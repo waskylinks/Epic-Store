@@ -1,14 +1,14 @@
 {
   "name": "epic-store",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["nodejs", "express", "mongodb", "mongoose"],
+  "author": "Likita Joel",
   "license": "ISC",
-  "description": "",
+  "description": "An E-commerce platform backend built with Node.js, Express, and MongoDB.",
   "dependencies": {
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
