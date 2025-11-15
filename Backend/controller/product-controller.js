@@ -10,6 +10,8 @@ export const createProducts = async (req, res) => {
     });
     
     } catch (e) {
+        console.error("Error creating product:", error.message);
+        
         res.status(500).json({
             success: false,
             message: e.message,
