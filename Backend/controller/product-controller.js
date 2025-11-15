@@ -11,7 +11,7 @@ export const createProducts = async (req, res) => {
     
     } catch (e) {
         console.error("Error creating product:", error.message);
-        
+
         res.status(500).json({
             success: false,
             message: e.message,
@@ -19,3 +19,36 @@ export const createProducts = async (req, res) => {
     }
     
 }
+
+//update products
+ export const updateProduct = async (req, res) => {
+    try {
+        let product = await Product.findById(req.params.id);
+
+        if(!product){
+            return res.status(404).json({
+                success: false,
+                message: "Product not found",
+            });
+        }
+
+        product = await Product.findByIdAndUpdate(req.params.id, req.body, {
+            new: true,
+            runValidators: true,
+            useFindAndModify: false,
+        })
+
+        res.status(200).json({
+            success: true,
+            product,    
+        });
+
+    } catch (error) {
+        console.error("Error updating product:", error.message);
+
+        res.status(500).json({
+            success: false,
+            message: error.message,
+        });
+    }
+ }
