@@ -1,12 +1,17 @@
 import app from './app.js';
 import dotenv from 'dotenv';
+import connectDB from './Database/database.js';
+import router from './routes/all-products-route.js';
 
-app.get('/', (req, res) => {
-    res.status(200).json({
-        message: 'All products route working fine',
+// Connect to the database
+connectDB();
 
-    });
-});
+//home route
+const allProductsRoute = router;
+
+app.use('/api/v1', allProductsRoute);
+
+
 
 
 
