@@ -1,6 +1,13 @@
 import app from './app.js';
 import dotenv from 'dotenv';
 
+app.get('/', (req, res) => {
+    res.status(200).json({
+        message: 'All products route working fine',
+
+    });
+});
+
 
 
 
@@ -22,7 +29,5 @@ connectDB();
 
 app.use(express.json());
 / home route
-app.get('/', (req, res) => {
-    res.send('Welcome to the Epic Store Backend!');
-});
+
     */
