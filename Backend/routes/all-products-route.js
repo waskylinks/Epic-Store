@@ -2,10 +2,7 @@ import express from 'express';
 
 const router = express.Router();
 
-
-
-router.get('/products', (req, res) => {
-
+const allProductsRoute = router.get('/products', (req, res) => {
     res.json({
         success: true,
         message: 'All products route working fine',
@@ -13,4 +10,4 @@ router.get('/products', (req, res) => {
     });
 });
 
-export default router;
+export default allProductsRoute;

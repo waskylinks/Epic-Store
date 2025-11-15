@@ -1,15 +1,15 @@
 import app from './app.js';
 import dotenv from 'dotenv';
 import connectDB from './Database/database.js';
-import router from './routes/all-products-route.js';
+import allProductsRoute from './routes/all-products-route.js';
+import singleProductRoute from './routes/single-product-route.js';
 
 // Connect to the database
 connectDB();
 
 //home route
-const allProductsRoute = router;
-
 app.use('/api/v1', allProductsRoute);
+app.use('/api/v1', singleProductRoute);
 
 
 
