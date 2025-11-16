@@ -11,6 +11,15 @@ connectDB();
 dotenv.config('config/config.env');
 const PORT = process.env.PORT || 8000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Server is listening on PORT ${PORT}`)
 })
+
+process.on("unhandledRejection", (err) => {
+    console.log(`Error: ${err.message}`);
+    console.log("Shutting down the server due to Unhandled Promise Rejection");
+
+    server.close(() => {
+        process.exit(1);
+    })
+});
