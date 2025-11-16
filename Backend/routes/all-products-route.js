@@ -1,26 +1,9 @@
 import express from 'express';
-import Product from '../models/product-model.js';
 
 const router = express.Router();
 
-router.get('/products', async (req, res) => {
-  try {
-    const products = await Product.find();
+import { getAllProducts } from '../controller/product-controller.js';
 
-    res.status(200).json({
-      success: true,
-      products,
-    });
+const createProductRoute = router.get('/products', getAllProducts);
 
-  } catch (error) {
-    console.error("Error fetching products:", error.message);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to fetch products",
-      error: error.message,
-    });
-  }
-});
-
-export default router;
+export default createProductRoute;

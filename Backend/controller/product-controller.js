@@ -1,6 +1,11 @@
 import Product from '../models/product-model.js';
 import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
+import APIFunctionality from '../utils/apiFunctionality.js';
+
+//http://localhost:8000/api/v1/product/69189630f8a419d4bf0dd35a?keyword=shirt
+
+
 
 // creating products 
 export const createProducts = handleAsyncError(async (req, res, next) => {
@@ -9,6 +14,20 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
     res.status(201).json({
         success: true,
         product,
+    });
+    
+});
+
+//get all products
+export const getAllProducts = handleAsyncError(async (req, res, next) => {
+    
+    const apiFunctionality = new APIFunctionality(Product.find(), req.query).search();
+
+    const products = await apiFunctionality.query;
+
+    res.status(200).json({
+        success: true,
+        products,
     });
     
 });
