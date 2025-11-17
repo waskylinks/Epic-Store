@@ -1,23 +1,18 @@
 import express from 'express';
 const app = express();
 
-import allProductsRoute from './routes/products-route.js';
-import productDetailsRoute from './routes/single-product-route.js';
-import createProductRoute from './routes/create-product-route.js';
-import updateProductRoute from './routes/updateProduct-route.js';
-import deleteProductRoute from './routes/deleteProduct-route.js';
+import products from './routes/products-route.js';
 import errorHandleMiddleware from './middleware/error.js';
 import user from './routes/user-route.js';
+import cookieParser from 'cookie-parser';
 
 //middleware
 app.use(express.json());
+app.use(cookieParser());
 
 //home route
-app.use('/api/v1', allProductsRoute);
-app.use('/api/v1', createProductRoute);
-app.use('/api/v1', updateProductRoute);
-app.use('/api/v1', deleteProductRoute);
-app.use('/api/v1', productDetailsRoute);
+app.use('/api/v1', products);
+
 app.use('/api/v1', user);
 app.use(errorHandleMiddleware);
 
