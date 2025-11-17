@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import validator from "validator";
+import bcryptjs from "bcryptjs";
 
 const userSchema = new mongoose.Schema({
     name: {
@@ -42,5 +43,15 @@ const userSchema = new mongoose.Schema({
     },
     
 }, { timestamps: true });
+
+//password hashing
+userSchema.pre("save", async function () {
+    this.password = await bcryptjs.hash(this.password, 10);
+
+    //updating profile(name, email, avatar) without password change
+
+    // update password
+
+});
 
 export default mongoose.model("User", userSchema);

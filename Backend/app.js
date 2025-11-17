@@ -7,6 +7,7 @@ import createProductRoute from './routes/create-product-route.js';
 import updateProductRoute from './routes/updateProduct-route.js';
 import deleteProductRoute from './routes/deleteProduct-route.js';
 import errorHandleMiddleware from './middleware/error.js';
+import user from './routes/user-route.js';
 
 //middleware
 app.use(express.json());
@@ -17,6 +18,7 @@ app.use('/api/v1', createProductRoute);
 app.use('/api/v1', updateProductRoute);
 app.use('/api/v1', deleteProductRoute);
 app.use('/api/v1', productDetailsRoute);
+app.use('/api/v1', user);
 app.use(errorHandleMiddleware);
 
 
