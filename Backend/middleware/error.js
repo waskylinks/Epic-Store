@@ -7,6 +7,12 @@ export default (err, req, res, next) => {
     //cast error
     if (err.name === 'CastError') {
         const message = `Resource not found. Invalid: ${err.path}`;
+        err = new HandleError(message, 404);
+    }
+
+    //duplicate key error
+    if (err.code === 11000) {
+        const message = `This ${Object.keys(err.keyValue)} already exists. Please use another ${Object.keys(err.keyValue)}!`;
         err = new HandleError(message, 400);
     }
 
