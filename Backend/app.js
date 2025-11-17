@@ -1,7 +1,7 @@
 import express from 'express';
 const app = express();
 
-import allProductsRoute from './routes/all-products-route.js';
+import allProductsRoute from './routes/products-route.js';
 import productDetailsRoute from './routes/single-product-route.js';
 import createProductRoute from './routes/create-product-route.js';
 import updateProductRoute from './routes/updateProduct-route.js';

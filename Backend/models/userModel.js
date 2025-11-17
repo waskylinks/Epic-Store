@@ -46,14 +46,22 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 //password hashing
-userSchema.pre("save", async function(next) {
-    this.password = await bcryptjs.hash(this.password, 10);
+userSchema.pre("save", async function (next) {
 
-    //updating profile(name, email, avatar) without password change
-    if(!this.isModified("password")) {
+    // Only hash if password was changed
+    if (!this.isModified("password")) {
         return next();
     }
+
+    this.password = await bcryptjs.hash(this.password, 10);
+    next();
 });
+
+//compare password method
+userSchema.methods.comparePassword = async function (enteredPassword) {
+    return await bcryptjs.compare(enteredPassword, this.password);
+};
+
 
 userSchema.methods.getJWTToken = function() {
     return jwt.sign({ id: this._id }, process.env.JWT_SECRET_KEY, {
