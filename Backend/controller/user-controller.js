@@ -6,6 +6,7 @@ import { sendEmail } from "../utils/sendEmail.js";
 import crypto from "crypto";
 
 
+//register new user
 export const registerUser = handleAsyncError(async (req, res, next) => {
 
     const { name, email, password } = req.body;
@@ -139,6 +140,15 @@ export const resetPassword = handleAsyncError(async(req, res, next) => {
     await user.save();
 
     sendToken(user, 200, res);
+})
+
+//get user details(profile)
+export const getUserDetails = handleAsyncError(async(req, res, next) => {
+    const user = await User.findById(req.user.id)
+    res.status(200).json({
+        success: true,
+        user
+    });
 })
 
 
