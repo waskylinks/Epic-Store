@@ -185,7 +185,7 @@ export const updateProfile = handleAsyncError(async(req, res, next) => {
         new: true,
         runValidators: true
     });
-    
+
     res.status(200).json({
         success: true,
         message: `Profile updated successfully`,
@@ -194,5 +194,11 @@ export const updateProfile = handleAsyncError(async(req, res, next) => {
 
 })
 
-
-
+//admin- Getting users information 
+export const getUsersList = handleAsyncError(async(req, res, next) => {
+    const users = await User.find();
+    res.status(200).json({
+        success: true,
+        users
+    })
+})
