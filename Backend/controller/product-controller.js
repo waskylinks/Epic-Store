@@ -178,6 +178,42 @@ export const getProductReviews = handleAsyncError(async(req, res, next) => {
     })
 });
 
+//delete product reviews
+export const deleteReview = handleAsyncError(async(req, res, next) => {
+    const product = await Product.findById(req.query.productID);
+    if(!product) {
+        return next(new HandleError(`Product not found`, 400))
+    }
+
+    const reviews = product.reviews.filter(review => review._id.toString() !== req.query.id.toString()); 
+    let avg = 0;
+
+    reviews.forEach(review => {
+        avg += review.rating;
+    })
+
+    const ratings = reviews.length > 0 
+    ? Number((avg / reviews.length).toFixed(1)) 
+    : 0;
+
+    const numOfReviews = reviews.length;
+
+    await Product.findByIdAndUpdate(req.query.productID, {
+        reviews,
+        ratings,
+        numOfReviews
+    }, {
+        new: true,
+        runValidators: true
+    })
+
+    res.status(200).json({
+        success: true,
+        message: `Review deleted successfully`
+    })
+
+})
+
 //admin - get all products
 export const getAdminProducts = handleAsyncError(async(req, res, next) => {
     const products = await Product.find();
