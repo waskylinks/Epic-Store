@@ -217,3 +217,25 @@ export const getSingleUser = handleAsyncError(async(req, res, next) => {
     });
 
 });
+
+//admin- changing user role
+export const updateUserRole = handleAsyncError(async(req, res, next) => {
+    const {role} = req.body;
+    const newUserData = {
+        role,
+
+    }
+    const user = await User.findByIdAndUpdate(req.user.id, newUserData, {
+        new: true,
+        runValidators: true
+    })
+
+    if(!user) {
+        return next(new HandleError(`Invalid user`, 400))
+    }
+
+    res.status(200).json({
+        success: true,
+        user
+    })
+});
