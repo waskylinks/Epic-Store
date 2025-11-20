@@ -194,7 +194,7 @@ export const updateProfile = handleAsyncError(async(req, res, next) => {
 
 })
 
-//admin- Getting users information 
+//admin- Getting all users information 
 export const getUsersList = handleAsyncError(async(req, res, next) => {
     const users = await User.find();
     res.status(200).json({
@@ -202,3 +202,18 @@ export const getUsersList = handleAsyncError(async(req, res, next) => {
         users
     })
 })
+
+//admin- get single user info
+export const getSingleUser = handleAsyncError(async(req, res, next) => {
+    const user = await User.findById(req.params.id);
+
+    if(!user) {
+        return next(new HandleError(`Invalid user ID: ${req.params.id}`, 400))
+    }
+
+    res.status(200).json({
+        success: true,
+        user
+    });
+
+});
