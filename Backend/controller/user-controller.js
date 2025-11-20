@@ -142,15 +142,6 @@ export const resetPassword = handleAsyncError(async(req, res, next) => {
     sendToken(user, 200, res);
 })
 
-//get user details(profile)
-export const getUserDetails = handleAsyncError(async(req, res, next) => {
-    const user = await User.findById(req.user.id)
-    res.status(200).json({
-        success: true,
-        user
-    });
-})
-
 //update password
 export const UpdatePassword = handleAsyncError(async(req, res, next) => {
     const { oldPassword, newPassword, confirmPassword } = req.body;
@@ -171,6 +162,37 @@ export const UpdatePassword = handleAsyncError(async(req, res, next) => {
     user.password = newPassword;
     await user.save();
     sendToken(user, 200, res);
+});
+
+//get user details(profile)
+export const getUserDetails = handleAsyncError(async(req, res, next) => {
+    const user = await User.findById(req.user.id)
+    res.status(200).json({
+        success: true,
+        user
+    });
 })
+
+//update user profile
+export const updateProfile = handleAsyncError(async(req, res, next) => {
+    const { name, email } = req.body;
+    const updateUserDetails = {
+        name,
+        email
+    }
+
+    const user = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
+        new: true,
+        runValidators: true
+    });
+    
+    res.status(200).json({
+        success: true,
+        message: `Profile updated successfully`,
+        user
+    });
+
+})
+
 
 
