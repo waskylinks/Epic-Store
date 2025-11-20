@@ -139,7 +139,21 @@ export const createProductReview = handleAsyncError(async(req, res, next) => {
         })
     } else {
         product.reviews.push(review)
+        product.numOfReviews = product.reviews.length;
     }
+
+    let avg = 0;
+    product.reviews.forEach(review => {
+        avg += review.rating;
+    })
+
+    if(product.reviews.length === 0) {
+        product.ratings = 0;
+        return
+    } else {
+        product.ratings = Math.ceil((avg / product.reviews.length) * 10) / 10;
+    }
+    
 
     await product.save({
         validateBeforeSave: false
@@ -149,7 +163,20 @@ export const createProductReview = handleAsyncError(async(req, res, next) => {
         success: true,
         product
     })
-})
+});
+
+//getting reviews 
+export const getProductReviews = handleAsyncError(async(req, res, next) => {
+    const product = await Product.findById(req.query.id);
+    if(!product) {
+        return next(new HandleError(`Product not found`, 400))
+    }
+
+    res.status(200).json({
+        success: true,
+        reviews: product.reviews
+    })
+});
 
 //admin - get all products
 export const getAdminProducts = handleAsyncError(async(req, res, next) => {
