@@ -59,7 +59,7 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
 });
 
 //update products
- export const updateProduct = handleAsyncError(async (req, res, next) => {
+export const updateProduct = handleAsyncError(async (req, res, next) => {
 
         let product = await Product.findById(req.params.id);
 
@@ -77,10 +77,10 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
             success: true,
             product,    
         });
- });
+});
 
  //delete products
- export const deleteProduct = handleAsyncError(async (req, res, next) => {
+export const deleteProduct = handleAsyncError(async (req, res, next) => {
 
         let product = await Product.findById(req.params.id);
 
@@ -94,7 +94,7 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
             success: true,
             message: 'Product deleted successfully'   
         });
- });
+});
 
  // get single product details
     export const getProductDetails = handleAsyncError(async (req, res, next) => {
@@ -110,3 +110,12 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
             product,
         });
     });
+
+//admin - get all products
+export const getAdminProducts = handleAsyncError(async(req, res, next) => {
+    const products = await Product.find();
+    res.status(200).json({
+        success: true,
+        products
+    })
+})
