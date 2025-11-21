@@ -212,7 +212,7 @@ export const deleteReview = handleAsyncError(async(req, res, next) => {
         message: `Review deleted successfully`
     })
 
-})
+});
 
 //admin - get all products
 export const getAdminProducts = handleAsyncError(async(req, res, next) => {
@@ -221,4 +221,4 @@ export const getAdminProducts = handleAsyncError(async(req, res, next) => {
         success: true,
         products
     })
-})
+});
