@@ -28,20 +28,6 @@ export const createNewOrder = handleAsyncError(async (req, res, next) => {
 
 });
 
-//getting single order
-export const getSingleOrder = handleAsyncError(async (req, res, next) => {
-    const order = await Order.findById(req.params.id).populate('user', 'name email')
-    if(!order) {
-        return next(new HandleError('No order found', 404));
-    }
-
-    res.status(200).json({
-        success: true,
-        order
-    });
-
-})
-
 //all orders 
 export const allMyOrders = handleAsyncError(async (req, res, next) => {
     const orders = await Order.find({
@@ -56,3 +42,26 @@ export const allMyOrders = handleAsyncError(async (req, res, next) => {
         orders
     })
 })
+
+//admin- getting single order
+export const getSingleOrder = handleAsyncError(async (req, res, next) => {
+    const order = await Order.findById(req.params.id).populate('user', 'name email')
+    if(!order) {
+        return next(new HandleError('No order found', 404));
+    }
+
+    res.status(200).json({
+        success: true,
+        order
+    });
+
+})
+
+//admin_ getting all orders placed by users
+export const getAllOrders = handleAsyncError(async (req, res, next) => {
+    const orders = await Order.find();
+    res.status(200).json({
+        success: true,
+        orders
+    });
+});
