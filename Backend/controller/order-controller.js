@@ -3,6 +3,7 @@ import Product from '../models/product-model.js';
 import Errorhandler from '../utils/handleError.js';
 import User from '../models/userModel.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
+import HandleError from '../utils/handleError.js';
 
 //create new order
 export const createNewOrder = handleAsyncError(async (req, res, next) => {
@@ -26,3 +27,17 @@ export const createNewOrder = handleAsyncError(async (req, res, next) => {
     });
 
 });
+
+//getting single order
+export const getSingleOrder = handleAsyncError(async (req, res, next) => {
+    const order = await Order.findById(req.params.id).populate('user', 'name email')
+    if(!order) {
+        return next(new HandleError('No order found', 404));
+    }
+
+    res.status(200).json({
+        success: true,
+        order
+    });
+    
+})
