@@ -53,6 +53,11 @@ const orderSchema = new mongoose.Schema({
             },
         }
     ],
+    orderStatus: {
+        type: String,
+        required: true,
+        default: "Processing"
+    },
     user: {
         type: mongoose.Schema.ObjectId,
         ref: 'User',
@@ -71,27 +76,28 @@ const orderSchema = new mongoose.Schema({
             type: Date,
             default: Date.now()
         },
-        itemPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
-        taxPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
-        shippingPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
-        totalPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        }
+        
     },
+    itemPrice: {
+            type: Number,
+            required: true,
+            default: 0
+        },
+    taxPrice: {
+            type: Number,
+            required: true,
+            default: 0
+        },
+    shippingPrice: {
+            type: Number,
+            required: true,
+            default: 0
+        },
+    totalPrice: {
+            type: Number,
+            required: true,
+            default: 0
+        },
     deliveredAt: Date,
     createdAt: {
         type: Date,
