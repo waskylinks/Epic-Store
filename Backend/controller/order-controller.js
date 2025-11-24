@@ -125,6 +125,9 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("No order found", 404));
     }
 
+    if(order.orderStatus !== 'Delivered') {
+        return next(new HandleError("This order is under processing and cannot be deleted", 404));
+    }
     await Order.deleteOne({
         _id: req.params.id
     });
