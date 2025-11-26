@@ -4,6 +4,7 @@ import '../pageStyles/Home.css'
 import Navbar from '../components/Navbar';
 import ImageSlider from '../components/ImageSlider';
 import Product from '../components/Product';
+import PageTitle from '../components/PageTitle';
 
 const products = [
         {
@@ -76,6 +77,7 @@ const products = [
 function Home() {
     return (
         <>
+        <PageTitle title='Home-Epic Store'/>
         <Navbar/>
         <ImageSlider/>
         <div className="home-container">
