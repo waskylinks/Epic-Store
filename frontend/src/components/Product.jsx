@@ -19,7 +19,7 @@ function Product({product}) {
             <h3 className="product-title">
                 {product.name}
             </h3>
-            <p className="product-price">
+            <p className="home-price">
                 <strong>Price</strong>
                     {product.price}/-
             </p>
