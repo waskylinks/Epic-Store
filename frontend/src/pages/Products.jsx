@@ -9,6 +9,7 @@ import Product from '../components/Product'
 import { toast } from 'react-toastify'
 import Loader from '../components/Loader'
 import { useLocation } from 'react-router-dom'
+import NoProduct from '../components/NoProduct'
 
 function Products() {
     const {loading, error, products} = useSelector(state => state.product);
@@ -48,12 +49,16 @@ function Products() {
         </div>
 
         <div className="products-section">
-            <div className="products-product-container">
+            { products.length > 0 ?
+            (<div className="products-product-container">
                 {products.map((product) => (
                     <Product key={product._id} product={product}/>
                 ))}
-            </div>
+            </div>) : (
+            <NoProduct keyword={keyword}/> 
+            )}
         </div>
+
     </div>
 
     <Footer />

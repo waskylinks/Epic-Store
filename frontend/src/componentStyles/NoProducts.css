@@ -20,6 +20,12 @@
     margin-bottom: 1rem;
   }
   
+
+.warning-icon {
+  font-size: 60px;
+  color: #FFA500; /* Orange caution color */
+}
+
   .no-products-title {
     font-size: 1.25rem;
     font-weight: 600;
@@ -31,3 +37,5 @@
     color: #666;
     max-width: 400px;
   }
+
+  
