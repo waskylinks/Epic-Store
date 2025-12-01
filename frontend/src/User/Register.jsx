@@ -65,7 +65,7 @@ function Register() {
 
     useEffect(() => {
             if(error) {
-                toast.error(error.message, {position: 'top-center', autoClose: 2000});
+                toast.error(error, {position: 'top-center', autoClose: 2000});
                 dispatch(removeErrors())
             }
         }, [dispatch, error])
