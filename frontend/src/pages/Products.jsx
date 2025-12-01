@@ -25,10 +25,21 @@ function Products() {
     const [currentPage, setCurrentPage] = useState(pageFromURL);
 
     const navigate = useNavigate();
+
+    //categories
+    const category = searchParams.get('category')
+    const categories = ['trousers', 'jackets', 'shirts', 'shoes', 'caps']
+
+    const handleCategoryClick = (category) => {
+        const newSearchParams = new URLSearchParams(location.search);
+        newSearchParams.set('category', category)
+        newSearchParams.delete('page')
+        navigate(`?${newSearchParams.toString()}`)
+    }
     
     useEffect(() => {
-            dispatch(getProduct({keyword, page: currentPage}))
-        }, [dispatch, keyword, currentPage])
+            dispatch(getProduct({keyword, page: currentPage, category}))
+        }, [dispatch, keyword, currentPage, category])
 
     useEffect(() => {
             if(error) {
@@ -64,7 +75,19 @@ function Products() {
             <h3 className="filter-heading">
                 CATEGORIES
             </h3>
+
             {/* Render all categories */}
+            <ul>
+                {
+                    categories.map((category) => {
+                        return (
+                            <li key={category} onClick={() => handleCategoryClick(category)}>
+                                {category}
+                            </li>
+                        )
+                    })
+                }
+            </ul>
 
         </div>
 
