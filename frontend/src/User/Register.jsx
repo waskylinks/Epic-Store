@@ -1,6 +1,10 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import '../UserStyles/Form.css';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { toast } from 'react-toastify';
+import { useDispatch, useSelector } from 'react-redux';
+import { register, removeErrors, removeSuccess } from '../features/products/userSlice';
+
 
 function Register() {
 
@@ -13,6 +17,11 @@ function Register() {
 
     const [avatar, setAvatar] = useState('');
     const [avatarPreview, setAvatarPreview] = useState('./images/profile.webp')
+
+    //access state
+    const {success, loading, error} = useSelector(state => state.user)
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
 
     const registerDataChange = (e) => {
         if(e.target.name === 'avatar') {
@@ -33,12 +42,51 @@ function Register() {
         }
     }
 
+    const registerSubmit = (e) => {
+        e.preventDefault();
+        if(!name || !email || !password) {
+            toast.error('Please fill out the required fields', {position: 'top-center', autoClose: 1200})
+            return;
+        }
+
+        const myForm = new FormData();
+        myForm.set('name', name)
+        myForm.set('email', email)
+        myForm.set('password', password)
+        myForm.set('avatar', avatar)
+
+        console.log(myForm.entries())
+
+        for (let pair of myForm.entries()) {
+            console.log(pair[0] + '-' + pair[1])
+        }
+        dispatch(register(myForm))
+    }
+
+    useEffect(() => {
+            if(error) {
+                toast.error(error.message, {position: 'top-center', autoClose: 2000});
+                dispatch(removeErrors())
+            }
+        }, [dispatch, error])
+
+    useEffect(() => {
+        if(success) {
+            toast.success('Registration successful', {position: 'top-center', autoClose: 2000});
+            dispatch(removeSuccess())
+            navigate('/login')
+        }
+    }, [dispatch, success, navigate])
 
 
   return (
     <div className="form-container container">
         <div className="form-content">
-            <form className="form">
+            <form 
+            className="form" 
+            onSubmit={registerSubmit} 
+            encType='multipart/form-data' 
+            >
                 <h2>
                     Sign Up
                 </h2>
