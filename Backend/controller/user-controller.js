@@ -23,8 +23,8 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
         email,
         password,
         avatar: {
-            public_id: "this is a sample id",
-            url: "profilepicUrl",
+            public_id: myCloud.public_id,
+            url: myCloud.secure_url,
         }
     })
 

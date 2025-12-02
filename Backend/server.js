@@ -5,9 +5,9 @@ import {v2 as cloudinary} from 'cloudinary';
 
 //set up cloudinary
 cloudinary.config({
-    cloud_name: process.config.env.CLOUDINARY_NAME,
-    api_key: process.config.env.API_KEY,
-    api_secret: process.config.env.API_SECRET
+    cloud_name: process.env.CLOUDINARY_NAME,
+    api_key: process.env.API_KEY,
+    api_secret: process.env.API_SECRET
 })
 
 // Connect to the database
