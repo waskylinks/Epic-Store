@@ -6,6 +6,7 @@ import errorHandleMiddleware from './middleware/error.js';
 import user from './routes/user-route.js';
 import order from './routes/order-routes.js';
 import cookieParser from 'cookie-parser';
+import fileUpload from 'express-fileupload';
 
 
 
@@ -13,6 +14,7 @@ import cookieParser from 'cookie-parser';
 //middleware
 app.use(express.json());
 app.use(cookieParser());
+app.use(fileUpload());
 
 //home route
 app.use('/api/v1', products);

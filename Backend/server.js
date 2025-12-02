@@ -1,7 +1,14 @@
 import app from './app.js';
 import dotenv from 'dotenv';
 import connectDB from './Database/database.js';
+import {v2 as cloudinary} from 'cloudinary';
 
+//set up cloudinary
+cloudinary.config({
+    cloud_name: process.config.env.CLOUDINARY_NAME,
+    api_key: process.config.env.API_KEY,
+    api_secret: process.config.env.API_SECRET
+})
 
 // Connect to the database
 connectDB();
