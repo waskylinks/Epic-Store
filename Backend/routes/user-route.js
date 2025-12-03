@@ -18,7 +18,7 @@ router.route("/profile").get(verifyUserAuth, getUserDetails);
 
 router.route("/password/update").post(verifyUserAuth, UpdatePassword);
 
-router.route("/profile/update").post(verifyUserAuth, updateProfile);
+router.route("/profile/update").put(verifyUserAuth, updateProfile);
 
 router.route("/admin/users").get(verifyUserAuth, roleBaseAccess('admin'), getUsersList);
 
