@@ -10,6 +10,7 @@ import { loadUser } from './features/products/userSlice';
 import UserDashboard from './User/UserDashboard';
 import Profile from './User/Profile';
 import ProtectedRoute from './components/ProtectedRoute';
+import UpdateProfile from './User/UpdateProfile';
 
 
 function App() {
@@ -27,6 +28,7 @@ function App() {
   return (
      <Router>
       <Routes>
+
         <Route path='/' element={<Home/>}/>
         <Route path='/product/:id' element={<ProductDetails/>}/>
         <Route path='/products' element={<Products />}/>
@@ -34,6 +36,8 @@ function App() {
         <Route path='/register' element={<Register />}/>
         <Route path='/login' element={<Login />}/>
         <Route path='/profile' element={<ProtectedRoute element={<Profile />} />} />
+        <Route path='/profile/update' element={<ProtectedRoute element={<UpdateProfile />} />}/>
+
       </Routes>
       {isAuthenticated && <UserDashboard user={user}/>}
      </Router>
