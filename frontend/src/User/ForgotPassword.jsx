@@ -1,19 +1,46 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import '../UserStyles/Form.css'
 import PageTitle from '../components/PageTitle'
 import Navbar from '../components/Navbar'
+import { useDispatch, useSelector } from 'react-redux'
+import { useNavigate } from 'react-router-dom'
+import { forgotPassword, removeErrors, removeSuccess } from '../features/products/userSlice'
+import { toast } from 'react-toastify'
+import Loader from '../components/Loader'
 
 function ForgotPassword() {
+    const {loading, error, success, message} = useSelector((state) => state.user)
+    const dispatch = useDispatch()
+    const navigate = useNavigate()
+
     const [email, setEmail] = useState('');
 
     const forgotPasswordEmail = (e) => {
         e.preventDefault();
         const myForm = new FormData();
         myForm.set('email', email)
+        dispatch(forgotPassword(myForm))
+        setEmail('')
     }
+
+    useEffect(() => {
+                if(error) {
+                    toast.error(error, {position: 'top-center', autoClose: 2000});
+                    dispatch(removeErrors())
+                }
+            }, [dispatch, error])
+    
+    useEffect(() => {
+                    if(success) {
+                        toast.success(message, {position: 'top-center', autoClose: 2000});
+                        dispatch(removeSuccess())
+                    }
+                }, [dispatch, success, message])
 
   return (
     <>
+    { loading ? (<Loader />) :
+    (<>
     <PageTitle title='Forgot Password'/>
     <Navbar />
 
@@ -42,6 +69,7 @@ function ForgotPassword() {
     </div>
 
     <Footer />
+    </>)}
     </>
   )
 }
