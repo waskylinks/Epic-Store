@@ -155,13 +155,13 @@ export const UpdatePassword = handleAsyncError(async(req, res, next) => {
     const user = await User.findById(req.user.id).select('+password');
 
     //verify old password
-    const checkPasswordMatch = await user.verifyPassword(oldPassword);
+    const checkPasswordMatch = await user.comparePassword(oldPassword);
 
     if(!checkPasswordMatch){
         return next(new HandleError(`Old password is incorrect`, 400));
     }
 
-    if(newPassword === confirmPassword){
+    if(newPassword !== confirmPassword){
         return next(new HandleError(`Password mismatch`, 400));
     }
 
