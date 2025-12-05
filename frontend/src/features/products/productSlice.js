@@ -15,7 +15,6 @@ export const getProduct = createAsyncThunk('product/getProduct', async({keyword,
         // const link = keyword?`/api/v1/products?keyword=${encodeURIComponent(keyword)}&page=${page}` :
         // `/api/v1/products?page=${page}`
         const {data} = await axios.get(link)
-        console.log('Response', data);
         return data;
 
     } catch (error){
@@ -78,7 +77,6 @@ const productSlice = createSlice({
             state.error = null;
         })
         .addCase(getProductDetails.fulfilled, (state, action) => {
-            console.log('Product Details', action.payload);
             state.loading = false;
             state.error = null;
             state.product = action.payload.product;

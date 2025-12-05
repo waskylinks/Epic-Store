@@ -42,19 +42,19 @@ function UserDashboard({user}) {
         navigate('/profile')
     } 
 
-    function logoutUser () {
+    function logoutUser() {
         dispatch(logout())
-        .unwrap()
-        .then(() => {
-            toast.success('Logout Successfully', {position: 'top-center', autoClose: 2000})
-        })
-        dispatch(removeSuccess())
-        navigate('/login')
+            .unwrap()
+            .then(() => {
+                toast.success('Logout Successfully', { position: 'top-center', autoClose: 2000 });
+                dispatch(removeSuccess());
+                navigate('/login');
+            })
+            .catch((error) => {
+                toast.error(error?.message || 'Logout Failed', { position: 'top-center', autoClose: 2000 });
+            });
+    }
 
-        .catch((error) => {
-            toast.success(error.message || 'Logout Failed', {position: 'top-center', autoClose: 2000})
-        })
-    } 
 
     function dashboard () {
         navigate('/admin/dashboard')

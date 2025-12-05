@@ -1,10 +1,19 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import '../UserStyles/Form.css'
 import Navbar from '../components/Navbar'
 import Footer from '../components/footer'
 import PageTitle from '../components/PageTitle'
+import { useDispatch, useSelector } from 'react-redux'
+import { useNavigate } from 'react-router-dom'
+import { removeErrors, removeSuccess, updatePassword } from '../features/products/userSlice'
+import { toast } from 'react-toastify'
+import Loader from '../components/Loader'
 
 function UpdatePassword() {
+    const {success, loading, error} = useSelector((state) => state.user)
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
+
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -15,10 +24,29 @@ function UpdatePassword() {
                 myForm.set('oldPassword', oldPassword)
                 myForm.set('newPassword', newPassword)
                 myForm.set('confirmPassword', confirmPassword)
+
+                dispatch(updatePassword(myForm))
     }
+
+    useEffect(() => {
+                if(error) {
+                    toast.error(error, {position: 'top-center', autoClose: 2000});
+                    dispatch(removeErrors())
+                }
+            }, [dispatch, error])
+
+    useEffect(() => {
+                if(success) {
+                    toast.success('Password Updated Successfully ', {position: 'top-center', autoClose: 2000});
+                    dispatch(removeSuccess())
+                    navigate('/profile')
+                }
+            }, [dispatch, success, navigate])
 
   return (
     <>
+    { loading ? (<Loader />) : 
+    (<>
     <Navbar />
     <PageTitle title='Update Password '/>
     
@@ -69,6 +97,8 @@ function UpdatePassword() {
     </div>
 
     <Footer />
+    </>)
+    }
     </>
   )
 }

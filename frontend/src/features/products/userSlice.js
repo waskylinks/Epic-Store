@@ -10,7 +10,6 @@ export const register = createAsyncThunk('user/register', async(userData, {rejec
             }   
         }
         const {data} = await axios.post('/api/v1/register', userData, config)
-        console.log('registration data', data);
         return data
 
     } catch(error) {
@@ -27,7 +26,6 @@ export const login = createAsyncThunk('user/login', async({email, password}, {re
             }   
         }
         const {data} = await axios.post('/api/v1/login', {email, password}, config)
-        console.log('Login data', data);
         return data
 
     } catch(error) {
@@ -216,7 +214,7 @@ const userSlice = createSlice({
             })
             .addCase(updatePassword.rejected, (state, action) => {
                 state.loading = false;
-                state.error = action.payload || 'Password update failed. Please try again later'
+                state.error = action.payload?.message || 'Password update failed. Please try again later'
             })
     }
     
