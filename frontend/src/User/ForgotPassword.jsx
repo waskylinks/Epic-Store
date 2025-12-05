@@ -3,7 +3,6 @@ import '../UserStyles/Form.css'
 import PageTitle from '../components/PageTitle'
 import Navbar from '../components/Navbar'
 import { useDispatch, useSelector } from 'react-redux'
-import { useNavigate } from 'react-router-dom'
 import { forgotPassword, removeErrors, removeSuccess } from '../features/products/userSlice'
 import { toast } from 'react-toastify'
 import Loader from '../components/Loader'
@@ -11,7 +10,6 @@ import Loader from '../components/Loader'
 function ForgotPassword() {
     const {loading, error, success, message} = useSelector((state) => state.user)
     const dispatch = useDispatch()
-    const navigate = useNavigate()
 
     const [email, setEmail] = useState('');
 
