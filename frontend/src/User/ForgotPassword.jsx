@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import '../UserStyles/Form.css'
 import PageTitle from '../components/PageTitle'
 import Navbar from '../components/Navbar'
+import Footer from '../components/footer'
 import { useDispatch, useSelector } from 'react-redux'
 import { forgotPassword, removeErrors, removeSuccess } from '../features/products/userSlice'
 import { toast } from 'react-toastify'
@@ -15,61 +16,59 @@ function ForgotPassword() {
 
     const forgotPasswordEmail = (e) => {
         e.preventDefault();
-        const myForm = new FormData();
-        myForm.set('email', email)
-        dispatch(forgotPassword(myForm))
+        if (!email) {
+            return toast.error("Please enter your registered email", { position: "top-center", autoClose: 2000 })
+        }
+
+        dispatch(forgotPassword({ email })) // send JSON object, not FormData
         setEmail('')
     }
 
     useEffect(() => {
-                if(error) {
-                    toast.error(error, {position: 'top-center', autoClose: 2000});
-                    dispatch(removeErrors())
-                }
-            }, [dispatch, error])
+        if (error) {
+            toast.error(error, { position: 'top-center', autoClose: 2000 });
+            dispatch(removeErrors())
+        }
+    }, [dispatch, error])
     
     useEffect(() => {
-                    if(success) {
-                        toast.success(message, {position: 'top-center', autoClose: 2000});
-                        dispatch(removeSuccess())
-                    }
-                }, [dispatch, success, message])
+        if (success) {
+            toast.success(message || "Email sent successfully", { position: 'top-center', autoClose: 2000 });
+            dispatch(removeSuccess())
+        }
+    }, [dispatch, success, message])
 
-  return (
-    <>
-    { loading ? (<Loader />) :
-    (<>
-    <PageTitle title='Forgot Password'/>
-    <Navbar />
+    return (
+        <>
+        { loading ? (<Loader />) :
+        (<>
+            <PageTitle title='Forgot Password'/>
+            <Navbar />
 
-    <div className="container forgot-container">
-        <div className="form-content email-group">
-            <form 
-            className="form" 
-            onSubmit={forgotPasswordEmail}>
-                <h2>
-                    Forgot Password
-                </h2>
-                <div className="input-group">
-                    <input 
-                    type="email" 
-                    placeholder='Enter your registered email' 
-                    name='email'
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}/>
+            <div className="container forgot-container">
+                <div className="form-content email-group">
+                    <form className="form" onSubmit={forgotPasswordEmail}>
+                        <h2>Forgot Password</h2>
+                        <div className="input-group">
+                            <input 
+                                type="email" 
+                                placeholder='Enter your registered email' 
+                                name='email'
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                            />
+                        </div>
+                        <button className="authBtn" disabled={loading}>
+                            {loading ? 'Sending...' : 'Send'}
+                        </button>
+                    </form>
                 </div>
-                <button className="authBtn">
-                    Send
-                </button>
-            </form>
-        </div>
-        
-    </div>
+            </div>
 
-    <Footer />
-    </>)}
-    </>
-  )
+            <Footer />
+        </>)}
+        </>
+    )
 }
 
 export default ForgotPassword

@@ -118,7 +118,7 @@ export const resetPassword = createAsyncThunk('user/resetPassword', async({token
                 'Content-Type' : 'application/json'
             }
         }
-        const {data} = await axios.post(`/api/v1/reset/:${token}`, userData, config);
+        const {data} = await axios.post(`/api/v1/reset/${token}`, userData, config);
 
         return data
 
@@ -259,6 +259,7 @@ const userSlice = createSlice({
             .addCase(forgotPassword.fulfilled, (state, action) => {
                 state.loading = false;
                 state.error = null;
+                state.success = true;
                 state.message = action.payload?.message
             })
             .addCase(forgotPassword.rejected, (state, action) => {

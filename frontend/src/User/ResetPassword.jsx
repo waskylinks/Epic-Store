@@ -1,9 +1,17 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import '../UserStyles/Form.css'
 import PageTitle from '../components/PageTitle'
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
+import { removeErrors, removeSuccess, resetPassword } from '../features/products/userSlice';
+import { toast } from 'react-toastify';
+import Loader from '../components/Loader';
 
 function ResetPassword() {
+    const {success, loading, error} = useSelector((state) => state.user)
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
+
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const {token} = useParams()
@@ -14,11 +22,31 @@ function ResetPassword() {
             password,
             confirmPassword
         }
-        console.log(data)
+        dispatch(resetPassword({
+            token,
+            userData : data,
+        }))
     }
+
+    useEffect(() => {
+        if(error) {
+            toast.error(error, {position: 'top-center', autoClose: 2000});
+            dispatch(removeErrors())
+        }
+    }, [dispatch, error])
+
+    useEffect(() => {
+        if(success) {
+            toast.success('Password reset successful', {position: 'top-center', autoClose: 2000});
+            dispatch(removeSuccess())
+            navigate('/login')
+        }
+    }, [dispatch, success, navigate])
 
   return (
     <>
+    { loading ? (<Loader />) :
+    (<>
     <PageTitle title='Reset Password'/>
     <div className="container update-container">
         <div className="form-content">
@@ -55,6 +83,7 @@ function ResetPassword() {
             </form>
         </div>
     </div>
+    </>)}
     </>
   )
 }
