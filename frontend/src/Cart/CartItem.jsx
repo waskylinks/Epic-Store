@@ -32,15 +32,14 @@ function CartItem({item}) {
     }
 
     const handleUpdate = () => {
-        if(!loading) return
-        if(quantity !== item.quantity) {
+        if (quantity !== item.quantity) {
             dispatch(addItemsToCart({
                 id: item.product,
-                quantity
-            }))
+                quantity // ✅ send the new quantity
+            }));
         }
-        
     }
+
 
     useEffect(() => {
         if(error) {
@@ -63,14 +62,13 @@ function CartItem({item}) {
     }, [dispatch, success, message])
     
     const handleRemove = () => {
-        if(loading) return
-        dispatch(removeItemFromCart(item.product))
-        toast.success(
-                'Item removed from cart successfully', 
-                {position: 'top-center', 
-                autoClose: 2000});
-        dispatch(removeMessage())
-    }
+    dispatch(removeItemFromCart(item.product))
+    toast.success('Item removed from cart successfully', {
+        position: 'top-center', 
+        autoClose: 2000
+    });
+}
+
 
   return (
     <div>
@@ -117,8 +115,9 @@ function CartItem({item}) {
 
             <div className="item-total">
                 <span className="item-total-price">
-                    {(item.price * item.quantity).toFixed(2)}
+                    {(item.price * quantity).toFixed(2)}
                 </span>
+
             </div>
 
             <div className="item-action">

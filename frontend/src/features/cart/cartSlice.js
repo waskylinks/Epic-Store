@@ -54,22 +54,21 @@ const cartSlice = createSlice ({
 
         builder.addCase(addItemsToCart.fulfilled, (state, action) => {
             const item = action.payload
-            state.cartItems.push(item)
 
             const existingItem = state.cartItems.find(
                 (i) => i.product === item.product)
 
-            if(existingItem) {
-                existingItem.quantity = item.quantity
-                state.message = `Updated ${item.name} quantity in the cart`
+            if (existingItem) {
+                existingItem.quantity = item.quantity; 
+                state.message = `Updated ${item.name} quantity in the cart`;
             } else {
-                state.cartItems.push(item)
-                state.message = `${item.name} is added to cart successfully`
+                state.cartItems.push(item);
+                state.message = `${item.name} is added to cart successfully`;
             }
 
             state.loading = false;
-            state.error = null,
-            state.success = true
+            state.error = null;
+            state.success = true;
             localStorage.setItem('cartItems', JSON.stringify(state.cartItems))
             
         })

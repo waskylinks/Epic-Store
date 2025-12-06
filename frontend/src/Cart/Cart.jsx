@@ -5,19 +5,31 @@ import Navbar from '../components/Navbar'
 import Footer from '../components/footer'
 import CartItem from './CartItem'
 import { useSelector } from 'react-redux'
+import { Link } from 'react-router-dom'
 
 function Cart() {
     const {cartItems} = useSelector(state => state.cart) 
 
   return (
     <>
-    <PageTitle title='Cart'/>
     <Navbar />
+    <PageTitle title='Cart'/>
+    {cartItems.length === 0 ? (
+        <div className="empty-cart-container">
+            <p className="empty-cart-message">
+                Your Cart is Empty
+            </p>
+            <Link to='/products'
+            className='viewProduct'>View Products</Link>
+        </div>
+    ) :
+    (<>
+    
 
     <div className="cart-page">
 
         <div className="cart-items">
-            <div className="cart-item-heading">
+            <div className="cart-items-heading">
                 Your Cart
             </div>
 
@@ -38,7 +50,7 @@ function Cart() {
                 </div>
 
                 {/* cart items */}
-                {cartItems && cartItems.map(item => <CartItem item={item} key={item.name}/>)}
+                {cartItems && cartItems.map(item => <CartItem item={item} key={item.product}/>)}
             </div>
         </div>
 
@@ -86,6 +98,8 @@ function Cart() {
 
     </div>
 
+    
+    </>) }
     <Footer />
     </>
   )
