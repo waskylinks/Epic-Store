@@ -6,7 +6,7 @@ import { addItemsToCart, removeErrors, removeItemFromCart, removeMessage } from 
 function CartItem({item}) {
     const {success, loading, error, message, CartItems} = useSelector(state => state.cart)
     const [quantity, setQuantity] = useState(item.quantity);
-    const dispatch = useDispatch()
+    const dispatch = useDispatch();
 
     //quantity control
     const decreaseQuantity = () => {
@@ -35,11 +35,10 @@ function CartItem({item}) {
         if (quantity !== item.quantity) {
             dispatch(addItemsToCart({
                 id: item.product,
-                quantity // ✅ send the new quantity
+                quantity 
             }));
         }
     }
-
 
     useEffect(() => {
         if(error) {
