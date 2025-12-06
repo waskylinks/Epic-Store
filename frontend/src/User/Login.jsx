@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import '../UserStyles/Form.css'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useDispatch, useSelector } from 'react-redux';
 import { login, removeErrors, removeSuccess } from '../features/products/userSlice';
 import { toast } from 'react-toastify';
@@ -9,8 +9,12 @@ function Login() {
     const [loginEmail, setLoginEmail] = useState('');
     const [loginPassword, setLoginPassword] = useState('');
     const {error, loading, success, isAuthenticated} = useSelector(state => state.user)
-    const dispatch = useDispatch()
-    const navigate = useNavigate()
+
+    const redirect = new URLSearchParams(location.search).get('redirect') || '/'
+    const location = useLocation();
+
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
 
 
     const logInSubmit = (e) => {
@@ -30,9 +34,9 @@ function Login() {
     
     useEffect(() => {
         if(isAuthenticated) {
-            navigate('/')
+            navigate(redirect)
         }
-    }, [isAuthenticated, navigate])
+    }, [isAuthenticated, redirect, navigate])
 
     useEffect(() => {
         if(success) {
