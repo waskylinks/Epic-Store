@@ -3,6 +3,7 @@ import '../CartStyles/Shipping.css'
 import PageTitle from '../components/PageTitle'
 import Navbar from '../components/Navbar'
 import Footer from '../components/footer'
+import CheckoutPath from './CheckoutPath'
 
 function Shipping() {
     
@@ -11,6 +12,7 @@ function Shipping() {
     <PageTitle title='Shipping Info'/>
     <Navbar />
 
+    <CheckoutPath activePath={0}/>
     <div className="shipping-form-container">
         <h1 className="shipping-form-header">
             Shipping Details

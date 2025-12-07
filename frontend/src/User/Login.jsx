@@ -10,12 +10,12 @@ function Login() {
     const [loginPassword, setLoginPassword] = useState('');
     const {error, loading, success, isAuthenticated} = useSelector(state => state.user)
 
-    const redirect = new URLSearchParams(location.search).get('redirect') || '/'
     const location = useLocation();
 
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
+    const redirect = new URLSearchParams(location.search).get('redirect') || '/'
 
     const logInSubmit = (e) => {
         e.preventDefault();
