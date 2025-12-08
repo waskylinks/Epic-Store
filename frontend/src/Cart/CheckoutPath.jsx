@@ -20,7 +20,7 @@ function CheckoutPath({activePath}) {
 
   return (
     <div className="checkoutPath">
-        { path.map((item, index) => {
+        { path.map((item, index) => (
             <div 
             className="checkoutPath-step"
             key={index}
@@ -35,7 +35,7 @@ function CheckoutPath({activePath}) {
                     {item.label}
                 </p>
         </div>
-        }) }
+        )) }
     </div>
   )
 }
