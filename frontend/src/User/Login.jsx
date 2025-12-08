@@ -16,6 +16,7 @@ function Login() {
     const navigate = useNavigate();
 
     const redirect = new URLSearchParams(location.search).get('redirect') || '/'
+    
 
     const logInSubmit = (e) => {
         e.preventDefault();

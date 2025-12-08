@@ -22,12 +22,10 @@ function App() {
   const {isAuthenticated, user} = useSelector(state  => state.user);
   const dispatch = useDispatch()
 
+   // Always load user on app start
   useEffect(() => {
-    if(isAuthenticated){
-       dispatch(loadUser())
-    }
-   
-  }, [dispatch, isAuthenticated])
+    dispatch(loadUser());
+  }, [dispatch]);
 
   return (
      <Router>

@@ -6,20 +6,38 @@ import Footer from '../components/footer'
 import CheckoutPath from './CheckoutPath'
 import { useDispatch, useSelector } from 'react-redux'
 import {Country, State, City} from 'country-state-city'
+import { toast } from 'react-toastify';
+import { saveShippingInfo } from '../features/cart/cartSlice'
+import { Navigate, useNavigate } from 'react-router-dom'
 
 function Shipping() {
     const {shippingInfo} = useSelector(state => state.cart)
 
+    
+    const [address, setAddress] = useState(shippingInfo.address || '');
+    const [pinCode, setPinCode] = useState(shippingInfo.pinCode || '');
+    const [phoneNumber, setPhoneNumber] = useState(shippingInfo.phoneNumber || '');
+    const [country, setCountry] = useState(shippingInfo.country || '');
+    const [state, setState] = useState(shippingInfo.state || '');
+    const [city, setCity] = useState(shippingInfo.city || '');
     const dispatch = useDispatch();
-    const [address, setAddress] = useState('');
-    const [pinCode, setPinCode] = useState('');
-    const [phoneNumber, setPhoneNumber] = useState('');
-    const [country, setCountry] = useState('');
-    const [state, setState] = useState('');
-    const [city, setCity] = useState('');
+    const navigate = useNavigate();
 
     const shippingInfoSubmit = (e) => {
         e.preventDefault();
+        if(phoneNumber.length !== 11){
+            toast.error('Invalid phone number', {position: 'top-center'}, 2000)
+            return;
+        }
+        dispatch(saveShippingInfo({
+            address,
+            pinCode,
+            phoneNumber,
+            country,
+            state,
+            city
+        }))
+        navigate('/order/confirm');
     }
     
   return (
@@ -37,40 +55,40 @@ function Shipping() {
 
                 <div className="shipping-form-group">
                     <label 
-                    htmlFor="address"
-                    value={address}
-                    onChange={(e) => setAddress(e.target.value)}>
+                    htmlFor="address">
                         Address
                     </label>
                     <input type="text" 
                     id='address'
                     name='address'
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
                     placeholder='Enter your Address'/>
                 </div>
 
                 <div className="shipping-form-group">
                     <label 
-                    htmlFor="pinCode"
-                    value={pinCode}
-                    onChange={(e) => setPinCode(e.target.value)}>
+                    htmlFor="pinCode">
                         Zipcode
                     </label>
                     <input type="number" 
                     id='pinCode'
                     name='pinCode'
+                    value={pinCode}
+                    onChange={(e) => setPinCode(e.target.value)}
                     placeholder='Enter your Zipcode'/>
                 </div>
 
                 <div className="shipping-form-group">
                     <label 
-                    htmlFor="phoneNumber"
-                    value={phoneNumber}
-                    onChange={(e) => setPhoneNumber(e.target.value)}>
+                    htmlFor="phoneNumber">
                         Phone Number
                     </label>
                     <input type="tel" 
                     id='phoneNumber'
                     name='phoneNumber'
+                    value={phoneNumber}
+                    onChange={(e) => setPhoneNumber(e.target.value)}
                     placeholder='Enter your Phone Number'/>
                 </div>
 
@@ -80,7 +98,12 @@ function Shipping() {
 
                 <div className="shipping-form-group">
                     <label 
-                    htmlFor="country"
+                    htmlFor="country">
+                        Country
+                    </label>
+                    <select 
+                    name="country" 
+                    id="country" 
                     value={country}
                     onChange={(e) => 
                     {
@@ -88,9 +111,6 @@ function Shipping() {
                         setState('');
                         setCity('');
                     }}>
-                        Country
-                    </label>
-                    <select name="country" id="country" value={country}>
                         <option value="">
                             Select a Country
                         </option>
@@ -107,16 +127,18 @@ function Shipping() {
                 { country && 
                 <div className="shipping-form-group">
                     <label 
-                    htmlFor="state"
+                    htmlFor="state">
+                        State
+                    </label>
+                    <select 
+                    name="state" 
+                    id="state" 
                     value={state}
                     onChange={(e) => 
                     {
                         setState(e.target.value)
                         setCity('');
                     }}>
-                        State
-                    </label>
-                    <select name="state" id="state" value={state}>
                         <option value="">
                             Select your State
                         </option>
@@ -133,12 +155,14 @@ function Shipping() {
                 { state && 
                 <div className="shipping-form-group">
                     <label 
-                    htmlFor="city"
-                    value={city}
-                    onChange={(e) => setCity(e.target.value)}>
+                    htmlFor="city">
                         City
                     </label>
-                    <select name="city" id="city" value={city}>
+                    <select 
+                    name="city" 
+                    id="city" 
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}>
                         <option value="">
                             Select your City
                         </option>

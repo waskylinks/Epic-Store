@@ -1,6 +1,9 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
+axios.defaults.withCredentials = true;
+
+
 //register api
 export const register = createAsyncThunk('user/register', async(userData, {rejectWithValue}) => {
     try{
@@ -47,7 +50,7 @@ export const loadUser = createAsyncThunk('user/loadUser', async(_, {rejectWithVa
 //logout user
 export const logout = createAsyncThunk('user/logout', async(_, {rejectWithValue}) => {
     try{
-        const {data} = await axios.post('/api/v1/logout', {
+        const {data} = await axios.post('/api/v1/logout', {}, {
         withCredentials : true
         });
 
