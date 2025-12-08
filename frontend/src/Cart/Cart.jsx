@@ -9,6 +9,7 @@ import { Link, useNavigate } from 'react-router-dom'
 
 function Cart() {
     const {cartItems} = useSelector(state => state.cart) 
+    const { isAuthenticated } = useSelector(state => state.user) 
     const navigate = useNavigate()
 
     //price summary
@@ -19,7 +20,11 @@ function Cart() {
 
     //checkout
     const checkoutHandler = () => {
-        navigate('/login?redirect=/shipping')
+        if(isAuthenticated) {
+            navigate('/shipping')  // go straight to shipping if logged in
+        } else {
+            navigate('/login?redirect=/shipping') // else redirect to login
+        }
     }
 
   return (
