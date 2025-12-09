@@ -17,6 +17,7 @@ import ResetPassword from './User/ResetPassword';
 import Cart from './Cart/Cart';
 import Shipping from './Cart/Shipping';
 import OrderConfirm from './Cart/OrderConfirm';
+import Payment from './Cart/Payment';
 
 
 function App() {
@@ -46,6 +47,7 @@ function App() {
         <Route path='/cart' element={<Cart />}/>
         <Route path='/shipping' element={<ProtectedRoute element={<Shipping />} />}/>
         <Route path='/order/confirm' element={<ProtectedRoute element={<OrderConfirm />} />}/>
+        <Route path='/process/payment' element={<ProtectedRoute element={<Payment />} />}/>
 
       </Routes>
       {isAuthenticated && <UserDashboard user={user}/>}
