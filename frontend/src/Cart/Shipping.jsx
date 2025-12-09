@@ -8,7 +8,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import {Country, State, City} from 'country-state-city'
 import { toast } from 'react-toastify';
 import { saveShippingInfo } from '../features/cart/cartSlice'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 
 function Shipping() {
     const {shippingInfo} = useSelector(state => state.cart)
