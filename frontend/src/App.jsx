@@ -18,16 +18,26 @@ import Cart from './Cart/Cart';
 import Shipping from './Cart/Shipping';
 import OrderConfirm from './Cart/OrderConfirm';
 import Payment from './Cart/Payment';
+import Loader from './components/Loader';
+
+
 
 
 function App() {
   const {isAuthenticated, user} = useSelector(state  => state.user);
   const dispatch = useDispatch()
 
+  const { initializing } = useSelector(state => state.user);
+
    // Always load user on app start
   useEffect(() => {
     dispatch(loadUser());
   }, [dispatch]);
+
+  // Prevent routes from rendering until loadUser() finishes
+  if (initializing) {
+    return <Loader />;
+  }
 
   return (
      <Router>

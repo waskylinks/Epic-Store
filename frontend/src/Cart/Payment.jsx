@@ -4,6 +4,7 @@ import Navbar from '../components/Navbar';
 import PageTitle from '../components/PageTitle';
 import Footer from '../components/footer';
 import { Link } from 'react-router-dom';
+import CheckoutPath from './CheckoutPath';
 
 function Payment() {
     const orderItem = JSON.parse(sessionStorage.getItem('orderItem'))
