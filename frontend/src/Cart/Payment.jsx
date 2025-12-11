@@ -1,148 +1,125 @@
-import React, { useEffect, useState } from 'react';
-import { useSelector } from 'react-redux';
-import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
-import '../CartStyles/Payment.css';
-import Navbar from '../components/Navbar';
-import PageTitle from '../components/PageTitle';
-import Footer from '../components/footer';
-import CheckoutPath from './CheckoutPath';
+import React, { useEffect, useState } from "react";
+import { useSelector, useDispatch } from "react-redux";
+import { useNavigate } from "react-router-dom";
+import "../CartStyles/Payment.css";
+
+import Navbar from "../components/Navbar";
+import PageTitle from "../components/PageTitle";
+import Footer from "../components/footer";
+import CheckoutPath from "./CheckoutPath";
+
+import { toast } from "react-toastify";
+import { verifyPayment } from "../features/cart/paymentSlice";
+
 
 function Payment() {
-    const orderItem = JSON.parse(sessionStorage.getItem('orderItem'));
-    const { shippingInfo, cartItems } = useSelector(state => state.cart);
-    const { user } = useSelector(state => state.user);
+    const orderItem = JSON.parse(sessionStorage.getItem("orderItem"));
+    const { shippingInfo, cartItems } = useSelector((state) => state.cart);
+    const { user } = useSelector((state) => state.user);
+    const { loading, error, message } = useSelector((state) => state.payment);
+
+    const dispatch = useDispatch();
     const navigate = useNavigate();
 
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState('');
+    const [localError, setLocalError] = useState("");
 
-    // Load Paystack script
+    // Load Paystack Script
     useEffect(() => {
         const script = document.createElement("script");
         script.src = "https://js.paystack.co/v1/inline.js";
         script.async = true;
 
-        script.onload = () => console.log("Paystack script loaded");
-        script.onerror = () => setError("Failed to load Paystack payment gateway.");
+        script.onload = () => console.log("Paystack loaded");
+        script.onerror = () => setLocalError("Failed to load Paystack");
 
         document.body.appendChild(script);
     }, []);
 
+    // Handle toast on redux error or success
+    useEffect(() => {
+        if (error) {
+            toast.error(error, { position: "top-center" });
+        }
+        if (message) {
+            toast.success(message, { position: "top-center" });
+        }
+    }, [error, message]);
+
     const handlePayment = () => {
-        setLoading(true);
-        setError('');
+        setLocalError("");
 
         if (!window.PaystackPop) {
-            setError('Paystack script not loaded');
-            setLoading(false);
+            setLocalError("Paystack script not loaded");
+            toast.error("Payment gateway unavailable");
             return;
         }
 
-        const paystackKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
-        if (!paystackKey) {
-            setError('Paystack public key not found.');
-            setLoading(false);
+        const key = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
+        if (!key) {
+            toast.error("Paystack key missing");
             return;
         }
 
         if (!user?.email) {
-            setError('User email not found.');
-            setLoading(false);
-            return;
-        }
-
-        if (!orderItem?.total) {
-            setError('Invalid order total.');
-            setLoading(false);
+            toast.error("User email not found");
             return;
         }
 
         try {
             const handler = window.PaystackPop.setup({
-                key: paystackKey,
+                key,
                 email: user.email,
-                amount: Number(orderItem.total) * 100, // kobo
-                currency: 'NGN',
-                channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer', 'zap'],
+                amount: Number(orderItem.total) * 100,
+                currency: "NGN",
 
-                callback: function(response) {
-                    console.log('Payment reference:', response.reference);
-
-                    (async () => {
-                        try {
-                            // Map phoneNumber to phoneNo to match backend schema
-                            const payload = {
-                                reference: response.reference,
-                                shippingInfo: {
-                                    ...shippingInfo,
-                                },
-                                orderItems: cartItems,
-                                itemPrice: orderItem.subtotal,
-                                taxPrice: orderItem.tax,
-                                shippingPrice: orderItem.shipping,
-                                totalPrice: orderItem.total,
-                                amountPaid: orderItem.total
-                            };
-
-                            console.log('Sending payload to backend:', payload);
-
-                            const res = await axios.post(
-                                '/api/v1/paystack/verify',
-                                payload,
-                                {
-                                    headers: {
-                                        Authorization: `Bearer ${localStorage.getItem('token')}`
-                                    }
-                                }
-                            );
-
-                            console.log('Backend response:', res.data);
-
-                            if (res.data.success) {
-                                setLoading(false);
-                                navigate('/order/success');
-                            } else {
-                                setError('Payment verification failed. Order not saved.');
-                                setLoading(false);
-                            }
-                        } catch (err) {
-                            console.error('Error sending payment to backend:', err);
-                            setError('Error sending payment to backend.');
-                            setLoading(false);
-                        }
-                    })();
+                callback: (response) => {
+                    dispatch(
+                        verifyPayment({
+                            reference: response.reference,
+                            shippingInfo,
+                            orderItems: cartItems,
+                            itemPrice: orderItem.subtotal,
+                            taxPrice: orderItem.tax,
+                            shippingPrice: orderItem.shipping,
+                            totalPrice: orderItem.total,
+                            amountPaid: orderItem.total
+                        })
+                    )
+                        .unwrap()
+                        .then(() => {
+                            navigate("/order/success");
+                        })
+                        .catch(() => {
+                            toast.error("Payment verification failed");
+                        });
                 },
 
-                onClose: function() {
-                    console.log('Payment cancelled by user');
-                    setError('Payment cancelled.');
-                    setLoading(false);
+                onClose: () => {
+                    toast.error("Payment cancelled");
                 }
             });
 
             handler.openIframe();
-        } catch (err) {
-            console.error('Payment setup error:', err);
-            setError('Something went wrong. Please try again.');
-            setLoading(false);
+        } catch{
+            toast.error("Payment setup failed");
         }
     };
 
     return (
         <>
-            <PageTitle title="Payment Processing" />
+            <PageTitle title="Payment" />
             <Navbar />
             <CheckoutPath activePath={2} />
 
             <div className="payment-container">
-                {error && <p className="payment-error">{error}</p>}
+                {localError && <p className="payment-error">{localError}</p>}
+
                 <button
                     className="payment-btn"
                     onClick={handlePayment}
                     disabled={loading}
                 >
-                    {loading ? 'Processing...' : `Pay (${orderItem.total})/-`}
+                    {loading ? "Verifying..." : `Pay (${orderItem.total})/-`}
                 </button>
             </div>
 
