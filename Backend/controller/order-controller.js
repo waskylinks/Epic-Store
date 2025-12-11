@@ -1,9 +1,8 @@
 import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
-import Errorhandler from '../utils/handleError.js';
-import User from '../models/userModel.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
+
 
 //create new order
 export const createNewOrder = handleAsyncError(async (req, res, next) => {
@@ -136,3 +135,5 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
         message: `Order deleted successfully`
     })
 })
+
+

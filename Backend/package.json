@@ -16,6 +16,8 @@
   "description": "An E-commerce app store built with MongoDB, Express, React, NodeJS stack",
   "type": "module",
   "dependencies": {
+    "@paystack/inline-js": "^2.22.2",
+    "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.8.0",
     "cookie-parser": "^1.4.7",

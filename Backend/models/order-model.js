@@ -74,7 +74,7 @@ const orderSchema = new mongoose.Schema({
         },
         paidAt: {
             type: Date,
-            default: Date.now()
+            default: Date.now
         },
         
     },
@@ -102,7 +102,20 @@ const orderSchema = new mongoose.Schema({
     createdAt: {
         type: Date,
         default: Date.now
+    },
+    amountPaid: {
+    type: Number,
+    required: true
+},
+    paymentDetails: {
+        channel: String,
+        currency: String,
+        ipAddress: String,
+        customer: Object, // store name, email, phone
+        authorization: Object // card info, last4 digits, brand, etc.
     }
+
+
 
 });
 
