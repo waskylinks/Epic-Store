@@ -23,33 +23,25 @@ function Payment() {
         script.src = "https://js.paystack.co/v1/inline.js";
         script.async = true;
 
-        script.onload = () => {
-            console.log("Paystack script loaded");
-        };
-
-        script.onerror = () => {
-            console.error("Failed to load Paystack script");
-            setError("Failed to load Paystack payment gateway. Check your connection.");
-        };
+        script.onload = () => console.log("Paystack script loaded");
+        script.onerror = () => setError("Failed to load Paystack payment gateway.");
 
         document.body.appendChild(script);
     }, []);
 
-    const handlePayment = async () => {
+    const handlePayment = () => {
         setLoading(true);
         setError('');
 
-        // Ensure Paystack script is loaded
         if (!window.PaystackPop) {
             setError('Paystack script not loaded');
             setLoading(false);
             return;
         }
 
-        // Ensure key and email are defined
         const paystackKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
         if (!paystackKey) {
-            setError('Paystack public key not found. Check your .env file.');
+            setError('Paystack public key not found.');
             setLoading(false);
             return;
         }
@@ -60,26 +52,78 @@ function Payment() {
             return;
         }
 
+        if (!orderItem?.total) {
+            setError('Invalid order total.');
+            setLoading(false);
+            return;
+        }
+
         try {
             const handler = window.PaystackPop.setup({
-                key: import.meta.env.VITE_PAYSTACK_PUBLIC_KEY,
+                key: paystackKey,
                 email: user.email,
-                amount: Number(orderItem.total) * 100,
+                amount: Number(orderItem.total) * 100, // kobo
                 currency: 'NGN',
+                channels: ['card', 'bank', 'ussd', 'qr', 'mobile_money', 'bank_transfer', 'zap'],
 
                 callback: function(response) {
                     console.log('Payment reference:', response.reference);
+
+                    (async () => {
+                        try {
+                            // Map phoneNumber to phoneNo to match backend schema
+                            const payload = {
+                                reference: response.reference,
+                                shippingInfo: {
+                                    ...shippingInfo,
+                                },
+                                orderItems: cartItems,
+                                itemPrice: orderItem.subtotal,
+                                taxPrice: orderItem.tax,
+                                shippingPrice: orderItem.shipping,
+                                totalPrice: orderItem.total,
+                                amountPaid: orderItem.total
+                            };
+
+                            console.log('Sending payload to backend:', payload);
+
+                            const res = await axios.post(
+                                '/api/v1/paystack/verify',
+                                payload,
+                                {
+                                    headers: {
+                                        Authorization: `Bearer ${localStorage.getItem('token')}`
+                                    }
+                                }
+                            );
+
+                            console.log('Backend response:', res.data);
+
+                            if (res.data.success) {
+                                setLoading(false);
+                                navigate('/order/success');
+                            } else {
+                                setError('Payment verification failed. Order not saved.');
+                                setLoading(false);
+                            }
+                        } catch (err) {
+                            console.error('Error sending payment to backend:', err);
+                            setError('Error sending payment to backend.');
+                            setLoading(false);
+                        }
+                    })();
                 },
 
                 onClose: function() {
-                    console.log('Payment closed by user');
+                    console.log('Payment cancelled by user');
+                    setError('Payment cancelled.');
+                    setLoading(false);
                 }
-        });
+            });
 
-        handler.openIframe();
-
+            handler.openIframe();
         } catch (err) {
-            console.error(err);
+            console.error('Payment setup error:', err);
             setError('Something went wrong. Please try again.');
             setLoading(false);
         }
