@@ -1,11 +1,8 @@
 import * as paystackService from "./paystack.service.js";
-// import * as flutterwaveService from "./flutterwave.service.js";
-// import * as stripeService from "./stripe.service.js";
+// other gateways can be added later
 
 const gateways = {
-  paystack: paystackService,
-  // flutterwave: flutterwaveService,
-  // stripe: stripeService
+  paystack: paystackService
 };
 
 export const PaymentFactory = {
@@ -16,6 +13,24 @@ export const PaymentFactory = {
     if (!gateway) {
       console.error(`PaymentFactory: Unsupported payment gateway attempted: ${method}`);
       throw new Error(`Unsupported payment gateway: ${method}`);
+    }
+
+    return gateway;
+  },
+
+  // Webhook helper
+  getWebhookService(provider = "paystack") {
+    const normalized = String(provider).toLowerCase();
+    const gateway = gateways[normalized];
+
+    if (!gateway) {
+      console.error(`PaymentFactory: Unsupported webhook provider attempted: ${provider}`);
+      throw new Error(`Unsupported webhook provider: ${provider}`);
+    }
+
+    if (!gateway.handleWebhook) {
+      console.warn(`${provider} service does not implement handleWebhook yet`);
+      return null;
     }
 
     return gateway;

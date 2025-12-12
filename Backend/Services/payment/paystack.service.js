@@ -3,13 +3,13 @@ import Order from '../../models/order-model.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const PAYSTACK_SECRET = process.env.PAYSTACK_TEST_SECRET_KEY;
+if (!PAYSTACK_SECRET) throw new Error("PAYSTACK_TEST_SECRET_KEY missing");
+
 /**
  * Verify Paystack transaction with retry logic.
  */
 export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
-  const PAYSTACK_SECRET = process.env.PAYSTACK_TEST_SECRET_KEY;
-  if (!PAYSTACK_SECRET) throw new Error("PAYSTACK_TEST_SECRET_KEY missing");
-
   const url = `https://api.paystack.co/transaction/verify/${reference}`;
   let attempt = 0;
   let lastErr;
@@ -30,12 +30,10 @@ export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
       throw new Error(`Paystack status: ${data.data?.status || "unknown"}`);
     } catch (err) {
       lastErr = err;
-
       if (attempt < maxAttempts) {
         await sleep(attempt * 500); // exponential backoff
         continue;
       }
-
       throw lastErr;
     }
   }
@@ -57,21 +55,14 @@ export async function verifyAndCreateOrder({
 }) {
   const tx = await verifyPaystackTransaction(reference);
 
-  const paystackAmount = tx.amount / 100; // convert kobo → NGN
+  const paystackAmount = tx.amount / 100; // kobo → NGN
   const currency = tx.currency;
 
-  if (currency !== "NGN") {
-    throw new Error("Invalid payment currency");
-  }
-
-  if (Math.abs(Number(totalPrice) - paystackAmount) > 0.01) {
-    throw new Error("Amount mismatch between server and Paystack");
-  }
+  if (currency !== "NGN") throw new Error("Invalid payment currency");
+  if (Math.abs(Number(totalPrice) - paystackAmount) > 0.01) throw new Error("Amount mismatch");
 
   const existingOrder = await Order.findOne({ "paymentInfo.reference": reference });
-  if (existingOrder) {
-    return { created: false, order: existingOrder, reason: "duplicate" };
-  }
+  if (existingOrder) return { created: false, order: existingOrder, reason: "duplicate" };
 
   const newOrder = await Order.create({
     user: userId,
@@ -102,4 +93,56 @@ export async function verifyAndCreateOrder({
   });
 
   return { created: true, order: newOrder };
+}
+
+/**
+ * Handle Paystack webhook
+ * Call this from a dedicated webhook route
+ */
+export async function handleWebhook(req, res) {
+  try {
+    const event = req.body;
+
+    // TODO: verify signature if using Paystack webhook secret
+    // const paystackSignature = req.headers['x-paystack-signature'];
+
+    if (event.event === 'charge.success') {
+      const reference = event.data.reference;
+
+      // Idempotency check
+      const existingOrder = await Order.findOne({ 'paymentInfo.reference': reference });
+      if (existingOrder) return res.status(200).json({ message: 'Order already processed' });
+
+      const tx = event.data;
+      const paystackAmount = tx.amount / 100;
+
+      const newOrder = await Order.create({
+        user: tx.customer.id, // adapt if needed
+        shippingInfo: tx.metadata?.shippingInfo || {},
+        orderItems: tx.metadata?.orderItems || [],
+        itemPrice: tx.metadata?.itemPrice || 0,
+        taxPrice: tx.metadata?.taxPrice || 0,
+        shippingPrice: tx.metadata?.shippingPrice || 0,
+        totalPrice: tx.metadata?.totalPrice || paystackAmount,
+        amountPaid: paystackAmount,
+        paymentInfo: {
+          reference: tx.reference,
+          providerTxId: tx.id,
+          status: tx.status,
+          method: "paystack",
+          currency: tx.currency,
+          amount: paystackAmount,
+          paidAt: new Date(tx.paidAt)
+        },
+        paymentMeta: tx
+      });
+
+      return res.status(201).json({ message: 'Order created via webhook', order: newOrder });
+    }
+
+    return res.status(200).json({ message: 'Event ignored' });
+  } catch (err) {
+    console.error('Paystack webhook error:', err);
+    return res.status(500).json({ message: 'Webhook processing failed', error: err.message });
+  }
 }

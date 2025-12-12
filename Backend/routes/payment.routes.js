@@ -4,6 +4,7 @@ import { validateBody } from "../middleware/validateBody.js";
 import { verifyUserAuth } from "../middleware/user-auth.js";
 import { verifyPaymentController } from "../controller/payment.controller.js";
 import { verifyPaymentSchema } from "../Validation/payment.validation.js";
+import { PaymentFactory } from "../Services/payment/paymentFactory.js";
 
 const router = express.Router();
 
@@ -14,9 +15,30 @@ const router = express.Router();
  */
 router.post(
   "/verify",
-  verifyUserAuth,                  // Step 1: Ensure user is authenticated
-  validateBody(verifyPaymentSchema), // Step 2: Validate request payload
-  verifyPaymentController           // Step 3: Verify payment & create order
+  verifyUserAuth,
+  validateBody(verifyPaymentSchema),
+  verifyPaymentController
+);
+
+/**
+ * @route POST /api/v1/payment/webhook/paystack
+ * @desc Handle Paystack webhook
+ * @access Public (Paystack servers)
+ */
+router.post(
+  "/webhook/paystack",
+  express.raw({ type: "*/*" }), // Paystack requires raw body for signature verification
+  async (req, res) => {
+    try {
+      const service = PaymentFactory.getWebhookService("paystack");
+      if (!service) return res.status(400).json({ message: "Webhook service unavailable" });
+
+      await service.handleWebhook(req, res);
+    } catch (err) {
+      console.error("Paystack webhook error:", err);
+      res.status(500).json({ message: "Webhook processing failed", error: err.message });
+    }
+  }
 );
 
 export default router;
