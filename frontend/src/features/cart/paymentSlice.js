@@ -2,13 +2,12 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
 // ----------------------
-// VERIFY PAYMENT THUNK
+// VERIFY PAYMENT THUNK (frontend-triggered)
 // ----------------------
 export const verifyPayment = createAsyncThunk(
   "payment/verifyPayment",
   async (payload, { rejectWithValue }) => {
     try {
-      // Extract gateway from payload (currently just paystack)
       const { gateway = "paystack", ...rest } = payload;
 
       const { data } = await axios.post(
@@ -31,6 +30,27 @@ export const verifyPayment = createAsyncThunk(
 );
 
 // ----------------------
+// WEBHOOK THUNK (server-to-server)
+// ----------------------
+export const handleWebhook = createAsyncThunk(
+  "payment/handleWebhook",
+  async ({ provider, payload }, { rejectWithValue }) => {
+    try {
+      // Provider can be paystack, stripe, flutterwave, etc.
+      const { data } = await axios.post(
+        `/api/v1/payment/webhook?provider=${provider}`,
+        payload
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data || { message: "Webhook handling failed" }
+      );
+    }
+  }
+);
+
+// ----------------------
 // PAYMENT SLICE
 // ----------------------
 const initialState = {
@@ -45,12 +65,8 @@ const paymentSlice = createSlice({
   name: "payment",
   initialState,
   reducers: {
-    removePaymentError: (state) => {
-      state.error = null;
-    },
-    removePaymentMessage: (state) => {
-      state.message = null;
-    },
+    removePaymentError: (state) => { state.error = null; },
+    removePaymentMessage: (state) => { state.message = null; },
     resetPaymentState: (state) => {
       state.loading = false;
       state.success = false;
@@ -60,6 +76,7 @@ const paymentSlice = createSlice({
     }
   },
   extraReducers: (builder) => {
+    // Frontend verification
     builder
       .addCase(verifyPayment.pending, (state) => {
         state.loading = true;
@@ -77,6 +94,23 @@ const paymentSlice = createSlice({
         state.loading = false;
         state.success = false;
         state.error = action.payload?.message || "Payment verification failed";
+      });
+
+    // Webhook handling
+    builder
+      .addCase(handleWebhook.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+        state.message = null;
+      })
+      .addCase(handleWebhook.fulfilled, (state, action) => {
+        state.loading = false;
+        state.message = action.payload.message || "Webhook processed successfully";
+        state.order = action.payload.order || state.order;
+      })
+      .addCase(handleWebhook.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload?.message || "Webhook handling failed";
       });
   }
 });
