@@ -8,6 +8,7 @@ import products from './routes/products-route.js';
 import user from './routes/user-route.js';
 import order from './routes/order-routes.js';
 import payment from './routes/payment.routes.js'; // unified multipayment route
+import paymentWebhookRoutes from "./routes/paymentWebhook.routes.js";
 
 // Middleware
 import errorHandleMiddleware from './middleware/error.js';
@@ -24,6 +25,7 @@ app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
 app.use('/api/v1/payment', payment); // use unified payment route
+app.use("/api/v1/payment/webhook", paymentWebhookRoutes);
 
 // Global error handler
 app.use(errorHandleMiddleware);
