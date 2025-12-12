@@ -1,36 +1,31 @@
 import express from 'express';
-const app = express();
-
-import products from './routes/products-route.js';
-import errorHandleMiddleware from './middleware/error.js';
-import user from './routes/user-route.js';
-import order from './routes/order-routes.js';
+import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import fileUpload from 'express-fileupload';
-import dotenv from 'dotenv'
-import paystack from './routes/paystack-routes.js';
 
+// Routes
+import products from './routes/products-route.js';
+import user from './routes/user-route.js';
+import order from './routes/order-routes.js';
+import payment from './routes/payment.routes.js'; // unified multipayment route
 
+// Middleware
+import errorHandleMiddleware from './middleware/error.js';
 
+const app = express();
 
-
-
-//middleware
+// Body parser, cookies, file uploads
 app.use(express.json());
 app.use(cookieParser());
 app.use(fileUpload());
 
-//home route
+// API routes
 app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
-app.use('/api/v1', paystack);
+app.use('/api/v1/payment', payment); // use unified payment route
 
+// Global error handler
 app.use(errorHandleMiddleware);
-
-dotenv.config({
-    path: 'Backend/.env'
-})
-
 
 export default app;

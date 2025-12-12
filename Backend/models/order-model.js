@@ -1,123 +1,99 @@
 import mongoose from 'mongoose';
 
-const orderSchema = new mongoose.Schema({
+const orderSchema = new mongoose.Schema(
+  {
     shippingInfo: {
-        address: {
-            type: String,
-            required: true
-        },
-        city: {
-            type: String,
-            required: true
-        },
-        state: {
-            type: String,
-            required: true
-        },
-        country: {
-            type: String,
-            required: true
-        },
-        pinCode: {
-            type: Number,
-            required: true
-        },
-        phoneNo: {
-            type: Number,
-            required: true
-        }
+      address: { type: String, required: true },
+      city: { type: String, required: true },
+      state: { type: String, required: true },
+      country: { type: String, required: true },
+      pinCode: { type: Number, required: true },
+      phoneNo: { type: String, required: true }
     },
 
     orderItems: [
-        {
-            name: {
-                type: String,
-                required: true
-            },
-            price: {
-                type: Number,
-                required: true
-            },
-            quantity: {
-                type: Number,
-                required: true
-            },
-            image: {
-                type: String,
-                required: true
-            },
-            product: {
-                type: mongoose.Schema.ObjectId,
-                ref: 'Product',
-                required: true
-            },
-        }
+      {
+        product: {
+          type: mongoose.Schema.ObjectId,
+          ref: "Product",
+          required: true
+        },
+        name: { type: String, required: true },
+        price: { type: Number, required: true },
+        quantity: { type: Number, required: true },
+        image: { type: String, required: true }
+      }
     ],
-    orderStatus: {
+
+    user: {
+      type: mongoose.Schema.ObjectId,
+      ref: "User",
+      required: true
+    },
+
+    //------------------------------------------------------------------
+    // PAYMENT CORE (multi-gateway, multi-currency, idempotent)
+    //------------------------------------------------------------------
+    paymentInfo: {
+      reference: {
         type: String,
         required: true,
-        default: "Processing"
-    },
-    user: {
-        type: mongoose.Schema.ObjectId,
-        ref: 'User',
+        unique: true // prevents duplicate orders per transaction
+      },
+      providerTxId: { type: String }, // paystack id / stripe charge id / flutterwave id
+      status: {
+        type: String,
+        enum: ["pending", "success", "failed"],
         required: true
+      },
+      method: {
+        type: String,
+        enum: ["paystack", "flutterwave", "stripe", "manual"],
+        required: true
+      },
+      currency: { type: String, default: "NGN" },
+      amount: { type: Number, required: true },
+      paidAt: { type: Date }
     },
-    paymentInfo: {
-        id: {
-            type: String,
-            required: true
-        },
-        status: {
-            type: String,
-            required: true
-        },
-        paidAt: {
-            type: Date,
-            default: Date.now
-        },
-        
+
+    //------------------------------------------------------------------
+    // PRICING BREAKDOWN
+    //------------------------------------------------------------------
+    itemPrice: { type: Number, required: true, default: 0 },
+    taxPrice: { type: Number, required: true, default: 0 },
+    shippingPrice: { type: Number, required: true, default: 0 },
+    totalPrice: { type: Number, required: true, default: 0 },
+    amountPaid: { type: Number, required: true, default: 0 },
+
+    //------------------------------------------------------------------
+    // ORDER LIFECYCLE
+    //------------------------------------------------------------------
+    orderStatus: {
+      type: String,
+      enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
+      default: "Processing"
     },
-    itemPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
-    taxPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
-    shippingPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
-    totalPrice: {
-            type: Number,
-            required: true,
-            default: 0
-        },
+
     deliveredAt: Date,
-    createdAt: {
-        type: Date,
-        default: Date.now
-    },
-    amountPaid: {
-    type: Number,
-    required: true
-},
-    paymentDetails: {
-        channel: String,
-        currency: String,
-        ipAddress: String,
-        customer: Object, // store name, email, phone
-        authorization: Object // card info, last4 digits, brand, etc.
+
+    //------------------------------------------------------------------
+    // PAYMENT METADATA (raw provider data)
+    //------------------------------------------------------------------
+    paymentMeta: {
+      channel: String,     
+      currency: String,    
+      ipAddress: String,   
+      customer: Object,    
+      authorization: Object,  
+      raw: Object // Paystack/Flutterwave/Stripe verified payload
     }
+  },
+  { timestamps: true }
+);
 
+//------------------------------------------------------------------
+// OTHER UNIQUE INDEXES
+//------------------------------------------------------------------
+orderSchema.index({ user: 1, createdAt: -1 });
 
-
-});
-
-export default mongoose.model('Order', orderSchema);
-
+export default mongoose.model("Order", orderSchema);

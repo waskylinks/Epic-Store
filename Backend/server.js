@@ -1,40 +1,53 @@
-import app from './app.js';
 import dotenv from 'dotenv';
+dotenv.config({ path: './.env' });
+
+
+console.log('Loaded Paystack Secret Key:', process.env.PAYSTACK_TEST_SECRET_KEY);
+
+
+import app from './app.js';
 import connectDB from './Database/database.js';
-import {v2 as cloudinary} from 'cloudinary';
+import { v2 as cloudinary } from 'cloudinary';
 
-//set up cloudinary
+// ------------------------
+// Cloudinary Configuration
+// ------------------------
 cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_NAME,
-    api_key: process.env.API_KEY,
-    api_secret: process.env.API_SECRET
-})
+  cloud_name: process.env.CLOUDINARY_NAME,
+  api_key: process.env.API_KEY,
+  api_secret: process.env.API_SECRET
+});
 
-// Connect to the database
+// ------------------------
+// Connect to Database
+// ------------------------
 connectDB();
 
-//handle uncaught exception error
+// ------------------------
+// Handle Uncaught Exceptions
+// ------------------------
 process.on("uncaughtException", (err) => {
-    console.log(`Error: ${err.message}`);
-    console.log("Shutting down the server due to Uncaught Exception Error");
-    process.exit(1);
-})
+  console.error(`Uncaught Exception: ${err.message}`);
+  console.error("Shutting down the server due to uncaught exception");
+  process.exit(1);
+});
 
-
-
-dotenv.config('config/config.env');
+// ------------------------
+// Start Server
+// ------------------------
 const PORT = process.env.PORT || 8000;
-
 const server = app.listen(PORT, () => {
-    console.log(`Server is listening on PORT ${PORT}`)
-})
+  console.log(`Server is running on PORT ${PORT}`);
+});
 
-//handle unhandled promise rejection
+// ------------------------
+// Handle Unhandled Promise Rejections
+// ------------------------
 process.on("unhandledRejection", (err) => {
-    console.log(`Error: ${err.message}`);
-    console.log("Shutting down the server due to Unhandled Promise Rejection");
+  console.error(`Unhandled Rejection: ${err.message}`);
+  console.error("Shutting down the server due to unhandled promise rejection");
 
-    server.close(() => {
-        process.exit(1);
-    })
+  server.close(() => {
+    process.exit(1);
+  });
 });
