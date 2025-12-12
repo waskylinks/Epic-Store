@@ -9,8 +9,7 @@ import Footer from "../components/footer";
 import CheckoutPath from "./CheckoutPath";
 
 import { toast } from "react-toastify";
-import { verifyPayment } from "../features/cart/paymentSlice";
-
+import { verifyPayment, removePaymentError, removePaymentMessage } from "../features/cart/paymentSlice";
 
 function Payment() {
     const orderItem = JSON.parse(sessionStorage.getItem("orderItem"));
@@ -23,86 +22,64 @@ function Payment() {
 
     const [localError, setLocalError] = useState("");
 
-    // Load Paystack Script
+    // Load Paystack script dynamically
     useEffect(() => {
-        const script = document.createElement("script");
-        script.src = "https://js.paystack.co/v1/inline.js";
-        script.async = true;
-
-        script.onload = () => console.log("Paystack loaded");
-        script.onerror = () => setLocalError("Failed to load Paystack");
-
-        document.body.appendChild(script);
+        if (!window.PaystackPop) {
+            const script = document.createElement("script");
+            script.src = "https://js.paystack.co/v1/inline.js";
+            script.async = true;
+            script.onload = () => console.log("Paystack loaded");
+            script.onerror = () => setLocalError("Failed to load Paystack");
+            document.body.appendChild(script);
+        }
     }, []);
 
-    // Handle toast on redux error or success
+    // Toast notifications
     useEffect(() => {
         if (error) {
             toast.error(error, { position: "top-center" });
+            dispatch(removePaymentError());
         }
         if (message) {
             toast.success(message, { position: "top-center" });
+            dispatch(removePaymentMessage());
         }
-    }, [error, message]);
+    }, [error, message, dispatch]);
 
     const handlePayment = () => {
-        setLocalError("");
-
-        if (!window.PaystackPop) {
-            setLocalError("Paystack script not loaded");
-            toast.error("Payment gateway unavailable");
-            return;
-        }
+        if (!orderItem) return toast.error("No order found");
+        if (!window.PaystackPop) return toast.error("Paystack script not loaded");
 
         const key = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
-        if (!key) {
-            toast.error("Paystack key missing");
-            return;
-        }
+        if (!key) return toast.error("Paystack key missing");
 
-        if (!user?.email) {
-            toast.error("User email not found");
-            return;
-        }
+        const handler = window.PaystackPop.setup({
+            key,
+            email: user.email,
+            amount: Number(orderItem.total) * 100, // in kobo
+            currency: "NGN",
+            callback: (response) => {
+                dispatch(
+                    verifyPayment({
+                        gateway: "paystack",
+                        reference: response.reference,
+                        shippingInfo,
+                        orderItems: cartItems,
+                        itemPrice: orderItem.subtotal,
+                        taxPrice: orderItem.tax,
+                        shippingPrice: orderItem.shipping,
+                        totalPrice: orderItem.total,
+                        amountPaid: orderItem.total
+                    })
+                )
+                    .unwrap()
+                    .then(() => navigate("/order/success"))
+                    .catch(() => toast.error("Payment verification failed"));
+            },
+            onClose: () => toast.info("Payment cancelled")
+        });
 
-        try {
-            const handler = window.PaystackPop.setup({
-                key,
-                email: user.email,
-                amount: Number(orderItem.total) * 100,
-                currency: "NGN",
-
-                callback: (response) => {
-                    dispatch(
-                        verifyPayment({
-                            reference: response.reference,
-                            shippingInfo,
-                            orderItems: cartItems,
-                            itemPrice: orderItem.subtotal,
-                            taxPrice: orderItem.tax,
-                            shippingPrice: orderItem.shipping,
-                            totalPrice: orderItem.total,
-                            amountPaid: orderItem.total
-                        })
-                    )
-                        .unwrap()
-                        .then(() => {
-                            navigate("/order/success");
-                        })
-                        .catch(() => {
-                            toast.error("Payment verification failed");
-                        });
-                },
-
-                onClose: () => {
-                    toast.error("Payment cancelled");
-                }
-            });
-
-            handler.openIframe();
-        } catch{
-            toast.error("Payment setup failed");
-        }
+        handler.openIframe();
     };
 
     return (
@@ -117,9 +94,9 @@ function Payment() {
                 <button
                     className="payment-btn"
                     onClick={handlePayment}
-                    disabled={loading}
+                    disabled={loading || !orderItem}
                 >
-                    {loading ? "Verifying..." : `Pay (${orderItem.total})/-`}
+                    {loading ? "Verifying..." : `Pay (₦${orderItem?.total.toFixed(2)})`}
                 </button>
             </div>
 
