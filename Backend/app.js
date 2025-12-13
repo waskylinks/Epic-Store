@@ -1,5 +1,4 @@
 import express from 'express';
-import dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
 import fileUpload from 'express-fileupload';
 
@@ -8,12 +7,18 @@ import products from './routes/products-route.js';
 import user from './routes/user-route.js';
 import order from './routes/order-routes.js';
 import payment from './routes/payment.routes.js'; // unified multipayment route
-import paymentWebhookRoutes from "./routes/paymentWebhook.routes.js";
+
 
 // Middleware
 import errorHandleMiddleware from './middleware/error.js';
 
 const app = express();
+
+// IMPORTANT: webhook route must come BEFORE express.json
+app.use(
+  "/api/v1/payment/webhook/paystack",
+  express.raw({ type: "*/*" })
+);
 
 // Body parser, cookies, file uploads
 app.use(express.json());
@@ -25,7 +30,7 @@ app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
 app.use('/api/v1/payment', payment); // use unified payment route
-app.use("/api/v1/payment/webhook", paymentWebhookRoutes);
+
 
 // Global error handler
 app.use(errorHandleMiddleware);

@@ -3,11 +3,11 @@ import Order from '../../models/order-model.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const PAYSTACK_SECRET = process.env.PAYSTACK_TEST_SECRET_KEY;
-if (!PAYSTACK_SECRET) throw new Error("PAYSTACK_TEST_SECRET_KEY missing");
-
 /**
- * Verify Paystack transaction with retry logic.
+ * Verify Paystack transaction with retry logic
+ * @param {string} reference - Paystack transaction reference
+ * @param {number} maxAttempts - Number of retries for verification
+ * @returns {Object} Paystack transaction data
  */
 export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
   const url = `https://api.paystack.co/transaction/verify/${reference}`;
@@ -19,7 +19,7 @@ export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
 
     try {
       const { data } = await axios.get(url, {
-        headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` },
+        headers: { Authorization: `Bearer ${process.env.PAYSTACK_TEST_SECRET_KEY}` },
         timeout: 8000
       });
 
@@ -40,7 +40,8 @@ export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
 }
 
 /**
- * Idempotent create order flow aligned with order-model.js schema.
+ * Idempotent order creation
+ * @param {Object} orderData - Order details
  */
 export async function verifyAndCreateOrder({
   reference,
@@ -55,12 +56,13 @@ export async function verifyAndCreateOrder({
 }) {
   const tx = await verifyPaystackTransaction(reference);
 
-  const paystackAmount = tx.amount / 100; // kobo → NGN
+  const paystackAmount = tx.amount / 100; // convert kobo → NGN
   const currency = tx.currency;
 
   if (currency !== "NGN") throw new Error("Invalid payment currency");
   if (Math.abs(Number(totalPrice) - paystackAmount) > 0.01) throw new Error("Amount mismatch");
 
+  // Idempotency check
   const existingOrder = await Order.findOne({ "paymentInfo.reference": reference });
   if (existingOrder) return { created: false, order: existingOrder, reason: "duplicate" };
 
@@ -97,13 +99,14 @@ export async function verifyAndCreateOrder({
 
 /**
  * Handle Paystack webhook
- * Call this from a dedicated webhook route
+ * @param {Request} req - Express request object
+ * @param {Response} res - Express response object
  */
 export async function handleWebhook(req, res) {
   try {
     const event = req.body;
 
-    // TODO: verify signature if using Paystack webhook secret
+    // TODO: Verify signature if using Paystack webhook secret
     // const paystackSignature = req.headers['x-paystack-signature'];
 
     if (event.event === 'charge.success') {
@@ -117,7 +120,7 @@ export async function handleWebhook(req, res) {
       const paystackAmount = tx.amount / 100;
 
       const newOrder = await Order.create({
-        user: tx.customer.id, // adapt if needed
+        user: tx.customer.id, // adjust if needed
         shippingInfo: tx.metadata?.shippingInfo || {},
         orderItems: tx.metadata?.orderItems || [],
         itemPrice: tx.metadata?.itemPrice || 0,

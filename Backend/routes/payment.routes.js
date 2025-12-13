@@ -27,7 +27,6 @@ router.post(
  */
 router.post(
   "/webhook/paystack",
-  express.raw({ type: "*/*" }), // Paystack requires raw body for signature verification
   async (req, res) => {
     try {
       const service = PaymentFactory.getWebhookService("paystack");
