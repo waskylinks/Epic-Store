@@ -82,6 +82,14 @@ function Payment() {
         handler.openIframe();
     };
 
+    const formatNGN = amount =>
+        new Intl.NumberFormat('en-NG', {
+            style: 'currency',
+            currency: 'NGN',
+            minimumFractionDigits: 2
+        }).format(amount);
+
+
     return (
         <>
             <PageTitle title="Payment" />
@@ -96,7 +104,7 @@ function Payment() {
                     onClick={handlePayment}
                     disabled={loading || !orderItem}
                 >
-                    {loading ? "Verifying..." : `Pay (₦${orderItem?.total.toFixed(2)})`}
+                    {loading ? "Verifying..." : `Pay (${formatNGN(orderItem?.total)})`}
                 </button>
             </div>
 
