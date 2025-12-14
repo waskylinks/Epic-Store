@@ -27,17 +27,24 @@ router.post(
  */
 router.post(
   "/webhook/paystack",
+  express.raw({ type: "application/json" }), // only parse JSON payloads as raw buffer
   async (req, res) => {
+    console.log(">>> Paystack webhook route reached");
+
     try {
       const service = PaymentFactory.getWebhookService("paystack");
-      if (!service) return res.status(400).json({ message: "Webhook service unavailable" });
+      if (!service) {
+        return res.status(400).json({ message: "Webhook service unavailable" });
+      }
 
+      // Ensure handleWebhook receives raw body for signature verification
       await service.handleWebhook(req, res);
     } catch (err) {
       console.error("Paystack webhook error:", err);
-      res.status(500).json({ message: "Webhook processing failed", error: err.message });
+      res.status(500).json({ message: "Webhook processing failed" });
     }
   }
 );
+
 
 export default router;

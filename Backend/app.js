@@ -14,11 +14,6 @@ import errorHandleMiddleware from './middleware/error.js';
 
 const app = express();
 
-// IMPORTANT: webhook route must come BEFORE express.json
-app.use(
-  "/api/v1/payment/webhook/paystack",
-  express.raw({ type: "*/*" })
-);
 
 // Body parser, cookies, file uploads
 app.use(express.json());
@@ -29,7 +24,7 @@ app.use(fileUpload());
 app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
-app.use('/api/v1/payment', payment); // use unified payment route
+app.use('/api/v1/payment', payment); //  unified payment route
 
 
 // Global error handler

@@ -102,50 +102,41 @@ export async function verifyAndCreateOrder({
  * @param {Request} req - Express request object
  * @param {Response} res - Express response object
  */
+
 export async function handleWebhook(req, res) {
   try {
     const event = req.body;
 
-    // TODO: Verify signature if using Paystack webhook secret
-    // const paystackSignature = req.headers['x-paystack-signature'];
-
-    if (event.event === 'charge.success') {
-      const reference = event.data.reference;
-
-      // Idempotency check
-      const existingOrder = await Order.findOne({ 'paymentInfo.reference': reference });
-      if (existingOrder) return res.status(200).json({ message: 'Order already processed' });
-
-      const tx = event.data;
-      const paystackAmount = tx.amount / 100;
-
-      const newOrder = await Order.create({
-        user: tx.customer.id, // adjust if needed
-        shippingInfo: tx.metadata?.shippingInfo || {},
-        orderItems: tx.metadata?.orderItems || [],
-        itemPrice: tx.metadata?.itemPrice || 0,
-        taxPrice: tx.metadata?.taxPrice || 0,
-        shippingPrice: tx.metadata?.shippingPrice || 0,
-        totalPrice: tx.metadata?.totalPrice || paystackAmount,
-        amountPaid: paystackAmount,
-        paymentInfo: {
-          reference: tx.reference,
-          providerTxId: tx.id,
-          status: tx.status,
-          method: "paystack",
-          currency: tx.currency,
-          amount: paystackAmount,
-          paidAt: new Date(tx.paidAt)
-        },
-        paymentMeta: tx
-      });
-
-      return res.status(201).json({ message: 'Order created via webhook', order: newOrder });
+    if (event.event !== "charge.success") {
+      return res.status(200).json({ message: "Event ignored" });
     }
 
-    return res.status(200).json({ message: 'Event ignored' });
+    const tx = event.data;
+
+    const order = await Order.findOne({
+      "paymentInfo.reference": tx.reference
+    });
+
+    if (!order) {
+      return res.status(200).json({
+        message: "Order not found, ignoring webhook"
+      });
+    }
+
+    if (order.paymentInfo.status === "success") {
+      return res.status(200).json({ message: "Already processed" });
+    }
+
+    order.paymentInfo.status = "success";
+    order.paymentInfo.paidAt = new Date(tx.paid_at);
+    order.amountPaid = tx.amount / 100;
+
+    await order.save();
+
+    return res.status(200).json({ message: "Order confirmed" });
   } catch (err) {
-    console.error('Paystack webhook error:', err);
-    return res.status(500).json({ message: 'Webhook processing failed', error: err.message });
+    console.error("Paystack webhook error:", err);
+    return res.status(500).json({ message: "Webhook processing failed" });
   }
 }
+
