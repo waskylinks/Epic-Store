@@ -19,6 +19,7 @@ import Shipping from './Cart/Shipping';
 import OrderConfirm from './Cart/OrderConfirm';
 import Payment from './Cart/Payment';
 import Loader from './components/Loader';
+import OrderSuccess from './Cart/OrderSuccess';
 
 
 
@@ -58,6 +59,7 @@ function App() {
         <Route path='/shipping' element={<ProtectedRoute element={<Shipping />} />}/>
         <Route path='/order/confirm' element={<ProtectedRoute element={<OrderConfirm />} />}/>
         <Route path='/process/payment' element={<ProtectedRoute element={<Payment />} />}/>
+        <Route path='/order/success' element={<ProtectedRoute element={<OrderSuccess />} />}/>
 
       </Routes>
       {isAuthenticated && <UserDashboard user={user}/>}

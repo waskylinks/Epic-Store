@@ -73,7 +73,7 @@ function Payment() {
                     })
                 )
                     .unwrap()
-                    .then(() => navigate("/order/success"))
+                    .then(() => navigate(`/order/success?reference=${response.reference}`))
                     .catch(() => toast.error("Payment verification failed"));
             },
             onClose: () => toast.info("Payment cancelled")
