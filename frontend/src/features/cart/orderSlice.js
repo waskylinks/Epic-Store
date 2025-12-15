@@ -2,7 +2,7 @@ import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
 // creating order
-const createOrder = createAsyncThunk('order/createOrder', async(order, {rejectWithValue}) => {
+export const createOrder = createAsyncThunk('order/createOrder', async(order, {rejectWithValue}) => {
     try {
         const config = {
             headers: {

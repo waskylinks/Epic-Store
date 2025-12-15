@@ -10,6 +10,7 @@ import CheckoutPath from "./CheckoutPath";
 
 import { toast } from "react-toastify";
 import { verifyPayment, removePaymentError, removePaymentMessage } from "../features/cart/paymentSlice";
+import { clearCart } from "../features/cart/cartSlice"; // <-- import clearCart
 
 function Payment() {
     const orderItem = JSON.parse(sessionStorage.getItem("orderItem"));
@@ -73,7 +74,14 @@ function Payment() {
                     })
                 )
                     .unwrap()
-                    .then(() => navigate(`/order/success?reference=${response.reference}`))
+                    .then(() => {
+                        // Clear cart and shipping info after successful payment verification
+                        sessionStorage.removeItem("orderItem"); // optional, cleanup
+                        dispatch(clearCart());
+
+                        // Navigate to success page
+                        navigate(`/order/success?reference=${response.reference}`);
+                    })
                     .catch(() => toast.error("Payment verification failed"));
             },
             onClose: () => toast.info("Payment cancelled")

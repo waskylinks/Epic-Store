@@ -52,7 +52,18 @@ const cartSlice = createSlice({
         saveShippingInfo: (state, action) => {
             state.shippingInfo = action.payload;
             localStorage.setItem("shippingInfo", JSON.stringify(state.shippingInfo));
+        },
+        clearCart: (state) => {
+            state.cartItems = [];
+            state.shippingInfo = {};
+            state.success = false;
+            state.message = null;
+            state.error = null;
+            localStorage.removeItem('cartItems');
+            localStorage.removeItem('shippingInfo');
+            sessionStorage.removeItem('orderItem'); 
         }
+
     },
     extraReducers: (builder) => {
         // Add item to cart
@@ -87,5 +98,5 @@ const cartSlice = createSlice({
     }
 });
 
-export const { removeErrors, removeMessage, removeItemFromCart, saveShippingInfo } = cartSlice.actions;
+export const { removeErrors, removeMessage, removeItemFromCart, saveShippingInfo, clearCart } = cartSlice.actions;
 export default cartSlice.reducer;
