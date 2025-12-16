@@ -59,7 +59,8 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         reference,
         orderItems,
         totalPrice,
-        shippingInfo
+        shippingInfo,
+        currency
       });
     }
 

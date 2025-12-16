@@ -38,6 +38,14 @@ const receiptSchema = new mongoose.Schema(
       type: Number,
       required: true
     },
+    
+    // 💵 New: Currency code for formatting (e.g., USD, NGN, EUR)
+    currency: { 
+      type: String,
+      required: true, 
+      trim: true,
+      uppercase: true
+    },
 
     // Shipping information
     shippingInfo: {
