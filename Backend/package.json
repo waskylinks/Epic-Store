@@ -28,6 +28,8 @@
     "express-fileupload": "^1.5.2",
     "joi": "^18.0.2",
     "jsonwebtoken": "^9.0.2",
+    "jspdf": "^3.0.4",
+    "jspdf-autotable": "^5.0.2",
     "mongodb": "^7.0.0",
     "mongoose": "^8.19.4",
     "nodemailer": "^7.0.10",

@@ -7,6 +7,7 @@ import products from './routes/products-route.js';
 import user from './routes/user-route.js';
 import order from './routes/order-routes.js';
 import payment from './routes/payment.routes.js'; // unified multipayment route
+import receipt from './routes/receipts-routes.js';
 
 
 // Middleware
@@ -25,6 +26,7 @@ app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
 app.use('/api/v1/payment', payment); //  unified payment route
+app.use('/api/v1', receipt)
 
 
 // Global error handler
