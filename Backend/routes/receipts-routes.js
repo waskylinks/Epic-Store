@@ -12,7 +12,13 @@ const router = express.Router();
 router.route('/user/').get(verifyUserAuth, getAllReceipts);
 
 // Fetch a single receipt by reference (user can access only their own)
-router.route('/:reference').get(verifyUserAuth, getReceiptByReference);
+router.route('/:reference').get(verifyUserAuth, (req, res, next) => {
+  console.log("User fetch request:", {
+    userId: req.user._id,
+    reference: req.params.reference
+  });
+  return getReceiptByReference(req, res, next);
+});
 
 // -------------------- ADMIN ROUTES -------------------- //
 
@@ -23,6 +29,7 @@ router.route('/admin/all').get(
   async (req, res, next) => {
     try {
       const receipts = await Receipt.find().sort({ createdAt: -1 });
+      console.log("Admin fetch all receipts, total:", receipts.length);
       return res.status(200).json({ success: true, receipts });
     } catch (err) {
       return next(new HandleError("Failed to fetch all receipts", 500));
@@ -37,8 +44,12 @@ router.route('/admin/:reference').get(
   async (req, res, next) => {
     try {
       const { reference } = req.params;
+      console.log("Admin fetch receipt:", reference);
       const receipt = await Receipt.findOne({ reference });
-      if (!receipt) return next(new HandleError("Receipt not found", 404));
+      if (!receipt) {
+        console.log("Admin receipt not found:", reference);
+        return next(new HandleError("Receipt not found", 404));
+      }
       return res.status(200).json({ success: true, receipt });
     } catch (err) {
       return next(new HandleError("Failed to fetch receipt", 500));

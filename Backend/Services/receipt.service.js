@@ -25,11 +25,9 @@ export const createReceiptIfNotExists = async ({
   shippingInfo,
   currency = "NGN",
 }) => {
-  // Check if receipt already exists (idempotency)
   let receipt = await Receipt.findOne({ reference });
   if (receipt) return receipt;
 
-  // Create new receipt document in DB
   receipt = await Receipt.create({
     order: orderId,
     user: userId,
@@ -48,7 +46,9 @@ export const createReceiptIfNotExists = async ({
  */
 export const getAllReceipts = async (req, res) => {
   try {
+    console.log("Fetching all receipts for user:", req.user._id);
     const receipts = await Receipt.find({ user: req.user._id }).sort({ createdAt: -1 });
+    console.log("Found receipts count:", receipts.length);
     return res.status(200).json({ success: true, receipts });
   } catch (error) {
     console.error("Error fetching receipts:", error);
@@ -62,8 +62,16 @@ export const getAllReceipts = async (req, res) => {
 export const getReceiptByReference = async (req, res, next) => {
   try {
     const { reference } = req.params;
+    console.log("Fetching receipt by reference:", reference, "for user:", req.user._id);
+
     const receipt = await Receipt.findOne({ reference, user: req.user._id });
-    if (!receipt) return next(new HandleError("Receipt not found", 404));
+
+    if (!receipt) {
+      console.log("Receipt not found:", reference, "for user:", req.user._id);
+      return next(new HandleError("Receipt not found", 404));
+    }
+
+    console.log("Receipt found:", receipt._id);
     return res.status(200).json({ success: true, receipt });
   } catch (error) {
     console.error(`Error fetching receipt ${req.params.reference}:`, error);

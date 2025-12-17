@@ -26,7 +26,7 @@ app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
 app.use('/api/v1/payment', payment); //  unified payment route
-app.use('/api/v1', receipt)
+app.use('/api/v1/receipts', receipt)
 
 
 // Global error handler
