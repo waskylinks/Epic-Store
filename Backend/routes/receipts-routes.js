@@ -1,60 +1,15 @@
-import express from 'express';
-import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
-import { getAllReceipts, getReceiptByReference } from '../Services/receipt.service.js';
-import HandleError from '../utils/handleError.js';
-import Receipt from '../models/receipt-model.js';
+import express from "express";
+import { verifyUserAuth } from "../middleware/user-auth.js";
+import {
+  getAllReceipts,
+  getReceiptByReference,
+} from "../Services/receipt.service.js";
+import { downloadReceiptPdf } from "../controller/receipt.controller.js";
 
 const router = express.Router();
 
-// -------------------- USER ROUTES -------------------- //
-
-// Fetch all receipts for the authenticated user
-router.route('/user/').get(verifyUserAuth, getAllReceipts);
-
-// Fetch a single receipt by reference (user can access only their own)
-router.route('/:reference').get(verifyUserAuth, (req, res, next) => {
-  console.log("User fetch request:", {
-    userId: req.user._id,
-    reference: req.params.reference
-  });
-  return getReceiptByReference(req, res, next);
-});
-
-// -------------------- ADMIN ROUTES -------------------- //
-
-// Admin: fetch all receipts for all users
-router.route('/admin/all').get(
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  async (req, res, next) => {
-    try {
-      const receipts = await Receipt.find().sort({ createdAt: -1 });
-      console.log("Admin fetch all receipts, total:", receipts.length);
-      return res.status(200).json({ success: true, receipts });
-    } catch (err) {
-      return next(new HandleError("Failed to fetch all receipts", 500));
-    }
-  }
-);
-
-// Admin: fetch any receipt by reference
-router.route('/admin/:reference').get(
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  async (req, res, next) => {
-    try {
-      const { reference } = req.params;
-      console.log("Admin fetch receipt:", reference);
-      const receipt = await Receipt.findOne({ reference });
-      if (!receipt) {
-        console.log("Admin receipt not found:", reference);
-        return next(new HandleError("Receipt not found", 404));
-      }
-      return res.status(200).json({ success: true, receipt });
-    } catch (err) {
-      return next(new HandleError("Failed to fetch receipt", 500));
-    }
-  }
-);
+router.get("/user", verifyUserAuth, getAllReceipts);
+router.get("/:reference", verifyUserAuth, getReceiptByReference);
+router.get("/:reference/pdf", verifyUserAuth, downloadReceiptPdf);
 
 export default router;
