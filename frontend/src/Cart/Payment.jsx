@@ -10,7 +10,7 @@ import CheckoutPath from "./CheckoutPath";
 
 import { toast } from "react-toastify";
 import { verifyPayment, removePaymentError, removePaymentMessage } from "../features/cart/paymentSlice";
-import { clearCart } from "../features/cart/cartSlice"; // <-- import clearCart
+import { clearCart } from "../features/cart/cartSlice";
 
 function Payment() {
     const orderItem = JSON.parse(sessionStorage.getItem("orderItem"));
@@ -20,10 +20,8 @@ function Payment() {
 
     const dispatch = useDispatch();
     const navigate = useNavigate();
-
     const [localError, setLocalError] = useState("");
 
-    // Load Paystack script dynamically
     useEffect(() => {
         if (!window.PaystackPop) {
             const script = document.createElement("script");
@@ -35,7 +33,6 @@ function Payment() {
         }
     }, []);
 
-    // Toast notifications
     useEffect(() => {
         if (error) {
             toast.error(error, { position: "top-center" });
@@ -54,16 +51,19 @@ function Payment() {
         const key = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
         if (!key) return toast.error("Paystack key missing");
 
+        const paymentCurrency = "NGN"; // Define currency once for consistency
+
         const handler = window.PaystackPop.setup({
             key,
             email: user.email,
-            amount: Number(orderItem.total) * 100, // in kobo
-            currency: "NGN",
+            amount: Number(orderItem.total) * 100,
+            currency: paymentCurrency, // Use defined currency
             callback: (response) => {
                 dispatch(
                     verifyPayment({
                         gateway: "paystack",
                         reference: response.reference,
+                        currency: paymentCurrency, // <--- 🔑 The essential addition for receipt generation
                         shippingInfo,
                         orderItems: cartItems,
                         itemPrice: orderItem.subtotal,
@@ -73,16 +73,16 @@ function Payment() {
                         amountPaid: orderItem.total
                     })
                 )
-                    .unwrap()
-                    .then(() => {
-                        // Clear cart and shipping info after successful payment verification
-                        sessionStorage.removeItem("orderItem"); // optional, cleanup
-                        dispatch(clearCart());
+                .unwrap()
+                .then(() => {
+                    // Clear cart after successful payment verification
+                    dispatch(clearCart());
+                    sessionStorage.removeItem("orderItem"); // optional cleanup
 
-                        // Navigate to success page
-                        navigate(`/order/success?reference=${response.reference}`);
-                    })
-                    .catch(() => toast.error("Payment verification failed"));
+                    // Navigate to success page using only reference
+                    navigate(`/order/success?reference=${response.reference}`);
+                })
+                .catch(() => toast.error("Payment verification failed"));
             },
             onClose: () => toast.info("Payment cancelled")
         });
@@ -90,13 +90,12 @@ function Payment() {
         handler.openIframe();
     };
 
-    const formatNGN = amount =>
+    const formatNGN = (amount) =>
         new Intl.NumberFormat('en-NG', {
             style: 'currency',
             currency: 'NGN',
             minimumFractionDigits: 2
         }).format(amount);
-
 
     return (
         <>

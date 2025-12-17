@@ -1,61 +1,112 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
+import { toast } from "react-toastify";
 
-// creating order
-export const createOrder = createAsyncThunk('order/createOrder', async(order, {rejectWithValue}) => {
+/* --- Fetch a single receipt by reference --- */
+export const fetchReceiptByReference = createAsyncThunk(
+  "order/fetchReceiptByReference",
+  async (reference, { rejectWithValue }) => {
     try {
-        const config = {
-            headers: {
-                'Content-Type' : 'application/json'
-            }
-        }
-        const {data} = await axios.post('/api/v1/new/order', order, config)
-        console.log('order data', data)
-        return data;
+      const { data } = await axios.get(`/api/v1/receipts/${reference}`, {
+        withCredentials: true,
+      });
 
+      return data.receipt; // <-- IMPORTANT
     } catch (error) {
-         return rejectWithValue(error.response?.data || `Failed to create order. Please try again later`);
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch receipt."
+      );
     }
-})
+  }
+);
+/* --- Download receipt PDF --- */
+export const downloadReceiptPdf = createAsyncThunk(
+  "order/downloadReceiptPdf",
+  async ({ reference }, { rejectWithValue }) => {
+    if (!reference) {
+      return rejectWithValue("Receipt not found for this order");
+    }
 
-const orderSlice = createSlice({
-    name: 'order',
-    initialState: {
-        success: false,
-        loading: false,
-        error: null,
-        orders: [],
-        order: {}
-    },
-    reducers: {
-        removeErrors: (state) => {
-            state.error = null;
-        },
-        removeSuccess: (state) => {
-            state.success = null;
+    try {
+      const response = await axios.get(
+        `/api/v1/receipts/${reference}/pdf`,
+        {
+          responseType: "blob",
+          withCredentials: true,
         }
-    },
-    extraReducers: (builder) => {
-        builder
-        .addCase(createOrder.pending,(state) => {
-            state.loading = true;
-            state.error = null;
-        })
+      );
 
-        .addCase(createOrder.fulfilled,(state, action) => {
-            state.loading = false;
-            state.order = action.payload.order;
-            state.success = action.payload.success;
-            
-        })
+      const blob = new Blob([response.data], {
+        type: "application/pdf",
+      });
 
-        .addCase(createOrder.rejected,(state, action) => {
-            state.loading = false;
-            state.error = action.payload?.message || 'Failed to create order. Please try again later'
-        })
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = `receipt_${reference}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return true;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message ||
+          "Receipt not found for this order"
+      );
     }
-    
+  }
+);
+
+
+/* --- Slice --- */
+const orderSlice = createSlice({
+  name: "order",
+  initialState: {
+    selectedReceipt: null,   // single receipt object
+    loading: false,          // for fetching receipt
+    error: null,             // receipt fetch error
+    downloadLoading: false,  // optional, for download spinner
+  },
+  reducers: {
+    clearSelectedReceipt: (state) => {
+      state.selectedReceipt = null;
+      state.error = null;
+    },
+  },
+  extraReducers: (builder) => {
+    builder
+      // Fetch receipt
+      .addCase(fetchReceiptByReference.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+        state.selectedReceipt = null;
+      })
+      .addCase(fetchReceiptByReference.fulfilled, (state, action) => {
+        state.loading = false;
+        state.selectedReceipt = action.payload;
+      })
+      .addCase(fetchReceiptByReference.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Receipt not found.";
+      })
+
+      // Download PDF
+      .addCase(downloadReceiptPdf.pending, (state) => {
+        state.downloadLoading = true;
+      })
+      .addCase(downloadReceiptPdf.fulfilled, (state) => {
+        state.downloadLoading = false;
+      })
+      .addCase(downloadReceiptPdf.rejected, (state, action) => {
+        state.downloadLoading = false;
+        toast.error(action.payload || "PDF download failed.", { position: "top-center" });
+      });
+  },
 });
 
-export const {removeErrors, removeSuccess} = orderSlice.actions;
+export const { clearSelectedReceipt } = orderSlice.actions;
 export default orderSlice.reducer;

@@ -1,3 +1,5 @@
+/* Paste this content into your global CSS file (e.g., OrderCart.css or PaymentSuccess.css) */
+
 .payment-success-container {
     display: flex;
     flex-direction: column;
@@ -63,4 +65,32 @@
   .explore-btn:hover {
     background-color: var(--bg-primary);
   }
-  
+
+  .download-receipt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 15px 0;
+  padding: 12px 25px;
+  background-color: #1e90ff;
+  color: #fff;
+  font-weight: 500;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 14px;
+}
+
+.download-receipt-btn:hover:not(:disabled) {
+  background-color: #1c86ee;
+}
+/* Style for the error box, previously inline */
+.error-box {
+  padding: 10px; 
+  border: 1px solid #e74c3c; 
+  background: #fdd; 
+  margin-top: 15px; 
+  font-size: 0.9em; 
+  border-radius: 5px;
+}
