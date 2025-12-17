@@ -21,7 +21,7 @@ const receiptSchema = new mongoose.Schema(
     reference: {
       type: String,
       required: true,
-      unique: true // Mongoose will create a unique index automatically
+      unique: true // Mongoose creates a unique index
     },
 
     // Array of ordered items
@@ -38,11 +38,11 @@ const receiptSchema = new mongoose.Schema(
       type: Number,
       required: true
     },
-    
-    // 💵 New: Currency code for formatting (e.g., USD, NGN, EUR)
-    currency: { 
+
+    // 💵 Currency (hard-defaulted to NGN for receipts)
+    currency: {
       type: String,
-      required: true, 
+      default: "NGN",
       trim: true,
       uppercase: true
     },
@@ -54,18 +54,12 @@ const receiptSchema = new mongoose.Schema(
       state: { type: String, required: true },
       postalCode: { type: String },
       phoneNo: { type: String, required: true }
-    },
-
-    // Optional path to the generated PDF receipt
-    pdfPath: {
-      type: String
     }
   },
-  { timestamps: true } // Automatically adds createdAt and updatedAt
+  { timestamps: true }
 );
 
-// Additional index for faster queries by user
+// Index for faster user-based queries
 receiptSchema.index({ user: 1 });
 
-// Export the model
 export default mongoose.model("Receipt", receiptSchema);

@@ -1,56 +1,49 @@
-import express from "express";
-import { verifyUserAuth } from "../middleware/user-auth.js";
-import handleAsyncError from "../middleware/handleAsyncError.js";
-import HandleError from "../utils/handleError.js";
-import {
-  getAllReceipts,
-  getReceiptByReference
-} from "../Services/receipt.service.js"; // must match folder 'Services'
-import fs from "fs";
-import path from "path";
-import Receipt from "../models/receipt-model.js";
+import express from 'express';
+import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
+import { getAllReceipts, getReceiptByReference } from '../Services/receipt.service.js';
+import HandleError from '../utils/handleError.js';
+import Receipt from '../models/receipt-model.js';
 
 const router = express.Router();
 
-// All routes require authentication
-router.use(verifyUserAuth);
+// -------------------- USER ROUTES -------------------- //
 
-/**
- * GET /api/v1/receipts/user
- * Fetch all receipts for the authenticated user
- */
-router.route("/user").get(handleAsyncError(getAllReceipts));
+// Fetch all receipts for the authenticated user
+router.route('/user/').get(verifyUserAuth, getAllReceipts);
 
-/**
- * GET /api/v1/receipts/:reference
- * Fetch a single receipt by reference
- */
-router.route("/:reference").get(handleAsyncError(getReceiptByReference));
+// Fetch a single receipt by reference (user can access only their own)
+router.route('/:reference').get(verifyUserAuth, getReceiptByReference);
 
-/**
- * GET /api/v1/receipts/:reference/pdf
- * Download pre-generated PDF for a receipt
- */
-router.route("/:reference/pdf").get(
-  handleAsyncError(async (req, res, next) => {
-    const userId = req.user._id;
-    const { reference } = req.params;
+// -------------------- ADMIN ROUTES -------------------- //
 
-    const receipt = await Receipt.findOne({ reference, user: userId });
-    if (!receipt) return next(new HandleError("Receipt not found", 404));
-
-    const pdfPath = receipt.pdfPath;
-    if (!pdfPath || !fs.existsSync(pdfPath)) {
-      return next(new HandleError("Receipt PDF not available", 404));
+// Admin: fetch all receipts for all users
+router.route('/admin/all').get(
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  async (req, res, next) => {
+    try {
+      const receipts = await Receipt.find().sort({ createdAt: -1 });
+      return res.status(200).json({ success: true, receipts });
+    } catch (err) {
+      return next(new HandleError("Failed to fetch all receipts", 500));
     }
+  }
+);
 
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename=receipt_${reference}.pdf`
-    );
-    fs.createReadStream(pdfPath).pipe(res);
-  })
+// Admin: fetch any receipt by reference
+router.route('/admin/:reference').get(
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  async (req, res, next) => {
+    try {
+      const { reference } = req.params;
+      const receipt = await Receipt.findOne({ reference });
+      if (!receipt) return next(new HandleError("Receipt not found", 404));
+      return res.status(200).json({ success: true, receipt });
+    } catch (err) {
+      return next(new HandleError("Failed to fetch receipt", 500));
+    }
+  }
 );
 
 export default router;
