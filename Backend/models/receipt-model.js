@@ -21,7 +21,14 @@ const receiptSchema = new mongoose.Schema(
     reference: {
       type: String,
       required: true,
-      unique: true // Mongoose creates a unique index
+      unique: true
+    },
+
+    // Snapshot of customer info at time of purchase
+    customer: {
+      name: { type: String, required: true },
+      email: { type: String, required: true },
+      phoneNo: { type: String, required: true }
     },
 
     // Array of ordered items
@@ -33,11 +40,11 @@ const receiptSchema = new mongoose.Schema(
       }
     ],
 
-    // Total price for the order
-    totalPrice: {
-      type: Number,
-      required: true
-    },
+    // Price breakdown for accounting
+    itemPrice: { type: Number, required: true },      // subtotal
+    taxPrice: { type: Number, required: true },       // tax
+    shippingPrice: { type: Number, required: true },  // shipping
+    totalPrice: { type: Number, required: true },     // grand total
 
     // 💵 Currency (hard-defaulted to NGN for receipts)
     currency: {
@@ -53,13 +60,33 @@ const receiptSchema = new mongoose.Schema(
       city: { type: String, required: true },
       state: { type: String, required: true },
       postalCode: { type: String },
-      phoneNo: { type: String, required: true }
-    }
+      phoneNo: { type: String, required: true },
+      country: { type: String, default: "Nigeria" } // optional for future scaling
+    },
+
+    // Payment info
+    paymentStatus: {
+      type: String,
+      enum: ["paid", "refunded", "pending"],
+      default: "paid"
+    },
+    paymentGateway: {
+      type: String,
+      default: "paystack"
+    },
+    paidAt: {
+      type: Date,
+      default: Date.now
+    },
+
+    // Optional: human-readable invoice number
+    invoiceNumber: { type: String }
   },
   { timestamps: true }
 );
 
-// Index for faster user-based queries
+// Indexes for fast queries
 receiptSchema.index({ user: 1 });
+receiptSchema.index({ order: 1 });
 
 export default mongoose.model("Receipt", receiptSchema);

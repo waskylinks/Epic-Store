@@ -58,9 +58,13 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         userId,
         reference,
         orderItems,
+        itemPrice,      // subtotal
+        taxPrice,
+        shippingPrice,
         totalPrice,
         shippingInfo,
-        currency
+        currency,
+        paymentGateway: gateway
       });
     }
 
