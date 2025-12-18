@@ -19,6 +19,7 @@ export const fetchReceiptByReference = createAsyncThunk(
     }
   }
 );
+
 /* --- Download receipt PDF --- */
 export const downloadReceiptPdf = createAsyncThunk(
   "order/downloadReceiptPdf",

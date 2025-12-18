@@ -41,7 +41,7 @@ function OrderSuccess() {
 
       <div className="payment-success-container">
         <div className="success-content">
-          <h1>Payment Successful!</h1>
+          <h1>Payment Successful 🎉</h1>
           <p>Your order has been placed and confirmed.</p>
 
           <p>
@@ -59,7 +59,7 @@ function OrderSuccess() {
             className="explore-btn"
             to="/orders/user"
           >
-            View Order Status
+            View Orders
           </Link>
         </div>
       </div>
