@@ -62,6 +62,17 @@ export const downloadReceiptPdf = createAsyncThunk(
   }
 );
 
+//get user orders 
+export const getAllOrders = createAsyncThunk('orders/getAllOrders', async(_, {rejectWithValue}) => {
+  try{
+    const {data} = await axios.get('/api/v1/orders/user')
+    return data;
+
+  } catch (error) {
+    return rejectWithValue(error.response?.data || 'Failed to fetch Orders')
+  }
+})
+
 
 /* --- Slice --- */
 const orderSlice = createSlice({
@@ -106,6 +117,23 @@ const orderSlice = createSlice({
         state.downloadLoading = false;
         toast.error(action.payload || "PDF download failed.", { position: "top-center" });
       });
+
+      //get all orders
+      builder
+      .addCase(getAllOrders.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+        
+      })
+      .addCase(getAllOrders.fulfilled, (state, action) => {
+        state.loading = false;
+        state.orders = action.payload.orders;
+        state.success = action.payload.success;
+      })
+      .addCase(getAllOrders.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Failed to fetch Orders";
+      })
   },
 });
 
