@@ -20,6 +20,7 @@ import OrderConfirm from './Cart/OrderConfirm';
 import Payment from './Cart/Payment';
 import Loader from './components/Loader';
 import OrderSuccess from './Cart/OrderSuccess';
+import MyOrders from './Orders/MyOrders';
 
 
 
@@ -60,6 +61,7 @@ function App() {
         <Route path='/order/confirm' element={<ProtectedRoute element={<OrderConfirm />} />}/>
         <Route path='/process/payment' element={<ProtectedRoute element={<Payment />} />}/>
         <Route path='/order/success' element={<ProtectedRoute element={<OrderSuccess />} />}/>
+        <Route path='/orders/user' element={<ProtectedRoute element={<MyOrders />} />}/>
 
       </Routes>
       {isAuthenticated && <UserDashboard user={user}/>}
