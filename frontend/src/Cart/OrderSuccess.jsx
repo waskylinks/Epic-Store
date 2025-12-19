@@ -9,7 +9,7 @@ import Footer from "../components/footer";
 
 import "../CartStyles/PaymentSuccess.css";
 
-import { downloadReceiptPdf } from "../features/cart/orderSlice";
+import { downloadReceiptPdf } from "../features/cart/receiptSlice";
 
 function OrderSuccess() {
   const [searchParams] = useSearchParams();

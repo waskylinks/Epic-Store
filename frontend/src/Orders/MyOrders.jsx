@@ -6,17 +6,18 @@ import Footer from '../components/footer'
 import { Link } from 'react-router-dom'
 import { LaunchOutlined } from '@mui/icons-material'
 import { useDispatch, useSelector } from 'react-redux'
-import { getAllOrders } from '../features/cart/orderSlice'
+import { getAllMyOrders } from '../features/cart/orderSlice'
 import { toast } from 'react-toastify'
 import { removeErrors } from '../features/cart/orderSlice'
 import Loader from '../components/Loader';
 
 function MyOrders() {
     const {orders, loading, error} = useSelector(state => state.order)
+    console.log('my orders data', orders)
     const dispatch = useDispatch()
 
     useEffect(() => {
-        dispatch(getAllOrders())
+        dispatch(getAllMyOrders())
         if(error) {
             toast.error(error, {position: 'top-center'});
             dispatch(removeErrors())
@@ -30,7 +31,7 @@ function MyOrders() {
     <PageTitle title='All Orders'/>
     <Navbar />
 
-    { loading ? (<Loader />) : orders.length > 0 ? (
+    { loading ? (<Loader />) : Array.isArray(orders) && orders.length > 0 ? (
         <div className="my-orders-container">
             <h1>
                 My Orders
@@ -47,31 +48,21 @@ function MyOrders() {
                         </tr>
                     </thead>
                     <tbody>
-                        {orders.map((order) => {
-                            <tr>
-                            <td key={order._id}>
-                                {order._id}
-                            </td>
+                        {orders.map((order) => (
+                            <tr key={order._id}>
+                            <td>{order._id}</td>
+                            <td>{order.orderItems.length}</td>
+                            <td>{order.orderStatus}</td>
+                            <td>{order.totalPrice}</td>
                             <td>
-                                {order.orderItems.length}
-                            </td>
-                            <td>
-                                {order.orderStatus}
-                            </td>
-                            <td>
-                                {order.totalPrice}
-                            </td>
-                            <td>
-                                <Link 
-                                to={`/order/${order._id}`}
-                                className='order-link'>
-                                    <LaunchOutlined />
+                                <Link to={`/order/${order._id}`} className="order-link">
+                                <LaunchOutlined />
                                 </Link>
                             </td>
-                        </tr>
-                        })
-                            }
-                        </tbody>
+                            </tr>
+                        ))}
+                    </tbody>
+
                     </table>
                 </div>
         </div>) : (
