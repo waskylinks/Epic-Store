@@ -88,6 +88,12 @@ const orderSlice = createSlice({
       state.selectedReceipt = null;
       state.error = null;
     },
+    removeErrors: (state) => {
+            state.error = null;
+        },
+    removeMessage: (state) => {
+        state.message = null;
+    }
   },
   extraReducers: (builder) => {
     builder
