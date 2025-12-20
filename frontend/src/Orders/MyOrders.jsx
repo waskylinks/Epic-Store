@@ -25,6 +25,13 @@ function MyOrders() {
         }
     }, [dispatch, error]);
 
+    const formatNGN = (amount) =>
+        new Intl.NumberFormat('en-NG', {
+            style: 'currency',
+            currency: 'NGN',
+            minimumFractionDigits: 2
+        }).format(amount);
+
   return (
 
     <>
@@ -53,7 +60,7 @@ function MyOrders() {
                             <td>{order._id}</td>
                             <td>{order.orderItems.length}</td>
                             <td>{order.orderStatus}</td>
-                            <td>{order.totalPrice}</td>
+                            <td>{formatNGN(order.totalPrice)}</td>
                             <td>
                                 <Link to={`/order/${order._id}`} className="order-link">
                                 <LaunchOutlined />
