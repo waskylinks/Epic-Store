@@ -109,6 +109,13 @@ function ProductDetails() {
             dispatch(addItemsToCart({id, quantity}))
         }
 
+        const formatNGN = (amount) =>
+        new Intl.NumberFormat('en-NG', {
+            style: 'currency',
+            currency: 'NGN',
+            minimumFractionDigits: 2
+        }).format(amount);
+
   return (
     <div>
         <>
@@ -127,7 +134,7 @@ function ProductDetails() {
                         {product.description}
                     </p>
                     <p className="product-price">
-                        {product.price}
+                        {formatNGN(product.price)}
                     </p>
 
                     <div className="product-rating">
