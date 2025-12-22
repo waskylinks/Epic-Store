@@ -9,8 +9,9 @@ router.route('/new/order/').post(verifyUserAuth, createNewOrder);
 
 router.route('/orders/user/').get(verifyUserAuth, allMyOrders);
 
+router.route('/order/:id').get(verifyUserAuth, getSingleOrder);
+
 router.route('/admin/order/:id')
-.get(verifyUserAuth, roleBaseAccess('admin'), getSingleOrder)
 .put(verifyUserAuth, roleBaseAccess('admin'),updateOrderStatus)
 .delete(verifyUserAuth, roleBaseAccess('admin'),deleteOrder);
 
