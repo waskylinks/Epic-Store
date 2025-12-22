@@ -23,7 +23,7 @@ function ProductDetails() {
     const {loading, error, product} = useSelector((state) => state.product);
 
     //cart state
-    const {loading: cartLoading, error: cartError, success, message, cartItems} = useSelector((state) => state.cart);
+    const {loading: cartLoading, error: cartError, success, message} = useSelector((state) => state.cart);
 
     const dispatch = useDispatch();
     const {id} = useParams();

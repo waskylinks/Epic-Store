@@ -19,12 +19,31 @@ export const getAllMyOrders = createAsyncThunk(
   }
 );
 
+// get order details
+export const getOrderDetails = createAsyncThunk(
+  "order/getOrderDetails",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`/api/v1/order/${orderId}`, {
+        withCredentials: true,
+      });
+      return data.order;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch order details"
+      );
+    }
+  }
+);
+
 const orderSlice = createSlice({
   name: "order",
   initialState: {
     orders: [],
+    order: null,
     loading: false,
     error: null,
+    success: false,
   },
   reducers: {
     removeErrors: (state) => {
@@ -43,7 +62,23 @@ const orderSlice = createSlice({
       })
       .addCase(getAllMyOrders.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error = action.payload?.message || action.error?.message || "Failed to fetch orders";
+      });
+
+      //get order details 
+      builder
+      .addCase(getOrderDetails.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(getOrderDetails.fulfilled, (state, action) => {
+        state.loading = false;
+        state.order = action.payload.order;
+        state.success = action.payload.success
+      })
+      .addCase(getOrderDetails.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload?.message || action.error?.message || "Failed to fetch order details";
       });
   },
 });
