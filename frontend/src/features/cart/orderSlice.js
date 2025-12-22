@@ -21,16 +21,17 @@ export const getAllMyOrders = createAsyncThunk(
 
 // get order details
 export const getOrderDetails = createAsyncThunk(
-  "order/getOrderDetails",
-  async (orderId, { rejectWithValue }) => {
+  'order/getOrderDetails',
+  async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`/api/v1/order/${orderId}`, {
-        withCredentials: true,
-      });
+      const { data } = await axios.get(
+        `/api/v1/order/${id}`,
+        { withCredentials: true }
+      );
       return data.order;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch order details"
+        error.response?.data?.message || 'Failed to fetch order details'
       );
     }
   }
@@ -40,7 +41,7 @@ const orderSlice = createSlice({
   name: "order",
   initialState: {
     orders: [],
-    order: null,
+    order: {},
     loading: false,
     error: null,
     success: false,
@@ -73,8 +74,8 @@ const orderSlice = createSlice({
       })
       .addCase(getOrderDetails.fulfilled, (state, action) => {
         state.loading = false;
-        state.order = action.payload.order;
-        state.success = action.payload.success
+        state.order = action.payload;
+        state.success = true
       })
       .addCase(getOrderDetails.rejected, (state, action) => {
         state.loading = false;

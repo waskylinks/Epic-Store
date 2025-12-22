@@ -1,186 +1,189 @@
+:root {
+  --bg-dark: #0a0a0a;
+  --primary-color: #ff6a3d;
+  --primary-hover: #ff854e;
+  --text-light: #ffffff;
+  --text-secondary: #b0b0b0;
+  --shadow-sm: 0 2px 6px rgba(0,0,0,0.3);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+  --border-color: #222;
+}
 
 .navbar {
-    position: fixed;
-    top: 0;
-    width: 100%;
-    background-color: var(--bg-primary);
-    box-shadow: var(--shadow-sm);
-    z-index: 1000;
-    
+  position: fixed;
+  top: 0;
+  width: 100%;
+  background-color: var(--bg-dark);
+  box-shadow: var(--shadow-sm);
+  z-index: 1000;
+  transition: background 0.3s ease;
+}
 
-  }
-  
-  .navbar-container {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 0 1.5rem;
-    height: 4rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  
-  .navbar-logo a {
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--primary-light);
-    text-decoration: none;
-    transition: color 0.2s ease;
-  }
-  
-  .navbar-logo a:hover {
-    color: var(--primary-main);
-  }
-  
+.navbar-container {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  height: 4.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.navbar-logo a {
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  text-decoration: none;
+  transition: color 0.3s ease;
+}
+
+.navbar-logo a:hover {
+  color: var(--primary-hover);
+}
+
+.navbar-links {
+  flex: 1;
+  margin-left: 3rem;
+  transition: all 0.3s ease;
+}
+
+.navbar-links ul {
+  display: flex;
+  list-style: none;
+  gap: 2.5rem;
+  margin: 0;
+  padding: 0;
+}
+
+.navbar-links li a {
+  color: var(--text-light);
+  font-weight: 500;
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.navbar-links li a:hover {
+  color: var(--primary-color);
+}
+
+.navbar-icons {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.icon {
+  color: var(--text-light);
+  transition: transform 0.3s ease, color 0.3s ease;
+  cursor: pointer;
+}
+
+.icon:hover {
+  color: var(--primary-color);
+  transform: scale(1.2);
+}
+
+.cart-container {
+  position: relative;
+}
+
+.cart-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background-color: var(--primary-color);
+  color: var(--text-light);
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 50%;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.register-link .icon {
+  font-size: 2rem;
+}
+
+.navbar-hamburger {
+  display: none;
+}
+
+.search-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  width: 0;
+  opacity: 0;
+  transition: all 0.3s ease;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0.5rem;
+  border: none;
+  outline: none;
+  font-size: 0.95rem;
+  background-color: #222;
+  color: var(--text-light);
+}
+
+.search-input.active {
+  width: 200px;
+  opacity: 1;
+  margin-right: 0.5rem;
+}
+
+.search-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-light);
+  display: flex;
+  align-items: center;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
   .navbar-links {
-    flex: 1;
-    margin-left: 2rem;
-  }
-  
-  .navbar-links ul {
-    display: flex;
-    list-style: none;
-    gap: 2.5rem;
-    margin: 0;
-    padding: 0;
-  }
-  
-  .navbar-links li a {
-    color: var(--text-primary);
-    text-decoration: none;
-    font-weight: 500;
-    transition: color 0.2s ease;
-  }
-  
-  .navbar-links li a:hover {
-    color: var(--primary-light);
-  }
-  
-  .search-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  
-  .navbar-icons {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    width: 250px;
-  }
-  
-  .icon {
-    color: var(--text-primary);
-    transition: color 0.2s ease;
-    cursor: pointer;
-  }
-  
-  .icon:hover {
-    color: var(--primary-light);
-  }
-  
-  .cart-container {
-    position: relative;
-    display: flex;
-    align-items: center;
-  }
-  
-  .cart-badge {
-    position: absolute;
-    top: -8px;
-    right: -8px;
-    background-color: var(--primary-main);
-    color: var(--text-light);
-    font-size: 0.75rem;
-    font-weight: 600;
-    min-width: 1.25rem;
-    height: 1.25rem;
-    border-radius: 9999px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0 0.25rem;
-  }
-  
-  .register-link {
-    text-decoration: none;
-    display: flex;
-    align-items: center;
-  }
-  
-  .register-btn {
-    background-color: var(--primary-main);
-    color: var(--text-light);
-    padding: 0.5rem 1.2rem;
-    border-radius: 0.5rem;
-    border: none;
-    font-weight: 500;
-    transition: all 0.2s ease;
-    cursor: pointer;
-    height: 36px;
-    display: flex;
-    align-items: center;
-  }
-  
-  .register-btn:hover {
-    background-color: var(--primary-dark);
-  }
-  
-  .navbar-hamburger {
     display: none;
-    cursor: pointer;
+    position: absolute;
+    top: 4.5rem;
+    left: 0;
+    right: 0;
+    background-color: var(--bg-dark);
+    flex-direction: column;
+    padding: 1rem 2rem;
+    border-top: 1px solid var(--border-color);
+    box-shadow: var(--shadow-md);
   }
-  
-  @media (max-width: 768px) {
-    .navbar-links {
-      display: none;
-      position: absolute;
-      top: 4rem;
-      left: 0;
-      right: 0;
-      background-color: var(--bg-primary);
-      padding: 1rem;
-      border-top: 1px solid var(--border-color);
-      box-shadow: var(--shadow-md);
-    }
-  
-    .navbar-links.active {
-      display: block;
-    }
-  
-    .navbar-links ul {
-      flex-direction: column;
-      gap: 1rem;
-    }
-  
-    .navbar-icons {
-      gap: 1.25rem;
-    }
-  
-    .navbar-hamburger {
-      display: block;
-      margin-left: 1rem;
-    }
-  
-    .navbar-links.active li {
-      padding: 0.5rem 0;
-    }
-  
-    .search-item {
-      width: 100%;
-      justify-content: flex-start;
-    }
-    .navbar-icons{
-      width: 300px;
-    }
+
+  .navbar-links.active {
+    display: flex;
   }
-  
-  .navbar-links {
-    transition: all 0.3s ease;
+
+  .navbar-links ul {
+    flex-direction: column;
+    gap: 1rem;
   }
-  
-  a:focus, button:focus {
-    outline: 2px solid var(--primary-main);
-    outline-offset: 2px;
+
+  .navbar-hamburger {
+    display: block;
   }
-  
+
+  .navbar-icons {
+    gap: 1rem;
+  }
+
+  .search-input.active {
+    width: 150px;
+  }
+}
+
+/* Focus Accessibility */
+a:focus, button:focus, input:focus {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}

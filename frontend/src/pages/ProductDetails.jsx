@@ -6,13 +6,14 @@ import Footer from '../components/footer';
 import Rating from '@mui/material/Rating';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams } from 'react-router-dom';
-import { getProductDetails, removeErrors } from '../features/products/productSlice';
+import { createReviews, getProductDetails, removeErrors, removeSuccess } from '../features/products/productSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
 
 function ProductDetails() {
     const [userRating, setUserRating] = useState(0);
+    const [comment, setComment] = useState('');
 
     const [quantity, setQuantity] = useState(1);
 
@@ -20,7 +21,7 @@ function ProductDetails() {
         setUserRating(newRating)
     }
     //product state
-    const {loading, error, product} = useSelector((state) => state.product);
+    const {loading, error, product, reviewSuccess, reviewLoading} = useSelector((state) => state.product);
 
     //cart state
     const {loading: cartLoading, error: cartError, success, message} = useSelector((state) => state.cart);
@@ -28,7 +29,37 @@ function ProductDetails() {
     const dispatch = useDispatch();
     const {id} = useParams();
 
-    useEffect(() => {
+        const formatNGN = (amount) =>
+        new Intl.NumberFormat('en-NG', {
+            style: 'currency',
+            currency: 'NGN',
+            minimumFractionDigits: 2
+        }).format(amount);
+
+        const handleReviewSubmit = (e) => {
+            e.preventDefault();
+            if(!userRating) {
+                toast.error('Please select a rating', {position:'top-centre', autoClose: 2000})
+                return
+            }
+            dispatch(createReviews({
+                rating : userRating,
+                comment,
+                productId : id 
+            }))
+        }
+
+        useEffect(() => {
+            if(reviewSuccess) {
+                toast.success('Review Submitted Successfully', {position:'top-centre', autoClose: 2000})
+                setUserRating(0);
+                setComment('')
+                dispatch(removeSuccess())
+                dispatch(getProductDetails(id))
+            }
+        }, [reviewSuccess, id, dispatch])
+
+        useEffect(() => {
         if(id) {
             dispatch(getProductDetails(id));
         }
@@ -59,8 +90,7 @@ function ProductDetails() {
             }
         }, [dispatch, success, message])
 
-    //cart items
-    
+        //cart items
 
         if(loading) {
             return(
@@ -108,13 +138,6 @@ function ProductDetails() {
         const addToCart = () => {
             dispatch(addItemsToCart({id, quantity}))
         }
-
-        const formatNGN = (amount) =>
-        new Intl.NumberFormat('en-NG', {
-            style: 'currency',
-            currency: 'NGN',
-            minimumFractionDigits: 2
-        }).format(amount);
 
   return (
     <div>
@@ -182,14 +205,26 @@ function ProductDetails() {
                         )
                     }
 
-                    <form  className="review-form">
+                    <form 
+                    className="review-form"
+                    onSubmit={handleReviewSubmit}>
                         <h3>Write a Review</h3>
                         <Rating
                         value={userRating}
                         onChange={(event, newValue) => handleRatingChange(newValue)}
                         />
-                        <textarea className="review-input" placeholder='Write your review here'></textarea>
-                        <button className="submit-review-btn">Submit Review</button>
+                        <textarea 
+                        className="review-input" 
+                        placeholder='Write your review here'
+                        value={comment}
+                        onChange={(e) => setComment(e.target.value)}
+                        required
+                        ></textarea>
+                        <button 
+                        className="submit-review-btn"
+                        disabled={reviewLoading}>
+                            {reviewLoading ? 'Submitting....' : 'Submit Review'}
+                        </button>
                     </form>
                 </div>
             </div>

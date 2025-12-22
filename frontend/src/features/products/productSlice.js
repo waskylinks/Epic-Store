@@ -35,6 +35,24 @@ export const getProductDetails = createAsyncThunk('product/getProductDetails', a
     }
 })
 
+//submit review
+export const createReviews = createAsyncThunk('product/createReviews', async({rating, comment, productId}, {rejectWithValue}) => {
+    try{
+
+        const config = {
+            headers: {
+                'Content-Type' : 'application/json'
+            }
+        }
+        const link = `/api/v1/review`;
+        const {data} = await axios.put(link, {rating, comment, productId}, config);
+        return data;
+
+    } catch (error){
+        return rejectWithValue(error.response?.data || 'Unable to create review. Please try again');
+    }
+})
+
 const productSlice = createSlice({
     name: 'product',
     initialState: {
@@ -44,11 +62,16 @@ const productSlice = createSlice({
         error: null,
         product: null,
         resultsPerPage: 0,
-        totalPages: 0
+        totalPages: 0,
+        reviewSuccess: false,
+        reviewLoading: false
     },
     reducers: {
         removeErrors: (state) => {
             state.error = null
+        },
+        removeSuccess: (state) => {
+            state.reviewSuccess = false
         }
     },
     extraReducers: (builder) => {
@@ -85,8 +108,22 @@ const productSlice = createSlice({
             state.loading = false;
             state.error = action.payload || 'Something went wrong'
         })
+
+        // create review
+        builder.addCase(createReviews.pending, (state) => {
+            state.reviewLoading = true;
+            state.error = null;
+        })
+        .addCase(createReviews.fulfilled, (state) => {
+            state.reviewLoading = false;
+            state.reviewSuccess = true;
+        })
+        .addCase(createReviews.rejected,(state, action) => {
+            state.reviewLoading = false;
+            state.error = action.payload || 'Unable to create review. Please try again'
+        })
     }
 });
 
-export const {removeErrors} = productSlice.actions;
+export const {removeErrors, removeSuccess} = productSlice.actions;
 export default productSlice.reducer;
