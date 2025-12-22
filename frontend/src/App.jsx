@@ -21,6 +21,7 @@ import Payment from './Cart/Payment';
 import Loader from './components/Loader';
 import OrderSuccess from './Cart/OrderSuccess';
 import MyOrders from './Orders/MyOrders';
+import OrderDetails from './Orders/OrderDetails';
 
 
 
@@ -62,6 +63,7 @@ function App() {
         <Route path='/process/payment' element={<ProtectedRoute element={<Payment />} />}/>
         <Route path='/order/success' element={<ProtectedRoute element={<OrderSuccess />} />}/>
         <Route path='/orders/user' element={<ProtectedRoute element={<MyOrders />} />}/>
+        <Route path='/order/:id' element={<ProtectedRoute element={<OrderDetails />} />}/>
 
       </Routes>
       {isAuthenticated && <UserDashboard user={user}/>}
