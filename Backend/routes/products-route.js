@@ -9,7 +9,7 @@ router.route("/products").get(getAllProducts);
 
 router.route('/product/:id').get(getProductDetails);
 
-router.route('/review/').put(verifyUserAuth, createProductReview);
+router.route('/review').put(verifyUserAuth, createProductReview);
 
 router.route('/reviews/').get(getProductReviews);
 

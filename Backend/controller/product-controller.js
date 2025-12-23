@@ -130,13 +130,13 @@ export const createProductReview = handleAsyncError(async(req, res, next) => {
 
     const reviewExists = product.reviews.find(review => review.user.toString() === req.user._id.toString());
 
-    if(reviewExists) {
-        product.reviews.forEach(review => {
-            if(req.user.toString === req.user._id.toString()) {
-                review.rating = rating,
-                review.comment = comment
-            }
-        })
+    if (reviewExists) {
+    product.reviews.forEach(review => {
+        if (review.user.toString() === req.user._id.toString()) {
+            review.rating = rating;
+            review.comment = comment;
+        }
+    })
     } else {
         product.reviews.push(review)
         product.numOfReviews = product.reviews.length;
