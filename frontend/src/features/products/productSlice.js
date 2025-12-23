@@ -36,7 +36,7 @@ export const getProductDetails = createAsyncThunk('product/getProductDetails', a
 })
 
 //submit review
-export const createReviews = createAsyncThunk('product/createReviews', async({rating, comment, productId}, {rejectWithValue}) => {
+export const createReviews = createAsyncThunk('product/createReviews', async({rating, comment, productID}, {rejectWithValue}) => {
     try{
 
         const config = {
@@ -45,7 +45,8 @@ export const createReviews = createAsyncThunk('product/createReviews', async({ra
             }
         }
         const link = `/api/v1/review`;
-        const {data} = await axios.put(link, {rating, comment, productId}, config);
+        const {data} = await axios.put(link, {rating, comment, productID}, config);
+        console.log('reviews data from slice:', data)
         return data;
 
     } catch (error){

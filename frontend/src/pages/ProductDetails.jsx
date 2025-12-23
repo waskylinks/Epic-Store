@@ -45,7 +45,7 @@ function ProductDetails() {
             dispatch(createReviews({
                 rating : userRating,
                 comment,
-                productId : id 
+                productID : id 
             }))
         }
 
