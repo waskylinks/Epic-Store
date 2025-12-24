@@ -46,7 +46,6 @@ export const createReviews = createAsyncThunk('product/createReviews', async({ra
         }
         const link = `/api/v1/review`;
         const {data} = await axios.put(link, {rating, comment, productID}, config);
-        console.log('reviews data from slice:', data)
         return data;
 
     } catch (error){

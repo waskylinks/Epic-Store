@@ -22,6 +22,7 @@ import Loader from './components/Loader';
 import OrderSuccess from './Cart/OrderSuccess';
 import MyOrders from './Orders/MyOrders';
 import OrderDetails from './Orders/OrderDetails';
+import AdminDashboard from './Admin/AdminDashboard';
 
 
 
@@ -64,6 +65,7 @@ function App() {
         <Route path='/order/success' element={<ProtectedRoute element={<OrderSuccess />} />}/>
         <Route path='/orders/user' element={<ProtectedRoute element={<MyOrders />} />}/>
         <Route path='/order/:id' element={<ProtectedRoute element={<OrderDetails />} />}/>
+        <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard/>} />}/>
 
       </Routes>
       {isAuthenticated && <UserDashboard user={user}/>}
