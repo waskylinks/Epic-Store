@@ -12,6 +12,7 @@ import Loader from '../components/Loader'
 
 function ProductList() {
     const {products, loading, error} = useSelector(state => state.admin);
+    console.log('page products', products)
     const dispatch = useDispatch();
     useEffect(() => {
         dispatch(fetchAdminProducts())
@@ -63,7 +64,7 @@ function ProductList() {
                 </tr>
             </thead>
             <tbody>
-                { products.map((product, index) => {
+                { products.map((product, index) => (
                     <tr key={product._id}>
                         <td>
                             {index+1}
@@ -101,7 +102,7 @@ function ProductList() {
                             </Link>
                         </td>
                     </tr>
-                })}
+                ))}
             </tbody>
         </table>
     </div>
