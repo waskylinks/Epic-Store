@@ -107,6 +107,23 @@
   font-size: 2rem;
 }
 
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem; /* Space between image and name */
+}
+
+.profile-image {
+  width: 40px; /* Set fixed size for profile image */
+  height: 40px; /* Set fixed size for profile image */
+  border-radius: 50%; /* Circular image */
+  object-fit: cover; /* Ensure image covers the area */
+}
+
+.user-name.loading {
+  visibility: hidden; /* Hide name while loading */
+}
+
 .navbar-hamburger {
   display: none;
 }

@@ -14,10 +14,10 @@ function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isImageLoading, setIsImageLoading] = useState(true); // Image loading state
 
-  const { isAuthenticated } = useSelector((state) => state.user);
+  const { isAuthenticated, user } = useSelector((state) => state.user);
   const { cartItems } = useSelector((state) => state.cart);
-
   const navigate = useNavigate();
 
   const toggleSearch = () => setIsSearchOpen(!isSearchOpen);
@@ -70,10 +70,22 @@ function Navbar() {
             </Link>
           </div>
 
-          {!isAuthenticated && (
+          {!isAuthenticated ? (
             <Link to='/register' className='register-link'>
               <PersonAddIcon className='icon' />
             </Link>
+          ) : (
+            <div className="user-profile">
+              {/* Add a loading state for the image */}
+              <img
+                src={user.profileImage} // Assuming you store the image URL in user
+                alt={user.name}
+                onLoad={() => setIsImageLoading(false)} // Set loading to false once the image loads
+                style={{ display: isImageLoading ? 'none' : 'block' }} // Hide until loaded
+                className="profile-image"
+              />
+              <span className={`user-name ${isImageLoading ? 'loading' : ''}`}>{user.name}</span>
+            </div>
           )}
 
           <div className="navbar-hamburger" onClick={toggleMenu}>
