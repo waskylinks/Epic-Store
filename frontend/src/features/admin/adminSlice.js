@@ -1,7 +1,7 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
-//fetch all products
+//fetch all products - admin
 export const fetchAdminProducts = createAsyncThunk('admin/fetchAdminProducts', async(_, {rejectWithValue}) => {
     try {
         const {data} = await axios.get('/api/v1/admin/products')
