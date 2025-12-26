@@ -69,7 +69,7 @@ function App() {
         {/*admin routes */}
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard/>} adminOnly={true}/>}/>
         <Route path='/admin/products' element={<ProtectedRoute element={<ProductList/>} adminOnly={true}/>}/>
-        <Route path='/admin/product/create' element={<ProtectedRoute element={<CreateProduct/>} adminOnly={true}/>}/>
+        <Route path='/admin/products/create' element={<ProtectedRoute element={<CreateProduct/>} adminOnly={true}/>}/>
 
 
       </Routes>
