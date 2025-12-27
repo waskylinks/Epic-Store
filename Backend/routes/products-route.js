@@ -17,7 +17,7 @@ router.route('/reviews/').get(getProductReviews).delete(verifyUserAuth, deleteRe
 
 router.route('/admin/products/').get(verifyUserAuth, roleBaseAccess('admin'), getAdminProducts);
 
-router.route("/admin/product/create").post(verifyUserAuth, roleBaseAccess('admin'), createProducts);
+router.route("/admin/products/create").post(verifyUserAuth, roleBaseAccess('admin'), createProducts);
 
 router.route('/admin/product/:id')
 .put(verifyUserAuth, roleBaseAccess('admin'), updateProduct)
