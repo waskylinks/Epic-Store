@@ -5,7 +5,6 @@ import axios from "axios";
 export const fetchAdminProducts = createAsyncThunk('admin/fetchAdminProducts', async(_, {rejectWithValue}) => {
     try {
         const {data} = await axios.get('/api/v1/admin/products')
-        console.log(data)
         return data;
 
     } catch (error) {
@@ -14,21 +13,25 @@ export const fetchAdminProducts = createAsyncThunk('admin/fetchAdminProducts', a
 })
 
 //create products
-export const createProduct = createAsyncThunk('admin/createProduct', async(productData, {rejectWithValue}) => {
-    try {
-        const config = {
-            headers: {
-                'Content-Type': 'multipart/form-data'
-            }
+export const createProduct = createAsyncThunk(
+    'admin/createProduct',
+    async (productData, { rejectWithValue }) => {
+        try {
+            // Remove the config object with manual Content-Type
+            const { data } = await axios.post(
+                '/api/v1/admin/products/create',
+                productData
+                // No config needed!
+            );
+            console.log(data);
+            return data;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data || { message: 'Failed to Create Product' }
+            );
         }
-
-        const {data} = await axios.post('/api/v1/admin/product/create', productData, config)
-        return data;
-
-    } catch (error) {
-        return rejectWithValue(error.response?.data ||  'Failed to Create Product')
     }
-})
+);
 
 const adminSlice = createSlice({
     name: 'admin',
@@ -57,6 +60,7 @@ const adminSlice = createSlice({
         .addCase(fetchAdminProducts.fulfilled, (state, action) => {
             state.loading = false;
             state.products = action.payload.products;
+            
         })
 
         .addCase(fetchAdminProducts.rejected, (state, action) => {
