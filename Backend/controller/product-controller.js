@@ -2,7 +2,7 @@ import Product from '../models/product-model.js';
 import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import APIFunctionality from '../utils/apiFunctionality.js';
-import {v2 as cloudinary} from 'cloudinary';
+import { uploadToCloudinary } from '../utils/cloudinaryUpload.js';
 
 //http://localhost:8000/api/v1/product/69189630f8a419d4bf0dd35a?keyword=shirt
 
@@ -10,35 +10,42 @@ import {v2 as cloudinary} from 'cloudinary';
 
 // creating products 
 export const createProducts = handleAsyncError(async (req, res, next) => {
-    let image = [];
-    if(typeof req.body.image === 'string'){
-        image.push(req.body.image);
-    }else{
-        image = req.body.image;
-    }
-
     const imageLinks = [];
 
-    for(let i = 0; i < image.length; i++){
-        const result = await cloudinary.uploader.upload(image[i], {
-            folder: 'products'
-        });
-        imageLinks.push({
-            public_id: result.public_id,
-            url: result.secure_url
-        })
+    // Check if files were uploaded
+    if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+            try {
+                const result = await uploadToCloudinary(file.buffer);
+
+                imageLinks.push({
+                    public_id: result.public_id,
+                    url: result.secure_url,
+                });
+            } catch (uploadError) {
+                return next(new HandleError('Failed to upload image to Cloudinary', 500));
+            }
+        }
     }
 
-    req.body.image = imageLinks;
+    // If no images uploaded, you can either:
+    // - Allow empty array (if your schema allows)
+    // - Or reject if images are required
+    if (imageLinks.length === 0) {
+        return next(new HandleError('Please upload at least one product image', 400));
+    }
 
+    // Attach processed images to req.body
+    req.body.image = imageLinks;
     req.body.user = req.user.id;
 
-    const product = await Product.create(req.body)
+    // Create product in database
+    const product = await Product.create(req.body);
+
     res.status(201).json({
         success: true,
         product,
     });
-    
 });
 
 //get all products
