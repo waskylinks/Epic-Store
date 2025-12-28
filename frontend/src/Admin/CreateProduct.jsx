@@ -100,7 +100,7 @@ function CreateProduct() {
                 autoClose: 3000,
             });
             dispatch(removeSuccess());
-            resetForm(); // Clean reset
+            resetForm(); 
         }
     }, [dispatch, error, success]);
 
