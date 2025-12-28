@@ -87,25 +87,75 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
     
 });
 
-//update products
+// update products
 export const updateProduct = handleAsyncError(async (req, res, next) => {
+    let product = await Product.findById(req.params.id);
 
-        let product = await Product.findById(req.params.id);
+    if (!product) {
+        return next(new HandleError("Product not found", 404));
+    }
 
-        if(!product){
-            return next(new HandleError("Product not found", 404))
+    // Handle image updates
+    let imageLinks = [...product.image]; // Start with existing images
+
+    // 1. Delete selected existing images (if client sends array of public_ids to remove)
+    if (req.body.imagesToDelete) {
+        let imagesToDelete;
+        try {
+            imagesToDelete = JSON.parse(req.body.imagesToDelete); // Expect JSON string array
+        } catch (e) {
+            imagesToDelete = Array.isArray(req.body.imagesToDelete)
+                ? req.body.imagesToDelete
+                : [req.body.imagesToDelete];
         }
 
-        product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-            new: true,
-            runValidators: true,
-            useFindAndModify: false,
-        })
+        // Optionally: Delete from Cloudinary
+        for (const publicId of imagesToDelete) {
+            await cloudinary.uploader.destroy(publicId); // Remove from Cloudinary
+        }
 
-        res.status(200).json({
-            success: true,
-            product,    
-        });
+        // Remove from local array
+        imageLinks = imageLinks.filter(
+            (img) => !imagesToDelete.includes(img.public_id)
+        );
+    }
+
+    // 2. Upload new images (if any)
+    if (req.files && req.files.length > 0) {
+        for (const file of req.files) {
+            try {
+                const result = await uploadToCloudinary(file.buffer);
+
+                imageLinks.push({
+                    public_id: result.public_id,
+                    url: result.secure_url,
+                });
+            } catch (uploadError) {
+                return next(new HandleError('Failed to upload new image to Cloudinary', 500));
+            }
+        }
+    }
+
+    // Optional: Require at least one image (recommended)
+    if (imageLinks.length === 0) {
+        return next(new HandleError('Product must have at least one image', 400));
+    }
+
+    // Attach updated images to req.body
+    req.body.image = imageLinks;
+
+    // Update other fields (name, price, description, etc.) from req.body
+    // Mongoose will merge req.body with existing fields
+    product = await Product.findByIdAndUpdate(req.params.id, req.body, {
+        new: true,
+        runValidators: true,
+        useFindAndModify: false,
+    });
+
+    res.status(200).json({
+        success: true,
+        product,
+    });
 });
 
  //delete products

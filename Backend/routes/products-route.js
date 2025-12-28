@@ -22,7 +22,7 @@ router.route("/admin/products/create")
   .post(verifyUserAuth, roleBaseAccess('admin'), upload.array('image', 10), createProducts); // 10 = max images, adjust as needed
 
 router.route('/admin/product/:id')
-.put(verifyUserAuth, roleBaseAccess('admin'), updateProduct)
+.put(verifyUserAuth, roleBaseAccess('admin'), upload.array('image', 10), updateProduct)
 .delete(verifyUserAuth, roleBaseAccess('admin'),deleteProduct);
 
 
