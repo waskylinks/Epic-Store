@@ -25,6 +25,7 @@ import OrderDetails from './Orders/OrderDetails';
 import AdminDashboard from './Admin/AdminDashboard';
 import ProductList from './Admin/ProductList';
 import CreateProduct from './Admin/CreateProduct';
+import UpdateProduct from './Admin/UpdateProduct';
 
 
 function App() {
@@ -70,6 +71,7 @@ function App() {
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard/>} adminOnly={true}/>}/>
         <Route path='/admin/products' element={<ProtectedRoute element={<ProductList/>} adminOnly={true}/>}/>
         <Route path='/admin/products/create' element={<ProtectedRoute element={<CreateProduct/>} adminOnly={true}/>}/>
+        <Route path='/admin/product/:id' element={<ProtectedRoute element={<UpdateProduct/>} adminOnly={true}/>}/>
 
 
       </Routes>
