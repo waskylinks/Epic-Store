@@ -3,6 +3,7 @@ import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import APIFunctionality from '../utils/apiFunctionality.js';
 import { uploadToCloudinary } from '../utils/cloudinaryUpload.js';
+import { v2 as cloudinary } from 'cloudinary';
 
 //http://localhost:8000/api/v1/product/69189630f8a419d4bf0dd35a?keyword=shirt
 
@@ -102,19 +103,24 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
     if (req.body.imagesToDelete) {
         let imagesToDelete;
         try {
-            imagesToDelete = JSON.parse(req.body.imagesToDelete); // Expect JSON string array
+            imagesToDelete = JSON.parse(req.body.imagesToDelete);
         } catch (e) {
             imagesToDelete = Array.isArray(req.body.imagesToDelete)
                 ? req.body.imagesToDelete
                 : [req.body.imagesToDelete];
         }
 
-        // Optionally: Delete from Cloudinary
+        // SAFELY delete from Cloudinary — ignore errors if image already gone
         for (const publicId of imagesToDelete) {
-            await cloudinary.uploader.destroy(publicId); // Remove from Cloudinary
+            try {
+                await cloudinary.uploader.destroy(publicId, { invalidate: true });
+            } catch (cloudinaryError) {
+                console.warn(`Cloudinary delete failed for ${publicId}:`, cloudinaryError.message);
+                // Continue — don't crash the whole update
+            }
         }
 
-        // Remove from local array
+        // Remove from local array regardless
         imageLinks = imageLinks.filter(
             (img) => !imagesToDelete.includes(img.public_id)
         );
@@ -136,7 +142,7 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
         }
     }
 
-    // Optional: Require at least one image (recommended)
+    // Optional: Require at least one image
     if (imageLinks.length === 0) {
         return next(new HandleError('Product must have at least one image', 400));
     }
@@ -144,8 +150,7 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
     // Attach updated images to req.body
     req.body.image = imageLinks;
 
-    // Update other fields (name, price, description, etc.) from req.body
-    // Mongoose will merge req.body with existing fields
+    // Update the product
     product = await Product.findByIdAndUpdate(req.params.id, req.body, {
         new: true,
         runValidators: true,
