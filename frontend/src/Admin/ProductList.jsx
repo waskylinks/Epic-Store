@@ -12,7 +12,6 @@ import Loader from '../components/Loader'
 
 function ProductList() {
     const {products, loading, error} = useSelector(state => state.admin);
-    console.log('page products', products)
     const dispatch = useDispatch();
     useEffect(() => {
         dispatch(fetchAdminProducts())

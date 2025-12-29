@@ -1,33 +1,50 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
-//fetch all products - admin
-export const fetchAdminProducts = createAsyncThunk('admin/fetchAdminProducts', async(_, {rejectWithValue}) => {
-    try {
-        const {data} = await axios.get('/api/v1/admin/products')
-        return data;
-
-    } catch (error) {
-        return rejectWithValue(error.response?.data ||  'Failed to Fetch Products')
+// Fetch all products - admin
+export const fetchAdminProducts = createAsyncThunk(
+    'admin/fetchAdminProducts',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/products');
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data || 'Failed to Fetch Products');
+        }
     }
-})
+);
 
-//create products
+// Create product
 export const createProduct = createAsyncThunk(
     'admin/createProduct',
     async (productData, { rejectWithValue }) => {
         try {
-            // Remove the config object with manual Content-Type
             const { data } = await axios.post(
                 '/api/v1/admin/products/create',
                 productData
-                // No config needed!
             );
-            console.log(data);
             return data;
         } catch (error) {
             return rejectWithValue(
                 error.response?.data || { message: 'Failed to Create Product' }
+            );
+        }
+    }
+);
+
+// Update product - NEW
+export const updateProduct = createAsyncThunk(
+    'admin/updateProduct',
+    async ({ id, productData }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/product/${id}`,
+                productData
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data || { message: 'Failed to Update Product' }
             );
         }
     }
@@ -51,43 +68,58 @@ const adminSlice = createSlice({
     },
     extraReducers: (builder) => {
         builder
-        .addCase(fetchAdminProducts.pending, (state) => {
-            state.loading = true;
-            state.error = null;
+            // Fetch Admin Products
+            .addCase(fetchAdminProducts.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAdminProducts.fulfilled, (state, action) => {
+                state.loading = false;
+                state.products = action.payload.products;
+            })
+            .addCase(fetchAdminProducts.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload?.message || 'Failed to Fetch Products';
+            })
 
-        })
+            // Create Product
+            .addCase(createProduct.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(createProduct.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = action.payload.success;
+                state.products.push(action.payload.product);
+            })
+            .addCase(createProduct.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload?.message || 'Failed to Create Product';
+            })
 
-        .addCase(fetchAdminProducts.fulfilled, (state, action) => {
-            state.loading = false;
-            state.products = action.payload.products;
-            
-        })
+            // Update Product - NEW CASES
+            .addCase(updateProduct.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(updateProduct.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = action.payload.success;
 
-        .addCase(fetchAdminProducts.rejected, (state, action) => {
-            state.loading = false;
-            state.error = action.payload?.message || 'Failed to Fetch Products'
-        })
-
-        //create product cases
-        builder
-        .addCase(createProduct.pending, (state) => {
-            state.loading = true;
-            state.error = null;
-
-        })
-
-        .addCase(createProduct.fulfilled, (state, action) => {
-            state.loading = false;
-            state.success = action.payload.success;
-            state.products.push(action.payload.product);
-        })
-
-        .addCase(createProduct.rejected, (state, action) => {
-            state.loading = false;
-            state.error = action.payload?.message || 'Failed to Create Product'
-        })
+                // Update the product in the products array
+                const index = state.products.findIndex(
+                    (product) => product._id === action.payload.product._id
+                );
+                if (index !== -1) {
+                    state.products[index] = action.payload.product;
+                }
+            })
+            .addCase(updateProduct.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload?.message || 'Failed to Update Product';
+            });
     }
-})
+});
 
-export const {removeErrors, removeSuccess} = adminSlice.actions;
+export const { removeErrors, removeSuccess } = adminSlice.actions;
 export default adminSlice.reducer;

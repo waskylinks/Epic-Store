@@ -16,10 +16,10 @@ function CreateProduct() {
     const [description, setDescription] = useState('');
     const [stock, setStock] = useState('');
     const [category, setCategory] = useState('');
-    const [image, setImage] = useState([]);
-    const [imagePreview, setImagePreview] = useState([]);
+    const [image, setImage] = useState([]);           // actual File objects
+    const [imagePreview, setImagePreview] = useState([]); // data URLs for preview
 
-    const fileInputRef = useRef(null); // To clear file input
+    const fileInputRef = useRef(null);
 
     const categories = ['Trousers', 'Shirts', 'Shoes', 'Jackets'];
 
@@ -31,15 +31,12 @@ function CreateProduct() {
         setCategory('');
         setImage([]);
         setImagePreview([]);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = ''; // Clear file input
-        }
+        if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
     const createProductSubmit = (e) => {
         e.preventDefault();
 
-        // Optional: Basic validation
         if (!category) {
             toast.error('Please select a category');
             return;
@@ -56,51 +53,46 @@ function CreateProduct() {
         myForm.append('category', category);
         myForm.append('stock', stock);
 
-        image.forEach((img) => {
-            myForm.append('image', img);
-        });
+        image.forEach((img) => myForm.append('image', img));
 
         dispatch(createProduct(myForm));
     };
 
     const createProductImage = (e) => {
         const files = Array.from(e.target.files);
-
         if (files.length === 0) return;
 
+        // Reset previous selection
         setImage([]);
         setImagePreview([]);
 
         files.forEach((file) => {
             const reader = new FileReader();
-
             reader.onload = () => {
                 if (reader.readyState === 2) {
                     setImagePreview((old) => [...old, reader.result]);
                     setImage((old) => [...old, file]);
                 }
             };
-
             reader.readAsDataURL(file);
         });
     };
 
+    // Remove specific image from selection
+    const removeImage = (index) => {
+        setImage((old) => old.filter((_, i) => i !== index));
+        setImagePreview((old) => old.filter((_, i) => i !== index));
+    };
+
     useEffect(() => {
         if (error) {
-            toast.error(error.message || error, {
-                position: 'top-center',
-                autoClose: 3000,
-            });
+            toast.error(error.message || error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
         }
-
         if (success) {
-            toast.success('Product created successfully!', {
-                position: 'top-center',
-                autoClose: 3000,
-            });
+            toast.success('Product created successfully!', { position: 'top-center', autoClose: 3000 });
             dispatch(removeSuccess());
-            resetForm(); 
+            resetForm();
         }
     }, [dispatch, error, success]);
 
@@ -112,68 +104,27 @@ function CreateProduct() {
             <div className="create-product-container">
                 <h1 className="form-title">Create Product</h1>
 
-                <form
-                    className="product-form"
-                    encType="multipart/form-data"
-                    onSubmit={createProductSubmit}
-                >
-                    <input
-                        type="text"
-                        className="form-input"
-                        placeholder="Enter Product Name"
-                        required
-                        value={name}
-                        onChange={(e) => setName(e.target.value)}
-                    />
+                <form className="product-form" encType="multipart/form-data" onSubmit={createProductSubmit}>
+                    <input type="text" className="form-input" placeholder="Enter Product Name" required value={name} onChange={(e) => setName(e.target.value)} />
 
-                    <input
-                        type="number"
-                        className="form-input"
-                        placeholder="Enter Product Price"
-                        required
-                        min="0"
-                        value={price}
-                        onChange={(e) => setPrice(e.target.value)}
-                    />
+                    <input type="number" className="form-input" placeholder="Enter Product Price" required min="0" value={price} onChange={(e) => setPrice(e.target.value)} />
 
-                    <textarea
-                        className="form-input"
-                        placeholder="Enter Product Description"
-                        required
-                        rows="4"
-                        value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                    />
+                    <textarea className="form-input" placeholder="Enter Product Description" required rows="4" value={description} onChange={(e) => setDescription(e.target.value)} />
 
-                    <select
-                        className="form-select"
-                        value={category}
-                        onChange={(e) => setCategory(e.target.value)}
-                        required
-                    >
+                    <select className="form-select" value={category} onChange={(e) => setCategory(e.target.value)} required>
                         <option value="">Choose Category</option>
                         {categories.map((item) => (
-                            <option key={item} value={item}>
-                                {item}
-                            </option>
+                            <option key={item} value={item}>{item}</option>
                         ))}
                     </select>
 
-                    <input
-                        type="number"
-                        className="form-input"
-                        placeholder="Enter Product Stock"
-                        required
-                        min="0"
-                        value={stock}
-                        onChange={(e) => setStock(e.target.value)}
-                    />
+                    <input type="number" className="form-input" placeholder="Enter Product Stock" required min="0" value={stock} onChange={(e) => setStock(e.target.value)} />
 
                     <div className="file-input-container">
                         <input
                             type="file"
                             className="form-input-file"
-                            accept="image/*" // Fixed: was 'image/'
+                            accept="image/*"
                             multiple
                             ref={fileInputRef}
                             onChange={createProductImage}
@@ -182,20 +133,20 @@ function CreateProduct() {
 
                     <div className="image-preview-container">
                         {imagePreview.map((img, index) => (
-                            <img
-                                src={img}
-                                alt={`Preview ${index + 1}`}
-                                className="image-preview"
-                                key={index}
-                            />
+                            <div key={index} className="image-preview-wrapper">
+                                <img src={img} alt={`Preview ${index + 1}`} className="image-preview" />
+                                <button
+                                    type="button"
+                                    className="remove-image-btn"
+                                    onClick={() => removeImage(index)}
+                                >
+                                    ×
+                                </button>
+                            </div>
                         ))}
                     </div>
 
-                    <button
-                        type="submit"
-                        className="submit-btn"
-                        disabled={loading}
-                    >
+                    <button type="submit" className="submit-btn" disabled={loading}>
                         {loading ? 'Creating Product...' : 'Create Product'}
                     </button>
                 </form>
