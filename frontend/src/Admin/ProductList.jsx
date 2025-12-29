@@ -27,12 +27,8 @@ function ProductList() {
     if(!products || products.length === 0) {
         return (
             <div className="product-list-container">
-                <h1 className="product-list-title">
-                    Admin Products
-                </h1>
-                <p className="no-admin-product">
-                    No Products Found
-                </p>
+                <Loader type='classic'/>
+                <h2>No Products Found</h2>
             </div>
         )
     }
