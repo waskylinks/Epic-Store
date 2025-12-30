@@ -163,21 +163,33 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
     });
 });
 
- //delete products
+ // delete products
 export const deleteProduct = handleAsyncError(async (req, res, next) => {
+    const product = await Product.findById(req.params.id);
 
-        let product = await Product.findById(req.params.id);
+    if (!product) {
+        return next(new HandleError("Product not found", 404));
+    }
 
-        if(!product){
-            return next(new HandleError("Product not found", 404))
+    // Delete images from Cloudinary (best practice)
+    if (product.image && product.image.length > 0) {
+        for (const img of product.image) {
+            try {
+                await cloudinary.uploader.destroy(img.public_id, { invalidate: true });
+            } catch (error) {
+                console.warn(`Failed to delete Cloudinary image: ${img.public_id}`, error.message);
+                // Continue even if one fails — don't block deletion
+            }
         }
+    }
 
-        product = await Product.findByIdAndDelete(req.params.id)
+    // Now delete the product from database
+    await Product.findByIdAndDelete(req.params.id);
 
-        res.status(200).json({
-            success: true,
-            message: 'Product deleted successfully'   
-        });
+    res.status(200).json({
+        success: true,
+        message: 'Product deleted successfully'
+    });
 });
 
  // get single product details
