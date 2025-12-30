@@ -32,7 +32,7 @@ export const createProduct = createAsyncThunk(
     }
 );
 
-// Update product - NEW
+// Update product
 export const updateProduct = createAsyncThunk(
     'admin/updateProduct',
     async ({ id, productData }, { rejectWithValue }) => {
@@ -45,6 +45,21 @@ export const updateProduct = createAsyncThunk(
         } catch (error) {
             return rejectWithValue(
                 error.response?.data || { message: 'Failed to Update Product' }
+            );
+        }
+    }
+);
+
+// Delete product - NEW
+export const deleteProduct = createAsyncThunk(
+    'admin/deleteProduct',
+    async (id, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.delete(`/api/v1/admin/product/${id}`);
+            return { id, message: data.message };
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to Delete Product'
             );
         }
     }
@@ -97,7 +112,7 @@ const adminSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to Create Product';
             })
 
-            // Update Product - NEW CASES
+            // Update Product
             .addCase(updateProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -106,7 +121,6 @@ const adminSlice = createSlice({
                 state.loading = false;
                 state.success = action.payload.success;
 
-                // Update the product in the products array
                 const index = state.products.findIndex(
                     (product) => product._id === action.payload.product._id
                 );
@@ -117,6 +131,24 @@ const adminSlice = createSlice({
             .addCase(updateProduct.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload?.message || 'Failed to Update Product';
+            })
+
+            // Delete Product - NEW
+            .addCase(deleteProduct.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(deleteProduct.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+
+                state.products = state.products.filter(
+                    (product) => product._id !== action.payload.id
+                );
+            })
+            .addCase(deleteProduct.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload || 'Failed to Delete Product';
             });
     }
 });
