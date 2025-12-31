@@ -50,7 +50,7 @@ export const updateProduct = createAsyncThunk(
     }
 );
 
-// Delete product - NEW
+// Delete product
 export const deleteProduct = createAsyncThunk(
     'admin/deleteProduct',
     async (id, { rejectWithValue }) => {
@@ -65,10 +65,77 @@ export const deleteProduct = createAsyncThunk(
     }
 );
 
+// === USER MANAGEMENT ===
+
+// Fetch all users - admin
+export const fetchAllUsers = createAsyncThunk(
+    'admin/fetchAllUsers',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/users');
+            return data;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to fetch users'
+            );
+        }
+    }
+);
+
+// Get single user - admin
+export const getSingleUser = createAsyncThunk(
+    'admin/getSingleUser',
+    async (id, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/admin/user/${id}`);
+            return data.user;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to fetch user'
+            );
+        }
+    }
+);
+
+// Update user role - admin
+export const updateUserRole = createAsyncThunk(
+    'admin/updateUserRole',
+    async ({ id, role }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/user/${id}`,
+                { role }
+            );
+            return data.user;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to update user role'
+            );
+        }
+    }
+);
+
+// Delete user - admin
+export const deleteUser = createAsyncThunk(
+    'admin/deleteUser',
+    async (id, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.delete(`/api/v1/admin/user/${id}`);
+            return { id, message: data.message };
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to delete user'
+            );
+        }
+    }
+);
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
         products: [],
+        users: [],                    // ← For all users list
+        currentUser: null,            // ← For single user details (optional)
         success: false,
         loading: false,
         error: null
@@ -79,11 +146,14 @@ const adminSlice = createSlice({
         },
         removeSuccess: (state) => {
             state.success = false;
+        },
+        clearCurrentUser: (state) => {
+            state.currentUser = null;
         }
     },
     extraReducers: (builder) => {
         builder
-            // Fetch Admin Products
+            // Products
             .addCase(fetchAdminProducts.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -97,7 +167,6 @@ const adminSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to Fetch Products';
             })
 
-            // Create Product
             .addCase(createProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -112,7 +181,6 @@ const adminSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to Create Product';
             })
 
-            // Update Product
             .addCase(updateProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -120,20 +188,14 @@ const adminSlice = createSlice({
             .addCase(updateProduct.fulfilled, (state, action) => {
                 state.loading = false;
                 state.success = action.payload.success;
-
-                const index = state.products.findIndex(
-                    (product) => product._id === action.payload.product._id
-                );
-                if (index !== -1) {
-                    state.products[index] = action.payload.product;
-                }
+                const index = state.products.findIndex(p => p._id === action.payload.product._id);
+                if (index !== -1) state.products[index] = action.payload.product;
             })
             .addCase(updateProduct.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload?.message || 'Failed to Update Product';
             })
 
-            // Delete Product - NEW
             .addCase(deleteProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -141,17 +203,75 @@ const adminSlice = createSlice({
             .addCase(deleteProduct.fulfilled, (state, action) => {
                 state.loading = false;
                 state.success = true;
-
-                state.products = state.products.filter(
-                    (product) => product._id !== action.payload.id
-                );
+                state.products = state.products.filter(p => p._id !== action.payload.id);
             })
             .addCase(deleteProduct.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload || 'Failed to Delete Product';
+            })
+
+            // Users
+            .addCase(fetchAllUsers.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAllUsers.fulfilled, (state, action) => {
+                state.loading = false;
+                state.users = action.payload.users;
+            })
+            .addCase(fetchAllUsers.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(getSingleUser.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getSingleUser.fulfilled, (state, action) => {
+                state.loading = false;
+                state.currentUser = action.payload;
+            })
+            .addCase(getSingleUser.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(updateUserRole.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(updateUserRole.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                // Update in users list
+                const index = state.users.findIndex(u => u._id === action.payload._id);
+                if (index !== -1) state.users[index] = action.payload;
+                // Update currentUser if viewing
+                if (state.currentUser?._id === action.payload._id) {
+                    state.currentUser = action.payload;
+                }
+            })
+            .addCase(updateUserRole.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(deleteUser.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(deleteUser.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                state.users = state.users.filter(u => u._id !== action.payload.id);
+            })
+            .addCase(deleteUser.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
             });
     }
 });
 
-export const { removeErrors, removeSuccess } = adminSlice.actions;
+export const { removeErrors, removeSuccess, clearCurrentUser } = adminSlice.actions;
 export default adminSlice.reducer;
