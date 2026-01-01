@@ -146,6 +146,38 @@ export const fetchAdminStats = createAsyncThunk(
     }
 );
 
+// Fetch all orders - admin
+export const fetchAllOrders = createAsyncThunk(
+    'admin/fetchAllOrders',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/orders');
+            return data.orders;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to fetch orders'
+            );
+        }
+    }
+);
+
+// Get single order - admin
+export const getSingleOrder = createAsyncThunk(
+    'admin/getSingleOrder',
+    async (id, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/admin/order/${id}`);
+            return data.order;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to fetch order'
+            );
+        }
+    }
+);
+
+
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
