@@ -176,7 +176,23 @@ export const getSingleOrder = createAsyncThunk(
     }
 );
 
-
+// Update order status - admin
+export const updateOrder = createAsyncThunk(
+    'admin/updateOrder',
+    async ({ id, status }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/order/${id}`,
+                { status }
+            );
+            return data.order;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to update order'
+            );
+        }
+    }
+);
 
 const adminSlice = createSlice({
     name: 'admin',
