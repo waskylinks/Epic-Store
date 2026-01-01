@@ -241,26 +241,40 @@ export const getSingleUser = handleAsyncError(async(req, res, next) => {
 
 });
 
-//admin- changing user role
-export const updateUserRole = handleAsyncError(async(req, res, next) => {
-    const {role} = req.body;
-    const newUserData = {
-        role,
+// admin- changing user role
+export const updateUserRole = handleAsyncError(async (req, res, next) => {
+    const { role } = req.body;
+    const targetUserId = req.params.id;
 
+    // Prevent changing role if it would remove the last admin
+    if (role === 'user') {
+        const adminCount = await User.countDocuments({ role: 'admin' });
+        const targetUser = await User.findById(targetUserId);
+
+        if (!targetUser) {
+            return next(new HandleError("User not found", 404));
+        }
+
+        // If this user is an admin AND there is only 1 admin → block downgrade
+        if (targetUser.role === 'admin' && adminCount === 1) {
+            return next(new HandleError("Cannot downgrade the last admin", 403));
+        }
     }
-    const user = await User.findByIdAndUpdate(req.params.id, newUserData, {
-        new: true,
-        runValidators: true
-    })
 
-    if(!user) {
-        return next(new HandleError(`Invalid user`, 400))
+    const updatedUser = await User.findByIdAndUpdate(
+        targetUserId,
+        { role },
+        { new: true, runValidators: true }
+    );
+
+    if (!updatedUser) {
+        return next(new HandleError("User not found", 404));
     }
 
     res.status(200).json({
         success: true,
-        user
-    })
+        user: updatedUser
+    });
 });
 
 // admin- delete user profile
