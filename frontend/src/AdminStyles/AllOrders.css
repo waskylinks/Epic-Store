@@ -440,3 +440,40 @@
     padding: 6px;
   }
 }
+
+/* Delete Button in Actions */
+.action-btn.delete {
+  background: #ffebee;
+  color: #d32f2f;
+}
+
+.action-btn.delete:hover {
+  background: #ffcdd2;
+}
+
+/* Delete Confirmation Modal */
+.delete-modal {
+  background: white;
+  padding: 30px;
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  text-align: center;
+  box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+}
+
+.order-info {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 10px;
+  margin: 20px 0;
+}
+
+.confirm-btn {
+  background: #d32f2f;
+  color: white;
+}
+
+.confirm-btn:hover:not(:disabled) {
+  background: #b71c1c;
+}
