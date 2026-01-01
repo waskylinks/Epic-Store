@@ -194,6 +194,21 @@ export const updateOrder = createAsyncThunk(
     }
 );
 
+// Delete order - admin
+export const deleteOrder = createAsyncThunk(
+    'admin/deleteOrder',
+    async (id, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.delete(`/api/v1/admin/order/${id}`);
+            return { id, message: data.message };
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to delete order'
+            );
+        }
+    }
+);
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
@@ -207,7 +222,9 @@ const adminSlice = createSlice({
             outOfStock: 0,
             inStock: 0
         },     
-        currentUser: null,          
+        currentUser: null, 
+        orders: [],  
+        currentOrder: null,         
         success: false,
         loading: false,
         error: null
@@ -221,6 +238,9 @@ const adminSlice = createSlice({
         },
         clearCurrentUser: (state) => {
             state.currentUser = null;
+        },
+        clearCurrentOrder: (state) => {
+            state.currentOrder = null;
         }
     },
     extraReducers: (builder) => {
@@ -355,9 +375,73 @@ const adminSlice = createSlice({
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
+
+            // Fetch All Orders
+            .addCase(fetchAllOrders.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAllOrders.fulfilled, (state, action) => {
+                state.loading = false;
+                state.orders = action.payload;
+            })
+            .addCase(fetchAllOrders.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            // Get Single Order
+            .addCase(getSingleOrder.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getSingleOrder.fulfilled, (state, action) => {
+                state.loading = false;
+                state.currentOrder = action.payload;
+            })
+            .addCase(getSingleOrder.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            // Update Order
+            .addCase(updateOrder.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(updateOrder.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                // Update in orders list
+                const index = state.orders.findIndex(o => o._id === action.payload._id);
+                if (index !== -1) state.orders[index] = action.payload;
+                // Update currentOrder if viewing
+                if (state.currentOrder?._id === action.payload._id) {
+                    state.currentOrder = action.payload;
+                }
+            })
+            .addCase(updateOrder.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+                        // Delete Order
+            .addCase(deleteOrder.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(deleteOrder.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                state.orders = state.orders.filter(o => o._id !== action.payload.id);
+            })
+            .addCase(deleteOrder.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
     }
 });
 
-export const { removeErrors, removeSuccess, clearCurrentUser } = adminSlice.actions;
+export const { removeErrors, removeSuccess, clearCurrentUser, clearCurrentOrder } = adminSlice.actions;
 export default adminSlice.reducer;
