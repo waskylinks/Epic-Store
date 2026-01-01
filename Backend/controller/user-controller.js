@@ -3,6 +3,8 @@ import User from "../models/userModel.js";
 import HandleError from "../utils/handleError.js";
 import { sendToken } from "../utils/jwtToken.js";
 import { sendEmail } from "../utils/sendEmail.js";
+import Product from '../models/product-model.js';
+import Order from '../models/order-model.js';
 import crypto from "crypto";
 import {v2 as cloudinary} from 'cloudinary';
 
@@ -290,4 +292,35 @@ export const deleteUser = handleAsyncError(async(req, res, next) => {
         message: `User with ID: ${req.params.id} was deleted successfully`
     });
 
+});
+
+// admin - get dashboard stats
+export const getAdminStats = handleAsyncError(async (req, res, next) => {
+    try {
+        const products = await Product.countDocuments();
+        const users = await User.countDocuments();
+
+        // If you have an Order model
+        const orders = await Order.countDocuments();
+        const orderList = await Order.find().populate('orderItems.product');
+        const revenue = orderList.reduce((acc, order) => acc + order.totalPrice, 0);
+
+        const outOfStock = await Product.countDocuments({ stock: { $lte: 0 } });
+        const lowStock = await Product.countDocuments({ stock: { $gt: 0, $lte: 10 } }); // optional
+        const inStock = await Product.countDocuments({ stock: { $gt: 0 } });
+
+        res.status(200).json({
+            success: true,
+            products,
+            orders: orders || 0,
+            revenue: revenue || 0,
+            users,
+            outOfStock,
+            lowStock: lowStock || 0,
+            inStock
+        });
+    } catch (error) {
+        console.error("Stats error:", error);
+        return next(new HandleError("Failed to load dashboard stats", 500));
+    }
 });
