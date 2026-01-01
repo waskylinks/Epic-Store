@@ -108,13 +108,13 @@ function ProductList() {
                                         <td>
                                             <Link 
                                                 to={`/admin/product/${product._id}`}
-                                                className='action-icon-edit'
+                                                className='edit-icon'
                                             >
                                                 <Edit />
                                             </Link>
                                             <button
                                                 onClick={() => openDeleteModal(product)}
-                                                className='action-icon-delete'
+                                                className='delete-icon'
                                             >
                                                 <Delete />
                                             </button>

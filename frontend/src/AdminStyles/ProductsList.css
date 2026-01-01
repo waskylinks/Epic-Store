@@ -69,7 +69,9 @@
   .delete-icon {
     color: #f7364a;
     border:none;
+    cursor: pointer;
     background-color: transparent;
+    padding-left: 4px;
   }
   
   .delete-icon:hover {
