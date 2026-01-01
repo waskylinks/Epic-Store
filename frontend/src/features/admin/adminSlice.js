@@ -130,12 +130,36 @@ export const deleteUser = createAsyncThunk(
     }
 );
 
+// Fetch Admin Dashboard Stats ===
+export const fetchAdminStats = createAsyncThunk(
+    'admin/fetchAdminStats',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/stats');
+            console.log(data, 'stats')
+            return data; // Expected: { products, orders, revenue, users, outOfStock, inStock }
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to fetch dashboard stats'
+            );
+        }
+    }
+);
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
         products: [],
-        users: [],                    // ← For all users list
-        currentUser: null,            // ← For single user details (optional)
+        users: [],  
+        stats: {              
+            products: 0,
+            orders: 0,
+            revenue: 0,
+            users: 0,
+            outOfStock: 0,
+            inStock: 0
+        },     
+        currentUser: null,          
         success: false,
         loading: false,
         error: null
@@ -267,6 +291,20 @@ const adminSlice = createSlice({
                 state.users = state.users.filter(u => u._id !== action.payload.id);
             })
             .addCase(deleteUser.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            // === NEW: Admin Stats ===
+            .addCase(fetchAdminStats.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAdminStats.fulfilled, (state, action) => {
+                state.loading = false;
+                state.stats = action.payload; // { products, orders, revenue, users, outOfStock, inStock }
+            })
+            .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             });
