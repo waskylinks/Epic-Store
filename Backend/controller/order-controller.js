@@ -84,13 +84,30 @@ export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("This order has already been delivered", 400));
     }
 
-    // Validate status
-    const validStatuses = ['Processing', 'Shipped', 'Delivered'];
+    // Allow Cancelled + other statuses
+    const validStatuses = ['Processing', 'Shipped', 'Delivered', 'Cancelled'];
     if (!req.body.status || !validStatuses.includes(req.body.status)) {
         return next(new HandleError('Invalid order status', 400));
     }
 
-    // Update stock only when moving to "Delivered"
+    // Restore stock if cancelling
+    if (req.body.status === 'Cancelled') {
+        try {
+            await Promise.all(
+                order.orderItems.map(async (item) => {
+                    const product = await Product.findById(item.product);
+                    if (product) {
+                        product.stock += item.quantity;
+                        await product.save({ validateBeforeSave: false });
+                    }
+                })
+            );
+        } catch (error) {
+            return next(error);
+        }
+    }
+
+    // Deduct stock only on delivery
     if (req.body.status === 'Delivered') {
         try {
             await Promise.all(
@@ -98,15 +115,13 @@ export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
                     await updateQuantity(item.product.toString(), item.quantity);
                 })
             );
+            order.deliveredAt = Date.now();
         } catch (error) {
-            return next(error); // Will catch stock errors
+            return next(error);
         }
-
-        order.deliveredAt = Date.now();
     }
 
     order.orderStatus = req.body.status;
-
     await order.save({ validateBeforeSave: false });
 
     res.status(200).json({
