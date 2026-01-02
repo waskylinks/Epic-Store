@@ -67,7 +67,7 @@ const orderSchema = new mongoose.Schema(
 
     //------------------------------------------------------------------
     // ORDER LIFECYCLE
-    //------------------------------------------------------------------
+    
     orderStatus: {
       type: String,
       enum: ["Processing", "Shipped", "Delivered", "Cancelled"],

@@ -56,16 +56,14 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
 
 })
 
-//admin- getting all orders placed by users
+// admin- getting all orders placed by users
 export const getAllOrders = handleAsyncError(async (req, res, next) => {
-    const orders = await Order.find();
+    const orders = await Order.find().populate('user', 'name email');
 
     let totalAmount = 0;
     orders.forEach(order => {
-        totalAmount += order.totalPrice
-    })
-
-
+        totalAmount += order.totalPrice;
+    });
 
     res.status(200).json({
         success: true,
