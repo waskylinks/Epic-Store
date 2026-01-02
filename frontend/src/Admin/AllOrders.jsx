@@ -193,6 +193,7 @@ function AllOrders() {
                             <option value="Processing">Processing</option>
                             <option value="Shipped">Shipped</option>
                             <option value="Delivered">Delivered</option>
+                            <option value="Cancelled">Cancelled</option>
                         </select>
                         <div className="modal-buttons">
                             <button onClick={() => setUpdateModal({ open: false })} className="cancel-btn" disabled={updateModal.loading}>

@@ -209,6 +209,21 @@ export const deleteOrder = createAsyncThunk(
     }
 );
 
+// Cancel order - admin
+export const cancelOrder = createAsyncThunk(
+    'admin/cancelOrder',
+    async (id, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(`/api/v1/admin/order/${id}`, { status: 'Cancelled' });
+            return data.order;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to cancel order'
+            );
+        }
+    }
+);
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
@@ -259,6 +274,7 @@ const adminSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to Fetch Products';
             })
 
+            //create product
             .addCase(createProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -273,6 +289,7 @@ const adminSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to Create Product';
             })
 
+            //update product
             .addCase(updateProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -288,6 +305,7 @@ const adminSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to Update Product';
             })
 
+            //delete product
             .addCase(deleteProduct.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -302,7 +320,7 @@ const adminSlice = createSlice({
                 state.error = action.payload || 'Failed to Delete Product';
             })
 
-            // Users
+            // fetch all Users
             .addCase(fetchAllUsers.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -316,6 +334,7 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
+            //get single user
             .addCase(getSingleUser.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -329,6 +348,7 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
+            //update user role
             .addCase(updateUserRole.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -349,6 +369,7 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
+            //delete user 
             .addCase(deleteUser.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -363,14 +384,14 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
-            // === NEW: Admin Stats ===
+            // Admin Stats 
             .addCase(fetchAdminStats.pending, (state) => {
                 state.loading = true;
                 state.error = null;
             })
             .addCase(fetchAdminStats.fulfilled, (state, action) => {
                 state.loading = false;
-                state.stats = action.payload; // { products, orders, revenue, users, outOfStock, inStock }
+                state.stats = action.payload; 
             })
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;
@@ -426,7 +447,7 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
-                        // Delete Order
+            // Delete Order
             .addCase(deleteOrder.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -437,6 +458,27 @@ const adminSlice = createSlice({
                 state.orders = state.orders.filter(o => o._id !== action.payload.id);
             })
             .addCase(deleteOrder.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            //cancel order
+            .addCase(updateOrder.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(updateOrder.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                // Update in orders list
+                const index = state.orders.findIndex(o => o._id === action.payload._id);
+                if (index !== -1) state.orders[index] = action.payload;
+                // Update currentOrder if viewing
+                if (state.currentOrder?._id === action.payload._id) {
+                    state.currentOrder = action.payload;
+                }
+            })
+            .addCase(updateOrder.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             })
