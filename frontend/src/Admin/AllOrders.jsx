@@ -14,9 +14,7 @@ function AllOrders() {
     const { orders, loading, error, success } = useSelector(state => state.admin);
 
     const [searchTerm, setSearchTerm] = useState('');
-    const [deleteModal, setDeleteModal] = useState({ open: false, order: null, loading: false });
-    const [updateModal, setUpdateModal] = useState({ open: false, order: null, loading: false });
-    const [viewModal, setViewModal] = useState({ open: false, order: null });
+    const [modal, setModal] = useState({ type: '', open: false, order: null, loading: false });
 
     useEffect(() => {
         dispatch(fetchAllOrders());
@@ -26,39 +24,50 @@ function AllOrders() {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
-            setDeleteModal(prev => ({ ...prev, loading: false }));
-            setUpdateModal(prev => ({ ...prev, loading: false }));
+            setModal(prev => ({ ...prev, loading: false }));
         }
         if (success) {
             toast.success('Action completed successfully!', { position: 'top-center', autoClose: 3000 });
             dispatch(removeSuccess());
-            setDeleteModal({ open: false, order: null, loading: false });
-            setUpdateModal({ open: false, order: null, loading: false });
+            setModal({ type: '', open: false, order: null, loading: false });
         }
     }, [error, success, dispatch]);
 
+    // Enhanced search: Order ID, User Name, Email, Status
     const filteredOrders = useMemo(() => {
-        if (!searchTerm) return orders;
+        if (!searchTerm.trim()) return orders;
+
         const lower = searchTerm.toLowerCase();
         return orders.filter(order =>
             order._id.toLowerCase().includes(lower) ||
-            order.user.name.toLowerCase().includes(lower)
+            order.user?.name?.toLowerCase().includes(lower) ||
+            order.user?.email?.toLowerCase().includes(lower) ||
+            order.orderStatus.toLowerCase().includes(lower)
         );
     }, [orders, searchTerm]);
 
-    const processingOrders = orders.filter(o => o.orderStatus === 'Processing');
+    // Sort: Processing orders first, then by date descending
+    const sortedOrders = useMemo(() => {
+        return [...filteredOrders].sort((a, b) => {
+            if (a.orderStatus === 'Processing' && b.orderStatus !== 'Processing') return -1;
+            if (a.orderStatus !== 'Processing' && b.orderStatus === 'Processing') return 1;
+            return new Date(b.createdAt) - new Date(a.createdAt);
+        });
+    }, [filteredOrders]);
 
-    const handleUpdateStatus = (status) => {
-        if (updateModal.order) {
-            setUpdateModal(prev => ({ ...prev, loading: true }));
-            dispatch(updateOrder({ id: updateModal.order._id, status }));
-        }
+    const handleAction = (type, order) => {
+        setModal({ type, open: true, order, loading: false });
     };
 
-    const handleDelete = () => {
-        if (deleteModal.order) {
-            setDeleteModal(prev => ({ ...prev, loading: true }));
-            dispatch(deleteOrder(deleteModal.order._id));
+    const executeAction = () => {
+        if (!modal.order) return;
+        setModal(prev => ({ ...prev, loading: true }));
+
+        if (modal.type === 'update') {
+            const status = document.getElementById('status-select').value;
+            dispatch(updateOrder({ id: modal.order._id, status }));
+        } else if (modal.type === 'delete') {
+            dispatch(deleteOrder(modal.order._id));
         }
     };
 
@@ -72,163 +81,208 @@ function AllOrders() {
             <div className="all-orders-container">
                 <h1 className="all-orders-title">All Orders ({orders.length})</h1>
 
-                {/* Processing Orders Highlight */}
-                {processingOrders.length > 0 && (
-                    <div className="processing-section">
-                        <h2>Processing Orders ({processingOrders.length})</h2>
-                        <div className="processing-grid">
-                            {processingOrders.map(order => (
-                                <div key={order._id} className="processing-card">
-                                    <p><strong>Order ID:</strong> #{order._id.slice(-6)}</p>
-                                    <p><strong>User:</strong> {order.user.name}</p>
-                                    <p><strong>Total:</strong> ${order.totalPrice}</p>
-                                    <p><strong>Date:</strong> {new Date(order.createdAt).toLocaleDateString()}</p>
-                                    <div className="card-actions">
-                                        <button onClick={() => setViewModal({ open: true, order })} className="view-btn">
-                                            <Visibility fontSize="small" /> View
-                                        </button>
-                                        <button onClick={() => setUpdateModal({ open: true, order })} className="update-btn">
-                                            Update Status
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                {/* Search */}
+                {/* Search Bar */}
                 <div className="search-bar">
                     <input
                         type="text"
-                        placeholder="Search by Order ID or User Name..."
+                        placeholder="Search by Order ID, Name, Email, or Status..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         className="search-input"
                     />
                 </div>
 
-                {/* Orders Table */}
-                <div className="table-container">
-                    <table className="orders-table">
-                        <thead>
-                            <tr>
-                                <th>Order ID</th>
-                                <th>User</th>
-                                <th>Items</th>
-                                <th>Amount</th>
-                                <th>Status</th>
-                                <th>Date</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filteredOrders.map(order => (
-                                <tr key={order._id}>
-                                    <td>#{order._id.slice(-6)}</td>
-                                    <td>{order.user.name}</td>
-                                    <td>{order.orderItems.length}</td>
-                                    <td>${order.totalPrice}</td>
-                                    <td>
-                                        <span className={`status-badge ${order.orderStatus.toLowerCase()}`}>
-                                            {order.orderStatus}
-                                        </span>
-                                    </td>
-                                    <td>{new Date(order.createdAt).toLocaleDateString()}</td>
-                                    <td className="actions">
-                                        <button onClick={() => setViewModal({ open: true, order })} className="action-btn view">
-                                            <Visibility fontSize="small" />
-                                        </button>
-                                        <button onClick={() => setUpdateModal({ open: true, order })} className="action-btn update">
-                                            <Edit fontSize="small" />
-                                        </button>
-                                        <button onClick={() => setDeleteModal({ open: true, order })} className="action-btn delete">
-                                            <Delete fontSize="small" />
-                                        </button>
-                                    </td>
+                {/* Single Unified Table with Processing at Top */}
+                <div className="table-section">
+                    <div className="table-container">
+                        <table className="orders-table">
+                            <thead>
+                                <tr>
+                                    <th>Order ID</th>
+                                    <th>Customer</th>
+                                    <th>Items</th>
+                                    <th>Amount</th>
+                                    <th>Status</th>
+                                    <th>Date & Time</th>
+                                    <th>Actions</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {sortedOrders.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="7" className="no-results">
+                                            No orders found matching your search.
+                                        </td>
+                                    </tr>
+                                ) : (
+                                    sortedOrders.map(order => (
+                                        <tr 
+                                            key={order._id} 
+                                            className={order.orderStatus === 'Processing' ? 'processing-row' : ''}
+                                        >
+                                            <td>#{order._id.slice(-8)}</td>
+                                            <td>
+                                                <div>
+                                                    <strong>{order.user?.name || 'N/A'}</strong>
+                                                    <br />
+                                                    <small>{order.user?.email || ''}</small>
+                                                </div>
+                                            </td>
+                                            <td>{order.orderItems.length}</td>
+                                            <td>${order.totalPrice.toFixed(2)}</td>
+                                            <td>
+                                                <span className={`status-badge ${order.orderStatus.toLowerCase()}`}>
+                                                    {order.orderStatus}
+                                                </span>
+                                            </td>
+                                            <td>{new Date(order.createdAt).toLocaleString()}</td>
+                                            <td className="actions">
+                                                <button onClick={() => handleAction('view', order)} className="action-btn view">
+                                                    <Visibility fontSize="small" />
+                                                </button>
+                                                <button onClick={() => handleAction('update', order)} className="action-btn update">
+                                                    <Edit fontSize="small" />
+                                                </button>
+                                                <button onClick={() => handleAction('delete', order)} className="action-btn delete">
+                                                    <Delete fontSize="small" />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 
             <Footer />
 
-            {/* Delete Confirmation Modal */}
-            {deleteModal.open && deleteModal.order && (
-                <div className="modal-overlay" onClick={() => setDeleteModal({ open: false })}>
-                    <div className="delete-modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>Delete Order</h2>
-                        <p>Are you sure you want to permanently delete this order?</p>
-                        <div className="order-info">
-                            <p><strong>ID:</strong> #{deleteModal.order._id.slice(-6)}</p>
-                            <p><strong>User:</strong> {deleteModal.order.user.name}</p>
-                            <p><strong>Total:</strong> ${deleteModal.order.totalPrice}</p>
+            {/* Unified Enterprise Modal */}
+            {modal.open && modal.order && (
+                <div className="modal-overlay" onClick={() => setModal({ type: '', open: false })}>
+                    <div className="enterprise-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2 className="modal-title">
+                                {modal.type === 'view' && 'Order Details'}
+                                {modal.type === 'update' && 'Update Order Status'}
+                                {modal.type === 'delete' && 'Delete Order'}
+                            </h2>
                         </div>
-                        <div className="modal-buttons">
-                            <button onClick={() => setDeleteModal({ open: false })} className="cancel-btn" disabled={deleteModal.loading}>
-                                Cancel
-                            </button>
-                            <button onClick={handleDelete} className="confirm-btn" disabled={deleteModal.loading}>
-                                {deleteModal.loading ? 'Deleting...' : 'Delete Order'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
-            {/* Update Status Modal */}
-            {updateModal.open && updateModal.order && (
-                <div className="modal-overlay" onClick={() => setUpdateModal({ open: false })}>
-                    <div className="update-modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>Update Order Status</h2>
-                        <p>Current: <strong>{updateModal.order.orderStatus}</strong></p>
-                        <select 
-                            value={updateModal.order.orderStatus} 
-                            onChange={(e) => handleUpdateStatus(e.target.value)}
-                            disabled={updateModal.loading}
-                            className="status-select"
-                        >
-                            <option value="Processing">Processing</option>
-                            <option value="Shipped">Shipped</option>
-                            <option value="Delivered">Delivered</option>
-                            <option value="Cancelled">Cancelled</option>
-                        </select>
-                        <div className="modal-buttons">
-                            <button onClick={() => setUpdateModal({ open: false })} className="cancel-btn" disabled={updateModal.loading}>
-                                Cancel
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+                        <div className="modal-body">
+                            {modal.type === 'view' && (
+                                <div className="view-content">
+                                    <div className="info-grid">
+                                        <div>
+                                            <strong>Order ID</strong>
+                                            <p>#{modal.order._id}</p>
+                                        </div>
+                                        <div>
+                                            <strong>Customer</strong>
+                                            <p>{modal.order.user?.name}</p>
+                                            <p>{modal.order.user?.email}</p>
+                                        </div>
+                                        <div>
+                                            <strong>Total</strong>
+                                            <p className="amount">${modal.order.totalPrice.toFixed(2)}</p>
+                                        </div>
+                                        <div>
+                                            <strong>Status</strong>
+                                            <span className={`status-badge ${modal.order.orderStatus.toLowerCase()}`}>
+                                                {modal.order.orderStatus}
+                                            </span>
+                                        </div>
+                                    </div>
 
-            {/* View Order Modal */}
-            {viewModal.open && viewModal.order && (
-                <div className="modal-overlay" onClick={() => setViewModal({ open: false })}>
-                    <div className="view-modal" onClick={(e) => e.stopPropagation()}>
-                        <h2>Order Details</h2>
-                        <p><strong>ID:</strong> #{viewModal.order._id}</p>
-                        <p><strong>User:</strong> {viewModal.order.user.name} ({viewModal.order.user.email})</p>
-                        <p><strong>Total:</strong> ${viewModal.order.totalPrice}</p>
-                        <p><strong>Status:</strong> 
-                            <span className={`status-badge ${viewModal.order.orderStatus.toLowerCase()}`}>
-                                {viewModal.order.orderStatus}
-                            </span>
-                        </p>
-                        <p><strong>Date:</strong> {new Date(viewModal.order.createdAt).toLocaleString()}</p>
-                        <h3>Items:</h3>
-                        <ul>
-                            {viewModal.order.orderItems.map(item => (
-                                <li key={item.product}>
-                                    {item.name} × {item.quantity} = ${item.price * item.quantity}
-                                </li>
-                            ))}
-                        </ul>
-                        <button onClick={() => setViewModal({ open: false })} className="close-btn">
-                            Close
-                        </button>
+                                    <h3>Order Items</h3>
+                                    <div className="items-table">
+                                        <div className="table-header-row">
+                                            <span>Product</span>
+                                            <span>Qty</span>
+                                            <span>Price</span>
+                                            <span>Total</span>
+                                        </div>
+                                        {modal.order.orderItems.map(item => (
+                                            <div key={item.product} className="table-row">
+                                                <span>{item.name}</span>
+                                                <span>{item.quantity}</span>
+                                                <span>${item.price.toFixed(2)}</span>
+                                                <span>${(item.price * item.quantity).toFixed(2)}</span>
+                                            </div>
+                                        ))}
+                                        <div className="table-footer">
+                                            <span><strong>Grand Total</strong></span>
+                                            <span></span>
+                                            <span></span>
+                                            <span><strong>${modal.order.totalPrice.toFixed(2)}</strong></span>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {modal.type === 'update' && (
+                                <div className="update-content">
+                                    <p className="order-summary">
+                                        Order: <strong>#{modal.order._id.slice(-8)}</strong>
+                                    </p>
+                                    <p className="current-status">
+                                        Current Status: 
+                                        <span className={`status-badge ${modal.order.orderStatus.toLowerCase()}`}>
+                                            {modal.order.orderStatus}
+                                        </span>
+                                    </p>
+
+                                    <label className="status-label">Select New Status</label>
+                                    <select id="status-select" className="status-select" defaultValue={modal.order.orderStatus}>
+                                        <option value="Processing">Processing</option>
+                                        <option value="Shipped">Shipped</option>
+                                        <option value="Delivered">Delivered</option>
+                                        <option value="Cancelled">Cancelled</option>
+                                    </select>
+
+                                    {document.getElementById('status-select')?.value === 'Cancelled' && (
+                                        <p className="warning-text">
+                                            Stock will be restored to inventory.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {modal.type === 'delete' && (
+                                <div className="delete-content">
+                                    <p className="warning-text">
+                                        This action is permanent and cannot be undone.
+                                    </p>
+                                    <div className="order-summary-box">
+                                        <p><strong>ID:</strong> #{modal.order._id.slice(-8)}</p>
+                                        <p><strong>Customer:</strong> {modal.order.user?.name}</p>
+                                        <p><strong>Total:</strong> ${modal.order.totalPrice.toFixed(2)}</p>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="modal-footer">
+                            <button
+                                onClick={() => setModal({ type: '', open: false })}
+                                className="modal-btn cancel"
+                                disabled={modal.loading}
+                            >
+                                {modal.type === 'view' ? 'Close' : 'Cancel'}
+                            </button>
+                            {modal.type !== 'view' && (
+                                <button
+                                    onClick={executeAction}
+                                    className={`modal-btn confirm ${modal.type === 'delete' ? 'danger' : ''}`}
+                                    disabled={modal.loading}
+                                >
+                                    {modal.loading ? 'Processing...' :
+                                        modal.type === 'update' ? 'Update Status' :
+                                        'Delete Order'}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </div>
             )}

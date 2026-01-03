@@ -463,11 +463,11 @@ const adminSlice = createSlice({
             })
 
             //cancel order
-            .addCase(updateOrder.pending, (state) => {
+            .addCase(cancelOrder.pending, (state) => {
                 state.loading = true;
                 state.error = null;
             })
-            .addCase(updateOrder.fulfilled, (state, action) => {
+            .addCase(cancelOrder.fulfilled, (state, action) => {
                 state.loading = false;
                 state.success = true;
                 // Update in orders list
@@ -478,7 +478,7 @@ const adminSlice = createSlice({
                     state.currentOrder = action.payload;
                 }
             })
-            .addCase(updateOrder.rejected, (state, action) => {
+            .addCase(cancelOrder.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             })
