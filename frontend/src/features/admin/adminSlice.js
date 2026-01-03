@@ -224,6 +224,56 @@ export const cancelOrder = createAsyncThunk(
     }
 );
 
+// Fetch all reviews from all products - admin
+export const fetchAllReviews = createAsyncThunk(
+    'admin/fetchAllReviews',
+    async (_, { rejectWithValue }) => {
+        try {
+            // First get all products
+            const { data } = await axios.get('/api/v1/admin/products');
+            
+            // Extract all reviews from all products with product info
+            const allReviews = [];
+            data.products.forEach(product => {
+                if (product.reviews && product.reviews.length > 0) {
+                    product.reviews.forEach(review => {
+                        allReviews.push({
+                            ...review,
+                            productId: product._id,
+                            productName: product.name,
+                            productImage: product.image[0]?.url || ''
+                        });
+                    });
+                }
+            });
+            
+            return allReviews;
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to fetch reviews'
+            );
+        }
+    }
+);
+
+// Delete review - admin
+export const deleteReview = createAsyncThunk(
+    'admin/deleteReview',
+    async ({ reviewId, productId }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.delete(
+                `/api/v1/reviews?id=${reviewId}&productID=${productId}`
+            );
+            return { reviewId, productId, message: data.message };
+        } catch (error) {
+            return rejectWithValue(
+                error.response?.data?.message || 'Failed to delete review'
+            );
+        }
+    }
+);
+
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
@@ -239,7 +289,8 @@ const adminSlice = createSlice({
         },     
         currentUser: null, 
         orders: [],  
-        currentOrder: null,         
+        currentOrder: null,    
+        reviews: [],     
         success: false,
         loading: false,
         error: null
@@ -479,6 +530,38 @@ const adminSlice = createSlice({
                 }
             })
             .addCase(cancelOrder.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+             // Fetch All Reviews
+            .addCase(fetchAllReviews.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAllReviews.fulfilled, (state, action) => {
+                state.loading = false;
+                state.reviews = action.payload;
+            })
+            .addCase(fetchAllReviews.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            // Delete Review
+            .addCase(deleteReview.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(deleteReview.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                // Remove the deleted review from state
+                state.reviews = state.reviews.filter(
+                    review => review._id.toString() !== action.payload.reviewId.toString()
+                );
+            })
+            .addCase(deleteReview.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             })

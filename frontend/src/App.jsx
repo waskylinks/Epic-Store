@@ -28,6 +28,7 @@ import CreateProduct from './Admin/CreateProduct';
 import UpdateProduct from './Admin/UpdateProduct';
 import UserList from './Admin/UserList';
 import AllOrders from './Admin/AllOrders';
+import ReviewList from './Admin/ReviewList';
 
 
 function App() {
@@ -76,6 +77,7 @@ function App() {
         <Route path='/admin/product/:id' element={<ProtectedRoute element={<UpdateProduct/>} adminOnly={true}/>}/>
         <Route path='/admin/users' element={<ProtectedRoute element={<UserList/>} adminOnly={true}/>}/>
         <Route path='/admin/orders' element={<ProtectedRoute element={<AllOrders/>} adminOnly={true}/>}/>
+        <Route path='/admin/reviews' element={<ProtectedRoute element={<ReviewList/>} adminOnly={true}/>}/>
 
 
       </Routes>
