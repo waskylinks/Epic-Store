@@ -2,19 +2,22 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { calculateTrend } from "../utils/calculateTrend.js";
 import { getDateRanges } from "../utils/dateRanges.js";
-import {
-  getAdminStatsService
-} from "../services/analytics-service.js";
+import { getAdminStatsService } from "../services/analytics-service.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
 import User from "../models/user-model.js";
+import { getCache, setCache, deleteCache, deleteCachePattern } from "../utils/redis.js";
 
 /* ================= ADMIN STATS ================= */
 export const getAdminStats = handleAsyncError(async (req, res) => {
+  const cacheKey = "admin_stats";
+
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
   const stats = await getAdminStatsService();
 
-  res.status(200).json({
-    success: true,
+  const response = {
     products: stats.products.products || 0,
     orders: stats.orders.orders || 0,
     revenue: Number((stats.orders.revenue || 0).toFixed(2)),
@@ -22,13 +25,21 @@ export const getAdminStats = handleAsyncError(async (req, res) => {
     outOfStock: stats.products.outOfStock || 0,
     inStock: stats.products.inStock || 0,
     adminCount: stats.users.adminCount || 0
-  });
+  };
+
+  await setCache(cacheKey, response, 300); // cache 5 min
+
+  res.status(200).json({ success: true, ...response });
 });
 
 /* ================= ADVANCED ANALYTICS ================= */
 export const getAnalytics = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
+
+  const cacheKey = `analytics_${timeframe}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } =
     getDateRanges(timeframe);
@@ -121,8 +132,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
     .limit(5)
     .populate("user", "name email");
 
-  res.status(200).json({
-    success: true,
+  const response = {
     trends,
     orderStatusBreakdown,
     topProducts,
@@ -139,5 +149,9 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
       users: previousUsers,
       products: previousProducts
     }
-  });
+  };
+
+  await setCache(cacheKey, response, 300); // cache 5 min
+
+  res.status(200).json({ success: true, ...response });
 });
