@@ -1,8 +1,8 @@
 import HandleError from "../utils/handleError.js";
 import { TIMEFRAMES } from "../constants/analytics.constants.js";
 
-export const validateTimeframe = (timeframe, next) => {
+export const validateTimeframe = (timeframe) => {
   if (!TIMEFRAMES.includes(timeframe)) {
-    return next(new HandleError("Invalid timeframe", 400));
+    throw new HandleError("Invalid timeframe", 400);
   }
 };

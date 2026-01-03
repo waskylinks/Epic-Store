@@ -32,15 +32,15 @@ const orderSchema = new mongoose.Schema(
     },
 
     //------------------------------------------------------------------
-    // PAYMENT CORE (multi-gateway, multi-currency, idempotent)
+    // PAYMENT CORE
     //------------------------------------------------------------------
     paymentInfo: {
       reference: {
         type: String,
         required: true,
-        unique: true // prevents duplicate orders per transaction
+        unique: true
       },
-      providerTxId: { type: String }, // paystack id / stripe charge id / flutterwave id
+      providerTxId: { type: String },
       status: {
         type: String,
         enum: ["pending", "success", "failed"],
@@ -67,7 +67,7 @@ const orderSchema = new mongoose.Schema(
 
     //------------------------------------------------------------------
     // ORDER LIFECYCLE
-    
+    //------------------------------------------------------------------
     orderStatus: {
       type: String,
       enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
@@ -77,23 +77,26 @@ const orderSchema = new mongoose.Schema(
     deliveredAt: Date,
 
     //------------------------------------------------------------------
-    // PAYMENT METADATA (raw provider data)
+    // PAYMENT METADATA
     //------------------------------------------------------------------
     paymentMeta: {
-      channel: String,     
-      currency: String,    
-      ipAddress: String,   
-      customer: Object,    
-      authorization: Object,  
-      raw: Object // Paystack/Flutterwave/Stripe verified payload
+      channel: String,
+      currency: String,
+      ipAddress: String,
+      customer: Object,
+      authorization: Object,
+      raw: Object
     }
   },
   { timestamps: true }
 );
 
 //------------------------------------------------------------------
-// OTHER UNIQUE INDEXES
+// OPTIMIZED INDEXES FOR ANALYTICS
 //------------------------------------------------------------------
-orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ createdAt: 1 });                       // date-based filtering
+orderSchema.index({ orderStatus: 1, createdAt: -1 });      // status breakdown + date filter
+orderSchema.index({ "orderItems.product": 1 });           // top products aggregation
+orderSchema.index({ user: 1, createdAt: -1 });            // recent orders per user
 
 export default mongoose.model("Order", orderSchema);

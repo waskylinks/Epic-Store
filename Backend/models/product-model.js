@@ -66,8 +66,8 @@ const productSchema = new mongoose.Schema({
                 required: true,
             },
             createdAt: {
-            type: Date,
-            default: Date.now,
+                type: Date,
+                default: Date.now,
             }
         }
     ],
@@ -81,5 +81,11 @@ const productSchema = new mongoose.Schema({
         default: Date.now,
     },
 });
+
+//------------------------------------------------------------------
+// INDEXES FOR ANALYTICS
+//------------------------------------------------------------------
+productSchema.index({ createdAt: 1 }); // speeds up timeframe queries
+productSchema.index({ stock: 1 });     // speeds up out-of-stock aggregation
 
 export default mongoose.model('Product', productSchema);
