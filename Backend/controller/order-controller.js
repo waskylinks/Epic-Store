@@ -2,7 +2,20 @@ import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
+import { deleteCachePattern } from '../utils/redis.js';
 
+// Helper: Invalidate analytics caches
+const invalidateAnalyticsCaches = async () => {
+    try {
+        await Promise.all([
+            deleteCachePattern('admin_stats*'),
+            deleteCachePattern('analytics_*')
+        ]);
+    } catch (error) {
+        console.error('Cache invalidation error:', error);
+        // Don't block the request if cache fails
+    }
+};
 
 //create new order
 export const createNewOrder = handleAsyncError(async (req, res, next) => {
@@ -20,11 +33,13 @@ export const createNewOrder = handleAsyncError(async (req, res, next) => {
         user: req.user._id
     });
 
+    // Invalidate caches after creating order
+    await invalidateAnalyticsCaches();
+
     res.status(200).json({
         success: true,
         order
     });
-
 });
 
 //all orders 
@@ -40,7 +55,7 @@ export const allMyOrders = handleAsyncError(async (req, res, next) => {
         success: true,
         orders
     })
-})
+});
 
 //admin- getting single order
 export const getSingleOrder = handleAsyncError(async (req, res, next) => {
@@ -53,8 +68,7 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
         success: true,
         order
     });
-
-})
+});
 
 // admin- getting all orders placed by users
 export const getAllOrders = handleAsyncError(async (req, res, next) => {
@@ -124,6 +138,9 @@ export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
     order.orderStatus = req.body.status;
     await order.save({ validateBeforeSave: false });
 
+    // Invalidate caches after updating order status
+    await invalidateAnalyticsCaches();
+
     res.status(200).json({
         success: true,
         order
@@ -159,10 +176,11 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
 
     await Order.findByIdAndDelete(req.params.id);
 
+    // Invalidate caches after deleting order
+    await invalidateAnalyticsCaches();
+
     res.status(200).json({
         success: true,
         message: 'Order deleted successfully'
     });
 });
-
-

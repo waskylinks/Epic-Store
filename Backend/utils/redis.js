@@ -16,20 +16,34 @@ redis.on("ready", () => console.info("Redis ready to accept commands"));
 redis.on("error", (err) => console.error("Redis error:", err));
 redis.on("close", () => console.warn("Redis connection closed"));
 redis.on("reconnecting", () => console.info("Redis reconnecting..."));
+redis.on("ready", async () => {
+  const info = await redis.info("memory");
+  console.info("Redis memory:", info);
+});
 
 // -----------------------------
 // Helper: get cached JSON
 // -----------------------------
 export const getCache = async (key) => {
-  const data = await redis.get(PREFIX + key);
-  return data ? JSON.parse(data) : null;
+  try {
+    const data = await redis.get(PREFIX + key);
+    return data ? JSON.parse(data) : null;
+  } catch (error) {
+    console.error("Redis GET error:", error);
+    return null; // Fallback to database
+  }
 };
 
 // -----------------------------
 // Helper: set cached JSON with TTL (seconds)
 // -----------------------------
 export const setCache = async (key, value, ttl = 300) => {
-  await redis.set(PREFIX + key, JSON.stringify(value), "EX", ttl);
+  try {
+    await redis.set(PREFIX + key, JSON.stringify(value), "EX", ttl);
+  } catch (error) {
+    console.error("Redis SET error:", error);
+    // Continue without caching
+  }
 };
 
 // -----------------------------

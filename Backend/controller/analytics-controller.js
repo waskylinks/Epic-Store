@@ -98,7 +98,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
   const orderStatusAgg = await Order.aggregate([
     {
       $group: {
-        _id: { $toLower: "$orderStatus" },
+        _id: "$orderStatus" ,
         count: { $sum: 1 }
       }
     }
@@ -112,6 +112,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
   };
 
   const topProducts = await Order.aggregate([
+    { $match: { orderStatus: { $ne: "cancelled" } } },
     { $unwind: "$orderItems" },
     { $match: { "orderItems.product": { $exists: true } } },
     {
