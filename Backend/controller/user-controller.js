@@ -7,6 +7,19 @@ import Product from '../models/product-model.js';
 import Order from '../models/order-model.js';
 import crypto from "crypto";
 import {v2 as cloudinary} from 'cloudinary';
+import { deleteCachePattern } from '../utils/redis.js';
+
+
+const invalidateCaches = async () => {
+    try {
+        await Promise.all([
+            deleteCachePattern('admin_stats*'),
+            deleteCachePattern('analytics_*')
+        ]);
+    } catch (error) {
+        console.error('Cache invalidation error:', error);
+    }
+};
 
 
 //register new user
@@ -29,6 +42,8 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
             url: myCloud.secure_url,
         }
     })
+
+    await invalidateCaches();
 
     //get token
     sendToken(user, 201, res);
@@ -273,6 +288,8 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("User not found", 404));
     }
 
+    await invalidateCaches();
+
     res.status(200).json({
         success: true,
         user: updatedUser
@@ -287,6 +304,8 @@ export const deleteUser = handleAsyncError(async(req, res, next) => {
     }
 
     await User.findByIdAndDelete(req.params.id);
+    await invalidateCaches();
+    
     return res.status(200).json({
         success: true,
         message: `User with ID: ${req.params.id} was deleted successfully`
