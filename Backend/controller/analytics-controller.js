@@ -6,7 +6,7 @@ import { getAdminStatsService } from "../services/analytics-service.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
 import User from "../models/user-model.js";
-import { getCache, setCache, deleteCache, deleteCachePattern } from "../utils/redis.js";
+import { getCache, setCache } from "../utils/redis.js";
 
 /* ================= ADMIN STATS ================= */
 export const getAdminStats = handleAsyncError(async (req, res) => {
@@ -27,7 +27,7 @@ export const getAdminStats = handleAsyncError(async (req, res) => {
     adminCount: stats.users.adminCount || 0
   };
 
-  await setCache(cacheKey, response, 300); // cache 5 min
+  await setCache(cacheKey, response, 300);
 
   res.status(200).json({ success: true, ...response });
 });
@@ -53,7 +53,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
           orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [{ $ne: ["$orderStatus", "cancelled"] }, "$totalPrice", 0]
+              $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0]
             }
           }
         }
@@ -71,7 +71,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
           orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [{ $ne: ["$orderStatus", "cancelled"] }, "$totalPrice", 0]
+              $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0]
             }
           }
         }
@@ -98,35 +98,21 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
   const orderStatusAgg = await Order.aggregate([
     {
       $group: {
-        _id: "$orderStatus" ,
+        _id: "$orderStatus",
         count: { $sum: 1 }
       }
     }
   ]);
 
   const orderStatusBreakdown = {
-    processing: orderStatusAgg.find(o => o._id === "processing")?.count || 0,
-    shipped: orderStatusAgg.find(o => o._id === "shipped")?.count || 0,
-    delivered: orderStatusAgg.find(o => o._id === "delivered")?.count || 0,
-    cancelled: orderStatusAgg.find(o => o._id === "cancelled")?.count || 0
+    processing: orderStatusAgg.find(o => o._id === "Processing")?.count || 0,
+    shipped: orderStatusAgg.find(o => o._id === "Shipped")?.count || 0,
+    delivered: orderStatusAgg.find(o => o._id === "Delivered")?.count || 0,
+    cancelled: orderStatusAgg.find(o => o._id === "Cancelled")?.count || 0
   };
 
-  const topProducts = await Order.aggregate([
-    { $match: { orderStatus: { $ne: "cancelled" } } },
-    { $unwind: "$orderItems" },
-    { $match: { "orderItems.product": { $exists: true } } },
-    {
-      $group: {
-        _id: "$orderItems.product",
-        name: { $first: "$orderItems.name" },
-        revenue: { $sum: { $multiply: ["$orderItems.price", "$orderItems.quantity"] } },
-        quantity: { $sum: "$orderItems.quantity" }
-      }
-    },
-    { $sort: { revenue: -1 } },
-    { $limit: 5 },
-    { $project: { _id: 0, name: 1, revenue: 1, quantity: 1 } }
-  ]);
+  // Use the reusable getTopProducts function
+  const topProducts = await getTopProducts(5, 0);
 
   const recentOrders = await Order.find()
     .sort({ createdAt: -1 })
@@ -152,7 +138,68 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
     }
   };
 
-  await setCache(cacheKey, response, 300); // cache 5 min
+  await setCache(cacheKey, response, 300);
+
+  res.status(200).json({ success: true, ...response });
+});
+
+/* ================= TOP PRODUCTS (REUSABLE WITH PAGINATION) ================= */
+export const getTopProducts = async (limit = 5, skip = 0) => {
+  return await Order.aggregate([
+    // Filter out cancelled orders
+    { $match: { orderStatus: { $ne: "Cancelled" } } },
+    { $unwind: "$orderItems" },
+    { $match: { "orderItems.product": { $exists: true } } },
+    {
+      $group: {
+        _id: "$orderItems.product",
+        name: { $first: "$orderItems.name" },
+        revenue: { $sum: { $multiply: ["$orderItems.price", "$orderItems.quantity"] } },
+        quantity: { $sum: "$orderItems.quantity" }
+      }
+    },
+    { $sort: { revenue: -1 } },
+    { $skip: skip },
+    { $limit: limit },
+    { $project: { _id: 0, name: 1, revenue: 1, quantity: 1 } }
+  ]);
+};
+
+/* ================= STANDALONE TOP PRODUCTS ENDPOINT (OPTIONAL) ================= */
+export const getTopProductsEndpoint = handleAsyncError(async (req, res, next) => {
+  const limit = parseInt(req.query.limit) || 10;
+  const page = parseInt(req.query.page) || 1;
+  const skip = (page - 1) * limit;
+
+  const cacheKey = `top_products_${limit}_${page}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
+  const topProducts = await getTopProducts(limit, skip);
+
+  // Get total count for pagination
+  const totalCount = await Order.aggregate([
+    { $match: { orderStatus: { $ne: "Cancelled" } } },
+    { $unwind: "$orderItems" },
+    { $group: { _id: "$orderItems.product" } },
+    { $count: "total" }
+  ]);
+
+  const total = totalCount[0]?.total || 0;
+  const totalPages = Math.ceil(total / limit);
+
+  const response = {
+    topProducts,
+    pagination: {
+      currentPage: page,
+      totalPages,
+      totalProducts: total,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1
+    }
+  };
+
+  await setCache(cacheKey, response, 300);
 
   res.status(200).json({ success: true, ...response });
 });
