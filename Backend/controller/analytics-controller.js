@@ -2,10 +2,10 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { calculateTrend } from "../utils/calculateTrend.js";
 import { getDateRanges } from "../utils/dateRanges.js";
-import { getAdminStatsService } from "../services/analytics-service.js";
+import { getAdminStatsService } from "../Services/analytics-service.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
-import User from "../models/user-model.js";
+import User from "../models/userModel.js";
 import { getCache, setCache } from "../utils/redis.js";
 
 /* ================= ADMIN STATS ================= */

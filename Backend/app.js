@@ -7,7 +7,7 @@ import user from './routes/user-route.js';
 import order from './routes/order-routes.js';
 import payment from './routes/payment.routes.js';
 import receipt from './routes/receipts-routes.js';
-import analytics from './routes/analytics-route.js';
+import analytics from './routes/analytics-routes.js';
 
 // Middleware
 import errorHandleMiddleware from './middleware/error.js';

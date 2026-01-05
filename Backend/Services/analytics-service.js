@@ -1,6 +1,6 @@
 import Product from "../models/product-model.js";
 import Order from "../models/order-model.js";
-import User from "../models/user-model.js";
+import User from "../models/userModel.js";
 import { assertAggregationResult } from "../utils/analyticsGuard.js";
 import { orderStatsPipeline, productStatsPipeline, userStatsPipeline } from "../constants/analytics-pipelines.js";
 
