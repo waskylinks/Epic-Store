@@ -5,18 +5,10 @@ import { createClient } from 'redis';
 const PREFIX = "epicstore:";
 
 // Validate and parse Redis configuration
-const REDIS_HOST = process.env.REDIS_HOST || 'redis-13909.c246.us-east-1-4.ec2.cloud.redislabs.com';
-const REDIS_PORT = parseInt(process.env.REDIS_PORT) || 13909;
+const REDIS_HOST = process.env.REDIS_HOST;
+const REDIS_PORT = parseInt(process.env.REDIS_PORT);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
-// Debug log to verify environment variables
-console.log('Redis Config:', {
-  host: REDIS_HOST,
-  port: REDIS_PORT,
-  hasPassword: !!REDIS_PASSWORD,
-  // Optionally show first few chars of password to verify it's loaded
-  passwordPreview: REDIS_PASSWORD ? `${REDIS_PASSWORD.substring(0, 3)}...` : 'MISSING'
-});
 
 const redis = createClient({
   username: 'default',
