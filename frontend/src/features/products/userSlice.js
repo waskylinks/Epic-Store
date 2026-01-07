@@ -3,9 +3,9 @@ import axios from "axios";
 
 axios.defaults.withCredentials = true;
 
-//=====================================================
+
 // REGISTER API
-//=====================================================
+
 export const register = createAsyncThunk('user/register', async(userData, {rejectWithValue}) => {
     try{
         const config = {
@@ -21,9 +21,9 @@ export const register = createAsyncThunk('user/register', async(userData, {rejec
     }
 });
 
-//=====================================================
+
 // VERIFY EMAIL API
-//=====================================================
+
 export const verifyEmail = createAsyncThunk('user/verifyEmail', async({email, code}, {rejectWithValue}) => {
     try{
         const config = {
@@ -39,9 +39,9 @@ export const verifyEmail = createAsyncThunk('user/verifyEmail', async({email, co
     }
 });
 
-//=====================================================
+
 // RESEND VERIFICATION CODE API
-//=====================================================
+
 export const resendVerificationCode = createAsyncThunk('user/resendVerification', async(email, {rejectWithValue}) => {
     try{
         const config = {
@@ -57,9 +57,9 @@ export const resendVerificationCode = createAsyncThunk('user/resendVerification'
     }
 });
 
-//=====================================================
+
 // LOGIN API
-//=====================================================
+
 export const login = createAsyncThunk('user/login', async({email, password}, {rejectWithValue}) => {
     try{
         const config = {
@@ -75,9 +75,9 @@ export const login = createAsyncThunk('user/login', async({email, password}, {re
     }
 });
 
-//=====================================================
+
 // LOAD USER
-//=====================================================
+
 export const loadUser = createAsyncThunk('user/loadUser', async(_, {rejectWithValue}) => {
     try{
         const {data} = await axios.get('/api/v1/profile');
@@ -88,9 +88,9 @@ export const loadUser = createAsyncThunk('user/loadUser', async(_, {rejectWithVa
     }
 });
 
-//=====================================================
+
 // LOGOUT USER
-//=====================================================
+
 export const logout = createAsyncThunk('user/logout', async(_, {rejectWithValue}) => {
     try{
         const {data} = await axios.post('/api/v1/logout', {}, {
@@ -104,9 +104,9 @@ export const logout = createAsyncThunk('user/logout', async(_, {rejectWithValue}
     }
 });
 
-//=====================================================
+
 // UPDATE USER PROFILE
-//=====================================================
+
 export const updateProfile = createAsyncThunk('user/updateProfile', async(userData, {rejectWithValue}) => {
     try{
         const config = {
@@ -122,9 +122,9 @@ export const updateProfile = createAsyncThunk('user/updateProfile', async(userDa
     }
 });
 
-//=====================================================
+
 // UPDATE USER PASSWORD
-//=====================================================
+
 export const updatePassword = createAsyncThunk('user/updatePassword', async(formData, {rejectWithValue}) => {
     try{
         const config = {
@@ -140,9 +140,9 @@ export const updatePassword = createAsyncThunk('user/updatePassword', async(form
     }
 });
 
-//=====================================================
+
 // FORGOT USER PASSWORD
-//=====================================================
+
 export const forgotPassword = createAsyncThunk(
   "user/forgotPassword",
   async (email, { rejectWithValue }) => {
@@ -162,9 +162,9 @@ export const forgotPassword = createAsyncThunk(
   }
 );
 
-//=====================================================
+
 // RESET USER PASSWORD WITH CODE
-//=====================================================
+
 export const resetPassword = createAsyncThunk('user/resetPassword', async({email, code, password, confirmPassword}, {rejectWithValue}) => {
     try{
         const config = {
@@ -180,9 +180,9 @@ export const resetPassword = createAsyncThunk('user/resetPassword', async({email
     }
 });
 
-//=====================================================
+
 // USER SLICE
-//=====================================================
+
 const userSlice = createSlice({
     name: 'user',
     initialState: {
@@ -212,9 +212,9 @@ const userSlice = createSlice({
     },
 
     extraReducers: (builder) => {
-        //=====================================================
+        
         // REGISTRATION CASES
-        //=====================================================
+        
         builder
             .addCase(register.pending, (state) => {
                 state.loading = true;
@@ -238,9 +238,9 @@ const userSlice = createSlice({
                 state.isAuthenticated = false;
             })
 
-        //=====================================================
+        
         // EMAIL VERIFICATION CASES
-        //=====================================================
+        
             .addCase(verifyEmail.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -259,9 +259,9 @@ const userSlice = createSlice({
                 state.error = action.payload?.message || 'Verification failed. Please try again later';
             })
 
-        //=====================================================
+        
         // RESEND VERIFICATION CODE CASES
-        //=====================================================
+        
             .addCase(resendVerificationCode.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -277,9 +277,9 @@ const userSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to resend code. Please try again later';
             })
 
-        //=====================================================
+        
         // LOGIN CASES
-        //=====================================================
+        
             .addCase(login.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -308,9 +308,9 @@ const userSlice = createSlice({
             })
 
 
-        //=====================================================
+        
         // LOAD USER CASES
-        //=====================================================
+        
             .addCase(loadUser.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -330,9 +330,9 @@ const userSlice = createSlice({
                 state.initializing = false;
             })
 
-        //=====================================================
+        
         // LOGOUT CASES
-        //=====================================================
+        
             .addCase(logout.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -348,9 +348,9 @@ const userSlice = createSlice({
                 state.error = action.payload?.message || 'Failed to logout. Please try again later';
             })
 
-        //=====================================================
+        
         // UPDATE PROFILE CASES
-        //=====================================================
+        
             .addCase(updateProfile.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -367,9 +367,9 @@ const userSlice = createSlice({
                 state.error = action.payload?.message || 'Profile update failed. Please try again later';
             })
 
-        //=====================================================
+        
         // UPDATE PASSWORD CASES
-        //=====================================================
+        
             .addCase(updatePassword.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -384,9 +384,9 @@ const userSlice = createSlice({
                 state.error = action.payload?.message || 'Password update failed. Please try again later';
             })
 
-        //=====================================================
+        
         // FORGOT PASSWORD CASES
-        //=====================================================
+        
             .addCase(forgotPassword.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -402,9 +402,9 @@ const userSlice = createSlice({
                 state.error = action.payload?.message || 'Forgot password request failed. Please try again later';
             })
 
-        //=====================================================
+        
         // RESET PASSWORD CASES
-        //=====================================================
+        
             .addCase(resetPassword.pending, (state) => {
                 state.loading = true;
                 state.error = null;
