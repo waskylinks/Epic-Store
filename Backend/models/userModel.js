@@ -64,22 +64,22 @@ const userSchema = new mongoose.Schema({
     }],
 }, { timestamps: true });
 
-//------------------------------------------------------------------
+
 // INDEXES FOR PERFORMANCE (Keep only necessary ones)
-//------------------------------------------------------------------
+
 userSchema.index({ createdAt: 1 });
 userSchema.index({ authProvider: 1 });
 
-//------------------------------------------------------------------
+
 // VIRTUAL FIELD: Check if account is locked
-//------------------------------------------------------------------
+
 userSchema.virtual('isLocked').get(function() {
     return !!(this.lockUntil && this.lockUntil > Date.now());
 });
 
-//------------------------------------------------------------------
+
 // PASSWORD HASHING (History stores hashed passwords only)
-//------------------------------------------------------------------
+
 userSchema.pre("save", async function (next) {
     if (!this.isModified("password") || !this.password) return next();
 
@@ -101,17 +101,17 @@ userSchema.pre("save", async function (next) {
     next();
 });
 
-//------------------------------------------------------------------
+
 // COMPARE PASSWORD METHOD
-//------------------------------------------------------------------
+
 userSchema.methods.comparePassword = async function (enteredPassword) {
     if (!this.password) return false;
     return await bcryptjs.compare(enteredPassword, this.password);
 };
 
-//------------------------------------------------------------------
+
 // CHECK PASSWORD REUSE
-//------------------------------------------------------------------
+
 userSchema.methods.isPasswordReused = async function(newPassword) {
     if (!this.passwordHistory || this.passwordHistory.length === 0) return false;
 
@@ -122,9 +122,9 @@ userSchema.methods.isPasswordReused = async function(newPassword) {
     return false;
 };
 
-//------------------------------------------------------------------
+
 // INCREMENT LOGIN ATTEMPTS
-//------------------------------------------------------------------
+
 userSchema.methods.incrementLoginAttempts = async function() {
     if (this.lockUntil && this.lockUntil < Date.now()) {
         return await this.updateOne({
@@ -144,9 +144,9 @@ userSchema.methods.incrementLoginAttempts = async function() {
     return await this.updateOne(updates);
 };
 
-//------------------------------------------------------------------
+
 // RESET LOGIN ATTEMPTS
-//------------------------------------------------------------------
+
 userSchema.methods.resetLoginAttempts = async function() {
     return await this.updateOne({
         $set: { loginAttempts: 0, lastLogin: Date.now() },
@@ -154,18 +154,18 @@ userSchema.methods.resetLoginAttempts = async function() {
     });
 };
 
-//------------------------------------------------------------------
+
 // JWT TOKEN GENERATION
-//------------------------------------------------------------------
+
 userSchema.methods.getJWTToken = function() {
     return jwt.sign({ id: this._id }, process.env.JWT_SECRET_KEY, {
         expiresIn: process.env.JWT_EXPIRES_TIME,
     });
 };
 
-//------------------------------------------------------------------
+
 // GENERATE EMAIL VERIFICATION CODE (6 digits, 90 seconds expiry)
-//------------------------------------------------------------------
+
 userSchema.methods.generateVerificationCode = function() {
     const code = crypto.randomInt(100000, 999999).toString();
 
@@ -178,9 +178,9 @@ userSchema.methods.generateVerificationCode = function() {
     return code; // unhashed code for sending via email
 };
 
-//------------------------------------------------------------------
+
 // GENERATE PASSWORD RESET CODE (6 digits, 90 seconds expiry)
-//------------------------------------------------------------------
+
 userSchema.methods.generatePasswordResetCode = function() {
     const code = crypto.randomInt(100000, 999999).toString();
 
@@ -193,9 +193,9 @@ userSchema.methods.generatePasswordResetCode = function() {
     return code; // unhashed code for sending via email
 };
 
-//------------------------------------------------------------------
+
 // VERIFY EMAIL WITH CODE
-//------------------------------------------------------------------
+
 userSchema.methods.verifyEmailCode = function(inputCode) {
     const hashedInputCode = crypto
         .createHash('sha256')
