@@ -12,6 +12,7 @@ function Login() {
     const [loginEmail, setLoginEmail] = useState('');
     const [loginPassword, setLoginPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
+    // Redux and Router hooks
     
     const { error, loading, success, isAuthenticated } = useSelector(state => state.user);
     const location = useLocation();
