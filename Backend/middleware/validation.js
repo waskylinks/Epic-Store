@@ -1,4 +1,4 @@
-import { validatePassword, validatePasswordMatch } from '../utils/passwordValidator.js';
+import { validatePassword, validatePasswordMatch } from './passwordValidator.js';
 import validator from 'validator';
 import HandleError from '../utils/handleError.js';
 

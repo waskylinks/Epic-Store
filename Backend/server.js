@@ -13,9 +13,9 @@ const validateEnvVariables = () => {
     const required = [
         'PORT',
         'MONGO_URI',
-        'JWT_SECRET',
-        'JWT_EXPIRE',
-        'COOKIE_EXPIRE',
+        'JWT_SECRET_KEY',
+        'JWT_EXPIRES_TIME',
+        'COOKIE_EXPIRES_TIME',
         'CLOUDINARY_NAME',
         'API_KEY',
         'API_SECRET',
