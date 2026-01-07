@@ -199,112 +199,105 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
 // LOGIN USER (CHECK EMAIL VERIFICATION)
 
 export const loginUser = handleAsyncError(async (req, res, next) => {
-    const { email, password } = req.body;
+  const { email, password } = req.body;
 
-    if(!email || !password) {
-        return next(new HandleError("Please enter email and password", 400));
-    }
+  if (!email || !password) {
+    return next(new HandleError("Please enter email and password", 400));
+  }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+  const user = await User.findOne({ email: email.toLowerCase() })
+    .select("+password");
 
-    if(!user) {
-        return next(new HandleError("Invalid email or password", 401));
-    }
+  if (!user) {
+    return next(new HandleError("Invalid email or password", 401));
+  }
 
-    // Check if account is locked
-    if (user.isLocked) {
-        const lockTimeRemaining = Math.ceil((user.lockUntil - Date.now()) / 1000 / 60);
-        return next(new HandleError(
-            `Account locked due to too many failed login attempts. Try again in ${lockTimeRemaining} minutes.`, 
-            403
-        ));
-    }
+  if (user.isLocked) {
+    const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
+    return next(
+      new HandleError(
+        `Account locked. Try again in ${mins} minutes.`,
+        403
+      )
+    );
+  }
 
-    // Check if email is verified (for local auth)
-    if (user.authProvider === 'local' && !user.emailVerified) {
-        return next(new HandleError(
-            "Please verify your email before logging in. Check your inbox for the verification code.", 
-            403
-        ));
-    }
+  if (user.authProvider === "local" && !user.emailVerified) {
+    return next(
+      new HandleError(
+        "Please verify your email before logging in.",
+        403
+      )
+    );
+  }
 
-    // Check password
-    const isPasswordMatched = await user.comparePassword(password);
+  const isMatch = await user.comparePassword(password);
 
-    if (!isPasswordMatched) {
-        // Increment failed login attempts
-        await user.incrementLoginAttempts();
-        return next(new HandleError("Invalid email or password", 401));
-    }
+  if (!isMatch) {
+    await user.incrementLoginAttempts();
+    return next(new HandleError("Invalid email or password", 401));
+  }
 
-    // Reset login attempts on successful login
-    await user.resetLoginAttempts();
-
-    // Get token and send response
-    sendToken(user, 200, res);
+  await user.resetLoginAttempts();
+  sendToken(user, 200, res);
 });
 
 
 // LOGOUT FUNCTION
 
-export const logout = handleAsyncError(async(req, res, next) => {
-    res.cookie('token', null, {
-        expires: new Date(Date.now()),
-        httpOnly: true
-    });
+export const logout = handleAsyncError(async (req, res) => {
+  res.cookie("token", null, {
+    expires: new Date(0),
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    path: "/"
+  });
 
-    res.status(200).json({
-        success: true,
-        message:'Successfully logged out'
-    });
+  res.status(200).json({
+    success: true,
+    message: "Successfully logged out"
+  });
 });
+
 
 
 // FORGOT PASSWORD (SEND CODE)
 
-export const requestPasswordReset = handleAsyncError(async(req, res, next) => {
-    const user = await User.findOne({
-        email: req.body.email.toLowerCase()
-    });
+export const requestPasswordReset = handleAsyncError(async (req, res, next) => {
+  const { email } = req.body;
 
-    if(!user) {
-        return next(new HandleError("No account found with this email address", 404));
-    }
+  const user = await User.findOne({ email: email.toLowerCase() });
 
-    if (!user.emailVerified && user.authProvider === 'local') {
-        return next(new HandleError("Please verify your email first before resetting password", 403));
-    }
+  if (!user) {
+    return next(new HandleError("No account found with this email", 404));
+  }
 
-    // Generate password reset code
-    let resetCode;
-    try {
-        resetCode = user.generatePasswordResetCode();
-        await user.save({ validateBeforeSave: false });
-    } catch(error) {
-        return next(new HandleError("Could not generate reset code, please try again later", 500));
-    }
+  if (!user.emailVerified && user.authProvider === "local") {
+    return next(
+      new HandleError("Please verify your email first", 403)
+    );
+  }
 
-    // Send reset code via email
-    try {
-        const emailTemplate = emailTemplates.passwordResetEmail(user.name, resetCode);
-        await sendEmail({
-            email: user.email,
-            subject: emailTemplate.subject,
-            message: emailTemplate.text,
-            html: emailTemplate.html
-        });
+  const resetCode = user.generatePasswordResetCode();
+  await user.save({ validateBeforeSave: false });
 
-        res.status(200).json({
-            success: true,
-            message: `Password reset code sent to ${user.email}. Code expires in 90 seconds.`
-        });
+  const template = emailTemplates.passwordResetEmail(
+    user.name,
+    resetCode
+  );
 
-    } catch (error) {
-        user.resetPasswordCode = undefined;
-        user.resetPasswordCodeExpire = undefined;
-        await user.save({ validateBeforeSave: false });
-        return next(new HandleError("Email could not be sent. Please try again later.", 500));
-    }
+  await sendEmail({
+    email: user.email,
+    subject: template.subject,
+    message: template.text,
+    html: template.html
+  });
+
+  res.status(200).json({
+    success: true,
+    message: `Password reset code sent to ${user.email}`
+  });
 });
 
 
