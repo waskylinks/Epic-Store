@@ -18,8 +18,8 @@ import payment from './routes/payment.routes.js';
 import receipt from './routes/receipts-routes.js';
 import analytics from './routes/analytics-routes.js';
 
-// Error middleware
-import errorHandleMiddleware from './middleware/error.js';
+// ✅ UPDATED: Import enterprise error handlers
+import { globalErrorHandler, handle404 } from './middleware/error.js';
 
 const app = express();
 
@@ -37,7 +37,17 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
-// ------------------- ROUTES -------------------
+// ------------------- HEALTH CHECK (Optional but recommended) -------------------
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'Server is running',
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// ------------------- API ROUTES -------------------
 app.use('/api/v1', products);
 app.use('/api/v1', user);
 app.use('/api/v1', order);
@@ -45,7 +55,13 @@ app.use('/api/v1/payment', payment);
 app.use('/api/v1/receipts', receipt);
 app.use('/api/v1', analytics);
 
-// ------------------- ERROR HANDLER -------------------
-app.use(errorHandleMiddleware);
+// ------------------- ERROR HANDLING -------------------
+// ✅ CRITICAL: Order matters! 404 handler must come BEFORE global error handler
+
+// Handle undefined routes (404)
+app.all('*', handle404);
+
+// Global error handler (MUST be last)
+app.use(globalErrorHandler);
 
 export default app;
