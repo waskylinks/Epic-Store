@@ -166,4 +166,366 @@
   }
   
 
-  
+  /* ===================================================
+   PHASE 2: EMAIL VERIFICATION & PASSWORD FEATURES
+   =================================================== */
+
+/* Password Toggle Button */
+.password-group {
+    position: relative;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 15px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 20px;
+    padding: 5px;
+    transition: opacity 0.2s;
+}
+
+.password-toggle:hover {
+    opacity: 0.7;
+}
+
+/* Password Strength Indicator */
+.password-strength {
+    margin: 10px 0;
+}
+
+.strength-bar-container {
+    width: 100%;
+    height: 6px;
+    background-color: #e0e0e0;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 5px;
+}
+
+.strength-bar {
+    height: 100%;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    border-radius: 3px;
+}
+
+.strength-text {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: capitalize;
+}
+
+/* Password Requirements List */
+.password-requirements {
+    background: #f5f5f5;
+    padding: 15px;
+    border-radius: 8px;
+    margin: 15px 0;
+    border-left: 3px solid #4CAF50;
+}
+
+.password-requirements p {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #333;
+}
+
+.password-requirements ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.password-requirements li {
+    font-size: 12px;
+    color: #666;
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.password-requirements li.valid {
+    color: #4CAF50;
+}
+
+/* Verification Header */
+.verification-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.verification-icon {
+    font-size: 64px;
+    margin-bottom: 15px;
+}
+
+.verification-header h2 {
+    margin: 10px 0;
+    color: #333;
+    font-size: 28px;
+}
+
+.verification-text {
+    color: #666;
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 10px 0;
+}
+
+.verification-text strong {
+    color: #4CAF50;
+    font-weight: 600;
+}
+
+/* Code Input Group */
+.code-input-group {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin: 25px 0;
+}
+
+.code-input {
+    width: 50px;
+    height: 60px;
+    text-align: center;
+    font-size: 24px;
+    font-weight: bold;
+    border: 2px solid #e0e0e0;
+    border-radius: 8px;
+    outline: none;
+    transition: all 0.3s ease;
+    background: #fff;
+}
+
+.code-input:focus {
+    border-color: #4CAF50;
+    box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+}
+
+.code-input:disabled {
+    background: #f5f5f5;
+    cursor: not-allowed;
+}
+
+/* Timer Section */
+.timer-section {
+    text-align: center;
+    margin: 20px 0;
+}
+
+.timer {
+    display: inline-block;
+    padding: 8px 20px;
+    background: #e3f2fd;
+    border-radius: 20px;
+    color: #1976d2;
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 10px;
+}
+
+.timer-warning {
+    background: #ffebee;
+    color: #d32f2f;
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+}
+
+.timer-expired {
+    color: #d32f2f;
+    font-size: 14px;
+    font-weight: 600;
+    margin: 5px 0;
+}
+
+/* Resend Section */
+.resend-section {
+    text-align: center;
+    margin: 20px 0;
+}
+
+.resend-section p {
+    font-size: 14px;
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.resend-btn {
+    background: transparent;
+    border: none;
+    color: #4CAF50;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: 14px;
+    padding: 5px 10px;
+    transition: color 0.2s;
+}
+
+.resend-btn:hover:not(:disabled) {
+    color: #45a049;
+}
+
+.resend-btn:disabled {
+    color: #999;
+    cursor: not-allowed;
+    text-decoration: none;
+}
+
+/* Link Button (for inline navigation) */
+.link-btn {
+    background: none;
+    border: none;
+    color: #4CAF50;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0 5px;
+    font-size: inherit;
+    transition: color 0.2s;
+}
+
+.link-btn:hover {
+    color: #45a049;
+}
+
+/* Form Links Enhancement */
+.form-links {
+    text-align: center;
+    margin: 15px 0;
+    font-size: 14px;
+    color: #666;
+}
+
+.form-links a,
+.form-links .link-btn {
+    color: #4CAF50;
+    text-decoration: none;
+    font-weight: 600;
+    margin-left: 5px;
+}
+
+.form-links a:hover,
+.form-links .link-btn:hover {
+    text-decoration: underline;
+}
+
+/* Auth Button Enhancement */
+.authBtn {
+    width: 100%;
+    padding: 14px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin: 15px 0;
+}
+
+.authBtn:hover:not(:disabled) {
+    background: #45a049;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+}
+
+.authBtn:disabled {
+    background: #cccccc;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Avatar Group Enhancement */
+.avatar-group {
+    text-align: center;
+    margin: 20px 0;
+}
+
+.avatar-group label {
+    display: block;
+    font-size: 14px;
+    font-weight: 600;
+    color: #666;
+    margin-bottom: 10px;
+}
+
+.file-input {
+    display: block;
+    margin: 10px auto;
+    padding: 8px;
+    font-size: 13px;
+}
+
+.avatar {
+    width: 100px;
+    height: 100px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 3px solid #e0e0e0;
+    margin: 10px auto;
+    display: block;
+}
+
+/* Verification Form Specific */
+.verification-form {
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .code-input {
+        width: 40px;
+        height: 50px;
+        font-size: 20px;
+    }
+
+    .code-input-group {
+        gap: 6px;
+    }
+
+    .verification-icon {
+        font-size: 48px;
+    }
+
+    .verification-header h2 {
+        font-size: 24px;
+    }
+
+    .password-toggle {
+        font-size: 18px;
+    }
+}
+
+@media (max-width: 480px) {
+    .code-input {
+        width: 35px;
+        height: 45px;
+        font-size: 18px;
+    }
+
+    .code-input-group {
+        gap: 5px;
+    }
+
+    .timer {
+        font-size: 14px;
+        padding: 6px 15px;
+    }
+}
