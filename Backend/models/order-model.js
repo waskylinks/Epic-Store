@@ -1,102 +1,72 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const orderSchema = new mongoose.Schema(
   {
     shippingInfo: {
-      address: { type: String, required: true },
-      city: { type: String, required: true },
-      state: { type: String, required: true },
-      country: { type: String, required: true },
-      pinCode: { type: Number, required: true },
-      phoneNo: { type: String, required: true }
+      address: String,
+      city: String,
+      state: String,
+      country: String,
+      pinCode: Number,
+      phoneNo: String
     },
 
     orderItems: [
       {
         product: {
-          type: mongoose.Schema.ObjectId,
+          type: mongoose.Schema.Types.ObjectId,
           ref: "Product",
           required: true
         },
-        name: { type: String, required: true },
-        price: { type: Number, required: true },
-        quantity: { type: Number, required: true },
-        image: { type: String, required: true }
+        name: String,
+        price: Number,
+        quantity: Number,
+        image: String
       }
     ],
 
     user: {
-      type: mongoose.Schema.ObjectId,
+      type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true
     },
 
-    //------------------------------------------------------------------
-    // PAYMENT CORE
-    //------------------------------------------------------------------
     paymentInfo: {
-      reference: {
-        type: String,
-        required: true,
-        unique: true
-      },
-      providerTxId: { type: String },
+      reference: { type: String, required: true, unique: true },
+      providerTxId: String,
       status: {
         type: String,
-        enum: ["pending", "success", "failed"],
-        required: true
+        enum: ["pending", "success", "failed"]
       },
       method: {
         type: String,
-        enum: ["paystack", "flutterwave", "stripe", "manual"],
-        required: true
+        enum: ["paystack", "flutterwave", "stripe", "manual"]
       },
       currency: { type: String, default: "NGN" },
-      amount: { type: Number, required: true },
-      paidAt: { type: Date }
+      amount: Number,
+      paidAt: Date
     },
 
-    //------------------------------------------------------------------
-    // PRICING BREAKDOWN
-    //------------------------------------------------------------------
-    itemPrice: { type: Number, required: true, default: 0 },
-    taxPrice: { type: Number, required: true, default: 0 },
-    shippingPrice: { type: Number, required: true, default: 0 },
-    totalPrice: { type: Number, required: true, default: 0 },
-    amountPaid: { type: Number, required: true, default: 0 },
+    itemPrice: Number,
+    taxPrice: Number,
+    shippingPrice: Number,
+    totalPrice: Number,
+    amountPaid: Number,
 
-    //------------------------------------------------------------------
-    // ORDER LIFECYCLE
-    //------------------------------------------------------------------
     orderStatus: {
       type: String,
       enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
       default: "Processing"
     },
 
-    deliveredAt: Date,
-
-    //------------------------------------------------------------------
-    // PAYMENT METADATA
-    //------------------------------------------------------------------
-    paymentMeta: {
-      channel: String,
-      currency: String,
-      ipAddress: String,
-      customer: Object,
-      authorization: Object,
-      raw: Object
-    }
+    deliveredAt: Date
   },
-  { timestamps: true }
+  { timestamps: true, strict: true }
 );
 
-//------------------------------------------------------------------
-// OPTIMIZED INDEXES FOR ANALYTICS
-//------------------------------------------------------------------
-orderSchema.index({ createdAt: 1 });                       // date-based filtering
-orderSchema.index({ orderStatus: 1, createdAt: -1 });      // status breakdown + date filter
-orderSchema.index({ "orderItems.product": 1 });           // top products aggregation
-orderSchema.index({ user: 1, createdAt: -1 });            // recent orders per user
+orderSchema.index({ user: 1, createdAt: -1 });
+orderSchema.index({ orderStatus: 1, createdAt: -1 });
+
+orderSchema.set("strictQuery", true);
 
 export default mongoose.model("Order", orderSchema);

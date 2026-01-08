@@ -1,226 +1,181 @@
 import mongoose from "mongoose";
 import validator from "validator";
-import bcryptjs from "bcryptjs";
+import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
-const userSchema = new mongoose.Schema({
+const userSchema = new mongoose.Schema(
+  {
     name: {
-        type: String,
-        required: [true, "Please enter your name"],
-        maxLength: [30, "Name cannot exceed 30 characters"],
-        minLength: [3, "Name should have more than 3 characters"],
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 3,
+      maxlength: 30
     },
+
     email: {
-        type: String,
-        required: [true, "Please enter your email"],
-        unique: true,
-        lowercase: true,
-        validate: [validator.isEmail, "Please enter a valid email address"],
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+      validate: [validator.isEmail, "Invalid email address"]
     },
+
     password: {
-        type: String,
-        minLength: [12, "Password should be at least 12 characters"],
-        select: false,
-        required: function() {
-            return this.authProvider === 'local';
-        }
+      type: String,
+      minlength: 12,
+      select: false,
+      required: function () {
+        return this.authProvider === "local";
+      }
     },
+
     avatar: {
-        public_id: { type: String, default: 'default_avatar' },
-        url: { type: String, default: 'https://res.cloudinary.com/demo/image/upload/v1234567890/default_avatar.png' }
+      public_id: { type: String, default: "default_avatar" },
+      url: {
+        type: String,
+        default:
+          "https://res.cloudinary.com/demo/image/upload/v1234567890/default_avatar.png"
+      }
     },
-    role: { type: String, enum: ['user', 'admin'], default: "user" },
 
-    // Authentication Provider
-    authProvider: { type: String, enum: ['local', 'google', 'facebook'], default: 'local', required: true },
+    role: {
+      type: String,
+      enum: ["user", "admin"],
+      default: "user"
+    },
 
-    // OAuth Provider IDs for account linking
-    googleId: { type: String, sparse: true, unique: true },
-    facebookId: { type: String, sparse: true, unique: true },
+    authProvider: {
+      type: String,
+      enum: ["local", "google", "facebook"],
+      default: "local",
+      required: true
+    },
 
-    // Email Verification
+    googleId: { type: String, unique: true, sparse: true },
+    facebookId: { type: String, unique: true, sparse: true },
+
     emailVerified: { type: Boolean, default: false },
+
     verificationCode: String,
     verificationCodeExpire: Date,
 
-    // Password Reset
     resetPasswordCode: String,
     resetPasswordCodeExpire: Date,
 
-    // Two-Factor Authentication (Optional for future)
-    twoFactorEnabled: { type: Boolean, default: false },
-    twoFactorSecret: String,
-
-    // Security Features
     lastLogin: Date,
     loginAttempts: { type: Number, default: 0 },
     lockUntil: Date,
 
-    // Password History (prevent reusing last 5 passwords)
-    passwordHistory: [{
+    passwordHistory: [
+      {
         password: String,
         changedAt: Date
-    }],
-}, { timestamps: true });
+      }
+    ]
+  },
+  { timestamps: true, strict: true }
+);
 
+/* ================= INDEXES ================= */
 
-// INDEXES FOR PERFORMANCE (Keep only necessary ones)
-
-userSchema.index({ createdAt: 1 });
 userSchema.index({ authProvider: 1 });
+userSchema.index({ createdAt: 1 });
 
-
-// VIRTUAL FIELD: Check if account is locked
-
-userSchema.virtual('isLocked').get(function() {
-    return !!(this.lockUntil && this.lockUntil > Date.now());
-});
-
-
-// PASSWORD HASHING (History stores hashed passwords only)
+/* ================= PASSWORD HASH ================= */
 
 userSchema.pre("save", async function (next) {
-    if (!this.isModified("password") || !this.password) return next();
+  if (!this.isModified("password") || !this.password) return next();
 
-    const hashedPassword = await bcryptjs.hash(this.password, 12);
+  const hashed = await bcrypt.hash(this.password, 12);
 
-    if (!this.isNew) {
-        this.passwordHistory.push({
-            password: hashedPassword,
-            changedAt: new Date()
-        });
+  if (!this.isNew) {
+    this.passwordHistory.push({
+      password: this.password,
+      changedAt: new Date()
+    });
 
-        // Keep only last 5 passwords
-        if (this.passwordHistory.length > 5) {
-            this.passwordHistory = this.passwordHistory.slice(-5);
-        }
+    if (this.passwordHistory.length > 5) {
+      this.passwordHistory = this.passwordHistory.slice(-5);
     }
+  }
 
-    this.password = hashedPassword;
-    next();
+  this.password = hashed;
+  next();
 });
 
+/* ================= METHODS ================= */
 
-// COMPARE PASSWORD METHOD
-
-userSchema.methods.comparePassword = async function (enteredPassword) {
-    if (!this.password) return false;
-    return await bcryptjs.compare(enteredPassword, this.password);
+userSchema.methods.comparePassword = function (candidate) {
+  return bcrypt.compare(candidate, this.password);
 };
 
-
-// CHECK PASSWORD REUSE
-
-userSchema.methods.isPasswordReused = async function(newPassword) {
-    if (!this.passwordHistory || this.passwordHistory.length === 0) return false;
-
-    for (const oldPass of this.passwordHistory) {
-        const isMatch = await bcryptjs.compare(newPassword, oldPass.password);
-        if (isMatch) return true;
-    }
-    return false;
+userSchema.methods.isPasswordReused = async function (candidate) {
+  for (const item of this.passwordHistory) {
+    if (await bcrypt.compare(candidate, item.password)) return true;
+  }
+  return false;
 };
 
+userSchema.methods.incrementLoginAttempts = async function () {
+  const maxAttempts = 5;
+  const lockTime = 30 * 60 * 1000;
 
-// INCREMENT LOGIN ATTEMPTS
+  if (this.lockUntil && this.lockUntil > Date.now()) return;
 
-userSchema.methods.incrementLoginAttempts = async function() {
-    if (this.lockUntil && this.lockUntil < Date.now()) {
-        return await this.updateOne({
-            $set: { loginAttempts: 1 },
-            $unset: { lockUntil: 1 }
-        });
-    }
+  this.loginAttempts += 1;
 
-    const updates = { $inc: { loginAttempts: 1 } };
-    const maxAttempts = 5;
-    const lockTime = 30 * 60 * 1000; // 30 minutes
+  if (this.loginAttempts >= maxAttempts) {
+    this.lockUntil = Date.now() + lockTime;
+  }
 
-    if (this.loginAttempts + 1 >= maxAttempts && !this.isLocked) {
-        updates.$set = { lockUntil: Date.now() + lockTime };
-    }
-
-    return await this.updateOne(updates);
+  await this.save({ validateBeforeSave: false });
 };
 
-
-// RESET LOGIN ATTEMPTS
-
-userSchema.methods.resetLoginAttempts = async function() {
-    return await this.updateOne({
-        $set: { loginAttempts: 0, lastLogin: Date.now() },
-        $unset: { lockUntil: 1 }
-    });
+userSchema.methods.resetLoginAttempts = async function () {
+  this.loginAttempts = 0;
+  this.lockUntil = undefined;
+  this.lastLogin = Date.now();
+  await this.save({ validateBeforeSave: false });
 };
 
-
-// JWT TOKEN GENERATION
-
-userSchema.methods.getJWTToken = function() {
-    return jwt.sign({ id: this._id }, process.env.JWT_SECRET_KEY, {
-        expiresIn: process.env.JWT_EXPIRES_TIME,
-    });
+userSchema.methods.getJWTToken = function () {
+  return jwt.sign({ id: this._id }, process.env.JWT_SECRET_KEY, {
+    expiresIn: process.env.JWT_EXPIRES_TIME
+  });
 };
 
+userSchema.methods.generateVerificationCode = function () {
+  const code = crypto.randomInt(100000, 999999).toString();
 
-// GENERATE EMAIL VERIFICATION CODE (6 digits, 90 seconds expiry)
+  this.verificationCode = crypto
+    .createHash("sha256")
+    .update(code)
+    .digest("hex");
 
-userSchema.methods.generateVerificationCode = function() {
-    const code = crypto.randomInt(100000, 999999).toString();
-
-    this.verificationCode = crypto
-        .createHash('sha256')
-        .update(code)
-        .digest('hex');
-
-    this.verificationCodeExpire = Date.now() + 90 * 1000; // 90 seconds
-    return code; // unhashed code for sending via email
+  this.verificationCodeExpire = Date.now() + 90 * 1000;
+  return code;
 };
 
+userSchema.methods.generatePasswordResetCode = function () {
+  const code = crypto.randomInt(100000, 999999).toString();
 
-// GENERATE PASSWORD RESET CODE (6 digits, 90 seconds expiry)
+  this.resetPasswordCode = crypto
+    .createHash("sha256")
+    .update(code)
+    .digest("hex");
 
-userSchema.methods.generatePasswordResetCode = function() {
-    const code = crypto.randomInt(100000, 999999).toString();
-
-    this.resetPasswordCode = crypto
-        .createHash('sha256')
-        .update(code)
-        .digest('hex');
-
-    this.resetPasswordCodeExpire = Date.now() + 90 * 1000;
-    return code; // unhashed code for sending via email
+  this.resetPasswordCodeExpire = Date.now() + 90 * 1000;
+  return code;
 };
 
-
-// VERIFY EMAIL WITH CODE
-
-userSchema.methods.verifyEmailCode = function(inputCode) {
-    const hashedInputCode = crypto
-        .createHash('sha256')
-        .update(inputCode)
-        .digest('hex');
-
-    return (
-        hashedInputCode === this.verificationCode &&
-        this.verificationCodeExpire > Date.now()
-    );
+userSchema.methods.verifyCode = function (input, hashed, expiry) {
+  const hash = crypto.createHash("sha256").update(input).digest("hex");
+  return hash === hashed && expiry > Date.now();
 };
 
-//------------------------------------------------------------------
-// VERIFY RESET CODE
-//------------------------------------------------------------------
-userSchema.methods.verifyResetCode = function(inputCode) {
-    const hashedInputCode = crypto
-        .createHash('sha256')
-        .update(inputCode)
-        .digest('hex');
-
-    return (
-        hashedInputCode === this.resetPasswordCode &&
-        this.resetPasswordCodeExpire > Date.now()
-    );
-};
+userSchema.set("strictQuery", true);
 
 export default mongoose.model("User", userSchema);

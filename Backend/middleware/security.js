@@ -1,115 +1,127 @@
-import helmet from 'helmet';
-import mongoSanitize from 'express-mongo-sanitize';
-import hpp from 'hpp';
-import xss from 'xss-clean';
+import helmet from "helmet";
+import hpp from "hpp";
+import cors from "cors";
+import rateLimit from "express-rate-limit";
 
 /**
- * Security middleware configuration
- * Apply these to your Express app in server.js/app.js
+ * =========================
+ * STARTUP GUARDS
+ * =========================
+ * These checks prevent middleware from mutating read-only req properties.
  */
+export function startupGuards(app) {
+  if (!app || typeof app.use !== "function") {
+    throw new Error("Express app instance required for security middleware.");
+  }
+}
 
 /**
- * Helmet - Sets various HTTP headers for security
- */
-export const helmetConfig = helmet({
-    contentSecurityPolicy: {
-        directives: {
-            defaultSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'", "https:"],
-            scriptSrc: ["'self'", "https:"],
-            imgSrc: ["'self'", "data:", "https:", "http:"],
-            connectSrc: ["'self'", "https:", "ws:", "wss:"],
-            fontSrc: ["'self'", "https:", "data:"],
-            objectSrc: ["'none'"],
-            mediaSrc: ["'self'", "https:"],
-            frameSrc: ["'none'"],
-        },
-    },
-    crossOriginEmbedderPolicy: false,
-    crossOriginResourcePolicy: { policy: "cross-origin" }
-});
-
-/**
- * Data Sanitization against NoSQL Injection
- * Prevents operators like $gt, $ne etc in user input
- */
-export const sanitizeData = mongoSanitize({
-    replaceWith: '_',
-    onSanitize: ({ req, key }) => {
-        console.warn(`Sanitized potentially malicious input: ${key}`);
-    }
-});
-
-/**
- * XSS Clean - Sanitizes user input to prevent XSS attacks
- */
-export const xssProtection = xss();
-
-/**
- * HPP - Prevent HTTP Parameter Pollution
- */
-export const preventParameterPollution = hpp({
-    whitelist: [
-        'price',
-        'rating',
-        'category',
-        'sort',
-        'page',
-        'limit'
-    ]
-});
-
-/**
- * CORS Configuration
+ * =========================
+ * CORS CONFIGURATION
+ * =========================
  */
 export const corsOptions = {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true,
-    optionsSuccessStatus: 200,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  origin: process.env.FRONTEND_URL || "*",
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
 };
 
 /**
- * Additional security headers
+ * =========================
+ * RATE LIMITING
+ * =========================
+ * Protects against brute-force and API abuse
  */
-export const additionalSecurityHeaders = (req, res, next) => {
-    // Prevent clickjacking
-    res.setHeader('X-Frame-Options', 'DENY');
-    
-    // Prevent MIME type sniffing
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-    
-    // Enable XSS protection in browsers
-    res.setHeader('X-XSS-Protection', '1; mode=block');
-    
-    // Referrer policy
-    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    
-    // Permissions policy
-    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
-    
-    next();
-};
+export const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // max 100 requests per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: "Too many requests from this IP, please try again later.",
+});
 
 /**
- * How to use in your app.js/server.js:
- * 
- * import cors from 'cors';
- * import { 
- *   helmetConfig, 
- *   sanitizeData, 
- *   xssProtection, 
- *   preventParameterPollution,
+ * =========================
+ * HELMET SECURITY HEADERS
+ * =========================
+ */
+export const helmetConfig = helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      fontSrc: ["'self'", "https:", "data:"],
+    },
+  },
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: "same-origin" },
+  referrerPolicy: { policy: "no-referrer" },
+  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+  hidePoweredBy: true,
+});
+
+/**
+ * =========================
+ * PREVENT PARAMETER POLLUTION
+ * =========================
+ */
+export const hppProtection = hpp();
+
+/**
+ * =========================
+ * ADDITIONAL CUSTOM HEADERS
+ * =========================
+ */
+export function additionalSecurityHeaders(req, res, next) {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-XSS-Protection", "1; mode=block"); // fallback
+  next();
+}
+
+/**
+ * =========================
+ * INPUT SANITIZATION PLACEHOLDER
+ * =========================
+ * Instead of mutating req.query/body globally, validate & sanitize per-route
+ * using express-validator or manual checks in controllers.
+ */
+export function validateQueryMiddleware(validators = []) {
+  return async (req, res, next) => {
+    try {
+      for (const validatorFn of validators) {
+        await validatorFn(req);
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+/**
+ * =========================
+ * USAGE:
+ * =========================
+ * import express from "express";
+ * import {
+ *   startupGuards,
  *   corsOptions,
- *   additionalSecurityHeaders 
- * } from './middleware/security.js';
+ *   helmetConfig,
+ *   hppProtection,
+ *   apiLimiter,
+ *   additionalSecurityHeaders
+ * } from "./middleware/security.js";
  * 
- * // Apply security middleware
- * app.use(helmetConfig);
+ * const app = express();
+ * startupGuards(app);
  * app.use(cors(corsOptions));
+ * app.use(helmetConfig);
+ * app.use(hppProtection);
+ * app.use(apiLimiter);
  * app.use(additionalSecurityHeaders);
- * app.use(sanitizeData);
- * app.use(xssProtection);
- * app.use(preventParameterPollution);
  */

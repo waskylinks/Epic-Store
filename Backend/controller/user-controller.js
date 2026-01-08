@@ -199,47 +199,42 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
 // LOGIN USER (CHECK EMAIL VERIFICATION)
 
 export const loginUser = handleAsyncError(async (req, res, next) => {
-  const { email, password } = req.body;
+    const { email, password } = req.body;
 
-  if (!email || !password) {
-    return next(new HandleError("Please enter email and password", 400));
-  }
+    if (!email || !password) {
+        return next(new HandleError("Please enter email and password", 400));
+    }
 
-  const user = await User.findOne({ email: email.toLowerCase() })
-    .select("+password");
+    const user = await User.findOne({ email: email.toLowerCase() })
+        .select("+password");
 
-  if (!user) {
-    return next(new HandleError("Invalid email or password", 401));
-  }
+    if (!user) {
+        return next(new HandleError("Invalid email or password", 401));
+    }
 
-  if (user.isLocked) {
-    const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
-    return next(
-      new HandleError(
-        `Account locked. Try again in ${mins} minutes.`,
-        403
-      )
-    );
-  }
+    // ✅ FIX: explicit lock check (no virtual reliance)
+    if (user.lockUntil && user.lockUntil > Date.now()) {
+        const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
+        return next(
+            new HandleError(`Account locked. Try again in ${mins} minutes.`, 403)
+        );
+    }
 
-  if (user.authProvider === "local" && !user.emailVerified) {
-    return next(
-      new HandleError(
-        "Please verify your email before logging in.",
-        403
-      )
-    );
-  }
+    if (user.authProvider === "local" && !user.emailVerified) {
+        return next(
+            new HandleError("Please verify your email before logging in.", 403)
+        );
+    }
 
-  const isMatch = await user.comparePassword(password);
+    const isMatch = await user.comparePassword(password);
 
-  if (!isMatch) {
-    await user.incrementLoginAttempts();
-    return next(new HandleError("Invalid email or password", 401));
-  }
+    if (!isMatch) {
+        await user.incrementLoginAttempts();
+        return next(new HandleError("Invalid email or password", 401));
+    }
 
-  await user.resetLoginAttempts();
-  sendToken(user, 200, res);
+    await user.resetLoginAttempts();
+    sendToken(user, 200, res);
 });
 
 
