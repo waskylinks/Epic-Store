@@ -3,8 +3,7 @@ import '../UserStyles/Form.css';
 import '../UserStyles/OAuthButtons.css';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { login, removeErrors, removeSuccess } from '../features/products/userSlice';
-import { toast } from 'react-toastify';
+import { login, removeErrors, removeSuccess, clearVerificationState } from '../features/products/userSlice';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import FacebookSignInButton from '../components/FacebookSignInButton';
 
@@ -12,9 +11,8 @@ function Login() {
     const [loginEmail, setLoginEmail] = useState('');
     const [loginPassword, setLoginPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
-    // Redux and Router hooks
-    
-    const { error, loading, success, isAuthenticated } = useSelector(state => state.user);
+
+    const { error, loading, success, isAuthenticated, needsVerification, verificationEmail } = useSelector(state => state.user);
     const location = useLocation();
     const dispatch = useDispatch();
     const navigate = useNavigate();
@@ -23,49 +21,41 @@ function Login() {
 
     const logInSubmit = (e) => {
         e.preventDefault();
-        
-        if (!loginEmail || !loginPassword) {
-            toast.error('Please enter both email and password', { position: 'top-center', autoClose: 2000 });
-            return;
-        }
+        if (!loginEmail || !loginPassword) return;
 
-        dispatch(login({
-            email: loginEmail,
-            password: loginPassword
-        }));
+        dispatch(login({ email: loginEmail, password: loginPassword }));
     };
 
-    const togglePasswordVisibility = () => {
-        setShowPassword(!showPassword);
-    };
+    const togglePasswordVisibility = () => setShowPassword(!showPassword);
 
+    // Redirect if login fails due to unverified email
     useEffect(() => {
-        if (error) {
-            // Check if error is about email verification
-            if (error.includes('verify your email')) {
-                toast.error(error, { position: 'top-center', autoClose: 4000 });
-                setTimeout(() => {
-                    navigate('/verify-email', { state: { email: loginEmail } });
-                }, 4000);
-            } else {
-                toast.error(error, { position: 'top-center', autoClose: 3000 });
-            }
-            dispatch(removeErrors());
+        if (needsVerification && verificationEmail) {
+            navigate('/verify-email', { state: { email: verificationEmail } });
+            dispatch(clearVerificationState());
         }
-    }, [dispatch, error, navigate, loginEmail]);
+    }, [needsVerification, verificationEmail, navigate, dispatch]);
 
+    // Redirect after successful login
     useEffect(() => {
         if (isAuthenticated) {
             navigate(redirect);
         }
     }, [isAuthenticated, redirect, navigate]);
 
+    // Clear errors on unmount
     useEffect(() => {
-        if (success) {
-            toast.success('Login Successful', { position: 'top-center', autoClose: 2000 });
+        return () => {
+            dispatch(removeErrors());
+        };
+    }, [dispatch]);
+
+    // Clear success on unmount
+    useEffect(() => {
+        return () => {
             dispatch(removeSuccess());
-        }
-    }, [dispatch, success]);
+        };
+    }, [dispatch]);
 
     return (
         <div className="form-container container">

@@ -9,6 +9,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { loadUser } from './features/products/userSlice';
 import UserDashboard from './User/UserDashboard';
 import Profile from './User/Profile';
+import VerifyEmail from './User/VerifyEmail';
 import ProtectedRoute from './components/ProtectedRoute';
 import UpdateProfile from './User/UpdateProfile';
 import UpdatePassword from './User/UpdatePassword';
@@ -57,6 +58,7 @@ function App() {
         <Route path='/products/:keyword' element={<Products />}/>
         <Route path='/register' element={<Register />}/>
         <Route path='/login' element={<Login />}/>
+        <Route path='/verify-email' element={<VerifyEmail />}/>
         <Route path='/profile' element={<ProtectedRoute element={<Profile />} />} />
         <Route path='/profile/update' element={<ProtectedRoute element={<UpdateProfile />} />}/>
         <Route path='/password/update' element={<ProtectedRoute element={<UpdatePassword />} />}/>

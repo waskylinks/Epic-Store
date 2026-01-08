@@ -7,16 +7,15 @@ import { toast } from 'react-toastify';
 
 function VerifyEmail() {
     const [code, setCode] = useState(['', '', '', '', '', '']);
-    const [timeLeft, setTimeLeft] = useState(90); // 90 seconds = 1:30
+    const [timeLeft, setTimeLeft] = useState(90); // 90 seconds
     const [canResend, setCanResend] = useState(false);
     const inputRefs = useRef([]);
-    
-    const { error, loading, success, message, verificationEmail } = useSelector(state => state.user);
+
+    const { error, loading, success, message, verificationEmail, isAuthenticated } = useSelector(state => state.user);
     const location = useLocation();
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
-    // Get email from Redux state or location state
     const email = verificationEmail || location.state?.email;
 
     // Countdown timer
@@ -29,35 +28,26 @@ function VerifyEmail() {
         }
     }, [timeLeft]);
 
-    // Format time as MM:SS
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
         const secs = seconds % 60;
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
-    // Handle input change
     const handleChange = (index, value) => {
-        if (isNaN(value)) return; // Only allow numbers
-
+        if (isNaN(value)) return;
         const newCode = [...code];
         newCode[index] = value;
         setCode(newCode);
-
-        // Auto-focus next input
-        if (value !== '' && index < 5) {
-            inputRefs.current[index + 1]?.focus();
-        }
+        if (value !== '' && index < 5) inputRefs.current[index + 1]?.focus();
     };
 
-    // Handle backspace
     const handleKeyDown = (index, e) => {
         if (e.key === 'Backspace' && !code[index] && index > 0) {
             inputRefs.current[index - 1]?.focus();
         }
     };
 
-    // Handle paste
     const handlePaste = (e) => {
         e.preventDefault();
         const pasteData = e.clipboardData.getData('text').slice(0, 6);
@@ -68,35 +58,28 @@ function VerifyEmail() {
         }
     };
 
-    // Submit verification
     const handleSubmit = (e) => {
         e.preventDefault();
         const verificationCode = code.join('');
-        
         if (verificationCode.length !== 6) {
             toast.error('Please enter the complete 6-digit code', { position: 'top-center', autoClose: 2000 });
             return;
         }
-
         if (!email) {
             toast.error('Email not found. Please register again.', { position: 'top-center', autoClose: 2000 });
             navigate('/register');
             return;
         }
-
         dispatch(verifyEmail({ email, code: verificationCode }));
     };
 
-    // Resend code
     const handleResend = () => {
         if (!canResend) return;
-        
         if (!email) {
             toast.error('Email not found. Please register again.', { position: 'top-center', autoClose: 2000 });
             navigate('/register');
             return;
         }
-
         dispatch(resendVerificationCode(email));
         setTimeLeft(90);
         setCanResend(false);
@@ -112,22 +95,31 @@ function VerifyEmail() {
         }
     }, [dispatch, error]);
 
-    // Handle success
+    // Show success toast for resend only
     useEffect(() => {
-        if (success && message?.includes('verification')) {
+        if (success && message?.includes('verification code sent')) {
             toast.success(message, { position: 'top-center', autoClose: 2000 });
             dispatch(removeSuccess());
         }
-    }, [dispatch, success, message]);
+    }, [success, message, dispatch]);
 
-    // Navigate after successful verification
+    // Auto redirect after successful verification (backend already logged user in)
     useEffect(() => {
-        if (success && !message?.includes('resend') && !message?.includes('sent')) {
-            toast.success('Email verified successfully! Welcome to EpicStore 🎉', { position: 'top-center', autoClose: 2000 });
+        if (isAuthenticated && success && !message?.includes('verification code sent')) {
+            toast.success('Email verified successfully! Redirecting...', { 
+                position: 'top-center', 
+                autoClose: 1500 
+            });
+            
             dispatch(clearVerificationState());
-            setTimeout(() => navigate('/'), 2000);
+            
+            const timer = setTimeout(() => {
+                navigate('/');
+            }, 1500);
+            
+            return () => clearTimeout(timer);
         }
-    }, [success, message, navigate, dispatch]);
+    }, [isAuthenticated, success, message, dispatch, navigate]);
 
     // Redirect if no email
     useEffect(() => {
