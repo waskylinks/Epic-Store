@@ -176,6 +176,20 @@ userSchema.methods.verifyCode = function (input, hashed, expiry) {
   return hash === hashed && expiry > Date.now();
 };
 
+userSchema.methods.verifyEmailCode = function (code) {
+  if (!this.verificationCode || !this.verificationCodeExpire) {
+    return false;
+  }
+  return this.verifyCode(code, this.verificationCode, this.verificationCodeExpire);
+};
+
+userSchema.methods.verifyResetCode = function (code) {
+  if (!this.resetPasswordCode || !this.resetPasswordCodeExpire) {
+    return false;
+  }
+  return this.verifyCode(code, this.resetPasswordCode, this.resetPasswordCodeExpire);
+};
+
 userSchema.set("strictQuery", true);
 
 export default mongoose.model("User", userSchema);

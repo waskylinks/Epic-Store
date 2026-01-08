@@ -198,6 +198,8 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
 
 // LOGIN USER (CHECK EMAIL VERIFICATION)
 
+// LOGIN USER (CHECK EMAIL VERIFICATION + RESEND CODE IF NEEDED)
+
 export const loginUser = handleAsyncError(async (req, res, next) => {
     const { email, password } = req.body;
 
@@ -212,7 +214,7 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Invalid email or password", 401));
     }
 
-    // ✅ FIX: explicit lock check (no virtual reliance)
+    // ✅ Check if account is locked
     if (user.lockUntil && user.lockUntil > Date.now()) {
         const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
         return next(
@@ -220,12 +222,42 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
         );
     }
 
+    // ✅ Check if email is verified
     if (user.authProvider === "local" && !user.emailVerified) {
-        return next(
-            new HandleError("Please verify your email before logging in.", 403)
-        );
+        // Generate NEW verification code
+        const verificationCode = user.generateVerificationCode();
+        await user.save({ validateBeforeSave: false });
+
+        // Send verification email
+        try {
+            const emailTemplate = emailTemplates.verificationEmail(user.name, verificationCode);
+            await sendEmail({
+                email: user.email,
+                subject: emailTemplate.subject,
+                message: emailTemplate.text,
+                html: emailTemplate.html
+            });
+
+            console.log(`✅ Verification code sent to ${user.email} during login attempt`);
+
+            // Return response telling user to verify
+            return res.status(403).json({
+                success: false,
+                message: "Please verify your email before logging in. A new verification code has been sent.",
+                needsVerification: true,
+                email: user.email
+            });
+
+        } catch (error) {
+            console.error('❌ Failed to send verification email during login:', error);
+            user.verificationCode = undefined;
+            user.verificationCodeExpire = undefined;
+            await user.save({ validateBeforeSave: false });
+            return next(new HandleError("Could not send verification email. Please try again later.", 500));
+        }
     }
 
+    // ✅ Verify password
     const isMatch = await user.comparePassword(password);
 
     if (!isMatch) {

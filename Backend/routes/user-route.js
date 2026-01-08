@@ -44,11 +44,12 @@ router.use(sanitizeInput);
 router.route("/register")
   .post(registrationLimiter, validateRegistration, registerUser);
 
-// ✅ NEW: Email verification with code
+// Email verification with code
+// Verify email
 router.route("/verify-email")
-  .post(authLimiter, validateVerificationCode, verifyEmail);
+  .post(emailLimiter, validateVerificationCode, verifyEmail);
 
-// ✅ NEW: Resend verification code
+//  Resend verification code
 router.route("/resend-verification")
   .post(emailLimiter, validateEmail, resendVerificationCode);
 
@@ -64,9 +65,10 @@ router.route("/logout")
 router.route("/password/forgot")
   .post(passwordResetLimiter, validateEmail, requestPasswordReset);
 
-// ✅ UPDATED: Password reset with CODE (not token)
+// 
+// Password reset with CODE (not token)
 router.route("/password/reset")
-  .post(authLimiter, validatePasswordReset, resetPasswordWithCode);
+  .post(passwordResetLimiter, validatePasswordReset, resetPasswordWithCode);
 
 // ===== PROTECTED ROUTES (Require Authentication) =====
 
