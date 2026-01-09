@@ -30,7 +30,8 @@ import {
   validatePasswordReset,
   validateEmail,
   validateVerificationCode,       // ✅ ADD THIS
-  sanitizeInput 
+  sanitizeInput, 
+  validateProfileUpdate
 } from '../middleware/validation.js';
 
 const router = express.Router();
@@ -82,7 +83,7 @@ router.route("/password/update")
 
 // Update profile
 router.route("/profile/update")
-  .put(verifyUserAuth, updateProfile);
+  .put(verifyUserAuth, validateProfileUpdate, updateProfile);
 
 // ===== ADMIN ROUTES =====
 
