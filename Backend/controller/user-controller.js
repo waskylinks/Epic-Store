@@ -87,7 +87,6 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Email and verification code are required", 400));
     }
 
-    // Find user
     const user = await User.findOne({ email: email.toLowerCase() });
 
     if (!user) {
@@ -98,22 +97,18 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Email already verified. Please login.", 400));
     }
 
-    // Verify code
     const isCodeValid = user.verifyEmailCode(code);
-
     if (!isCodeValid) {
         return next(new HandleError("Invalid or expired verification code", 400));
     }
 
-    // Mark email as verified
     user.emailVerified = true;
     user.verificationCode = undefined;
     user.verificationCodeExpire = undefined;
     await user.save();
 
-    // Send welcome email
     try {
-        const welcomeTemplate = emailTemplates.welcomeEmail(user.name);
+        const welcomeTemplate = emailTemplates.welcomeEmail(user.fullName);
         await sendEmail({
             email: user.email,
             subject: welcomeTemplate.subject,
@@ -121,13 +116,11 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
             html: welcomeTemplate.html
         });
     } catch (error) {
-        console.error('Failed to send welcome email:', error);
-        // Don't fail verification if welcome email fails
+        console.error("Welcome email failed:", error);
     }
 
     await invalidateCaches();
 
-    // Login user automatically after verification
     sendToken(user, 200, res);
 });
 
@@ -151,13 +144,15 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
         return next(new HandleError("Email already verified. Please login.", 400));
     }
 
-    // Generate new verification code
     const verificationCode = user.generateVerificationCode();
     await user.save({ validateBeforeSave: false });
 
-    // Send verification email
     try {
-        const emailTemplate = emailTemplates.verificationEmail(user.name, verificationCode);
+        const emailTemplate = emailTemplates.verificationEmail(
+            user.fullName,
+            verificationCode
+        );
+
         await sendEmail({
             email: user.email,
             subject: emailTemplate.subject,
@@ -169,17 +164,17 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
             success: true,
             message: `New verification code sent to ${user.email}`
         });
-
     } catch (error) {
         user.verificationCode = undefined;
         user.verificationCodeExpire = undefined;
         await user.save({ validateBeforeSave: false });
-        return next(new HandleError("Could not send verification email. Please try again later.", 500));
+
+        return next(
+            new HandleError("Could not send verification email. Please try again later.", 500)
+        );
     }
 });
 
-
-// LOGIN USER (CHECK EMAIL VERIFICATION)
 
 // LOGIN USER (CHECK EMAIL VERIFICATION + RESEND CODE IF NEEDED)
 
@@ -190,30 +185,27 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Please enter email and password", 400));
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() })
-        .select("+password");
+    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
 
     if (!user) {
         return next(new HandleError("Invalid email or password", 401));
     }
 
-    // ✅ Check if account is locked
     if (user.lockUntil && user.lockUntil > Date.now()) {
         const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
-        return next(
-            new HandleError(`Account locked. Try again in ${mins} minutes.`, 403)
-        );
+        return next(new HandleError(`Account locked. Try again in ${mins} minutes.`, 403));
     }
 
-    // ✅ Check if email is verified
     if (user.authProvider === "local" && !user.emailVerified) {
-        // Generate NEW verification code
         const verificationCode = user.generateVerificationCode();
         await user.save({ validateBeforeSave: false });
 
-        // Send verification email
         try {
-            const emailTemplate = emailTemplates.verificationEmail(user.name, verificationCode);
+            const emailTemplate = emailTemplates.verificationEmail(
+                user.fullName,
+                verificationCode
+            );
+
             await sendEmail({
                 email: user.email,
                 subject: emailTemplate.subject,
@@ -221,28 +213,24 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
                 html: emailTemplate.html
             });
 
-            console.log(`✅ Verification code sent to ${user.email} during login attempt`);
-
-            // Return response telling user to verify
             return res.status(403).json({
                 success: false,
-                message: "Please verify your email before logging in. A new verification code has been sent.",
+                message: "Please verify your email before logging in.",
                 needsVerification: true,
                 email: user.email
             });
-
         } catch (error) {
-            console.error('❌ Failed to send verification email during login:', error);
             user.verificationCode = undefined;
             user.verificationCodeExpire = undefined;
             await user.save({ validateBeforeSave: false });
-            return next(new HandleError("Could not send verification email. Please try again later.", 500));
+
+            return next(
+                new HandleError("Could not send verification email. Please try again later.", 500)
+            );
         }
     }
 
-    // ✅ Verify password
     const isMatch = await user.comparePassword(password);
-
     if (!isMatch) {
         await user.incrementLoginAttempts();
         return next(new HandleError("Invalid email or password", 401));
@@ -272,48 +260,54 @@ export const logout = handleAsyncError(async (req, res) => {
 
 
 
-// FORGOT PASSWORD (SEND CODE)
+// FORGOT PASSWORD (SEND CODE) - ✅ FIXED
 
 export const requestPasswordReset = handleAsyncError(async (req, res, next) => {
-  const { email } = req.body;
+    const { email } = req.body;
 
-  const user = await User.findOne({ email: email.toLowerCase() });
+    const user = await User.findOne({ email: email.toLowerCase() });
 
-  if (!user) {
-    return next(new HandleError("No account found with this email", 404));
-  }
+    if (!user) {
+        return next(new HandleError("No account found with this email", 404));
+    }
 
-  if (!user.emailVerified && user.authProvider === "local") {
-    return next(
-      new HandleError("Please verify your email first", 403)
-    );
-  }
+    if (!user.emailVerified && user.authProvider === "local") {
+        return next(new HandleError("Please verify your email first", 403));
+    }
 
-  const resetCode = user.generatePasswordResetCode();
-  await user.save({ validateBeforeSave: false });
+    const resetCode = user.generatePasswordResetCode();
+    await user.save({ validateBeforeSave: false });
 
-  const template = emailTemplates.passwordResetEmail(
-    user.name,
-    resetCode
-  );
+    // ✅ FIXED: Wrapped in try-catch
+    try {
+        const template = emailTemplates.passwordResetEmail(
+            user.fullName,
+            resetCode
+        );
 
-  await sendEmail({
-    email: user.email,
-    subject: template.subject,
-    message: template.text,
-    html: template.html
-  });
+        await sendEmail({
+            email: user.email,
+            subject: template.subject,
+            message: template.text,
+            html: template.html
+        });
 
-  res.status(200).json({
-    success: true,
-    message: `Password reset code sent to ${user.email}`
-  });
+        res.status(200).json({
+            success: true,
+            message: `Password reset code sent to ${user.email}`
+        });
+    } catch (error) {
+        user.resetPasswordCode = undefined;
+        user.resetPasswordCodeExpire = undefined;
+        await user.save({ validateBeforeSave: false });
+        return next(new HandleError("Could not send password reset email. Please try again later.", 500));
+    }
 });
 
 
 // RESET PASSWORD WITH CODE
 
-export const resetPasswordWithCode = handleAsyncError(async(req, res, next) => {
+export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => {
     const { email, code, password, confirmPassword } = req.body;
 
     if (!email || !code) {
@@ -321,40 +315,31 @@ export const resetPasswordWithCode = handleAsyncError(async(req, res, next) => {
     }
 
     if (password !== confirmPassword) {
-        return next(new HandleError('Passwords do not match', 400));
+        return next(new HandleError("Passwords do not match", 400));
     }
 
-    // Find user
-    const user = await User.findOne({ 
-        email: email.toLowerCase() 
-    }).select('+password');
+    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
 
     if (!user) {
-        return next(new HandleError('User not found', 404));
+        return next(new HandleError("User not found", 404));
     }
 
-    // Verify reset code
     const isCodeValid = user.verifyResetCode(code);
-
     if (!isCodeValid) {
-        return next(new HandleError('Invalid or expired reset code', 400));
+        return next(new HandleError("Invalid or expired reset code", 400));
     }
 
-    // Check if password is being reused
-    const isPasswordReused = await user.isPasswordReused(password);
-    if (isPasswordReused) {
-        return next(new HandleError('Cannot reuse any of your last 5 passwords', 400));
+    if (await user.isPasswordReused(password)) {
+        return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
     }
 
-    // Update password
     user.password = password;
     user.resetPasswordCode = undefined;
     user.resetPasswordCodeExpire = undefined;
     await user.save();
 
-    // Send password changed notification
     try {
-        const emailTemplate = emailTemplates.passwordChangedEmail(user.name);
+        const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
         await sendEmail({
             email: user.email,
             subject: emailTemplate.subject,
@@ -362,42 +347,36 @@ export const resetPasswordWithCode = handleAsyncError(async(req, res, next) => {
             html: emailTemplate.html
         });
     } catch (error) {
-        console.error('Failed to send password changed email:', error);
+        console.error("Password change email failed:", error);
     }
 
     sendToken(user, 200, res);
 });
 
-
 // UPDATE PASSWORD
 
-export const UpdatePassword = handleAsyncError(async(req, res, next) => {
+export const UpdatePassword = handleAsyncError(async (req, res, next) => {
     const { oldPassword, newPassword, confirmPassword } = req.body;
-    const user = await User.findById(req.user.id).select('+password');
 
-    // Verify old password
-    const checkPasswordMatch = await user.comparePassword(oldPassword);
-    if(!checkPasswordMatch){
-        return next(new HandleError(`Old password is incorrect`, 400));
+    const user = await User.findById(req.user.id).select("+password");
+
+    if (!(await user.comparePassword(oldPassword))) {
+        return next(new HandleError("Old password is incorrect", 400));
     }
 
-    if(newPassword !== confirmPassword){
-        return next(new HandleError(`Passwords do not match`, 400));
+    if (newPassword !== confirmPassword) {
+        return next(new HandleError("Passwords do not match", 400));
     }
 
-    // Check if new password is being reused
-    const isPasswordReused = await user.isPasswordReused(newPassword);
-    if (isPasswordReused) {
-        return next(new HandleError('Cannot reuse any of your last 5 passwords', 400));
+    if (await user.isPasswordReused(newPassword)) {
+        return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
     }
 
-    // Update password
     user.password = newPassword;
     await user.save();
 
-    // Send password changed notification
     try {
-        const emailTemplate = emailTemplates.passwordChangedEmail(user.name);
+        const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
         await sendEmail({
             email: user.email,
             subject: emailTemplate.subject,
@@ -405,7 +384,7 @@ export const UpdatePassword = handleAsyncError(async(req, res, next) => {
             html: emailTemplate.html
         });
     } catch (error) {
-        console.error('Failed to send password changed email:', error);
+        console.error("Password change email failed:", error);
     }
 
     sendToken(user, 200, res);

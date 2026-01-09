@@ -6,7 +6,6 @@ import crypto from "crypto";
 
 const userSchema = new mongoose.Schema(
   {
-    // ✅ CHANGED: Split name into firstName and lastName
     firstName: {
       type: String,
       required: true,
@@ -41,7 +40,6 @@ const userSchema = new mongoose.Schema(
       }
     },
 
-    // ✅ Avatar is optional now (set in profile update)
     avatar: {
       public_id: { type: String, default: "default_avatar" },
       url: {
@@ -85,13 +83,11 @@ const userSchema = new mongoose.Schema(
       }
     ],
 
-    // ✅ NEW: Profile completion tracking
     profileCompleted: { type: Boolean, default: false }
   },
   { 
     timestamps: true, 
     strict: true,
-    // ✅ Virtual for full name
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
   }
@@ -99,14 +95,18 @@ const userSchema = new mongoose.Schema(
 
 /* ================= VIRTUALS ================= */
 
-// Virtual for full name (computed, not stored)
+// Virtual for full name with null checks
 userSchema.virtual('fullName').get(function() {
-  return `${this.firstName} ${this.lastName}`;
+  const first = this.firstName || '';
+  const last = this.lastName || '';
+  return `${first} ${last}`.trim() || 'User';
 });
 
-// Virtual for initials (for default avatars)
+// Virtual for initials with null checks
 userSchema.virtual('initials').get(function() {
-  return `${this.firstName.charAt(0)}${this.lastName.charAt(0)}`.toUpperCase();
+  const first = this.firstName?.charAt(0) || '';
+  const last = this.lastName?.charAt(0) || '';
+  return `${first}${last}`.toUpperCase() || 'U';
 });
 
 /* ================= INDEXES ================= */
@@ -121,7 +121,9 @@ userSchema.index({ firstName: 1, lastName: 1 });
 userSchema.pre('save', function(next) {
   if (this.isModified('firstName') || this.isModified('lastName')) {
     if (this.avatar.public_id === 'default_avatar') {
-      const name = `${this.firstName}+${this.lastName}`;
+      const first = this.firstName || 'User';
+      const last = this.lastName || 'Name';
+      const name = `${first}+${last}`;
       this.avatar.url = `https://ui-avatars.com/api/?background=667eea&color=fff&name=${encodeURIComponent(name)}&size=200`;
     }
   }
@@ -198,7 +200,7 @@ userSchema.methods.generateVerificationCode = function () {
     .update(code)
     .digest("hex");
 
-  this.verificationCodeExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
+  this.verificationCodeExpire = Date.now() + 10 * 60 * 1000;
   return code;
 };
 
@@ -210,7 +212,7 @@ userSchema.methods.generatePasswordResetCode = function () {
     .update(code)
     .digest("hex");
 
-  this.resetPasswordCodeExpire = Date.now() + 90 * 1000; // 90 seconds
+  this.resetPasswordCodeExpire = Date.now() + 90 * 1000;
   return code;
 };
 
