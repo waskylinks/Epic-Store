@@ -111,7 +111,6 @@ userSchema.virtual('initials').get(function() {
 
 /* ================= INDEXES ================= */
 
-userSchema.index({ email: 1 });
 userSchema.index({ authProvider: 1 });
 userSchema.index({ createdAt: 1 });
 userSchema.index({ firstName: 1, lastName: 1 });

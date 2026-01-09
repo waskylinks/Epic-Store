@@ -22,12 +22,12 @@ const invalidateCaches = async () => {
 };
 
 
-// REGISTER NEW USER (WITH EMAIL VERIFICATION)
+// REGISTER NEW USER (WITH EMAIL VERIFICATION) 
 
 export const registerUser = handleAsyncError(async (req, res, next) => {
-    const { name, email, password, avatar } = req.body;
+    const { firstName, lastName, email, password } = req.body;
 
-    // Check if user already exists
+    // ✅ Check if user already exists
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
         if (existingUser.emailVerified) {
@@ -38,32 +38,15 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
         }
     }
 
-    // Upload avatar to cloudinary (optional now)
-    let avatarData = {
-        public_id: 'default_avatar',
-        url: 'https://res.cloudinary.com/demo/image/upload/v1234567890/default_avatar.png'
-    };
-
-    if (avatar && avatar !== '') {
-        const myCloud = await cloudinary.uploader.upload(avatar, {
-            folder: `EpicStore`,
-            width: 150,
-            crop: 'scale'
-        });
-        avatarData = {
-            public_id: myCloud.public_id,
-            url: myCloud.secure_url,
-        };
-    }
-
-    // Create user (not verified yet)
+    // ✅ Create user (no avatar at registration)
     const user = await User.create({
-        name,
+        firstName,
+        lastName,
         email: email.toLowerCase(),
         password,
-        avatar: avatarData,
         authProvider: 'local',
         emailVerified: false
+        // Avatar will use default with initials automatically
     });
 
     // Generate verification code
@@ -72,7 +55,7 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
 
     // Send verification email
     try {
-        const emailTemplate = emailTemplates.verificationEmail(user.name, verificationCode);
+        const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
         await sendEmail({
             email: user.email,
             subject: emailTemplate.subject,
