@@ -85,6 +85,21 @@
     color: var(--text-dark-gray);
 }
 
+/* Side-by-side first/last name inputs */
+.input-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
+}
+
+/* Adjust input-row for smaller screens */
+@media (max-width: 768px) {
+    .input-row {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+}
+
 /* Password Toggle Button */
 .password-group {
     position: relative;

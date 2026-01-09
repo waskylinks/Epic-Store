@@ -10,15 +10,14 @@ import FacebookSignInButton from '../components/FacebookSignInButton';
 
 function Register() {
     const [user, setUser] = useState({
-        name: '',
+        firstName: '',
+        lastName: '',
         email: '',
         password: '',
     });
-    const { name, email, password } = user;
+    const { firstName, lastName, email, password } = user;
 
     const [showPassword, setShowPassword] = useState(false);
-    const [avatar, setAvatar] = useState('');
-    const [avatarPreview, setAvatarPreview] = useState('./images/profile.webp');
     const [passwordStrength, setPasswordStrength] = useState('');
 
     const { success, loading, error, needsVerification, verificationEmail } = useSelector(state => state.user);
@@ -44,33 +43,22 @@ function Register() {
     };
 
     const registerDataChange = (e) => {
-        if (e.target.name === 'avatar') {
-            const reader = new FileReader();
-            reader.onload = () => {
-                if (reader.readyState === 2) {
-                    setAvatarPreview(reader.result);
-                    setAvatar(reader.result);
-                }
-            };
-            reader.readAsDataURL(e.target.files[0]);
-        } else {
-            const newValue = e.target.value;
-            setUser({
-                ...user,
-                [e.target.name]: newValue
-            });
+        const newValue = e.target.value;
+        setUser({
+            ...user,
+            [e.target.name]: newValue
+        });
 
-            // Update password strength
-            if (e.target.name === 'password') {
-                setPasswordStrength(calculatePasswordStrength(newValue));
-            }
+        // Update password strength
+        if (e.target.name === 'password') {
+            setPasswordStrength(calculatePasswordStrength(newValue));
         }
     };
 
     const registerSubmit = (e) => {
         e.preventDefault();
         
-        if (!name || !email || !password) {
+        if (!firstName || !lastName || !email || !password) {
             toast.error('Please fill out all required fields', { position: 'top-center', autoClose: 1200 });
             return;
         }
@@ -80,13 +68,22 @@ function Register() {
             return;
         }
 
-        const myForm = new FormData();
-        myForm.set('name', name);
-        myForm.set('email', email);
-        myForm.set('password', password);
-        myForm.set('avatar', avatar);
+        // ✅ Send clean JSON data
+        const userData = {
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: email.trim(),
+            password: password
+        };
 
-        dispatch(register(myForm));
+        console.log('📤 Submitting registration:', {
+            hasFirstName: !!userData.firstName,
+            hasLastName: !!userData.lastName,
+            hasEmail: !!userData.email,
+            hasPassword: !!userData.password
+        });
+
+        dispatch(register(userData));
     };
 
     useEffect(() => {
@@ -136,8 +133,7 @@ function Register() {
             <div className="form-content">
                 <form 
                     className="form" 
-                    onSubmit={registerSubmit} 
-                    encType='multipart/form-data'
+                    onSubmit={registerSubmit}
                 >
                     <h2>Sign Up</h2>
 
@@ -153,16 +149,30 @@ function Register() {
                     </div>
 
                     {/* Email Registration Form */}
-                    <div className="input-group">
-                        <input 
-                            type="text" 
-                            placeholder='Username *' 
-                            name='name' 
-                            value={name} 
-                            onChange={registerDataChange}
-                            required
-                        />
+                    
+                    <div className="input-row">
+                        <div className="input-group">
+                            <input 
+                                type="text" 
+                                placeholder='First Name *' 
+                                name='firstName' 
+                                value={firstName} 
+                                onChange={registerDataChange}
+                                required
+                            />
+                        </div>
+                        <div className="input-group">
+                            <input 
+                                type="text" 
+                                placeholder='Last Name *' 
+                                name='lastName' 
+                                value={lastName} 
+                                onChange={registerDataChange}
+                                required
+                            />
+                        </div>
                     </div>
+
 
                     <div className="input-group">
                         <input 
@@ -230,19 +240,6 @@ function Register() {
                                 {/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '✓' : '○'} One special character
                             </li>
                         </ul>
-                    </div>
-
-                    <div className="input-group avatar-group">
-                        <label htmlFor="avatar-input">Profile Picture (Optional)</label>
-                        <input 
-                            id="avatar-input"
-                            type="file" 
-                            name='avatar'
-                            className='file-input' 
-                            accept='image/*' 
-                            onChange={registerDataChange}
-                        />
-                        <img src={avatarPreview} alt="Avatar Preview" className='avatar'/>
                     </div>
 
                     <button className="authBtn" disabled={loading}>

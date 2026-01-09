@@ -3,17 +3,24 @@ import axios from "axios";
 
 axios.defaults.withCredentials = true;
 
-// ======================= ASYNC THUNKS =======================
-
+// REGISTER
 // REGISTER
 export const register = createAsyncThunk(
   "user/register",
   async (userData, { rejectWithValue }) => {
     try {
-      const config = { headers: { "Content-Type": "multipart/form-data" } };
+      console.log('📤 userSlice - Sending registration:', userData);
+      
+      const config = { 
+        headers: { 
+          "Content-Type": "application/json"  // ✅ Changed from multipart/form-data
+        } 
+      };
+      
       const { data } = await axios.post("/api/v1/register", userData, config);
       return data;
     } catch (error) {
+      console.error('❌ Registration error:', error.response?.data);
       return rejectWithValue(
         error.response?.data || { message: "Registration failed. Try again later." }
       );
@@ -110,7 +117,7 @@ export const updateProfile = createAsyncThunk(
   "user/updateProfile",
   async (userData, { rejectWithValue }) => {
     try {
-      const config = { headers: { "Content-Type": "multipart/form-data" } };
+      const config = { headers: { "Content-Type": "application/json" } };
       const { data } = await axios.put("/api/v1/profile/update", userData, config);
       return data;
     } catch (error) {
@@ -120,6 +127,7 @@ export const updateProfile = createAsyncThunk(
     }
   }
 );
+
 
 // UPDATE PASSWORD
 export const updatePassword = createAsyncThunk(
@@ -226,15 +234,17 @@ const userSlice = createSlice({
         state.success = action.payload.success;
         state.user = action.payload.user || null;
         state.isAuthenticated = Boolean(action.payload.user);
+        state.needsVerification = false;
+        state.verificationEmail = null;
       })
       .addCase(login.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload?.message || "Login failed.";
         state.user = null;
         state.isAuthenticated = false;
-        if (action.payload?.message?.toLowerCase().includes("verify your email")) {
+        if (action.payload?.needsVerification) {
           state.needsVerification = true;
-          state.verificationEmail = action.meta.arg.email;
+          state.verificationEmail = action.payload.email;
         }
       });
 
