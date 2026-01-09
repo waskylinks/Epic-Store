@@ -2,37 +2,47 @@ import { validatePassword, validatePasswordMatch } from './passwordValidator.js'
 import validator from 'validator';
 import HandleError from '../utils/handleError.js';
 
-/**
- * Validate registration data
- */
+//✅ UPDATED: Validate registration data (firstName, lastName)
 export const validateRegistration = (req, res, next) => {
-    // 🔍 DEBUG: Check if body exists
     console.log('🔍 validateRegistration called');
     console.log('📦 req.body:', req.body);
-    console.log('📋 Content-Type:', req.headers['content-type']);
     
-    // Safety check for empty body
     if (!req.body || Object.keys(req.body).length === 0) {
         console.error('❌ Request body is empty!');
         return next(new HandleError('Request body is empty. Please provide registration data.', 400));
     }
 
-    const { name, email, password } = req.body;
+    const { firstName, lastName, email, password } = req.body;
     const errors = [];
 
-    console.log('📝 Extracted data:', { name, email, hasPassword: !!password });
-
-    if (!name || name.trim().length < 3) {
-        errors.push('Name must be at least 3 characters long');
+    // Validate first name
+    if (!firstName || firstName.trim().length < 2) {
+        errors.push('First name must be at least 2 characters long');
     }
-    if (name && name.length > 30) {
-        errors.push('Name cannot exceed 30 characters');
+    if (firstName && firstName.length > 50) {
+        errors.push('First name cannot exceed 50 characters');
+    }
+    if (firstName && !/^[a-zA-Z\s'-]+$/.test(firstName)) {
+        errors.push('First name can only contain letters, spaces, hyphens, and apostrophes');
     }
 
+    // Validate last name
+    if (!lastName || lastName.trim().length < 2) {
+        errors.push('Last name must be at least 2 characters long');
+    }
+    if (lastName && lastName.length > 50) {
+        errors.push('Last name cannot exceed 50 characters');
+    }
+    if (lastName && !/^[a-zA-Z\s'-]+$/.test(lastName)) {
+        errors.push('Last name can only contain letters, spaces, hyphens, and apostrophes');
+    }
+
+    // Validate email
     if (!email || !validator.isEmail(email)) {
         errors.push('Please provide a valid email address');
     }
 
+    // Validate password
     if (!password) {
         errors.push('Password is required');
     } else {
@@ -55,7 +65,6 @@ export const validateRegistration = (req, res, next) => {
  * Validate login data
  */
 export const validateLogin = (req, res, next) => {
-    // Safety check
     if (!req.body || Object.keys(req.body).length === 0) {
         return next(new HandleError('Request body is empty. Please provide login credentials.', 400));
     }
@@ -69,6 +78,55 @@ export const validateLogin = (req, res, next) => {
 
     if (!password) {
         errors.push('Password is required');
+    }
+
+    if (errors.length > 0) {
+        return next(new HandleError(errors.join('. '), 400));
+    }
+
+    next();
+};
+
+/**
+ * ✅ NEW: Validate profile update (with avatar)
+ */
+export const validateProfileUpdate = (req, res, next) => {
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return next(new HandleError('Request body is empty.', 400));
+    }
+
+    const { firstName, lastName, email } = req.body;
+    const errors = [];
+
+    // Validate first name if provided
+    if (firstName !== undefined) {
+        if (!firstName || firstName.trim().length < 2) {
+            errors.push('First name must be at least 2 characters long');
+        }
+        if (firstName && firstName.length > 50) {
+            errors.push('First name cannot exceed 50 characters');
+        }
+        if (firstName && !/^[a-zA-Z\s'-]+$/.test(firstName)) {
+            errors.push('First name can only contain letters, spaces, hyphens, and apostrophes');
+        }
+    }
+
+    // Validate last name if provided
+    if (lastName !== undefined) {
+        if (!lastName || lastName.trim().length < 2) {
+            errors.push('Last name must be at least 2 characters long');
+        }
+        if (lastName && lastName.length > 50) {
+            errors.push('Last name cannot exceed 50 characters');
+        }
+        if (lastName && !/^[a-zA-Z\s'-]+$/.test(lastName)) {
+            errors.push('Last name can only contain letters, spaces, hyphens, and apostrophes');
+        }
+    }
+
+    // Validate email if provided
+    if (email !== undefined && (!email || !validator.isEmail(email))) {
+        errors.push('Please provide a valid email address');
     }
 
     if (errors.length > 0) {
@@ -174,11 +232,9 @@ export const validateVerificationCode = (req, res, next) => {
 };
 
 /**
- * ✅ FIXED: Safe input sanitization with logging
+ * Safe input sanitization with logging
  */
 export const sanitizeInput = (req, res, next) => {
-    console.log('🧹 sanitizeInput - Before:', req.body);
-    
     if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
         Object.keys(req.body).forEach(key => {
             if (typeof req.body[key] === 'string') {
@@ -186,7 +242,5 @@ export const sanitizeInput = (req, res, next) => {
             }
         });
     }
-    
-    console.log('✨ sanitizeInput - After:', req.body);
     next();
 };

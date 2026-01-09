@@ -426,21 +426,27 @@ export const getUserDetails = handleAsyncError(async(req, res, next) => {
 // UPDATE USER PROFILE
 
 export const updateProfile = handleAsyncError(async(req, res, next) => {
-    const { name, email, avatar } = req.body;
+    const { firstName, lastName, email, avatar } = req.body;
+    
     const updateUserDetails = {
-        name,
-        email: email.toLowerCase(),
+        firstName,
+        lastName,
+        email: email?.toLowerCase(),
     };
 
+    // Handle avatar upload
     if(avatar && avatar !== '') {
         const user = await User.findById(req.user.id);
         const imageId = user.avatar.public_id;
+        
+        // Delete old avatar if not default
         if (imageId !== 'default_avatar') {
             await cloudinary.uploader.destroy(imageId);
         }
+        
         const myCloud = await cloudinary.uploader.upload(avatar, {
-            folder: `EpicStore`,
-            width: 150,
+            folder: `EpicStore/avatars`,
+            width: 200,
             crop: 'scale'
         });
 
@@ -448,6 +454,11 @@ export const updateProfile = handleAsyncError(async(req, res, next) => {
             public_id: myCloud.public_id,
             url: myCloud.secure_url
         };
+    }
+
+    // Mark profile as completed if all fields are present
+    if (firstName && lastName && email) {
+        updateUserDetails.profileCompleted = true;
     }
 
     const user = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
