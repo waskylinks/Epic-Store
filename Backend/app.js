@@ -22,9 +22,38 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
+/* ================= DEBUG MIDDLEWARE (TEMPORARY) ================= */
+app.use((req, res, next) => {
+    if (req.method === 'POST' || req.method === 'PUT') {
+        console.log('📨 Incoming Request:', {
+            method: req.method,
+            path: req.originalUrl,
+            contentType: req.headers['content-type'],
+            bodyExists: !!req.body,
+            bodyKeys: req.body ? Object.keys(req.body) : [],
+            body: req.body
+        });
+    }
+    next();
+});
+
 /* ================= SECURITY ================= */
 // Startup guard (non-destructive, validates app)
 startupGuards(app);
+
+app.use((req, res, next) => {
+    if (req.method === 'POST' || req.method === 'PUT') {
+        console.log('📨 Incoming Request:', {
+            method: req.method,
+            path: req.originalUrl,
+            contentType: req.headers['content-type'],
+            bodyExists: !!req.body,
+            bodyKeys: req.body ? Object.keys(req.body) : [],
+            body: req.body
+        });
+    }
+    next();
+});
 
 // Standard security middlewares
 app.use(cors(corsOptions));

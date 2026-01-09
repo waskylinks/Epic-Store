@@ -6,8 +6,21 @@ import HandleError from '../utils/handleError.js';
  * Validate registration data
  */
 export const validateRegistration = (req, res, next) => {
+    // 🔍 DEBUG: Check if body exists
+    console.log('🔍 validateRegistration called');
+    console.log('📦 req.body:', req.body);
+    console.log('📋 Content-Type:', req.headers['content-type']);
+    
+    // Safety check for empty body
+    if (!req.body || Object.keys(req.body).length === 0) {
+        console.error('❌ Request body is empty!');
+        return next(new HandleError('Request body is empty. Please provide registration data.', 400));
+    }
+
     const { name, email, password } = req.body;
     const errors = [];
+
+    console.log('📝 Extracted data:', { name, email, hasPassword: !!password });
 
     if (!name || name.trim().length < 3) {
         errors.push('Name must be at least 3 characters long');
@@ -30,9 +43,11 @@ export const validateRegistration = (req, res, next) => {
     }
 
     if (errors.length > 0) {
+        console.log('❌ Validation errors:', errors);
         return next(new HandleError(errors.join('. '), 400));
     }
 
+    console.log('✅ Validation passed');
     next();
 };
 
@@ -40,6 +55,11 @@ export const validateRegistration = (req, res, next) => {
  * Validate login data
  */
 export const validateLogin = (req, res, next) => {
+    // Safety check
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return next(new HandleError('Request body is empty. Please provide login credentials.', 400));
+    }
+
     const { email, password } = req.body;
     const errors = [];
 
@@ -62,6 +82,10 @@ export const validateLogin = (req, res, next) => {
  * Validate password update
  */
 export const validatePasswordUpdate = (req, res, next) => {
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return next(new HandleError('Request body is empty.', 400));
+    }
+
     const { oldPassword, newPassword, confirmPassword } = req.body;
     const errors = [];
 
@@ -96,6 +120,10 @@ export const validatePasswordUpdate = (req, res, next) => {
  * Validate password reset
  */
 export const validatePasswordReset = (req, res, next) => {
+    if (!req.body || Object.keys(req.body).length === 0) {
+        return next(new HandleError('Request body is empty.', 400));
+    }
+
     const { password, confirmPassword } = req.body;
     const errors = [];
 
@@ -124,7 +152,7 @@ export const validatePasswordReset = (req, res, next) => {
  * Validate email
  */
 export const validateEmail = (req, res, next) => {
-    if (!req.body?.email || !validator.isEmail(req.body.email)) {
+    if (!req.body || !req.body.email || !validator.isEmail(req.body.email)) {
         return next(new HandleError('Please provide a valid email address', 400));
     }
     next();
@@ -134,7 +162,7 @@ export const validateEmail = (req, res, next) => {
  * Validate verification code
  */
 export const validateVerificationCode = (req, res, next) => {
-    if (!req.body?.code) {
+    if (!req.body || !req.body.code) {
         return next(new HandleError('Verification code is required', 400));
     }
 
@@ -146,15 +174,19 @@ export const validateVerificationCode = (req, res, next) => {
 };
 
 /**
- * ✅ FIXED: Safe input sanitization
+ * ✅ FIXED: Safe input sanitization with logging
  */
 export const sanitizeInput = (req, res, next) => {
-    if (req.body && typeof req.body === 'object') {
+    console.log('🧹 sanitizeInput - Before:', req.body);
+    
+    if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
         Object.keys(req.body).forEach(key => {
             if (typeof req.body[key] === 'string') {
                 req.body[key] = req.body[key].trim();
             }
         });
     }
+    
+    console.log('✨ sanitizeInput - After:', req.body);
     next();
 };

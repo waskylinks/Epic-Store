@@ -6,12 +6,21 @@ import crypto from "crypto";
 
 const userSchema = new mongoose.Schema(
   {
-    name: {
+    // ✅ CHANGED: Split name into firstName and lastName
+    firstName: {
       type: String,
       required: true,
       trim: true,
-      minlength: 3,
-      maxlength: 30
+      minlength: 2,
+      maxlength: 50
+    },
+
+    lastName: {
+      type: String,
+      required: true,
+      trim: true,
+      minlength: 2,
+      maxlength: 50
     },
 
     email: {
@@ -32,12 +41,12 @@ const userSchema = new mongoose.Schema(
       }
     },
 
+    // ✅ Avatar is optional now (set in profile update)
     avatar: {
       public_id: { type: String, default: "default_avatar" },
       url: {
         type: String,
-        default:
-          "https://res.cloudinary.com/demo/image/upload/v1234567890/default_avatar.png"
+        default: "https://ui-avatars.com/api/?background=667eea&color=fff&name=User"
       }
     },
 
@@ -74,18 +83,53 @@ const userSchema = new mongoose.Schema(
         password: String,
         changedAt: Date
       }
-    ]
+    ],
+
+    // ✅ NEW: Profile completion tracking
+    profileCompleted: { type: Boolean, default: false }
   },
-  { timestamps: true, strict: true }
+  { 
+    timestamps: true, 
+    strict: true,
+    // ✅ Virtual for full name
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+  }
 );
+
+/* ================= VIRTUALS ================= */
+
+// Virtual for full name (computed, not stored)
+userSchema.virtual('fullName').get(function() {
+  return `${this.firstName} ${this.lastName}`;
+});
+
+// Virtual for initials (for default avatars)
+userSchema.virtual('initials').get(function() {
+  return `${this.firstName.charAt(0)}${this.lastName.charAt(0)}`.toUpperCase();
+});
 
 /* ================= INDEXES ================= */
 
+userSchema.index({ email: 1 });
 userSchema.index({ authProvider: 1 });
 userSchema.index({ createdAt: 1 });
+userSchema.index({ firstName: 1, lastName: 1 });
 
-/* ================= PASSWORD HASH ================= */
+/* ================= MIDDLEWARE ================= */
 
+// Update avatar URL with user's initials on save
+userSchema.pre('save', function(next) {
+  if (this.isModified('firstName') || this.isModified('lastName')) {
+    if (this.avatar.public_id === 'default_avatar') {
+      const name = `${this.firstName}+${this.lastName}`;
+      this.avatar.url = `https://ui-avatars.com/api/?background=667eea&color=fff&name=${encodeURIComponent(name)}&size=200`;
+    }
+  }
+  next();
+});
+
+// Password hashing
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password") || !this.password) return next();
 
@@ -155,7 +199,7 @@ userSchema.methods.generateVerificationCode = function () {
     .update(code)
     .digest("hex");
 
-  this.verificationCodeExpire = Date.now() + 90 * 1000;
+  this.verificationCodeExpire = Date.now() + 10 * 60 * 1000; // 10 minutes
   return code;
 };
 
@@ -167,7 +211,7 @@ userSchema.methods.generatePasswordResetCode = function () {
     .update(code)
     .digest("hex");
 
-  this.resetPasswordCodeExpire = Date.now() + 90 * 1000;
+  this.resetPasswordCodeExpire = Date.now() + 90 * 1000; // 90 seconds
   return code;
 };
 
