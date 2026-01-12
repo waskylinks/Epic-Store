@@ -54,9 +54,16 @@ export const googleAuthCallback = (req, res, next) => {
                 }
             }
 
-            // Generate token and redirect to frontend
+            // ✅ UPDATED: Set token as httpOnly cookie instead of URL parameter
             const token = user.getJWTToken();
-            return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?token=${token}`);
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            });
+
+            return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
         } catch (error) {
             console.error('OAuth callback error:', error);
@@ -90,9 +97,16 @@ export const linkGoogleAccountCallback = (req, res, next) => {
                 return res.redirect(`${process.env.FRONTEND_URL}/profile?error=linking_failed`);
             }
 
-            // Generate updated token (user data changed after linking)
+            // ✅ UPDATED: Update token cookie with new user data
             const token = user.getJWTToken();
-            return res.redirect(`${process.env.FRONTEND_URL}/profile?success=google_linked&token=${token}`);
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax',
+                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            });
+
+            return res.redirect(`${process.env.FRONTEND_URL}/profile?success=google_linked`);
 
         } catch (error) {
             console.error('Link callback error:', error);
