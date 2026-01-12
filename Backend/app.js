@@ -18,7 +18,7 @@ import orderRoutes from './routes/order-routes.js';
 import oauthRoutes from './routes/oauth-routes.js';
 import analyticsRoutes from './routes/analytics-routes.js';
 import paymentRoutes from './routes/payment-routes.js';
-import receiptRoutes from './routes/receipt-routes.js';
+import receiptRoutes from './routes/receipts-routes.js';
 
 // Import passport configuration
 import './config/passport.js';
