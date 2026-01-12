@@ -1,93 +1,110 @@
+import express from 'express';
+import cookieParser from 'cookie-parser';
+import cors from 'cors';
 import passport from 'passport';
-import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
-import User from '../models/userModel.js';
 
-/**
- * Passport configuration for Google OAuth
- */
+import {
+  helmetConfig,
+  corsOptions,
+  hppProtection,
+  apiLimiter,
+  additionalSecurityHeaders,
+  startupGuards
+} from './middleware/security.js';
 
-// Serialize user for session
-passport.serializeUser((user, done) => {
-    done(null, user.id);
-});
+import userRoutes from './routes/user-route.js';
+import productRoutes from './routes/products-route.js';
+import orderRoutes from './routes/order-routes.js';
+import oauthRoutes from './routes/oauth-routes.js';
+import analyticsRoutes from './routes/analytics-routes.js';
+import paymentRoutes from './routes/payment-routes.js';
+import receiptRoutes from './routes/receipt-routes.js';
 
-// Deserialize user from session
-passport.deserializeUser(async (id, done) => {
+// Import passport configuration
+import './config/passport.js';
+
+const app = express();
+
+/* ================= WEBHOOK ROUTES (MUST BE BEFORE BODY PARSERS) ================= */
+// Paystack webhook needs raw body for signature verification
+app.post('/api/v1/payment/webhook/paystack', 
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    console.log('>>> Paystack webhook route reached');
+    
     try {
-        const user = await User.findById(id);
-        done(null, user);
-    } catch (error) {
-        done(error, null);
+      const { PaymentFactory } = await import('./Services/payment/paymentFactory.js');
+      const service = PaymentFactory.getWebhookService('paystack');
+      
+      if (!service) {
+        return res.status(400).json({ message: 'Webhook service unavailable' });
+      }
+      
+      await service.handleWebhook(req, res);
+    } catch (err) {
+      console.error('Paystack webhook error:', err);
+      res.status(500).json({ message: 'Webhook processing failed' });
     }
-});
-
-/**
- * Google OAuth Strategy
- */
-passport.use(
-    new GoogleStrategy(
-        {
-            clientID: process.env.GOOGLE_CLIENT_ID,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            callbackURL: process.env.GOOGLE_CALLBACK_URL,
-            scope: ['profile', 'email'],
-        },
-        async (accessToken, refreshToken, profile, done) => {
-            try {
-                const email = profile.emails[0].value;
-                const googleId = profile.id;
-
-                // Check if user exists with this Google ID
-                let user = await User.findOne({ googleId });
-
-                if (user) {
-                    // User exists with Google ID - login
-                    return done(null, user);
-                }
-
-                // Check if user exists with this email
-                user = await User.findOne({ email: email.toLowerCase() });
-
-                if (user) {
-                    // User exists with email but not linked to Google
-                    // Link Google account to existing user
-                    user.googleId = googleId;
-                    user.emailVerified = true; // Google emails are verified
-
-                    // Update avatar if user doesn't have one or has default
-                    if (!user.avatar.url || user.avatar.public_id === 'default_avatar') {
-                        user.avatar = {
-                            public_id: `google_${googleId}`,
-                            url: profile.photos[0]?.value || user.avatar.url
-                        };
-                    }
-
-                    await user.save();
-                    return done(null, user);
-                }
-
-                // Create new user with Google account
-                user = await User.create({
-                    name: profile.displayName,
-                    email: email.toLowerCase(),
-                    googleId: googleId,
-                    authProvider: 'google',
-                    emailVerified: true, // Google emails are pre-verified
-                    avatar: {
-                        public_id: `google_${googleId}`,
-                        url: profile.photos[0]?.value || 'https://res.cloudinary.com/demo/image/upload/v1234567890/default_avatar.png'
-                    },
-                    // No password needed for OAuth users
-                });
-
-                return done(null, user);
-
-            } catch (error) {
-                console.error('Google OAuth error:', error);
-                return done(error, null);
-            }
-        }
-    )
+  }
 );
 
-export default passport;
+/* ================= CORE ================= */
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+/* ================= PASSPORT (JWT-based, no sessions) ================= */
+app.use(passport.initialize());
+// No session middleware - using JWT tokens via sendToken()
+
+/* ================= DEBUG MIDDLEWARE (TEMPORARY) ================= */
+app.use((req, res, next) => {
+    if (req.method === 'POST' || req.method === 'PUT') {
+        console.log('📨 Incoming Request:', {
+            method: req.method,
+            path: req.originalUrl,
+            contentType: req.headers['content-type'],
+            bodyExists: !!req.body,
+            bodyKeys: req.body ? Object.keys(req.body) : [],
+            body: req.body
+        });
+    }
+    next();
+});
+
+/* ================= SECURITY ================= */
+// Startup guard (non-destructive, validates app)
+startupGuards(app);
+
+// Standard security middlewares
+app.use(cors(corsOptions));
+app.use(helmetConfig);
+app.use(hppProtection);
+app.use(apiLimiter);
+app.use(additionalSecurityHeaders);
+
+/* ================= ROUTES ================= */
+app.use('/api/v1', userRoutes);
+app.use('/api/v1', productRoutes);
+app.use('/api/v1', orderRoutes);
+app.use('/api/v1/oauth', oauthRoutes);
+app.use('/api/v1', analyticsRoutes);
+app.use('/api/v1/payment', paymentRoutes);
+app.use('/api/v1/receipts', receiptRoutes);
+
+/* ================= ERROR HANDLER ================= */
+app.use((err, req, res, next) => {
+  console.error('🔥 ERROR', {
+    method: req.method,
+    path: req.originalUrl,
+    message: err.message,
+    stack: err.stack
+  });
+
+  res.status(err.statusCode || 500).json({
+    success: false,
+    message: err.message || 'Internal Server Error'
+  });
+});
+
+export default app;

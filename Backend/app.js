@@ -1,6 +1,8 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import session from 'express-session';
+import passport from 'passport';
 
 import {
   helmetConfig,
@@ -14,13 +16,59 @@ import {
 import userRoutes from './routes/user-route.js';
 import productRoutes from './routes/products-route.js';
 import orderRoutes from './routes/order-routes.js';
+import oauthRoutes from './routes/oauth-routes.js';
+import analyticsRoutes from './routes/analytics-routes.js';
+import paymentRoutes from './routes/payment-routes.js';
+import receiptRoutes from './routes/receipt-routes.js';
+
+// Import passport configuration
+import './config/passport.js';
 
 const app = express();
+
+/* ================= WEBHOOK ROUTES (MUST BE BEFORE BODY PARSERS) ================= */
+// Paystack webhook needs raw body for signature verification
+app.post('/api/v1/payment/webhook/paystack', 
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    console.log('>>> Paystack webhook route reached');
+    
+    try {
+      const { PaymentFactory } = await import('./Services/payment/paymentFactory.js');
+      const service = PaymentFactory.getWebhookService('paystack');
+      
+      if (!service) {
+        return res.status(400).json({ message: 'Webhook service unavailable' });
+      }
+      
+      await service.handleWebhook(req, res);
+    } catch (err) {
+      console.error('Paystack webhook error:', err);
+      res.status(500).json({ message: 'Webhook processing failed' });
+    }
+  }
+);
 
 /* ================= CORE ================= */
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+/* ================= SESSION & PASSPORT (Before Security) ================= */
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-super-secret-key-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    sameSite: 'lax'
+  }
+}));
+
+app.use(passport.initialize());
+app.use(passport.session());
 
 /* ================= DEBUG MIDDLEWARE (TEMPORARY) ================= */
 app.use((req, res, next) => {
@@ -41,20 +89,6 @@ app.use((req, res, next) => {
 // Startup guard (non-destructive, validates app)
 startupGuards(app);
 
-app.use((req, res, next) => {
-    if (req.method === 'POST' || req.method === 'PUT') {
-        console.log('📨 Incoming Request:', {
-            method: req.method,
-            path: req.originalUrl,
-            contentType: req.headers['content-type'],
-            bodyExists: !!req.body,
-            bodyKeys: req.body ? Object.keys(req.body) : [],
-            body: req.body
-        });
-    }
-    next();
-});
-
 // Standard security middlewares
 app.use(cors(corsOptions));
 app.use(helmetConfig);
@@ -66,6 +100,10 @@ app.use(additionalSecurityHeaders);
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
 app.use('/api/v1', orderRoutes);
+app.use('/api/v1/oauth', oauthRoutes);
+app.use('/api/v1', analyticsRoutes);
+app.use('/api/v1/payment', paymentRoutes);
+app.use('/api/v1/receipts', receiptRoutes);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
