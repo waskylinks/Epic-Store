@@ -1,13 +1,12 @@
 import passport from 'passport';
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
-import { sendToken } from "../utils/jwtToken.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { emailTemplates } from "../utils/emailTemplates.js";
 
 /**
  * @desc    Initiate Google OAuth login
- * @route   GET /api/auth/google
+ * @route   GET /api/v1/oauth/google
  * @access  Public
  */
 export const googleAuth = passport.authenticate('google', {
@@ -16,16 +15,14 @@ export const googleAuth = passport.authenticate('google', {
 
 /**
  * @desc    Handle Google OAuth callback
- * @route   GET /api/auth/google/callback
+ * @route   GET /api/v1/oauth/google/callback
  * @access  Public
  */
 export const googleAuthCallback = (req, res, next) => {
     passport.authenticate('google', {
-        failureRedirect: `${process.env.FRONTEND_URL}/login?error=oauth_failed`,
         session: false
     }, async (err, user, info) => {
         try {
-            // Handle authentication errors
             if (err) {
                 console.error('OAuth authentication error:', err);
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
@@ -36,13 +33,15 @@ export const googleAuthCallback = (req, res, next) => {
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=authentication_failed`);
             }
 
-            // Check if this is a newly created user
+            // Check if newly created user
             const isNewUser = user.createdAt && (Date.now() - new Date(user.createdAt).getTime() < 5000);
 
             // Send welcome email for new users
             if (isNewUser) {
                 try {
-                    const welcomeTemplate = emailTemplates.welcomeEmail(user.fullName);
+                    // ✅ Use firstName and lastName to construct full name
+                    const fullName = `${user.firstName} ${user.lastName}`;
+                    const welcomeTemplate = emailTemplates.welcomeEmail(fullName);
                     await sendEmail({
                         email: user.email,
                         subject: welcomeTemplate.subject,
@@ -55,8 +54,9 @@ export const googleAuthCallback = (req, res, next) => {
                 }
             }
 
-            // Use your existing sendToken function
-            sendToken(user, 200, res);
+            // Generate token and redirect to frontend
+            const token = user.getJWTToken();
+            return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?token=${token}`);
 
         } catch (error) {
             console.error('OAuth callback error:', error);
@@ -67,7 +67,7 @@ export const googleAuthCallback = (req, res, next) => {
 
 /**
  * @desc    Link Google account to existing logged-in user
- * @route   GET /api/auth/link/google
+ * @route   GET /api/v1/oauth/link/google
  * @access  Private (requires authentication)
  */
 export const linkGoogleAccount = passport.authenticate('google', {
@@ -77,12 +77,11 @@ export const linkGoogleAccount = passport.authenticate('google', {
 
 /**
  * @desc    Handle Google account linking callback
- * @route   GET /api/auth/link/google/callback
+ * @route   GET /api/v1/oauth/link/google/callback
  * @access  Private
  */
 export const linkGoogleAccountCallback = (req, res, next) => {
     passport.authenticate('google', {
-        failureRedirect: `${process.env.FRONTEND_URL}/profile?error=linking_failed`,
         session: false
     }, async (err, user, info) => {
         try {
@@ -91,8 +90,9 @@ export const linkGoogleAccountCallback = (req, res, next) => {
                 return res.redirect(`${process.env.FRONTEND_URL}/profile?error=linking_failed`);
             }
 
-            // Successfully linked - redirect to profile with success message
-            return res.redirect(`${process.env.FRONTEND_URL}/profile?success=google_linked`);
+            // Generate updated token (user data changed after linking)
+            const token = user.getJWTToken();
+            return res.redirect(`${process.env.FRONTEND_URL}/profile?success=google_linked&token=${token}`);
 
         } catch (error) {
             console.error('Link callback error:', error);
@@ -103,7 +103,7 @@ export const linkGoogleAccountCallback = (req, res, next) => {
 
 /**
  * @desc    Unlink Google account from user profile
- * @route   POST /api/auth/unlink/google
+ * @route   POST /api/v1/oauth/unlink/google
  * @access  Private
  */
 export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
@@ -136,7 +136,7 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
 
 /**
  * @desc    Get OAuth connection status
- * @route   GET /api/auth/oauth/status
+ * @route   GET /api/v1/oauth/status
  * @access  Private
  */
 export const getOAuthStatus = handleAsyncError(async (req, res, next) => {

@@ -1,7 +1,6 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
-import session from 'express-session';
 import passport from 'passport';
 
 import {
@@ -54,21 +53,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-/* ================= SESSION & PASSPORT (Before Security) ================= */
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-super-secret-key-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    sameSite: 'lax'
-  }
-}));
-
+/* ================= PASSPORT (JWT-based, no sessions) ================= */
 app.use(passport.initialize());
-app.use(passport.session());
+// No session middleware - using JWT tokens via sendToken()
 
 /* ================= DEBUG MIDDLEWARE (TEMPORARY) ================= */
 app.use((req, res, next) => {
