@@ -4,7 +4,6 @@ import axios from "axios";
 axios.defaults.withCredentials = true;
 
 // REGISTER
-// REGISTER
 export const register = createAsyncThunk(
   "user/register",
   async (userData, { rejectWithValue }) => {
@@ -13,7 +12,7 @@ export const register = createAsyncThunk(
       
       const config = { 
         headers: { 
-          "Content-Type": "application/json"  // ✅ Changed from multipart/form-data
+          "Content-Type": "application/json"
         } 
       };
       
@@ -128,7 +127,6 @@ export const updateProfile = createAsyncThunk(
   }
 );
 
-
 // UPDATE PASSWORD
 export const updatePassword = createAsyncThunk(
   "user/updatePassword",
@@ -145,7 +143,7 @@ export const updatePassword = createAsyncThunk(
   }
 );
 
-// FORGOT PASSWORD
+// FORGOT PASSWORD (Request Reset Code)
 export const forgotPassword = createAsyncThunk(
   "user/forgotPassword",
   async (email, { rejectWithValue }) => {
@@ -160,7 +158,27 @@ export const forgotPassword = createAsyncThunk(
   }
 );
 
-// RESET PASSWORD WITH CODE
+// VERIFY RESET CODE (NEW - Step 2 of password reset)
+export const verifyResetCode = createAsyncThunk(
+  "user/verifyResetCode",
+  async ({ email, code }, { rejectWithValue }) => {
+    try {
+      const config = { headers: { "Content-Type": "application/json" } };
+      const { data } = await axios.post(
+        "/api/v1/password/verify-code",
+        { email, code },
+        config
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data || { message: "Code verification failed." }
+      );
+    }
+  }
+);
+
+// RESET PASSWORD WITH CODE (Step 3 of password reset)
 export const resetPassword = createAsyncThunk(
   "user/resetPassword",
   async ({ email, code, password, confirmPassword }, { rejectWithValue }) => {
@@ -192,7 +210,8 @@ const userSlice = createSlice({
     isAuthenticated: false,
     needsVerification: false,
     verificationEmail: null,
-    initializing: true
+    initializing: true,
+    codeVerified: false  // NEW - Track if reset code is verified
   },
   reducers: {
     removeErrors: (state) => {
@@ -205,13 +224,19 @@ const userSlice = createSlice({
     clearVerificationState: (state) => {
       state.needsVerification = false;
       state.verificationEmail = null;
+    },
+    clearCodeVerifiedState: (state) => {
+      state.codeVerified = false;
     }
   },
   extraReducers: (builder) => {
 
     // REGISTER
     builder
-      .addCase(register.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(register.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(register.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
@@ -228,7 +253,10 @@ const userSlice = createSlice({
 
     // LOGIN
     builder
-      .addCase(login.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(login.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(login.fulfilled, (state, action) => {
         state.loading = false;
         state.success = action.payload.success;
@@ -250,7 +278,9 @@ const userSlice = createSlice({
 
     // LOAD USER
     builder
-      .addCase(loadUser.pending, (state) => { state.loading = true; })
+      .addCase(loadUser.pending, (state) => { 
+        state.loading = true; 
+      })
       .addCase(loadUser.fulfilled, (state, action) => {
         state.loading = false;
         state.user = action.payload.user || null;
@@ -266,7 +296,9 @@ const userSlice = createSlice({
 
     // LOGOUT
     builder
-      .addCase(logout.pending, (state) => { state.loading = true; })
+      .addCase(logout.pending, (state) => { 
+        state.loading = true; 
+      })
       .addCase(logout.fulfilled, (state) => {
         state.loading = false;
         state.user = null;
@@ -279,7 +311,10 @@ const userSlice = createSlice({
 
     // VERIFY EMAIL
     builder
-      .addCase(verifyEmail.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(verifyEmail.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(verifyEmail.fulfilled, (state, action) => {
         state.loading = false;
         state.user = action.payload.user || null;
@@ -295,7 +330,10 @@ const userSlice = createSlice({
 
     // RESEND VERIFICATION CODE
     builder
-      .addCase(resendVerificationCode.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(resendVerificationCode.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(resendVerificationCode.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
@@ -308,7 +346,10 @@ const userSlice = createSlice({
 
     // UPDATE PROFILE
     builder
-      .addCase(updateProfile.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(updateProfile.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(updateProfile.fulfilled, (state, action) => {
         state.loading = false;
         state.user = action.payload.user || state.user;
@@ -322,7 +363,10 @@ const userSlice = createSlice({
 
     // UPDATE PASSWORD
     builder
-      .addCase(updatePassword.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(updatePassword.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(updatePassword.fulfilled, (state, action) => {
         state.loading = false;
         state.success = action.payload?.success;
@@ -334,7 +378,10 @@ const userSlice = createSlice({
 
     // FORGOT PASSWORD
     builder
-      .addCase(forgotPassword.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(forgotPassword.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(forgotPassword.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
@@ -345,14 +392,37 @@ const userSlice = createSlice({
         state.error = action.payload?.message;
       });
 
+    // VERIFY RESET CODE (NEW)
+    builder
+      .addCase(verifyResetCode.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+        state.codeVerified = false;
+      })
+      .addCase(verifyResetCode.fulfilled, (state, action) => {
+        state.loading = false;
+        state.success = true;
+        state.codeVerified = true;
+        state.message = action.payload?.message;
+      })
+      .addCase(verifyResetCode.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload?.message;
+        state.codeVerified = false;
+      });
+
     // RESET PASSWORD
     builder
-      .addCase(resetPassword.pending, (state) => { state.loading = true; state.error = null; })
+      .addCase(resetPassword.pending, (state) => { 
+        state.loading = true; 
+        state.error = null; 
+      })
       .addCase(resetPassword.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
         state.user = action.payload.user || null;
         state.isAuthenticated = Boolean(action.payload.user);
+        state.codeVerified = false; // Reset after successful password reset
       })
       .addCase(resetPassword.rejected, (state, action) => {
         state.loading = false;
@@ -363,5 +433,11 @@ const userSlice = createSlice({
 });
 
 // ======================= EXPORTS =======================
-export const { removeErrors, removeSuccess, clearVerificationState } = userSlice.actions;
+export const { 
+  removeErrors, 
+  removeSuccess, 
+  clearVerificationState,
+  clearCodeVerifiedState 
+} = userSlice.actions;
+
 export default userSlice.reducer;

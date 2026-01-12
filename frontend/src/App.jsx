@@ -14,6 +14,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import UpdateProfile from './User/UpdateProfile';
 import UpdatePassword from './User/UpdatePassword';
 import ForgotPassword from './User/ForgotPassword';
+import VerifyResetCode from './User/VerifyResetCode';  // ✅ Add import
 import ResetPassword from './User/ResetPassword';
 import Cart from './Cart/Cart';
 import Shipping from './Cart/Shipping';
@@ -63,7 +64,8 @@ function App() {
         <Route path='/profile/update' element={<ProtectedRoute element={<UpdateProfile />} />}/>
         <Route path='/password/update' element={<ProtectedRoute element={<UpdatePassword />} />}/>
         <Route path='/password/forgot' element={<ForgotPassword />}/>
-        <Route path='/reset/:token' element={<ResetPassword />}/>
+        <Route path='/password/verify-code' element={<VerifyResetCode />}/> {/* ✅ ADD THIS */}
+        <Route path='/password/new' element={<ResetPassword />}/> {/* ✅ UPDATE THIS PATH */}
         <Route path='/cart' element={<Cart />}/>
         <Route path='/shipping' element={<ProtectedRoute element={<Shipping />} />}/>
         <Route path='/order/confirm' element={<ProtectedRoute element={<OrderConfirm />} />}/>

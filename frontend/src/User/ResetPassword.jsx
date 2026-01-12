@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import '../UserStyles/Form.css';
 import PageTitle from '../components/PageTitle';
+import Navbar from '../components/Navbar';
+import Footer from '../components/footer';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { removeErrors, removeSuccess, resetPassword, forgotPassword } from '../features/products/userSlice';
+import { removeErrors, removeSuccess, resetPassword } from '../features/products/userSlice';
 import { toast } from 'react-toastify';
-import Loader from '../components/Loader';
 
 function ResetPassword() {
     const { success, loading, error } = useSelector((state) => state.user);
@@ -13,34 +14,16 @@ function ResetPassword() {
     const navigate = useNavigate();
     const location = useLocation();
 
-    const [code, setCode] = useState(['', '', '', '', '', '']);
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-    const [timeLeft, setTimeLeft] = useState(90); // 90 seconds
-    const [canResend, setCanResend] = useState(false);
     const [passwordStrength, setPasswordStrength] = useState('');
-    const inputRefs = useRef([]);
+    const [hasValidatedAccess, setHasValidatedAccess] = useState(false);
 
     const email = location.state?.email;
-
-    // Countdown timer
-    useEffect(() => {
-        if (timeLeft > 0) {
-            const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-            return () => clearTimeout(timer);
-        } else {
-            setCanResend(true);
-        }
-    }, [timeLeft]);
-
-    // Format time
-    const formatTime = (seconds) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
-    };
+    const code = location.state?.code;
+    const verified = location.state?.verified;
 
     // Calculate password strength
     const calculatePasswordStrength = (pass) => {
@@ -60,86 +43,88 @@ function ResetPassword() {
         return 'very-strong';
     };
 
-    // Handle code input
-    const handleChange = (index, value) => {
-        if (isNaN(value)) return;
+    // Check if password meets all requirements
+    const isPasswordValid = (pass) => {
+        return pass.length >= 12 &&
+               /[A-Z]/.test(pass) &&
+               /[a-z]/.test(pass) &&
+               /[0-9]/.test(pass) &&
+               /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pass);
+    };
 
-        const newCode = [...code];
-        newCode[index] = value;
-        setCode(newCode);
-
-        if (value !== '' && index < 5) {
-            inputRefs.current[index + 1]?.focus();
+    const handlePasswordChange = (e) => {
+        const newPassword = e.target.value;
+        setPassword(newPassword);
+        setPasswordStrength(calculatePasswordStrength(newPassword));
+        
+        // Clear errors when user starts typing
+        if (error) {
+            dispatch(removeErrors());
         }
     };
 
-    const handleKeyDown = (index, e) => {
-        if (e.key === 'Backspace' && !code[index] && index > 0) {
-            inputRefs.current[index - 1]?.focus();
-        }
-    };
-
-    const handlePaste = (e) => {
-        e.preventDefault();
-        const pasteData = e.clipboardData.getData('text').slice(0, 6);
-        if (/^\d+$/.test(pasteData)) {
-            const newCode = pasteData.split('');
-            setCode([...newCode, ...Array(6 - newCode.length).fill('')]);
-            inputRefs.current[Math.min(pasteData.length, 5)]?.focus();
+    const handleConfirmPasswordChange = (e) => {
+        setConfirmPassword(e.target.value);
+        
+        // Clear errors when user starts typing
+        if (error) {
+            dispatch(removeErrors());
         }
     };
 
     const resetPasswordSubmit = (e) => {
         e.preventDefault();
-        
-        const resetCode = code.join('');
-        
-        if (resetCode.length !== 6) {
-            toast.error('Please enter the complete 6-digit code', { position: 'top-center', autoClose: 2000 });
-            return;
-        }
 
-        if (!email) {
-            toast.error('Email not found. Please request password reset again.', { position: 'top-center', autoClose: 2000 });
+        // Clear previous errors
+        dispatch(removeErrors());
+
+        if (!email || !code) {
+            toast.error('Invalid session. Please start the password reset process again.', { 
+                position: 'top-center', 
+                autoClose: 2000 
+            });
             navigate('/password/forgot');
             return;
         }
 
         if (password !== confirmPassword) {
-            toast.error('Passwords do not match', { position: 'top-center', autoClose: 2000 });
+            toast.error('Passwords do not match', { 
+                position: 'top-center', 
+                autoClose: 2000 
+            });
             return;
         }
 
-        if (password.length < 12) {
-            toast.error('Password must be at least 12 characters', { position: 'top-center', autoClose: 2000 });
+        if (!isPasswordValid(password)) {
+            toast.error('Password must meet all requirements', { 
+                position: 'top-center', 
+                autoClose: 2000 
+            });
             return;
         }
 
         dispatch(resetPassword({
             email,
-            code: resetCode,
+            code,
             password,
             confirmPassword
         }));
     };
 
-    // Resend code
-    const handleResend = () => {
-        if (!canResend) return;
-        
-        if (!email) {
-            toast.error('Email not found', { position: 'top-center', autoClose: 2000 });
+    // Validate access on mount (only once)
+    useEffect(() => {
+        if (!email || !code || !verified) {
+            toast.error('Please verify your reset code first', { 
+                position: 'top-center', 
+                autoClose: 2000 
+            });
             navigate('/password/forgot');
-            return;
+        } else {
+            setHasValidatedAccess(true);
         }
+    }, []); // Empty dependency array - only run once on mount
 
-        dispatch(forgotPassword({ email }));
-        setTimeLeft(90);
-        setCanResend(false);
-        setCode(['', '', '', '', '', '']);
-        inputRefs.current[0]?.focus();
-    };
-
+    // Handle errors
     useEffect(() => {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
@@ -147,27 +132,27 @@ function ResetPassword() {
         }
     }, [dispatch, error]);
 
+    // Handle success
     useEffect(() => {
         if (success) {
             toast.success('Password reset successful! Please login with your new password.', { 
                 position: 'top-center', 
-                autoClose: 2000 
+                autoClose: 3000 
             });
             dispatch(removeSuccess());
-            navigate('/login');
+            setTimeout(() => {
+                navigate('/login');
+            }, 1000);
         }
     }, [dispatch, success, navigate]);
 
+    // Cleanup on unmount
     useEffect(() => {
-        if (!email) {
-            toast.error('Please request password reset first', { position: 'top-center', autoClose: 2000 });
-            navigate('/password/forgot');
-        }
-    }, [email, navigate]);
-
-    useEffect(() => {
-        setPasswordStrength(calculatePasswordStrength(password));
-    }, [password]);
+        return () => {
+            dispatch(removeErrors());
+            dispatch(removeSuccess());
+        };
+    }, [dispatch]);
 
     const getStrengthColor = () => {
         switch (passwordStrength) {
@@ -179,123 +164,233 @@ function ResetPassword() {
         }
     };
 
+    const getStrengthWidth = () => {
+        switch (passwordStrength) {
+            case 'weak': return '25%';
+            case 'medium': return '50%';
+            case 'strong': return '75%';
+            case 'very-strong': return '100%';
+            default: return '0%';
+        }
+    };
+
+    const getStrengthText = () => {
+        switch (passwordStrength) {
+            case 'weak': return 'Weak';
+            case 'medium': return 'Medium';
+            case 'strong': return 'Strong';
+            case 'very-strong': return 'Very Strong';
+            default: return '';
+        }
+    };
+
+    const isFormValid = () => {
+        return password && 
+               confirmPassword && 
+               password === confirmPassword && 
+               isPasswordValid(password);
+    };
+
+    // Don't render until access is validated
+    if (!hasValidatedAccess) {
+        return null;
+    }
+
     return (
         <>
-            {loading ? (<Loader />) : (
-                <>
-                    <PageTitle title='Reset Password'/>
-                    <div className="container update-container">
-                        <div className="form-content">
-                            <form className="form" onSubmit={resetPasswordSubmit}>
-                                <div className="verification-header">
-                                    <div className="verification-icon">🔐</div>
-                                    <h2>Reset Password</h2>
-                                    <p className="verification-text">
-                                        Enter the 6-digit code sent to<br />
-                                        <strong>{email}</strong>
-                                    </p>
-                                </div>
+            <PageTitle title='Set New Password'/>
+            <Navbar />
 
-                                <div className="code-input-group">
-                                    {code.map((digit, index) => (
-                                        <input
-                                            key={index}
-                                            ref={(el) => (inputRefs.current[index] = el)}
-                                            type="text"
-                                            maxLength="1"
-                                            value={digit}
-                                            onChange={(e) => handleChange(index, e.target.value)}
-                                            onKeyDown={(e) => handleKeyDown(index, e)}
-                                            onPaste={handlePaste}
-                                            className="code-input"
-                                            disabled={loading}
-                                            autoFocus={index === 0}
-                                        />
-                                    ))}
-                                </div>
-
-                                <div className="timer-section">
-                                    <div className={`timer ${timeLeft <= 10 ? 'timer-warning' : ''}`}>
-                                        ⏱️ {formatTime(timeLeft)}
-                                    </div>
-                                    {timeLeft === 0 && (
-                                        <p className="timer-expired">Code expired!</p>
-                                    )}
-                                </div>
-
-                                <div className="input-group password-group">
-                                    <input 
-                                        type={showPassword ? "text" : "password"}
-                                        name='password'
-                                        placeholder='Enter New Password (min 12 characters)'
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        required
-                                    />
-                                    <button
-                                        type="button"
-                                        className="password-toggle"
-                                        onClick={() => setShowPassword(!showPassword)}
-                                    >
-                                        {showPassword ? '👁️' : '👁️‍🗨️'}
-                                    </button>
-                                </div>
-
-                                {password && (
-                                    <div className="password-strength">
-                                        <div className="strength-bar-container">
-                                            <div 
-                                                className="strength-bar"
-                                                style={{
-                                                    width: `${passwordStrength === 'weak' ? 25 : passwordStrength === 'medium' ? 50 : passwordStrength === 'strong' ? 75 : 100}%`,
-                                                    backgroundColor: getStrengthColor()
-                                                }}
-                                            ></div>
-                                        </div>
-                                        <span className="strength-text" style={{ color: getStrengthColor() }}>
-                                            {passwordStrength.charAt(0).toUpperCase() + passwordStrength.slice(1).replace('-', ' ')}
-                                        </span>
-                                    </div>
-                                )}
-
-                                <div className="input-group password-group">
-                                    <input 
-                                        type={showConfirmPassword ? "text" : "password"}
-                                        name='confirmPassword'
-                                        placeholder='Confirm New Password'
-                                        value={confirmPassword}
-                                        onChange={(e) => setConfirmPassword(e.target.value)}
-                                        required
-                                    />
-                                    <button
-                                        type="button"
-                                        className="password-toggle"
-                                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                    >
-                                        {showConfirmPassword ? '👁️' : '👁️‍🗨️'}
-                                    </button>
-                                </div>
-
-                                <button className="authBtn" disabled={loading || code.some(d => d === '')}>
-                                    {loading ? 'Resetting...' : 'Reset Password'}
-                                </button>
-
-                                <div className="resend-section">
-                                    <p>Didn't receive the code?</p>
-                                    <button
-                                        type="button"
-                                        onClick={handleResend}
-                                        className="resend-btn"
-                                        disabled={!canResend || loading}
-                                    >
-                                        {canResend ? 'Resend Code' : `Resend in ${formatTime(timeLeft)}`}
-                                    </button>
-                                </div>
-                            </form>
+            <div className="container update-container">
+                <div className="form-content">
+                    <form className="form" onSubmit={resetPasswordSubmit}>
+                        <div className="verification-header">
+                            <div className="verification-icon">🔒</div>
+                            <h2>Set New Password</h2>
+                            <p className="verification-text">
+                                Create a strong password for<br />
+                                <strong>{email}</strong>
+                            </p>
                         </div>
-                    </div>
-                </>
-            )}
+
+                        <div className="input-group password-group">
+                            <input 
+                                type={showPassword ? "text" : "password"}
+                                name='password'
+                                placeholder='Enter New Password (min 12 characters)'
+                                value={password}
+                                onChange={handlePasswordChange}
+                                required
+                                disabled={loading}
+                                autoComplete="new-password"
+                            />
+                            <button
+                                type="button"
+                                className="password-toggle"
+                                onClick={() => setShowPassword(!showPassword)}
+                                disabled={loading}
+                                aria-label={showPassword ? "Hide password" : "Show password"}
+                            >
+                                {showPassword ? (
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                                    </svg>
+                                ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
+
+                        {password && (
+                            <div className="password-strength">
+                                <div className="strength-bar-container" style={{
+                                    width: '100%',
+                                    height: '6px',
+                                    backgroundColor: '#e0e0e0',
+                                    borderRadius: '3px',
+                                    overflow: 'hidden',
+                                    marginBottom: '8px'
+                                }}>
+                                    <div 
+                                        className="strength-bar"
+                                        style={{
+                                            width: getStrengthWidth(),
+                                            height: '100%',
+                                            backgroundColor: getStrengthColor(),
+                                            transition: 'all 0.3s ease'
+                                        }}
+                                    ></div>
+                                </div>
+                                <span 
+                                    className="strength-text" 
+                                    style={{ 
+                                        color: getStrengthColor(),
+                                        fontSize: '14px',
+                                        fontWeight: '500'
+                                    }}
+                                >
+                                    {getStrengthText()}
+                                </span>
+                            </div>
+                        )}
+
+                        <div className="password-requirements" style={{
+                            fontSize: '12px',
+                            color: '#666',
+                            marginBottom: '15px',
+                            padding: '10px',
+                            backgroundColor: '#f8f9fa',
+                            borderRadius: '6px'
+                        }}>
+                            <p style={{ margin: '0 0 5px 0', fontWeight: '600' }}>Password must contain:</p>
+                            <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                                <li style={{ color: password.length >= 12 ? '#4caf50' : '#999' }}>
+                                    {password.length >= 12 ? '✓' : '○'} At least 12 characters
+                                </li>
+                                <li style={{ color: /[A-Z]/.test(password) ? '#4caf50' : '#999' }}>
+                                    {/[A-Z]/.test(password) ? '✓' : '○'} One uppercase letter
+                                </li>
+                                <li style={{ color: /[a-z]/.test(password) ? '#4caf50' : '#999' }}>
+                                    {/[a-z]/.test(password) ? '✓' : '○'} One lowercase letter
+                                </li>
+                                <li style={{ color: /[0-9]/.test(password) ? '#4caf50' : '#999' }}>
+                                    {/[0-9]/.test(password) ? '✓' : '○'} One number
+                                </li>
+                                <li style={{ color: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '#4caf50' : '#999' }}>
+                                    {/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '✓' : '○'} One special character
+                                </li>
+                            </ul>
+                        </div>
+
+                        <div className="input-group password-group">
+                            <input 
+                                type={showConfirmPassword ? "text" : "password"}
+                                name='confirmPassword'
+                                placeholder='Confirm New Password'
+                                value={confirmPassword}
+                                onChange={handleConfirmPasswordChange}
+                                required
+                                disabled={loading}
+                                autoComplete="new-password"
+                            />
+                            <button
+                                type="button"
+                                className="password-toggle"
+                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                disabled={loading}
+                                aria-label={showConfirmPassword ? "Hide password" : "Show password"}
+                            >
+                                {showConfirmPassword ? (
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                        <line x1="1" y1="1" x2="23" y2="23"></line>
+                                    </svg>
+                                ) : (
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
+
+                        {confirmPassword && password !== confirmPassword && (
+                            <p style={{
+                                color: '#f44336',
+                                fontSize: '14px',
+                                marginTop: '-10px',
+                                marginBottom: '10px'
+                            }}>
+                                ✗ Passwords do not match
+                            </p>
+                        )}
+
+                        {confirmPassword && password === confirmPassword && (
+                            <p style={{
+                                color: '#4caf50',
+                                fontSize: '14px',
+                                marginTop: '-10px',
+                                marginBottom: '10px'
+                            }}>
+                                ✓ Passwords match
+                            </p>
+                        )}
+
+                        <button 
+                            className="authBtn" 
+                            disabled={loading || !isFormValid()}
+                        >
+                            {loading ? 'Resetting...' : 'Reset Password'}
+                        </button>
+
+                        <p className="form-links">
+                            Remember your password? 
+                            <button 
+                                type="button"
+                                onClick={() => navigate('/login')}
+                                disabled={loading}
+                                className="link-btn"
+                                style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: loading ? '#ccc' : '#667eea',
+                                    cursor: loading ? 'not-allowed' : 'pointer',
+                                    textDecoration: 'underline',
+                                    marginLeft: '5px'
+                                }}
+                            >
+                                Sign in here
+                            </button>
+                        </p>
+                    </form>
+                </div>
+            </div>
+
+            <Footer />
         </>
     );
 }

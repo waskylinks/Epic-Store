@@ -7,9 +7,10 @@ import { toast } from 'react-toastify';
 
 function VerifyEmail() {
     const [code, setCode] = useState(['', '', '', '', '', '']);
-    const [timeLeft, setTimeLeft] = useState(90); // 90 seconds
+    const [timeLeft, setTimeLeft] = useState(90);
     const [canResend, setCanResend] = useState(false);
     const inputRefs = useRef([]);
+    const wasAuthenticatedRef = useRef(false); // ✅ Track previous auth state
 
     const { error, loading, success, message, verificationEmail, isAuthenticated } = useSelector(state => state.user);
     const location = useLocation();
@@ -95,17 +96,18 @@ function VerifyEmail() {
         }
     }, [dispatch, error]);
 
-    // Show success toast for resend only
+    // ✅ FIXED: Show toast only for resend (has message)
     useEffect(() => {
-        if (success && message?.includes('verification code sent')) {
+        if (success && message) {
             toast.success(message, { position: 'top-center', autoClose: 2000 });
             dispatch(removeSuccess());
         }
     }, [success, message, dispatch]);
 
-    // Auto redirect after successful verification (backend already logged user in)
+    // ✅ FIXED: Detect when user becomes authenticated (verification succeeded)
     useEffect(() => {
-        if (isAuthenticated && success && !message?.includes('verification code sent')) {
+        // If user just became authenticated (wasn't before, is now)
+        if (isAuthenticated && !wasAuthenticatedRef.current) {
             toast.success('Email verified successfully! Redirecting...', { 
                 position: 'top-center', 
                 autoClose: 1500 
@@ -119,7 +121,10 @@ function VerifyEmail() {
             
             return () => clearTimeout(timer);
         }
-    }, [isAuthenticated, success, message, dispatch, navigate]);
+        
+        // Update ref for next render
+        wasAuthenticatedRef.current = isAuthenticated;
+    }, [isAuthenticated, dispatch, navigate]);
 
     // Redirect if no email
     useEffect(() => {

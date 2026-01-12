@@ -24,6 +24,12 @@ function Register() {
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
+    // Validate email format
+    const validateEmail = (email) => {
+        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return re.test(email);
+    };
+
     // Calculate password strength
     const calculatePasswordStrength = (pass) => {
         if (!pass) return '';
@@ -42,12 +48,26 @@ function Register() {
         return 'very-strong';
     };
 
+    // Check if password meets all requirements
+    const isPasswordValid = (pass) => {
+        return pass.length >= 12 &&
+               /[A-Z]/.test(pass) &&
+               /[a-z]/.test(pass) &&
+               /[0-9]/.test(pass) &&
+               /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pass);
+    };
+
     const registerDataChange = (e) => {
         const newValue = e.target.value;
         setUser({
             ...user,
             [e.target.name]: newValue
         });
+
+        // Clear errors when user starts typing
+        if (error) {
+            dispatch(removeErrors());
+        }
 
         // Update password strength
         if (e.target.name === 'password') {
@@ -58,21 +78,37 @@ function Register() {
     const registerSubmit = (e) => {
         e.preventDefault();
         
-        if (!firstName || !lastName || !email || !password) {
-            toast.error('Please fill out all required fields', { position: 'top-center', autoClose: 1200 });
+        // Clear previous errors
+        dispatch(removeErrors());
+
+        // Validate all fields
+        if (!firstName.trim() || !lastName.trim() || !email.trim() || !password) {
+            toast.error('Please fill out all required fields', { position: 'top-center', autoClose: 2000 });
             return;
         }
 
+        // Validate email format
+        if (!validateEmail(email.trim())) {
+            toast.error('Please enter a valid email address', { position: 'top-center', autoClose: 2000 });
+            return;
+        }
+
+        // Validate password
         if (password.length < 12) {
             toast.error('Password must be at least 12 characters', { position: 'top-center', autoClose: 2000 });
             return;
         }
 
-        // ✅ Send clean JSON data
+        if (!isPasswordValid(password)) {
+            toast.error('Password must meet all requirements', { position: 'top-center', autoClose: 2000 });
+            return;
+        }
+
+        // Send clean JSON data
         const userData = {
             firstName: firstName.trim(),
             lastName: lastName.trim(),
-            email: email.trim(),
+            email: email.trim().toLowerCase(),
             password: password
         };
 
@@ -86,6 +122,7 @@ function Register() {
         dispatch(register(userData));
     };
 
+    // Handle errors
     useEffect(() => {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
@@ -93,16 +130,27 @@ function Register() {
         }
     }, [dispatch, error]);
 
+    // Handle success and navigation
     useEffect(() => {
-        if (success && needsVerification) {
+        if (success && needsVerification && verificationEmail) {
             toast.success('Registration successful! Please check your email for verification code.', { 
                 position: 'top-center', 
                 autoClose: 3000 
             });
             dispatch(removeSuccess());
-            navigate('/verify-email', { state: { email: verificationEmail } });
+            setTimeout(() => {
+                navigate('/verify-email', { state: { email: verificationEmail } });
+            }, 500);
         }
     }, [dispatch, success, needsVerification, verificationEmail, navigate]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            dispatch(removeErrors());
+            dispatch(removeSuccess());
+        };
+    }, [dispatch]);
 
     const togglePasswordVisibility = () => {
         setShowPassword(!showPassword);
@@ -128,6 +176,15 @@ function Register() {
         }
     };
 
+    const isFormValid = () => {
+        return firstName.trim() && 
+               lastName.trim() && 
+               email.trim() && 
+               validateEmail(email.trim()) &&
+               password && 
+               isPasswordValid(password);
+    };
+
     return (
         <div className="form-container container">
             <div className="form-content">
@@ -136,6 +193,21 @@ function Register() {
                     onSubmit={registerSubmit}
                 >
                     <h2>Sign Up</h2>
+
+                    {/* Error message display */}
+                    {error && (
+                        <div className="error-message" style={{
+                            padding: '12px',
+                            marginBottom: '15px',
+                            backgroundColor: '#fee2e2',
+                            color: '#991b1b',
+                            borderRadius: '6px',
+                            border: '1px solid #fecaca',
+                            fontSize: '14px'
+                        }}>
+                            {error}
+                        </div>
+                    )}
 
                     {/* OAuth Buttons */}
                     <div className="oauth-buttons-container">
@@ -149,7 +221,6 @@ function Register() {
                     </div>
 
                     {/* Email Registration Form */}
-                    
                     <div className="input-row">
                         <div className="input-group">
                             <input 
@@ -158,6 +229,7 @@ function Register() {
                                 name='firstName' 
                                 value={firstName} 
                                 onChange={registerDataChange}
+                                disabled={loading}
                                 required
                             />
                         </div>
@@ -168,11 +240,11 @@ function Register() {
                                 name='lastName' 
                                 value={lastName} 
                                 onChange={registerDataChange}
+                                disabled={loading}
                                 required
                             />
                         </div>
                     </div>
-
 
                     <div className="input-group">
                         <input 
@@ -181,6 +253,8 @@ function Register() {
                             name='email'
                             value={email} 
                             onChange={registerDataChange}
+                            disabled={loading}
+                            autoComplete="email"
                             required
                         />
                     </div>
@@ -192,15 +266,28 @@ function Register() {
                             name='password'
                             value={password} 
                             onChange={registerDataChange}
+                            disabled={loading}
+                            autoComplete="new-password"
                             required
                         />
                         <button
                             type="button"
                             className="password-toggle"
                             onClick={togglePasswordVisibility}
+                            disabled={loading}
                             aria-label={showPassword ? "Hide password" : "Show password"}
                         >
-                            {showPassword ? '👁️' : '👁️‍🗨️'}
+                            {showPassword ? (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
+                                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                                </svg>
+                            ) : (
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                    <circle cx="12" cy="12" r="3"></circle>
+                                </svg>
+                            )}
                         </button>
                     </div>
 
@@ -242,7 +329,10 @@ function Register() {
                         </ul>
                     </div>
 
-                    <button className="authBtn" disabled={loading}>
+                    <button 
+                        className="authBtn" 
+                        disabled={loading || !isFormValid()}
+                    >
                         {loading ? 'Signing Up...' : 'Sign Up'}
                     </button>
 
