@@ -4,25 +4,13 @@ import '../UserStyles/OAuthButtons.css';
 function GoogleSignInButton({ text = "Sign in with Google" }) {
     const [loading, setLoading] = useState(false);
 
-    const handleGoogleSignIn = async () => {
+    const handleGoogleSignIn = () => {
         setLoading(true);
         
         try {
-            // Replace with your actual Google OAuth endpoint
-            // For example: window.location.href = 'http://your-backend.com/auth/google';
-            
-            // Placeholder - redirect to Google OAuth
-            console.log('Initiating Google Sign In...');
-            
-            // Example implementation:
-            // window.location.href = `${process.env.REACT_APP_API_URL}/auth/google`;
-            
-            // For demo purposes:
-            setTimeout(() => {
-                setLoading(false);
-                alert('Google Sign In would redirect here. Configure your backend OAuth endpoint.');
-            }, 1000);
-            
+            // Redirect to backend Google OAuth endpoint
+            // Backend will handle the OAuth flow and redirect back to /oauth/callback
+            window.location.href = '/api/v1/oauth/google';
         } catch (error) {
             console.error('Google Sign In Error:', error);
             setLoading(false);
@@ -62,6 +50,9 @@ function GoogleSignInButton({ text = "Sign in with Google" }) {
                     </svg>
                     <span className="oauth-text">{text}</span>
                 </>
+            )}
+            {loading && (
+                <span className="oauth-text">Redirecting...</span>
             )}
         </button>
     );

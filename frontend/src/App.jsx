@@ -31,6 +31,7 @@ import UpdateProduct from './Admin/UpdateProduct';
 import UserList from './Admin/UserList';
 import AllOrders from './Admin/AllOrders';
 import ReviewList from './Admin/ReviewList';
+import OAuthCallback from './User/OauthCallback';
 
 
 function App() {
@@ -60,6 +61,7 @@ function App() {
         <Route path='/register' element={<Register />}/>
         <Route path='/login' element={<Login />}/>
         <Route path='/verify-email' element={<VerifyEmail />}/>
+        <Route path="/oauth/callback" element={<OAuthCallback />} />
         <Route path='/profile' element={<ProtectedRoute element={<Profile />} />} />
         <Route path='/profile/update' element={<ProtectedRoute element={<UpdateProfile />} />}/>
         <Route path='/password/update' element={<ProtectedRoute element={<UpdatePassword />} />}/>
