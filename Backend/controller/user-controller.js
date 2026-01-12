@@ -353,6 +353,33 @@ export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => 
     sendToken(user, 200, res);
 });
 
+
+// VERIFY RESET CODE (WITHOUT RESETTING PASSWORD)
+export const verifyResetCode = handleAsyncError(async (req, res, next) => {
+    const { email, code } = req.body;
+
+    if (!email || !code) {
+        return next(new HandleError("Email and reset code are required", 400));
+    }
+
+    const user = await User.findOne({ email: email.toLowerCase() });
+
+    if (!user) {
+        return next(new HandleError("User not found", 404));
+    }
+
+    const isCodeValid = user.verifyResetCode(code);
+    if (!isCodeValid) {
+        return next(new HandleError("Invalid or expired reset code", 400));
+    }
+
+    // Code is valid - don't reset password yet
+    res.status(200).json({
+        success: true,
+        message: "Code verified successfully"
+    });
+});
+
 // UPDATE PASSWORD
 
 export const UpdatePassword = handleAsyncError(async (req, res, next) => {

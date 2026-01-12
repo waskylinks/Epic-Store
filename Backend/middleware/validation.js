@@ -182,9 +182,20 @@ export const validatePasswordReset = (req, res, next) => {
         return next(new HandleError('Request body is empty.', 400));
     }
 
-    const { password, confirmPassword } = req.body;
+    const { email, code, password, confirmPassword } = req.body;
     const errors = [];
 
+    // Validate email
+    if (!email || !validator.isEmail(email)) {
+        errors.push('Please provide a valid email address');
+    }
+
+    // Validate code
+    if (!code || !/^\d{6}$/.test(code)) {
+        errors.push('Verification code must be 6 digits');
+    }
+
+    // Validate password
     if (!password) {
         errors.push('Password is required');
     } else {

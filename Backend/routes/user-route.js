@@ -8,10 +8,11 @@ import {
   loginUser, 
   logout, 
   registerUser,
-  verifyEmail,                    // ✅ ADD THIS
-  resendVerificationCode,         // ✅ ADD THIS
-  requestPasswordReset, 
-  resetPasswordWithCode,          // ✅ RENAMED (was resetPassword)
+  verifyEmail,
+  resendVerificationCode,
+  requestPasswordReset,
+  verifyResetCode,                
+  resetPasswordWithCode,
   UpdatePassword, 
   updateProfile, 
   updateUserRole 
@@ -21,7 +22,7 @@ import {
   registrationLimiter, 
   authLimiter, 
   passwordResetLimiter,
-  emailLimiter                    // ✅ ADD THIS
+  emailLimiter
 } from '../middleware/rateLimiter.js';
 import { 
   validateRegistration, 
@@ -29,7 +30,7 @@ import {
   validatePasswordUpdate, 
   validatePasswordReset,
   validateEmail,
-  validateVerificationCode,       // ✅ ADD THIS
+  validateVerificationCode,
   sanitizeInput, 
   validateProfileUpdate
 } from '../middleware/validation.js';
@@ -46,11 +47,10 @@ router.route("/register")
   .post(registrationLimiter, validateRegistration, registerUser);
 
 // Email verification with code
-// Verify email
 router.route("/verify-email")
   .post(emailLimiter, validateVerificationCode, verifyEmail);
 
-//  Resend verification code
+// Resend verification code
 router.route("/resend-verification")
   .post(emailLimiter, validateEmail, resendVerificationCode);
 
@@ -58,7 +58,7 @@ router.route("/resend-verification")
 router.route("/login")
   .post(authLimiter, validateLogin, loginUser);
 
-// Logout (can be public or protected - your choice)
+// Logout
 router.route("/logout")
   .post(logout);
 
@@ -66,8 +66,11 @@ router.route("/logout")
 router.route("/password/forgot")
   .post(passwordResetLimiter, validateEmail, requestPasswordReset);
 
-// 
-// Password reset with CODE (not token)
+// ✅ NEW - Verify reset code (Step 2 of password reset)
+router.route("/password/verify-code")
+  .post(passwordResetLimiter, validateEmail, validateVerificationCode, verifyResetCode);
+
+// Password reset with CODE (Step 3 of password reset)
 router.route("/password/reset")
   .post(passwordResetLimiter, validatePasswordReset, resetPasswordWithCode);
 
