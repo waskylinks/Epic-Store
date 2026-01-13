@@ -2,6 +2,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import passport from 'passport';
+import { PaymentFactory } from './Services/payment/paymentFactory.js';
 
 import {
   helmetConfig,
@@ -33,7 +34,6 @@ app.post('/api/v1/payment/webhook/paystack',
     console.log('>>> Paystack webhook route reached');
     
     try {
-      const { PaymentFactory } = await import('./Services/payment/paymentFactory.js');
       const service = PaymentFactory.getWebhookService('paystack');
       
       if (!service) {
@@ -49,28 +49,37 @@ app.post('/api/v1/payment/webhook/paystack',
 );
 
 /* ================= CORE ================= */
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ 
+  limit: '1mb',
+  verify: (req, res, buf) => {
+    // Store raw body for webhook signature verification if needed
+    if (req.originalUrl.includes('/webhook')) {
+      req.rawBody = buf.toString('utf8');
+    }
+  }
+}));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 
 /* ================= PASSPORT (JWT-based, no sessions) ================= */
 app.use(passport.initialize());
-// No session middleware - using JWT tokens via sendToken()
 
-/* ================= DEBUG MIDDLEWARE (TEMPORARY) ================= */
-app.use((req, res, next) => {
+/* ================= REQUEST LOGGING (DEVELOPMENT ONLY) ================= */
+if (process.env.NODE_ENV === 'development') {
+  app.use((req, res, next) => {
     if (req.method === 'POST' || req.method === 'PUT') {
-        console.log('📨 Incoming Request:', {
-            method: req.method,
-            path: req.originalUrl,
-            contentType: req.headers['content-type'],
-            bodyExists: !!req.body,
-            bodyKeys: req.body ? Object.keys(req.body) : [],
-            body: req.body
-        });
+      console.log('📨 Incoming Request:', {
+        method: req.method,
+        path: req.originalUrl,
+        contentType: req.headers['content-type'],
+        bodyExists: !!req.body,
+        bodyKeys: req.body ? Object.keys(req.body) : []
+        // ❌ Removed: body: req.body (prevents logging sensitive data)
+      });
     }
     next();
-});
+  });
+}
 
 /* ================= SECURITY ================= */
 // Startup guard (non-destructive, validates app)
@@ -94,16 +103,27 @@ app.use('/api/v1/receipts', receiptRoutes);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
+  // Log full error server-side for debugging
   console.error('🔥 ERROR', {
     method: req.method,
     path: req.originalUrl,
     message: err.message,
-    stack: err.stack
+    // Only log stack trace in development
+    stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
+    statusCode: err.statusCode
   });
 
+  // Send sanitized error to client
+  const isDevelopment = process.env.NODE_ENV === 'development';
+  
   res.status(err.statusCode || 500).json({
     success: false,
-    message: err.message || 'Internal Server Error'
+    message: isDevelopment 
+      ? err.message 
+      : (err.statusCode >= 400 && err.statusCode < 500)
+        ? err.message // Client errors (4xx) can show actual message
+        : 'An error occurred', // Server errors (5xx) use generic message
+    ...(isDevelopment && { stack: err.stack }) // Include stack only in dev
   });
 });
 

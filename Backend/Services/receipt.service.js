@@ -1,14 +1,29 @@
 import Receipt from "../models/receipt-model.js";
-import User from "../models/userModel.js"; // for snapshotting customer info
+import User from "../models/userModel.js";
 import HandleError from "../utils/handleError.js";
 
 /**
- * Format NGN currency
+ * Format currency based on currency code
+ * @param {number} amount - Amount to format
+ * @param {string} currency - Currency code (NGN, USD, GBP, EUR, etc.)
+ * @returns {string} Formatted currency string
  */
-export const formatCurrency = (amount) => {
-  return new Intl.NumberFormat("en-NG", {
+export const formatCurrency = (amount, currency = "NGN") => {
+  const localeMap = {
+    NGN: "en-NG",
+    USD: "en-US",
+    GBP: "en-GB",
+    EUR: "en-DE",
+    GHS: "en-GH",
+    KES: "en-KE",
+    ZAR: "en-ZA"
+  };
+
+  const locale = localeMap[currency] || "en-US";
+
+  return new Intl.NumberFormat(locale, {
     style: "currency",
-    currency: "NGN",
+    currency: currency,
     minimumFractionDigits: 2,
   }).format(amount);
 };
@@ -29,41 +44,58 @@ export const createReceiptIfNotExists = async ({
   currency = "NGN",
   paymentGateway = "paystack",
 }) => {
-  // Return existing receipt if already created
-  let receipt = await Receipt.findOne({ reference });
-  if (receipt) return receipt;
+  try {
+    // Return existing receipt if already created
+    let receipt = await Receipt.findOne({ reference });
+    if (receipt) return receipt;
 
-  // Snapshot customer info
-  const user = await User.findById(userId).select("name email");
-  if (!user) throw new HandleError("User not found for receipt", 404);
+    // Snapshot customer info
+    const user = await User.findById(userId).select("name email");
+    if (!user) throw new HandleError("User not found for receipt", 404);
 
-  return Receipt.create({
-    order: orderId,
-    user: userId,
-    reference,
-    customer: {
-      name: user.name,
-      email: user.email,
-      phoneNo: shippingInfo.phoneNo,
-    },
-    orderItems,
-    itemPrice,
-    taxPrice,
-    shippingPrice,
-    totalPrice,
-    currency,
-    shippingInfo,
-    paymentStatus: "paid",
-    paymentGateway,
-    paidAt: new Date(),
-  });
+    // Create receipt
+    receipt = await Receipt.create({
+      order: orderId,
+      user: userId,
+      reference,
+      customer: {
+        name: user.name,
+        email: user.email,
+        phoneNo: shippingInfo.phoneNo,
+      },
+      shippingInfo: {
+        address: shippingInfo.address,
+        city: shippingInfo.city,
+        state: shippingInfo.state,
+        country: shippingInfo.country,
+        pinCode: shippingInfo.pinCode
+      },
+      orderItems,
+      itemPrice,
+      taxPrice,
+      shippingPrice,
+      totalPrice,
+      currency: currency.toUpperCase(),
+      paymentStatus: "paid",
+      paymentGateway,
+      paidAt: new Date(),
+    });
+
+    return receipt;
+  } catch (error) {
+    // Log error but don't fail the entire payment process
+    console.error("Receipt creation error:", error);
+    throw error;
+  }
 };
 
 /**
  * Get all receipts for a user
  */
 export const getAllReceipts = async (req, res) => {
-  const receipts = await Receipt.find({ user: req.user._id }).sort({ createdAt: -1 });
+  const receipts = await Receipt.find({ user: req.user._id })
+    .sort({ createdAt: -1 });
+  
   return res.status(200).json({ success: true, receipts });
 };
 

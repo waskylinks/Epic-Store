@@ -11,6 +11,7 @@ import { v2 as cloudinary } from 'cloudinary';
  */
 const validateEnvVariables = () => {
     const required = [
+        'NODE_ENV',
         'PORT',
         'MONGO_URI',
         'JWT_SECRET_KEY',
