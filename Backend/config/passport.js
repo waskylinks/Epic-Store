@@ -1,9 +1,10 @@
 import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
+import { Strategy as FacebookStrategy } from 'passport-facebook';
 import User from '../models/userModel.js';
 
 /**
- * Passport configuration for Google OAuth
+ * Passport configuration for OAuth (Google & Facebook)
  */
 
 // Serialize user for session (not used with JWT but required by Passport)
@@ -90,6 +91,84 @@ passport.use(
 
             } catch (error) {
                 console.error('Google OAuth error:', error);
+                return done(error, null);
+            }
+        }
+    )
+);
+
+/**
+ * Facebook OAuth Strategy
+ */
+passport.use(
+    new FacebookStrategy(
+        {
+            clientID: process.env.FACEBOOK_APP_ID,
+            clientSecret: process.env.FACEBOOK_APP_SECRET,
+            callbackURL: process.env.FACEBOOK_CALLBACK_URL,
+            profileFields: ['id', 'emails', 'name', 'photos'],
+            scope: ['email', 'public_profile']
+        },
+        async (accessToken, refreshToken, profile, done) => {
+            try {
+                const email = profile.emails?.[0]?.value;
+                const firstName = profile.name?.givenName;
+                const lastName = profile.name?.familyName;
+                const facebookId = profile.id;
+
+                // ✅ CRITICAL: Validate required fields
+                if (!email || !firstName || !lastName) {
+                    return done(new Error('Facebook must provide email, first name, and last name'), null);
+                }
+
+                // Check if user exists with this Facebook ID
+                let user = await User.findOne({ facebookId });
+
+                if (user) {
+                    // User exists with Facebook ID - login
+                    return done(null, user);
+                }
+
+                // Check if user exists with this email
+                user = await User.findOne({ email: email.toLowerCase() });
+
+                if (user) {
+                    // User exists with email but not linked to Facebook
+                    // Link Facebook account to existing user
+                    user.facebookId = facebookId;
+                    user.emailVerified = true; // Facebook emails are verified
+
+                    // Update avatar if user doesn't have one or has default
+                    if (!user.avatar.url || user.avatar.public_id === 'default_avatar') {
+                        user.avatar = {
+                            public_id: `facebook_${facebookId}`,
+                            url: profile.photos[0]?.value || user.avatar.url
+                        };
+                    }
+
+                    await user.save();
+                    return done(null, user);
+                }
+
+                // Create new user with Facebook account
+                user = await User.create({
+                    firstName: firstName,
+                    lastName: lastName,
+                    email: email.toLowerCase(),
+                    facebookId: facebookId,
+                    authProvider: 'facebook',
+                    emailVerified: true, // Facebook emails are pre-verified
+                    avatar: {
+                        public_id: `facebook_${facebookId}`,
+                        url: profile.photos[0]?.value || 'https://res.cloudinary.com/demo/image/upload/v1234567890/default_avatar.png'
+                    },
+                    // No password needed for OAuth users
+                });
+
+                return done(null, user);
+
+            } catch (error) {
+                console.error('Facebook OAuth error:', error);
                 return done(error, null);
             }
         }
