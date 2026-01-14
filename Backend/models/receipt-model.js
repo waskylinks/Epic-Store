@@ -96,7 +96,6 @@ const receiptSchema = new mongoose.Schema(
 // Indexes for query performance
 receiptSchema.index({ user: 1, createdAt: -1 });
 receiptSchema.index({ order: 1 });
-receiptSchema.index({ reference: 1 });
 receiptSchema.index({ paymentGateway: 1 });
 receiptSchema.index({ paymentStatus: 1 });
 

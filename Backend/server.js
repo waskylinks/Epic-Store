@@ -4,11 +4,10 @@ dotenv.config({ path: './.env' });
 
 import app from './app.js';
 import { connectDB, setupGracefulShutdown, getDBStatus } from './Database/database.js';
+import { initializeRedis, shutdownRedis, default as redis } from './utils/redis.js';
 import { v2 as cloudinary } from 'cloudinary';
 
-/**
- * Validate required environment variables
- */
+/* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
     const required = [
         'NODE_ENV',
@@ -24,7 +23,10 @@ const validateEnvVariables = () => {
         'SMTP_MAIL',
         'SMTP_PASSWORD',
         'FRONTEND_URL',
-        'SESSION_SECRET'
+        'SESSION_SECRET',
+        'REDIS_HOST',
+        'REDIS_PORT',
+        'REDIS_PASSWORD'
     ];
 
     const missing = required.filter(key => !process.env[key]);
@@ -38,9 +40,7 @@ const validateEnvVariables = () => {
     console.log('✅ Environment variables validated');
 };
 
-/**
- * Configure Cloudinary
- */
+/* ================= CLOUDINARY CONFIG ================= */
 const configureCloudinary = () => {
     try {
         cloudinary.config({
@@ -55,9 +55,7 @@ const configureCloudinary = () => {
     }
 };
 
-/**
- * Handle Uncaught Exceptions (BEFORE any other code)
- */
+/* ================= UNCUGHT EXCEPTIONS ================= */
 process.on('uncaughtException', (err) => {
     console.error('💥 UNCAUGHT EXCEPTION! Shutting down...');
     console.error('Error name:', err.name);
@@ -66,26 +64,30 @@ process.on('uncaughtException', (err) => {
     process.exit(1);
 });
 
-/**
- * Start the server
- */
+/* ================= START SERVER ================= */
 const startServer = async () => {
+    let server;
+
     try {
-        // 1. Validate environment variables
+        // 1️⃣ Validate env
         validateEnvVariables();
 
-        // 2. Configure external services
+        // 2️⃣ Configure Cloudinary
         configureCloudinary();
 
-        // 3. Connect to database with retry logic
+        // 3️⃣ Initialize Redis
+        await initializeRedis();
+        console.log(`📊 Redis status: ${redis.isOpen ? '✅ Connected' : '❌ Not connected'}`);
+
+        // 4️⃣ Connect to MongoDB
         await connectDB();
 
-        // 4. Setup graceful shutdown handlers
+        // 5️⃣ Setup graceful shutdown hooks
         setupGracefulShutdown();
 
-        // 5. Start Express server
+        // 6️⃣ Start Express server
         const PORT = process.env.PORT || 8000;
-        const server = app.listen(PORT, () => {
+        server = app.listen(PORT, () => {
             console.log('\n' + '='.repeat(50));
             console.log('🚀 SERVER STARTED SUCCESSFULLY');
             console.log('='.repeat(50));
@@ -107,7 +109,7 @@ const startServer = async () => {
             }
         });
 
-        // Handle server-specific errors
+        /* ================= SERVER ERROR ================= */
         server.on('error', (error) => {
             if (error.code === 'EADDRINUSE') {
                 console.error(`❌ Port ${PORT} is already in use`);
@@ -117,46 +119,47 @@ const startServer = async () => {
             process.exit(1);
         });
 
-        /**
-         * Handle Unhandled Promise Rejections
-         */
-        process.on('unhandledRejection', (err, promise) => {
+        /* ================= UNHANDLED REJECTIONS ================= */
+        process.on('unhandledRejection', async (err, promise) => {
             console.error('💥 UNHANDLED REJECTION! Shutting down gracefully...');
             console.error('Error name:', err.name);
             console.error('Error message:', err.message);
             console.error('Promise:', promise);
-            
-            // Close server gracefully
-            server.close(() => {
-                console.log('✅ Server closed gracefully');
-                process.exit(1);
-            });
 
-            // Force shutdown after 10 seconds if graceful shutdown fails
-            setTimeout(() => {
-                console.error('⚠️ Forcing shutdown after timeout');
-                process.exit(1);
-            }, 10000);
+            if (server) {
+                server.close(async () => {
+                    console.log('✅ Server closed gracefully');
+                    await shutdownRedis();
+                    process.exit(1);
+                });
+
+                // Force shutdown after 10 seconds
+                setTimeout(() => {
+                    console.error('⚠️ Forcing shutdown after timeout');
+                    process.exit(1);
+                }, 10000);
+            }
         });
 
-        /**
-         * Handle SIGTERM (for production deployments like Heroku, Railway)
-         */
-        process.on('SIGTERM', () => {
+        /* ================= SIGTERM HANDLER ================= */
+        process.on('SIGTERM', async () => {
             console.log('📡 SIGTERM received. Starting graceful shutdown...');
-            server.close(() => {
-                console.log('✅ Process terminated gracefully');
-            });
+            if (server) {
+                server.close(async () => {
+                    console.log('✅ Server closed gracefully');
+                    await shutdownRedis();
+                    process.exit(0);
+                });
+            }
         });
 
     } catch (error) {
         console.error('💥 Failed to start server:', error.message);
         console.error('Stack trace:', error.stack);
+        if (redis.isOpen) await shutdownRedis();
         process.exit(1);
     }
 };
 
-/**
- * Initialize application
- */
+/* ================= INITIALIZE APP ================= */
 startServer();

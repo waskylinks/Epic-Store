@@ -2,9 +2,9 @@ import rateLimit from "express-rate-limit";
 import RedisStore from "rate-limit-redis";
 import redisClient from '../utils/redis.js';
 
-/**
- * Helper: safely extract email from request
- */
+/* ================= HELPERS ================= */
+
+// Safely extract email from request
 const extractEmail = (req) => {
   let email = req.body?.email;
   if (typeof email === "object" && email?.email) email = email.email;
@@ -12,34 +12,35 @@ const extractEmail = (req) => {
   return email.toLowerCase();
 };
 
-/**
- * Helper: extract IP address
- */
+// Extract IP address
 const extractIP = (req) => {
-  return req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.connection.remoteAddress || 'unknown';
+  return req.ip || req.headers['x-forwarded-for']?.split(',')[0] || req.connection?.remoteAddress || 'unknown';
 };
 
-/**
- * Standardized rate limit message
- */
+// Standardized rate limit response
 const formatRateLimitMessage = (customMessage) => ({
   success: false,
   message: customMessage,
 });
 
-/**
- * Helper: create Redis store for rate limiter
- */
-const createRedisStore = (prefix) =>
-  new RedisStore({
+/* ================= REDIS STORE FACTORY ================= */
+
+// Lazily create a RedisStore after redisClient is connected
+const createRedisStore = (prefix) => {
+  if (!redisClient.isOpen) {
+    throw new Error(`Redis is not connected yet. Cannot create rate limiter store for prefix "${prefix}"`);
+  }
+
+  return new RedisStore({
     prefix,
     sendCommand: (...args) => redisClient.sendCommand(args),
   });
+};
 
-/**
- * General API limiter (100 requests / 15 min)
- */
-export const apiLimiter = rateLimit({
+/* ================= RATE LIMITERS ================= */
+
+// General API limiter (100 requests / 15 min)
+export const apiLimiter = () => rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   store: createRedisStore("ratelimit:api:"),
@@ -50,10 +51,8 @@ export const apiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/**
- * Authentication limiter (5 failed attempts / 15 min)
- */
-export const authLimiter = rateLimit({
+// Authentication limiter (5 failed attempts / 15 min)
+export const authLimiter = () => rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   skipSuccessfulRequests: true,
@@ -65,10 +64,8 @@ export const authLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/**
- * Email sending limiter (3 requests / hour)
- */
-export const emailLimiter = rateLimit({
+// Email sending limiter (3 requests / hour)
+export const emailLimiter = () => rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,
   store: createRedisStore("ratelimit:email:"),
@@ -79,18 +76,14 @@ export const emailLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/**
- * ✅ FIXED: Password reset limiter (3 attempts / hour per email)
- * Removed duplicate prefix in keyGenerator
- */
-export const passwordResetLimiter = rateLimit({
+// Password reset limiter (3 attempts / hour per email)
+export const passwordResetLimiter = () => rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,
   store: createRedisStore("ratelimit:password-reset:"),
   keyGenerator: (req) => {
     const email = extractEmail(req);
-    // ✅ Don't add prefix here - RedisStore already adds "ratelimit:password-reset:"
-    return email || extractIP(req);
+    return email || extractIP(req); // RedisStore prefix already added
   },
   message: formatRateLimitMessage(
     "Too many password reset attempts for this email, please try again after an hour"
@@ -99,10 +92,8 @@ export const passwordResetLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/**
- * Registration limiter (3 registrations / hour per IP)
- */
-export const registrationLimiter = rateLimit({
+// Registration limiter (3 registrations / hour per IP)
+export const registrationLimiter = () => rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,
   store: createRedisStore("ratelimit:registration:"),
@@ -113,11 +104,8 @@ export const registrationLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-/**
- * ✅ NEW: Email-based login limiter (5 attempts / 15 min per email)
- * Prevents brute force on specific accounts
- */
-export const emailLoginLimiter = rateLimit({
+// Email-based login limiter (5 attempts / 15 min per email)
+export const emailLoginLimiter = () => rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
   skipSuccessfulRequests: true,

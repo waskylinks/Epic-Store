@@ -2,9 +2,10 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import session from 'express-session';
-import MongoStore from 'connect-mongo';
+import { EventEmitter } from 'events';
 import passport from 'passport';
 import { PaymentFactory } from './Services/payment/paymentFactory.js';
+import redis from './utils/redis.js';
 
 import {
   helmetConfig,
@@ -30,18 +31,19 @@ const app = express();
 
 /* ================= WEBHOOK ROUTES (MUST BE BEFORE BODY PARSERS) ================= */
 // Paystack webhook needs raw body for signature verification
-app.post('/api/v1/payment/webhook/paystack', 
+app.post(
+  '/api/v1/payment/webhook/paystack',
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     console.log('>>> Paystack webhook route reached');
-    
+
     try {
       const service = PaymentFactory.getWebhookService('paystack');
-      
+
       if (!service) {
         return res.status(400).json({ message: 'Webhook service unavailable' });
       }
-      
+
       await service.handleWebhook(req, res);
     } catch (err) {
       console.error('Paystack webhook error:', err);
@@ -51,40 +53,95 @@ app.post('/api/v1/payment/webhook/paystack',
 );
 
 /* ================= CORE ================= */
-app.use(express.json({ 
-  limit: '1mb',
-  verify: (req, res, buf) => {
-    // Store raw body for webhook signature verification if needed
-    if (req.originalUrl.includes('/webhook')) {
-      req.rawBody = buf.toString('utf8');
+app.use(
+  express.json({
+    limit: '1mb',
+    verify: (req, res, buf) => {
+      // Store raw body for webhook signature verification if needed
+      if (req.originalUrl.includes('/webhook')) {
+        req.rawBody = buf.toString('utf8');
+      }
     }
-  }
-}));
+  })
+);
+
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 
-/* ================= SESSION (FOR OAUTH STATE PARAMETER) ================= */
-// Session middleware MUST come BEFORE passport initialization
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
-  resave: false,
-  saveUninitialized: false,
-  store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
-    touchAfter: 24 * 3600, // Update session every 24 hours (lazy update)
-    ttl: 15 * 60 // Session expires after 15 minutes of inactivity
-  }),
-  cookie: {
-    maxAge: 1000 * 60 * 15, // 15 minutes (enough for OAuth flow)
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
-    sameSite: 'lax' // CSRF protection
-  },
-  name: 'oauth.sid' // Custom session name (not default 'connect.sid')
-}));
+/* ================= CUSTOM REDIS SESSION STORE ================= */
+// Simple Redis store implementation (no connect-redis needed)
+class RedisSessionStore extends EventEmitter {
+  constructor(redisClient, options = {}) {
+    super();
+    this.client = redisClient;
+    this.prefix = options.prefix || 'sess:';
+    this.ttl = options.ttl || 900; // 15 minutes default
+  }
 
-/* ================= PASSPORT (JWT-based, no sessions for main auth) ================= */
-// Passport uses sessions ONLY for OAuth state parameter, not for user sessions
+  async get(sid, callback) {
+    try {
+      const data = await this.client.get(this.prefix + sid);
+      callback(null, data ? JSON.parse(data) : null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  async set(sid, session, callback) {
+    try {
+      await this.client.set(
+        this.prefix + sid,
+        JSON.stringify(session),
+        { EX: this.ttl }
+      );
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  async destroy(sid, callback) {
+    try {
+      await this.client.del(this.prefix + sid);
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+
+  async touch(sid, session, callback) {
+    try {
+      await this.client.expire(this.prefix + sid, this.ttl);
+      callback(null);
+    } catch (err) {
+      callback(err);
+    }
+  }
+}
+
+const sessionStore = new RedisSessionStore(redis, {
+  prefix: 'epicstore:session:',
+  ttl: 900 // 15 minutes
+});
+
+app.use(
+  session({
+    store: sessionStore,
+    secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      maxAge: 1000 * 60 * 15, // 15 minutes
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax'
+    },
+    name: 'oauth.sid'
+  })
+);
+
+/* ================= PASSPORT ================= */
+// Passport is used for OAuth only (JWT handles auth)
 app.use(passport.initialize());
 
 /* ================= REQUEST LOGGING (DEVELOPMENT ONLY) ================= */
@@ -97,7 +154,6 @@ if (process.env.NODE_ENV === 'development') {
         contentType: req.headers['content-type'],
         bodyExists: !!req.body,
         bodyKeys: req.body ? Object.keys(req.body) : []
-        // ❌ Removed: body: req.body (prevents logging sensitive data)
       });
     }
     next();
@@ -126,27 +182,25 @@ app.use('/api/v1/receipts', receiptRoutes);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
-  // Log full error server-side for debugging
   console.error('🔥 ERROR', {
     method: req.method,
     path: req.originalUrl,
     message: err.message,
-    // Only log stack trace in development
     stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
     statusCode: err.statusCode
   });
 
-  // Send sanitized error to client
   const isDevelopment = process.env.NODE_ENV === 'development';
-  
+
   res.status(err.statusCode || 500).json({
     success: false,
-    message: isDevelopment 
-      ? err.message 
-      : (err.statusCode >= 400 && err.statusCode < 500)
-        ? err.message // Client errors (4xx) can show actual message
-        : 'An error occurred', // Server errors (5xx) use generic message
-    ...(isDevelopment && { stack: err.stack }) // Include stack only in dev
+    message:
+      isDevelopment
+        ? err.message
+        : err.statusCode >= 400 && err.statusCode < 500
+        ? err.message
+        : 'An error occurred',
+    ...(isDevelopment && { stack: err.stack })
   });
 });
 

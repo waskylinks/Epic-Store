@@ -1,116 +1,126 @@
 import 'dotenv/config';
 import { createClient } from 'redis';
 
-// Namespace for your app to avoid key collisions
-const PREFIX = "epicstore:";
+/* ================= CONFIG ================= */
 
-// Validate and parse Redis configuration
+const PREFIX = 'epicstore:';
+
 const REDIS_HOST = process.env.REDIS_HOST;
-const REDIS_PORT = parseInt(process.env.REDIS_PORT);
+const REDIS_PORT = Number(process.env.REDIS_PORT);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
+if (!REDIS_HOST || !REDIS_PORT) {
+  console.warn('⚠️ Redis environment variables missing. Caching will be disabled.');
+}
+
+/* ================= CLIENT ================= */
 
 const redis = createClient({
   username: 'default',
-  password: REDIS_PASSWORD,
+  password: REDIS_PASSWORD || undefined,
   socket: {
     host: REDIS_HOST,
-    port: REDIS_PORT
+    port: REDIS_PORT,
+    reconnectStrategy: retries => {
+      console.warn(`🔄 Redis reconnect attempt #${retries}`);
+      return Math.min(retries * 100, 3000);
+    }
   }
 });
 
-// Connection logging
-redis.on('error', (err) => console.error('Redis Client Error:', err));
-redis.on('connect', () => console.log('✅ Connected to Redis'));
-redis.on('ready', () => console.log('✅ Redis is ready'));
-redis.on('close', () => console.warn('⚠️ Redis connection closed'));
-redis.on('reconnecting', () => console.info('🔄 Redis reconnecting...'));
+/* ================= EVENTS ================= */
 
-// Log memory info when ready
-redis.on('ready', async () => {
+redis.on('connect', () => console.log('✅ Redis connected'));
+redis.on('ready', () => console.log('🚀 Redis ready'));
+redis.on('reconnecting', () => console.warn('🔄 Redis reconnecting...'));
+redis.on('end', () => console.warn('⚠️ Redis connection closed'));
+redis.on('error', err => console.error('❌ Redis error:', err));
+
+/* ================= INITIALIZER ================= */
+
+export const initializeRedis = async () => {
+  if (redis.isOpen) {
+    console.log('ℹ️ Redis already connected');
+    return;
+  }
+
   try {
-    const info = await redis.info('memory');
-    console.info('📊 Redis memory info retrieved');
+    await redis.connect();
+
+    if (process.env.NODE_ENV !== 'production') {
+      // Health check (DEV ONLY)
+      await redis.set(`${PREFIX}healthcheck`, 'ok', { EX: 10 });
+      const value = await redis.get(`${PREFIX}healthcheck`);
+      await redis.del(`${PREFIX}healthcheck`);
+
+      if (value !== 'ok') {
+        throw new Error('Redis health check failed');
+      }
+
+      console.log('🎉 Redis health check passed');
+    }
   } catch (error) {
-    console.error('Error fetching Redis memory info:', error);
+    console.error('❌ Redis initialization failed:', error);
+    console.warn('⚠️ Application will continue without Redis caching');
   }
-});
+};
 
-// -----------------------------
-// Helper: get cached JSON
-// -----------------------------
-export const getCache = async (key) => {
+/* ================= CACHE HELPERS ================= */
+
+export const getCache = async key => {
   try {
+    if (!redis.isOpen) return null;
+
     const data = await redis.get(PREFIX + key);
     return data ? JSON.parse(data) : null;
   } catch (error) {
-    console.error("Redis GET error:", error);
-    return null; // Fallback to database
+    console.error('Redis GET error:', error);
+    return null;
   }
 };
 
-// -----------------------------
-// Helper: set cached JSON with TTL (seconds)
-// -----------------------------
 export const setCache = async (key, value, ttl = 300) => {
   try {
-    await redis.set(PREFIX + key, JSON.stringify(value), {
-      EX: ttl
-    });
+    if (!redis.isOpen) return;
+
+    await redis.set(PREFIX + key, JSON.stringify(value), { EX: ttl });
   } catch (error) {
-    console.error("Redis SET error:", error);
-    // Continue without caching
+    console.error('Redis SET error:', error);
   }
 };
 
-// -----------------------------
-// Helper: delete a single cache key
-// -----------------------------
-export const deleteCache = async (key) => {
+export const deleteCache = async key => {
   try {
+    if (!redis.isOpen) return;
+
     await redis.del(PREFIX + key);
   } catch (error) {
-    console.error("Redis DEL error:", error);
+    console.error('Redis DEL error:', error);
   }
 };
 
-// -----------------------------
-// Helper: delete keys by pattern (invalidate multiple related caches)
-// -----------------------------
-export const deleteCachePattern = async (pattern) => {
+export const deleteCachePattern = async pattern => {
   try {
+    if (!redis.isOpen) return;
+
     const keys = await redis.keys(PREFIX + pattern);
     if (keys.length) await redis.del(keys);
   } catch (error) {
-    console.error("Redis pattern delete error:", error);
+    console.error('Redis pattern delete error:', error);
   }
 };
 
-// -----------------------------
-// Test function (run once on startup)
-// -----------------------------
-(async () => {
+/* ================= SHUTDOWN ================= */
+
+export const shutdownRedis = async () => {
   try {
-    await redis.connect();
-    
-    // Test SET
-    await redis.set('test:key', 'Hello Redis!');
-    console.log('✅ SET test:key = "Hello Redis!"');
-    
-    // Test GET
-    const value = await redis.get('test:key');
-    console.log('✅ GET test:key =', value);
-    
-    // Test DELETE
-    await redis.del('test:key');
-    console.log('✅ DEL test:key');
-    
-    console.log('🎉 All Redis tests passed!');
+    if (redis.isOpen) {
+      await redis.quit();
+      console.log('🛑 Redis connection closed gracefully');
+    }
   } catch (error) {
-    console.error('❌ Redis test failed:', error);
-    // Don't exit - allow app to continue without Redis
-    console.warn('⚠️ Application will continue without Redis caching');
+    console.error('Redis shutdown error:', error);
   }
-})();
+};
 
 export default redis;
