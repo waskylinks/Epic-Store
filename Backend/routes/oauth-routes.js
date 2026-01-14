@@ -5,6 +5,11 @@ import {
   linkGoogleAccount,
   linkGoogleAccountCallback,
   unlinkGoogleAccount,
+  facebookAuth,
+  facebookAuthCallback,
+  linkFacebookAccount,
+  linkFacebookAccountCallback,
+  unlinkFacebookAccount,
   getOAuthStatus
 } from "../controller/oauth-controller.js";
 import { verifyUserAuth } from '../middleware/user-auth.js';
@@ -18,13 +23,19 @@ router.use(sanitizeInput);
 
 // ===== PUBLIC OAUTH ROUTES (No Authentication) =====
 
-// Initiate Google OAuth login
+// Google OAuth
 router.route("/google")
   .get(authLimiter, googleAuth);
 
-// Google OAuth callback
 router.route("/google/callback")
   .get(googleAuthCallback);
+
+// Facebook OAuth
+router.route("/facebook")
+  .get(authLimiter, facebookAuth);
+
+router.route("/facebook/callback")
+  .get(facebookAuthCallback);
 
 // ===== PROTECTED OAUTH ROUTES (Require Authentication) =====
 
@@ -32,16 +43,26 @@ router.route("/google/callback")
 router.route("/status")
   .get(verifyUserAuth, getOAuthStatus);
 
-// Link Google account to existing user
+// Link Google account
 router.route("/link/google")
   .get(verifyUserAuth, linkGoogleAccount);
 
-// Google account linking callback
 router.route("/link/google/callback")
   .get(verifyUserAuth, linkGoogleAccountCallback);
 
 // Unlink Google account
 router.route("/unlink/google")
   .post(verifyUserAuth, authLimiter, unlinkGoogleAccount);
+
+// Link Facebook account
+router.route("/link/facebook")
+  .get(verifyUserAuth, linkFacebookAccount);
+
+router.route("/link/facebook/callback")
+  .get(verifyUserAuth, linkFacebookAccountCallback);
+
+// Unlink Facebook account
+router.route("/unlink/facebook")
+  .post(verifyUserAuth, authLimiter, unlinkFacebookAccount);
 
 export default router;
