@@ -192,40 +192,45 @@ function Register() {
                     className="form" 
                     onSubmit={registerSubmit}
                 >
-                    <h2>Sign Up</h2>
+                    {/* Brand Header */}
+                    <div className="brand-header">
+                        <h1 className="brand-name">
+                            <span className="brand-epic">Epic</span>
+                            <span className="brand-store">Store</span>
+                        </h1>
+                        <p className="brand-tagline">Create your account</p>
+                    </div>
 
                     {/* Error message display */}
                     {error && (
-                        <div className="error-message" style={{
-                            padding: '12px',
-                            marginBottom: '15px',
-                            backgroundColor: '#fee2e2',
-                            color: '#991b1b',
-                            borderRadius: '6px',
-                            border: '1px solid #fecaca',
-                            fontSize: '14px'
-                        }}>
+                        <div className="error-message">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="12" y1="8" x2="12" y2="12"/>
+                                <line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
                             {error}
                         </div>
                     )}
 
                     {/* OAuth Buttons */}
                     <div className="oauth-buttons-container">
-                        <GoogleSignInButton text="Sign up with Google" />
-                        <FacebookSignInButton text="Sign up with Facebook" />
+                        <GoogleSignInButton text="Continue with Google" />
+                        <FacebookSignInButton text="Continue with Facebook" />
                     </div>
 
                     {/* Divider */}
                     <div className="oauth-divider">
-                        <span>OR</span>
+                        <span>or continue with email</span>
                     </div>
 
                     {/* Email Registration Form */}
                     <div className="input-row">
                         <div className="input-group">
+                            <label>First name</label>
                             <input 
                                 type="text" 
-                                placeholder='First Name *' 
+                                placeholder='John' 
                                 name='firstName' 
                                 value={firstName} 
                                 onChange={registerDataChange}
@@ -234,9 +239,10 @@ function Register() {
                             />
                         </div>
                         <div className="input-group">
+                            <label>Last name</label>
                             <input 
                                 type="text" 
-                                placeholder='Last Name *' 
+                                placeholder='Doe' 
                                 name='lastName' 
                                 value={lastName} 
                                 onChange={registerDataChange}
@@ -247,9 +253,10 @@ function Register() {
                     </div>
 
                     <div className="input-group">
+                        <label>Email address</label>
                         <input 
                             type="email" 
-                            placeholder='Email *' 
+                            placeholder='you@example.com' 
                             name='email'
                             value={email} 
                             onChange={registerDataChange}
@@ -260,9 +267,10 @@ function Register() {
                     </div>
 
                     <div className="input-group password-group">
+                        <label>Password</label>
                         <input 
                             type={showPassword ? "text" : "password"} 
-                            placeholder='Password (min 12 characters) *' 
+                            placeholder='Create a strong password' 
                             name='password'
                             value={password} 
                             onChange={registerDataChange}
@@ -292,53 +300,63 @@ function Register() {
                     </div>
 
                     {password && (
-                        <div className="password-strength">
-                            <div className="strength-bar-container">
-                                <div 
-                                    className="strength-bar"
-                                    style={{
-                                        width: `${(passwordStrength === 'weak' ? 25 : passwordStrength === 'medium' ? 50 : passwordStrength === 'strong' ? 75 : 100)}%`,
-                                        backgroundColor: getStrengthColor()
-                                    }}
-                                ></div>
+                        <>
+                            <div className="password-strength">
+                                <div className="strength-bar-container">
+                                    <div 
+                                        className="strength-bar"
+                                        style={{
+                                            width: `${(passwordStrength === 'weak' ? 25 : passwordStrength === 'medium' ? 50 : passwordStrength === 'strong' ? 75 : 100)}%`,
+                                            backgroundColor: getStrengthColor()
+                                        }}
+                                    ></div>
+                                </div>
+                                <span className="strength-text" style={{ color: getStrengthColor() }}>
+                                    {getStrengthText()}
+                                </span>
                             </div>
-                            <span className="strength-text" style={{ color: getStrengthColor() }}>
-                                {getStrengthText()}
-                            </span>
-                        </div>
-                    )}
 
-                    <div className="password-requirements">
-                        <p>Password must contain:</p>
-                        <ul>
-                            <li className={password.length >= 12 ? 'valid' : ''}>
-                                {password.length >= 12 ? '✓' : '○'} At least 12 characters
-                            </li>
-                            <li className={/[A-Z]/.test(password) ? 'valid' : ''}>
-                                {/[A-Z]/.test(password) ? '✓' : '○'} One uppercase letter
-                            </li>
-                            <li className={/[a-z]/.test(password) ? 'valid' : ''}>
-                                {/[a-z]/.test(password) ? '✓' : '○'} One lowercase letter
-                            </li>
-                            <li className={/[0-9]/.test(password) ? 'valid' : ''}>
-                                {/[0-9]/.test(password) ? '✓' : '○'} One number
-                            </li>
-                            <li className={/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? 'valid' : ''}>
-                                {/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '✓' : '○'} One special character
-                            </li>
-                        </ul>
-                    </div>
+                            <div className="password-requirements">
+                                <p>Password must contain:</p>
+                                <ul>
+                                    <li className={password.length >= 12 ? 'valid' : ''}>
+                                        {password.length >= 12 ? '✓' : '○'} At least 12 characters
+                                    </li>
+                                    <li className={/[A-Z]/.test(password) ? 'valid' : ''}>
+                                        {/[A-Z]/.test(password) ? '✓' : '○'} One uppercase letter
+                                    </li>
+                                    <li className={/[a-z]/.test(password) ? 'valid' : ''}>
+                                        {/[a-z]/.test(password) ? '✓' : '○'} One lowercase letter
+                                    </li>
+                                    <li className={/[0-9]/.test(password) ? 'valid' : ''}>
+                                        {/[0-9]/.test(password) ? '✓' : '○'} One number
+                                    </li>
+                                    <li className={/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? 'valid' : ''}>
+                                        {/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '✓' : '○'} One special character
+                                    </li>
+                                </ul>
+                            </div>
+                        </>
+                    )}
 
                     <button 
                         className="authBtn" 
                         disabled={loading || !isFormValid()}
                     >
-                        {loading ? 'Signing Up...' : 'Sign Up'}
+                        {loading ? (
+                            <span className="button-loading">
+                                <svg className="spinner" viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25"/>
+                                    <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" opacity="0.75"/>
+                                </svg>
+                                Creating account...
+                            </span>
+                        ) : 'Create account'}
                     </button>
 
                     <p className="form-links">
                         Already have an account? 
-                        <Link to='/login'> Sign in here</Link>
+                        <Link to='/login'>Sign in</Link>
                     </p>
                 </form>
             </div>
