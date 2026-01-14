@@ -4,29 +4,9 @@ import '../UserStyles/OAuthButtons.css';
 function FacebookSignInButton({ text = "Sign in with Facebook" }) {
     const [loading, setLoading] = useState(false);
 
-    const handleFacebookSignIn = async () => {
+    const handleFacebookSignIn = () => {
         setLoading(true);
-        
-        try {
-            // Replace with your actual Facebook OAuth endpoint
-            // For example: window.location.href = 'http://your-backend.com/auth/facebook';
-            
-            // Placeholder - redirect to Facebook OAuth
-            console.log('Initiating Facebook Sign In...');
-            
-            // Example implementation:
-            // window.location.href = `${process.env.REACT_APP_API_URL}/auth/facebook`;
-            
-            // For demo purposes:
-            setTimeout(() => {
-                setLoading(false);
-                alert('Facebook Sign In would redirect here. Configure your backend OAuth endpoint.');
-            }, 1000);
-            
-        } catch (error) {
-            console.error('Facebook Sign In Error:', error);
-            setLoading(false);
-        }
+        window.location.href = '/api/v1/oauth/facebook';
     };
 
     return (
@@ -50,6 +30,9 @@ function FacebookSignInButton({ text = "Sign in with Facebook" }) {
                     </svg>
                     <span className="oauth-text">{text}</span>
                 </>
+            )}
+            {loading && (
+                <span className="oauth-text">Redirecting...</span>
             )}
         </button>
     );

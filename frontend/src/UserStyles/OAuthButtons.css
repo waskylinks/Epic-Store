@@ -1,5 +1,5 @@
 /* ===================================================
-   OAUTH BUTTONS - BLACK & ORANGE THEME
+  
    Google & Facebook Sign In
    =================================================== */
 
@@ -123,6 +123,50 @@
     animation: spin 1s linear infinite;
 }
 
+/* ===================================================
+   OAuth Callback Loading Screen
+   =================================================== */
+
+.oauth-callback-container {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #f9fafb;
+}
+
+.oauth-callback-content {
+    text-align: center;
+    padding: 40px;
+    background-color: white;
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 400px;
+}
+
+.oauth-callback-spinner {
+    width: 50px;
+    height: 50px;
+    margin: 0 auto 20px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.oauth-callback-title {
+    font-size: 24px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.oauth-callback-text {
+    font-size: 14px;
+    color: #666;
+}
+
+/* Animations */
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
@@ -148,6 +192,19 @@
     .oauth-divider span {
         padding: 0 15px;
     }
+
+    .oauth-callback-content {
+        padding: 30px;
+        max-width: 350px;
+    }
+
+    .oauth-callback-title {
+        font-size: 20px;
+    }
+
+    .oauth-callback-text {
+        font-size: 13px;
+    }
 }
 
 @media (max-width: 480px) {
@@ -159,5 +216,15 @@
     .oauth-icon {
         width: 18px;
         height: 18px;
+    }
+
+    .oauth-callback-content {
+        padding: 25px;
+        max-width: 300px;
+    }
+
+    .oauth-callback-spinner {
+        width: 40px;
+        height: 40px;
     }
 }
