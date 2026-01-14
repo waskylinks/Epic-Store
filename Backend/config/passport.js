@@ -2,6 +2,7 @@ import passport from 'passport';
 import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { Strategy as FacebookStrategy } from 'passport-facebook';
 import User from '../models/userModel.js';
+import { oauthLogger } from '../utils/logger.js';
 
 /**
  * Passport configuration for OAuth (Google & Facebook)
@@ -90,7 +91,11 @@ passport.use(
                 return done(null, user);
 
             } catch (error) {
-                console.error('Google OAuth error:', error);
+                oauthLogger.error('Google OAuth strategy error', { 
+                    error: error.message,
+                    stack: error.stack,
+                    googleId: profile?.id
+                });
                 return done(error, null);
             }
         }
@@ -168,7 +173,11 @@ passport.use(
                 return done(null, user);
 
             } catch (error) {
-                console.error('Facebook OAuth error:', error);
+                oauthLogger.error('Facebook OAuth strategy error', { 
+                    error: error.message,
+                    stack: error.stack,
+                    facebookId: profile?.id
+                });
                 return done(error, null);
             }
         }

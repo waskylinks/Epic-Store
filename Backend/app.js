@@ -1,6 +1,8 @@
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
+import session from 'express-session';
+import MongoStore from 'connect-mongo';
 import passport from 'passport';
 import { PaymentFactory } from './Services/payment/paymentFactory.js';
 
@@ -61,7 +63,28 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 
-/* ================= PASSPORT (JWT-based, no sessions) ================= */
+/* ================= SESSION (FOR OAUTH STATE PARAMETER) ================= */
+// Session middleware MUST come BEFORE passport initialization
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    touchAfter: 24 * 3600, // Update session every 24 hours (lazy update)
+    ttl: 15 * 60 // Session expires after 15 minutes of inactivity
+  }),
+  cookie: {
+    maxAge: 1000 * 60 * 15, // 15 minutes (enough for OAuth flow)
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+    sameSite: 'lax' // CSRF protection
+  },
+  name: 'oauth.sid' // Custom session name (not default 'connect.sid')
+}));
+
+/* ================= PASSPORT (JWT-based, no sessions for main auth) ================= */
+// Passport uses sessions ONLY for OAuth state parameter, not for user sessions
 app.use(passport.initialize());
 
 /* ================= REQUEST LOGGING (DEVELOPMENT ONLY) ================= */

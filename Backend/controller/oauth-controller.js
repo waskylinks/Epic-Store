@@ -3,6 +3,8 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import { sendEmail } from "../utils/sendEmail.js";
 import { emailTemplates } from "../utils/emailTemplates.js";
+import { oauthLogger } from "../utils/logger.js";
+import crypto from "crypto";
 
 /* ========================================
    GOOGLE OAUTH CONTROLLERS
@@ -13,9 +15,18 @@ import { emailTemplates } from "../utils/emailTemplates.js";
  * @route   GET /api/v1/oauth/google
  * @access  Public
  */
-export const googleAuth = passport.authenticate('google', {
-    scope: ['profile', 'email']
-});
+export const googleAuth = (req, res, next) => {
+    // Generate and store state parameter for CSRF protection
+    const state = crypto.randomBytes(32).toString('hex');
+    req.session.oauthState = state;
+    
+    oauthLogger.info('Initiating Google OAuth flow', { state });
+    
+    passport.authenticate('google', {
+        scope: ['profile', 'email'],
+        state: state
+    })(req, res, next);
+};
 
 /**
  * @desc    Handle Google OAuth callback
@@ -23,22 +34,54 @@ export const googleAuth = passport.authenticate('google', {
  * @access  Public
  */
 export const googleAuthCallback = (req, res, next) => {
+    // Verify state parameter
+    const returnedState = req.query.state;
+    const storedState = req.session.oauthState;
+    
+    if (!returnedState || returnedState !== storedState) {
+        oauthLogger.error('Google OAuth state mismatch', { 
+            returnedState, 
+            storedState,
+            ip: req.ip 
+        });
+        return res.redirect(`${process.env.FRONTEND_URL}/login?error=invalid_state`);
+    }
+    
+    // Clear state after verification
+    delete req.session.oauthState;
+    
     passport.authenticate('google', {
         session: false
     }, async (err, user, info) => {
         try {
             if (err) {
-                console.error('OAuth authentication error:', err);
+                oauthLogger.error('Google OAuth authentication error', { 
+                    error: err.message,
+                    stack: err.stack
+                });
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=server_error`);
             }
 
             if (!user) {
-                console.error('OAuth authentication failed:', info);
+                oauthLogger.warn('Google OAuth authentication failed - no user', { info });
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=authentication_failed`);
             }
 
             // Check if newly created user
             const isNewUser = user.createdAt && (Date.now() - new Date(user.createdAt).getTime() < 5000);
+
+            if (isNewUser) {
+                oauthLogger.info('New user created via Google OAuth', {
+                    userId: user._id,
+                    email: user.email,
+                    provider: 'google'
+                });
+            } else {
+                oauthLogger.info('Existing user logged in via Google OAuth', {
+                    userId: user._id,
+                    email: user.email
+                });
+            }
 
             // Send welcome email for new users
             if (isNewUser) {
@@ -51,8 +94,13 @@ export const googleAuthCallback = (req, res, next) => {
                         message: welcomeTemplate.text,
                         html: welcomeTemplate.html
                     });
+                    
+                    oauthLogger.info('Welcome email sent', { userId: user._id });
                 } catch (error) {
-                    console.error("Welcome email failed:", error);
+                    oauthLogger.error('Welcome email failed', { 
+                        userId: user._id,
+                        error: error.message 
+                    });
                     // Don't block login if email fails
                 }
             }
@@ -69,7 +117,10 @@ export const googleAuthCallback = (req, res, next) => {
             return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
         } catch (error) {
-            console.error('OAuth callback error:', error);
+            oauthLogger.error('Google OAuth callback error', { 
+                error: error.message,
+                stack: error.stack 
+            });
             return res.redirect(`${process.env.FRONTEND_URL}/login?error=callback_error`);
         }
     })(req, res, next);
@@ -80,10 +131,22 @@ export const googleAuthCallback = (req, res, next) => {
  * @route   GET /api/v1/oauth/link/google
  * @access  Private (requires authentication)
  */
-export const linkGoogleAccount = passport.authenticate('google', {
-    scope: ['profile', 'email'],
-    prompt: 'select_account'
-});
+export const linkGoogleAccount = (req, res, next) => {
+    // Generate and store state parameter
+    const state = crypto.randomBytes(32).toString('hex');
+    req.session.oauthLinkState = state;
+    
+    oauthLogger.info('Initiating Google account linking', { 
+        userId: req.user?.id,
+        state 
+    });
+    
+    passport.authenticate('google', {
+        scope: ['profile', 'email'],
+        prompt: 'select_account',
+        state: state
+    })(req, res, next);
+};
 
 /**
  * @desc    Handle Google account linking callback
@@ -91,14 +154,38 @@ export const linkGoogleAccount = passport.authenticate('google', {
  * @access  Private
  */
 export const linkGoogleAccountCallback = (req, res, next) => {
+    // Verify state parameter
+    const returnedState = req.query.state;
+    const storedState = req.session.oauthLinkState;
+    
+    if (!returnedState || returnedState !== storedState) {
+        oauthLogger.error('Google link state mismatch', { 
+            returnedState, 
+            storedState,
+            ip: req.ip 
+        });
+        return res.redirect(`${process.env.FRONTEND_URL}/profile?error=invalid_state`);
+    }
+    
+    // Clear state after verification
+    delete req.session.oauthLinkState;
+    
     passport.authenticate('google', {
         session: false
     }, async (err, user, info) => {
         try {
             if (err || !user) {
-                console.error('Account linking error:', err || info);
+                oauthLogger.error('Google account linking error', { 
+                    error: err?.message,
+                    info 
+                });
                 return res.redirect(`${process.env.FRONTEND_URL}/profile?error=linking_failed`);
             }
+
+            oauthLogger.info('Google account linked successfully', {
+                userId: user._id,
+                email: user.email
+            });
 
             // Update token cookie with new user data
             const token = user.getJWTToken();
@@ -112,7 +199,10 @@ export const linkGoogleAccountCallback = (req, res, next) => {
             return res.redirect(`${process.env.FRONTEND_URL}/profile?success=google_linked`);
 
         } catch (error) {
-            console.error('Link callback error:', error);
+            oauthLogger.error('Google link callback error', { 
+                error: error.message,
+                stack: error.stack 
+            });
             return res.redirect(`${process.env.FRONTEND_URL}/profile?error=linking_error`);
         }
     })(req, res, next);
@@ -132,6 +222,9 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
 
     // Prevent unlinking if it's the only auth method and user has no password
     if (user.authProvider === 'google' && !user.password) {
+        oauthLogger.warn('Attempted to unlink Google without alternative auth', {
+            userId: user._id
+        });
         return next(new HandleError("Cannot unlink Google account. Please set a password first to maintain account access.", 400));
     }
 
@@ -144,6 +237,11 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
     }
 
     await user.save();
+
+    oauthLogger.info('Google account unlinked', {
+        userId: user._id,
+        email: user.email
+    });
 
     res.status(200).json({
         success: true,
@@ -160,9 +258,18 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
  * @route   GET /api/v1/oauth/facebook
  * @access  Public
  */
-export const facebookAuth = passport.authenticate('facebook', {
-    scope: ['email', 'public_profile']
-});
+export const facebookAuth = (req, res, next) => {
+    // Generate and store state parameter for CSRF protection
+    const state = crypto.randomBytes(32).toString('hex');
+    req.session.oauthState = state;
+    
+    oauthLogger.info('Initiating Facebook OAuth flow', { state });
+    
+    passport.authenticate('facebook', {
+        scope: ['email', 'public_profile'],
+        state: state
+    })(req, res, next);
+};
 
 /**
  * @desc    Handle Facebook OAuth callback
@@ -170,15 +277,37 @@ export const facebookAuth = passport.authenticate('facebook', {
  * @access  Public
  */
 export const facebookAuthCallback = (req, res, next) => {
+    // Verify state parameter
+    const returnedState = req.query.state;
+    const storedState = req.session.oauthState;
+    
+    if (!returnedState || returnedState !== storedState) {
+        oauthLogger.error('Facebook OAuth state mismatch', { 
+            returnedState, 
+            storedState,
+            ip: req.ip 
+        });
+        return res.redirect(`${process.env.FRONTEND_URL}/login?error=invalid_state`);
+    }
+    
+    // Clear state after verification
+    delete req.session.oauthState;
+    
     passport.authenticate('facebook', {
         session: false
     }, async (err, user, info) => {
         try {
             if (err) {
-                console.error('Facebook OAuth authentication error:', err);
+                oauthLogger.error('Facebook OAuth authentication error', { 
+                    error: err.message,
+                    stack: err.stack
+                });
                 
                 // Handle specific error for missing required data
                 if (err.message && err.message.includes('must provide email')) {
+                    oauthLogger.warn('Facebook OAuth rejected - missing required data', {
+                        error: err.message
+                    });
                     return res.redirect(`${process.env.FRONTEND_URL}/login?error=email_required`);
                 }
                 
@@ -186,12 +315,25 @@ export const facebookAuthCallback = (req, res, next) => {
             }
 
             if (!user) {
-                console.error('Facebook OAuth authentication failed:', info);
+                oauthLogger.warn('Facebook OAuth authentication failed - no user', { info });
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=authentication_failed`);
             }
 
             // Check if newly created user
             const isNewUser = user.createdAt && (Date.now() - new Date(user.createdAt).getTime() < 5000);
+
+            if (isNewUser) {
+                oauthLogger.info('New user created via Facebook OAuth', {
+                    userId: user._id,
+                    email: user.email,
+                    provider: 'facebook'
+                });
+            } else {
+                oauthLogger.info('Existing user logged in via Facebook OAuth', {
+                    userId: user._id,
+                    email: user.email
+                });
+            }
 
             // Send welcome email for new users
             if (isNewUser) {
@@ -204,8 +346,13 @@ export const facebookAuthCallback = (req, res, next) => {
                         message: welcomeTemplate.text,
                         html: welcomeTemplate.html
                     });
+                    
+                    oauthLogger.info('Welcome email sent', { userId: user._id });
                 } catch (error) {
-                    console.error("Welcome email failed:", error);
+                    oauthLogger.error('Welcome email failed', { 
+                        userId: user._id,
+                        error: error.message 
+                    });
                     // Don't block login if email fails
                 }
             }
@@ -222,7 +369,10 @@ export const facebookAuthCallback = (req, res, next) => {
             return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
         } catch (error) {
-            console.error('Facebook OAuth callback error:', error);
+            oauthLogger.error('Facebook OAuth callback error', { 
+                error: error.message,
+                stack: error.stack 
+            });
             return res.redirect(`${process.env.FRONTEND_URL}/login?error=callback_error`);
         }
     })(req, res, next);
@@ -233,10 +383,22 @@ export const facebookAuthCallback = (req, res, next) => {
  * @route   GET /api/v1/oauth/link/facebook
  * @access  Private (requires authentication)
  */
-export const linkFacebookAccount = passport.authenticate('facebook', {
-    scope: ['email', 'public_profile'],
-    prompt: 'select_account'
-});
+export const linkFacebookAccount = (req, res, next) => {
+    // Generate and store state parameter
+    const state = crypto.randomBytes(32).toString('hex');
+    req.session.oauthLinkState = state;
+    
+    oauthLogger.info('Initiating Facebook account linking', { 
+        userId: req.user?.id,
+        state 
+    });
+    
+    passport.authenticate('facebook', {
+        scope: ['email', 'public_profile'],
+        prompt: 'select_account',
+        state: state
+    })(req, res, next);
+};
 
 /**
  * @desc    Handle Facebook account linking callback
@@ -244,14 +406,38 @@ export const linkFacebookAccount = passport.authenticate('facebook', {
  * @access  Private
  */
 export const linkFacebookAccountCallback = (req, res, next) => {
+    // Verify state parameter
+    const returnedState = req.query.state;
+    const storedState = req.session.oauthLinkState;
+    
+    if (!returnedState || returnedState !== storedState) {
+        oauthLogger.error('Facebook link state mismatch', { 
+            returnedState, 
+            storedState,
+            ip: req.ip 
+        });
+        return res.redirect(`${process.env.FRONTEND_URL}/profile?error=invalid_state`);
+    }
+    
+    // Clear state after verification
+    delete req.session.oauthLinkState;
+    
     passport.authenticate('facebook', {
         session: false
     }, async (err, user, info) => {
         try {
             if (err || !user) {
-                console.error('Facebook account linking error:', err || info);
+                oauthLogger.error('Facebook account linking error', { 
+                    error: err?.message,
+                    info 
+                });
                 return res.redirect(`${process.env.FRONTEND_URL}/profile?error=linking_failed`);
             }
+
+            oauthLogger.info('Facebook account linked successfully', {
+                userId: user._id,
+                email: user.email
+            });
 
             // Update token cookie with new user data
             const token = user.getJWTToken();
@@ -265,7 +451,10 @@ export const linkFacebookAccountCallback = (req, res, next) => {
             return res.redirect(`${process.env.FRONTEND_URL}/profile?success=facebook_linked`);
 
         } catch (error) {
-            console.error('Facebook link callback error:', error);
+            oauthLogger.error('Facebook link callback error', { 
+                error: error.message,
+                stack: error.stack 
+            });
             return res.redirect(`${process.env.FRONTEND_URL}/profile?error=linking_error`);
         }
     })(req, res, next);
@@ -285,6 +474,9 @@ export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => 
 
     // Prevent unlinking if it's the only auth method and user has no password
     if (user.authProvider === 'facebook' && !user.password) {
+        oauthLogger.warn('Attempted to unlink Facebook without alternative auth', {
+            userId: user._id
+        });
         return next(new HandleError("Cannot unlink Facebook account. Please set a password first to maintain account access.", 400));
     }
 
@@ -297,6 +489,11 @@ export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => 
     }
 
     await user.save();
+
+    oauthLogger.info('Facebook account unlinked', {
+        userId: user._id,
+        email: user.email
+    });
 
     res.status(200).json({
         success: true,

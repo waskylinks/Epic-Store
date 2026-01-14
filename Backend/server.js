@@ -23,7 +23,8 @@ const validateEnvVariables = () => {
         'SMTP_SERVICE',
         'SMTP_MAIL',
         'SMTP_PASSWORD',
-        'FRONTEND_URL'
+        'FRONTEND_URL',
+        'SESSION_SECRET'
     ];
 
     const missing = required.filter(key => !process.env[key]);
