@@ -82,39 +82,44 @@ function Login() {
         <div className="form-container container">
             <div className="form-content">
                 <form className='form' onSubmit={logInSubmit}>
-                    <h2>Sign In</h2>
+                    {/* Brand Header */}
+                    <div className="brand-header">
+                        <h1 className="brand-name">
+                            <span className="brand-epic">Epic</span>
+                            <span className="brand-store">Store</span>
+                        </h1>
+                        <p className="brand-tagline">Welcome back</p>
+                    </div>
 
                     {/* Error message */}
                     {error && (
-                        <div className="error-message" style={{
-                            padding: '12px',
-                            marginBottom: '15px',
-                            backgroundColor: '#fee2e2',
-                            color: '#991b1b',
-                            borderRadius: '6px',
-                            border: '1px solid #fecaca',
-                            fontSize: '14px'
-                        }}>
+                        <div className="error-message">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="12" y1="8" x2="12" y2="12"/>
+                                <line x1="12" y1="16" x2="12.01" y2="16"/>
+                            </svg>
                             {error}
                         </div>
                     )}
 
                     {/* OAuth Buttons */}
                     <div className="oauth-buttons-container">
-                        <GoogleSignInButton text="Sign in with Google" />
-                        <FacebookSignInButton text="Sign in with Facebook" />
+                        <GoogleSignInButton text="Continue with Google" />
+                        <FacebookSignInButton text="Continue with Facebook" />
                     </div>
 
                     {/* Divider */}
                     <div className="oauth-divider">
-                        <span>OR</span>
+                        <span>or continue with email</span>
                     </div>
 
                     {/* Email/Password Login */}
                     <div className="input-group">
+                        <label>Email address</label>
                         <input 
                             type="email" 
-                            placeholder='Email' 
+                            placeholder='you@example.com' 
                             value={loginEmail} 
                             onChange={handleEmailChange}
                             disabled={loading}
@@ -123,9 +128,10 @@ function Login() {
                     </div>
 
                     <div className="input-group password-group">
+                        <label>Password</label>
                         <input 
                             type={showPassword ? "text" : "password"} 
-                            placeholder='Password' 
+                            placeholder='Enter your password' 
                             value={loginPassword} 
                             onChange={handlePasswordChange}
                             disabled={loading}
@@ -153,17 +159,25 @@ function Login() {
                     </div>
 
                     <button className="authBtn" disabled={loading || !loginEmail.trim() || !loginPassword.trim()}>
-                        {loading ? 'Signing In...' : 'Sign In'}
+                        {loading ? (
+                            <span className="button-loading">
+                                <svg className="spinner" viewBox="0 0 24 24">
+                                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" opacity="0.25"/>
+                                    <path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" opacity="0.75"/>
+                                </svg>
+                                Signing in...
+                            </span>
+                        ) : 'Sign in'}
                     </button>
 
                     <p className="form-links">
                         Forgot your password? 
-                        <Link to='/password/forgot'> Reset Here</Link>
+                        <Link to='/password/forgot'>Reset here</Link>
                     </p>
 
                     <p className="form-links">
                         Don't have an account?
-                        <Link to='/register'> Sign up Here</Link>
+                        <Link to='/register'>Sign up</Link>
                     </p>
                 </form>
             </div>
