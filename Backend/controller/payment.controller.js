@@ -2,7 +2,7 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import { PaymentFactory } from "../Services/payment/paymentFactory.js"; 
 import { createReceiptIfNotExists } from "../Services/receipt.service.js"; 
-//import { validateAndCalculateOrder } from "../Services/pricing.service.js";
+import { validateAndCalculateOrder } from "../Services/pricing.service.js";
 import { deleteCachePattern } from '../utils/redis.js';
 import Order from '../models/order-model.js';
 import crypto from 'crypto';
