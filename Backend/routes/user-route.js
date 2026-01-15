@@ -66,7 +66,7 @@ router.route("/logout")
 router.route("/password/forgot")
   .post(passwordResetLimiter, validateEmail, requestPasswordReset);
 
-// ✅ NEW - Verify reset code (Step 2 of password reset)
+// Verify reset code (Step 2 of password reset)
 router.route("/password/verify-code")
   .post(passwordResetLimiter, validateEmail, validateVerificationCode, verifyResetCode);
 

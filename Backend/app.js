@@ -6,12 +6,12 @@ import { EventEmitter } from 'events';
 import passport from 'passport';
 import { PaymentFactory } from './Services/payment/paymentFactory.js';
 import redis from './utils/redis.js';
+import {RedisStore} from 'connect-redis';
 
 import {
   helmetConfig,
   corsOptions,
   hppProtection,
-  apiLimiter,
   additionalSecurityHeaders,
   startupGuards
 } from './middleware/security.js';
@@ -126,7 +126,11 @@ const sessionStore = new RedisSessionStore(redis, {
 
 app.use(
   session({
-    store: sessionStore,
+    store: new RedisStore({ 
+      client: redis,
+      prefix: 'epicstore:session:',
+      ttl: 900 // 15 minutes in seconds
+    }),
     secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
     resave: false,
     saveUninitialized: false,
@@ -168,7 +172,6 @@ startupGuards(app);
 app.use(cors(corsOptions));
 app.use(helmetConfig);
 app.use(hppProtection);
-app.use(apiLimiter);
 app.use(additionalSecurityHeaders);
 
 /* ================= ROUTES ================= */

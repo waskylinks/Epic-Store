@@ -13,7 +13,7 @@ import {
   getOAuthStatus
 } from "../controller/oauth-controller.js";
 import { verifyUserAuth } from '../middleware/user-auth.js';
-import { authLimiter } from '../middleware/rateLimiter.js';
+import { authLimiter } from '../middleware/rateLimiter.js';  // Import directly, not as function
 import { sanitizeInput } from '../middleware/validation.js';
 
 const router = express.Router();
@@ -25,14 +25,14 @@ router.use(sanitizeInput);
 
 // Google OAuth
 router.route("/google")
-  .get(authLimiter, googleAuth);
+  .get(authLimiter, googleAuth);  // Use directly, not authLimiter
 
 router.route("/google/callback")
   .get(googleAuthCallback);
 
 // Facebook OAuth
 router.route("/facebook")
-  .get(authLimiter, facebookAuth);
+  .get(authLimiter, facebookAuth);  // Use directly, not authLimiter
 
 router.route("/facebook/callback")
   .get(facebookAuthCallback);
@@ -52,7 +52,7 @@ router.route("/link/google/callback")
 
 // Unlink Google account
 router.route("/unlink/google")
-  .post(verifyUserAuth, authLimiter, unlinkGoogleAccount);
+  .post(verifyUserAuth, authLimiter, unlinkGoogleAccount);  // Use directly
 
 // Link Facebook account
 router.route("/link/facebook")
@@ -63,6 +63,6 @@ router.route("/link/facebook/callback")
 
 // Unlink Facebook account
 router.route("/unlink/facebook")
-  .post(verifyUserAuth, authLimiter, unlinkFacebookAccount);
+  .post(verifyUserAuth, authLimiter, unlinkFacebookAccount);  // Use directly
 
 export default router;

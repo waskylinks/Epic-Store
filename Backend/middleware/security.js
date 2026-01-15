@@ -7,7 +7,6 @@ import rateLimit from "express-rate-limit";
  * =========================
  * STARTUP GUARDS
  * =========================
- * These checks prevent middleware from mutating read-only req properties.
  */
 export function startupGuards(app) {
   if (!app || typeof app.use !== "function") {
@@ -28,13 +27,12 @@ export const corsOptions = {
 
 /**
  * =========================
- * RATE LIMITING
+ * RATE LIMITING (CREATED ONCE)
  * =========================
- * Protects against brute-force and API abuse
  */
 export const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // max 100 requests per IP
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: "Too many requests from this IP, please try again later.",
@@ -79,49 +77,6 @@ export const hppProtection = hpp();
 export function additionalSecurityHeaders(req, res, next) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-XSS-Protection", "1; mode=block"); // fallback
+  res.setHeader("X-XSS-Protection", "1; mode=block");
   next();
 }
-
-/**
- * =========================
- * INPUT SANITIZATION PLACEHOLDER
- * =========================
- * Instead of mutating req.query/body globally, validate & sanitize per-route
- * using express-validator or manual checks in controllers.
- */
-export function validateQueryMiddleware(validators = []) {
-  return async (req, res, next) => {
-    try {
-      for (const validatorFn of validators) {
-        await validatorFn(req);
-      }
-      next();
-    } catch (err) {
-      next(err);
-    }
-  };
-}
-
-/**
- * =========================
- * USAGE:
- * =========================
- * import express from "express";
- * import {
- *   startupGuards,
- *   corsOptions,
- *   helmetConfig,
- *   hppProtection,
- *   apiLimiter,
- *   additionalSecurityHeaders
- * } from "./middleware/security.js";
- * 
- * const app = express();
- * startupGuards(app);
- * app.use(cors(corsOptions));
- * app.use(helmetConfig);
- * app.use(hppProtection);
- * app.use(apiLimiter);
- * app.use(additionalSecurityHeaders);
- */
