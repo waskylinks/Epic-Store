@@ -16,6 +16,8 @@ import {
   startupGuards
 } from './middleware/security.js';
 
+import { webhookLimiter } from './middleware/rateLimiter.js';
+
 import userRoutes from './routes/user-route.js';
 import productRoutes from './routes/products-route.js';
 import orderRoutes from './routes/order-routes.js';
@@ -33,6 +35,7 @@ const app = express();
 // Paystack webhook needs raw body for signature verification
 app.post(
   '/api/v1/payment/webhook/paystack',
+  webhookLimiter,
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     console.log('>>> Paystack webhook route reached');
