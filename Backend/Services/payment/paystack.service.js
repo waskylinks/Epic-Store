@@ -5,6 +5,88 @@ import Order from '../../models/order-model.js';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * Initialize Paystack payment with metadata
+ * @param {Object} params - Payment initialization parameters
+ * @returns {Object} Paystack initialization response with authorization URL
+ */
+export async function initializePaystackPayment({
+  email,
+  amount, // Amount in currency base unit (e.g., naira, not kobo)
+  currency = "NGN",
+  reference,
+  userId,
+  orderReference,
+  itemCount,
+  callback_url
+}) {
+  const url = "https://api.paystack.co/transaction/initialize";
+
+  // Convert amount to kobo/cents (Paystack expects smallest currency unit)
+  const amountInMinorUnit = Math.round(amount * 100);
+
+  try {
+    const { data } = await axios.post(
+      url,
+      {
+        email,
+        amount: amountInMinorUnit,
+        currency: currency.toUpperCase(),
+        reference,
+        callback_url,
+        metadata: {
+          // Custom metadata for tracking and debugging
+          user_id: userId,
+          order_reference: orderReference,
+          item_count: itemCount,
+          payment_source: "epicstore",
+          initialized_at: new Date().toISOString(),
+          // Can add more custom fields as needed
+          custom_fields: [
+            {
+              display_name: "Order Reference",
+              variable_name: "order_reference",
+              value: orderReference
+            },
+            {
+              display_name: "Items",
+              variable_name: "item_count",
+              value: itemCount.toString()
+            }
+          ]
+        },
+        channels: ["card", "bank", "ussd", "qr", "mobile_money", "bank_transfer"]
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 10000
+      }
+    );
+
+    if (!data.status) {
+      throw new Error(data.message || "Paystack initialization failed");
+    }
+
+    return {
+      success: true,
+      authorization_url: data.data.authorization_url,
+      access_code: data.data.access_code,
+      reference: data.data.reference
+    };
+
+  } catch (err) {
+    console.error("Paystack initialization error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.message || 
+      err.message || 
+      "Failed to initialize Paystack payment"
+    );
+  }
+}
+
+/**
  * Verify Paystack transaction with retry logic
  * @param {string} reference - Paystack transaction reference
  * @param {number} maxAttempts - Number of retries for verification
@@ -100,7 +182,7 @@ export async function verifyAndUpdateOrder({
   order.paymentInfo.paidAt = new Date(tx.paid_at);
   order.amountPaid = paystackAmount;
 
-  // 9. Store payment metadata
+  // 9. Store payment metadata (including our custom metadata)
   order.paymentMeta = {
     channel: tx.channel,
     ipAddress: tx.ip_address,
@@ -112,6 +194,8 @@ export async function verifyAndUpdateOrder({
       expMonth: tx.authorization?.exp_month,
       expYear: tx.authorization?.exp_year
     },
+    // Store custom metadata we sent during initialization
+    customMetadata: tx.metadata,
     raw: tx
   };
 
@@ -263,6 +347,7 @@ export async function handleWebhook(req, res) {
         expMonth: tx.authorization?.exp_month,
         expYear: tx.authorization?.exp_year
       },
+      customMetadata: tx.metadata, // Store our custom metadata
       raw: tx
     };
 

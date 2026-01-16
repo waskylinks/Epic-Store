@@ -5,6 +5,7 @@ import { createReceiptIfNotExists } from "../Services/receipt.service.js";
 import { validateAndCalculateOrder } from "../Services/pricing.service.js";
 import { deleteCachePattern } from '../utils/redis.js';
 import Order from '../models/order-model.js';
+import User from '../models/userModel.js';
 import crypto from 'crypto';
 
 // Helper: Invalidate payment-related caches
@@ -29,7 +30,7 @@ const generatePaymentReference = () => {
 };
 
 /**
- * Initialize Payment - Creates pending order with server-calculated prices
+ * Initialize Payment - Creates pending order and returns gateway authorization URL
  * @route POST /api/v1/payment/initialize
  * @access Private
  */
@@ -41,7 +42,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
     const { gateway, currency, shippingInfo, cartItems } = req.body;
 
-    // 1. Validate and calculate order totals using database prices
+    // 1. Get user email for payment gateway
+    const user = await User.findById(userId).select('email');
+    if (!user) {
+        return next(new HandleError("User not found", 404));
+    }
+
+    // 2. Validate and calculate order totals using database prices
     let validatedOrder;
     try {
         validatedOrder = await validateAndCalculateOrder(cartItems, currency);
@@ -49,12 +56,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(err); // Pricing service throws HandleError already
     }
 
-    // 2. Generate unique payment reference
+    // 3. Generate unique payment reference
     const reference = generatePaymentReference();
 
-    // 3. Create pending order with locked prices
+    // 4. Create pending order with locked prices
+    let pendingOrder;
     try {
-        const pendingOrder = await Order.create({
+        pendingOrder = await Order.create({
             user: userId,
             shippingInfo,
             orderItems: validatedOrder.orderItems,
@@ -72,36 +80,70 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             },
             orderStatus: "Processing" // Will remain Processing until payment verified
         });
-
-        // 4. Return payment initialization data to frontend
-        return res.status(200).json({
-            success: true,
-            message: "Payment initialized successfully",
-            data: {
-                reference,
-                orderId: pendingOrder._id,
-                amount: validatedOrder.totalPrice,
-                currency: validatedOrder.currency,
-                gateway,
-                // Frontend uses this to initialize payment with gateway
-                orderItems: validatedOrder.orderItems.map(item => ({
-                    name: item.name,
-                    quantity: item.quantity,
-                    price: item.price
-                })),
-                breakdown: {
-                    itemPrice: validatedOrder.itemPrice,
-                    taxPrice: validatedOrder.taxPrice,
-                    shippingPrice: validatedOrder.shippingPrice,
-                    totalPrice: validatedOrder.totalPrice
-                }
-            }
-        });
-
     } catch (err) {
         console.error("Pending order creation failed:", err);
         return next(new HandleError("Failed to initialize payment", 500));
     }
+
+    // 5. Initialize payment with the gateway (if Paystack, get authorization URL)
+    let gatewayResponse = null;
+    
+    if (gateway === 'paystack') {
+        try {
+            const paymentService = PaymentFactory.getService('paystack');
+            
+            gatewayResponse = await paymentService.initializePaystackPayment({
+                email: user.email,
+                amount: validatedOrder.totalPrice,
+                currency: validatedOrder.currency,
+                reference,
+                userId: userId.toString(),
+                orderReference: reference,
+                itemCount: validatedOrder.orderItems.length,
+                callback_url: `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`
+            });
+        } catch (err) {
+            // If gateway initialization fails, mark order as failed and clean up
+            pendingOrder.paymentInfo.status = "failed";
+            await pendingOrder.save();
+            
+            console.error("Gateway initialization error:", err);
+            return next(new HandleError(
+                `Failed to initialize ${gateway} payment: ${err.message}`, 
+                500
+            ));
+        }
+    }
+
+    // 6. Return payment initialization data to frontend
+    return res.status(200).json({
+        success: true,
+        message: "Payment initialized successfully",
+        data: {
+            reference,
+            orderId: pendingOrder._id,
+            amount: validatedOrder.totalPrice,
+            currency: validatedOrder.currency,
+            gateway,
+            // Gateway-specific data (authorization URL for Paystack)
+            ...(gatewayResponse && {
+                authorization_url: gatewayResponse.authorization_url,
+                access_code: gatewayResponse.access_code
+            }),
+            // Order details for display
+            orderItems: validatedOrder.orderItems.map(item => ({
+                name: item.name,
+                quantity: item.quantity,
+                price: item.price
+            })),
+            breakdown: {
+                itemPrice: validatedOrder.itemPrice,
+                taxPrice: validatedOrder.taxPrice,
+                shippingPrice: validatedOrder.shippingPrice,
+                totalPrice: validatedOrder.totalPrice
+            }
+        }
+    });
 });
 
 /**
