@@ -85,64 +85,77 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(new HandleError("Failed to initialize payment", 500));
     }
 
-    // 5. Initialize payment with the gateway (if Paystack, get authorization URL)
+    // 5. Initialize payment with the gateway
     let gatewayResponse = null;
     
-    if (gateway === 'paystack') {
-        try {
-            const paymentService = PaymentFactory.getService('paystack');
-            
-            gatewayResponse = await paymentService.initializePaystackPayment({
-                email: user.email,
-                amount: validatedOrder.totalPrice,
-                currency: validatedOrder.currency,
-                reference,
-                userId: userId.toString(),
-                orderReference: reference,
-                itemCount: validatedOrder.orderItems.length,
-                callback_url: `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`
-            });
-        } catch (err) {
-            // If gateway initialization fails, mark order as failed and clean up
-            pendingOrder.paymentInfo.status = "failed";
-            await pendingOrder.save();
-            
-            console.error("Gateway initialization error:", err);
-            return next(new HandleError(
-                `Failed to initialize ${gateway} payment: ${err.message}`, 
-                500
-            ));
-        }
+    try {
+        const paymentService = PaymentFactory.getService(gateway);
+        
+        // Common parameters for all gateways
+        const initParams = {
+            email: user.email,
+            amount: validatedOrder.totalPrice,
+            currency: validatedOrder.currency,
+            reference,
+            userId: userId.toString(),
+            orderReference: reference,
+            itemCount: validatedOrder.orderItems.length,
+            callback_url: `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`,
+            customer_name: user.name,
+            customer_phone: shippingInfo.phoneNo
+        };
+
+        // Initialize payment using the factory
+        gatewayResponse = await PaymentFactory.initializePayment(gateway, initParams);
+        
+    } catch (err) {
+        // If gateway initialization fails, mark order as failed and clean up
+        pendingOrder.paymentInfo.status = "failed";
+        await pendingOrder.save();
+        
+        console.error("Gateway initialization error:", err);
+        return next(new HandleError(
+            `Failed to initialize ${gateway} payment: ${err.message}`, 
+            500
+        ));
     }
 
     // 6. Return payment initialization data to frontend
+    const responseData = {
+        reference,
+        orderId: pendingOrder._id,
+        amount: validatedOrder.totalPrice,
+        currency: validatedOrder.currency,
+        gateway,
+        // Order details for display
+        orderItems: validatedOrder.orderItems.map(item => ({
+            name: item.name,
+            quantity: item.quantity,
+            price: item.price
+        })),
+        breakdown: {
+            itemPrice: validatedOrder.itemPrice,
+            taxPrice: validatedOrder.taxPrice,
+            shippingPrice: validatedOrder.shippingPrice,
+            totalPrice: validatedOrder.totalPrice
+        }
+    };
+
+    // Add gateway-specific data
+    if (gateway === 'paystack') {
+        responseData.authorization_url = gatewayResponse.authorization_url;
+        responseData.access_code = gatewayResponse.access_code;
+    } else if (gateway === 'flutterwave') {
+        responseData.payment_link = gatewayResponse.payment_link;
+    } else if (gateway === 'stripe') {
+        responseData.client_secret = gatewayResponse.client_secret;
+        responseData.payment_intent_id = gatewayResponse.payment_intent_id;
+    }
+
     return res.status(200).json({
         success: true,
         message: "Payment initialized successfully",
-        data: {
-            reference,
-            orderId: pendingOrder._id,
-            amount: validatedOrder.totalPrice,
-            currency: validatedOrder.currency,
-            gateway,
-            // Gateway-specific data (authorization URL for Paystack)
-            ...(gatewayResponse && {
-                authorization_url: gatewayResponse.authorization_url,
-                access_code: gatewayResponse.access_code
-            }),
-            // Order details for display
-            orderItems: validatedOrder.orderItems.map(item => ({
-                name: item.name,
-                quantity: item.quantity,
-                price: item.price
-            })),
-            breakdown: {
-                itemPrice: validatedOrder.itemPrice,
-                taxPrice: validatedOrder.taxPrice,
-                shippingPrice: validatedOrder.shippingPrice,
-                totalPrice: validatedOrder.totalPrice
-            }
-        }
+        data: responseData
     });
 });
 
