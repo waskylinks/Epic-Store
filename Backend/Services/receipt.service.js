@@ -1,6 +1,7 @@
 import Receipt from "../models/receipt-model.js";
 import User from "../models/userModel.js";
 import HandleError from "../utils/handleError.js";
+import handleAsyncError from "../middleware/handleAsyncError.js";
 
 /**
  * Format currency based on currency code
@@ -114,3 +115,79 @@ export const getReceiptByReference = async (req, res, next) => {
 
   return res.status(200).json({ success: true, receipt });
 };
+
+/**
+ * Check if receipt exists for a reference
+ * @route GET /api/v1/receipts/:reference/exists
+ * @access Private
+ */
+export const checkReceiptExists = handleAsyncError(async (req, res, next) => {
+  const { reference } = req.params;
+  const userId = req.user._id;
+
+  const receipt = await Receipt.findOne({ 
+    reference,
+    user: userId 
+  });
+
+  return res.status(200).json({
+    success: true,
+    exists: !!receipt,
+    receipt: receipt || null
+  });
+});
+
+/**
+ * Email receipt to user
+ * @route POST /api/v1/receipts/:reference/email
+ * @access Private
+ */
+export const emailReceipt = handleAsyncError(async (req, res, next) => {
+  const { reference } = req.params;
+  const userId = req.user._id;
+
+  // Find receipt
+  const receipt = await Receipt.findOne({ 
+    reference,
+    user: userId 
+  });
+
+  if (!receipt) {
+    return next(new HandleError("Receipt not found", 404));
+  }
+
+  // Get user email
+  const user = await User.findById(userId).select('email name');
+
+  // TODO: Implement email sending logic
+  // This is a placeholder - integrate with your email service (SendGrid, AWS SES, etc.)
+  // Example implementation:
+  /*
+  import { sendReceiptEmail } from './email.service.js';
+  
+  try {
+    await sendReceiptEmail({
+      to: user.email,
+      name: user.name,
+      receipt: receipt,
+      reference: reference
+    });
+  } catch (emailError) {
+    console.error('Email sending failed:', emailError);
+    return next(new HandleError("Failed to send receipt email", 500));
+  }
+  */
+
+  console.log(`📧 Would email receipt ${reference} to ${user.email}`);
+  console.log(`Receipt details:`, {
+    reference: receipt.reference,
+    total: receipt.totalPrice,
+    currency: receipt.currency,
+    items: receipt.orderItems.length
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: `Receipt will be sent to ${user.email}`
+  });
+});
