@@ -54,7 +54,7 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(135deg, #a81111 0%, #9e5e5e 100%);
+  background: linear-gradient(135deg, rgba(255, 60, 60, 0.95) 0%, rgba(255, 82, 82, 0.9) 100%);
 }
 
 .visual-content {
@@ -106,61 +106,33 @@
   color: rgba(255, 255, 255, 0.95);
 }
 
-/* 🎯 IMAGE AREA 2: Carousel/Testimonial Section */
-.visual-carousel {
+/* Trust Statement */
+.visual-trust-statement {
+  text-align: center;
+  padding: 2rem;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
   border-radius: 16px;
-  padding: 2rem;
   border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-.carousel-placeholder {
-  /* ADD YOUR CAROUSEL/SLIDER COMPONENT HERE */
-  /* For now, showing a testimonial example */
-}
-
-.carousel-item {
-  display: none;
-}
-
-.carousel-item.active {
-  display: block;
-  animation: fadeIn 0.5s ease;
-}
-
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.carousel-content {
-  text-align: center;
-}
-
-.carousel-icon {
+.trust-icon {
   font-size: 3rem !important;
-  color: rgba(255, 255, 255, 0.9);
+  color: white;
   margin-bottom: 1rem;
 }
 
-.carousel-text {
-  font-size: 1.1rem;
-  font-style: italic;
-  line-height: 1.6;
-  margin-bottom: 1rem;
+.visual-trust-statement h3 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
   color: white;
 }
 
-.carousel-author {
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+.visual-trust-statement p {
+  font-size: 1rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.95);
 }
 
 /* Benefits Grid */

@@ -13,13 +13,16 @@ function OrderConfirm() {
 
     const navigate = useNavigate();
 
-    // Price calculations
+    // ⚠️ IMPORTANT: These calculations are for DISPLAY ONLY
+    // The backend will recalculate from database prices
+    // This prevents price manipulation attacks
     const subtotal = cartItems.reduce((acc, item) => acc + item.price * item.quantity, 0);
     const tax = subtotal * 0.18;
     const shipping = subtotal > 500 ? 0 : 50;
     const total = subtotal + tax + shipping;
 
     const proceedToPayment = () => {
+        // Store display data only (not used for actual payment)
         const data = {
             subtotal,
             tax,
@@ -32,6 +35,13 @@ function OrderConfirm() {
         navigate('/process/payment');
     };
 
+    const formatNGN = (amount) =>
+        new Intl.NumberFormat('en-NG', {
+            style: 'currency',
+            currency: 'NGN',
+            minimumFractionDigits: 2
+        }).format(amount);
+
     return (
         <>
             <PageTitle title='Order Confirm' />
@@ -40,6 +50,14 @@ function OrderConfirm() {
 
             <div className="confirm-container">
                 <h1 className="confirm-header">Order Confirmation</h1>
+
+                {/* Info Banner */}
+                <div className="info-banner">
+                    <p>
+                        ℹ️ Please review your order details before proceeding to payment.
+                        Final prices will be calculated securely on our servers.
+                    </p>
+                </div>
 
                 {/* Shipping Info Table */}
                 <div className="confirm-table-container">
@@ -80,9 +98,9 @@ function OrderConfirm() {
                                 <tr key={item.product}>
                                     <td><img src={item.image} alt={item.name} className='product-image' /></td>
                                     <td>{item.name}</td>
-                                    <td>₦{item.price.toFixed(2)}</td>
+                                    <td>{formatNGN(item.price)}</td>
                                     <td>{item.quantity}</td>
-                                    <td>₦{(item.price * item.quantity).toFixed(2)}</td>
+                                    <td>{formatNGN(item.price * item.quantity)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -90,24 +108,28 @@ function OrderConfirm() {
 
                     {/* Order Summary Table */}
                     <table className="confirm-table">
-                        <caption>Order Summary</caption>
+                        <caption>Order Summary (Estimated)</caption>
                         <thead>
                             <tr>
                                 <th>Subtotal</th>
                                 <th>Shipping Charges</th>
-                                <th>GST</th>
+                                <th>Tax (18%)</th>
                                 <th>Total</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
-                                <td>₦{subtotal.toFixed(2)}</td>
-                                <td>₦{shipping.toFixed(2)}</td>
-                                <td>₦{tax.toFixed(2)}</td>
-                                <td>₦{total.toFixed(2)}</td>
+                                <td>{formatNGN(subtotal)}</td>
+                                <td>{formatNGN(shipping)}</td>
+                                <td>{formatNGN(tax)}</td>
+                                <td>{formatNGN(total)}</td>
                             </tr>
                         </tbody>
                     </table>
+
+                    <p className="summary-note">
+                        * Final amount will be calculated at checkout based on current product prices
+                    </p>
                 </div>
 
                 {/* Proceed to Payment Button */}
@@ -115,7 +137,7 @@ function OrderConfirm() {
                     type="button"
                     className="proceed-button"
                     onClick={proceedToPayment}
-                    disabled={cartItems.length === 0} // disable if cart is empty
+                    disabled={cartItems.length === 0}
                 >
                     Proceed to Payment
                 </button>
