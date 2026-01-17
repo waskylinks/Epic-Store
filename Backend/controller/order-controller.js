@@ -184,3 +184,30 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
         message: 'Order deleted successfully'
     });
 });
+
+/**
+ * Get order by payment reference
+ * Used by success page to display order details
+ * @route GET /api/v1/orders/reference/:reference
+ * @access Private
+ */
+export const getOrderByReference = handleAsyncError(async (req, res, next) => {
+  const { reference } = req.params;
+  const userId = req.user._id;
+
+  // Find order by payment reference
+  const order = await Order.findOne({
+    "paymentInfo.reference": reference,
+    user: userId
+  }).populate('orderItems.product', 'name images');
+
+  if (!order) {
+    return next(new HandleError("Order not found for this reference", 404));
+  }
+
+  // Return order details
+  return res.status(200).json({
+    success: true,
+    order
+  });
+});
