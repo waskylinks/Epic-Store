@@ -34,6 +34,7 @@ const orderSchema = new mongoose.Schema(
     paymentInfo: {
       reference: { type: String, required: true, unique: true },
       providerTxId: String,
+      stripePaymentIntentId: String,
       status: {
         type: String,
         enum: ["pending", "success", "failed"],

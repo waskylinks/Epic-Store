@@ -42,8 +42,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
     const { gateway, currency, shippingInfo, cartItems } = req.body;
 
-    // 1. Get user email for payment gateway
-    const user = await User.findById(userId).select('email');
+    // 1. Get user info for payment gateway
+    const user = await User.findById(userId).select('email name');
     if (!user) {
         return next(new HandleError("User not found", 404));
     }
@@ -80,6 +80,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             },
             orderStatus: "Processing" // Will remain Processing until payment verified
         });
+
+        console.log(`✅ Pending order created: ${pendingOrder._id} with reference: ${reference}`);
     } catch (err) {
         console.error("Pending order creation failed:", err);
         return next(new HandleError("Failed to initialize payment", 500));
@@ -89,8 +91,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     let gatewayResponse = null;
     
     try {
-        const paymentService = PaymentFactory.getService(gateway);
-        
         // Common parameters for all gateways
         const initParams = {
             email: user.email,
@@ -108,12 +108,21 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         // Initialize payment using the factory
         gatewayResponse = await PaymentFactory.initializePayment(gateway, initParams);
         
+        console.log(`✅ ${gateway} payment initialized for reference: ${reference}`);
+        
+        // ✅ OPTIONAL: Store payment intent ID for Stripe (for better security)
+        if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
+            pendingOrder.paymentInfo.stripePaymentIntentId = gatewayResponse.payment_intent_id;
+            await pendingOrder.save();
+            console.log(`✅ Stripe payment intent ID stored: ${gatewayResponse.payment_intent_id}`);
+        }
+        
     } catch (err) {
         // If gateway initialization fails, mark order as failed and clean up
         pendingOrder.paymentInfo.status = "failed";
         await pendingOrder.save();
         
-        console.error("Gateway initialization error:", err);
+        console.error(`❌ ${gateway} initialization error:`, err);
         return next(new HandleError(
             `Failed to initialize ${gateway} payment: ${err.message}`, 
             500
@@ -172,6 +181,8 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     const { gateway, reference } = req.body;
 
+    console.log(`🔍 Verifying ${gateway} payment with reference: ${reference}`);
+
     // 1. Get payment service for the gateway
     let paymentService;
     try {
@@ -180,18 +191,42 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         return next(new HandleError(err.message, 400));
     }
 
-    // 2. Find the pending order by reference
-    const pendingOrder = await Order.findOne({
-        "paymentInfo.reference": reference,
-        user: userId
-    });
+    // 2. Find the pending order
+    // ✅ IMPROVED: For Stripe, also search by payment intent ID if available
+    let pendingOrder;
+    
+    if (gateway === 'stripe' && reference.startsWith('pi_')) {
+        // Stripe: reference is payment_intent_id
+        pendingOrder = await Order.findOne({
+            "paymentInfo.stripePaymentIntentId": reference,
+            user: userId
+        });
+        
+        // Fallback to reference search if not found by payment intent ID
+        if (!pendingOrder) {
+            pendingOrder = await Order.findOne({
+                "paymentInfo.reference": reference,
+                user: userId
+            });
+        }
+    } else {
+        // Flutterwave and Paystack: search by reference
+        pendingOrder = await Order.findOne({
+            "paymentInfo.reference": reference,
+            user: userId
+        });
+    }
 
     if (!pendingOrder) {
+        console.error(`❌ Order not found for ${gateway} reference: ${reference}`);
         return next(new HandleError("Order not found for this reference", 404));
     }
 
+    console.log(`✅ Order found: ${pendingOrder._id}`);
+
     // 3. Check if already processed (idempotency)
     if (pendingOrder.paymentInfo.status === "success") {
+        console.log(`ℹ️ Payment already verified for order: ${pendingOrder._id}`);
         return res.status(200).json({
             success: true,
             message: "Payment already verified",
@@ -210,13 +245,15 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             userId
         });
 
+        console.log(`✅ ${gateway} payment verified for order: ${pendingOrder._id}`);
+
         // 5. Create receipt if payment was successful
         if (result.success) {
             try {
-                await createReceiptIfNotExists({
+                const receipt = await createReceiptIfNotExists({
                     orderId: result.order._id,
                     userId,
-                    reference,
+                    reference: pendingOrder.paymentInfo.reference, // Use original order reference
                     orderItems: result.order.orderItems,
                     itemPrice: result.order.itemPrice,
                     taxPrice: result.order.taxPrice,
@@ -226,9 +263,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                     currency: result.order.paymentInfo.currency,
                     paymentGateway: gateway
                 });
+                console.log(`✅ Receipt created: ${receipt._id}`);
             } catch (receiptErr) {
                 // Log but don't fail the verification
-                console.error("Receipt creation failed:", receiptErr);
+                console.error("❌ Receipt creation failed:", receiptErr);
             }
 
             // Invalidate caches after successful payment
@@ -245,23 +283,23 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         });
 
     } catch (err) {
-        console.error("Payment verification error:", err);
+        console.error(`❌ ${gateway} verification error:`, err);
         
         // Update order status to failed
         try {
             pendingOrder.paymentInfo.status = "failed";
             await pendingOrder.save();
+            console.log(`⚠️ Order marked as failed: ${pendingOrder._id}`);
         } catch (saveErr) {
             console.error("Failed to update order status:", saveErr);
         }
 
-        const status =
-            err.message?.toLowerCase().includes("currency") ||
-            err.message?.toLowerCase().includes("amount") ||
-            err.message?.toLowerCase().includes("reference")
-                ? 400
-                : 500;
-
-        return next(new HandleError(err.message, status));
+        // ✅ IMPROVED: Return specific error message from gateway
+        return next(new HandleError(
+            `Payment verification failed: ${err.message}`,
+            err.message?.includes("currency") || 
+            err.message?.includes("amount") ||
+            err.message?.includes("mismatch") ? 400 : 500
+        ));
     }
 });
