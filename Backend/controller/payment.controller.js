@@ -192,40 +192,46 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     }
 
     // 2. Find the pending order
-    // ✅ IMPROVED: For Stripe, also search by payment intent ID if available
+    // ✅ IMPROVED: Different lookup strategies per gateway
     let pendingOrder;
     
     if (gateway === 'stripe' && reference.startsWith('pi_')) {
-        // Stripe: reference is payment_intent_id
+        // Stripe: Search by payment intent ID first, then fallback to reference
         pendingOrder = await Order.findOne({
             "paymentInfo.stripePaymentIntentId": reference,
             user: userId
         });
         
-        // Fallback to reference search if not found by payment intent ID
         if (!pendingOrder) {
             pendingOrder = await Order.findOne({
                 "paymentInfo.reference": reference,
                 user: userId
             });
         }
+    } else if (gateway === 'flutterwave') {
+        // Flutterwave: We receive transaction_id but need to verify first to get tx_ref
+        // Pass null as orderId - the service will find the order using tx_ref from Flutterwave
+        console.log(`🔍 Flutterwave: Will verify transaction ${reference} and find order by tx_ref`);
+        
+        // For Flutterwave, we skip the order lookup here
+        // The service will verify with Flutterwave, get tx_ref, then find the order
+        pendingOrder = null; // Will be found by the service
     } else {
-        // Flutterwave and Paystack: search by reference
+        // Paystack: Search by reference directly
         pendingOrder = await Order.findOne({
             "paymentInfo.reference": reference,
             user: userId
         });
     }
 
-    if (!pendingOrder) {
+    // For non-Flutterwave gateways, check if order was found
+    if (gateway !== 'flutterwave' && !pendingOrder) {
         console.error(`❌ Order not found for ${gateway} reference: ${reference}`);
         return next(new HandleError("Order not found for this reference", 404));
     }
 
-    console.log(`✅ Order found: ${pendingOrder._id}`);
-
-    // 3. Check if already processed (idempotency)
-    if (pendingOrder.paymentInfo.status === "success") {
+    // For non-Flutterwave, check if already processed
+    if (gateway !== 'flutterwave' && pendingOrder.paymentInfo.status === "success") {
         console.log(`ℹ️ Payment already verified for order: ${pendingOrder._id}`);
         return res.status(200).json({
             success: true,
@@ -235,17 +241,34 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         });
     }
 
+    console.log(gateway === 'flutterwave' 
+        ? `✅ Will find order after Flutterwave verification` 
+        : `✅ Order found: ${pendingOrder._id}`
+    );
+
     // 4. Verify payment with gateway and update order
     try {
-        const result = await paymentService.verifyAndUpdateOrder({
-            reference,
-            orderId: pendingOrder._id,
-            expectedAmount: pendingOrder.totalPrice,
-            expectedCurrency: pendingOrder.paymentInfo.currency,
-            userId
-        });
+        let result;
 
-        console.log(`✅ ${gateway} payment verified for order: ${pendingOrder._id}`);
+        if (gateway === 'flutterwave') {
+            // For Flutterwave: only pass reference and userId
+            // The service will verify, get tx_ref, find order, and validate
+            result = await paymentService.verifyAndUpdateOrder({
+                reference,
+                userId
+            });
+        } else {
+            // For Stripe and Paystack: pass all order details
+            result = await paymentService.verifyAndUpdateOrder({
+                reference,
+                orderId: pendingOrder._id,
+                expectedAmount: pendingOrder.totalPrice,
+                expectedCurrency: pendingOrder.paymentInfo.currency,
+                userId
+            });
+        }
+
+        console.log(`✅ ${gateway} payment verified for order: ${result.order._id}`);
 
         // 5. Create receipt if payment was successful
         if (result.success) {
@@ -253,7 +276,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 const receipt = await createReceiptIfNotExists({
                     orderId: result.order._id,
                     userId,
-                    reference: pendingOrder.paymentInfo.reference, // Use original order reference
+                    reference: result.order.paymentInfo.reference, // Use order's reference
                     orderItems: result.order.orderItems,
                     itemPrice: result.order.itemPrice,
                     taxPrice: result.order.taxPrice,
@@ -285,13 +308,15 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     } catch (err) {
         console.error(`❌ ${gateway} verification error:`, err);
         
-        // Update order status to failed
-        try {
-            pendingOrder.paymentInfo.status = "failed";
-            await pendingOrder.save();
-            console.log(`⚠️ Order marked as failed: ${pendingOrder._id}`);
-        } catch (saveErr) {
-            console.error("Failed to update order status:", saveErr);
+        // Update order status to failed (skip for Flutterwave if order wasn't found yet)
+        if (pendingOrder) {
+            try {
+                pendingOrder.paymentInfo.status = "failed";
+                await pendingOrder.save();
+                console.log(`⚠️ Order marked as failed: ${pendingOrder._id}`);
+            } catch (saveErr) {
+                console.error("Failed to update order status:", saveErr);
+            }
         }
 
         // ✅ IMPROVED: Return specific error message from gateway
