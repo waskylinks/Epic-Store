@@ -94,8 +94,13 @@ export const initializePaymentSchema = Joi.object({
 });
 
 /**
- * Validation schema for payment verification (existing)
+ * Validation schema for payment verification
  * This is called AFTER payment to verify and update pending order
+ * 
+ * ✅ FIXED: Removed minimum length requirement to support all gateway reference formats:
+ * - Paystack: "ORD-1768858351837-00AB28A3124F" (long string)
+ * - Flutterwave: "9950870" (short number converted to string, 7 chars)
+ * - Stripe: "pi_3QcXXXXXXXXXXXXXXXXX" (starts with pi_, ~27 chars)
  */
 export const verifyPaymentSchema = Joi.object({
   // Payment gateway
@@ -108,11 +113,10 @@ export const verifyPaymentSchema = Joi.object({
     }),
 
   // Payment reference from gateway
+  // ✅ CHANGED: Removed .min(8) requirement
   reference: Joi.string()
-    .min(8)
     .required()
     .messages({
-      'string.min': 'Reference must be at least 8 characters',
       'any.required': 'Payment reference is required'
     })
   
@@ -141,3 +145,5 @@ export const checkProductAvailabilitySchema = Joi.object({
       'number.max': 'Quantity cannot exceed 100'
     })
 });
+
+
