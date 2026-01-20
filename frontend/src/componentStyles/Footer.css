@@ -2,7 +2,7 @@
    FOOTER BASE STYLES
    =========================== */
 .footer {
-  background-color: #1a1a1a;
+  background-color: #2e2b2b;
   color: #e0e0e0;
   margin-top: auto;
   width: 100%;
@@ -19,8 +19,8 @@
    TRUST BANNER
    =========================== */
 .footer-trust-banner {
-  background: linear-gradient(135deg, #801414 0%, #ff5252 100%);
-  padding: 1.5rem 0;
+  background: #801414 ;
+  padding: 0.5rem 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   width: 100%;
 }
@@ -180,11 +180,12 @@
    =========================== */
 .footer-links h3 {
   color: #ffffff;
-  font-size: 1.1rem;
+  font-size: 0.9rem;
   margin-bottom: 1.25rem;
   font-weight: 600;
   position: relative;
   padding-bottom: 0.75rem;
+  text-transform: uppercase;
 }
 
 .footer-links h3::after {
