@@ -8,6 +8,8 @@ import * as stripeService from "./stripe.service.js";
  * - initializePayment() - Initialize payment with gateway
  * - verifyAndUpdateOrder() - Verify payment and update order
  * - handleWebhook() - Process webhook events
+ * - refundPayment() - Process refund ✅ NEW
+ * - getRefundStatus() - Get refund status ✅ NEW
  */
 const gateways = {
   paystack: paystackService,
@@ -84,6 +86,40 @@ export const PaymentFactory = {
   },
 
   /**
+   * ✅ NEW: Process refund with any gateway
+   * @param {string} gateway - Gateway name (paystack, flutterwave, stripe)
+   * @param {Object} params - Refund parameters
+   * @returns {Promise<Object>} Refund response
+   */
+  async refundPayment(gateway, params) {
+    const normalized = String(gateway).toLowerCase();
+    const service = this.getService(normalized);
+
+    if (!service.refundPayment) {
+      throw new Error(`${gateway} does not support refund processing`);
+    }
+
+    return await service.refundPayment(params);
+  },
+
+  /**
+   * ✅ NEW: Get refund status from any gateway
+   * @param {string} gateway - Gateway name
+   * @param {string} refundReference - Refund or transaction reference
+   * @returns {Promise<Object>} Refund status
+   */
+  async getRefundStatus(gateway, refundReference) {
+    const normalized = String(gateway).toLowerCase();
+    const service = this.getService(normalized);
+
+    if (!service.getRefundStatus) {
+      throw new Error(`${gateway} does not support refund status checking`);
+    }
+
+    return await service.getRefundStatus(refundReference);
+  },
+
+  /**
    * Get list of supported gateways
    * @returns {Array<string>} List of gateway names
    */
@@ -114,24 +150,64 @@ export const PaymentFactory = {
         currencies: ["NGN", "GHS", "ZAR", "USD"],
         countries: ["NG", "GH", "ZA"],
         paymentMethods: ["card", "bank", "ussd", "qr", "mobile_money", "bank_transfer"],
-        requiresRedirect: true
+        requiresRedirect: true,
+        supportsRefunds: true, // ✅ NEW
+        refundMethods: ["full", "partial"], // ✅ NEW
+        refundProcessingTime: "3-5 business days" // ✅ NEW
       },
       flutterwave: {
         name: "Flutterwave",
         currencies: ["NGN", "USD", "GBP", "EUR", "GHS", "KES", "ZAR"],
         countries: ["NG", "GH", "KE", "UG", "ZA", "TZ"],
         paymentMethods: ["card", "bank_transfer", "ussd", "mobile_money"],
-        requiresRedirect: true
+        requiresRedirect: true,
+        supportsRefunds: true, // ✅ NEW
+        refundMethods: ["full", "partial"], // ✅ NEW
+        refundProcessingTime: "5-7 business days" // ✅ NEW
       },
       stripe: {
         name: "Stripe",
         currencies: ["USD", "EUR", "GBP", "CAD", "AUD"],
         countries: ["US", "GB", "CA", "AU", "EU"],
         paymentMethods: ["card", "bank_transfer", "wallet"],
-        requiresRedirect: false // Uses Stripe Elements/JS
+        requiresRedirect: false, // Uses Stripe Elements/JS
+        supportsRefunds: true, // ✅ NEW
+        refundMethods: ["full", "partial"], // ✅ NEW
+        refundProcessingTime: "5-10 business days" // ✅ NEW
       }
     };
 
     return gatewayInfo[normalized] || null;
+  },
+
+  /**
+   * ✅ NEW: Check if a gateway supports refunds
+   * @param {string} gateway - Gateway name
+   * @returns {boolean}
+   */
+  supportsRefunds(gateway) {
+    const info = this.getGatewayInfo(gateway);
+    return info?.supportsRefunds || false;
+  },
+
+  /**
+   * ✅ NEW: Get refund policy for a gateway
+   * @param {string} gateway - Gateway name
+   * @returns {Object} Refund policy details
+   */
+  getRefundPolicy(gateway) {
+    const info = this.getGatewayInfo(gateway);
+    
+    if (!info?.supportsRefunds) {
+      return null;
+    }
+
+    return {
+      gateway: info.name,
+      supportedMethods: info.refundMethods,
+      processingTime: info.refundProcessingTime,
+      maxRefundWindow: "180 days", // Most gateways allow refunds within 6 months
+      partialRefundsAllowed: info.refundMethods.includes("partial")
+    };
   }
 };
