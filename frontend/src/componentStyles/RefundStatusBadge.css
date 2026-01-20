@@ -1,0 +1,56 @@
+/* Frontend/src/components/RefundStatusBadge.css */
+
+.refund-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+.refund-badge-icon {
+  font-size: 0.9rem;
+}
+
+.refund-badge-label {
+  text-transform: uppercase;
+}
+
+/* Status Colors */
+.refund-badge-none {
+  color: #64748b;
+  background: rgba(100, 116, 139, 0.12);
+}
+
+.refund-badge-requested {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.refund-badge-approved {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.12);
+}
+
+.refund-badge-rejected {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.refund-badge-processing {
+  color: #8b5cf6;
+  background: rgba(139, 92, 246, 0.12);
+}
+
+.refund-badge-completed {
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.refund-badge-failed {
+  color: #dc2626;
+  background: rgba(220, 38, 38, 0.12);
+}

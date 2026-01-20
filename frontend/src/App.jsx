@@ -31,6 +31,7 @@ import UserList from './Admin/UserList';
 import AllOrders from './Admin/AllOrders';
 import ReviewList from './Admin/ReviewList';
 import OAuthCallback from './User/OauthCallback';
+import RefundRequest from './Orders/RefundRequest';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -77,6 +78,7 @@ function App() {
         <Route path='/order/success' element={<ProtectedRoute element={<OrderSuccess />} />} />
         <Route path='/orders/user' element={<ProtectedRoute element={<MyOrders />} />} />
         <Route path='/order/:id' element={<ProtectedRoute element={<OrderDetails />} />} />
+        <Route path="/orders/:id/refund/request" element={<ProtectedRoute element={<RefundRequest />} />} />
 
         {/* Admin Routes */}
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard />} adminOnly={true} />} />
