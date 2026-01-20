@@ -6,15 +6,14 @@ import { emailTemplates } from "../utils/emailTemplates.js";
 import { oauthLogger } from "../utils/logger.js";
 import crypto from "crypto";
 
-/* ========================================
-   GOOGLE OAUTH CONTROLLERS
-======================================== */
+// GOOGLE OAUTH CONTROLLERS
 
 /**
  * @desc    Initiate Google OAuth login
  * @route   GET /api/v1/oauth/google
  * @access  Public
  */
+
 export const googleAuth = (req, res, next) => {
     // Generate and store state parameter for CSRF protection
     const state = crypto.randomBytes(32).toString('hex');
@@ -33,6 +32,7 @@ export const googleAuth = (req, res, next) => {
  * @route   GET /api/v1/oauth/google/callback
  * @access  Public
  */
+
 export const googleAuthCallback = (req, res, next) => {
     // Verify state parameter
     const returnedState = req.query.state;
@@ -131,6 +131,7 @@ export const googleAuthCallback = (req, res, next) => {
  * @route   GET /api/v1/oauth/link/google
  * @access  Private (requires authentication)
  */
+
 export const linkGoogleAccount = (req, res, next) => {
     // Generate and store state parameter
     const state = crypto.randomBytes(32).toString('hex');
@@ -153,6 +154,7 @@ export const linkGoogleAccount = (req, res, next) => {
  * @route   GET /api/v1/oauth/link/google/callback
  * @access  Private
  */
+
 export const linkGoogleAccountCallback = (req, res, next) => {
     // Verify state parameter
     const returnedState = req.query.state;
@@ -213,6 +215,7 @@ export const linkGoogleAccountCallback = (req, res, next) => {
  * @route   POST /api/v1/oauth/unlink/google
  * @access  Private
  */
+
 export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
     const user = await req.user;
 
@@ -249,15 +252,15 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
     });
 });
 
-/* ========================================
-   FACEBOOK OAUTH CONTROLLERS
-======================================== */
+
+   // FACEBOOK OAUTH CONTROLLERS
 
 /**
  * @desc    Initiate Facebook OAuth login
  * @route   GET /api/v1/oauth/facebook
  * @access  Public
  */
+
 export const facebookAuth = (req, res, next) => {
     // Generate and store state parameter for CSRF protection
     const state = crypto.randomBytes(32).toString('hex');
@@ -276,6 +279,7 @@ export const facebookAuth = (req, res, next) => {
  * @route   GET /api/v1/oauth/facebook/callback
  * @access  Public
  */
+
 export const facebookAuthCallback = (req, res, next) => {
     // Verify state parameter
     const returnedState = req.query.state;
@@ -383,6 +387,7 @@ export const facebookAuthCallback = (req, res, next) => {
  * @route   GET /api/v1/oauth/link/facebook
  * @access  Private (requires authentication)
  */
+
 export const linkFacebookAccount = (req, res, next) => {
     // Generate and store state parameter
     const state = crypto.randomBytes(32).toString('hex');
@@ -405,6 +410,7 @@ export const linkFacebookAccount = (req, res, next) => {
  * @route   GET /api/v1/oauth/link/facebook/callback
  * @access  Private
  */
+
 export const linkFacebookAccountCallback = (req, res, next) => {
     // Verify state parameter
     const returnedState = req.query.state;
@@ -465,6 +471,7 @@ export const linkFacebookAccountCallback = (req, res, next) => {
  * @route   POST /api/v1/oauth/unlink/facebook
  * @access  Private
  */
+
 export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => {
     const user = await req.user;
 
@@ -501,15 +508,16 @@ export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => 
     });
 });
 
-/* ========================================
-   SHARED OAUTH CONTROLLERS
-======================================== */
+
+   // SHARED OAUTH CONTROLLERS
+
 
 /**
  * @desc    Get OAuth connection status
  * @route   GET /api/v1/oauth/status
  * @access  Private
  */
+
 export const getOAuthStatus = handleAsyncError(async (req, res, next) => {
     const user = await req.user;
 

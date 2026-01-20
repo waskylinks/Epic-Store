@@ -46,45 +46,62 @@ export const createReceiptIfNotExists = async ({
   paymentGateway = "paystack",
 }) => {
   try {
-    // Return existing receipt if already created
+    // Check if receipt exists
     let receipt = await Receipt.findOne({ reference });
-    if (receipt) return receipt;
+    if (receipt) {
+      console.log(`ℹ️ Receipt already exists for reference: ${reference}`);
+      return receipt;
+    }
 
     // Snapshot customer info
     const user = await User.findById(userId).select("name email");
     if (!user) throw new HandleError("User not found for receipt", 404);
 
-    // Create receipt
-    receipt = await Receipt.create({
-      order: orderId,
-      user: userId,
-      reference,
-      customer: {
-        name: user.name,
-        email: user.email,
-        phoneNo: shippingInfo.phoneNo,
-      },
-      shippingInfo: {
-        address: shippingInfo.address,
-        city: shippingInfo.city,
-        state: shippingInfo.state,
-        country: shippingInfo.country,
-        pinCode: shippingInfo.pinCode
-      },
-      orderItems,
-      itemPrice,
-      taxPrice,
-      shippingPrice,
-      totalPrice,
-      currency: currency.toUpperCase(),
-      paymentStatus: "paid",
-      paymentGateway,
-      paidAt: new Date(),
-    });
+    // Try to create receipt
+    try {
+      receipt = await Receipt.create({
+        order: orderId,
+        user: userId,
+        reference,
+        customer: {
+          name: user.name,
+          email: user.email,
+          phoneNo: shippingInfo.phoneNo,
+        },
+        shippingInfo: {
+          address: shippingInfo.address,
+          city: shippingInfo.city,
+          state: shippingInfo.state,
+          country: shippingInfo.country,
+          pinCode: shippingInfo.pinCode
+        },
+        orderItems,
+        itemPrice,
+        taxPrice,
+        shippingPrice,
+        totalPrice,
+        currency: currency.toUpperCase(),
+        paymentStatus: "paid",
+        paymentGateway,
+        paidAt: new Date(),
+      });
 
-    return receipt;
+      console.log(`✅ New receipt created for reference: ${reference}`);
+      return receipt;
+      
+    } catch (createError) {
+      // If duplicate key error (race condition), fetch the existing receipt
+      if (createError.code === 11000) {
+        console.log(`ℹ️ Receipt created by another process, fetching existing one`);
+        receipt = await Receipt.findOne({ reference });
+        if (receipt) return receipt;
+      }
+      
+      // Re-throw other errors
+      throw createError;
+    }
+
   } catch (error) {
-    // Log error but don't fail the entire payment process
     console.error("Receipt creation error:", error);
     throw error;
   }

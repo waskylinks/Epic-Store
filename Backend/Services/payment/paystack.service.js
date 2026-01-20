@@ -384,3 +384,102 @@ export async function handleWebhook(req, res) {
   }
 }
 
+/**
+ * Process Paystack refund
+ * @param {Object} params - Refund parameters
+ * @returns {Object} Refund response
+ */
+export async function refundPayment({
+  transactionReference, // Paystack transaction reference
+  amount, // Amount to refund (in naira, optional - full refund if not provided)
+  reason, // Refund reason
+  merchantNote // Internal note
+}) {
+  const url = "https://api.paystack.co/refund";
+
+  try {
+    // Convert amount to kobo if provided (partial refund)
+    const refundData = {
+      transaction: transactionReference,
+      ...(amount && { amount: Math.round(amount * 100) }), // Only include if partial refund
+      ...(merchantNote && { merchant_note: merchantNote })
+    };
+
+    const { data } = await axios.post(
+      url,
+      refundData,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 15000
+      }
+    );
+
+    if (!data.status) {
+      throw new Error(data.message || "Paystack refund failed");
+    }
+
+    // Paystack refund response structure
+    return {
+      success: true,
+      refundId: data.data.id,
+      status: data.data.status, // "pending", "processing", "success", "failed"
+      amount: data.data.amount / 100, // Convert back to naira
+      currency: data.data.currency,
+      transaction: data.data.transaction,
+      createdAt: data.data.created_at,
+      raw: data.data
+    };
+
+  } catch (err) {
+    console.error("Paystack refund error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.message || 
+      err.message || 
+      "Failed to process Paystack refund"
+    );
+  }
+}
+
+/**
+ * Check Paystack refund status
+ * @param {string} refundReference - Paystack refund reference
+ * @returns {Object} Refund status
+ */
+export async function getRefundStatus(refundReference) {
+  const url = `https://api.paystack.co/refund/${refundReference}`;
+
+  try {
+    const { data } = await axios.get(url, {
+      headers: { 
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` 
+      },
+      timeout: 8000
+    });
+
+    if (!data.status) {
+      throw new Error(data.message || "Failed to get refund status");
+    }
+
+    return {
+      success: true,
+      refundId: data.data.id,
+      status: data.data.status,
+      amount: data.data.amount / 100,
+      currency: data.data.currency,
+      fullyDeducted: data.data.fully_deducted,
+      deductedAmount: data.data.deducted_amount / 100,
+      raw: data.data
+    };
+
+  } catch (err) {
+    console.error("Get refund status error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.message || 
+      err.message || 
+      "Failed to get refund status"
+    );
+  }
+}
