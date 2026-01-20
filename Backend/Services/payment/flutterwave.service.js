@@ -334,3 +334,102 @@ export async function handleWebhook(req, res) {
     return res.status(500).json({ message: "Webhook processing failed" });
   }
 }
+
+
+/**
+ * Process Flutterwave refund
+ * @param {Object} params - Refund parameters
+ * @returns {Object} Refund response
+ */
+export async function refundPayment({
+  transactionId, // Flutterwave transaction ID (NOT tx_ref)
+  amount, // Amount to refund (optional - full refund if not provided)
+  reason, // Refund reason
+  merchantNote // Internal note
+}) {
+  const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/refund`;
+
+  try {
+    const refundData = {
+      ...(amount && { amount }), // Only include if partial refund
+      ...(reason && { comments: reason })
+    };
+
+    const { data } = await axios.post(
+      url,
+      refundData,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
+          "Content-Type": "application/json"
+        },
+        timeout: 15000
+      }
+    );
+
+    if (data.status !== "success") {
+      throw new Error(data.message || "Flutterwave refund failed");
+    }
+
+    // Flutterwave refund response structure
+    return {
+      success: true,
+      refundId: data.data.id,
+      status: data.data.status, // "pending", "completed", "failed"
+      amount: parseFloat(data.data.amount_refunded || data.data.amount),
+      currency: data.data.settlement_currency,
+      transactionId: data.data.tx_id,
+      accountId: data.data.account_id,
+      createdAt: data.data.created_at,
+      raw: data.data
+    };
+
+  } catch (err) {
+    console.error("Flutterwave refund error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.message || 
+      err.message || 
+      "Failed to process Flutterwave refund"
+    );
+  }
+}
+
+/**
+ * Check Flutterwave refund status
+ * @param {string} transactionId - Original transaction ID
+ * @returns {Object} Refund status
+ */
+export async function getRefundStatus(transactionId) {
+  const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/refund`;
+
+  try {
+    const { data } = await axios.get(url, {
+      headers: { 
+        Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` 
+      },
+      timeout: 8000
+    });
+
+    if (data.status !== "success") {
+      throw new Error(data.message || "Failed to get refund status");
+    }
+
+    return {
+      success: true,
+      refundId: data.data[0]?.id, // Returns array of refunds
+      status: data.data[0]?.status,
+      amount: parseFloat(data.data[0]?.amount_refunded),
+      currency: data.data[0]?.settlement_currency,
+      createdAt: data.data[0]?.created_at,
+      raw: data.data
+    };
+
+  } catch (err) {
+    console.error("Get refund status error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.message || 
+      err.message || 
+      "Failed to get refund status"
+    );
+  }
+}
