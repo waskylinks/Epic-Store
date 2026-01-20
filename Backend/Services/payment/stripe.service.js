@@ -344,3 +344,105 @@ export async function handleWebhook(req, res) {
     return res.status(500).json({ message: "Webhook processing failed" });
   }
 }
+
+
+/**
+ * Process Stripe refund
+ * @param {Object} params - Refund parameters
+ * @returns {Object} Refund response
+ */
+export async function refundPayment({
+  paymentIntentId, // Stripe payment intent ID
+  amount, // Amount to refund in currency base unit (optional - full refund if not provided)
+  reason, // Refund reason: "duplicate", "fraudulent", "requested_by_customer"
+  merchantNote // Internal note (metadata)
+}) {
+  const url = "https://api.stripe.com/v1/refunds";
+
+  try {
+    // Build refund data
+    const refundParams = {
+      payment_intent: paymentIntentId,
+      ...(reason && { reason }), // Stripe accepts: duplicate, fraudulent, requested_by_customer
+      ...(merchantNote && { 'metadata[merchant_note]': merchantNote })
+    };
+
+    // Add amount only if partial refund (cents/pence)
+    if (amount) {
+      refundParams.amount = Math.round(amount * 100);
+    }
+
+    const { data } = await axios.post(
+      url,
+      new URLSearchParams(refundParams),
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}`,
+          "Content-Type": "application/x-www-form-urlencoded"
+        },
+        timeout: 15000
+      }
+    );
+
+    // Stripe refund response structure
+    return {
+      success: true,
+      refundId: data.id,
+      status: data.status, // "pending", "succeeded", "failed", "canceled"
+      amount: data.amount / 100, // Convert back to base currency unit
+      currency: data.currency.toUpperCase(),
+      paymentIntentId: data.payment_intent,
+      reason: data.reason,
+      receiptNumber: data.receipt_number,
+      createdAt: new Date(data.created * 1000).toISOString(),
+      raw: data
+    };
+
+  } catch (err) {
+    console.error("Stripe refund error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.error?.message || 
+      err.message || 
+      "Failed to process Stripe refund"
+    );
+  }
+}
+
+/**
+ * Check Stripe refund status
+ * @param {string} refundId - Stripe refund ID
+ * @returns {Object} Refund status
+ */
+export async function getRefundStatus(refundId) {
+  const url = `https://api.stripe.com/v1/refunds/${refundId}`;
+
+  try {
+    const { data } = await axios.get(url, {
+      headers: { 
+        Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` 
+      },
+      timeout: 8000
+    });
+
+    return {
+      success: true,
+      refundId: data.id,
+      status: data.status,
+      amount: data.amount / 100,
+      currency: data.currency.toUpperCase(),
+      paymentIntentId: data.payment_intent,
+      reason: data.reason,
+      failureReason: data.failure_reason,
+      createdAt: new Date(data.created * 1000).toISOString(),
+      raw: data
+    };
+
+  } catch (err) {
+    console.error("Get refund status error:", err.response?.data || err.message);
+    throw new Error(
+      err.response?.data?.error?.message || 
+      err.message || 
+      "Failed to get refund status"
+    );
+  }
+}
