@@ -281,61 +281,58 @@ export async function verifyAndCreateOrder({
  * @param {Request} req - Express request object
  * @param {Response} res - Express response object
  */
+
 export async function handleWebhook(req, res) {
   try {
-    // 1. Verify webhook signature
+    // 1-5: Your existing signature verification and order lookup code
     const paystackSignature = req.headers["x-paystack-signature"];
     
     if (!paystackSignature) {
-      console.warn("Missing Paystack signature");
+      console.warn("❌ Missing Paystack signature");
       return res.status(400).send("Missing signature");
     }
 
     const hash = crypto
       .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY)
-      .update(req.body) // req.body is raw buffer from express.raw()
+      .update(req.body)
       .digest("hex");
 
     if (hash !== paystackSignature) {
-      console.warn("Invalid Paystack webhook signature");
+      console.warn("❌ Invalid Paystack webhook signature");
       return res.status(400).send("Invalid signature");
     }
 
-    // 2. Parse webhook event
     const payload = JSON.parse(req.body.toString());
     const { event, data: tx } = payload;
 
-    console.log("Paystack webhook event:", event);
+    console.log("📨 Paystack webhook event:", event);
 
-    // 3. Only process charge.success events
     if (event !== "charge.success") {
       return res.status(200).json({ message: "Event ignored" });
     }
 
-    // 4. Find order by reference
     const order = await Order.findOne({
       "paymentInfo.reference": tx.reference
     });
 
     if (!order) {
-      console.warn("Webhook: Order not found for reference:", tx.reference);
+      console.warn("⚠️ Webhook: Order not found for reference:", tx.reference);
       return res.status(200).json({
         message: "Order not found, ignoring webhook"
       });
     }
 
-    // 5. Check if already processed (idempotency)
     if (order.paymentInfo.status === "success") {
+      console.log("ℹ️ Webhook: Already processed");
       return res.status(200).json({ message: "Already processed" });
     }
 
-    // 6. Update order payment status
+    // 6: Update order
     order.paymentInfo.status = "success";
     order.paymentInfo.providerTxId = tx.id;
     order.paymentInfo.paidAt = new Date(tx.paid_at);
     order.amountPaid = tx.amount / 100;
 
-    // Update payment metadata
     order.paymentMeta = {
       channel: tx.channel,
       ipAddress: tx.ip_address,
@@ -347,17 +344,43 @@ export async function handleWebhook(req, res) {
         expMonth: tx.authorization?.exp_month,
         expYear: tx.authorization?.exp_year
       },
-      customMetadata: tx.metadata, // Store our custom metadata
+      customMetadata: tx.metadata,
       raw: tx
     };
 
     await order.save();
+    console.log("✅ Order updated via webhook");
 
-    console.log("Webhook: Order confirmed for reference:", tx.reference);
+    // 7: CREATE RECEIPT 
+    try {
+      const { createReceiptIfNotExists } = await import('../receipt.service.js');
+      
+      await createReceiptIfNotExists({
+        orderId: order._id,
+        userId: order.user,
+        reference: tx.reference, 
+        orderItems: order.orderItems,
+        itemPrice: order.itemPrice,
+        taxPrice: order.taxPrice,
+        shippingPrice: order.shippingPrice,
+        totalPrice: order.totalPrice,
+        shippingInfo: order.shippingInfo,
+        currency: order.paymentInfo.currency,
+        paymentGateway: 'paystack'
+      });
+      
+      console.log("✅ Receipt created via Paystack webhook");
+    } catch (receiptErr) {
+      console.error("⚠️ Receipt creation failed:", receiptErr);
+      // Don't fail the webhook for receipt errors
+    }
+
+    console.log("✅ Webhook: Order confirmed for reference:", tx.reference);
     return res.status(200).json({ message: "Order confirmed" });
 
   } catch (err) {
-    console.error("Paystack webhook error:", err);
+    console.error("❌ Paystack webhook error:", err);
     return res.status(500).json({ message: "Webhook processing failed" });
   }
 }
+

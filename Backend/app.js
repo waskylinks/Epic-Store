@@ -6,7 +6,7 @@ import { EventEmitter } from 'events';
 import passport from 'passport';
 import { PaymentFactory } from './Services/payment/paymentFactory.js';
 import redis from './utils/redis.js';
-import {RedisStore} from 'connect-redis';
+import { RedisStore } from 'connect-redis';
 
 import {
   helmetConfig,
@@ -32,7 +32,36 @@ import './config/passport.js';
 const app = express();
 
 /* ================= WEBHOOK ROUTES (MUST BE BEFORE BODY PARSERS) ================= */
-// Paystack webhook needs raw body for signature verification
+
+/**
+ * Stripe Webhook - Raw body required for signature verification
+ */
+app.post(
+  '/api/v1/payment/webhook/stripe',
+  webhookLimiter,
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    console.log('>>> Stripe webhook route reached');
+
+    try {
+      const service = PaymentFactory.getService('stripe');
+
+      if (!service || typeof service.handleWebhook !== 'function') {
+        console.error('Stripe webhook service unavailable');
+        return res.status(500).json({ message: 'Webhook service unavailable' });
+      }
+
+      await service.handleWebhook(req, res);
+    } catch (err) {
+      console.error('❌ Stripe webhook error:', err);
+      res.status(500).json({ message: 'Webhook processing failed' });
+    }
+  }
+);
+
+/**
+ * Paystack Webhook - Raw body required for signature verification
+ */
 app.post(
   '/api/v1/payment/webhook/paystack',
   webhookLimiter,
@@ -41,33 +70,49 @@ app.post(
     console.log('>>> Paystack webhook route reached');
 
     try {
-      const service = PaymentFactory.getWebhookService('paystack');
+      const service = PaymentFactory.getService('paystack');
 
-      if (!service) {
-        return res.status(400).json({ message: 'Webhook service unavailable' });
+      if (!service || typeof service.handleWebhook !== 'function') {
+        console.error('Paystack webhook service unavailable');
+        return res.status(500).json({ message: 'Webhook service unavailable' });
       }
 
       await service.handleWebhook(req, res);
     } catch (err) {
-      console.error('Paystack webhook error:', err);
+      console.error('❌ Paystack webhook error:', err);
       res.status(500).json({ message: 'Webhook processing failed' });
     }
   }
 );
 
-/* ================= CORE ================= */
-app.use(
-  express.json({
-    limit: '1mb',
-    verify: (req, res, buf) => {
-      // Store raw body for webhook signature verification if needed
-      if (req.originalUrl.includes('/webhook')) {
-        req.rawBody = buf.toString('utf8');
+/**
+ * Flutterwave Webhook - Raw body required for signature verification
+ */
+app.post(
+  '/api/v1/payment/webhook/flutterwave',
+  webhookLimiter,
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    console.log('>>> Flutterwave webhook route reached');
+
+    try {
+      const service = PaymentFactory.getService('flutterwave');
+
+      if (!service || typeof service.handleWebhook !== 'function') {
+        console.error('Flutterwave webhook service unavailable');
+        return res.status(500).json({ message: 'Webhook service unavailable' });
       }
+
+      await service.handleWebhook(req, res);
+    } catch (err) {
+      console.error('❌ Flutterwave webhook error:', err);
+      res.status(500).json({ message: 'Webhook processing failed' });
     }
-  })
+  }
 );
 
+/* ================= CORE BODY PARSERS (AFTER WEBHOOKS) ================= */
+app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 

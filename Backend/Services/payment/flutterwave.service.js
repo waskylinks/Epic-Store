@@ -302,6 +302,30 @@ export async function handleWebhook(req, res) {
 
     await order.save();
 
+    // Create receipt via webhook
+    try {
+      const { createReceiptIfNotExists } = await import('../receipt.service.js');
+      
+      await createReceiptIfNotExists({
+        orderId: order._id,
+        userId: order.user,
+        reference: order.paymentInfo.reference,
+        orderItems: order.orderItems,
+        itemPrice: order.itemPrice,
+        taxPrice: order.taxPrice,
+        shippingPrice: order.shippingPrice,
+        totalPrice: order.totalPrice,
+        shippingInfo: order.shippingInfo,
+        currency: order.paymentInfo.currency,
+        paymentGateway: 'flutterwave' // or 'stripe', 'flutterwave'
+      });
+      
+      console.log("✅ Receipt created via webhook");
+    } catch (receiptErr) {
+      console.error("⚠️ Receipt creation failed:", receiptErr);
+      // Don't fail the webhook for receipt errors
+    }
+
     console.log("Webhook: Order confirmed for reference:", tx.tx_ref);
     return res.status(200).json({ message: "Order confirmed" });
 

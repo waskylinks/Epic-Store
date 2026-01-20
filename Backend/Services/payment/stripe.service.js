@@ -203,20 +203,19 @@ export async function verifyAndUpdateOrder({
  * @param {Request} req - Express request object
  * @param {Response} res - Express response object
  */
+
 export async function handleWebhook(req, res) {
   try {
-    // 1. Verify webhook signature
+    // 1-4: Signature verification (your existing code)
     const stripeSignature = req.headers["stripe-signature"];
     
     if (!stripeSignature) {
-      console.warn("Missing Stripe signature");
+      console.warn("❌ Missing Stripe signature");
       return res.status(400).send("Missing signature");
     }
 
-    // 2. Verify signature using Stripe's method
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
     
-    // Extract timestamp and signatures from header
     const elements = stripeSignature.split(',');
     const timestamp = elements.find(el => el.startsWith('t='))?.split('=')[1];
     const signatures = elements
@@ -224,20 +223,17 @@ export async function handleWebhook(req, res) {
       .map(el => el.split('=')[1]);
 
     if (!timestamp || signatures.length === 0) {
-      console.warn("Invalid Stripe signature format");
+      console.warn("❌ Invalid Stripe signature format");
       return res.status(400).send("Invalid signature");
     }
 
-    // Construct signed payload
     const signedPayload = `${timestamp}.${req.body.toString()}`;
     
-    // Compute expected signature
     const expectedSignature = crypto
       .createHmac("sha256", webhookSecret)
       .update(signedPayload)
       .digest("hex");
 
-    // Verify signature matches
     const isValid = signatures.some(sig => 
       crypto.timingSafeEqual(
         Buffer.from(sig, 'hex'),
@@ -246,34 +242,31 @@ export async function handleWebhook(req, res) {
     );
 
     if (!isValid) {
-      console.warn("Invalid Stripe webhook signature");
+      console.warn("❌ Invalid Stripe webhook signature");
       return res.status(400).send("Invalid signature");
     }
 
-    // 3. Check timestamp to prevent replay attacks (allow 5 minute tolerance)
     const timestampAge = Math.floor(Date.now() / 1000) - parseInt(timestamp);
     if (timestampAge > 300) {
-      console.warn("Stripe webhook timestamp too old");
+      console.warn("❌ Stripe webhook timestamp too old");
       return res.status(400).send("Timestamp too old");
     }
 
-    // 4. Parse webhook event
+    // 5-7: Parse and process event
     const event = JSON.parse(req.body.toString());
 
-    console.log("Stripe webhook event:", event.type);
+    console.log("📨 Stripe webhook event:", event.type);
 
-    // 5. Only process payment_intent.succeeded events
     if (event.type !== "payment_intent.succeeded") {
       return res.status(200).json({ message: "Event ignored" });
     }
 
     const paymentIntent = event.data.object;
 
-    // 6. Find order by reference (stored in metadata)
     const orderReference = paymentIntent.metadata?.tx_ref;
     
     if (!orderReference) {
-      console.warn("Webhook: No order reference in metadata");
+      console.warn("⚠️ Webhook: No order reference in metadata");
       return res.status(200).json({ message: "No order reference" });
     }
 
@@ -282,24 +275,23 @@ export async function handleWebhook(req, res) {
     });
 
     if (!order) {
-      console.warn("Webhook: Order not found for reference:", orderReference);
+      console.warn("⚠️ Webhook: Order not found for reference:", orderReference);
       return res.status(200).json({
         message: "Order not found, ignoring webhook"
       });
     }
 
-    // 7. Check if already processed (idempotency)
     if (order.paymentInfo.status === "success") {
+      console.log("ℹ️ Webhook: Already processed");
       return res.status(200).json({ message: "Already processed" });
     }
 
-    // 8. Update order payment status
+    // 8: Update order
     order.paymentInfo.status = "success";
     order.paymentInfo.providerTxId = paymentIntent.id;
     order.paymentInfo.paidAt = new Date(paymentIntent.created * 1000);
     order.amountPaid = paymentIntent.amount / 100;
 
-    // Update payment metadata
     const paymentMethod = paymentIntent.charges?.data[0]?.payment_method_details;
     
     order.paymentMeta = {
@@ -318,12 +310,37 @@ export async function handleWebhook(req, res) {
     };
 
     await order.save();
+    console.log("✅ Order updated via webhook");
 
-    console.log("Webhook: Order confirmed for reference:", orderReference);
+    // 9: ✅ CREATE RECEIPT (correct location)
+    try {
+      const { createReceiptIfNotExists } = await import('../receipt.service.js');
+      
+      await createReceiptIfNotExists({
+        orderId: order._id,
+        userId: order.user,
+        reference: orderReference, 
+        orderItems: order.orderItems,
+        itemPrice: order.itemPrice,
+        taxPrice: order.taxPrice,
+        shippingPrice: order.shippingPrice,
+        totalPrice: order.totalPrice,
+        shippingInfo: order.shippingInfo,
+        currency: order.paymentInfo.currency,
+        paymentGateway: 'stripe'
+      });
+      
+      console.log("✅ Receipt created via Stripe webhook");
+    } catch (receiptErr) {
+      console.error("⚠️ Receipt creation failed:", receiptErr);
+      // Don't fail the webhook for receipt errors
+    }
+
+    console.log("✅ Webhook: Order confirmed for reference:", orderReference);
     return res.status(200).json({ message: "Order confirmed" });
 
   } catch (err) {
-    console.error("Stripe webhook error:", err);
+    console.error("❌ Stripe webhook error:", err);
     return res.status(500).json({ message: "Webhook processing failed" });
   }
 }
