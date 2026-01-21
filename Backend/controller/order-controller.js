@@ -306,22 +306,6 @@ async function updateQuantity(id, quantity) {
     await product.save({ validateBeforeSave: false });
 }
 
-
-async function updateQuantity(id, quantity) {
-    const product = await Product.findById(id);
-
-    if (!product) {
-        throw new HandleError(`Product not found with id: ${id}`, 404);
-    }
-
-    if (product.stock < quantity) {
-        throw new HandleError(`Only ${product.stock} units available for ${product.name}`, 400);
-    }
-
-    product.stock -= quantity;
-    await product.save({ validateBeforeSave: false });
-}
-
 // Delete order 
 export const deleteOrder = handleAsyncError(async (req, res, next) => {
     const order = await Order.findById(req.params.id);
