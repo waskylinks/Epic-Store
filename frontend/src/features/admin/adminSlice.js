@@ -232,6 +232,54 @@ export const deleteReview = createAsyncThunk(
     }
 );
 
+// === REFUND MANAGEMENT ===
+
+export const fetchAllRefunds = createAsyncThunk(
+    'admin/fetchAllRefunds',
+    async (filters = {}, { rejectWithValue }) => {
+        try {
+            const params = new URLSearchParams(filters).toString();
+            const { data } = await axios.get(
+                `/api/v1/admin/refunds${params ? `?${params}` : ''}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch refunds');
+        }
+    }
+);
+
+export const reviewRefundRequest = createAsyncThunk(
+    'admin/reviewRefund',
+    async ({ orderId, action, adminNote }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/orders/${orderId}/refund/review`,
+                { action, adminNote }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to review refund');
+        }
+    }
+);
+
+export const processRefundPayment = createAsyncThunk(
+    'admin/processRefund',
+    async ({ orderId, refundAmount, merchantNote }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.post(
+                `/api/v1/admin/orders/${orderId}/refund/process`,
+                { refundAmount, merchantNote }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to process refund');
+        }
+    }
+);
+
+
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
@@ -283,6 +331,8 @@ const adminSlice = createSlice({
         analyticsLoading: false,
         error: null
     },
+    refunds: [],
+    refundStats: null,
     reducers: {
         removeErrors: (state) => {
             state.error = null;
@@ -548,7 +598,55 @@ const adminSlice = createSlice({
             .addCase(deleteReview.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
+            })
+
+            // Refunds
+            .addCase(fetchAllRefunds.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAllRefunds.fulfilled, (state, action) => {
+                state.loading = false;
+                state.refunds = action.payload.orders;
+                state.refundStats = action.payload.stats;
+            })
+            .addCase(fetchAllRefunds.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(reviewRefundRequest.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(reviewRefundRequest.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                // Update the refund in the list
+                const index = state.refunds.findIndex(r => r._id === action.payload.order._id);
+                if (index !== -1) state.refunds[index] = action.payload.order;
+            })
+            .addCase(reviewRefundRequest.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(processRefundPayment.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(processRefundPayment.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                // Update the refund in the list
+                const index = state.refunds.findIndex(r => r._id === action.payload.order._id);
+                if (index !== -1) state.refunds[index] = action.payload.order;
+            })
+            .addCase(processRefundPayment.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
             });
+
     }
 });
 
