@@ -32,6 +32,7 @@ import AllOrders from './Admin/AllOrders';
 import ReviewList from './Admin/ReviewList';
 import OAuthCallback from './User/OauthCallback';
 import RefundRequest from './Orders/RefundRequest';
+import AdminRefunds from './Admin/AdminRefunds';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -88,6 +89,8 @@ function App() {
         <Route path='/admin/users' element={<ProtectedRoute element={<UserList />} adminOnly={true} />} />
         <Route path='/admin/orders' element={<ProtectedRoute element={<AllOrders />} adminOnly={true} />} />
         <Route path='/admin/reviews' element={<ProtectedRoute element={<ReviewList />} adminOnly={true} />} />
+        <Route path='/admin/refunds' element={<ProtectedRoute element={<AdminRefunds />} adminOnly={true} />} />
+      
       </Routes>
     </Router>
   );

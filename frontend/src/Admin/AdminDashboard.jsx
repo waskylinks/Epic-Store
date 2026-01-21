@@ -19,7 +19,8 @@ import {
     Close as CloseIcon,
     LocalShipping,
     Cancel,
-    HourglassEmpty
+    HourglassEmpty,
+    MoneyOff
 } from '@mui/icons-material';
 import { Link, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -166,6 +167,18 @@ function AdminDashboard() {
                     >
                         <People className="nav-item-icon" />
                         <span>All Users</span>
+                    </Link>
+                </div>
+
+                <div className="nav-group">
+                    <h4>Refunds</h4>
+                    <Link 
+                        to="/admin/refunds" 
+                        className={isActive('/admin/refunds') ? 'nav-item active' : 'nav-item'}
+                        onClick={() => setSidebarOpen(false)}
+                    >
+                        <MoneyOff className="nav-item-icon" />
+                        <span>Manage Refunds</span>
                     </Link>
                 </div>
 
@@ -391,6 +404,13 @@ function AdminDashboard() {
                         </div>
                         <h3>User Management</h3>
                         <p>View and manage users</p>
+                    </Link>
+                    <Link to="/admin/refunds" className="quick-action-card">
+                        <div className="quick-action-icon-wrapper">
+                            <MoneyOff className="quick-action-icon" />
+                        </div>
+                        <h3>Refunds</h3>
+                        <p>Review refund requests</p>
                     </Link>
                     <Link to="/admin/reviews" className="quick-action-card">
                         <div className="quick-action-icon-wrapper">
