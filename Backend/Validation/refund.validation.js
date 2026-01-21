@@ -1,5 +1,3 @@
-// Backend/Validation/refund.validation.js
-
 import Joi from 'joi';
 
 /**
@@ -99,12 +97,14 @@ export const processRefundSchema = Joi.object({
 });
 
 /**
- * Validation schema for refund status query
+ * ✅ FIX: Validation schema for refund status query
+ * Allow empty string for "All Refunds" filter
  */
 export const refundStatusQuerySchema = Joi.object({
   status: Joi.string()
-    .valid('requested', 'approved', 'rejected', 'processing', 'completed', 'failed')
+    .valid('requested', 'approved', 'rejected', 'processing', 'completed', 'failed', '') // ✅ Added empty string
     .optional()
+    .allow('') // ✅ Explicitly allow empty string
     .messages({
       'any.only': 'Invalid status filter'
     }),

@@ -7,7 +7,7 @@ const orderSchema = new mongoose.Schema(
       city: String,
       state: String,
       country: String,
-      pinCode: String, // Changed from Number to String for international postal codes
+      pinCode: String,
       phoneNo: String
     },
 
@@ -54,7 +54,6 @@ const orderSchema = new mongoose.Schema(
       paidAt: Date
     },
 
-    // Gateway-specific payment metadata
     paymentMeta: {
       channel: String,
       ipAddress: String,
@@ -75,22 +74,64 @@ const orderSchema = new mongoose.Schema(
       }
     },
 
-    // Refund tracking
+    // ✅ FIXED: Complete refund tracking
     refundInfo: {
       status: {
         type: String,
-        enum: ["none", "requested", "processing", "completed", "failed"],
+        enum: ["none", "requested", "approved", "rejected", "processing", "completed", "failed"],
         default: "none"
       },
-      amount: {
-        type: Number,
-        default: 0
-      },
+      
+      // Request details
       reason: String,
-      refundReference: String,
+      description: String,
+      refundType: {
+        type: String,
+        enum: ["full", "partial"],
+        default: "full"
+      },
+      requestedAmount: Number,
       requestedAt: Date,
+      requestedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      
+      // Review details
+      approvedAt: Date,
+      approvedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      rejectedAt: Date,
+      rejectedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
+      adminNote: String,
+      
+      // Processing details
+      refundId: String,
+      refundAmount: Number,
+      refundCurrency: String,
       processedAt: Date,
+      processedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      },
       refundedAt: Date,
+      
+      // Gateway response
+      gatewayResponse: {
+        type: mongoose.Schema.Types.Mixed
+      },
+      
+      // Failure handling
+      failureReason: String,
+      
+      // Legacy fields
+      amount: { type: Number, default: 0 },
+      refundReference: String,
       notes: String
     },
 
@@ -106,19 +147,22 @@ const orderSchema = new mongoose.Schema(
       default: "Processing"
     },
 
-    deliveredAt: Date
+    deliveredAt: Date,
+    cancelledAt: Date,
+    cancellationReason: String
   },
   { timestamps: true, strict: true }
 );
 
-// Indexes for query performance
+// Indexes
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
 orderSchema.index({ "paymentInfo.status": 1 });
 orderSchema.index({ "paymentInfo.method": 1 });
 orderSchema.index({ "refundInfo.status": 1 });
+orderSchema.index({ "paymentInfo.reference": 1 });
 
-// Virtual for checking if order is refundable
+// Virtuals
 orderSchema.virtual("isRefundable").get(function() {
   return (
     this.paymentInfo.status === "success" &&
@@ -127,12 +171,20 @@ orderSchema.virtual("isRefundable").get(function() {
   );
 });
 
-// Virtual for partial refund amount
 orderSchema.virtual("refundableAmount").get(function() {
-  return this.amountPaid - this.refundInfo.amount;
+  return this.amountPaid - (this.refundInfo.refundAmount || 0);
 });
 
-// Ensure virtuals are included in JSON/Object conversions
+orderSchema.virtual("daysUntilRefundDeadline").get(function() {
+  const REFUND_WINDOW_DAYS = 30;
+  const baseDate = this.deliveredAt || this.paymentInfo.paidAt;
+  if (!baseDate) return null;
+  const deadline = new Date(baseDate);
+  deadline.setDate(deadline.getDate() + REFUND_WINDOW_DAYS);
+  const daysRemaining = Math.ceil((deadline - new Date()) / (1000 * 60 * 60 * 24));
+  return Math.max(0, daysRemaining);
+});
+
 orderSchema.set("toJSON", { virtuals: true });
 orderSchema.set("toObject", { virtuals: true });
 orderSchema.set("strictQuery", true);

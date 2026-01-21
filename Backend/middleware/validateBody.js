@@ -1,8 +1,10 @@
+// Backend/middleware/validateBody.js
 
 import HandleError from '../utils/handleError.js';
 
 /**
  * Middleware to validate request body/query/params using Joi schema
+ * ✅ FIXED: Does not reassign req.query or req.params (read-only getters)
  * @param {Object} schema - Joi validation schema
  * @param {string} source - Where to validate: 'body' (default), 'query', 'params'
  * @returns {Function} Express middleware
@@ -29,8 +31,13 @@ export const validateRequest = (schema, source = 'body') => {
       ));
     }
 
-    // Replace request data with validated data
-    req[source] = value;
+    // ✅ FIX: Only replace req[source] if it's NOT 'query' or 'params'
+    // These are read-only getters in Express and cannot be reassigned
+    if (source === 'body') {
+      req[source] = value;
+    }
+    // For 'query' and 'params', validation is enough - don't reassign
+    // The original values remain but validation ensures they're correct
 
     next();
   };
@@ -38,6 +45,7 @@ export const validateRequest = (schema, source = 'body') => {
 
 /**
  * Middleware to validate multiple sources (body + query + params)
+ * ✅ FIXED: Does not reassign read-only properties
  * @param {Object} schemas - Object with schemas for different sources
  * @example
  * validateMultiple({
@@ -64,7 +72,11 @@ export const validateMultiple = (schemas) => {
           message: detail.message
         })));
       } else {
-        req[source] = value;
+        // ✅ FIX: Only replace if it's the body
+        if (source === 'body') {
+          req[source] = value;
+        }
+        // For query and params, validation passed but don't reassign
       }
     }
 
@@ -79,6 +91,12 @@ export const validateMultiple = (schemas) => {
   };
 };
 
+/**
+ * Middleware to validate request body only
+ * This is the safest option for body validation
+ * @param {Object} schema - Joi validation schema
+ * @returns {Function} Express middleware
+ */
 export const validateBody = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, {
     abortEarly: false,   // return all errors, not just the first
@@ -96,7 +114,7 @@ export const validateBody = (schema) => (req, res, next) => {
     });
   }
 
-  // Replace req.body with the validated value
+  // ✅ Safe: req.body can be reassigned
   req.body = value;
   next();
 };
