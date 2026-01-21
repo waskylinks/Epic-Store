@@ -1,15 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import Footer from '../components/footer';
 import '../pageStyles/Home.css';
 import Navbar from '../components/Navbar';
 import Product from '../components/Product';
 import PageTitle from '../components/PageTitle';
 import { useDispatch, useSelector } from 'react-redux';
-import { removeErrors } from '../features/products/productSlice';
+import { 
+    fetchTrendingProducts, 
+    fetchNewArrivals,
+    clearAllErrors 
+} from '../features/publicProducts/publicProductsSlice';
 import Loader from '../components/Loader';
 import { toast } from 'react-toastify';
 import { Link } from 'react-router-dom';
-import axios from 'axios';
 import {
   TrendingUp,
   LocalShipping,
@@ -21,25 +24,17 @@ import {
 } from '@mui/icons-material';
 
 function Home() {
-    const { error } = useSelector((state) => state.product);
     const dispatch = useDispatch();
-
-    // State for different product sections
-    const [loading, setLoading] = useState(true);
-    const [trendingProducts, setTrendingProducts] = useState([]);
-    const [newArrivals, setNewArrivals] = useState([]);
-    const [categoryProducts, setCategoryProducts] = useState({});
-
-    // Categories list
-    const categories = [
-        { name: 'Electronics', key: 'Electronics' },
-        { name: 'Clothing & Apparel', key: 'Clothing & Apparel' },
-        { name: 'Home & Living', key: 'Home & Living' },
-        { name: 'Sports & Outdoors', key: 'Sports & Outdoors' },
-        { name: 'Beauty & Personal Care', key: 'Beauty & Personal Care' },
-        { name: 'Books & Media', key: 'Books & Media' },
-        { name: 'Food & Beverages', key: 'Food & Beverages' }
-    ];
+    
+    // Get state from Redux
+    const { 
+        trendingProducts,
+        trendingLoading,
+        trendingError,
+        newArrivals,
+        newArrivalsLoading,
+        newArrivalsError 
+    } = useSelector((state) => state.publicProducts);
 
     // Trust badges data
     const trustFeatures = [
@@ -65,59 +60,33 @@ function Home() {
         }
     ];
 
-    // Fetch all product sections
+    // Fetch products on mount
     useEffect(() => {
-        const fetchAllProducts = async () => {
-            try {
-                setLoading(true);
-
-                // Fetch trending and new arrivals
-                const [trendingRes, newArrivalsRes] = await Promise.all([
-                    axios.get('/api/v1/products/trending?limit=8'),
-                    axios.get('/api/v1/products/new-arrivals?limit=8')
-                ]);
-
-                setTrendingProducts(trendingRes.data.products || []);
-                setNewArrivals(newArrivalsRes.data.products || []);
-
-                // Fetch products for each category
-                const categoryData = {};
-                const categoryPromises = categories.map(async (category) => {
-                    try {
-                        const categoryRes = await axios.get(
-                            `/api/v1/products?category=${encodeURIComponent(category.key)}&page=1`
-                        );
-                        categoryData[category.key] = categoryRes.data.products || [];
-                    } catch (err) {
-                        console.warn(`Failed to fetch ${category.name}:`, err);
-                        categoryData[category.key] = [];
-                    }
-                });
-
-                await Promise.all(categoryPromises);
-                setCategoryProducts(categoryData);
-
-            } catch (err) {
-                console.error('Error fetching products:', err);
-                toast.error('Failed to load products', { position: 'top-center', autoClose: 2000 });
-            } finally {
-                setLoading(false);
-            }
+        dispatch(fetchTrendingProducts({ limit: 8, timeframe: 'month' }));
+        dispatch(fetchNewArrivals({ limit: 8, daysBack: 30 }));
+        
+        // Cleanup errors on unmount
+        return () => {
+            dispatch(clearAllErrors());
         };
+    }, [dispatch]);
 
-        fetchAllProducts();
-    }, []);
-
+    // Handle errors
     useEffect(() => {
-        if (error) {
-            toast.error(error.message, { position: 'top-center', autoClose: 2000 });
-            dispatch(removeErrors());
+        if (trendingError) {
+            toast.error(trendingError, { position: 'top-center', autoClose: 2000 });
         }
-    }, [dispatch, error]);
+        if (newArrivalsError) {
+            toast.error(newArrivalsError, { position: 'top-center', autoClose: 2000 });
+        }
+    }, [trendingError, newArrivalsError]);
+
+    // Show loader while initial data is loading
+    const isLoading = trendingLoading || newArrivalsLoading;
 
     return (
         <>
-            {loading ? (
+            {isLoading && trendingProducts.length === 0 && newArrivals.length === 0 ? (
                 <Loader />
             ) : (
                 <>
@@ -134,7 +103,7 @@ function Home() {
                                             <TrendingUp className="section-icon trending-icon" />
                                             <h2 className="section-title">Trending Now</h2>
                                         </div>
-                                        <Link to="/products" className="section-link">
+                                        <Link to="/products/trending" className="section-link">
                                             View All <ArrowForward />
                                         </Link>
                                     </div>
@@ -156,7 +125,7 @@ function Home() {
                                             <NewReleases className="section-icon new-icon" />
                                             <h2 className="section-title">New Arrivals</h2>
                                         </div>
-                                        <Link to="/products" className="section-link">
+                                        <Link to="/products/new-arrivals" className="section-link">
                                             View All <ArrowForward />
                                         </Link>
                                     </div>
@@ -168,33 +137,6 @@ function Home() {
                                 </div>
                             </section>
                         )}
-
-                        {/* Category Sections */}
-                        {categories.map((category) => {
-                            const products = categoryProducts[category.key] || [];
-                            if (products.length === 0) return null;
-
-                            return (
-                                <section key={category.key} className="category-section">
-                                    <div className="container">
-                                        <div className="section-header">
-                                            <h2 className="section-title">{category.name}</h2>
-                                            <Link 
-                                                to={`/products?category=${encodeURIComponent(category.key)}`}
-                                                className="section-link"
-                                            >
-                                                See More <ArrowForward />
-                                            </Link>
-                                        </div>
-                                        <div className="products-grid">
-                                            {products.map((product) => (
-                                                <Product product={product} key={product._id} />
-                                            ))}
-                                        </div>
-                                    </div>
-                                </section>
-                            );
-                        })}
 
                         {/* Trust Features at Bottom */}
                         <section className="trust-features-section">
