@@ -5,6 +5,12 @@ import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import { PaymentFactory } from '../Services/payment/paymentFactory.js';
 
+// Helper: Check if we're in test/development mode
+const isTestMode = () => {
+  return process.env.NODE_ENV === 'development' || 
+         process.env.PAYMENT_TEST_MODE === 'true';
+};
+
 // Helper: Invalidate analytics caches
 const invalidateAnalyticsCaches = async () => {
     try {
@@ -88,6 +94,9 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
 });
 
 // admin- update order status
+/**
+ * Auto-refund on cancel with test mode handling
+ */
 export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
     const order = await Order.findById(req.params.id);
 
@@ -104,135 +113,158 @@ export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
         return next(new HandleError('Invalid order status', 400));
     }
 
-
     // HANDLE CANCELLATION WITH AUTO-REFUND
-
     if (req.body.status === 'Cancelled') {
-      // 1. Restore stock
-      try {
-        await Promise.all(
-          order.orderItems.map(async (item) => {
-              const product = await Product.findById(item.product);
-              if (product) {
-                product.stock += item.quantity;
-                await product.save({ validateBeforeSave: false });
-              }
-          })
-        );
-      console.log(`✅ Stock restored for cancelled order ${order._id}`);
-
-      } catch (error) {
-        console.error("❌ Stock restoration failed:", error);
-        return next(error);
-      }
-
-    // 2. Auto-refund if payment was successful and no refund exists
-    if (order.paymentInfo.status === "success" && 
-      (!order.refundInfo || order.refundInfo.status === "none")) {
-      
-      const gateway = order.paymentInfo.method;
-      const supportedGateways = ['paystack', 'flutterwave', 'stripe'];
-
-      if (supportedGateways.includes(gateway)) {
+        // 1. Restore stock
         try {
-          console.log(`🔄 Auto-refunding cancelled order ${order._id} via ${gateway}...`);
-
-          // Build gateway-specific refund parameters
-          let refundParams;
-            
-          if (gateway === "paystack") {
-            refundParams = {
-                transactionReference: order.paymentInfo.reference,
-                reason: "Order cancelled by admin",
-                merchantNote: req.body.cancellationReason || "Order cancelled"
-            };
-          } else if (gateway === "flutterwave") {
-              refundParams = {
-                  transactionId: order.paymentInfo.providerTxId,
-                  reason: "Order cancelled by admin",
-                  merchantNote: req.body.cancellationReason || "Order cancelled"
-              };
-          } else if (gateway === "stripe") {
-              refundParams = {
-                  paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
-                  reason: "requested_by_customer",
-                  merchantNote: req.body.cancellationReason || "Order cancelled"
-              };
-          }
-
-            // Process refund via PaymentFactory
-            const refundResponse = await PaymentFactory.refundPayment(gateway, refundParams);
-
-            // Map gateway status to our status
-            let refundStatus = "processing";
-            const gatewayStatus = refundResponse.status?.toLowerCase();
-            
-            if (gatewayStatus === "succeeded" || gatewayStatus === "success" || gatewayStatus === "completed") {
-                refundStatus = "completed";
-            } else if (gatewayStatus === "failed") {
-                refundStatus = "failed";
-            }
-
-            // Update order with refund details
-            order.refundInfo = {
-                status: refundStatus,
-                reason: "Order cancelled by admin",
-                description: req.body.cancellationReason || "Order was cancelled",
-                refundType: "full",
-                requestedAmount: order.amountPaid,
-                requestedAt: new Date(),
-                requestedBy: req.user._id,
-                approvedAt: new Date(),
-                approvedBy: req.user._id,
-                adminNote: "Auto-approved due to order cancellation",
-                refundId: refundResponse.refundId,
-                refundAmount: refundResponse.amount,
-                refundCurrency: refundResponse.currency,
-                processedAt: new Date(),
-                processedBy: req.user._id,
-                gatewayResponse: refundResponse.raw
-            };
-
-            console.log(`✅ Refund ${refundStatus} for cancelled order ${order._id}`);
-
-        } catch (refundError) {
-            console.error("❌ Auto-refund failed:", refundError);
-            
-            // Mark refund as failed but still cancel the order
-            order.refundInfo = {
-                status: "failed",
-                reason: "Order cancelled by admin",
-                description: "Automatic refund failed - requires manual processing",
-                failureReason: refundError.message,
-                requestedAt: new Date(),
-                requestedBy: req.user._id
-            };
-
-            // ⚠️ IMPORTANT: Log for admin to manually process refund
-            console.error(`⚠️ MANUAL REFUND REQUIRED for order ${order._id} - ${refundError.message}`);
+            await Promise.all(
+                order.orderItems.map(async (item) => {
+                    const product = await Product.findById(item.product);
+                    if (product) {
+                        product.stock += item.quantity;
+                        await product.save({ validateBeforeSave: false });
+                    }
+                })
+            );
+            console.log(`✅ Stock restored for cancelled order ${order._id}`);
+        } catch (error) {
+            console.error("❌ Stock restoration failed:", error);
+            return next(error);
         }
-      } else {
-          // Unsupported gateway - mark for manual refund
-          console.warn(`⚠️ Manual refund required for ${gateway} payment on order ${order._id}`);
-          
-          order.refundInfo = {
-              status: "requested",
-              reason: "Order cancelled - manual refund required",
-              description: `Payment gateway ${gateway} requires manual refund processing`,
-              requestedAt: new Date(),
-              requestedBy: req.user._id
-          };
-      }
-    }
 
-        // Update cancellation metadata
+        // 2. Auto-refund if payment was successful
+        if (order.paymentInfo.status === "success" && 
+            (!order.refundInfo || order.refundInfo.status === "none")) {
+            
+            const gateway = order.paymentInfo.method;
+            const supportedGateways = ['paystack', 'flutterwave', 'stripe'];
+
+            if (supportedGateways.includes(gateway)) {
+                let refundResponse;
+                let refundStatus = "processing";
+
+                // ✅ TEST MODE HANDLING
+                if (isTestMode()) {
+                    console.log(`🧪 TEST MODE: Simulating auto-refund for cancelled order ${order._id}...`);
+                    
+                    refundResponse = {
+                        refundId: `test_refund_${Date.now()}`,
+                        status: "completed", // ✅ Auto-complete in test mode
+                        amount: order.amountPaid,
+                        currency: order.paymentInfo.currency,
+                        raw: {
+                            test_mode: true,
+                            message: "Auto-refund completed in test mode"
+                        }
+                    };
+                    
+                    refundStatus = "completed";
+                    console.log(`✅ TEST MODE: Auto-refund completed`);
+                } else {
+                    // PRODUCTION MODE
+                    try {
+                        console.log(`🔄 Auto-refunding cancelled order ${order._id} via ${gateway}...`);
+
+                        let refundParams;
+                        
+                        if (gateway === "paystack") {
+                            refundParams = {
+                                transactionReference: order.paymentInfo.reference,
+                                reason: "Order cancelled by admin",
+                                merchantNote: req.body.cancellationReason || "Order cancelled"
+                            };
+                        } else if (gateway === "flutterwave") {
+                            refundParams = {
+                                transactionId: order.paymentInfo.providerTxId,
+                                reason: "Order cancelled by admin",
+                                merchantNote: req.body.cancellationReason || "Order cancelled"
+                            };
+                        } else if (gateway === "stripe") {
+                            refundParams = {
+                                paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
+                                reason: "requested_by_customer",
+                                merchantNote: req.body.cancellationReason || "Order cancelled"
+                            };
+                        }
+
+                        refundResponse = await PaymentFactory.refundPayment(gateway, refundParams);
+
+                        const gatewayStatus = refundResponse.status?.toLowerCase();
+                        if (gatewayStatus === "succeeded" || gatewayStatus === "success" || gatewayStatus === "completed") {
+                            refundStatus = "completed";
+                        } else if (gatewayStatus === "failed") {
+                            refundStatus = "failed";
+                        }
+
+                        console.log(`✅ Refund ${refundStatus} for cancelled order ${order._id}`);
+                    } catch (refundError) {
+                        console.error("❌ Auto-refund failed:", refundError);
+                        
+                        order.refundInfo = {
+                            status: "failed",
+                            reason: "Order cancelled by admin",
+                            description: "Automatic refund failed - requires manual processing",
+                            failureReason: refundError.message,
+                            requestedAt: new Date(),
+                            requestedBy: req.user._id
+                        };
+
+                        console.error(`⚠️ MANUAL REFUND REQUIRED for order ${order._id} - ${refundError.message}`);
+                        
+                        // Still proceed with cancellation
+                        order.cancelledAt = Date.now();
+                        order.cancellationReason = req.body.cancellationReason || "Cancelled by admin";
+                        order.orderStatus = req.body.status;
+                        await order.save({ validateBeforeSave: false });
+                        await invalidateAnalyticsCaches();
+                        
+                        return res.status(200).json({
+                            success: true,
+                            order,
+                            message: 'Order cancelled but refund failed. Manual refund required.'
+                        });
+                    }
+                }
+
+                // Update order with refund details
+                order.refundInfo = {
+                    status: refundStatus,
+                    reason: "Order cancelled by admin",
+                    description: req.body.cancellationReason || "Order was cancelled",
+                    refundType: "full",
+                    requestedAmount: order.amountPaid,
+                    requestedAt: new Date(),
+                    requestedBy: req.user._id,
+                    approvedAt: new Date(),
+                    approvedBy: req.user._id,
+                    adminNote: isTestMode() 
+                        ? "Auto-approved due to order cancellation (Test Mode)" 
+                        : "Auto-approved due to order cancellation",
+                    refundId: refundResponse.refundId,
+                    refundAmount: refundResponse.amount,
+                    refundCurrency: refundResponse.currency,
+                    processedAt: new Date(),
+                    processedBy: req.user._id,
+                    gatewayResponse: refundResponse.raw
+                };
+            } else {
+                console.warn(`⚠️ Manual refund required for ${gateway} payment on order ${order._id}`);
+                
+                order.refundInfo = {
+                    status: "requested",
+                    reason: "Order cancelled - manual refund required",
+                    description: `Payment gateway ${gateway} requires manual refund processing`,
+                    requestedAt: new Date(),
+                    requestedBy: req.user._id
+                };
+            }
+        }
+
         order.cancelledAt = Date.now();
         order.cancellationReason = req.body.cancellationReason || "Cancelled by admin";
     }
 
-    
-    // HANDLE DELIVERY (deduct stock)
-    
+    // HANDLE DELIVERY
     if (req.body.status === 'Delivered') {
         try {
             await Promise.all(
@@ -246,17 +278,13 @@ export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
         }
     }
 
-    // Update order status
     order.orderStatus = req.body.status;
     await order.save({ validateBeforeSave: false });
-
-    // Invalidate caches
     await invalidateAnalyticsCaches();
 
-    // Build response message
     let responseMessage = 'Order updated successfully';
     if (req.body.status === 'Cancelled' && order.refundInfo && order.refundInfo.status !== 'none') {
-        responseMessage = `Order cancelled. Refund status: ${order.refundInfo.status}`;
+        responseMessage = `Order cancelled. Refund status: ${order.refundInfo.status}${isTestMode() ? ' (Test Mode)' : ''}`;
     }
 
     res.status(200).json({
@@ -265,6 +293,19 @@ export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
         message: responseMessage
     });
 });
+
+async function updateQuantity(id, quantity) {
+    const product = await Product.findById(id);
+    if (!product) {
+        throw new HandleError(`Product not found with id: ${id}`, 404);
+    }
+    if (product.stock < quantity) {
+        throw new HandleError(`Only ${product.stock} units available for ${product.name}`, 400);
+    }
+    product.stock -= quantity;
+    await product.save({ validateBeforeSave: false });
+}
+
 
 async function updateQuantity(id, quantity) {
     const product = await Product.findById(id);
@@ -451,6 +492,9 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
  * @access Private (Admin only)
  */
 
+/**
+ * Process refund with test mode handling
+ */
 export const processRefund = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const { refundAmount, merchantNote } = req.body;
@@ -472,26 +516,26 @@ export const processRefund = handleAsyncError(async (req, res, next) => {
 
   const gateway = order.paymentInfo.method;
 
-  // Correct parameter mapping for each gateway
+  // Build gateway-specific refund parameters
   let refundParams;
   
   if (gateway === "paystack") {
     refundParams = {
-      transactionReference: order.paymentInfo.reference, 
+      transactionReference: order.paymentInfo.reference,
       amount: finalRefundAmount < maxRefundAmount ? finalRefundAmount : undefined,
       reason: order.refundInfo.reason,
       merchantNote: merchantNote
     };
   } else if (gateway === "flutterwave") {
     refundParams = {
-      transactionId: order.paymentInfo.providerTxId, 
+      transactionId: order.paymentInfo.providerTxId,
       amount: finalRefundAmount < maxRefundAmount ? finalRefundAmount : undefined,
       reason: order.refundInfo.reason,
       merchantNote: merchantNote
     };
   } else if (gateway === "stripe") {
     refundParams = {
-      paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId, 
+      paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
       amount: finalRefundAmount < maxRefundAmount ? finalRefundAmount : undefined,
       reason: "requested_by_customer",
       merchantNote: merchantNote
@@ -501,32 +545,56 @@ export const processRefund = handleAsyncError(async (req, res, next) => {
   }
 
   let refundResponse;
-  
-  try {
-    console.log(`🔄 Processing ${gateway} refund for order ${orderId}...`);
-    refundResponse = await PaymentFactory.refundPayment(gateway, refundParams);
-    console.log(`✅ Refund response:`, refundResponse);
-  } catch (error) {
-    console.error("❌ Refund processing error:", error);
-    
-    order.refundInfo.status = "failed";
-    order.refundInfo.failureReason = error.message;
-    order.refundInfo.processedAt = new Date();
-    await order.save();
-
-    return next(new HandleError(`Refund failed: ${error.message}`, 500));
-  }
-
-  // Map gateway status correctly
   let finalStatus = "processing";
-  const gatewayStatus = refundResponse.status?.toLowerCase();
   
-  if (gatewayStatus === "succeeded" || gatewayStatus === "success" || gatewayStatus === "completed") {
+  // ✅ TEST MODE HANDLING
+  if (isTestMode()) {
+    console.log(`🧪 TEST MODE: Simulating refund for order ${orderId}...`);
+    
+    // Simulate gateway response in test mode
+    refundResponse = {
+      success: true,
+      refundId: `test_refund_${Date.now()}`,
+      status: "completed", // ✅ Auto-complete in test mode
+      amount: finalRefundAmount,
+      currency: order.paymentInfo.currency,
+      raw: {
+        test_mode: true,
+        message: "Refund completed in test mode"
+      }
+    };
+    
     finalStatus = "completed";
-  } else if (gatewayStatus === "failed") {
-    finalStatus = "failed";
+    console.log(`✅ TEST MODE: Refund auto-completed`);
+  } else {
+    // PRODUCTION MODE: Call actual gateway
+    try {
+      console.log(`🔄 PRODUCTION: Processing ${gateway} refund for order ${orderId}...`);
+      refundResponse = await PaymentFactory.refundPayment(gateway, refundParams);
+      console.log(`✅ Refund response:`, refundResponse);
+      
+      // Map gateway status
+      const gatewayStatus = refundResponse.status?.toLowerCase();
+      if (gatewayStatus === "succeeded" || gatewayStatus === "success" || gatewayStatus === "completed") {
+        finalStatus = "completed";
+      } else if (gatewayStatus === "failed") {
+        finalStatus = "failed";
+      } else {
+        finalStatus = "processing";
+      }
+    } catch (error) {
+      console.error("❌ Refund processing error:", error);
+      
+      order.refundInfo.status = "failed";
+      order.refundInfo.failureReason = error.message;
+      order.refundInfo.processedAt = new Date();
+      await order.save();
+
+      return next(new HandleError(`Refund failed: ${error.message}`, 500));
+    }
   }
 
+  // Update order with refund details
   order.refundInfo.status = finalStatus;
   order.refundInfo.refundId = refundResponse.refundId;
   order.refundInfo.refundAmount = refundResponse.amount;
@@ -546,11 +614,13 @@ export const processRefund = handleAsyncError(async (req, res, next) => {
       status: finalStatus,
       amount: refundResponse.amount,
       currency: refundResponse.currency,
-      gateway: gateway
+      gateway: gateway,
+      testMode: isTestMode() // ✅ Indicate if this was a test mode refund
     },
     order
   });
 });
+
 
 /**
  * Get refund status for an order
