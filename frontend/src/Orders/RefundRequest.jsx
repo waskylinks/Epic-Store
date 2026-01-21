@@ -1,5 +1,3 @@
-// Frontend/src/pages/RefundRequest.jsx
-
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -10,7 +8,7 @@ import Footer from '../components/footer';
 import Loader from '../components/Loader';
 import { getOrderDetails } from '../features/cart/orderSlice';
 import { requestRefund, clearRefundState } from '../features/refunds/refundSlice';
-import '../OrderStyles/RefundRequest.css';
+import '../OrderStyles/OrderDetails.css';
 
 const REFUND_REASONS = [
   { value: 'defective_product', label: 'Defective or Damaged Product' },

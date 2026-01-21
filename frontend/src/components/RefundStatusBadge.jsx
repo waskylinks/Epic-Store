@@ -1,5 +1,5 @@
 import React from 'react';
-import './RefundStatusBadge.css';
+import '../componentStyles/RefundStatusBadge.css';
 
 const RefundStatusBadge = ({ status }) => {
   const getStatusConfig = (status) => {

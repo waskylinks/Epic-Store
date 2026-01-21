@@ -7,7 +7,7 @@ import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
-import RefundStatusBadge from '../componentStyles/RefundStatusBadge.css';
+import RefundStatusBadge from '../components/RefundStatusBadge';
 import {
     fetchAllRefunds,
     reviewRefundRequest,
@@ -41,8 +41,9 @@ function AdminRefunds() {
     const [processing, setProcessing] = useState(false);
 
     useEffect(() => {
-        dispatch(fetchAllRefunds({ status: statusFilter }));
-    }, [dispatch, statusFilter]);
+  const filters = statusFilter ? { status: statusFilter } : {};
+  dispatch(fetchAllRefunds(filters));
+}, [dispatch, statusFilter]);
 
     useEffect(() => {
         if (success) {

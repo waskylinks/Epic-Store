@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import '../OrderStyles/OrderDetails.css';
+import '../OrderStyles/RefundRequest.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
@@ -17,7 +17,7 @@ function OrderDetails() {
   const dispatch = useDispatch();
 
   const { order = {}, loading, error } = useSelector((state) => state.order);
-  const { refundStatus } = useSelector((state) => state.refund);
+  const { refundStatus, statusLoading } = useSelector((state) => state.refund);
 
   // Fetch order details and refund status
   useEffect(() => {
@@ -56,13 +56,16 @@ function OrderDetails() {
   const paymentStatus = isPaid ? 'Paid' : 'Not Paid';
   const paidAt = paymentInfo?.paidAt;
 
-  // Refund eligibility check
-  const hasRefund = refundStatus && refundStatus.status !== 'none';
+  // ✅ FIX: Robust refund eligibility check
+  // Check if there's an active refund (not 'none' status)
+  const hasActiveRefund = refundStatus?.hasRefund === true || 
+                          (refundStatus?.status && refundStatus.status !== 'none');
+
+  // Order must be paid, delivered/shipped/cancelled, and no active refund
   const refundableStatuses = ['Delivered', 'Shipped', 'Cancelled'];
   const isRefundable = isPaid && 
-    !hasRefund && 
-    refundableStatuses.includes(orderStatus) &&
-    order.isRefundable !== false;
+    !hasActiveRefund && 
+    refundableStatuses.includes(orderStatus);
 
   // Status badge classes
   const orderStatusClass =
@@ -78,8 +81,8 @@ function OrderDetails() {
       <Navbar />
 
       <div className="order-box">
-        {/* Refund Status Alert */}
-        {hasRefund && (
+        {/* ✅ FIX: Only show refund alert if there's an ACTIVE refund */}
+        {hasActiveRefund && (
           <div className="refund-alert">
             <div className="refund-alert-header">
               <h3>Refund Status</h3>
@@ -103,8 +106,8 @@ function OrderDetails() {
           </div>
         )}
 
-        {/* Refund Action Button */}
-        {isRefundable && (
+        {/* ✅ FIX: Show refund button only when eligible */}
+        {isRefundable && !statusLoading && (
           <div className="refund-action">
             <button
               onClick={() => navigate(`/orders/${id}/refund/request`)}

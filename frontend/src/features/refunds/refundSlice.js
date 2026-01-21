@@ -1,3 +1,5 @@
+// Frontend/src/features/refunds/refundSlice.js
+
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -108,10 +110,16 @@ export const processRefund = createAsyncThunk(
 const refundSlice = createSlice({
   name: "refund",
   initialState: {
-    refundStatus: null,
+    // ✅ FIX: Default to object with status 'none' instead of null
+    refundStatus: { status: 'none', hasRefund: false },
     refunds: [],
     stats: null,
-    loading: false,
+    
+    // ✅ FIX: Separate loading states
+    loading: false,           // For request/review/process
+    statusLoading: false,     // For getRefundStatus
+    refundsLoading: false,    // For getAllRefunds (admin)
+    
     error: null,
     success: false,
     message: null,
@@ -123,7 +131,8 @@ const refundSlice = createSlice({
       state.message = null;
     },
     resetRefundStatus: (state) => {
-      state.refundStatus = null;
+      // ✅ FIX: Reset to object, not null
+      state.refundStatus = { status: 'none', hasRefund: false };
     }
   },
   extraReducers: (builder) => {
@@ -145,34 +154,40 @@ const refundSlice = createSlice({
         state.success = false;
       });
 
-    // Get Refund Status
+    // Get Refund Status - ✅ FIX: Use separate loading state
     builder
       .addCase(getRefundStatus.pending, (state) => {
-        state.loading = true;
+        state.statusLoading = true;
         state.error = null;
       })
       .addCase(getRefundStatus.fulfilled, (state, action) => {
-        state.loading = false;
-        state.refundStatus = action.payload.refundInfo;
+        state.statusLoading = false;
+        // ✅ FIX: Always set to object with hasRefund flag
+        state.refundStatus = action.payload.refundInfo || { status: 'none', hasRefund: false };
       })
       .addCase(getRefundStatus.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
+        state.statusLoading = false;
+        // ✅ FIX: On error, reset to 'none' instead of keeping null
+        state.refundStatus = { status: 'none', hasRefund: false };
+        // Don't show error toast for 404s (order has no refund)
+        if (!action.payload?.includes('not found')) {
+          state.error = action.payload;
+        }
       });
 
-    // Get All Refunds (Admin)
+    // Get All Refunds (Admin) - ✅ FIX: Use separate loading state
     builder
       .addCase(getAllRefunds.pending, (state) => {
-        state.loading = true;
+        state.refundsLoading = true;
         state.error = null;
       })
       .addCase(getAllRefunds.fulfilled, (state, action) => {
-        state.loading = false;
+        state.refundsLoading = false;
         state.refunds = action.payload.orders;
         state.stats = action.payload.stats;
       })
       .addCase(getAllRefunds.rejected, (state, action) => {
-        state.loading = false;
+        state.refundsLoading = false;
         state.error = action.payload;
       });
 
