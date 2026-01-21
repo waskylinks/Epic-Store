@@ -1,19 +1,38 @@
 import express from "express";
 import { verifyUserAuth, roleBaseAccess } from "../middleware/user-auth.js";
+import { adminAnalyticsLimiter } from "../middleware/rateLimiter.js";
 import { 
     getAdminStats, 
     getAnalytics,
-    getTopProductsEndpoint  // NEW: Optional standalone endpoint
+    getTopProductsEndpoint
 } from "../controller/analytics-controller.js";
 
 const router = express.Router();
 
+// Admin analytics endpoints (with rate limiting)
+router.get(
+  "/admin/stats", 
+  verifyUserAuth, 
+  roleBaseAccess("admin"), 
+  adminAnalyticsLimiter,
+  getAdminStats
+);
 
-router.get("/admin/stats", verifyUserAuth, roleBaseAccess("admin"), getAdminStats);
-router.get("/admin/analytics", verifyUserAuth, roleBaseAccess("admin"), getAnalytics);
+router.get(
+  "/admin/analytics", 
+  verifyUserAuth, 
+  roleBaseAccess("admin"), 
+  adminAnalyticsLimiter,
+  getAnalytics
+);
 
-//  Optional standalone top products endpoint with pagination
-// Example: /api/v1/admin/top-products?limit=10&page=2
-router.get("/admin/top-products", verifyUserAuth, roleBaseAccess("admin"), getTopProductsEndpoint);
+// Optional standalone top products endpoint with pagination
+router.get(
+  "/admin/top-products", 
+  verifyUserAuth, 
+  roleBaseAccess("admin"), 
+  adminAnalyticsLimiter,
+  getTopProductsEndpoint
+);
 
 export default router;

@@ -8,28 +8,32 @@ import {
     getAdminProducts, 
     createProductReview, 
     getProductReviews, 
-    deleteReview,
+    deleteReview
+} from '../controller/product-controller.js';
+import {
     getTrendingProducts,
-    getNewArrivals,
+    getNewProducts,
     getFeaturedProducts,
     getBestsellers
-} from '../controller/product-controller.js';
+} from '../controller/public-controller.js';
 import { roleBaseAccess, verifyUserAuth } from '../middleware/user-auth.js';
+import { publicProductLimiter } from '../middleware/rateLimiter.js';
 import upload from '../middleware/multer.js';
 
 const router = express.Router();
 
-// Public routes - Product discovery
-router.route("/products").get(getAllProducts);
+// Public routes - Product discovery (with rate limiting)
+router.route("/products").get(publicProductLimiter, getAllProducts);
 
 // Analytics-based product routes (place before /product/:id to avoid route conflicts)
-router.route('/products/trending').get(getTrendingProducts);
-router.route('/products/new-arrivals').get(getNewArrivals);
-router.route('/products/featured').get(getFeaturedProducts);
-router.route('/products/bestsellers').get(getBestsellers);
+// These now use the advanced public-controller with caching, pagination, and filtering
+router.route('/products/trending').get(publicProductLimiter, getTrendingProducts);
+router.route('/products/new-arrivals').get(publicProductLimiter, getNewProducts);
+router.route('/products/featured').get(publicProductLimiter, getFeaturedProducts);
+router.route('/products/bestsellers').get(publicProductLimiter, getBestsellers);
 
 // Single product details
-router.route('/product/:id').get(getProductDetails);
+router.route('/product/:id').get(publicProductLimiter, getProductDetails);
 
 // Reviews routes
 router.route('/review').put(verifyUserAuth, createProductReview);

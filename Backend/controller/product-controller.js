@@ -11,7 +11,11 @@ const invalidateProductCaches = async () => {
     try {
         await Promise.all([
             deleteCachePattern('admin_stats*'),
-            deleteCachePattern('analytics_*')
+            deleteCachePattern('analytics_*'),
+            deleteCachePattern('trending_products*'),
+            deleteCachePattern('new_products*'),
+            deleteCachePattern('featured_products*'),
+            deleteCachePattern('bestsellers*')
         ]);
     } catch (error) {
         console.error('Cache invalidation error:', error);
@@ -30,7 +34,7 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
                     public_id: result.public_id,
                     url: result.secure_url,
                     alt: req.body.name || 'Product image',
-                    isPrimary: imageLinks.length === 0 // First image is primary
+                    isPrimary: imageLinks.length === 0
                 });
             } catch (uploadError) {
                 return next(new HandleError('Failed to upload image to Cloudinary', 500));
@@ -42,10 +46,8 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
         return next(new HandleError('Please upload at least one product image', 400));
     }
 
-    // Map images to new schema field name
     req.body.images = imageLinks;
 
-    // Handle pricing structure (support both old and new format)
     if (req.body.price && !req.body.pricing) {
         req.body.pricing = {
             regular: req.body.price,
@@ -56,7 +58,6 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
         }
     }
 
-    // Handle inventory (support both old and new format)
     if (req.body.stock !== undefined && !req.body.inventory) {
         req.body.inventory = {
             stock: req.body.stock,
@@ -64,21 +65,18 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
         };
     }
 
-    // Set SKU if provided
     if (req.body.sku && req.body.inventory) {
         req.body.inventory.sku = req.body.sku;
     }
 
     req.body.user = req.user.id;
 
-    // Mark as new arrival by default
     if (req.body.isNewArrival === undefined) {
         req.body.isNewArrival = true;
     }
 
     const product = await Product.create(req.body);
 
-    // Invalidate caches
     await invalidateProductCaches();
 
     res.status(201).json({
@@ -175,7 +173,6 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
 
     req.body.images = imageLinks;
 
-    // Handle pricing updates
     if (req.body.price) {
         req.body.pricing = req.body.pricing || {};
         req.body.pricing.regular = req.body.price;
@@ -184,13 +181,11 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
         }
     }
 
-    // Handle inventory updates
     if (req.body.stock !== undefined) {
         req.body.inventory = req.body.inventory || {};
         req.body.inventory.stock = req.body.stock;
     }
 
-    // Track who modified
     req.body.lastModifiedBy = req.user.id;
 
     product = await Product.findByIdAndUpdate(req.params.id, req.body, {
@@ -199,7 +194,6 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
         useFindAndModify: false,
     });
 
-    // Invalidate caches (stock changes affect analytics)
     await invalidateProductCaches();
 
     res.status(200).json({
@@ -228,7 +222,6 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
 
     await Product.findByIdAndDelete(req.params.id);
 
-    // Invalidate caches
     await invalidateProductCaches();
 
     res.status(200).json({
@@ -248,7 +241,6 @@ export const getProductDetails = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Product not found", 404))
     }
 
-    // Track product view (async, don't wait)
     product.incrementView().catch(err => 
         console.warn('Failed to track view:', err)
     );
@@ -267,7 +259,7 @@ export const createProductReview = handleAsyncError(async(req, res, next) => {
         name: req.user.name,
         rating: Number(rating),
         comment,
-        verified: false // TODO: Check if user purchased this product
+        verified: false
     } 
 
     const product = await Product.findById(productID);
@@ -364,54 +356,6 @@ export const getAdminProducts = handleAsyncError(async(req, res, next) => {
     const products = await Product.find();
     res.status(200).json({
         success: true,
-        products
-    })
-});
-
-// NEW: Get trending products (based on analytics)
-export const getTrendingProducts = handleAsyncError(async(req, res, next) => {
-    const limit = Number(req.query.limit) || 10;
-    const products = await Product.getTrendingProducts(limit);
-    
-    res.status(200).json({
-        success: true,
-        count: products.length,
-        products
-    })
-});
-
-// NEW: Get new arrivals
-export const getNewArrivals = handleAsyncError(async(req, res, next) => {
-    const limit = Number(req.query.limit) || 10;
-    const products = await Product.getNewArrivals(limit);
-    
-    res.status(200).json({
-        success: true,
-        count: products.length,
-        products
-    })
-});
-
-// NEW: Get featured products
-export const getFeaturedProducts = handleAsyncError(async(req, res, next) => {
-    const limit = Number(req.query.limit) || 10;
-    const products = await Product.getFeaturedProducts(limit);
-    
-    res.status(200).json({
-        success: true,
-        count: products.length,
-        products
-    })
-});
-
-// NEW: Get bestsellers
-export const getBestsellers = handleAsyncError(async(req, res, next) => {
-    const limit = Number(req.query.limit) || 10;
-    const products = await Product.getBestsellers(limit);
-    
-    res.status(200).json({
-        success: true,
-        count: products.length,
         products
     })
 });
