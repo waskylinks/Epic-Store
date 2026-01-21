@@ -325,14 +325,14 @@ const adminSlice = createSlice({
         currentUser: null, 
         orders: [],  
         currentOrder: null,    
-        reviews: [],     
+        reviews: [],
+        refunds: [], 
+        refundStats: null, 
         success: false,
         loading: false,
         analyticsLoading: false,
         error: null
     },
-    refunds: [],
-    refundStats: null,
     reducers: {
         removeErrors: (state) => {
             state.error = null;
