@@ -53,7 +53,8 @@ export const requestRefundSchema = Joi.object({
 });
 
 /**
- * Validation schema for admin refund review (approve/reject)
+ * ✅ FIXED: Validation schema for admin refund review (approve/reject)
+ * The issue: adminNote was being treated as required for 'approve' when empty string was sent
  */
 export const reviewRefundSchema = Joi.object({
   action: Joi.string()
@@ -66,13 +67,15 @@ export const reviewRefundSchema = Joi.object({
 
   adminNote: Joi.string()
     .max(500)
+    .allow('', null) // ✅ FIX: Allow empty string and null
     .when('action', {
       is: 'reject',
-      then: Joi.required(),
-      otherwise: Joi.optional()
+      then: Joi.string().min(1).required(), // ✅ FIX: Require at least 1 character when rejecting
+      otherwise: Joi.string().allow('', null).optional() // ✅ FIX: Optional when approving
     })
     .messages({
       'string.max': 'Admin note cannot exceed 500 characters',
+      'string.min': 'Admin note is required when rejecting a refund',
       'any.required': 'Admin note is required when rejecting a refund'
     })
 });
@@ -90,6 +93,7 @@ export const processRefundSchema = Joi.object({
 
   merchantNote: Joi.string()
     .max(500)
+    .allow('', null) // ✅ Allow empty string
     .optional()
     .messages({
       'string.max': 'Merchant note cannot exceed 500 characters'
@@ -97,14 +101,14 @@ export const processRefundSchema = Joi.object({
 });
 
 /**
- * ✅ FIX: Validation schema for refund status query
+ * Validation schema for refund status query
  * Allow empty string for "All Refunds" filter
  */
 export const refundStatusQuerySchema = Joi.object({
   status: Joi.string()
-    .valid('requested', 'approved', 'rejected', 'processing', 'completed', 'failed', '') // ✅ Added empty string
+    .valid('requested', 'approved', 'rejected', 'processing', 'completed', 'failed', '')
     .optional()
-    .allow('') // ✅ Explicitly allow empty string
+    .allow('')
     .messages({
       'any.only': 'Invalid status filter'
     }),

@@ -160,7 +160,7 @@ orderSchema.index({ orderStatus: 1, createdAt: -1 });
 orderSchema.index({ "paymentInfo.status": 1 });
 orderSchema.index({ "paymentInfo.method": 1 });
 orderSchema.index({ "refundInfo.status": 1 });
-orderSchema.index({ "paymentInfo.reference": 1 });
+
 
 // Virtuals
 orderSchema.virtual("isRefundable").get(function() {
