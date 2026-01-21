@@ -1,3 +1,5 @@
+import { ORDER_STATUSES } from "./analytics.constants.js";
+
 export const productStatsPipeline = [
   {
     $group: {
@@ -26,7 +28,7 @@ export const orderStatsPipeline = [
       revenue: {
         $sum: {
           $cond: [
-            { $ne: ["$orderStatus", "cancelled"] },
+            { $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] },
             "$totalPrice",
             0
           ]
