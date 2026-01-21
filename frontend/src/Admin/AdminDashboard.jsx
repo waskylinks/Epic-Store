@@ -205,6 +205,13 @@ function AdminDashboard() {
                 
                 <div className="timeframe-selector">
                     <button 
+                        className={timeframe === 'day' ? 'active' : ''} 
+                        onClick={() => setTimeframe('day')}
+                    >
+                        Day
+                    </button>
+                    
+                    <button 
                         className={timeframe === 'week' ? 'active' : ''} 
                         onClick={() => setTimeframe('week')}
                     >
