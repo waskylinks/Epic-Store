@@ -25,12 +25,10 @@ const formatRateLimitMessage = (customMessage) => ({
 let redisStoreCache = {};
 
 const getRedisStore = (prefix) => {
-  // Return cached store if exists
   if (redisStoreCache[prefix]) {
     return redisStoreCache[prefix];
   }
 
-  // Create new store if Redis is ready
   if (redisClient.isOpen) {
     const store = new RedisStore({
       prefix,
@@ -40,14 +38,11 @@ const getRedisStore = (prefix) => {
     return store;
   }
 
-  // Return undefined to use memory store
   return undefined;
 };
 
-// Middleware to upgrade to Redis store once available
 const upgradeToRedisStore = (limiter, prefix) => {
   return (req, res, next) => {
-    // If using memory store and Redis is now ready, try to upgrade
     if (!limiter.store && redisClient.isOpen && !redisStoreCache[prefix]) {
       try {
         limiter.store = getRedisStore(prefix);
@@ -152,24 +147,18 @@ const emailLoginLimiterBase = rateLimit({
 });
 export const emailLoginLimiter = upgradeToRedisStore(emailLoginLimiterBase, "ratelimit:email-login:");
 
-/* ================= WEBHOOK RATE LIMITERS (NEW) ================= */
+/* ================= WEBHOOK RATE LIMITERS ================= */
 
-/**
- * Webhook rate limiter - prevents abuse of webhook endpoints
- * 100 requests per minute per gateway
- * This is lenient enough for legitimate webhook traffic but strict enough to prevent DoS
- */
 const webhookLimiterBase = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
+  windowMs: 1 * 60 * 1000,
   max: 100,
   store: getRedisStore("ratelimit:webhook:"),
   keyGenerator: (req) => {
-    // Rate limit per gateway provider (paystack, flutterwave, stripe)
     const path = req.path || req.originalUrl || '';
     if (path.includes('paystack')) return 'webhook:paystack';
     if (path.includes('flutterwave')) return 'webhook:flutterwave';
     if (path.includes('stripe')) return 'webhook:stripe';
-    return extractIP(req); // Fallback to IP
+    return extractIP(req);
   },
   message: {
     success: false,
@@ -177,24 +166,16 @@ const webhookLimiterBase = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  // Don't skip successful requests - we want to count all webhook attempts
   skipSuccessfulRequests: false,
-  // Don't skip failed requests either
   skipFailedRequests: false
 });
 export const webhookLimiter = upgradeToRedisStore(webhookLimiterBase, "ratelimit:webhook:");
 
-/**
- * Payment initialization rate limiter
- * Prevents rapid payment initialization abuse
- * 10 payment initializations per 5 minutes per user
- */
 const paymentInitLimiterBase = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
+  windowMs: 5 * 60 * 1000,
   max: 10,
   store: getRedisStore("ratelimit:payment-init:"),
   keyGenerator: (req) => {
-    // Rate limit per authenticated user
     const userId = req.user?._id?.toString();
     return userId || extractIP(req);
   },
@@ -207,18 +188,11 @@ const paymentInitLimiterBase = rateLimit({
 });
 export const paymentInitLimiter = upgradeToRedisStore(paymentInitLimiterBase, "ratelimit:payment-init:");
 
-/**
- * Payment verification rate limiter
- * Prevents payment verification spam
- * 20 verification attempts per 5 minutes per user
- * (Higher than initialization because users might retry on network errors)
- */
 const paymentVerifyLimiterBase = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
+  windowMs: 5 * 60 * 1000,
   max: 20,
   store: getRedisStore("ratelimit:payment-verify:"),
   keyGenerator: (req) => {
-    // Rate limit per authenticated user
     const userId = req.user?._id?.toString();
     return userId || extractIP(req);
   },
@@ -230,3 +204,52 @@ const paymentVerifyLimiterBase = rateLimit({
   skipSuccessfulRequests: false
 });
 export const paymentVerifyLimiter = upgradeToRedisStore(paymentVerifyLimiterBase, "ratelimit:payment-verify:");
+
+/* ================= PUBLIC PRODUCT API RATE LIMITERS (NEW) ================= */
+
+/**
+ * Public product browsing limiter
+ * For trending, new arrivals, featured, bestsellers endpoints
+ * 150 requests / 15 min (more lenient for browsing)
+ */
+const publicProductLimiterBase = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 150,
+  store: getRedisStore("ratelimit:public-products:"),
+  message: formatRateLimitMessage(
+    "Too many product browsing requests, please try again after 15 minutes"
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: 'Too many requests. Please try again in a few minutes.',
+      retryAfter: Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000)
+    });
+  }
+});
+export const publicProductLimiter = upgradeToRedisStore(publicProductLimiterBase, "ratelimit:public-products:");
+
+/**
+ * Admin analytics rate limiter
+ * Stricter limits for admin analytics endpoints
+ * 50 requests / 15 min per admin user
+ */
+const adminAnalyticsLimiterBase = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 50,
+  store: getRedisStore("ratelimit:admin-analytics:"),
+  keyGenerator: (req) => {
+    const userId = req.user?._id?.toString();
+    return userId ? `admin:${userId}` : extractIP(req);
+  },
+  message: formatRateLimitMessage(
+    "Too many analytics requests, please try again after 15 minutes"
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false
+});
+export const adminAnalyticsLimiter = upgradeToRedisStore(adminAnalyticsLimiterBase, "ratelimit:admin-analytics:");
