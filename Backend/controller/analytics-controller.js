@@ -3,6 +3,7 @@ import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { calculateTrend } from "../utils/calculateTrend.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { getAdminStatsService } from "../Services/analytics-service.js";
+import { ORDER_STATUSES } from "../constants/analytics.constants.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
 import User from "../models/userModel.js";
@@ -53,7 +54,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
           orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0]
+              $cond: [{ $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] }, "$totalPrice", 0]
             }
           }
         }
@@ -71,7 +72,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
           orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0]
+              $cond: [{ $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] }, "$totalPrice", 0]
             }
           }
         }
@@ -105,13 +106,12 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
   ]);
 
   const orderStatusBreakdown = {
-    processing: orderStatusAgg.find(o => o._id === "Processing")?.count || 0,
-    shipped: orderStatusAgg.find(o => o._id === "Shipped")?.count || 0,
-    delivered: orderStatusAgg.find(o => o._id === "Delivered")?.count || 0,
-    cancelled: orderStatusAgg.find(o => o._id === "Cancelled")?.count || 0
+    processing: orderStatusAgg.find(o => o._id === ORDER_STATUSES.PROCESSING)?.count || 0,
+    shipped: orderStatusAgg.find(o => o._id === ORDER_STATUSES.SHIPPED)?.count || 0,
+    delivered: orderStatusAgg.find(o => o._id === ORDER_STATUSES.DELIVERED)?.count || 0,
+    cancelled: orderStatusAgg.find(o => o._id === ORDER_STATUSES.CANCELLED)?.count || 0
   };
 
-  // Use the reusable getTopProducts function
   const topProducts = await getTopProducts(5, 0);
 
   const recentOrders = await Order.find()
@@ -146,8 +146,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
 /* ================= TOP PRODUCTS (REUSABLE WITH PAGINATION) ================= */
 export const getTopProducts = async (limit = 5, skip = 0) => {
   return await Order.aggregate([
-    // Filter out cancelled orders
-    { $match: { orderStatus: { $ne: "Cancelled" } } },
+    { $match: { orderStatus: { $ne: ORDER_STATUSES.CANCELLED } } },
     { $unwind: "$orderItems" },
     { $match: { "orderItems.product": { $exists: true } } },
     {
@@ -177,9 +176,8 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res, next) =>
 
   const topProducts = await getTopProducts(limit, skip);
 
-  // Get total count for pagination
   const totalCount = await Order.aggregate([
-    { $match: { orderStatus: { $ne: "Cancelled" } } },
+    { $match: { orderStatus: { $ne: ORDER_STATUSES.CANCELLED } } },
     { $unwind: "$orderItems" },
     { $group: { _id: "$orderItems.product" } },
     { $count: "total" }
