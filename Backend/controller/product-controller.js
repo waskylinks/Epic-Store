@@ -24,12 +24,38 @@ const invalidateProductCaches = async () => {
 
 // creating products 
 export const createProducts = handleAsyncError(async (req, res, next) => {
+    // Debug: Check environment variables
+    console.log('🔍 Cloudinary Config Check:', {
+        cloudName: process.env.CLOUDINARY_CLOUD_NAME ? `Set (${process.env.CLOUDINARY_CLOUD_NAME.substring(0, 5)}...)` : '❌ MISSING',
+        apiKey: process.env.CLOUDINARY_API_KEY ? 'Set ✅' : '❌ MISSING',
+        apiSecret: process.env.CLOUDINARY_API_SECRET ? 'Set ✅' : '❌ MISSING'
+    });
+
+    // Debug: Check files
+    console.log('📁 Files received:', {
+        filesExist: !!req.files,
+        fileCount: req.files?.length || 0,
+        fileDetails: req.files?.map(f => ({
+            fieldname: f.fieldname,
+            originalname: f.originalname,
+            mimetype: f.mimetype,
+            size: f.size,
+            hasBuffer: !!f.buffer
+        }))
+    });
+
     const imageLinks = [];
 
     if (req.files && req.files.length > 0) {
         for (const file of req.files) {
             try {
+                console.log(`⬆️ Uploading image: ${file.originalname}`);
                 const result = await uploadToCloudinary(file.buffer);
+                console.log('✅ Upload successful:', {
+                    public_id: result.public_id,
+                    url: result.secure_url
+                });
+                
                 imageLinks.push({
                     public_id: result.public_id,
                     url: result.secure_url,
@@ -37,7 +63,19 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
                     isPrimary: imageLinks.length === 0
                 });
             } catch (uploadError) {
-                return next(new HandleError('Failed to upload image to Cloudinary', 500));
+                // Detailed error logging
+                console.error('❌ Cloudinary Upload Failed:', {
+                    fileName: file.originalname,
+                    errorName: uploadError.name,
+                    errorMessage: uploadError.message,
+                    httpCode: uploadError.http_code,
+                    stack: uploadError.stack
+                });
+                
+                return next(new HandleError(
+                    `Failed to upload image "${file.originalname}": ${uploadError.message}`, 
+                    500
+                ));
             }
         }
     }
@@ -162,7 +200,14 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
                     alt: req.body.name || product.name || 'Product image'
                 });
             } catch (uploadError) {
-                return next(new HandleError('Failed to upload new image to Cloudinary', 500));
+                console.error('❌ Update Upload Failed:', {
+                    fileName: file.originalname,
+                    error: uploadError.message
+                });
+                return next(new HandleError(
+                    `Failed to upload new image: ${uploadError.message}`, 
+                    500
+                ));
             }
         }
     }
