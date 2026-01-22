@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
-import '../AdminStyles/ProductList.css';
+import '../AdminStyles/ProductsList.css';
 import { Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { fetchAdminProducts, deleteProduct, removeErrors, removeSuccess } from '../features/admin/adminSlice';

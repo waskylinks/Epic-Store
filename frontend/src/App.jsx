@@ -62,8 +62,8 @@ function App() {
         <Route path='/login' element={<Login />} />
         <Route path='/verify-email' element={<VerifyEmail />} />
         <Route path="/oauth/callback" element={<OAuthCallback />} />
-        <Route path="/about" element={<AboutPage />} />
-        <Route path="/contact" element={<ContactPage />} />
+        <Route path="/about-us" element={<AboutPage />} />
+        <Route path="/contact-us" element={<ContactPage />} />
         
         {/* Password Reset Routes */}
         <Route path='/password/forgot' element={<ForgotPassword />} />
