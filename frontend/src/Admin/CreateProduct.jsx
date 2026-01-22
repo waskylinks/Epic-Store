@@ -12,7 +12,7 @@ import {
   FiEye, FiAlertCircle, FiCheck 
 } from 'react-icons/fi';
 
-function EnterpriseCreateProduct() {
+function CreateProduct() {
   const { success, loading, error } = useSelector((state) => state.admin);
   const dispatch = useDispatch();
 
@@ -1087,4 +1087,4 @@ function EnterpriseCreateProduct() {
   );
 }
 
-export default EnterpriseCreateProduct;
+export default CreateProduct;
