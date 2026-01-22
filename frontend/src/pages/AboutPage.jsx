@@ -2,7 +2,7 @@ import React from 'react';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
-import '../styles/AboutPage.css';
+import '../pageStyles/AboutPage.css';
 import { 
     FiShoppingBag, FiTrendingUp, FiAward, FiUsers, 
     FiGlobe, FiShield, FiHeart, FiTarget, 
