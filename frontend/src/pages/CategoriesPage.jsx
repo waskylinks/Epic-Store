@@ -1,19 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import '../pageStyles/CategoriesPage.css';
 import { useNavigate } from 'react-router-dom';
+import { useDispatch, useSelector } from 'react-redux';
+import { getProduct } from '../features/products/productSlice';
 import { 
     FiMonitor, FiShoppingBag, FiHome, FiActivity,
     FiHeart, FiBook, FiCoffee, FiChevronRight,
-    FiSearch, FiTrendingUp, FiPackage, FiStar
+    FiSearch, FiFilter, FiGrid, FiTrendingUp,
+    FiBarChart2, FiPackage, FiLayers
 } from 'react-icons/fi';
 
 function CategoriesPage() {
     const navigate = useNavigate();
+    const dispatch = useDispatch();
+    const { products } = useSelector(state => state.product);
+    
     const [searchQuery, setSearchQuery] = useState('');
-    const [hoveredCategory, setHoveredCategory] = useState(null);
+    const [viewMode, setViewMode] = useState('grid');
+    const [sortBy, setSortBy] = useState('name');
+    const [categoryStats, setCategoryStats] = useState({});
 
     const categories = [
         {
@@ -21,86 +29,91 @@ function CategoriesPage() {
             name: 'Electronics',
             slug: 'Electronics',
             icon: <FiMonitor />,
-            description: 'Cutting-edge technology and gadgets for your digital lifestyle',
-            productCount: '1,234',
-            gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-            subcategories: ['Smartphones', 'Laptops', 'Tablets', 'Cameras', 'Audio', 'Wearables'],
-            featured: true
+            description: 'Latest technology, gadgets, and electronic devices',
+            color: '#667eea',
+            tags: ['Smartphones', 'Laptops', 'Tablets', 'Cameras', 'Audio', 'Wearables']
         },
         {
             id: 'clothing',
             name: 'Clothing & Apparel',
             slug: 'Clothing & Apparel',
             icon: <FiShoppingBag />,
-            description: 'Fashion-forward clothing and accessories for every occasion',
-            productCount: '2,567',
-            gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-            subcategories: ['Men\'s Wear', 'Women\'s Wear', 'Kids Fashion', 'Shoes', 'Accessories'],
-            featured: true
+            description: 'Fashion, accessories, and apparel for all ages',
+            color: '#f093fb',
+            tags: ['Men', 'Women', 'Kids', 'Shoes', 'Accessories', 'Sportswear']
         },
         {
             id: 'home',
             name: 'Home & Living',
             slug: 'Home & Living',
             icon: <FiHome />,
-            description: 'Transform your space with our curated home essentials',
-            productCount: '892',
-            gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
-            subcategories: ['Furniture', 'Decor', 'Kitchen', 'Bedding', 'Storage'],
-            featured: true
+            description: 'Furniture, decor, and home essentials',
+            color: '#4facfe',
+            tags: ['Furniture', 'Decor', 'Kitchen', 'Bedding', 'Storage', 'Lighting']
         },
         {
             id: 'sports',
             name: 'Sports & Outdoors',
             slug: 'Sports & Outdoors',
             icon: <FiActivity />,
-            description: 'Gear up for adventure and stay active with premium equipment',
-            productCount: '1,456',
-            gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
-            subcategories: ['Fitness', 'Outdoor Gear', 'Sports Equipment', 'Activewear'],
-            featured: false
+            description: 'Sports equipment, outdoor gear, and fitness products',
+            color: '#43e97b',
+            tags: ['Fitness', 'Camping', 'Sports', 'Activewear', 'Equipment']
         },
         {
             id: 'beauty',
             name: 'Beauty & Personal Care',
             slug: 'Beauty & Personal Care',
             icon: <FiHeart />,
-            description: 'Premium beauty products and personal care essentials',
-            productCount: '1,789',
-            gradient: 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)',
-            subcategories: ['Skincare', 'Makeup', 'Haircare', 'Fragrances', 'Tools'],
-            featured: false
+            description: 'Skincare, cosmetics, and personal care products',
+            color: '#fa709a',
+            tags: ['Skincare', 'Makeup', 'Haircare', 'Fragrances', 'Tools', 'Bath']
         },
         {
             id: 'books',
             name: 'Books & Media',
             slug: 'Books & Media',
             icon: <FiBook />,
-            description: 'Explore worlds of knowledge and entertainment',
-            productCount: '3,421',
-            gradient: 'linear-gradient(135deg, #fbc2eb 0%, #a6c1ee 100%)',
-            subcategories: ['Books', 'E-Books', 'Audio Books', 'Movies', 'Music'],
-            featured: false
+            description: 'Books, e-books, movies, music, and educational content',
+            color: '#fbc2eb',
+            tags: ['Books', 'E-Books', 'Audio', 'Movies', 'Music', 'Education']
         },
         {
             id: 'food',
             name: 'Food & Beverages',
             slug: 'Food & Beverages',
             icon: <FiCoffee />,
-            description: 'Quality ingredients and gourmet treats delivered fresh',
-            productCount: '567',
-            gradient: 'linear-gradient(135deg, #fddb92 0%, #d1fdff 100%)',
-            subcategories: ['Snacks', 'Beverages', 'Organic', 'Specialty Foods'],
-            featured: false
+            description: 'Gourmet foods, beverages, and specialty ingredients',
+            color: '#fddb92',
+            tags: ['Snacks', 'Beverages', 'Organic', 'Specialty', 'Health Foods']
         }
     ];
 
-    const stats = [
-        { icon: <FiPackage />, value: '10,000+', label: 'Products' },
-        { icon: <FiTrendingUp />, value: '7', label: 'Categories' },
-        { icon: <FiStar />, value: '4.8', label: 'Avg Rating' },
-        { icon: <FiShoppingBag />, value: '50K+', label: 'Happy Customers' }
-    ];
+    useEffect(() => {
+        dispatch(getProduct({ keyword: '', page: 1, category: '' }));
+    }, [dispatch]);
+
+    useEffect(() => {
+        if (products && products.length > 0) {
+            const stats = {};
+            categories.forEach(cat => {
+                const categoryProducts = products.filter(p => p.category === cat.slug);
+                const totalProducts = categoryProducts.length;
+                const avgRating = totalProducts > 0 
+                    ? (categoryProducts.reduce((sum, p) => sum + (p.ratings || 0), 0) / totalProducts).toFixed(1)
+                    : 0;
+                const onSale = categoryProducts.filter(p => p.pricing?.sale || p.isOnSale).length;
+                
+                stats[cat.slug] = {
+                    total: totalProducts,
+                    avgRating,
+                    onSale,
+                    newArrivals: categoryProducts.filter(p => p.isNewArrival).length
+                };
+            });
+            setCategoryStats(stats);
+        }
+    }, [products]);
 
     const handleCategoryClick = (category) => {
         navigate(`/products?category=${encodeURIComponent(category.slug)}`);
@@ -108,177 +121,250 @@ function CategoriesPage() {
 
     const filteredCategories = categories.filter(cat =>
         cat.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        cat.description.toLowerCase().includes(searchQuery.toLowerCase())
+        cat.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        cat.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()))
     );
 
-    const featuredCategories = filteredCategories.filter(cat => cat.featured);
-    const regularCategories = filteredCategories.filter(cat => !cat.featured);
+    const sortedCategories = [...filteredCategories].sort((a, b) => {
+        const statsA = categoryStats[a.slug] || { total: 0 };
+        const statsB = categoryStats[b.slug] || { total: 0 };
+        
+        switch (sortBy) {
+            case 'name':
+                return a.name.localeCompare(b.name);
+            case 'products':
+                return statsB.total - statsA.total;
+            case 'rating':
+                return statsB.avgRating - statsA.avgRating;
+            default:
+                return 0;
+        }
+    });
+
+    const totalProducts = Object.values(categoryStats).reduce((sum, stat) => sum + stat.total, 0);
+    const totalOnSale = Object.values(categoryStats).reduce((sum, stat) => sum + stat.onSale, 0);
+    const avgRatingAll = Object.values(categoryStats).length > 0
+        ? (Object.values(categoryStats).reduce((sum, stat) => sum + parseFloat(stat.avgRating || 0), 0) / Object.values(categoryStats).length).toFixed(1)
+        : 0;
 
     return (
         <>
-            <PageTitle title="Shop by Category - Epic Store" />
+            <PageTitle title="Product Categories - Epic Store" />
             <Navbar />
 
             <div className="cat-page">
-                {/* Hero Section */}
-                <section className="cat-hero">
-                    <div className="cat-hero-content">
-                        <h1 className="cat-hero-title">Explore Our Categories</h1>
-                        <p className="cat-hero-subtitle">
-                            Discover thousands of products across all your favorite categories
+                {/* Breadcrumb & Header */}
+                <div className="cat-breadcrumb">
+                    <button onClick={() => navigate('/')}>Home</button>
+                    <FiChevronRight />
+                    <span>Categories</span>
+                </div>
+
+                <div className="cat-header-section">
+                    <div className="cat-header-content">
+                        <h1 className="cat-main-title">Product Categories</h1>
+                        <p className="cat-main-subtitle">
+                            Browse our complete catalog organized by category
                         </p>
-                        
-                        {/* Search Bar */}
-                        <div className="cat-search-bar">
-                            <FiSearch className="cat-search-icon" />
+                    </div>
+
+                    {/* Quick Stats */}
+                    <div className="cat-quick-stats">
+                        <div className="cat-quick-stat">
+                            <FiPackage className="cat-quick-icon" />
+                            <div>
+                                <h3>{totalProducts}</h3>
+                                <p>Total Products</p>
+                            </div>
+                        </div>
+                        <div className="cat-quick-stat">
+                            <FiLayers className="cat-quick-icon" />
+                            <div>
+                                <h3>{categories.length}</h3>
+                                <p>Categories</p>
+                            </div>
+                        </div>
+                        <div className="cat-quick-stat">
+                            <FiTrendingUp className="cat-quick-icon" />
+                            <div>
+                                <h3>{totalOnSale}</h3>
+                                <p>On Sale</p>
+                            </div>
+                        </div>
+                        <div className="cat-quick-stat">
+                            <FiBarChart2 className="cat-quick-icon" />
+                            <div>
+                                <h3>{avgRatingAll}</h3>
+                                <p>Avg Rating</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="cat-container">
+                    {/* Toolbar */}
+                    <div className="cat-toolbar">
+                        <div className="cat-search-wrapper">
+                            <FiSearch className="cat-toolbar-search-icon" />
                             <input
                                 type="text"
-                                className="cat-search-input"
-                                placeholder="Search categories..."
+                                className="cat-toolbar-search"
+                                placeholder="Search categories, tags..."
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                             />
                         </div>
+
+                        <div className="cat-toolbar-right">
+                            <select
+                                className="cat-sort-select"
+                                value={sortBy}
+                                onChange={(e) => setSortBy(e.target.value)}
+                            >
+                                <option value="name">Sort by Name</option>
+                                <option value="products">Sort by Products</option>
+                                <option value="rating">Sort by Rating</option>
+                            </select>
+
+                            <div className="cat-view-toggle">
+                                <button
+                                    className={`cat-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
+                                    onClick={() => setViewMode('grid')}
+                                >
+                                    <FiGrid />
+                                </button>
+                                <button
+                                    className={`cat-view-btn ${viewMode === 'list' ? 'active' : ''}`}
+                                    onClick={() => setViewMode('list')}
+                                >
+                                    <FiFilter />
+                                </button>
+                            </div>
+                        </div>
                     </div>
-                </section>
 
-                {/* Stats Section */}
-                <section className="cat-stats">
-                    <div className="cat-stats-grid">
-                        {stats.map((stat, index) => (
-                            <div key={index} className="cat-stat-card">
-                                <div className="cat-stat-icon">{stat.icon}</div>
-                                <h3 className="cat-stat-value">{stat.value}</h3>
-                                <p className="cat-stat-label">{stat.label}</p>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                <div className="cat-container">
-                    {/* Featured Categories */}
-                    {featuredCategories.length > 0 && (
-                        <section className="cat-section">
-                            <div className="cat-section-header">
-                                <h2 className="cat-section-title">Featured Categories</h2>
-                                <p className="cat-section-subtitle">Our most popular shopping destinations</p>
-                            </div>
-
-                            <div className="cat-featured-grid">
-                                {featuredCategories.map((category) => (
-                                    <div
-                                        key={category.id}
-                                        className="cat-featured-card"
-                                        onMouseEnter={() => setHoveredCategory(category.id)}
-                                        onMouseLeave={() => setHoveredCategory(null)}
-                                        onClick={() => handleCategoryClick(category)}
-                                    >
+                    {/* Categories Display */}
+                    <div className={`cat-display ${viewMode}`}>
+                        {sortedCategories.map((category) => {
+                            const stats = categoryStats[category.slug] || { total: 0, avgRating: 0, onSale: 0, newArrivals: 0 };
+                            
+                            return (
+                                <div
+                                    key={category.id}
+                                    className="cat-item"
+                                    onClick={() => handleCategoryClick(category)}
+                                >
+                                    <div className="cat-item-header">
                                         <div 
-                                            className="cat-featured-bg"
-                                            style={{ background: category.gradient }}
-                                        >
-                                            <div className="cat-featured-icon">
-                                                {category.icon}
-                                            </div>
-                                        </div>
-                                        <div className="cat-featured-content">
-                                            <h3 className="cat-featured-name">{category.name}</h3>
-                                            <p className="cat-featured-desc">{category.description}</p>
-                                            <div className="cat-featured-footer">
-                                                <span className="cat-product-count">
-                                                    {category.productCount} products
-                                                </span>
-                                                <button className="cat-explore-btn">
-                                                    Explore <FiChevronRight />
-                                                </button>
-                                            </div>
-                                        </div>
-                                        
-                                        {/* Subcategories Overlay */}
-                                        <div className={`cat-subcategories ${hoveredCategory === category.id ? 'show' : ''}`}>
-                                            <h4>Browse by:</h4>
-                                            <ul>
-                                                {category.subcategories.map((sub, idx) => (
-                                                    <li key={idx}>
-                                                        <FiChevronRight /> {sub}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </section>
-                    )}
-
-                    {/* All Categories */}
-                    {regularCategories.length > 0 && (
-                        <section className="cat-section">
-                            <div className="cat-section-header">
-                                <h2 className="cat-section-title">All Categories</h2>
-                                <p className="cat-section-subtitle">Explore our complete catalog</p>
-                            </div>
-
-                            <div className="cat-grid">
-                                {regularCategories.map((category) => (
-                                    <div
-                                        key={category.id}
-                                        className="cat-card"
-                                        onClick={() => handleCategoryClick(category)}
-                                    >
-                                        <div 
-                                            className="cat-card-icon"
-                                            style={{ background: category.gradient }}
+                                            className="cat-item-icon"
+                                            style={{ backgroundColor: category.color }}
                                         >
                                             {category.icon}
                                         </div>
-                                        <h3 className="cat-card-name">{category.name}</h3>
-                                        <p className="cat-card-desc">{category.description}</p>
-                                        <div className="cat-card-footer">
-                                            <span className="cat-card-count">
-                                                {category.productCount} items
-                                            </span>
-                                            <FiChevronRight className="cat-card-arrow" />
+                                        <div className="cat-item-info">
+                                            <h3 className="cat-item-name">{category.name}</h3>
+                                            <p className="cat-item-desc">{category.description}</p>
                                         </div>
                                     </div>
-                                ))}
-                            </div>
-                        </section>
-                    )}
+
+                                    <div className="cat-item-tags">
+                                        {category.tags.slice(0, 6).map((tag, idx) => (
+                                            <span key={idx} className="cat-item-tag">
+                                                {tag}
+                                            </span>
+                                        ))}
+                                    </div>
+
+                                    <div className="cat-item-stats">
+                                        <div className="cat-stat-item">
+                                            <FiPackage />
+                                            <span>{stats.total} Products</span>
+                                        </div>
+                                        {stats.avgRating > 0 && (
+                                            <div className="cat-stat-item">
+                                                <FiBarChart2 />
+                                                <span>{stats.avgRating} Rating</span>
+                                            </div>
+                                        )}
+                                        {stats.onSale > 0 && (
+                                            <div className="cat-stat-item sale">
+                                                <FiTrendingUp />
+                                                <span>{stats.onSale} On Sale</span>
+                                            </div>
+                                        )}
+                                        {stats.newArrivals > 0 && (
+                                            <div className="cat-stat-item new">
+                                                <FiPackage />
+                                                <span>{stats.newArrivals} New</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <button className="cat-item-btn">
+                                        Browse Category <FiChevronRight />
+                                    </button>
+                                </div>
+                            );
+                        })}
+                    </div>
 
                     {/* Empty State */}
-                    {filteredCategories.length === 0 && (
+                    {sortedCategories.length === 0 && (
                         <div className="cat-empty">
                             <FiSearch className="cat-empty-icon" />
                             <h3>No categories found</h3>
                             <p>Try adjusting your search term</p>
+                            <button 
+                                className="cat-empty-btn"
+                                onClick={() => setSearchQuery('')}
+                            >
+                                Clear Search
+                            </button>
                         </div>
                     )}
-                </div>
 
-                {/* CTA Section */}
-                <section className="cat-cta">
-                    <div className="cat-cta-content">
-                        <h2 className="cat-cta-title">Can't Find What You're Looking For?</h2>
-                        <p className="cat-cta-description">
-                            Browse all products or use our search to find exactly what you need
-                        </p>
-                        <div className="cat-cta-buttons">
-                            <button 
-                                className="cat-cta-btn primary"
-                                onClick={() => navigate('/products')}
-                            >
-                                Browse All Products
-                            </button>
-                            <button 
-                                className="cat-cta-btn secondary"
-                                onClick={() => navigate('/contact')}
-                            >
-                                Contact Us
-                            </button>
+                    {/* Category Analytics */}
+                    <div className="cat-analytics">
+                        <h2 className="cat-analytics-title">Category Overview</h2>
+                        <div className="cat-analytics-grid">
+                            {sortedCategories.map((category) => {
+                                const stats = categoryStats[category.slug] || { total: 0 };
+                                const percentage = totalProducts > 0 
+                                    ? ((stats.total / totalProducts) * 100).toFixed(1)
+                                    : 0;
+
+                                return (
+                                    <div key={category.id} className="cat-analytics-item">
+                                        <div className="cat-analytics-header">
+                                            <div 
+                                                className="cat-analytics-icon"
+                                                style={{ backgroundColor: category.color }}
+                                            >
+                                                {category.icon}
+                                            </div>
+                                            <div>
+                                                <h4>{category.name}</h4>
+                                                <p>{stats.total} products</p>
+                                            </div>
+                                        </div>
+                                        <div className="cat-analytics-bar">
+                                            <div 
+                                                className="cat-analytics-fill"
+                                                style={{ 
+                                                    width: `${percentage}%`,
+                                                    backgroundColor: category.color
+                                                }}
+                                            />
+                                        </div>
+                                        <div className="cat-analytics-percentage">
+                                            {percentage}% of catalog
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
-                </section>
+                </div>
             </div>
 
             <Footer />
