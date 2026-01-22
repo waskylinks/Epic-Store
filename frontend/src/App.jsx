@@ -33,6 +33,8 @@ import ReviewList from './Admin/ReviewList';
 import OAuthCallback from './User/OauthCallback';
 import RefundRequest from './Orders/RefundRequest';
 import AdminRefunds from './Admin/AdminRefunds';
+import AboutPage from './pages/AboutPage';
+import ContactPage from './pages/ContactPage';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -60,6 +62,8 @@ function App() {
         <Route path='/login' element={<Login />} />
         <Route path='/verify-email' element={<VerifyEmail />} />
         <Route path="/oauth/callback" element={<OAuthCallback />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/contact" element={<ContactPage />} />
         
         {/* Password Reset Routes */}
         <Route path='/password/forgot' element={<ForgotPassword />} />
