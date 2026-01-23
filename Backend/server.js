@@ -5,7 +5,7 @@ dotenv.config({ path: './.env' });
 import app from './app.js';
 import { connectDB, setupGracefulShutdown, getDBStatus } from './Database/database.js';
 import { initializeRedis, shutdownRedis, default as redis } from './utils/redis.js';
-import { v2 as cloudinary } from 'cloudinary';
+import { configureCloudinary } from './utils/cloudinaryUpload.js'; // ✅ Import centralized config
 
 /* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
@@ -40,21 +40,6 @@ const validateEnvVariables = () => {
     console.log('✅ Environment variables validated');
 };
 
-/* ================= CLOUDINARY CONFIG ================= */
-const configureCloudinary = () => {
-    try {
-        cloudinary.config({
-            cloud_name: process.env.CLOUDINARY_NAME,
-            api_key: process.env.API_KEY,
-            api_secret: process.env.API_SECRET
-        });
-        console.log('✅ Cloudinary configured successfully');
-    } catch (error) {
-        console.error('❌ Cloudinary configuration failed:', error.message);
-        throw error;
-    }
-};
-
 /* ================= UNCUGHT EXCEPTIONS ================= */
 process.on('uncaughtException', (err) => {
     console.error('💥 UNCAUGHT EXCEPTION! Shutting down...');
@@ -72,7 +57,7 @@ const startServer = async () => {
         // 1️⃣ Validate env
         validateEnvVariables();
 
-        // 2️⃣ Configure Cloudinary
+        // 2️⃣ Configure Cloudinary (using centralized config)
         configureCloudinary();
 
         // 3️⃣ Initialize Redis

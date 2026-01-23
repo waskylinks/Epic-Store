@@ -2,8 +2,7 @@ import Product from '../models/product-model.js';
 import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import APIFunctionality from '../utils/apiFunctionality.js';
-import { uploadToCloudinary } from '../utils/cloudinaryUpload.js';
-import { v2 as cloudinary } from 'cloudinary';
+import { uploadToCloudinary, cloudinary, deleteFromCloudinary } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
 // Helper: Invalidate product-related caches
@@ -29,6 +28,16 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
         cloudName: process.env.CLOUDINARY_CLOUD_NAME ? `Set (${process.env.CLOUDINARY_CLOUD_NAME.substring(0, 5)}...)` : '❌ MISSING',
         apiKey: process.env.CLOUDINARY_API_KEY ? 'Set ✅' : '❌ MISSING',
         apiSecret: process.env.CLOUDINARY_API_SECRET ? 'Set ✅' : '❌ MISSING'
+    });
+
+    // Debug: Log raw request body
+    console.log('📝 Raw Request Body:', {
+        name: req.body.name,
+        category: req.body.category,
+        price: req.body.price,
+        stock: req.body.stock,
+        status: req.body.status,
+        bodyKeys: Object.keys(req.body)
     });
 
     // Debug: Check files
@@ -86,6 +95,60 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
 
     req.body.images = imageLinks;
 
+    // Parse JSON strings if they exist
+    if (typeof req.body.specifications === 'string') {
+        try {
+            req.body.specifications = JSON.parse(req.body.specifications);
+        } catch (e) {
+            console.warn('Failed to parse specifications:', e);
+            req.body.specifications = [];
+        }
+    }
+
+    if (typeof req.body.variants === 'string') {
+        try {
+            req.body.variants = JSON.parse(req.body.variants);
+        } catch (e) {
+            console.warn('Failed to parse variants:', e);
+            req.body.variants = [];
+        }
+    }
+
+    if (typeof req.body.dimensions === 'string') {
+        try {
+            req.body.dimensions = JSON.parse(req.body.dimensions);
+        } catch (e) {
+            console.warn('Failed to parse dimensions:', e);
+        }
+    }
+
+    if (typeof req.body.weight === 'string') {
+        try {
+            req.body.weight = JSON.parse(req.body.weight);
+        } catch (e) {
+            console.warn('Failed to parse weight:', e);
+        }
+    }
+
+    if (typeof req.body.seo === 'string') {
+        try {
+            req.body.seo = JSON.parse(req.body.seo);
+        } catch (e) {
+            console.warn('Failed to parse seo:', e);
+        }
+    }
+
+    // Convert string booleans to actual booleans
+    if (typeof req.body.isFeatured === 'string') {
+        req.body.isFeatured = req.body.isFeatured === 'true';
+    }
+    if (typeof req.body.isNewArrival === 'string') {
+        req.body.isNewArrival = req.body.isNewArrival === 'true';
+    }
+    if (typeof req.body.isBestseller === 'string') {
+        req.body.isBestseller = req.body.isBestseller === 'true';
+    }
+
     if (req.body.price && !req.body.pricing) {
         req.body.pricing = {
             regular: req.body.price,
@@ -113,14 +176,51 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
         req.body.isNewArrival = true;
     }
 
-    const product = await Product.create(req.body);
-
-    await invalidateProductCaches();
-
-    res.status(201).json({
-        success: true,
-        product,
+    console.log('📦 Creating product with data:', {
+        name: req.body.name,
+        category: req.body.category,
+        price: req.body.price,
+        stock: req.body.stock,
+        imagesCount: req.body.images?.length,
+        user: req.body.user,
+        description: req.body.description ? 'Set' : 'MISSING'
     });
+
+    try {
+        const product = await Product.create(req.body);
+        console.log('✅ Product created successfully:', product._id);
+
+        await invalidateProductCaches();
+
+        res.status(201).json({
+            success: true,
+            product,
+        });
+    } catch (dbError) {
+        console.error('❌ Database Error:', {
+            name: dbError.name,
+            message: dbError.message,
+            errors: dbError.errors,
+            code: dbError.code
+        });
+        
+        // Better error messages for validation errors
+        if (dbError.name === 'ValidationError') {
+            const missingFields = Object.keys(dbError.errors).map(field => {
+                return `${field}: ${dbError.errors[field].message}`;
+            }).join(', ');
+            
+            return next(new HandleError(
+                `Validation failed: ${missingFields}`,
+                400
+            ));
+        }
+        
+        return next(new HandleError(
+            `Failed to create product: ${dbError.message}`,
+            500
+        ));
+    }
 });
 
 //get all products
@@ -165,59 +265,137 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Product not found", 404));
     }
 
-    let imageLinks = [...product.images];
+    console.log(`📝 Updating product: ${product.name} (${product._id})`);
 
+    // Start with existing images
+    let imageLinks = [...product.images];
+    let deletedImageIds = [];
+
+    // STEP 1: Handle image deletions
     if (req.body.imagesToDelete) {
         let imagesToDelete;
+        
+        // Parse the deletion list
         try {
-            imagesToDelete = JSON.parse(req.body.imagesToDelete);
+            imagesToDelete = typeof req.body.imagesToDelete === 'string' 
+                ? JSON.parse(req.body.imagesToDelete)
+                : req.body.imagesToDelete;
         } catch (e) {
-            imagesToDelete = Array.isArray(req.body.imagesToDelete)
-                ? req.body.imagesToDelete
-                : [req.body.imagesToDelete];
+            return next(new HandleError('Invalid imagesToDelete format', 400));
         }
 
-        for (const publicId of imagesToDelete) {
+        // Ensure it's an array
+        if (!Array.isArray(imagesToDelete)) {
+            imagesToDelete = [imagesToDelete];
+        }
+
+        if (imagesToDelete.length > 0) {
+            console.log(`🗑️ Deleting ${imagesToDelete.length} images from Cloudinary...`);
+
             try {
-                await cloudinary.uploader.destroy(publicId, { invalidate: true });
+                // Delete from Cloudinary using helper function
+                const results = await deleteMultipleFromCloudinary(imagesToDelete);
+                
+                // Check results
+                const successful = results.filter(r => !r.error);
+                const failed = results.filter(r => r.error);
+
+                console.log(`✅ Deleted ${successful.length}/${imagesToDelete.length} images`);
+                
+                if (failed.length > 0) {
+                    console.warn('⚠️ Some images failed to delete:', 
+                        failed.map(f => f.public_id || 'unknown')
+                    );
+                }
+
+                // Track successfully deleted IDs
+                deletedImageIds = imagesToDelete;
+
+                // Remove deleted images from the image links array
+                imageLinks = imageLinks.filter(
+                    (img) => !imagesToDelete.includes(img.public_id)
+                );
+
             } catch (cloudinaryError) {
-                console.warn(`Cloudinary delete failed for ${publicId}:`, cloudinaryError.message);
+                console.error('❌ Cloudinary deletion error:', cloudinaryError.message);
+                
+                // DECISION: Should we fail the update or continue?
+                // Option A: Fail the update (safer)
+                return next(new HandleError(
+                    'Failed to delete images from Cloudinary',
+                    500
+                ));
+                
+                // Option B: Continue with warning (less safe)
+                // console.warn('Continuing update despite deletion errors');
             }
         }
-
-        imageLinks = imageLinks.filter(
-            (img) => !imagesToDelete.includes(img.public_id)
-        );
     }
 
+    // STEP 2: Upload new images
+    let newlyUploadedImages = [];
     if (req.files && req.files.length > 0) {
+        console.log(`⬆️ Uploading ${req.files.length} new images...`);
+
         for (const file of req.files) {
             try {
+                console.log(`📤 Uploading: ${file.originalname}`);
                 const result = await uploadToCloudinary(file.buffer);
-                imageLinks.push({
+                
+                const newImage = {
                     public_id: result.public_id,
                     url: result.secure_url,
-                    alt: req.body.name || product.name || 'Product image'
-                });
+                    alt: req.body.name || product.name || 'Product image',
+                    isPrimary: imageLinks.length === 0 && newlyUploadedImages.length === 0
+                };
+
+                imageLinks.push(newImage);
+                newlyUploadedImages.push(newImage);
+                
+                console.log(`✅ Uploaded: ${result.public_id}`);
+
             } catch (uploadError) {
-                console.error('❌ Update Upload Failed:', {
+                console.error('❌ Upload failed:', {
                     fileName: file.originalname,
                     error: uploadError.message
                 });
+
+                // ROLLBACK: Delete newly uploaded images if one fails
+                if (newlyUploadedImages.length > 0) {
+                    console.log('🔄 Rolling back uploaded images...');
+                    const rollbackIds = newlyUploadedImages.map(img => img.public_id);
+                    try {
+                        await deleteMultipleFromCloudinary(rollbackIds);
+                        console.log('✅ Rollback successful');
+                    } catch (rollbackError) {
+                        console.error('❌ Rollback failed:', rollbackError.message);
+                    }
+                }
+
                 return next(new HandleError(
-                    `Failed to upload new image: ${uploadError.message}`, 
+                    `Failed to upload image "${file.originalname}": ${uploadError.message}`,
                     500
                 ));
             }
         }
     }
 
+    // STEP 3: Validate that product has at least one image
     if (imageLinks.length === 0) {
-        return next(new HandleError('Product must have at least one image', 400));
+        // ROLLBACK: Restore deleted images if no images remain
+        if (deletedImageIds.length > 0) {
+            console.warn('⚠️ Cannot delete all images - product needs at least one');
+        }
+        return next(new HandleError(
+            'Product must have at least one image',
+            400
+        ));
     }
 
+    // STEP 4: Update product data
     req.body.images = imageLinks;
 
+    // Handle pricing updates
     if (req.body.price) {
         req.body.pricing = req.body.pricing || {};
         req.body.pricing.regular = req.body.price;
@@ -226,24 +404,60 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
         }
     }
 
+    // Handle inventory updates
     if (req.body.stock !== undefined) {
         req.body.inventory = req.body.inventory || {};
         req.body.inventory.stock = req.body.stock;
     }
 
+    // Track who modified the product
     req.body.lastModifiedBy = req.user.id;
 
-    product = await Product.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
-        runValidators: true,
-        useFindAndModify: false,
-    });
+    // STEP 5: Update in database
+    try {
+        product = await Product.findByIdAndUpdate(
+            req.params.id, 
+            req.body, 
+            {
+                new: true,
+                runValidators: true,
+                useFindAndModify: false,
+            }
+        );
 
+        console.log('✅ Product updated successfully');
+
+    } catch (dbError) {
+        console.error('❌ Database update error:', dbError.message);
+
+        // ROLLBACK: Delete newly uploaded images
+        if (newlyUploadedImages.length > 0) {
+            console.log('🔄 Rolling back uploaded images due to DB error...');
+            const rollbackIds = newlyUploadedImages.map(img => img.public_id);
+            try {
+                await deleteMultipleFromCloudinary(rollbackIds);
+            } catch (rollbackError) {
+                console.error('❌ Rollback failed:', rollbackError.message);
+            }
+        }
+
+        return next(new HandleError(
+            `Failed to update product: ${dbError.message}`,
+            500
+        ));
+    }
+
+    // STEP 6: Invalidate caches
     await invalidateProductCaches();
 
     res.status(200).json({
         success: true,
         product,
+        changes: {
+            imagesDeleted: deletedImageIds.length,
+            imagesAdded: newlyUploadedImages.length,
+            totalImages: imageLinks.length
+        }
     });
 });
 
@@ -255,23 +469,204 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Product not found", 404));
     }
 
+    console.log(`🗑️ Starting deletion process for product: ${product.name} (${product._id})`);
+
+    // STEP 1: Delete images from Cloudinary FIRST
     if (product.images && product.images.length > 0) {
-        for (const img of product.images) {
+        const publicIds = product.images.map(img => img.public_id).filter(Boolean);
+        
+        if (publicIds.length > 0) {
+            console.log(`📸 Deleting ${publicIds.length} images from Cloudinary...`);
+            
             try {
-                await cloudinary.uploader.destroy(img.public_id, { invalidate: true });
-            } catch (error) {
-                console.warn(`Failed to delete Cloudinary image: ${img.public_id}`, error.message);
+                // Use the helper function for batch deletion
+                const results = await deleteMultipleFromCloudinary(publicIds);
+                
+                // Check for failures
+                const failed = results.filter(r => r.error);
+                const successful = results.filter(r => !r.error);
+                
+                console.log(`✅ Successfully deleted ${successful.length} images`);
+                
+                if (failed.length > 0) {
+                    console.warn(`⚠️ Failed to delete ${failed.length} images:`, 
+                        failed.map(f => f.public_id || 'unknown')
+                    );
+                    
+                    // You can choose to:
+                    // Option A: Continue anyway (current approach)
+                    // Option B: Return error and don't delete product
+                    // For now, we'll log but continue
+                }
+            } catch (cloudinaryError) {
+                console.error('❌ Cloudinary deletion error:', cloudinaryError.message);
+                
+                // IMPORTANT DECISION POINT:
+                // Should we fail the entire deletion if Cloudinary fails?
+                // Option A: Fail the request (recommended for data consistency)
+                return next(new HandleError(
+                    'Failed to delete product images from Cloudinary. Product not deleted.',
+                    500
+                ));
+                
+                // Option B: Continue anyway (orphans images in Cloudinary)
+                // console.warn('Continuing with product deletion despite Cloudinary errors');
             }
         }
     }
 
-    await Product.findByIdAndDelete(req.params.id);
+    // STEP 2: Delete product from database
+    try {
+        await Product.findByIdAndDelete(req.params.id);
+        console.log(`✅ Product deleted from database: ${product._id}`);
+    } catch (dbError) {
+        console.error('❌ Database deletion error:', dbError.message);
+        return next(new HandleError(
+            'Failed to delete product from database',
+            500
+        ));
+    }
+
+    // STEP 3: Invalidate caches
+    await invalidateProductCaches();
+
+    res.status(200).json({
+        success: true,
+        message: 'Product and associated images deleted successfully',
+        deletedProduct: {
+            id: product._id,
+            name: product.name,
+            imagesDeleted: product.images?.length || 0
+        }
+    });
+});
+
+// ALTERNATIVE VERSION - WITH TRANSACTION-LIKE ROLLBACK
+export const deleteProductWithRollback = handleAsyncError(async (req, res, next) => {
+    const product = await Product.findById(req.params.id);
+
+    if (!product) {
+        return next(new HandleError("Product not found", 404));
+    }
+
+    console.log(`🗑️ Starting deletion with rollback for: ${product.name}`);
+
+    let deletedImageIds = [];
+    let dbDeleted = false;
+
+    try {
+        // STEP 1: Delete images from Cloudinary
+        if (product.images && product.images.length > 0) {
+            const publicIds = product.images.map(img => img.public_id).filter(Boolean);
+            
+            if (publicIds.length > 0) {
+                console.log(`📸 Deleting ${publicIds.length} images...`);
+                const results = await deleteMultipleFromCloudinary(publicIds);
+                
+                // Track successfully deleted images for potential rollback
+                deletedImageIds = results
+                    .filter(r => !r.error && r.result === 'ok')
+                    .map((r, idx) => publicIds[idx]);
+                
+                const failed = results.filter(r => r.error);
+                if (failed.length > 0) {
+                    throw new Error(`Failed to delete ${failed.length} images`);
+                }
+            }
+        }
+
+        // STEP 2: Delete from database
+        await Product.findByIdAndDelete(req.params.id);
+        dbDeleted = true;
+        console.log(`✅ Product deleted successfully`);
+
+        // STEP 3: Invalidate caches
+        await invalidateProductCaches();
+
+        res.status(200).json({
+            success: true,
+            message: 'Product and images deleted successfully',
+            deletedProduct: {
+                id: product._id,
+                name: product.name,
+                imagesDeleted: deletedImageIds.length
+            }
+        });
+
+    } catch (error) {
+        console.error('❌ Deletion failed, attempting rollback:', error.message);
+
+        // ROLLBACK: If DB deletion succeeded but something after failed,
+        // we can't easily recreate the product, so this is mainly for Cloudinary
+        if (!dbDeleted && deletedImageIds.length > 0) {
+            console.warn('⚠️ Rolling back Cloudinary deletions is not supported');
+            console.warn('Images may be orphaned:', deletedImageIds);
+        }
+
+        return next(new HandleError(
+            `Failed to delete product: ${error.message}`,
+            500
+        ));
+    }
+});
+
+// BATCH DELETE PRODUCTS (BONUS)
+export const deleteMultipleProducts = handleAsyncError(async (req, res, next) => {
+    const { productIds } = req.body;
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+        return next(new HandleError('Please provide an array of product IDs', 400));
+    }
+
+    console.log(`🗑️ Batch deleting ${productIds.length} products...`);
+
+    const results = {
+        successful: [],
+        failed: []
+    };
+
+    for (const productId of productIds) {
+        try {
+            const product = await Product.findById(productId);
+            
+            if (!product) {
+                results.failed.push({
+                    id: productId,
+                    reason: 'Product not found'
+                });
+                continue;
+            }
+
+            // Delete images
+            if (product.images && product.images.length > 0) {
+                const publicIds = product.images.map(img => img.public_id).filter(Boolean);
+                if (publicIds.length > 0) {
+                    await deleteMultipleFromCloudinary(publicIds);
+                }
+            }
+
+            // Delete product
+            await Product.findByIdAndDelete(productId);
+
+            results.successful.push({
+                id: productId,
+                name: product.name
+            });
+
+        } catch (error) {
+            results.failed.push({
+                id: productId,
+                reason: error.message
+            });
+        }
+    }
 
     await invalidateProductCaches();
 
     res.status(200).json({
         success: true,
-        message: 'Product deleted successfully'
+        message: `Deleted ${results.successful.length}/${productIds.length} products`,
+        results
     });
 });
 
