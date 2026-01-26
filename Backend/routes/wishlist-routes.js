@@ -6,7 +6,7 @@ import {
   clearWishlist,
   checkWishlistStatus,
   moveToCart
-} from "../controllers/wishlist-controller.js";
+} from "../controller/wishlist-controller.js";
 import { verifyUserAuth } from "../middleware/user-auth.js";
 
 const router = express.Router();
