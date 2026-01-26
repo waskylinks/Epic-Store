@@ -1,0 +1,461 @@
+/* ===========================
+   UPDATE PROFILE PAGE - MODERN UI
+   =========================== */
+
+.update-profile-page {
+  min-height: calc(100vh - 200px);
+  background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+  padding: 3rem 0;
+}
+
+.update-profile-container {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 0 2rem;
+}
+
+/* ===========================
+   HEADER SECTION
+   =========================== */
+.update-profile-header {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  border: none;
+  color: #666;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  margin-bottom: 1.5rem;
+}
+
+.back-button:hover {
+  background: rgba(255, 60, 60, 0.08);
+  color: #ff3c3c;
+  transform: translateX(-3px);
+}
+
+.back-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.update-profile-header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-bottom: 0.5rem;
+}
+
+.update-profile-header p {
+  font-size: 1rem;
+  color: #666;
+}
+
+/* ===========================
+   FORM CARD
+   =========================== */
+.update-profile-card {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  padding: 2.5rem;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.update-profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* ===========================
+   AVATAR UPLOAD SECTION
+   =========================== */
+.avatar-upload-section {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid #e8e8e8;
+}
+
+.avatar-upload-wrapper {
+  position: relative;
+  flex-shrink: 0;
+  transition: all 0.3s ease;
+}
+
+.avatar-upload-wrapper.dragging {
+  transform: scale(1.05);
+}
+
+.avatar-preview-container {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  overflow: hidden;
+  cursor: pointer;
+  border: 4px solid #f0f0f0;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.avatar-preview-container:hover {
+  border-color: #ff3c3c;
+  transform: scale(1.02);
+}
+
+.avatar-preview-container:hover .avatar-overlay {
+  opacity: 1;
+}
+
+.avatar-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.avatar-overlay svg {
+  width: 28px;
+  height: 28px;
+}
+
+.avatar-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.avatar-upload-hint {
+  flex: 1;
+}
+
+.hint-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin-bottom: 0.5rem;
+}
+
+.hint-text {
+  font-size: 0.95rem;
+  color: #666;
+  margin-bottom: 0.25rem;
+}
+
+.hint-subtext {
+  font-size: 0.85rem;
+  color: #999;
+}
+
+/* ===========================
+   FORM FIELDS
+   =========================== */
+.form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 1rem;
+  width: 20px;
+  height: 20px;
+  color: #999;
+  pointer-events: none;
+}
+
+.input-wrapper input {
+  width: 100%;
+  padding: 0.875rem 1rem 0.875rem 3rem;
+  border: 2px solid #e8e8e8;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  color: #1a1a1a;
+  transition: all 0.3s ease;
+  background: #fafafa;
+}
+
+.input-wrapper input:focus {
+  outline: none;
+  border-color: #ff3c3c;
+  background: white;
+  box-shadow: 0 0 0 4px rgba(255, 60, 60, 0.1);
+}
+
+.input-wrapper input::placeholder {
+  color: #999;
+}
+
+/* ===========================
+   ACTION BUTTONS
+   =========================== */
+.form-actions {
+  display: flex;
+  gap: 1rem;
+  padding-top: 1rem;
+}
+
+.cancel-button {
+  flex: 1;
+  padding: 0.875rem 1.5rem;
+  border: 2px solid #e8e8e8;
+  background: white;
+  color: #666;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.cancel-button:hover {
+  background: #f8f9fa;
+  border-color: #d0d0d0;
+  color: #1a1a1a;
+}
+
+.save-button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1.5rem;
+  border: none;
+  background: linear-gradient(135deg, #ff3c3c 0%, #ff5252 100%);
+  color: white;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
+}
+
+.save-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(255, 60, 60, 0.4);
+}
+
+.save-button:active {
+  transform: translateY(0);
+}
+
+.save-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ===========================
+   RESPONSIVE - TABLET (768px)
+   =========================== */
+@media (max-width: 768px) {
+  .update-profile-page {
+    padding: 2rem 0;
+  }
+
+  .update-profile-container {
+    padding: 0 1rem;
+  }
+
+  .update-profile-card {
+    padding: 2rem 1.5rem;
+  }
+
+  .update-profile-header h1 {
+    font-size: 1.75rem;
+  }
+
+  .avatar-upload-section {
+    flex-direction: column;
+    text-align: center;
+    gap: 1.5rem;
+  }
+
+  .avatar-preview-container {
+    width: 120px;
+    height: 120px;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .cancel-button,
+  .save-button {
+    width: 100%;
+  }
+}
+
+/* ===========================
+   RESPONSIVE - MOBILE (480px)
+   =========================== */
+@media (max-width: 480px) {
+  .update-profile-page {
+    padding: 1.5rem 0;
+  }
+
+  .update-profile-header {
+    margin-bottom: 2rem;
+  }
+
+  .update-profile-header h1 {
+    font-size: 1.5rem;
+  }
+
+  .update-profile-header p {
+    font-size: 0.9rem;
+  }
+
+  .back-button {
+    font-size: 0.875rem;
+    padding: 0.4rem 0.75rem;
+  }
+
+  .update-profile-card {
+    padding: 1.5rem 1rem;
+    border-radius: 12px;
+  }
+
+  .avatar-preview-container {
+    width: 100px;
+    height: 100px;
+    border-width: 3px;
+  }
+
+  .avatar-overlay svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .hint-title {
+    font-size: 1rem;
+  }
+
+  .hint-text {
+    font-size: 0.875rem;
+  }
+
+  .hint-subtext {
+    font-size: 0.8rem;
+  }
+
+  .input-wrapper input {
+    padding: 0.75rem 1rem 0.75rem 2.75rem;
+    font-size: 0.9rem;
+  }
+
+  .input-icon {
+    width: 18px;
+    height: 18px;
+    left: 0.875rem;
+  }
+
+  .cancel-button,
+  .save-button {
+    padding: 0.75rem 1.25rem;
+    font-size: 0.9rem;
+  }
+}
+
+/* ===========================
+   ACCESSIBILITY
+   =========================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus visible for keyboard navigation */
+.back-button:focus-visible,
+.cancel-button:focus-visible,
+.save-button:focus-visible,
+.input-wrapper input:focus-visible,
+.avatar-input:focus-visible {
+  outline: 3px solid #ff3c3c;
+  outline-offset: 3px;
+}
+
+/* Loading state for buttons */
+.save-button:disabled,
+.cancel-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.save-button:disabled:hover {
+  transform: none;
+  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
+}
+
+/* ===========================
+   DRAGGING STATE ANIMATIONS
+   =========================== */
+.avatar-upload-wrapper.dragging .avatar-preview-container {
+  border-color: #ff3c3c;
+  box-shadow: 0 8px 24px rgba(255, 60, 60, 0.3);
+}
+
+.avatar-upload-wrapper.dragging .avatar-overlay {
+  opacity: 1;
+  background: rgba(255, 60, 60, 0.9);
+}
