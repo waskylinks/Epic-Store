@@ -10,11 +10,23 @@ function Product({product}) {
         console.log(`rating changed to: ${newRating}`);
     }
     
+    // Add safety check for product
+    if (!product) {
+        return null;
+    }
+
+    // Safe image getter
+    const getProductImage = () => {
+        // Handle both 'images' and 'image' properties
+        const imageArray = product.images || product.image || [];
+        return imageArray[0]?.url || '/placeholder-product.png';
+    };
+    
   return (
     <Link to={`/product/${product._id}`} className='product_id'>
     <div className="product-card">
 
-        <img src={product.image[0].url} alt={product.name} className='product-image-card'/>
+        <img src={getProductImage()} alt={product.name} className='product-image-card'/>
         <div className="product-details">
             <h3 className="product-title">
                 {product.name}
