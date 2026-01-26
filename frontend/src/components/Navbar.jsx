@@ -208,13 +208,18 @@ function Navbar() {
               </Link>
             ) : (
               <div className="mobile-user-section">
-                <div className="mobile-user-header">
-                  <div className="mobile-user-info">
-                    <img
-                      src={user?.avatar?.url || '/images/profile.webp'}
-                      alt={user?.name}
-                      className="mobile-profile-image"
-                    />
+                <div className="navbar-mobile-user-header">
+                  <div className="navbar-mobile-user-info">
+                    <div className="navbar-mobile-profile-wrapper">
+                      <img
+                        src={user?.avatar?.url || '/images/profile.webp'}
+                        alt={user?.name}
+                        className="navbar-mobile-profile-img"
+                        onError={(e) => {
+                          e.target.src = '/images/profile.webp';
+                        }}
+                      />
+                    </div>
                     <div className="mobile-user-details">
                       <span className="mobile-user-name">{user?.name}</span>
                       <span className="mobile-user-email">{user?.email}</span>
@@ -291,29 +296,36 @@ function Navbar() {
           ) : (
             <div className="profile-dropdown" ref={profileMenuRef}>
               <button 
-                className={`profile-trigger ${isProfileMenuOpen ? 'active' : ''}`} 
+                className={`navbar-profile-trigger ${isProfileMenuOpen ? 'active' : ''}`} 
                 onClick={toggleProfileMenu}
                 disabled={loading}
               >
-                <img
-                  src={user?.avatar?.url || '/images/profile.webp'}
-                  alt={user?.name}
-                  className="profile-image"
-                  onError={(e) => {
-                    e.target.src = '/images/profile.webp';
-                  }}
-                />
+                <div className="navbar-profile-img-wrapper">
+                  <img
+                    src={user?.avatar?.url || '/images/profile.webp'}
+                    alt={user?.name}
+                    className="navbar-profile-img"
+                    onError={(e) => {
+                      e.target.src = '/images/profile.webp';
+                    }}
+                  />
+                </div>
                 <ArrowDownIcon className={`profile-arrow ${isProfileMenuOpen ? 'open' : ''}`} />
               </button>
 
               {isProfileMenuOpen && !loading && (
                 <div className="profile-menu">
-                  <div className="profile-menu-header">
-                    <img
-                      src={user?.avatar?.url || '/images/profile.webp'}
-                      alt={user?.name}
-                      className="profile-menu-avatar"
-                    />
+                  <div className="navbar-profile-menu-header">
+                    <div className="navbar-profile-menu-avatar-wrapper">
+                      <img
+                        src={user?.avatar?.url || '/images/profile.webp'}
+                        alt={user?.name}
+                        className="navbar-profile-menu-avatar-img"
+                        onError={(e) => {
+                          e.target.src = '/images/profile.webp';
+                        }}
+                      />
+                    </div>
                     <div className="profile-menu-info">
                       <span className="profile-menu-name">{user?.name}</span>
                       <span className="profile-menu-email">{user?.email}</span>

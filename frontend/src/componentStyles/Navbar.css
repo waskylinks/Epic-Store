@@ -269,44 +269,69 @@
 }
 
 /* ===========================
-   PROFILE DROPDOWN
+   PROFILE DROPDOWN - DESKTOP
    =========================== */
 .profile-dropdown {
   position: relative;
 }
 
-.profile-trigger {
-  background: none;
-  border: none;
+/* Profile Trigger Button */
+.navbar-profile-trigger {
+  background: transparent !important;
+  border: none !important;
   cursor: pointer;
-  padding: 0;
+  padding: 0 !important;
+  margin: 0 !important;
   display: flex;
   align-items: center;
   gap: 0.5rem;
   transition: all 0.3s ease;
+  line-height: 0 !important;
+  outline: none !important;
 }
 
-.profile-trigger:disabled {
+.navbar-profile-trigger:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
 
-.profile-trigger:hover:not(:disabled) {
+.navbar-profile-trigger:hover:not(:disabled) {
   transform: translateY(-2px);
 }
 
-.profile-image {
+/* Profile Image Wrapper - Desktop */
+.navbar-profile-img-wrapper {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  object-fit: cover;
+  overflow: hidden;
   border: 2px solid #ff3c3c;
   transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
-.profile-trigger:hover:not(:disabled) .profile-image {
+.navbar-profile-trigger:hover:not(:disabled) .navbar-profile-img-wrapper {
   border-color: #e03030;
   box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
+}
+
+/* Profile Image - Desktop */
+.navbar-profile-img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .profile-arrow {
@@ -344,7 +369,8 @@
   }
 }
 
-.profile-menu-header {
+/* Profile Menu Header */
+.navbar-profile-menu-header {
   padding: 1.25rem;
   background: linear-gradient(135deg, #ff3c3c 0%, #ff5252 100%);
   display: flex;
@@ -352,12 +378,33 @@
   gap: 1rem;
 }
 
-.profile-menu-avatar {
+/* Profile Menu Avatar Wrapper */
+.navbar-profile-menu-avatar-wrapper {
   width: 50px;
   height: 50px;
   border-radius: 50%;
-  object-fit: cover;
+  overflow: hidden;
   border: 3px solid white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+/* Profile Menu Avatar Image */
+.navbar-profile-menu-avatar-img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+  border-radius: 0 !important;
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
 }
 
 .profile-menu-info {
@@ -642,7 +689,13 @@
     gap: 1.5rem;
   }
 
-  .mobile-user-info {
+  /* Mobile User Header */
+  .navbar-mobile-user-header {
+    width: 100%;
+  }
+
+  /* Mobile User Info Container */
+  .navbar-mobile-user-info {
     display: flex;
     align-items: center;
     gap: 1rem;
@@ -651,12 +704,33 @@
     border-radius: 12px;
   }
 
-  .mobile-profile-image {
+  /* Mobile Profile Wrapper */
+  .navbar-mobile-profile-wrapper {
     width: 60px;
     height: 60px;
     border-radius: 50%;
-    object-fit: cover;
+    overflow: hidden;
     border: 3px solid white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* Mobile Profile Image */
+  .navbar-mobile-profile-img {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    display: block !important;
+    border-radius: 0 !important;
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
   .mobile-user-details {
@@ -783,10 +857,11 @@
     font-size: 0.85rem;
   }
 
-  /* Adjust profile image size */
-  .profile-image {
+  /* Adjust desktop profile image size on mobile */
+  .navbar-profile-img-wrapper {
     width: 36px;
     height: 36px;
+    border-width: 2px;
   }
 
   /* Hide profile arrow on mobile */
@@ -820,9 +895,10 @@
     width: 280px;
   }
 
-  .profile-image {
+  .navbar-profile-img-wrapper {
     width: 32px;
     height: 32px;
+    border-width: 1.5px;
   }
 
   .icon {
@@ -849,7 +925,7 @@
 .search-toggle:focus-visible,
 .navbar-hamburger:focus-visible,
 .mobile-close:focus-visible,
-.profile-trigger:focus-visible,
+.navbar-profile-trigger:focus-visible,
 .profile-menu-option:focus-visible {
   outline: 2px solid #ff3c3c;
   outline-offset: 2px;

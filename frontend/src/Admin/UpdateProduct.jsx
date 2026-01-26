@@ -96,58 +96,61 @@ function UpdateProduct() {
 
     // Pre-fill form when product is found
     useEffect(() => {
-        if (product) {
-            setFormData({
-                name: product.name || '',
-                description: product.description || '',
-                shortDescription: product.shortDescription || '',
-                category: product.category || '',
-                brand: product.brand || '',
-                pricing: {
-                    regular: product.pricing?.regular || product.price || '',
-                    sale: product.pricing?.sale || '',
-                    cost: product.pricing?.cost || '',
-                    currency: product.pricing?.currency || 'USD'
-                },
-                inventory: {
-                    stock: product.inventory?.stock ?? product.stock ?? '',
-                    sku: product.inventory?.sku || '',
-                    barcode: product.inventory?.barcode || '',
-                    trackInventory: product.inventory?.trackInventory ?? true,
-                    lowStockThreshold: product.inventory?.lowStockThreshold || 5
-                },
-                dimensions: product.dimensions || {
-                    length: '',
-                    width: '',
-                    height: '',
-                    unit: 'cm'
-                },
-                weight: product.weight || {
-                    value: '',
-                    unit: 'kg'
-                },
-                seo: product.seo || {
-                    metaTitle: '',
-                    metaDescription: '',
-                    keywords: []
-                },
-                isFeatured: product.isFeatured || false,
-                isNewArrival: product.isNewArrival || false,
-                isBestseller: product.isBestseller || false,
-                status: product.status || 'published'
-            });
+    if (product) {
+        setFormData({
+            name: product.name || '',
+            description: product.description || '',
+            shortDescription: product.shortDescription || '',
+            category: product.category || '',
+            brand: product.brand || '',
+            pricing: {
+                regular: product.pricing?.regular || product.price || '',
+                sale: product.pricing?.sale || '',
+                // ✅ FIX: Use ?? instead of || to preserve 0 values
+                cost: product.pricing?.cost ?? '',
+                currency: product.pricing?.currency || 'USD'
+            },
+            inventory: {
+                // ✅ FIX: Use ?? instead of || to preserve 0 values
+                stock: product.inventory?.stock ?? product.stock ?? '',
+                sku: product.inventory?.sku || '',
+                barcode: product.inventory?.barcode || '',
+                trackInventory: product.inventory?.trackInventory ?? true,
+                lowStockThreshold: product.inventory?.lowStockThreshold ?? 5
+            },
+            dimensions: product.dimensions || {
+                length: '',
+                width: '',
+                height: '',
+                unit: 'cm'
+            },
+            weight: {
+                // ✅ FIX: Use ?? instead of || to preserve 0 values
+                value: product.weight?.value ?? '',
+                unit: product.weight?.unit || 'kg'
+            },
+            seo: product.seo || {
+                metaTitle: '',
+                metaDescription: '',
+                keywords: []
+            },
+            isFeatured: product.isFeatured || false,
+            isNewArrival: product.isNewArrival || false,
+            isBestseller: product.isBestseller || false,
+            status: product.status || 'published'
+        });
 
-            setOldImages(product.images || product.image || []);
-            setSubcategories(product.subcategories || []);
-            setTags(product.tags || []);
-            setSpecifications(product.specifications || []);
-            setVariants(product.variants || []);
-            setSeoKeywords(product.seo?.keywords || []);
-        } else if (products.length > 0) {
-            toast.error('Product not found', { position: 'top-center', autoClose: 3000 });
-            navigate('/admin/products');
-        }
-    }, [product, products, navigate]);
+        setOldImages(product.images || product.image || []);
+        setSubcategories(product.subcategories || []);
+        setTags(product.tags || []);
+        setSpecifications(product.specifications || []);
+        setVariants(product.variants || []);
+        setSeoKeywords(product.seo?.keywords || []);
+    } else if (products.length > 0) {
+        toast.error('Product not found', { position: 'top-center', autoClose: 3000 });
+        navigate('/admin/products');
+    }
+}, [product, products, navigate]);
 
     const handleInputChange = (e) => {
         const { name, value, type, checked } = e.target;
