@@ -10,7 +10,8 @@ import { User, Mail, Camera, ArrowLeft, Save } from 'lucide-react';
 import './UpdateProfile.css';
 
 function UpdateProfile() {
-    const [name, setName] = useState('');
+    const [firstName, setFirstName] = useState('');
+    const [lastName, setLastName] = useState('');
     const [email, setEmail] = useState('');
     const [avatar, setAvatar] = useState('');
     const [avatarPreview, setAvatarPreview] = useState('./images/profile.webp');
@@ -76,8 +77,13 @@ function UpdateProfile() {
         e.preventDefault();
 
         // Validation
-        if (!name.trim()) {
-            toast.error('Name is required');
+        if (!firstName.trim()) {
+            toast.error('First name is required');
+            return;
+        }
+
+        if (!lastName.trim()) {
+            toast.error('Last name is required');
             return;
         }
 
@@ -92,11 +98,20 @@ function UpdateProfile() {
             return;
         }
 
-        const myForm = new FormData();
-        myForm.set('name', name);
-        myForm.set('email', email);
-        myForm.set('avatar', avatar);
-        dispatch(updateProfile(myForm));
+        // Create update object
+        const updateData = {
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            email: email.trim()
+        };
+
+        // Only include avatar if it was changed
+        if (avatar && avatar !== '') {
+            updateData.avatar = avatar;
+        }
+        
+        console.log('📤 Updating profile with:', updateData);
+        dispatch(updateProfile(updateData));
     };
 
     useEffect(() => {
@@ -108,7 +123,7 @@ function UpdateProfile() {
 
     useEffect(() => {
         if (success) {
-            toast.success(message, { position: 'top-center', autoClose: 2000 });
+            toast.success(message || 'Profile updated successfully', { position: 'top-center', autoClose: 2000 });
             dispatch(removeSuccess());
             navigate('/profile');
         }
@@ -116,8 +131,10 @@ function UpdateProfile() {
 
     useLayoutEffect(() => {
         if (user) {
-            setName(user.name);
-            setEmail(user.email);
+            console.log('👤 Current user data:', user);
+            setFirstName(user.firstName || '');
+            setLastName(user.lastName || '');
+            setEmail(user.email || '');
             setAvatarPreview(user?.avatar?.url || './images/profile.webp');
         }
     }, [user]);
@@ -148,11 +165,7 @@ function UpdateProfile() {
 
                             {/* Form Card */}
                             <div className="update-profile-card">
-                                <form 
-                                    className="update-profile-form" 
-                                    encType="multipart/form-data" 
-                                    onSubmit={updateSubmit}
-                                >
+                                <div className="update-profile-form-wrapper">
                                     {/* Avatar Upload Section */}
                                     <div className="avatar-upload-section">
                                         <div 
@@ -190,18 +203,35 @@ function UpdateProfile() {
 
                                     {/* Form Fields */}
                                     <div className="form-fields">
-                                        {/* Name Field */}
+                                        {/* First Name Field */}
                                         <div className="form-group">
-                                            <label htmlFor="name">Full Name</label>
+                                            <label htmlFor="firstName">First Name</label>
                                             <div className="input-wrapper">
                                                 <User className="input-icon" />
                                                 <input 
                                                     type="text" 
-                                                    id="name"
-                                                    value={name} 
-                                                    onChange={(e) => setName(e.target.value)}
-                                                    name="name"
-                                                    placeholder="Enter your full name"
+                                                    id="firstName"
+                                                    value={firstName} 
+                                                    onChange={(e) => setFirstName(e.target.value)}
+                                                    name="firstName"
+                                                    placeholder="Enter your first name"
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Last Name Field */}
+                                        <div className="form-group">
+                                            <label htmlFor="lastName">Last Name</label>
+                                            <div className="input-wrapper">
+                                                <User className="input-icon" />
+                                                <input 
+                                                    type="text" 
+                                                    id="lastName"
+                                                    value={lastName} 
+                                                    onChange={(e) => setLastName(e.target.value)}
+                                                    name="lastName"
+                                                    placeholder="Enter your last name"
                                                     required
                                                 />
                                             </div>
@@ -235,14 +265,15 @@ function UpdateProfile() {
                                             Cancel
                                         </button>
                                         <button 
-                                            type="submit" 
+                                            type="button" 
                                             className="save-button"
+                                            onClick={updateSubmit}
                                         >
                                             <Save />
                                             <span>Save Changes</span>
                                         </button>
                                     </div>
-                                </form>
+                                </div>
                             </div>
                         </div>
                     </div>

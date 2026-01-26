@@ -15,11 +15,85 @@ import {
   Dashboard as DashboardIcon,
   Logout as LogoutIcon,
   KeyboardArrowDown as ArrowDownIcon,
-
 } from '@mui/icons-material';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout, removeSuccess } from '../features/products/userSlice';
 import { toast } from 'react-toastify';
+
+/**
+ * Get user display name - handles firstName/lastName structure
+ */
+const getUserDisplayName = (user) => {
+  if (!user) return 'User';
+  
+  // Primary: firstName + lastName (your backend structure)
+  const firstName = user.firstName?.trim() || '';
+  const lastName = user.lastName?.trim() || '';
+  
+  if (firstName && lastName) {
+    return `${firstName} ${lastName}`;
+  }
+  
+  if (firstName) {
+    return firstName;
+  }
+  
+  // Fallback to fullName virtual if available
+  if (user.fullName && user.fullName !== 'User') {
+    return user.fullName;
+  }
+  
+  // Last resort: extract from email
+  if (user.email) {
+    const emailUsername = user.email.split('@')[0];
+    return emailUsername.charAt(0).toUpperCase() + emailUsername.slice(1).replace(/[._-]/g, ' ');
+  }
+  
+  return 'User';
+};
+
+/**
+ * Get user avatar URL with fallback
+ */
+const getUserAvatar = (user) => {
+  if (!user) return './images/profile.webp';
+  
+  // Handle nested avatar object (your backend structure)
+  if (user.avatar && typeof user.avatar === 'object' && user.avatar.url) {
+    return user.avatar.url;
+  }
+  
+  // Handle direct avatar URL string
+  if (user.avatar && typeof user.avatar === 'string') {
+    return user.avatar;
+  }
+  
+  return './images/profile.webp';
+};
+
+/**
+ * Get user initials for display
+ */
+const getUserInitials = (user) => {
+  if (!user) return 'U';
+  
+  const firstName = user.firstName?.trim() || '';
+  const lastName = user.lastName?.trim() || '';
+  
+  if (firstName && lastName) {
+    return `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
+  }
+  
+  if (firstName) {
+    return firstName.charAt(0).toUpperCase();
+  }
+  
+  if (user.initials) {
+    return user.initials;
+  }
+  
+  return 'U';
+};
 
 function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -29,13 +103,26 @@ function Navbar() {
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const { count: wishlistCount } = useSelector(state => state.wishlist);
 
-
   const { isAuthenticated, user, loading } = useSelector((state) => state.user);
   const { cartItems } = useSelector((state) => state.cart);
   const navigate = useNavigate();
   const location = useLocation();
   const dispatch = useDispatch();
   const profileMenuRef = useRef(null);
+
+  // Debug user data
+  useEffect(() => {
+    if (user) {
+      console.log('👤 Navbar - User data received:', {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        avatar: user.avatar,
+        displayName: getUserDisplayName(user),
+        initials: getUserInitials(user)
+      });
+    }
+  }, [user]);
 
   // Handle scroll effect
   useEffect(() => {
@@ -212,16 +299,16 @@ function Navbar() {
                   <div className="navbar-mobile-user-info">
                     <div className="navbar-mobile-profile-wrapper">
                       <img
-                        src={user?.avatar?.url || '/images/profile.webp'}
-                        alt={user?.name}
+                        src={getUserAvatar(user)}
+                        alt={getUserDisplayName(user)}
                         className="navbar-mobile-profile-img"
                         onError={(e) => {
-                          e.target.src = '/images/profile.webp';
+                          e.target.src = './images/profile.webp';
                         }}
                       />
                     </div>
                     <div className="mobile-user-details">
-                      <span className="mobile-user-name">{user?.name}</span>
+                      <span className="mobile-user-name">{getUserDisplayName(user)}</span>
                       <span className="mobile-user-email">{user?.email}</span>
                     </div>
                   </div>
@@ -251,30 +338,31 @@ function Navbar() {
         <div className="navbar-icons">
           {/* Search */}
           <div className={`search-container ${isSearchOpen ? 'active' : ''}`}>
-            <form className="search-form" onSubmit={handleSearchSubmit}>
+            <div className="search-form">
               <input
                 type="text"
                 placeholder="Search products..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSearchSubmit(e)}
                 className={`search-input ${isSearchOpen ? 'active' : ''}`}
               />
               <button type="button" className="search-toggle" onClick={toggleSearch}>
                 {isSearchOpen ? <CloseIcon fontSize="small" /> : <SearchIcon fontSize="small" />}
               </button>
-            </form>
+            </div>
           </div>
 
           {/* Wishlist */}
           <Link to="/wishlist" className="icon-link wishlist-link">
-          <div className="cart-container">
-            <FavoriteIcon className="icon" />
-            {wishlistCount > 0 && (
-              <span className="cart-badge">{wishlistCount}</span>
-            )}
-          </div>
-          <span className="icon-label">Wishlist</span>
-        </Link>
+            <div className="cart-container">
+              <FavoriteIcon className="icon" />
+              {wishlistCount > 0 && (
+                <span className="cart-badge">{wishlistCount}</span>
+              )}
+            </div>
+            <span className="icon-label">Wishlist</span>
+          </Link>
 
           {/* Cart */}
           <Link to="/cart" className="icon-link cart-link">
@@ -302,11 +390,11 @@ function Navbar() {
               >
                 <div className="navbar-profile-img-wrapper">
                   <img
-                    src={user?.avatar?.url || '/images/profile.webp'}
-                    alt={user?.name}
+                    src={getUserAvatar(user)}
+                    alt={getUserDisplayName(user)}
                     className="navbar-profile-img"
                     onError={(e) => {
-                      e.target.src = '/images/profile.webp';
+                      e.target.src = './images/profile.webp';
                     }}
                   />
                 </div>
@@ -318,16 +406,16 @@ function Navbar() {
                   <div className="navbar-profile-menu-header">
                     <div className="navbar-profile-menu-avatar-wrapper">
                       <img
-                        src={user?.avatar?.url || '/images/profile.webp'}
-                        alt={user?.name}
+                        src={getUserAvatar(user)}
+                        alt={getUserDisplayName(user)}
                         className="navbar-profile-menu-avatar-img"
                         onError={(e) => {
-                          e.target.src = '/images/profile.webp';
+                          e.target.src = './images/profile.webp';
                         }}
                       />
                     </div>
                     <div className="profile-menu-info">
-                      <span className="profile-menu-name">{user?.name}</span>
+                      <span className="profile-menu-name">{getUserDisplayName(user)}</span>
                       <span className="profile-menu-email">{user?.email}</span>
                     </div>
                   </div>

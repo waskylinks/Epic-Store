@@ -116,10 +116,44 @@ export const updateProfile = createAsyncThunk(
   "user/updateProfile",
   async (userData, { rejectWithValue }) => {
     try {
+      console.log('📤 userSlice - Updating profile');
+      
+      // Convert FormData to regular object for JSON
+      let profileData = {};
+      
+      if (userData instanceof FormData) {
+        const name = userData.get('name');
+        const email = userData.get('email');
+        const avatar = userData.get('avatar');
+        
+        // Split full name into firstName and lastName
+        if (name) {
+          const nameParts = name.trim().split(' ');
+          profileData.firstName = nameParts[0] || '';
+          profileData.lastName = nameParts.slice(1).join(' ') || nameParts[0] || '';
+        }
+        
+        if (email) {
+          profileData.email = email;
+        }
+        
+        if (avatar && avatar !== '') {
+          profileData.avatar = avatar;
+        }
+      } else {
+        profileData = userData;
+      }
+      
+      console.log('📤 userSlice - Sending:', profileData);
+      
       const config = { headers: { "Content-Type": "application/json" } };
-      const { data } = await axios.put("/api/v1/profile/update", userData, config);
+      const { data } = await axios.put("/api/v1/profile/update", profileData, config);
+      
+      console.log('✅ userSlice - Update response:', data);
+      
       return data;
     } catch (error) {
+      console.error('❌ userSlice - Update error:', error.response?.data);
       return rejectWithValue(
         error.response?.data || { message: "Profile update failed." }
       );
