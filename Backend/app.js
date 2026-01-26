@@ -25,6 +25,7 @@ import oauthRoutes from './routes/oauth-routes.js';
 import analyticsRoutes from './routes/analytics-routes.js';
 import paymentRoutes from './routes/payment-routes.js';
 import receiptRoutes from './routes/receipts-routes.js';
+import wishlistRoutes from './routes/wishlist-routes.js';
 
 // Import passport configuration
 import './config/passport.js';
@@ -230,6 +231,7 @@ app.use('/api/v1/oauth', oauthRoutes);
 app.use('/api/v1', analyticsRoutes);
 app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/receipts', receiptRoutes);
+app.use('/api/v1/wishlist', wishlistRoutes);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
