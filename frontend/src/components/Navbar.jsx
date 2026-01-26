@@ -14,7 +14,8 @@ import {
   ShoppingBag as OrdersIcon,
   Dashboard as DashboardIcon,
   Logout as LogoutIcon,
-  KeyboardArrowDown as ArrowDownIcon
+  KeyboardArrowDown as ArrowDownIcon,
+
 } from '@mui/icons-material';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout, removeSuccess } from '../features/products/userSlice';
@@ -262,7 +263,7 @@ function Navbar() {
           {/* Wishlist */}
           <Link to="/wishlist" className="icon-link wishlist-link">
           <div className="cart-container">
-            <FiHeart className="icon" />
+            <FavoriteIcon className="icon" />
             {wishlistCount > 0 && (
               <span className="cart-badge">{wishlistCount}</span>
             )}

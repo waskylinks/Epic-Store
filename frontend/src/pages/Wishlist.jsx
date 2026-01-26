@@ -11,7 +11,7 @@ import {
   clearWishlist,
   removeMessage,
   removeErrors 
-} from '../features/wishlist/wishlistSlice';
+} from '../features/products/wishlistSlice';
 import { addItemsToCart } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';

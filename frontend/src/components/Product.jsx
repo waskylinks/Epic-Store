@@ -3,7 +3,7 @@ import '../componentStyles/Product.css';
 import { Link, useNavigate } from 'react-router-dom';
 import Rating from './Rating';
 import { useDispatch, useSelector } from 'react-redux';
-import { addToWishlist, removeFromWishlist, getWishlist } from '../features/wishlist/wishlistSlice';
+import { addToWishlist, removeFromWishlist, getWishlist } from '../features/products/wishlistSlice';
 import { addItemsToCart } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
 import { FiHeart, FiEye, FiShoppingCart, FiStar } from 'react-icons/fi';
