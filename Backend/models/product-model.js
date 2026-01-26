@@ -27,7 +27,7 @@ const productSchema = new mongoose.Schema(
       maxlength: [500, 'Short description cannot exceed 500 characters']
     },
 
-    // Pricing
+    // Pricing - FIXED VALIDATION
     pricing: {
       regular: { 
         type: Number, 
@@ -39,7 +39,10 @@ const productSchema = new mongoose.Schema(
         min: [0, 'Sale price cannot be negative'],
         validate: {
           validator: function(value) {
-            return !value || value < this.pricing.regular;
+            // Only validate if sale price is provided
+            if (!value) return true;
+            // Access the parent pricing object properly
+            return value < this.regular;
           },
           message: 'Sale price must be less than regular price'
         }

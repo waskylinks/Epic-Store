@@ -5,6 +5,20 @@ import APIFunctionality from '../utils/apiFunctionality.js';
 import { uploadToCloudinary, cloudinary, deleteFromCloudinary } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
+// Helper: Delete multiple images from Cloudinary
+const deleteMultipleFromCloudinary = async (publicIds) => {
+    const results = [];
+    for (const publicId of publicIds) {
+        try {
+            const result = await deleteFromCloudinary(publicId);
+            results.push({ public_id: publicId, result: 'ok' });
+        } catch (error) {
+            results.push({ public_id: publicId, error: error.message });
+        }
+    }
+    return results;
+};
+
 // Helper: Invalidate product-related caches
 const invalidateProductCaches = async () => {
     try {
@@ -21,207 +35,6 @@ const invalidateProductCaches = async () => {
     }
 };
 
-// creating products 
-export const createProducts = handleAsyncError(async (req, res, next) => {
-    // Debug: Check environment variables
-    console.log('🔍 Cloudinary Config Check:', {
-        cloudName: process.env.CLOUDINARY_CLOUD_NAME ? `Set (${process.env.CLOUDINARY_CLOUD_NAME.substring(0, 5)}...)` : '❌ MISSING',
-        apiKey: process.env.CLOUDINARY_API_KEY ? 'Set ✅' : '❌ MISSING',
-        apiSecret: process.env.CLOUDINARY_API_SECRET ? 'Set ✅' : '❌ MISSING'
-    });
-
-    // Debug: Log raw request body
-    console.log('📝 Raw Request Body:', {
-        name: req.body.name,
-        category: req.body.category,
-        price: req.body.price,
-        stock: req.body.stock,
-        status: req.body.status,
-        bodyKeys: Object.keys(req.body)
-    });
-
-    // Debug: Check files
-    console.log('📁 Files received:', {
-        filesExist: !!req.files,
-        fileCount: req.files?.length || 0,
-        fileDetails: req.files?.map(f => ({
-            fieldname: f.fieldname,
-            originalname: f.originalname,
-            mimetype: f.mimetype,
-            size: f.size,
-            hasBuffer: !!f.buffer
-        }))
-    });
-
-    const imageLinks = [];
-
-    if (req.files && req.files.length > 0) {
-        for (const file of req.files) {
-            try {
-                console.log(`⬆️ Uploading image: ${file.originalname}`);
-                const result = await uploadToCloudinary(file.buffer);
-                console.log('✅ Upload successful:', {
-                    public_id: result.public_id,
-                    url: result.secure_url
-                });
-                
-                imageLinks.push({
-                    public_id: result.public_id,
-                    url: result.secure_url,
-                    alt: req.body.name || 'Product image',
-                    isPrimary: imageLinks.length === 0
-                });
-            } catch (uploadError) {
-                // Detailed error logging
-                console.error('❌ Cloudinary Upload Failed:', {
-                    fileName: file.originalname,
-                    errorName: uploadError.name,
-                    errorMessage: uploadError.message,
-                    httpCode: uploadError.http_code,
-                    stack: uploadError.stack
-                });
-                
-                return next(new HandleError(
-                    `Failed to upload image "${file.originalname}": ${uploadError.message}`, 
-                    500
-                ));
-            }
-        }
-    }
-
-    if (imageLinks.length === 0) {
-        return next(new HandleError('Please upload at least one product image', 400));
-    }
-
-    req.body.images = imageLinks;
-
-    // Parse JSON strings if they exist
-    if (typeof req.body.specifications === 'string') {
-        try {
-            req.body.specifications = JSON.parse(req.body.specifications);
-        } catch (e) {
-            console.warn('Failed to parse specifications:', e);
-            req.body.specifications = [];
-        }
-    }
-
-    if (typeof req.body.variants === 'string') {
-        try {
-            req.body.variants = JSON.parse(req.body.variants);
-        } catch (e) {
-            console.warn('Failed to parse variants:', e);
-            req.body.variants = [];
-        }
-    }
-
-    if (typeof req.body.dimensions === 'string') {
-        try {
-            req.body.dimensions = JSON.parse(req.body.dimensions);
-        } catch (e) {
-            console.warn('Failed to parse dimensions:', e);
-        }
-    }
-
-    if (typeof req.body.weight === 'string') {
-        try {
-            req.body.weight = JSON.parse(req.body.weight);
-        } catch (e) {
-            console.warn('Failed to parse weight:', e);
-        }
-    }
-
-    if (typeof req.body.seo === 'string') {
-        try {
-            req.body.seo = JSON.parse(req.body.seo);
-        } catch (e) {
-            console.warn('Failed to parse seo:', e);
-        }
-    }
-
-    // Convert string booleans to actual booleans
-    if (typeof req.body.isFeatured === 'string') {
-        req.body.isFeatured = req.body.isFeatured === 'true';
-    }
-    if (typeof req.body.isNewArrival === 'string') {
-        req.body.isNewArrival = req.body.isNewArrival === 'true';
-    }
-    if (typeof req.body.isBestseller === 'string') {
-        req.body.isBestseller = req.body.isBestseller === 'true';
-    }
-
-    if (req.body.price && !req.body.pricing) {
-        req.body.pricing = {
-            regular: req.body.price,
-            currency: req.body.currency || 'USD'
-        };
-        if (req.body.salePrice) {
-            req.body.pricing.sale = req.body.salePrice;
-        }
-    }
-
-    if (req.body.stock !== undefined && !req.body.inventory) {
-        req.body.inventory = {
-            stock: req.body.stock,
-            trackInventory: true
-        };
-    }
-
-    if (req.body.sku && req.body.inventory) {
-        req.body.inventory.sku = req.body.sku;
-    }
-
-    req.body.user = req.user.id;
-
-    if (req.body.isNewArrival === undefined) {
-        req.body.isNewArrival = true;
-    }
-
-    console.log('📦 Creating product with data:', {
-        name: req.body.name,
-        category: req.body.category,
-        price: req.body.price,
-        stock: req.body.stock,
-        imagesCount: req.body.images?.length,
-        user: req.body.user,
-        description: req.body.description ? 'Set' : 'MISSING'
-    });
-
-    try {
-        const product = await Product.create(req.body);
-        console.log('✅ Product created successfully:', product._id);
-
-        await invalidateProductCaches();
-
-        res.status(201).json({
-            success: true,
-            product,
-        });
-    } catch (dbError) {
-        console.error('❌ Database Error:', {
-            name: dbError.name,
-            message: dbError.message,
-            errors: dbError.errors,
-            code: dbError.code
-        });
-        
-        // Better error messages for validation errors
-        if (dbError.name === 'ValidationError') {
-            const missingFields = Object.keys(dbError.errors).map(field => {
-                return `${field}: ${dbError.errors[field].message}`;
-            }).join(', ');
-            
-            return next(new HandleError(
-                `Validation failed: ${missingFields}`,
-                400
-            ));
-        }
-        
-        return next(new HandleError(
-            `Failed to create product: ${dbError.message}`,
-            500
-        ));
-    }
-});
 
 //get all products
 export const getAllProducts = handleAsyncError(async (req, res, next) => {
@@ -256,210 +69,353 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
         currentPage: page,
     });
 });
+export const createProduct = async (req, res, next) => {
+  try {
+    console.log('📝 Creating new product...');
 
-// update products
-export const updateProduct = handleAsyncError(async (req, res, next) => {
-    let product = await Product.findById(req.params.id);
+    // Parse JSON fields
+    let parsedPricing = null;
+    let parsedInventory = null;
+    let parsedDimensions = null;
+    let parsedWeight = null;
+    let parsedSeo = null;
+    let parsedSpecs = null;
+    let parsedVariants = null;
 
-    if (!product) {
-        return next(new HandleError("Product not found", 404));
+    // ✅ Parse pricing object (NEW)
+    if (req.body.pricing) {
+      try {
+        parsedPricing = JSON.parse(req.body.pricing);
+        console.log('💰 Parsed pricing:', parsedPricing);
+      } catch (err) {
+        console.error('❌ Failed to parse pricing:', err);
+      }
     }
 
-    console.log(`📝 Updating product: ${product.name} (${product._id})`);
-
-    // Start with existing images
-    let imageLinks = [...product.images];
-    let deletedImageIds = [];
-
-    // STEP 1: Handle image deletions
-    if (req.body.imagesToDelete) {
-        let imagesToDelete;
-        
-        // Parse the deletion list
-        try {
-            imagesToDelete = typeof req.body.imagesToDelete === 'string' 
-                ? JSON.parse(req.body.imagesToDelete)
-                : req.body.imagesToDelete;
-        } catch (e) {
-            return next(new HandleError('Invalid imagesToDelete format', 400));
-        }
-
-        // Ensure it's an array
-        if (!Array.isArray(imagesToDelete)) {
-            imagesToDelete = [imagesToDelete];
-        }
-
-        if (imagesToDelete.length > 0) {
-            console.log(`🗑️ Deleting ${imagesToDelete.length} images from Cloudinary...`);
-
-            try {
-                // Delete from Cloudinary using helper function
-                const results = await deleteMultipleFromCloudinary(imagesToDelete);
-                
-                // Check results
-                const successful = results.filter(r => !r.error);
-                const failed = results.filter(r => r.error);
-
-                console.log(`✅ Deleted ${successful.length}/${imagesToDelete.length} images`);
-                
-                if (failed.length > 0) {
-                    console.warn('⚠️ Some images failed to delete:', 
-                        failed.map(f => f.public_id || 'unknown')
-                    );
-                }
-
-                // Track successfully deleted IDs
-                deletedImageIds = imagesToDelete;
-
-                // Remove deleted images from the image links array
-                imageLinks = imageLinks.filter(
-                    (img) => !imagesToDelete.includes(img.public_id)
-                );
-
-            } catch (cloudinaryError) {
-                console.error('❌ Cloudinary deletion error:', cloudinaryError.message);
-                
-                // DECISION: Should we fail the update or continue?
-                // Option A: Fail the update (safer)
-                return next(new HandleError(
-                    'Failed to delete images from Cloudinary',
-                    500
-                ));
-                
-                // Option B: Continue with warning (less safe)
-                // console.warn('Continuing update despite deletion errors');
-            }
-        }
+    // ✅ Parse inventory object (NEW)
+    if (req.body.inventory) {
+      try {
+        parsedInventory = JSON.parse(req.body.inventory);
+        console.log('📦 Parsed inventory:', parsedInventory);
+      } catch (err) {
+        console.error('❌ Failed to parse inventory:', err);
+      }
     }
 
-    // STEP 2: Upload new images
-    let newlyUploadedImages = [];
+    if (req.body.dimensions) {
+      try {
+        parsedDimensions = JSON.parse(req.body.dimensions);
+      } catch (err) {
+        console.error('❌ Failed to parse dimensions:', err);
+      }
+    }
+
+    if (req.body.weight) {
+      try {
+        parsedWeight = JSON.parse(req.body.weight);
+      } catch (err) {
+        console.error('❌ Failed to parse weight:', err);
+      }
+    }
+
+    if (req.body.seo) {
+      try {
+        parsedSeo = JSON.parse(req.body.seo);
+      } catch (err) {
+        console.error('❌ Failed to parse seo:', err);
+      }
+    }
+
+    if (req.body.specifications) {
+      try {
+        parsedSpecs = JSON.parse(req.body.specifications);
+      } catch (err) {
+        console.error('❌ Failed to parse specifications:', err);
+      }
+    }
+
+    if (req.body.variants) {
+      try {
+        parsedVariants = JSON.parse(req.body.variants);
+      } catch (err) {
+        console.error('❌ Failed to parse variants:', err);
+      }
+    }
+
+    // Build product data
+    const productData = {
+      name: req.body.name,
+      description: req.body.description,
+      shortDescription: req.body.shortDescription,
+      category: req.body.category,
+      brand: req.body.brand || '',
+      
+      // ✅ Use parsed pricing object if available
+      pricing: parsedPricing || {
+        regular: Number(req.body.price),
+        sale: req.body.salePrice ? Number(req.body.salePrice) : undefined,
+        cost: undefined,
+        currency: req.body.currency || 'USD'
+      },
+      
+      // ✅ Use parsed inventory object if available
+      inventory: parsedInventory || {
+        stock: Number(req.body.stock) || 0,
+        sku: req.body.sku || undefined,
+        barcode: undefined,
+        trackInventory: true,
+        lowStockThreshold: 5
+      },
+      
+      // Legacy fields
+      price: Number(req.body.price),
+      stock: Number(req.body.stock) || 0,
+      
+      subcategories: req.body.subcategories || [],
+      tags: req.body.tags || [],
+      specifications: parsedSpecs || [],
+      variants: parsedVariants || [],
+      dimensions: parsedDimensions,
+      weight: parsedWeight,
+      seo: parsedSeo,
+      
+      isFeatured: req.body.isFeatured === 'true',
+      isNewArrival: req.body.isNewArrival === 'true',
+      isBestseller: req.body.isBestseller === 'true',
+      status: req.body.status || 'published',
+      
+      user: req.user._id
+    };
+
+    console.log('📊 Product data prepared:', JSON.stringify(productData, null, 2));
+
+    // Handle images
     if (req.files && req.files.length > 0) {
-        console.log(`⬆️ Uploading ${req.files.length} new images...`);
-
-        for (const file of req.files) {
-            try {
-                console.log(`📤 Uploading: ${file.originalname}`);
-                const result = await uploadToCloudinary(file.buffer);
-                
-                const newImage = {
-                    public_id: result.public_id,
-                    url: result.secure_url,
-                    alt: req.body.name || product.name || 'Product image',
-                    isPrimary: imageLinks.length === 0 && newlyUploadedImages.length === 0
-                };
-
-                imageLinks.push(newImage);
-                newlyUploadedImages.push(newImage);
-                
-                console.log(`✅ Uploaded: ${result.public_id}`);
-
-            } catch (uploadError) {
-                console.error('❌ Upload failed:', {
-                    fileName: file.originalname,
-                    error: uploadError.message
-                });
-
-                // ROLLBACK: Delete newly uploaded images if one fails
-                if (newlyUploadedImages.length > 0) {
-                    console.log('🔄 Rolling back uploaded images...');
-                    const rollbackIds = newlyUploadedImages.map(img => img.public_id);
-                    try {
-                        await deleteMultipleFromCloudinary(rollbackIds);
-                        console.log('✅ Rollback successful');
-                    } catch (rollbackError) {
-                        console.error('❌ Rollback failed:', rollbackError.message);
-                    }
-                }
-
-                return next(new HandleError(
-                    `Failed to upload image "${file.originalname}": ${uploadError.message}`,
-                    500
-                ));
-            }
-        }
+      const imagesLinks = [];
+      
+      for (let i = 0; i < req.files.length; i++) {
+        const result = await uploadToCloudinary(req.files[i].path, "products");
+        
+        imagesLinks.push({
+          public_id: result.public_id,
+          url: result.secure_url,
+          isPrimary: i === 0,
+          order: i
+        });
+        
+        fs.unlinkSync(req.files[i].path);
+      }
+      
+      productData.images = imagesLinks;
     }
 
-    // STEP 3: Validate that product has at least one image
-    if (imageLinks.length === 0) {
-        // ROLLBACK: Restore deleted images if no images remain
-        if (deletedImageIds.length > 0) {
-            console.warn('⚠️ Cannot delete all images - product needs at least one');
-        }
-        return next(new HandleError(
-            'Product must have at least one image',
-            400
-        ));
+    // Create product
+    const product = await Product.create(productData);
+    
+    console.log('✅ Product created successfully:', product._id);
+
+    res.status(201).json({
+      success: true,
+      product
+    });
+
+  } catch (error) {
+    console.error('🔥 Error creating product:', error);
+    next(error);
+  }
+};
+
+
+// ============================================
+// FIX 4: Backend - updateProduct function
+// ============================================
+
+
+export const updateProduct = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    console.log(`📝 Updating product: ${id}`);
+
+    let product = await Product.findById(id);
+    if (!product) {
+      return next(new ErrorHandler("Product not found", 404));
     }
 
-    // STEP 4: Update product data
-    req.body.images = imageLinks;
+    // Parse JSON fields
+    let parsedPricing = null;
+    let parsedInventory = null;
+    let parsedDimensions = null;
+    let parsedWeight = null;
+    let parsedSeo = null;
+    let parsedSpecs = null;
+    let parsedVariants = null;
+    let imagesToDelete = null;
 
-    // Handle pricing updates
-    if (req.body.price) {
-        req.body.pricing = req.body.pricing || {};
-        req.body.pricing.regular = req.body.price;
-        if (req.body.salePrice) {
-            req.body.pricing.sale = req.body.salePrice;
-        }
+    // ✅ Parse pricing object (NEW)
+    if (req.body.pricing) {
+      try {
+        parsedPricing = JSON.parse(req.body.pricing);
+        console.log('💰 Parsed pricing:', parsedPricing);
+      } catch (err) {
+        console.error('❌ Failed to parse pricing:', err);
+      }
     }
 
-    // Handle inventory updates
-    if (req.body.stock !== undefined) {
-        req.body.inventory = req.body.inventory || {};
-        req.body.inventory.stock = req.body.stock;
+    // ✅ Parse inventory object (NEW)
+    if (req.body.inventory) {
+      try {
+        parsedInventory = JSON.parse(req.body.inventory);
+        console.log('📦 Parsed inventory:', parsedInventory);
+      } catch (err) {
+        console.error('❌ Failed to parse inventory:', err);
+      }
     }
 
-    // Track who modified the product
-    req.body.lastModifiedBy = req.user.id;
-
-    // STEP 5: Update in database
-    try {
-        product = await Product.findByIdAndUpdate(
-            req.params.id, 
-            req.body, 
-            {
-                new: true,
-                runValidators: true,
-                useFindAndModify: false,
-            }
-        );
-
-        console.log('✅ Product updated successfully');
-
-    } catch (dbError) {
-        console.error('❌ Database update error:', dbError.message);
-
-        // ROLLBACK: Delete newly uploaded images
-        if (newlyUploadedImages.length > 0) {
-            console.log('🔄 Rolling back uploaded images due to DB error...');
-            const rollbackIds = newlyUploadedImages.map(img => img.public_id);
-            try {
-                await deleteMultipleFromCloudinary(rollbackIds);
-            } catch (rollbackError) {
-                console.error('❌ Rollback failed:', rollbackError.message);
-            }
-        }
-
-        return next(new HandleError(
-            `Failed to update product: ${dbError.message}`,
-            500
-        ));
+    if (req.body.dimensions) {
+      try {
+        parsedDimensions = JSON.parse(req.body.dimensions);
+      } catch (err) {
+        console.error('❌ Failed to parse dimensions:', err);
+      }
     }
 
-    // STEP 6: Invalidate caches
-    await invalidateProductCaches();
+    if (req.body.weight) {
+      try {
+        parsedWeight = JSON.parse(req.body.weight);
+      } catch (err) {
+        console.error('❌ Failed to parse weight:', err);
+      }
+    }
+
+    if (req.body.seo) {
+      try {
+        parsedSeo = JSON.parse(req.body.seo);
+      } catch (err) {
+        console.error('❌ Failed to parse seo:', err);
+      }
+    }
+
+    if (req.body.specifications) {
+      try {
+        parsedSpecs = JSON.parse(req.body.specifications);
+      } catch (err) {
+        console.error('❌ Failed to parse specifications:', err);
+      }
+    }
+
+    if (req.body.variants) {
+      try {
+        parsedVariants = JSON.parse(req.body.variants);
+      } catch (err) {
+        console.error('❌ Failed to parse variants:', err);
+      }
+    }
+
+    if (req.body.imagesToDelete) {
+      try {
+        imagesToDelete = JSON.parse(req.body.imagesToDelete);
+      } catch (err) {
+        console.error('❌ Failed to parse imagesToDelete:', err);
+      }
+    }
+
+    // Build update data
+    const updateData = {
+      name: req.body.name,
+      description: req.body.description,
+      shortDescription: req.body.shortDescription,
+      category: req.body.category,
+      brand: req.body.brand || '',
+      
+      // ✅ Use parsed pricing object if available
+      pricing: parsedPricing || {
+        regular: Number(req.body.price),
+        sale: req.body.salePrice ? Number(req.body.salePrice) : undefined,
+        cost: undefined,
+        currency: req.body.currency || 'USD'
+      },
+      
+      // ✅ Use parsed inventory object if available
+      inventory: parsedInventory || {
+        stock: Number(req.body.stock) || 0,
+        sku: req.body.sku || undefined,
+        barcode: undefined,
+        trackInventory: true,
+        lowStockThreshold: 5
+      },
+      
+      // Legacy fields
+      price: Number(req.body.price),
+      stock: Number(req.body.stock) || 0,
+      
+      subcategories: req.body.subcategories || [],
+      tags: req.body.tags || [],
+      specifications: parsedSpecs || [],
+      variants: parsedVariants || [],
+      dimensions: parsedDimensions,
+      weight: parsedWeight,
+      seo: parsedSeo,
+      
+      isFeatured: req.body.isFeatured === 'true',
+      isNewArrival: req.body.isNewArrival === 'true',
+      isBestseller: req.body.isBestseller === 'true',
+      status: req.body.status || product.status,
+      
+      lastModifiedBy: req.user._id
+    };
+
+    console.log('📊 Update data prepared:', JSON.stringify(updateData, null, 2));
+
+    // Handle image deletion
+    if (imagesToDelete && imagesToDelete.length > 0) {
+      for (const publicId of imagesToDelete) {
+        await deleteFromCloudinary(publicId);
+        product.images = product.images.filter(img => img.public_id !== publicId);
+      }
+    }
+
+    // Handle new images
+    if (req.files && req.files.length > 0) {
+      const imagesLinks = [];
+      
+      for (let i = 0; i < req.files.length; i++) {
+        const result = await uploadToCloudinary(req.files[i].path, "products");
+        
+        imagesLinks.push({
+          public_id: result.public_id,
+          url: result.secure_url,
+          isPrimary: false,
+          order: product.images.length + i
+        });
+        
+        fs.unlinkSync(req.files[i].path);
+      }
+      
+      updateData.images = [...product.images, ...imagesLinks];
+    } else {
+      updateData.images = product.images;
+    }
+
+    // Update product
+    product = await Product.findByIdAndUpdate(id, updateData, {
+      new: true,
+      runValidators: true,
+      useFindAndModify: false
+    });
+
+    console.log('✅ Product updated successfully');
 
     res.status(200).json({
-        success: true,
-        product,
-        changes: {
-            imagesDeleted: deletedImageIds.length,
-            imagesAdded: newlyUploadedImages.length,
-            totalImages: imageLinks.length
-        }
+      success: true,
+      product
     });
-});
+
+  } catch (error) {
+    console.error('🔥 Error updating product:', error);
+    next(error);
+  }
+};
+
 
 // delete products
 export const deleteProduct = handleAsyncError(async (req, res, next) => {
@@ -492,25 +448,14 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
                     console.warn(`⚠️ Failed to delete ${failed.length} images:`, 
                         failed.map(f => f.public_id || 'unknown')
                     );
-                    
-                    // You can choose to:
-                    // Option A: Continue anyway (current approach)
-                    // Option B: Return error and don't delete product
-                    // For now, we'll log but continue
                 }
             } catch (cloudinaryError) {
                 console.error('❌ Cloudinary deletion error:', cloudinaryError.message);
                 
-                // IMPORTANT DECISION POINT:
-                // Should we fail the entire deletion if Cloudinary fails?
-                // Option A: Fail the request (recommended for data consistency)
                 return next(new HandleError(
                     'Failed to delete product images from Cloudinary. Product not deleted.',
                     500
                 ));
-                
-                // Option B: Continue anyway (orphans images in Cloudinary)
-                // console.warn('Continuing with product deletion despite Cloudinary errors');
             }
         }
     }
@@ -541,76 +486,7 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
     });
 });
 
-// ALTERNATIVE VERSION - WITH TRANSACTION-LIKE ROLLBACK
-export const deleteProductWithRollback = handleAsyncError(async (req, res, next) => {
-    const product = await Product.findById(req.params.id);
-
-    if (!product) {
-        return next(new HandleError("Product not found", 404));
-    }
-
-    console.log(`🗑️ Starting deletion with rollback for: ${product.name}`);
-
-    let deletedImageIds = [];
-    let dbDeleted = false;
-
-    try {
-        // STEP 1: Delete images from Cloudinary
-        if (product.images && product.images.length > 0) {
-            const publicIds = product.images.map(img => img.public_id).filter(Boolean);
-            
-            if (publicIds.length > 0) {
-                console.log(`📸 Deleting ${publicIds.length} images...`);
-                const results = await deleteMultipleFromCloudinary(publicIds);
-                
-                // Track successfully deleted images for potential rollback
-                deletedImageIds = results
-                    .filter(r => !r.error && r.result === 'ok')
-                    .map((r, idx) => publicIds[idx]);
-                
-                const failed = results.filter(r => r.error);
-                if (failed.length > 0) {
-                    throw new Error(`Failed to delete ${failed.length} images`);
-                }
-            }
-        }
-
-        // STEP 2: Delete from database
-        await Product.findByIdAndDelete(req.params.id);
-        dbDeleted = true;
-        console.log(`✅ Product deleted successfully`);
-
-        // STEP 3: Invalidate caches
-        await invalidateProductCaches();
-
-        res.status(200).json({
-            success: true,
-            message: 'Product and images deleted successfully',
-            deletedProduct: {
-                id: product._id,
-                name: product.name,
-                imagesDeleted: deletedImageIds.length
-            }
-        });
-
-    } catch (error) {
-        console.error('❌ Deletion failed, attempting rollback:', error.message);
-
-        // ROLLBACK: If DB deletion succeeded but something after failed,
-        // we can't easily recreate the product, so this is mainly for Cloudinary
-        if (!dbDeleted && deletedImageIds.length > 0) {
-            console.warn('⚠️ Rolling back Cloudinary deletions is not supported');
-            console.warn('Images may be orphaned:', deletedImageIds);
-        }
-
-        return next(new HandleError(
-            `Failed to delete product: ${error.message}`,
-            500
-        ));
-    }
-});
-
-// BATCH DELETE PRODUCTS (BONUS)
+// BATCH DELETE PRODUCTS
 export const deleteMultipleProducts = handleAsyncError(async (req, res, next) => {
     const { productIds } = req.body;
 
