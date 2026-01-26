@@ -48,6 +48,18 @@ const userSchema = new mongoose.Schema(
       }
     },
 
+    wishlist: [{
+      product: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Product',
+        required: true
+      },
+      addedAt: {
+        type: Date,
+        default: Date.now
+      }
+    }],
+
     role: {
       type: String,
       enum: ["user", "admin"],
@@ -114,6 +126,7 @@ userSchema.virtual('initials').get(function() {
 userSchema.index({ authProvider: 1 });
 userSchema.index({ createdAt: 1 });
 userSchema.index({ firstName: 1, lastName: 1 });
+userSchema.index({ 'wishlist.product': 1 });
 
 /* ================= MIDDLEWARE ================= */
 

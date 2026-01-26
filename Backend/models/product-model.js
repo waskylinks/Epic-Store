@@ -420,6 +420,15 @@ productSchema.methods.incrementPurchase = async function(quantity = 1) {
   return this.save({ validateBeforeSave: false });
 };
 
+productSchema.methods.incrementWishlist = async function(increment = true) {
+  if (increment) {
+    this.analytics.addedToWishlist += 1;
+  } else {
+    this.analytics.addedToWishlist = Math.max(0, this.analytics.addedToWishlist - 1);
+  }
+  return this.save({ validateBeforeSave: false });
+};
+
 productSchema.set("strictQuery", true);
 
 export default mongoose.model("Product", productSchema);
