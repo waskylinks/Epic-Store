@@ -8,6 +8,7 @@ import receiptReducer from '../features/cart/receiptSlice'
 import adminReducer from '../features/admin/adminSlice'
 import refundReducer from '../features/refunds/refundSlice'
 import publicProductsReducer from '../features/publicProducts/publicProductsSlice';
+import wishlistReducer from '../features/products/wishlistSlice';
 
 
 export const store = configureStore({
@@ -21,6 +22,7 @@ export const store = configureStore({
         admin: adminReducer,
         refund: refundReducer,
         publicProducts: publicProductsReducer,
+        wishlist: wishlistReducer,
 
     }
 });

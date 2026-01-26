@@ -26,6 +26,8 @@ function Navbar() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isScrolled, setIsScrolled] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const { count: wishlistCount } = useSelector(state => state.wishlist);
+
 
   const { isAuthenticated, user, loading } = useSelector((state) => state.user);
   const { cartItems } = useSelector((state) => state.cart);
@@ -259,9 +261,14 @@ function Navbar() {
 
           {/* Wishlist */}
           <Link to="/wishlist" className="icon-link wishlist-link">
-            <FavoriteIcon className="icon" />
-            <span className="icon-label">Wishlist</span>
-          </Link>
+          <div className="cart-container">
+            <FiHeart className="icon" />
+            {wishlistCount > 0 && (
+              <span className="cart-badge">{wishlistCount}</span>
+            )}
+          </div>
+          <span className="icon-label">Wishlist</span>
+        </Link>
 
           {/* Cart */}
           <Link to="/cart" className="icon-link cart-link">

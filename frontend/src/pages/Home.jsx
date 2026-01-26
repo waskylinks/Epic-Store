@@ -13,6 +13,7 @@ import {
 import Loader from '../components/Loader';
 import { toast } from 'react-toastify';
 import { Link } from 'react-router-dom';
+import { addItemsToCart } from '../features/cart/cartSlice';
 import {
   TrendingUp,
   LocalShipping,
@@ -81,6 +82,11 @@ function Home() {
         }
     }, [trendingError, newArrivalsError]);
 
+    // Quick add to cart handler
+    const handleQuickAdd = (productId) => {
+        dispatch(addItemsToCart({ id: productId, quantity: 1 }));
+    };
+
     // Show loader while initial data is loading
     const isLoading = trendingLoading || newArrivalsLoading;
 
@@ -103,13 +109,19 @@ function Home() {
                                             <TrendingUp className="section-icon trending-icon" />
                                             <h2 className="section-title">Trending Now</h2>
                                         </div>
-                                        <Link to="/products/trending" className="section-link">
+                                        <Link to="/products" className="section-link">
                                             View All <ArrowForward />
                                         </Link>
                                     </div>
                                     <div className="products-grid">
                                         {trendingProducts.map((product) => (
-                                            <Product product={product} key={product._id} />
+                                            <Product 
+                                                key={product._id}
+                                                product={product}
+                                                hideNewBadge={true}
+                                                onQuickAdd={handleQuickAdd}
+                                                showQuickActions={true}
+                                            />
                                         ))}
                                     </div>
                                 </div>
@@ -125,13 +137,19 @@ function Home() {
                                             <NewReleases className="section-icon new-icon" />
                                             <h2 className="section-title">New Arrivals</h2>
                                         </div>
-                                        <Link to="/products/new-arrivals" className="section-link">
+                                        <Link to="/products" className="section-link">
                                             View All <ArrowForward />
                                         </Link>
                                     </div>
                                     <div className="products-grid">
                                         {newArrivals.map((product) => (
-                                            <Product product={product} key={product._id} />
+                                            <Product 
+                                                key={product._id}
+                                                product={product}
+                                                hideNewBadge={true}
+                                                onQuickAdd={handleQuickAdd}
+                                                showQuickActions={true}
+                                            />
                                         ))}
                                     </div>
                                 </div>

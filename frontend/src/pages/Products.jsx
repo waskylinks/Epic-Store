@@ -3,15 +3,15 @@ import '../pageStyles/Products.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
+import Product from '../components/Product';
 import { useDispatch, useSelector } from 'react-redux';
 import { getProduct, removeErrors } from '../features/products/productSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { 
-    FiGrid, FiList, FiFilter, FiX, FiChevronDown, 
-    FiStar, FiShoppingCart, FiHeart, FiEye,
-    FiPackage, FiTrendingUp, FiDollarSign, FiTag
+    FiGrid, FiList, FiFilter, FiX, 
+    FiPackage
 } from 'react-icons/fi';
 import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
 
@@ -34,14 +34,13 @@ function Products() {
     const [sortBy, setSortBy] = useState('newest');
     const [priceRange, setPriceRange] = useState({ min: '', max: '' });
     const [showFilters, setShowFilters] = useState(false);
-    const [hoveredProduct, setHoveredProduct] = useState(null);
 
     const categories = [
         { id: 'all', name: 'All Products', icon: <FiPackage /> },
         { id: 'Electronics', name: 'Electronics', icon: <FiPackage /> },
-        { id: 'Clothing & Apparel', name: 'Clothing & Apparel', icon: <FiTag /> },
+        { id: 'Clothing & Apparel', name: 'Clothing & Apparel', icon: <FiPackage /> },
         { id: 'Home & Living', name: 'Home & Living', icon: <FiPackage /> },
-        { id: 'Sports & Outdoors', name: 'Sports & Outdoors', icon: <FiTrendingUp /> },
+        { id: 'Sports & Outdoors', name: 'Sports & Outdoors', icon: <FiPackage /> },
         { id: 'Beauty & Personal Care', name: 'Beauty & Personal Care', icon: <FiPackage /> },
         { id: 'Books & Media', name: 'Books & Media', icon: <FiPackage /> },
         { id: 'Food & Beverages', name: 'Food & Beverages', icon: <FiPackage /> }
@@ -104,37 +103,6 @@ function Products() {
 
     const getProductPrice = (product) => {
         return product.pricing?.regular || product.price || 0;
-    };
-
-    const getSalePrice = (product) => {
-        return product.pricing?.sale || null;
-    };
-
-    const getProductImage = (product) => {
-        const images = product.images || product.image || [];
-        return images[0]?.url || '/placeholder-product.png';
-    };
-
-    const getDiscountPercentage = (product) => {
-        const regular = getProductPrice(product);
-        const sale = getSalePrice(product);
-        if (sale && regular > sale) {
-            return Math.round(((regular - sale) / regular) * 100);
-        }
-        return 0;
-    };
-
-    const getStockStatus = (product) => {
-        const stock = product.inventory?.stock ?? product.stock ?? 0;
-        return stock > 0 ? 'In Stock' : 'Out of Stock';
-    };
-
-    const formatPrice = (amount) => {
-        return new Intl.NumberFormat('en-NG', {
-            style: 'currency',
-            currency: 'NGN',
-            minimumFractionDigits: 0
-        }).format(amount);
     };
 
     const handleQuickAdd = (productId) => {
@@ -301,111 +269,15 @@ function Products() {
                         {/* Products Grid/List */}
                         {sortedProducts.length > 0 ? (
                             <div className={`ep-products ${viewMode}`}>
-                                {sortedProducts.map((product) => {
-                                    const price = getProductPrice(product);
-                                    const salePrice = getSalePrice(product);
-                                    const discount = getDiscountPercentage(product);
-                                    const image = getProductImage(product);
-                                    const stock = product.inventory?.stock ?? product.stock ?? 0;
-
-                                    return (
-                                        <div 
-                                            key={product._id} 
-                                            className="ep-product-card"
-                                            onMouseEnter={() => setHoveredProduct(product._id)}
-                                            onMouseLeave={() => setHoveredProduct(null)}
-                                        >
-                                            <div className="ep-product-image-wrapper">
-                                                <img 
-                                                    src={image} 
-                                                    alt={product.name}
-                                                    className="ep-product-image"
-                                                />
-                                                
-                                                {/* Badges */}
-                                                <div className="ep-product-badges">
-                                                    {discount > 0 && (
-                                                        <span className="ep-badge discount">-{discount}%</span>
-                                                    )}
-                                                    {product.isNewArrival && (
-                                                        <span className="ep-badge new">New</span>
-                                                    )}
-                                                    {product.isFeatured && (
-                                                        <span className="ep-badge featured">Featured</span>
-                                                    )}
-                                                    {stock === 0 && (
-                                                        <span className="ep-badge sold-out">Sold Out</span>
-                                                    )}
-                                                </div>
-
-                                                {/* Quick Actions */}
-                                                <div className={`ep-quick-actions ${hoveredProduct === product._id ? 'show' : ''}`}>
-                                                    <button 
-                                                        className="ep-action-btn"
-                                                        onClick={() => navigate(`/product/${product._id}`)}
-                                                        title="View Details"
-                                                    >
-                                                        <FiEye />
-                                                    </button>
-                                                    <button 
-                                                        className="ep-action-btn"
-                                                        title="Add to Wishlist"
-                                                    >
-                                                        <FiHeart />
-                                                    </button>
-                                                </div>
-                                            </div>
-
-                                            <div className="ep-product-info">
-                                                <h3 className="ep-product-name">
-                                                    {product.name}
-                                                </h3>
-                                                
-                                                <p className="ep-product-category">{product.category}</p>
-
-                                                <div className="ep-product-rating">
-                                                    <div className="ep-stars">
-                                                        {[...Array(5)].map((_, i) => (
-                                                            <FiStar 
-                                                                key={i}
-                                                                className={i < Math.floor(product.ratings || 0) ? 'filled' : ''}
-                                                            />
-                                                        ))}
-                                                    </div>
-                                                    <span className="ep-rating-text">
-                                                        ({product.numOfReviews || 0})
-                                                    </span>
-                                                </div>
-
-                                                <div className="ep-product-price">
-                                                    {salePrice ? (
-                                                        <>
-                                                            <span className="ep-price-sale">{formatPrice(salePrice)}</span>
-                                                            <span className="ep-price-original">{formatPrice(price)}</span>
-                                                        </>
-                                                    ) : (
-                                                        <span className="ep-price-current">{formatPrice(price)}</span>
-                                                    )}
-                                                </div>
-
-                                                <div className="ep-product-footer">
-                                                    <span className={`ep-stock-status ${stock > 0 ? 'in-stock' : 'out-stock'}`}>
-                                                        {getStockStatus(product)}
-                                                    </span>
-                                                    
-                                                    {stock > 0 && (
-                                                        <button 
-                                                            className="ep-add-cart-btn"
-                                                            onClick={() => handleQuickAdd(product._id)}
-                                                        >
-                                                            <FiShoppingCart /> Add
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
+                                {sortedProducts.map((product) => (
+                                    <Product 
+                                        key={product._id}
+                                        product={product}
+                                        hideNewBadge={false}
+                                        onQuickAdd={handleQuickAdd}
+                                        showQuickActions={true}
+                                    />
+                                ))}
                             </div>
                         ) : (
                             <div className="ep-empty-state">
