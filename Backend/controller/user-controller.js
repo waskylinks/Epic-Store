@@ -429,16 +429,18 @@ export const getUserDetails = handleAsyncError(async(req, res, next) => {
 });
 
 
-// UPDATE USER PROFILE
-
+// UPDATE USER PROFILE - FIXED VERSION
 export const updateProfile = handleAsyncError(async(req, res, next) => {
     const { firstName, lastName, email, avatar } = req.body;
     
-    const updateUserDetails = {
-        firstName,
-        lastName,
-        email: email?.toLowerCase(),
-    };
+    console.log('📥 Backend - Received update request:', { firstName, lastName, email, hasAvatar: !!avatar });
+    
+    const updateUserDetails = {};
+
+    // Only update fields that are provided
+    if (firstName !== undefined) updateUserDetails.firstName = firstName;
+    if (lastName !== undefined) updateUserDetails.lastName = lastName;
+    if (email !== undefined) updateUserDetails.email = email?.toLowerCase();
 
     // Handle avatar upload
     if(avatar && avatar !== '') {
@@ -470,6 +472,14 @@ export const updateProfile = handleAsyncError(async(req, res, next) => {
     const user = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
         new: true,
         runValidators: true
+    });
+
+    console.log('✅ Backend - Updated user:', {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        email: user.email,
+        fullName: user.fullName, // This is the virtual field
+        avatar: user.avatar
     });
 
     res.status(200).json({
