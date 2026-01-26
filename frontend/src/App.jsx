@@ -38,6 +38,7 @@ import ContactPage from './pages/ContactPage';
 import CategoriesPage from './pages/CategoriesPage';
 import SalePage from './pages/SalePage';
 import Wishlist from './pages/Wishlist';
+import NewArrivals from './pages/NewArrivals';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -70,6 +71,7 @@ function App() {
         <Route path="/categories" element={<CategoriesPage />} />
         <Route path="/sale" element={<SalePage />} />
         <Route path="/wishlist" element={<Wishlist />} />
+        <Route path="/new-arrivals" element={<NewArrivals />} />
         
         {/* Password Reset Routes */}
         <Route path='/password/forgot' element={<ForgotPassword />} />

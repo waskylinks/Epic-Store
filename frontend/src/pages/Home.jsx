@@ -8,6 +8,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { 
     fetchTrendingProducts, 
     fetchNewArrivals,
+    fetchFeaturedProducts,
+    fetchBestsellers,
     clearAllErrors 
 } from '../features/publicProducts/publicProductsSlice';
 import Loader from '../components/Loader';
@@ -21,7 +23,9 @@ import {
   Verified,
   ArrowForward,
   NewReleases,
-  CardGiftcard
+  CardGiftcard,
+  Star,
+  Whatshot
 } from '@mui/icons-material';
 
 function Home() {
@@ -34,7 +38,13 @@ function Home() {
         trendingError,
         newArrivals,
         newArrivalsLoading,
-        newArrivalsError 
+        newArrivalsError,
+        featuredProducts,
+        featuredLoading,
+        featuredError,
+        bestsellers,
+        bestsellersLoading,
+        bestsellersError
     } = useSelector((state) => state.publicProducts);
 
     // Trust badges data
@@ -61,10 +71,12 @@ function Home() {
         }
     ];
 
-    // Fetch products on mount
+    // Fetch all product sections on mount
     useEffect(() => {
         dispatch(fetchTrendingProducts({ limit: 8, timeframe: 'month' }));
         dispatch(fetchNewArrivals({ limit: 8, daysBack: 30 }));
+        dispatch(fetchFeaturedProducts({ limit: 8 }));
+        dispatch(fetchBestsellers({ limit: 8 }));
         
         // Cleanup errors on unmount
         return () => {
@@ -80,19 +92,30 @@ function Home() {
         if (newArrivalsError) {
             toast.error(newArrivalsError, { position: 'top-center', autoClose: 2000 });
         }
-    }, [trendingError, newArrivalsError]);
+        if (featuredError) {
+            toast.error(featuredError, { position: 'top-center', autoClose: 2000 });
+        }
+        if (bestsellersError) {
+            toast.error(bestsellersError, { position: 'top-center', autoClose: 2000 });
+        }
+    }, [trendingError, newArrivalsError, featuredError, bestsellersError]);
 
     // Quick add to cart handler
     const handleQuickAdd = (productId) => {
         dispatch(addItemsToCart({ id: productId, quantity: 1 }));
     };
 
-    // Show loader while initial data is loading
-    const isLoading = trendingLoading || newArrivalsLoading;
+    // Show loader only on initial load
+    const isInitialLoading = (
+        (trendingLoading && trendingProducts.length === 0) &&
+        (newArrivalsLoading && newArrivals.length === 0) &&
+        (featuredLoading && featuredProducts.length === 0) &&
+        (bestsellersLoading && bestsellers.length === 0)
+    );
 
     return (
         <>
-            {isLoading && trendingProducts.length === 0 && newArrivals.length === 0 ? (
+            {isInitialLoading ? (
                 <Loader />
             ) : (
                 <>
@@ -100,7 +123,35 @@ function Home() {
                     <Navbar />
 
                     <div className="home-page">
-                        {/* Trending Products - TOP */}
+                        {/* Featured Products */}
+                        {featuredProducts.length > 0 && (
+                            <section className="featured-section">
+                                <div className="container">
+                                    <div className="section-header">
+                                        <div className="section-header-left">
+                                            <Star className="section-icon featured-icon" />
+                                            <h2 className="section-title">Featured Products</h2>
+                                        </div>
+                                        <Link to="/products" className="section-link">
+                                            View All <ArrowForward />
+                                        </Link>
+                                    </div>
+                                    <div className="products-grid">
+                                        {featuredProducts.map((product) => (
+                                            <Product 
+                                                key={product._id}
+                                                product={product}
+                                                hideNewBadge={true}
+                                                onQuickAdd={handleQuickAdd}
+                                                showQuickActions={true}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </section>
+                        )}
+
+                        {/* Trending Products */}
                         {trendingProducts.length > 0 && (
                             <section className="trending-section">
                                 <div className="container">
@@ -137,12 +188,40 @@ function Home() {
                                             <NewReleases className="section-icon new-icon" />
                                             <h2 className="section-title">New Arrivals</h2>
                                         </div>
-                                        <Link to="/products" className="section-link">
+                                        <Link to="/new-arrivals" className="section-link">
                                             View All <ArrowForward />
                                         </Link>
                                     </div>
                                     <div className="products-grid">
                                         {newArrivals.map((product) => (
+                                            <Product 
+                                                key={product._id}
+                                                product={product}
+                                                hideNewBadge={true}
+                                                onQuickAdd={handleQuickAdd}
+                                                showQuickActions={true}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            </section>
+                        )}
+
+                        {/* Bestsellers */}
+                        {bestsellers.length > 0 && (
+                            <section className="bestsellers-section">
+                                <div className="container">
+                                    <div className="section-header">
+                                        <div className="section-header-left">
+                                            <Whatshot className="section-icon bestseller-icon" />
+                                            <h2 className="section-title">Best Sellers</h2>
+                                        </div>
+                                        <Link to="/products" className="section-link">
+                                            View All <ArrowForward />
+                                        </Link>
+                                    </div>
+                                    <div className="products-grid">
+                                        {bestsellers.map((product) => (
                                             <Product 
                                                 key={product._id}
                                                 product={product}
