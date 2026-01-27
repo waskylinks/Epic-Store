@@ -2,22 +2,8 @@ import Product from '../models/product-model.js';
 import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import APIFunctionality from '../utils/apiFunctionality.js';
-import { uploadToCloudinary, cloudinary, deleteFromCloudinary } from '../utils/cloudinaryUpload.js';
+import { uploadToCloudinary, deleteFromCloudinary, deleteMultipleFromCloudinary } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern } from '../utils/redis.js';
-
-// Helper: Delete multiple images from Cloudinary
-const deleteMultipleFromCloudinary = async (publicIds) => {
-    const results = [];
-    for (const publicId of publicIds) {
-        try {
-            const result = await deleteFromCloudinary(publicId);
-            results.push({ public_id: publicId, result: 'ok' });
-        } catch (error) {
-            results.push({ public_id: publicId, error: error.message });
-        }
-    }
-    return results;
-};
 
 // Helper: Invalidate product-related caches
 const invalidateProductCaches = async () => {
@@ -35,8 +21,45 @@ const invalidateProductCaches = async () => {
     }
 };
 
+const parsePricingData = (body) => {
+  let pricing = null;
+  
+  if (body.pricing) {
+    try {
+      pricing = JSON.parse(body.pricing);
+    } catch (err) {
+      console.error('❌ Failed to parse pricing JSON:', err);
+    }
+  }
+  
+  // Convert to numbers and handle undefined
+  const regular = Number(pricing?.regular || body.price || 0);
+  const sale = pricing?.sale ? Number(pricing.sale) : (body.salePrice ? Number(body.salePrice) : null);
+  const cost = pricing?.cost ? Number(pricing.cost) : null;
+  
+  const result = {
+    regular,
+    currency: pricing?.currency || body.currency || 'USD'
+  };
+  
+  // Only add sale if it exists AND is less than regular
+  if (sale !== null && !isNaN(sale) && sale > 0) {
+    if (sale >= regular) {
+      throw new Error(`Sale price (${sale}) must be less than regular price (${regular})`);
+    }
+    result.sale = sale;
+  }
+  
+  // Only add cost if it exists
+  if (cost !== null && !isNaN(cost) && cost > 0) {
+    result.cost = cost;
+  }
+  
+  console.log('✅ Parsed pricing:', result);
+  return result;
+};
 
-//get all products
+// Get all products
 export const getAllProducts = handleAsyncError(async (req, res, next) => {
     const resultPerPage = 4;
     
@@ -69,150 +92,89 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
         currentPage: page,
     });
 });
-export const createProduct = async (req, res, next) => {
+
+// Create Product - fully resilient
+export const createProducts = async (req, res, next) => {
+  let uploadedImages = [];
+
   try {
     console.log('📝 Creating new product...');
+    console.log('📤 Files received:', req.files?.length || 0);
 
-    // Parse JSON fields
-    let parsedPricing = null;
-    let parsedInventory = null;
-    let parsedDimensions = null;
-    let parsedWeight = null;
-    let parsedSeo = null;
-    let parsedSpecs = null;
-    let parsedVariants = null;
+    // Parse JSON fields safely
+    const parseJSONSafe = (field) => {
+      if (!req.body[field]) return undefined;
+      try { return JSON.parse(req.body[field]); }
+      catch { return undefined; }
+    };
 
-    // ✅ Parse pricing object (NEW)
-    if (req.body.pricing) {
-      try {
-        parsedPricing = JSON.parse(req.body.pricing);
-        console.log('💰 Parsed pricing:', parsedPricing);
-      } catch (err) {
-        console.error('❌ Failed to parse pricing:', err);
-      }
-    }
+    const inventory = parseJSONSafe('inventory') || {
+      stock: Number(req.body.stock) || 0,
+      sku: req.body.sku || undefined,
+      barcode: undefined,
+      trackInventory: true,
+      lowStockThreshold: 5
+    };
 
-    // ✅ Parse inventory object (NEW)
-    if (req.body.inventory) {
-      try {
-        parsedInventory = JSON.parse(req.body.inventory);
-        console.log('📦 Parsed inventory:', parsedInventory);
-      } catch (err) {
-        console.error('❌ Failed to parse inventory:', err);
-      }
-    }
-
-    if (req.body.dimensions) {
-      try {
-        parsedDimensions = JSON.parse(req.body.dimensions);
-      } catch (err) {
-        console.error('❌ Failed to parse dimensions:', err);
-      }
-    }
-
-    if (req.body.weight) {
-      try {
-        parsedWeight = JSON.parse(req.body.weight);
-      } catch (err) {
-        console.error('❌ Failed to parse weight:', err);
-      }
-    }
-
-    if (req.body.seo) {
-      try {
-        parsedSeo = JSON.parse(req.body.seo);
-      } catch (err) {
-        console.error('❌ Failed to parse seo:', err);
-      }
-    }
-
-    if (req.body.specifications) {
-      try {
-        parsedSpecs = JSON.parse(req.body.specifications);
-      } catch (err) {
-        console.error('❌ Failed to parse specifications:', err);
-      }
-    }
-
-    if (req.body.variants) {
-      try {
-        parsedVariants = JSON.parse(req.body.variants);
-      } catch (err) {
-        console.error('❌ Failed to parse variants:', err);
-      }
-    }
-
-    // Build product data
     const productData = {
       name: req.body.name,
       description: req.body.description,
       shortDescription: req.body.shortDescription,
       category: req.body.category,
       brand: req.body.brand || '',
-      
-      // ✅ Use parsed pricing object if available
-      pricing: parsedPricing || {
-        regular: Number(req.body.price),
+      pricing: parseJSONSafe('pricing') || {
+        regular: Number(req.body.price) || 0,
         sale: req.body.salePrice ? Number(req.body.salePrice) : undefined,
-        cost: undefined,
+        cost: req.body.cost ? Number(req.body.cost) : undefined,
         currency: req.body.currency || 'USD'
       },
-      
-      // ✅ Use parsed inventory object if available
-      inventory: parsedInventory || {
-        stock: Number(req.body.stock) || 0,
-        sku: req.body.sku || undefined,
-        barcode: undefined,
-        trackInventory: true,
-        lowStockThreshold: 5
-      },
-      
-      // Legacy fields
-      price: Number(req.body.price),
-      stock: Number(req.body.stock) || 0,
-      
-      subcategories: req.body.subcategories || [],
-      tags: req.body.tags || [],
-      specifications: parsedSpecs || [],
-      variants: parsedVariants || [],
-      dimensions: parsedDimensions,
-      weight: parsedWeight,
-      seo: parsedSeo,
-      
+      inventory,
+      subcategories: parseJSONSafe('subcategories') || [],
+      tags: parseJSONSafe('tags') || [],
+      specifications: parseJSONSafe('specifications') || [],
+      variants: parseJSONSafe('variants') || [],
+      dimensions: parseJSONSafe('dimensions'),
+      weight: parseJSONSafe('weight'),
+      seo: parseJSONSafe('seo'),
       isFeatured: req.body.isFeatured === 'true',
       isNewArrival: req.body.isNewArrival === 'true',
       isBestseller: req.body.isBestseller === 'true',
       status: req.body.status || 'published',
-      
       user: req.user._id
     };
-
-    console.log('📊 Product data prepared:', JSON.stringify(productData, null, 2));
 
     // Handle images
     if (req.files && req.files.length > 0) {
       const imagesLinks = [];
-      
       for (let i = 0; i < req.files.length; i++) {
-        const result = await uploadToCloudinary(req.files[i].path, "products");
-        
-        imagesLinks.push({
-          public_id: result.public_id,
-          url: result.secure_url,
-          isPrimary: i === 0,
-          order: i
-        });
-        
-        fs.unlinkSync(req.files[i].path);
+        try {
+          const result = await uploadToCloudinary(req.files[i].buffer, {
+            folder: 'products',
+            transformation: [
+              { width: 1000, height: 1000, crop: 'limit' },
+              { quality: 'auto:good' }
+            ]
+          });
+          imagesLinks.push({
+            public_id: result.public_id,
+            url: result.secure_url,
+            isPrimary: i === 0,
+            order: i
+          });
+        } catch (err) {
+          if (imagesLinks.length > 0)
+            await deleteMultipleFromCloudinary(imagesLinks.map(img => img.public_id));
+          return next(new HandleError(`Failed to upload image ${i + 1}`, 500));
+        }
       }
-      
       productData.images = imagesLinks;
+      uploadedImages = imagesLinks;
     }
 
-    // Create product
+    // Save product - let Mongoose handle pricing validation
     const product = await Product.create(productData);
-    
-    console.log('✅ Product created successfully:', product._id);
+
+    await invalidateProductCaches();
 
     res.status(201).json({
       success: true,
@@ -220,190 +182,113 @@ export const createProduct = async (req, res, next) => {
     });
 
   } catch (error) {
+    if (uploadedImages.length > 0) {
+      await deleteMultipleFromCloudinary(uploadedImages.map(img => img.public_id));
+    }
     console.error('🔥 Error creating product:', error);
     next(error);
   }
 };
 
-
-// ============================================
-// FIX 4: Backend - updateProduct function
-// ============================================
-
-
+// Update Product - fully resilient
 export const updateProduct = async (req, res, next) => {
+  let newlyUploadedImages = [];
+
   try {
     const { id } = req.params;
-    console.log(`📝 Updating product: ${id}`);
-
     let product = await Product.findById(id);
-    if (!product) {
-      return next(new ErrorHandler("Product not found", 404));
-    }
+    if (!product) return next(new HandleError('Product not found', 404));
 
-    // Parse JSON fields
-    let parsedPricing = null;
-    let parsedInventory = null;
-    let parsedDimensions = null;
-    let parsedWeight = null;
-    let parsedSeo = null;
-    let parsedSpecs = null;
-    let parsedVariants = null;
-    let imagesToDelete = null;
+    const parseJSONSafe = (field) => {
+      if (!req.body[field]) return undefined;
+      try { return JSON.parse(req.body[field]); }
+      catch { return undefined; }
+    };
 
-    // ✅ Parse pricing object (NEW)
-    if (req.body.pricing) {
-      try {
-        parsedPricing = JSON.parse(req.body.pricing);
-        console.log('💰 Parsed pricing:', parsedPricing);
-      } catch (err) {
-        console.error('❌ Failed to parse pricing:', err);
-      }
-    }
+    const inventory = parseJSONSafe('inventory') || {
+      stock: Number(req.body.stock) || product.inventory?.stock || 0,
+      sku: req.body.sku || product.inventory?.sku,
+      barcode: product.inventory?.barcode,
+      trackInventory: true,
+      lowStockThreshold: 5
+    };
 
-    // ✅ Parse inventory object (NEW)
-    if (req.body.inventory) {
-      try {
-        parsedInventory = JSON.parse(req.body.inventory);
-        console.log('📦 Parsed inventory:', parsedInventory);
-      } catch (err) {
-        console.error('❌ Failed to parse inventory:', err);
-      }
-    }
-
-    if (req.body.dimensions) {
-      try {
-        parsedDimensions = JSON.parse(req.body.dimensions);
-      } catch (err) {
-        console.error('❌ Failed to parse dimensions:', err);
-      }
-    }
-
-    if (req.body.weight) {
-      try {
-        parsedWeight = JSON.parse(req.body.weight);
-      } catch (err) {
-        console.error('❌ Failed to parse weight:', err);
-      }
-    }
-
-    if (req.body.seo) {
-      try {
-        parsedSeo = JSON.parse(req.body.seo);
-      } catch (err) {
-        console.error('❌ Failed to parse seo:', err);
-      }
-    }
-
-    if (req.body.specifications) {
-      try {
-        parsedSpecs = JSON.parse(req.body.specifications);
-      } catch (err) {
-        console.error('❌ Failed to parse specifications:', err);
-      }
-    }
-
-    if (req.body.variants) {
-      try {
-        parsedVariants = JSON.parse(req.body.variants);
-      } catch (err) {
-        console.error('❌ Failed to parse variants:', err);
-      }
-    }
-
-    if (req.body.imagesToDelete) {
-      try {
-        imagesToDelete = JSON.parse(req.body.imagesToDelete);
-      } catch (err) {
-        console.error('❌ Failed to parse imagesToDelete:', err);
-      }
-    }
-
-    // Build update data
     const updateData = {
       name: req.body.name,
       description: req.body.description,
       shortDescription: req.body.shortDescription,
       category: req.body.category,
       brand: req.body.brand || '',
-      
-      // ✅ Use parsed pricing object if available
-      pricing: parsedPricing || {
-        regular: Number(req.body.price),
-        sale: req.body.salePrice ? Number(req.body.salePrice) : undefined,
-        cost: undefined,
-        currency: req.body.currency || 'USD'
+      pricing: parseJSONSafe('pricing') || {
+        regular: Number(req.body.price) || product.pricing?.regular || 0,
+        sale: req.body.salePrice ? Number(req.body.salePrice) : product.pricing?.sale,
+        cost: req.body.cost ? Number(req.body.cost) : product.pricing?.cost,
+        currency: req.body.currency || product.pricing?.currency || 'USD'
       },
-      
-      // ✅ Use parsed inventory object if available
-      inventory: parsedInventory || {
-        stock: Number(req.body.stock) || 0,
-        sku: req.body.sku || undefined,
-        barcode: undefined,
-        trackInventory: true,
-        lowStockThreshold: 5
-      },
-      
-      // Legacy fields
-      price: Number(req.body.price),
-      stock: Number(req.body.stock) || 0,
-      
-      subcategories: req.body.subcategories || [],
-      tags: req.body.tags || [],
-      specifications: parsedSpecs || [],
-      variants: parsedVariants || [],
-      dimensions: parsedDimensions,
-      weight: parsedWeight,
-      seo: parsedSeo,
-      
+      inventory,
+      subcategories: parseJSONSafe('subcategories') || product.subcategories,
+      tags: parseJSONSafe('tags') || product.tags,
+      specifications: parseJSONSafe('specifications') || product.specifications,
+      variants: parseJSONSafe('variants') || product.variants,
+      dimensions: parseJSONSafe('dimensions') || product.dimensions,
+      weight: parseJSONSafe('weight') || product.weight,
+      seo: parseJSONSafe('seo') || product.seo,
       isFeatured: req.body.isFeatured === 'true',
       isNewArrival: req.body.isNewArrival === 'true',
       isBestseller: req.body.isBestseller === 'true',
       status: req.body.status || product.status,
-      
       lastModifiedBy: req.user._id
     };
 
-    console.log('📊 Update data prepared:', JSON.stringify(updateData, null, 2));
-
     // Handle image deletion
-    if (imagesToDelete && imagesToDelete.length > 0) {
-      for (const publicId of imagesToDelete) {
-        await deleteFromCloudinary(publicId);
-        product.images = product.images.filter(img => img.public_id !== publicId);
-      }
+    const imagesToDelete = parseJSONSafe('imagesToDelete') || [];
+    if (imagesToDelete.length > 0) {
+      product.images = product.images.filter(img => !imagesToDelete.includes(img.public_id));
     }
 
     // Handle new images
     if (req.files && req.files.length > 0) {
       const imagesLinks = [];
-      
       for (let i = 0; i < req.files.length; i++) {
-        const result = await uploadToCloudinary(req.files[i].path, "products");
-        
-        imagesLinks.push({
-          public_id: result.public_id,
-          url: result.secure_url,
-          isPrimary: false,
-          order: product.images.length + i
-        });
-        
-        fs.unlinkSync(req.files[i].path);
+        try {
+          const result = await uploadToCloudinary(req.files[i].buffer, {
+            folder: 'products',
+            transformation: [
+              { width: 1000, height: 1000, crop: 'limit' },
+              { quality: 'auto:good' }
+            ]
+          });
+          imagesLinks.push({
+            public_id: result.public_id,
+            url: result.secure_url,
+            isPrimary: false,
+            order: product.images.length + i
+          });
+        } catch (err) {
+          if (imagesLinks.length > 0)
+            await deleteMultipleFromCloudinary(imagesLinks.map(img => img.public_id));
+          return next(new HandleError(`Failed to upload image ${i + 1}`, 500));
+        }
       }
-      
       updateData.images = [...product.images, ...imagesLinks];
+      newlyUploadedImages = imagesLinks;
     } else {
       updateData.images = product.images;
     }
 
-    // Update product
+    // Update product in DB - Mongoose handles validation
     product = await Product.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
       useFindAndModify: false
     });
 
-    console.log('✅ Product updated successfully');
+    // Delete old images from Cloudinary
+    if (imagesToDelete.length > 0) {
+      await deleteMultipleFromCloudinary(imagesToDelete);
+    }
+
+    await invalidateProductCaches();
 
     res.status(200).json({
       success: true,
@@ -411,13 +296,16 @@ export const updateProduct = async (req, res, next) => {
     });
 
   } catch (error) {
+    if (newlyUploadedImages.length > 0) {
+      await deleteMultipleFromCloudinary(newlyUploadedImages.map(img => img.public_id));
+    }
     console.error('🔥 Error updating product:', error);
     next(error);
   }
 };
 
 
-// delete products
+// Delete products
 export const deleteProduct = handleAsyncError(async (req, res, next) => {
     const product = await Product.findById(req.params.id);
 
@@ -425,9 +313,9 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Product not found", 404));
     }
 
-    console.log(`🗑️ Starting deletion process for product: ${product.name} (${product._id})`);
+    console.log(`🗑️ Deleting product: ${product.name} (${product._id})`);
 
-    // STEP 1: Delete images from Cloudinary FIRST
+    // Delete images from Cloudinary
     if (product.images && product.images.length > 0) {
         const publicIds = product.images.map(img => img.public_id).filter(Boolean);
         
@@ -435,49 +323,28 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
             console.log(`📸 Deleting ${publicIds.length} images from Cloudinary...`);
             
             try {
-                // Use the helper function for batch deletion
                 const results = await deleteMultipleFromCloudinary(publicIds);
-                
-                // Check for failures
-                const failed = results.filter(r => r.error);
-                const successful = results.filter(r => !r.error);
-                
-                console.log(`✅ Successfully deleted ${successful.length} images`);
-                
-                if (failed.length > 0) {
-                    console.warn(`⚠️ Failed to delete ${failed.length} images:`, 
-                        failed.map(f => f.public_id || 'unknown')
-                    );
-                }
+                console.log(`✅ Images deleted from Cloudinary`);
             } catch (cloudinaryError) {
                 console.error('❌ Cloudinary deletion error:', cloudinaryError.message);
-                
                 return next(new HandleError(
-                    'Failed to delete product images from Cloudinary. Product not deleted.',
+                    'Failed to delete product images from Cloudinary',
                     500
                 ));
             }
         }
     }
 
-    // STEP 2: Delete product from database
-    try {
-        await Product.findByIdAndDelete(req.params.id);
-        console.log(`✅ Product deleted from database: ${product._id}`);
-    } catch (dbError) {
-        console.error('❌ Database deletion error:', dbError.message);
-        return next(new HandleError(
-            'Failed to delete product from database',
-            500
-        ));
-    }
+    // Delete product from database
+    await Product.findByIdAndDelete(req.params.id);
+    console.log(`✅ Product deleted from database`);
 
-    // STEP 3: Invalidate caches
+    // Invalidate caches
     await invalidateProductCaches();
 
     res.status(200).json({
         success: true,
-        message: 'Product and associated images deleted successfully',
+        message: 'Product and images deleted successfully',
         deletedProduct: {
             id: product._id,
             name: product.name,
@@ -486,7 +353,7 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
     });
 });
 
-// BATCH DELETE PRODUCTS
+// Batch delete products
 export const deleteMultipleProducts = handleAsyncError(async (req, res, next) => {
     const { productIds } = req.body;
 
@@ -546,7 +413,7 @@ export const deleteMultipleProducts = handleAsyncError(async (req, res, next) =>
     });
 });
 
-// get single product details (with analytics tracking)
+// Get single product details
 export const getProductDetails = handleAsyncError(async (req, res, next) => {
     const product = await Product.findById(req.params.id)
         .populate('relatedProducts', 'name price images slug ratings')
@@ -567,7 +434,7 @@ export const getProductDetails = handleAsyncError(async (req, res, next) => {
     });
 });
 
-// creating and updating review
+// Create/update product review
 export const createProductReview = handleAsyncError(async(req, res, next) => {
     const {rating, comment, productID} = req.body;
     const review = {
@@ -619,7 +486,7 @@ export const createProductReview = handleAsyncError(async(req, res, next) => {
     })
 });
 
-//getting reviews 
+// Get product reviews
 export const getProductReviews = handleAsyncError(async(req, res, next) => {
     const product = await Product.findById(req.query.id);
     if(!product) {
@@ -632,7 +499,7 @@ export const getProductReviews = handleAsyncError(async(req, res, next) => {
     })
 });
 
-//delete product reviews
+// Delete product review
 export const deleteReview = handleAsyncError(async(req, res, next) => {
     const product = await Product.findById(req.query.productID);
     if(!product) {
@@ -667,7 +534,7 @@ export const deleteReview = handleAsyncError(async(req, res, next) => {
     })
 });
 
-//admin - get all products
+// Admin - get all products
 export const getAdminProducts = handleAsyncError(async(req, res, next) => {
     const products = await Product.find();
     res.status(200).json({
@@ -675,3 +542,4 @@ export const getAdminProducts = handleAsyncError(async(req, res, next) => {
         products
     })
 });
+

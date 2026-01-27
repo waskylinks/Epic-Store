@@ -27,7 +27,9 @@ const productSchema = new mongoose.Schema(
       maxlength: [500, 'Short description cannot exceed 500 characters']
     },
 
-    // Pricing - FIXED VALIDATION
+    // ============================================
+    // Pricing (enterprise-safe)
+    // ============================================
     pricing: {
       regular: { 
         type: Number, 
@@ -36,16 +38,7 @@ const productSchema = new mongoose.Schema(
       },
       sale: { 
         type: Number,
-        min: [0, 'Sale price cannot be negative'],
-        validate: {
-          validator: function(value) {
-            // Only validate if sale price is provided
-            if (!value) return true;
-            // Access the parent pricing object properly
-            return value < this.regular;
-          },
-          message: 'Sale price must be less than regular price'
-        }
+        min: [0, 'Sale price cannot be negative']
       },
       cost: { 
         type: Number,
@@ -56,13 +49,6 @@ const productSchema = new mongoose.Schema(
         default: 'USD',
         enum: ['USD', 'EUR', 'GBP', 'NGN']
       }
-    },
-
-    // Legacy price field (for backward compatibility)
-    price: { 
-      type: Number, 
-      required: true,
-      min: [0, 'Price cannot be negative']
     },
 
     // Categories (Multi-category support)
@@ -142,13 +128,13 @@ const productSchema = new mongoose.Schema(
       }
     },
 
-    // Legacy stock field (for backward compatibility)
+    // Legacy stock field
     stock: { 
       type: Number, 
       default: 1 
     },
 
-    // Product Variants (size, color, etc.)
+    // Product Variants
     variants: [{
       name: { type: String, required: true }, // e.g., "Size", "Color"
       options: [{
@@ -165,7 +151,7 @@ const productSchema = new mongoose.Schema(
       value: { type: String, required: true }
     }],
 
-    // Dimensions & Weight (for shipping)
+    // Dimensions & Weight
     dimensions: {
       length: { type: Number },
       width: { type: Number },
@@ -277,9 +263,34 @@ const productSchema = new mongoose.Schema(
   }
 );
 
+// ============================================
+// ENTERPRISE PRICING VALIDATION (PRE-VALIDATE)
+// ============================================
+productSchema.pre('validate', function (next) {
+  const { pricing } = this;
+
+  if (!pricing || pricing.regular == null) {
+    return next(new Error('Pricing.regular is required'));
+  }
+
+  if (pricing.sale != null && pricing.sale >= pricing.regular) {
+    return next(
+      new Error('Sale price must be less than regular price')
+    );
+  }
+
+  if (pricing.cost != null && pricing.cost > pricing.regular) {
+    return next(
+      new Error('Cost price cannot exceed regular price')
+    );
+  }
+
+  next();
+});
+
 // Virtuals
 productSchema.virtual('finalPrice').get(function() {
-  return this.pricing?.sale || this.pricing?.regular || this.price;
+  return this.pricing?.sale ?? this.pricing?.regular;
 });
 
 productSchema.virtual('discountPercentage').get(function() {
@@ -290,17 +301,17 @@ productSchema.virtual('discountPercentage').get(function() {
 });
 
 productSchema.virtual('isLowStock').get(function() {
-  const stock = this.inventory?.stock || this.stock;
-  const threshold = this.inventory?.lowStockThreshold || 5;
+  const stock = this.inventory?.stock ?? this.stock;
+  const threshold = this.inventory?.lowStockThreshold ?? 5;
   return stock > 0 && stock <= threshold;
 });
 
 productSchema.virtual('isOutOfStock').get(function() {
-  const stock = this.inventory?.stock || this.stock;
+  const stock = this.inventory?.stock ?? this.stock;
   return stock === 0;
 });
 
-// Indexes for performance
+// Indexes
 productSchema.index({ createdAt: -1 });
 productSchema.index({ 'inventory.stock': 1 });
 productSchema.index({ category: 1 });
@@ -320,13 +331,13 @@ productSchema.index({
   tags: 'text'
 });
 
-// Compound indexes for common queries
+// Compound indexes
 productSchema.index({ category: 1, status: 1, createdAt: -1 });
 productSchema.index({ status: 1, isFeatured: 1, ratings: -1 });
 
 // Pre-save middleware
 productSchema.pre('save', function(next) {
-  // Auto-generate slug from name
+  // Auto-generate slug
   if (this.isModified('name') && !this.slug) {
     this.slug = this.name
       .toLowerCase()
@@ -334,14 +345,6 @@ productSchema.pre('save', function(next) {
       .replace(/\s+/g, '-')
       .replace(/-+/g, '-')
       .trim();
-  }
-
-  // Sync legacy fields with new structure
-  if (this.pricing?.regular) {
-    this.price = this.pricing.sale || this.pricing.regular;
-  }
-  if (this.inventory?.stock !== undefined) {
-    this.stock = this.inventory.stock;
   }
 
   // Update inventory status
@@ -364,7 +367,7 @@ productSchema.pre('save', function(next) {
   }
 
   // Mark first image as primary if none set
-  if (this.images && this.images.length > 0) {
+  if (this.images?.length > 0) {
     const hasPrimary = this.images.some(img => img.isPrimary);
     if (!hasPrimary) {
       this.images[0].isPrimary = true;
@@ -417,7 +420,7 @@ productSchema.methods.incrementView = async function() {
 
 productSchema.methods.incrementPurchase = async function(quantity = 1) {
   this.analytics.purchases += quantity;
-  if (this.inventory.trackInventory) {
+  if (this.inventory?.trackInventory) {
     this.inventory.stock -= quantity;
   }
   return this.save({ validateBeforeSave: false });
