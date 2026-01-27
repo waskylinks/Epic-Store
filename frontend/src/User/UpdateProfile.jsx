@@ -7,7 +7,7 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
 import { User, Mail, Camera, ArrowLeft, Save } from 'lucide-react';
-import './UpdateProfile.css';
+import '../UserStyles/UpdateProfile.css';
 
 function UpdateProfile() {
     const [firstName, setFirstName] = useState('');

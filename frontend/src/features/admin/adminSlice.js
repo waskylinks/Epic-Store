@@ -207,7 +207,7 @@ export const fetchAllReviews = createAsyncThunk(
                             ...review,
                             productId: product._id,
                             productName: product.name,
-                            productImage: product.image[0]?.url || ''
+                            productImage: product.images?.[0]?.url || ''
                         });
                     });
                 }

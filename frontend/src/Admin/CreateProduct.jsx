@@ -130,15 +130,19 @@ function CreateProduct() {
   };
 
   const setPrimaryImage = (index) => {
-    const newPreviews = [...imagePreview];
-    const newImages = [...images];
-    
-    const [primaryPreview] = newPreviews.splice(index, 1);
-    const [primaryImage] = newImages.splice(index, 1);
-    
-    setImagePreview([primaryPreview, ...newPreviews]);
-    setImages([primaryImage, ...newImages]);
-  };
+  if (index === 0) return; // Already primary, do nothing
+
+  // Swap the selected image with the first image
+  const newImages = [...images];
+  const newPreviews = [...imagePreview];
+
+  [newImages[0], newImages[index]] = [newImages[index], newImages[0]];
+  [newPreviews[0], newPreviews[index]] = [newPreviews[index], newPreviews[0]];
+
+  setImages(newImages);
+  setImagePreview(newPreviews);
+};
+
 
   // Add/Remove subcategories
   const addSubcategory = () => {
