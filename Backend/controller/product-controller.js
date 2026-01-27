@@ -246,35 +246,43 @@ export const updateProduct = async (req, res, next) => {
       product.images = product.images.filter(img => !imagesToDelete.includes(img.public_id));
     }
 
-    // Handle new images
-    if (req.files && req.files.length > 0) {
-      const imagesLinks = [];
-      for (let i = 0; i < req.files.length; i++) {
-        try {
-          const result = await uploadToCloudinary(req.files[i].buffer, {
-            folder: 'products',
-            transformation: [
-              { width: 1000, height: 1000, crop: 'limit' },
-              { quality: 'auto:good' }
-            ]
-          });
-          imagesLinks.push({
-            public_id: result.public_id,
-            url: result.secure_url,
-            isPrimary: false,
-            order: product.images.length + i
-          });
-        } catch (err) {
-          if (imagesLinks.length > 0)
-            await deleteMultipleFromCloudinary(imagesLinks.map(img => img.public_id));
-          return next(new HandleError(`Failed to upload image ${i + 1}`, 500));
-        }
+   // Handle existing images reordering
+      const existingImages = parseJSONSafe('existingImages');
+      let currentImages = product.images; // Start with current images
+
+      if (existingImages && Array.isArray(existingImages)) {
+          currentImages = existingImages; // Use the reordered existing images
       }
-      updateData.images = [...product.images, ...imagesLinks];
-      newlyUploadedImages = imagesLinks;
-    } else {
-      updateData.images = product.images;
-    }
+
+      // Handle new images
+      if (req.files && req.files.length > 0) {
+          const imagesLinks = [];
+          for (let i = 0; i < req.files.length; i++) {
+              try {
+                  const result = await uploadToCloudinary(req.files[i].buffer, {
+                      folder: 'products',
+                      transformation: [
+                          { width: 1000, height: 1000, crop: 'limit' },
+                          { quality: 'auto:good' }
+                      ]
+                  });
+                  imagesLinks.push({
+                      public_id: result.public_id,
+                      url: result.secure_url,
+                      isPrimary: false,
+                      order: currentImages.length + i
+                  });
+              } catch (err) {
+                  if (imagesLinks.length > 0)
+                      await deleteMultipleFromCloudinary(imagesLinks.map(img => img.public_id));
+                  return next(new HandleError(`Failed to upload image ${i + 1}`, 500));
+              }
+          }
+          updateData.images = [...currentImages, ...imagesLinks];
+          newlyUploadedImages = imagesLinks;
+      } else {
+          updateData.images = currentImages;
+      }
 
     // Update product in DB - Mongoose handles validation
     product = await Product.findByIdAndUpdate(id, updateData, {
