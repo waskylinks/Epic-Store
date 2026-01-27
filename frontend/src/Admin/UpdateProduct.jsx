@@ -363,7 +363,26 @@ function UpdateProduct() {
         if (imagesToDelete.length > 0) {
             myForm.append('imagesToDelete', JSON.stringify(imagesToDelete));
         }
+
+        if (formData.pricing.cost) {
+            myForm.append('cost', formData.pricing.cost);
+        }
+
+        if (formData.inventory.barcode) {
+            myForm.append('barcode', formData.inventory.barcode);
+        }
+        myForm.append('trackInventory', formData.inventory.trackInventory);
+        myForm.append('lowStockThreshold', formData.inventory.lowStockThreshold);
         
+        // Send the reordered old images
+        const existingImagesData = oldImages.map((img, index) => ({
+            public_id: img.public_id,
+            url: img.url,
+            isPrimary: index === 0, // First image is primary
+            order: index
+        }));
+        myForm.append('existingImages', JSON.stringify(existingImagesData));
+
         // New images
         newImages.forEach((img) => myForm.append('image', img));
 
