@@ -130,18 +130,18 @@ function CreateProduct() {
   };
 
   const setPrimaryImage = (index) => {
-  if (index === 0) return; // Already primary, do nothing
+    if (index === 0) return; // Already primary, do nothing
 
-  // Swap the selected image with the first image
-  const newImages = [...images];
-  const newPreviews = [...imagePreview];
+    // Swap the selected image with the first image
+    const newImages = [...images];
+    const newPreviews = [...imagePreview];
 
-  [newImages[0], newImages[index]] = [newImages[index], newImages[0]];
-  [newPreviews[0], newPreviews[index]] = [newPreviews[index], newPreviews[0]];
+    [newImages[0], newImages[index]] = [newImages[index], newImages[0]];
+    [newPreviews[0], newPreviews[index]] = [newPreviews[index], newPreviews[0]];
 
-  setImages(newImages);
-  setImagePreview(newPreviews);
-};
+    setImages(newImages);
+    setImagePreview(newPreviews);
+  };
 
 
   // Add/Remove subcategories
@@ -232,6 +232,10 @@ function CreateProduct() {
   const handleSubmit = (e, publishStatus = 'draft') => {
     e.preventDefault();
 
+    if (!formData.name.trim()) {
+      toast.error('Please enter product name');
+      return;
+    }
     if (!formData.category) {
       toast.error('Please select a category');
       return;
@@ -244,20 +248,28 @@ function CreateProduct() {
       toast.error('Please enter regular price');
       return;
     }
+    if (!formData.description.trim()) {
+      toast.error('Please enter product description');
+      return;
+    }
 
     const myForm = new FormData();
     
     // Basic info
-    myForm.append('name', formData.name);
-    myForm.append('description', formData.description);
-    myForm.append('shortDescription', formData.shortDescription);
+    myForm.append('name', formData.name.trim());
+    myForm.append('description', formData.description.trim());
+    myForm.append('shortDescription', formData.shortDescription.trim());
     myForm.append('category', formData.category);
-    myForm.append('brand', formData.brand);
+    myForm.append('brand', formData.brand.trim());
     
     // Pricing (legacy fields for backward compatibility)
     myForm.append('price', formData.pricing.regular);
     if (formData.pricing.sale) {
       myForm.append('salePrice', formData.pricing.sale);
+    }
+    // FIX: Add cost price to FormData
+    if (formData.pricing.cost) {
+      myForm.append('cost', formData.pricing.cost);
     }
     myForm.append('currency', formData.pricing.currency);
     
@@ -266,6 +278,11 @@ function CreateProduct() {
     if (formData.inventory.sku) {
       myForm.append('sku', formData.inventory.sku);
     }
+    if (formData.inventory.barcode) {
+      myForm.append('barcode', formData.inventory.barcode);
+    }
+    myForm.append('trackInventory', formData.inventory.trackInventory);
+    myForm.append('lowStockThreshold', formData.inventory.lowStockThreshold);
     
     // Arrays
     subcategories.forEach(sub => myForm.append('subcategories', sub));
@@ -273,12 +290,18 @@ function CreateProduct() {
     
     // Specifications
     if (specifications.length > 0) {
-      myForm.append('specifications', JSON.stringify(specifications.filter(s => s.key && s.value)));
+      const validSpecs = specifications.filter(s => s.key && s.value);
+      if (validSpecs.length > 0) {
+        myForm.append('specifications', JSON.stringify(validSpecs));
+      }
     }
     
     // Variants
     if (variants.length > 0) {
-      myForm.append('variants', JSON.stringify(variants.filter(v => v.name && v.options.length > 0)));
+      const validVariants = variants.filter(v => v.name && v.options.length > 0);
+      if (validVariants.length > 0) {
+        myForm.append('variants', JSON.stringify(validVariants));
+      }
     }
     
     // Dimensions & Weight
@@ -294,7 +317,9 @@ function CreateProduct() {
       ...formData.seo,
       keywords: seoKeywords
     };
-    myForm.append('seo', JSON.stringify(seoData));
+    if (seoData.metaTitle || seoData.metaDescription || seoKeywords.length > 0) {
+      myForm.append('seo', JSON.stringify(seoData));
+    }
     
     // Flags
     myForm.append('isFeatured', formData.isFeatured);
@@ -302,7 +327,8 @@ function CreateProduct() {
     myForm.append('isBestseller', formData.isBestseller);
     myForm.append('status', publishStatus);
     
-    // Images
+    // FIX: Images - The first image in the array is automatically the primary image
+    // This ensures index [0] is always the primary image
     images.forEach((img) => myForm.append('image', img));
 
     dispatch(createProduct(myForm));
@@ -855,32 +881,38 @@ function CreateProduct() {
                   </div>
 
                   {imagePreview.length > 0 && (
-                    <div className="ecp-image-grid">
-                      {imagePreview.map((img, idx) => (
-                        <div key={idx} className="ecp-image-card">
-                          <img src={img} alt={`Product ${idx + 1}`} />
-                          <div className="ecp-image-overlay">
-                            <button
-                              type="button"
-                              className="ecp-image-btn"
-                              onClick={() => setPrimaryImage(idx)}
-                              title="Set as primary"
-                            >
-                              {idx === 0 ? <FiCheck /> : <FiEye />}
-                            </button>
-                            <button
-                              type="button"
-                              className="ecp-image-btn ecp-image-btn-danger"
-                              onClick={() => removeImage(idx)}
-                              title="Remove image"
-                            >
-                              <FiTrash2 />
-                            </button>
+                    <>
+                      <div className="ecp-info-box" style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+                        <FiAlertCircle style={{ marginRight: '0.5rem' }} />
+                        <span>The first image will be used as the primary product image</span>
+                      </div>
+                      <div className="ecp-image-grid">
+                        {imagePreview.map((img, idx) => (
+                          <div key={idx} className="ecp-image-card">
+                            <img src={img} alt={`Product ${idx + 1}`} />
+                            <div className="ecp-image-overlay">
+                              <button
+                                type="button"
+                                className="ecp-image-btn"
+                                onClick={() => setPrimaryImage(idx)}
+                                title="Set as primary"
+                              >
+                                {idx === 0 ? <FiCheck /> : <FiEye />}
+                              </button>
+                              <button
+                                type="button"
+                                className="ecp-image-btn ecp-image-btn-danger"
+                                onClick={() => removeImage(idx)}
+                                title="Remove image"
+                              >
+                                <FiTrash2 />
+                              </button>
+                            </div>
+                            {idx === 0 && <span className="ecp-primary-badge">Primary</span>}
                           </div>
-                          {idx === 0 && <span className="ecp-primary-badge">Primary</span>}
-                        </div>
-                      ))}
-                    </div>
+                        ))}
+                      </div>
+                    </>
                   )}
                 </div>
               </div>
