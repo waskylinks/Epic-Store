@@ -1,5 +1,6 @@
 // Backend/middleware/refund-policy.middleware.js
 
+import mongoose from 'mongoose';
 import Order from '../models/order-model.js';
 import HandleError from '../utils/handleError.js';
 
@@ -9,10 +10,15 @@ import HandleError from '../utils/handleError.js';
  */
 export const checkRefundEligibility = async (req, res, next) => {
   try {
-    const { orderId } = req.params;
+    const { id } = req.params;
+
+    // 0. Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new HandleError("Invalid order ID format", 400));
+    }
 
     // 1. Find the order
-    const order = await Order.findById(orderId);
+    const order = await Order.findById(id);
 
     if (!order) {
       return next(new HandleError("Order not found", 404));
@@ -30,7 +36,7 @@ export const checkRefundEligibility = async (req, res, next) => {
     }
 
     // 4. Check if refund already requested/processed
-    if (order.refundInfo) {
+    if (order.refundInfo && order.refundInfo.status !== 'none') {
       const status = order.refundInfo.status;
       
       if (status === "requested") {
@@ -48,6 +54,12 @@ export const checkRefundEligibility = async (req, res, next) => {
       if (status === "completed") {
         return next(new HandleError("This order has already been refunded", 400));
       }
+
+      // If rejected, allow re-requesting (optional - you can change this)
+      if (status === "rejected") {
+        // Allow re-request or return error
+        // return next(new HandleError("Previous refund request was rejected. Please contact support.", 400));
+      }
     }
 
     // 5. Check order status - only specific statuses can be refunded
@@ -61,12 +73,18 @@ export const checkRefundEligibility = async (req, res, next) => {
 
     // 6. Check refund time window (30 days from delivery/payment)
     const REFUND_WINDOW_DAYS = 30;
-    const refundDeadline = new Date(order.deliveredAt || order.paymentInfo.paidAt);
+    const baseDate = order.deliveredAt || order.paymentInfo.paidAt;
+    
+    if (!baseDate) {
+      return next(new HandleError("Cannot determine refund eligibility date", 400));
+    }
+
+    const refundDeadline = new Date(baseDate);
     refundDeadline.setDate(refundDeadline.getDate() + REFUND_WINDOW_DAYS);
 
     if (new Date() > refundDeadline) {
       const daysSincePurchase = Math.floor(
-        (new Date() - new Date(order.deliveredAt || order.paymentInfo.paidAt)) / (1000 * 60 * 60 * 24)
+        (new Date() - new Date(baseDate)) / (1000 * 60 * 60 * 24)
       );
       
       return next(new HandleError(
@@ -81,12 +99,20 @@ export const checkRefundEligibility = async (req, res, next) => {
     
     if (!supportedGateways.includes(gateway)) {
       return next(new HandleError(
-        `Refunds are not supported for payment method: ${gateway}`,
+        `Refunds are not supported for payment method: ${gateway}. Please contact support for manual refund.`,
         400
       ));
     }
 
-    // 8. Attach order to request for use in controller
+    // 8. Additional check: Ensure there's a payment reference
+    if (!order.paymentInfo.reference) {
+      return next(new HandleError(
+        "Payment reference not found. Cannot process refund.",
+        400
+      ));
+    }
+
+    // 9. Attach order to request for use in controller
     req.order = order;
 
     // Proceed to controller
@@ -103,22 +129,26 @@ export const checkRefundEligibility = async (req, res, next) => {
  * @middleware
  */
 export const validateRefundAmount = (req, res, next) => {
-  const { refundAmount } = req.body;
+  const { refundType, requestedAmount } = req.body;
   const order = req.order; // Attached by checkRefundEligibility
 
-  if (!refundAmount) {
-    // Full refund - no validation needed
+  if (!order) {
+    return next(new HandleError("Order not found in request. Ensure checkRefundEligibility runs first.", 500));
+  }
+
+  // For full refunds, no validation needed
+  if (refundType === 'full' || !requestedAmount) {
     return next();
   }
 
   // Partial refund validation
-  const maxRefundable = order.amountPaid;
+  const maxRefundable = order.amountPaid - (order.refundInfo?.refundAmount || 0);
 
-  if (refundAmount <= 0) {
+  if (requestedAmount <= 0) {
     return next(new HandleError("Refund amount must be greater than 0", 400));
   }
 
-  if (refundAmount > maxRefundable) {
+  if (requestedAmount > maxRefundable) {
     return next(new HandleError(
       `Refund amount cannot exceed ${maxRefundable} ${order.paymentInfo.currency}`,
       400
@@ -138,9 +168,18 @@ export const validateRefundAmount = (req, res, next) => {
 
   const minAmount = minimumRefunds[order.paymentInfo.currency] || 1;
 
-  if (refundAmount < minAmount) {
+  if (requestedAmount < minAmount) {
     return next(new HandleError(
       `Refund amount must be at least ${minAmount} ${order.paymentInfo.currency}`,
+      400
+    ));
+  }
+
+  // Check for decimal places (max 2)
+  const decimalPlaces = (requestedAmount.toString().split('.')[1] || '').length;
+  if (decimalPlaces > 2) {
+    return next(new HandleError(
+      "Refund amount cannot have more than 2 decimal places",
       400
     ));
   }
@@ -149,14 +188,58 @@ export const validateRefundAmount = (req, res, next) => {
 };
 
 /**
+ * Check if admin can review refund
+ * @middleware
+ */
+export const canReviewRefund = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new HandleError("Invalid order ID format", 400));
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return next(new HandleError("Order not found", 404));
+    }
+
+    // Check if refund was requested
+    if (!order.refundInfo || order.refundInfo.status !== "requested") {
+      return next(new HandleError(
+        "No pending refund request found. Current status: " + 
+        (order.refundInfo?.status || "none"),
+        400
+      ));
+    }
+
+    // Attach order to request
+    req.order = order;
+
+    next();
+
+  } catch (error) {
+    console.error("Review refund check error:", error);
+    return next(new HandleError("Failed to validate refund review", 500));
+  }
+};
+
+/**
  * Check if admin can process refund
  * @middleware
  */
 export const canProcessRefund = async (req, res, next) => {
   try {
-    const { orderId } = req.params;
+    const { id } = req.params;
 
-    const order = await Order.findById(orderId);
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new HandleError("Invalid order ID format", 400));
+    }
+
+    const order = await Order.findById(id);
 
     if (!order) {
       return next(new HandleError("Order not found", 404));
@@ -176,6 +259,11 @@ export const canProcessRefund = async (req, res, next) => {
       return next(new HandleError("Refund already processed or in progress", 400));
     }
 
+    // Validate that there's a payment reference
+    if (!order.paymentInfo.reference) {
+      return next(new HandleError("Payment reference not found", 400));
+    }
+
     // Attach order to request
     req.order = order;
 
@@ -185,4 +273,208 @@ export const canProcessRefund = async (req, res, next) => {
     console.error("Process refund check error:", error);
     return next(new HandleError("Failed to validate refund processing", 500));
   }
+};
+
+/**
+ * Check if user can add message to refund
+ * @middleware
+ */
+export const canAddRefundMessage = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+    const isAdmin = req.user.role === 'admin';
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new HandleError("Invalid order ID format", 400));
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return next(new HandleError("Order not found", 404));
+    }
+
+    // Check if refund exists
+    if (!order.refundInfo || order.refundInfo.status === 'none') {
+      return next(new HandleError("No refund request found for this order", 404));
+    }
+
+    // Check ownership (unless admin)
+    if (!isAdmin && order.user.toString() !== userId.toString()) {
+      return next(new HandleError("Unauthorized", 403));
+    }
+
+    // Check if refund is in a state that allows messaging
+    const closedStatuses = ['completed', 'failed'];
+    if (closedStatuses.includes(order.refundInfo.status)) {
+      return next(new HandleError(
+        `Cannot add messages to ${order.refundInfo.status} refund requests`,
+        400
+      ));
+    }
+
+    // Attach order to request
+    req.order = order;
+
+    next();
+
+  } catch (error) {
+    console.error("Add refund message check error:", error);
+    return next(new HandleError("Failed to validate message addition", 500));
+  }
+};
+
+/**
+ * Check if user can cancel refund request
+ * @middleware
+ */
+export const canCancelRefund = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new HandleError("Invalid order ID format", 400));
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return next(new HandleError("Order not found", 404));
+    }
+
+    // Check ownership
+    if (order.user.toString() !== userId.toString()) {
+      return next(new HandleError("Unauthorized", 403));
+    }
+
+    // Check if refund exists
+    if (!order.refundInfo || order.refundInfo.status === 'none') {
+      return next(new HandleError("No refund request found", 404));
+    }
+
+    // Can only cancel if still in requested status
+    if (order.refundInfo.status !== 'requested') {
+      return next(new HandleError(
+        `Cannot cancel refund at this stage. Current status: ${order.refundInfo.status}`,
+        400
+      ));
+    }
+
+    // Attach order to request
+    req.order = order;
+
+    next();
+
+  } catch (error) {
+    console.error("Cancel refund check error:", error);
+    return next(new HandleError("Failed to validate refund cancellation", 500));
+  }
+};
+
+/**
+ * Check return eligibility
+ * @middleware
+ */
+export const checkReturnEligibility = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return next(new HandleError("Invalid order ID format", 400));
+    }
+
+    const order = await Order.findById(id);
+
+    if (!order) {
+      return next(new HandleError("Order not found", 404));
+    }
+
+    // Check ownership
+    if (order.user.toString() !== userId.toString()) {
+      return next(new HandleError("Unauthorized", 403));
+    }
+
+    // Check if order is delivered
+    if (order.orderStatus !== 'Delivered') {
+      return next(new HandleError("Can only return delivered orders", 400));
+    }
+
+    // Check return window (30 days from delivery)
+    if (!order.deliveredAt) {
+      return next(new HandleError("Delivery date not found", 400));
+    }
+
+    const RETURN_WINDOW_DAYS = 30;
+    const returnDeadline = new Date(order.deliveredAt);
+    returnDeadline.setDate(returnDeadline.getDate() + RETURN_WINDOW_DAYS);
+
+    if (new Date() > returnDeadline) {
+      const daysSinceDelivery = Math.floor(
+        (new Date() - new Date(order.deliveredAt)) / (1000 * 60 * 60 * 24)
+      );
+      return next(new HandleError(
+        `Return period has expired (${RETURN_WINDOW_DAYS} days from delivery). Order was delivered ${daysSinceDelivery} days ago.`,
+        400
+      ));
+    }
+
+    // Check if return already exists
+    if (order.returnInfo && order.returnInfo.status !== 'none') {
+      return next(new HandleError(
+        `Return request already exists with status: ${order.returnInfo.status}`,
+        400
+      ));
+    }
+
+    // Attach order to request
+    req.order = order;
+
+    next();
+
+  } catch (error) {
+    console.error("Return eligibility check error:", error);
+    return next(new HandleError("Failed to check return eligibility", 500));
+  }
+};
+
+/**
+ * Validate file uploads for refunds
+ * @middleware
+ */
+export const validateRefundFileUpload = (req, res, next) => {
+  if (!req.files || req.files.length === 0) {
+    return next(new HandleError("No files uploaded", 400));
+  }
+
+  const MAX_FILES = 5;
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+  const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf'];
+
+  if (req.files.length > MAX_FILES) {
+    return next(new HandleError(`Maximum ${MAX_FILES} files allowed`, 400));
+  }
+
+  for (const file of req.files) {
+    if (file.size > MAX_FILE_SIZE) {
+      return next(new HandleError(
+        `File ${file.originalname} exceeds maximum size of 5MB`,
+        400
+      ));
+    }
+
+    if (!ALLOWED_TYPES.includes(file.mimetype)) {
+      return next(new HandleError(
+        `File ${file.originalname} has invalid type. Allowed: JPEG, PNG, WebP, PDF`,
+        400
+      ));
+    }
+  }
+
+  next();
 };

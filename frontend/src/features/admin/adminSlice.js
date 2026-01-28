@@ -279,6 +279,59 @@ export const processRefundPayment = createAsyncThunk(
     }
 );
 
+/**
+ * Add message to refund conversation
+ */
+export const addRefundMessage = createAsyncThunk(
+    'admin/addRefundMessage',
+    async ({ orderId, message, attachments }, { rejectWithValue }) => {
+        try {
+            const requestData = { message };
+            
+            if (attachments && attachments.length > 0) {
+                requestData.attachments = attachments;
+            }
+            
+            const { data } = await axios.post(
+                `/api/v1/admin/refunds/${orderId}/messages`,
+                requestData
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to send message');
+        }
+    }
+);
+
+/**
+ * Upload files for refund
+ */
+export const uploadRefundFiles = createAsyncThunk(
+    'admin/uploadRefundFiles',
+    async ({ orderId, files }, { rejectWithValue }) => {
+        try {
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('attachments', file);
+            });
+            
+            const { data } = await axios.post(
+                `/api/v1/admin/refunds/${orderId}/upload`,
+                formData,
+                {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    }
+                }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to upload files');
+        }
+    }
+);
+
+
 
 const adminSlice = createSlice({
     name: 'admin',
@@ -331,7 +384,9 @@ const adminSlice = createSlice({
         success: false,
         loading: false,
         analyticsLoading: false,
-        error: null
+        error: null,
+        messageLoading: false,
+        uploadLoading: false,
     },
     reducers: {
         removeErrors: (state) => {
@@ -645,7 +700,45 @@ const adminSlice = createSlice({
             .addCase(processRefundPayment.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
+
+            // Add message
+            .addCase(addRefundMessage.pending, (state) => {
+                state.messageLoading = true;
+                state.error = null;
+            })
+            .addCase(addRefundMessage.fulfilled, (state, action) => {
+                state.messageLoading = false;
+                state.success = true;
+                
+                // Update the current refund if it's loaded
+                const index = state.refunds.findIndex(r => r._id === action.payload.orderId);
+                if (index !== -1 && state.refunds[index].refundInfo) {
+                    // Add message to the messages array
+                    if (!state.refunds[index].refundInfo.messages) {
+                        state.refunds[index].refundInfo.messages = [];
+                    }
+                    state.refunds[index].refundInfo.messages.push(action.payload.message);
+                }
+            })
+            .addCase(addRefundMessage.rejected, (state, action) => {
+                state.messageLoading = false;
+                state.error = action.payload;
+            })
+
+            // Upload files
+            .addCase(uploadRefundFiles.pending, (state) => {
+                state.uploadLoading = true;
+                state.error = null;
+            })
+            .addCase(uploadRefundFiles.fulfilled, (state, action) => {
+                state.uploadLoading = false;
+                // Uploaded files are returned and can be attached to messages
+            })
+            .addCase(uploadRefundFiles.rejected, (state, action) => {
+                state.uploadLoading = false;
+                state.error = action.payload;
+            })
 
     }
 });

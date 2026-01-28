@@ -189,6 +189,84 @@ const orderSchema = new mongoose.Schema(
       
       failureReason: String,
       
+      // ✨ NEW: Messages/Communication Thread
+      messages: [{
+        sender: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true
+        },
+        senderType: {
+          type: String,
+          enum: ['customer', 'admin', 'system'],
+          required: true
+        },
+        message: {
+          type: String,
+          required: true
+        },
+        attachments: [{
+          url: String,
+          filename: String,
+          fileType: String,
+          fileSize: Number,
+          uploadedAt: { type: Date, default: Date.now }
+        }],
+        isRead: {
+          type: Boolean,
+          default: false
+        },
+        readAt: Date,
+        createdAt: {
+          type: Date,
+          default: Date.now
+        },
+        metadata: mongoose.Schema.Types.Mixed
+      }],
+      
+      // ✨ NEW: Supporting Documents/Evidence
+      documents: [{
+        type: {
+          type: String,
+          enum: ['receipt', 'photo', 'video', 'screenshot', 'other'],
+          required: true
+        },
+        url: {
+          type: String,
+          required: true
+        },
+        filename: String,
+        description: String,
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User"
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now
+        },
+        fileSize: Number,
+        mimeType: String
+      }],
+      
+      // ✨ NEW: Timeline/Activity Log
+      timeline: [{
+        event: {
+          type: String,
+          required: true
+        },
+        description: String,
+        performedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User"
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now
+        },
+        metadata: mongoose.Schema.Types.Mixed
+      }],
+      
       // Legacy fields
       amount: { type: Number, default: 0 },
       refundReference: String,
@@ -417,7 +495,8 @@ orderSchema.index({ "fraudCheck.riskLevel": 1 });
 orderSchema.index({ "fraudCheck.reviewRequired": 1 });
 orderSchema.index({ "analytics.source": 1 });
 orderSchema.index({ "analytics.isFirstPurchase": 1 });
-orderSchema.index({ "invoiceInfo.invoiceNumber": 1 }, { unique: true, sparse: true });
+orderSchema.index({ "refundInfo.messages.isRead": 1 });
+orderSchema.index({ "refundInfo.messages.createdAt": -1 });
 
 // ============================================
 // VIRTUALS
@@ -470,6 +549,18 @@ orderSchema.virtual("isFullyFulfilled").get(function() {
     item.fulfillmentStatus === 'complete' || 
     item.quantityShipped === item.quantityOrdered
   );
+});
+
+// ✨ NEW: Count unread refund messages
+orderSchema.virtual("unreadRefundMessages").get(function() {
+  if (!this.refundInfo || !this.refundInfo.messages) return 0;
+  return this.refundInfo.messages.filter(msg => !msg.isRead && msg.senderType !== 'admin').length;
+});
+
+// ✨ NEW: Get latest refund message
+orderSchema.virtual("latestRefundMessage").get(function() {
+  if (!this.refundInfo || !this.refundInfo.messages || this.refundInfo.messages.length === 0) return null;
+  return this.refundInfo.messages[this.refundInfo.messages.length - 1];
 });
 
 orderSchema.set("toJSON", { virtuals: true });
@@ -537,6 +628,20 @@ orderSchema.statics.getActiveReturns = async function() {
     .sort({ 'returnInfo.requestedAt': -1 });
 };
 
+orderSchema.statics.getRefundsWithUnreadMessages = async function() {
+  return this.find({
+    'refundInfo.status': { 
+      $nin: ['none', 'completed', 'rejected'] 
+    },
+    'refundInfo.messages': {
+      $elemMatch: { isRead: false, senderType: 'customer' }
+    }
+  })
+    .populate('user', 'name email')
+    .populate('refundInfo.messages.sender', 'name email')
+    .sort({ 'refundInfo.messages.createdAt': -1 });
+};
+
 // ============================================
 // INSTANCE METHODS
 // ============================================
@@ -566,6 +671,80 @@ orderSchema.methods.addNote = function(content, type, author) {
     type,
     author,
     createdAt: new Date()
+  });
+};
+
+// ✨ NEW: Add refund message
+orderSchema.methods.addRefundMessage = function(sender, senderType, message, attachments = []) {
+  if (!this.refundInfo) {
+    this.refundInfo = { status: 'none' };
+  }
+  if (!this.refundInfo.messages) {
+    this.refundInfo.messages = [];
+  }
+  
+  this.refundInfo.messages.push({
+    sender,
+    senderType,
+    message,
+    attachments,
+    isRead: false,
+    createdAt: new Date()
+  });
+  
+  // Add to timeline
+  this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
+};
+
+// ✨ NEW: Mark refund messages as read
+orderSchema.methods.markRefundMessagesAsRead = function(senderType) {
+  if (!this.refundInfo || !this.refundInfo.messages) return;
+  
+  this.refundInfo.messages.forEach(msg => {
+    if (msg.senderType !== senderType && !msg.isRead) {
+      msg.isRead = true;
+      msg.readAt = new Date();
+    }
+  });
+};
+
+// ✨ NEW: Add refund document
+orderSchema.methods.addRefundDocument = function(type, url, filename, uploadedBy, description = '') {
+  if (!this.refundInfo) {
+    this.refundInfo = { status: 'none' };
+  }
+  if (!this.refundInfo.documents) {
+    this.refundInfo.documents = [];
+  }
+  
+  this.refundInfo.documents.push({
+    type,
+    url,
+    filename,
+    description,
+    uploadedBy,
+    uploadedAt: new Date()
+  });
+  
+  // Add to timeline
+  this.addRefundTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
+};
+
+// ✨ NEW: Add refund timeline event
+orderSchema.methods.addRefundTimeline = function(event, description, performedBy, metadata = {}) {
+  if (!this.refundInfo) {
+    this.refundInfo = { status: 'none' };
+  }
+  if (!this.refundInfo.timeline) {
+    this.refundInfo.timeline = [];
+  }
+  
+  this.refundInfo.timeline.push({
+    event,
+    description,
+    performedBy,
+    timestamp: new Date(),
+    metadata
   });
 };
 
