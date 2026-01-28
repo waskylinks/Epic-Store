@@ -1,738 +1,780 @@
+// ============================================
+// NEW CONTROLLER FUNCTIONS FOR ENHANCED ORDER MODEL
+// Add these to your existing order-controller.js
+// ============================================
+
 import Order from '../models/order-model.js';
-import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
-import { PaymentFactory } from '../Services/payment/paymentFactory.js';
 
-// Helper: Check if we're in test/development mode
-const isTestMode = () => {
-  return process.env.NODE_ENV === 'development' || 
-         process.env.PAYMENT_TEST_MODE === 'true';
-};
-
-// Helper: Invalidate analytics caches
-const invalidateAnalyticsCaches = async () => {
-    try {
-        await Promise.all([
-            deleteCachePattern('admin_stats*'),
-            deleteCachePattern('analytics_*')
-        ]);
-    } catch (error) {
-        console.error('Cache invalidation error:', error);
-        // Don't block the request if cache fails
-    }
-};
-
-//create new order
-export const createNewOrder = handleAsyncError(async (req, res, next) => {
-    const { shippingInfo, orderItems, paymentInfo, itemPrice, taxPrice, shippingPrice, totalPrice } = req.body;
-
-    const order = await Order.create({
-        shippingInfo,
-        orderItems,
-        paymentInfo,
-        itemPrice,
-        taxPrice,
-        shippingPrice,
-        totalPrice,
-        paidAt: Date.now(),
-        user: req.user._id
-    });
-
-    // Invalidate caches after creating order
-    await invalidateAnalyticsCaches();
-
-    res.status(200).json({
-        success: true,
-        order
-    });
-});
-
-//all orders 
-export const allMyOrders = handleAsyncError(async (req, res, next) => {
-    const orders = await Order.find({
-        user: req.user._id
-    });
-    if(!orders) {
-        return next(new HandleError('No order found', 404));
-    }
-
-    res.status(200).json({
-        success: true,
-        orders
-    })
-});
-
-//admin- getting single order
-export const getSingleOrder = handleAsyncError(async (req, res, next) => {
-    const order = await Order.findById(req.params.id).populate('user', 'name email')
-    if(!order) {
-        return next(new HandleError('No order found', 404));
-    }
-
-    res.status(200).json({
-        success: true,
-        order
-    });
-});
-
-// admin- getting all orders placed by users
-export const getAllOrders = handleAsyncError(async (req, res, next) => {
-    const orders = await Order.find().populate('user', 'name email');
-
-    let totalAmount = 0;
-    orders.forEach(order => {
-        totalAmount += order.totalPrice;
-    });
-
-    res.status(200).json({
-        success: true,
-        orders,
-        totalAmount
-    });
-});
-
-// admin- update order status
-/**
- * Auto-refund on cancel with test mode handling
- */
-export const updateOrderStatus = handleAsyncError(async (req, res, next) => {
-    const order = await Order.findById(req.params.id);
-
-    if (!order) {
-        return next(new HandleError('Order not found', 404));
-    }
-
-    if (order.orderStatus === 'Delivered') {
-        return next(new HandleError("This order has already been delivered", 400));
-    }
-
-    const validStatuses = ['Processing', 'Shipped', 'Delivered', 'Cancelled'];
-    if (!req.body.status || !validStatuses.includes(req.body.status)) {
-        return next(new HandleError('Invalid order status', 400));
-    }
-
-    // HANDLE CANCELLATION WITH AUTO-REFUND
-    if (req.body.status === 'Cancelled') {
-        // 1. Restore stock
-        try {
-            await Promise.all(
-                order.orderItems.map(async (item) => {
-                    const product = await Product.findById(item.product);
-                    if (product) {
-                        product.stock += item.quantity;
-                        await product.save({ validateBeforeSave: false });
-                    }
-                })
-            );
-            console.log(`✅ Stock restored for cancelled order ${order._id}`);
-        } catch (error) {
-            console.error("❌ Stock restoration failed:", error);
-            return next(error);
-        }
-
-        // 2. Auto-refund if payment was successful
-        if (order.paymentInfo.status === "success" && 
-            (!order.refundInfo || order.refundInfo.status === "none")) {
-            
-            const gateway = order.paymentInfo.method;
-            const supportedGateways = ['paystack', 'flutterwave', 'stripe'];
-
-            if (supportedGateways.includes(gateway)) {
-                let refundResponse;
-                let refundStatus = "processing";
-
-                // ✅ TEST MODE HANDLING
-                if (isTestMode()) {
-                    console.log(`🧪 TEST MODE: Simulating auto-refund for cancelled order ${order._id}...`);
-                    
-                    refundResponse = {
-                        refundId: `test_refund_${Date.now()}`,
-                        status: "completed", // ✅ Auto-complete in test mode
-                        amount: order.amountPaid,
-                        currency: order.paymentInfo.currency,
-                        raw: {
-                            test_mode: true,
-                            message: "Auto-refund completed in test mode"
-                        }
-                    };
-                    
-                    refundStatus = "completed";
-                    console.log(`✅ TEST MODE: Auto-refund completed`);
-                } else {
-                    // PRODUCTION MODE
-                    try {
-                        console.log(`🔄 Auto-refunding cancelled order ${order._id} via ${gateway}...`);
-
-                        let refundParams;
-                        
-                        if (gateway === "paystack") {
-                            refundParams = {
-                                transactionReference: order.paymentInfo.reference,
-                                reason: "Order cancelled by admin",
-                                merchantNote: req.body.cancellationReason || "Order cancelled"
-                            };
-                        } else if (gateway === "flutterwave") {
-                            refundParams = {
-                                transactionId: order.paymentInfo.providerTxId,
-                                reason: "Order cancelled by admin",
-                                merchantNote: req.body.cancellationReason || "Order cancelled"
-                            };
-                        } else if (gateway === "stripe") {
-                            refundParams = {
-                                paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
-                                reason: "requested_by_customer",
-                                merchantNote: req.body.cancellationReason || "Order cancelled"
-                            };
-                        }
-
-                        refundResponse = await PaymentFactory.refundPayment(gateway, refundParams);
-
-                        const gatewayStatus = refundResponse.status?.toLowerCase();
-                        if (gatewayStatus === "succeeded" || gatewayStatus === "success" || gatewayStatus === "completed") {
-                            refundStatus = "completed";
-                        } else if (gatewayStatus === "failed") {
-                            refundStatus = "failed";
-                        }
-
-                        console.log(`✅ Refund ${refundStatus} for cancelled order ${order._id}`);
-                    } catch (refundError) {
-                        console.error("❌ Auto-refund failed:", refundError);
-                        
-                        order.refundInfo = {
-                            status: "failed",
-                            reason: "Order cancelled by admin",
-                            description: "Automatic refund failed - requires manual processing",
-                            failureReason: refundError.message,
-                            requestedAt: new Date(),
-                            requestedBy: req.user._id
-                        };
-
-                        console.error(`⚠️ MANUAL REFUND REQUIRED for order ${order._id} - ${refundError.message}`);
-                        
-                        // Still proceed with cancellation
-                        order.cancelledAt = Date.now();
-                        order.cancellationReason = req.body.cancellationReason || "Cancelled by admin";
-                        order.orderStatus = req.body.status;
-                        await order.save({ validateBeforeSave: false });
-                        await invalidateAnalyticsCaches();
-                        
-                        return res.status(200).json({
-                            success: true,
-                            order,
-                            message: 'Order cancelled but refund failed. Manual refund required.'
-                        });
-                    }
-                }
-
-                // Update order with refund details
-                order.refundInfo = {
-                    status: refundStatus,
-                    reason: "Order cancelled by admin",
-                    description: req.body.cancellationReason || "Order was cancelled",
-                    refundType: "full",
-                    requestedAmount: order.amountPaid,
-                    requestedAt: new Date(),
-                    requestedBy: req.user._id,
-                    approvedAt: new Date(),
-                    approvedBy: req.user._id,
-                    adminNote: isTestMode() 
-                        ? "Auto-approved due to order cancellation (Test Mode)" 
-                        : "Auto-approved due to order cancellation",
-                    refundId: refundResponse.refundId,
-                    refundAmount: refundResponse.amount,
-                    refundCurrency: refundResponse.currency,
-                    processedAt: new Date(),
-                    processedBy: req.user._id,
-                    gatewayResponse: refundResponse.raw
-                };
-            } else {
-                console.warn(`⚠️ Manual refund required for ${gateway} payment on order ${order._id}`);
-                
-                order.refundInfo = {
-                    status: "requested",
-                    reason: "Order cancelled - manual refund required",
-                    description: `Payment gateway ${gateway} requires manual refund processing`,
-                    requestedAt: new Date(),
-                    requestedBy: req.user._id
-                };
-            }
-        }
-
-        order.cancelledAt = Date.now();
-        order.cancellationReason = req.body.cancellationReason || "Cancelled by admin";
-    }
-
-    // HANDLE DELIVERY
-    if (req.body.status === 'Delivered') {
-        try {
-            await Promise.all(
-                order.orderItems.map(async (item) => {
-                    await updateQuantity(item.product.toString(), item.quantity);
-                })
-            );
-            order.deliveredAt = Date.now();
-        } catch (error) {
-            return next(error);
-        }
-    }
-
-    order.orderStatus = req.body.status;
-    await order.save({ validateBeforeSave: false });
-    await invalidateAnalyticsCaches();
-
-    let responseMessage = 'Order updated successfully';
-    if (req.body.status === 'Cancelled' && order.refundInfo && order.refundInfo.status !== 'none') {
-        responseMessage = `Order cancelled. Refund status: ${order.refundInfo.status}${isTestMode() ? ' (Test Mode)' : ''}`;
-    }
-
-    res.status(200).json({
-        success: true,
-        order,
-        message: responseMessage
-    });
-});
-
-async function updateQuantity(id, quantity) {
-    const product = await Product.findById(id);
-    if (!product) {
-        throw new HandleError(`Product not found with id: ${id}`, 404);
-    }
-    if (product.stock < quantity) {
-        throw new HandleError(`Only ${product.stock} units available for ${product.name}`, 400);
-    }
-    product.stock -= quantity;
-    await product.save({ validateBeforeSave: false });
-}
-
-// Delete order 
-export const deleteOrder = handleAsyncError(async (req, res, next) => {
-    const order = await Order.findById(req.params.id);
-
-    if (!order) {
-        return next(new HandleError("Order not found", 404));
-    }
-
-    if (order.orderStatus !== 'Delivered') {
-        return next(new HandleError("Cannot delete order that is not delivered", 400));
-    }
-
-    await Order.findByIdAndDelete(req.params.id);
-
-    // Invalidate caches after deleting order
-    await invalidateAnalyticsCaches();
-
-    res.status(200).json({
-        success: true,
-        message: 'Order deleted successfully'
-    });
-});
+// ============================================
+// 1. STATUS HISTORY & TIMELINE
+// ============================================
 
 /**
- * Get order by payment reference
- * Used by success page to display order details
- * @route GET /api/v1/orders/reference/:reference
- * @access Private
- */
-export const getOrderByReference = handleAsyncError(async (req, res, next) => {
-  const { reference } = req.params;
-  const userId = req.user._id;
-
-  // Find order by payment reference
-  const order = await Order.findOne({
-    "paymentInfo.reference": reference,
-    user: userId
-  }).populate('orderItems.product', 'name images');
-
-  if (!order) {
-    return next(new HandleError("Order not found for this reference", 404));
-  }
-
-  // Return order details
-  return res.status(200).json({
-    success: true,
-    order
-  });
-});
-
-
-// REFUND CONTROLLER FUNCTIONS
-
-
-/**
- * User requests a refund for their order
- * @route POST /api/v1/orders/:orderId/refund/request
- * @access Private (User who owns the order)
- */
-export const requestRefund = handleAsyncError(async (req, res, next) => {
-  const { orderId } = req.params;
-  const { reason, description, refundType, requestedAmount } = req.body;
-  const userId = req.user._id;
-
-  // Order was already validated by checkRefundEligibility middleware
-  // So we can safely fetch it again or use req.order if middleware attaches it
-  const order = await Order.findById(orderId);
-
-  if (!order) {
-    return next(new HandleError("Order not found", 404));
-  }
-
-  // Verify ownership (double-check even though middleware did it)
-  if (order.user.toString() !== userId.toString()) {
-    return next(new HandleError("Unauthorized", 403));
-  }
-
-  // Create refund request
-  order.refundInfo = {
-    status: "requested",
-    reason: reason,
-    description: description,
-    refundType: refundType || "full",
-    requestedAmount: refundType === "partial" ? requestedAmount : undefined,
-    requestedAt: new Date(),
-    requestedBy: userId
-  };
-
-  await order.save();
-
-  // Invalidate caches
-  await invalidateAnalyticsCaches();
-
-  return res.status(200).json({
-    success: true,
-    message: "Refund request submitted successfully. Our team will review it shortly.",
-    order: {
-      _id: order._id,
-      refundInfo: order.refundInfo,
-      orderStatus: order.orderStatus,
-      totalPrice: order.totalPrice
-    }
-  });
-});
-
-/**
- * Admin approves/rejects refund request
- * @route PUT /api/v1/admin/orders/:orderId/refund/review
- * @access Private (Admin only)
- */
-export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
-  const { orderId } = req.params;
-  const { action, adminNote } = req.body;
-
-  const order = await Order.findById(orderId);
-
-  if (!order) {
-    return next(new HandleError("Order not found", 404));
-  }
-
-  // Check if refund was requested
-  if (!order.refundInfo || order.refundInfo.status !== "requested") {
-    return next(new HandleError(
-      `No pending refund request for this order. Current status: ${order.refundInfo?.status || "none"}`,
-      400
-    ));
-  }
-
-  // Approve or reject
-  if (action === "approve") {
-    order.refundInfo.status = "approved";
-    order.refundInfo.approvedAt = new Date();
-    order.refundInfo.approvedBy = req.user._id;
-    order.refundInfo.adminNote = adminNote;
-
-    await order.save();
-    await invalidateAnalyticsCaches();
-
-    return res.status(200).json({
-      success: true,
-      message: "Refund request approved. You can now process the refund.",
-      order
-    });
-
-  } else if (action === "reject") {
-    order.refundInfo.status = "rejected";
-    order.refundInfo.rejectedAt = new Date();
-    order.refundInfo.rejectedBy = req.user._id;
-    order.refundInfo.adminNote = adminNote;
-
-    await order.save();
-    await invalidateAnalyticsCaches();
-
-    return res.status(200).json({
-      success: true,
-      message: "Refund request rejected",
-      order
-    });
-
-  } else {
-    return next(new HandleError("Invalid action. Must be 'approve' or 'reject'", 400));
-  }
-});
-
-/**
- * Admin processes the actual refund (calls payment gateway)
- * @route POST /api/v1/admin/orders/:orderId/refund/process
- * @access Private (Admin only)
- */
-
-/**
- * Process refund with test mode handling
- */
-export const processRefund = handleAsyncError(async (req, res, next) => {
-  const { orderId } = req.params;
-  const { refundAmount, merchantNote } = req.body;
-
-  const order = await Order.findById(orderId);
-  if (!order) {
-    return next(new HandleError("Order not found", 404));
-  }
-
-  const maxRefundAmount = order.amountPaid;
-  const finalRefundAmount = refundAmount || maxRefundAmount;
-
-  if (finalRefundAmount > maxRefundAmount) {
-    return next(new HandleError(
-      `Refund amount cannot exceed ${maxRefundAmount} ${order.paymentInfo.currency}`,
-      400
-    ));
-  }
-
-  const gateway = order.paymentInfo.method;
-
-  // Build gateway-specific refund parameters
-  let refundParams;
-  
-  if (gateway === "paystack") {
-    refundParams = {
-      transactionReference: order.paymentInfo.reference,
-      amount: finalRefundAmount < maxRefundAmount ? finalRefundAmount : undefined,
-      reason: order.refundInfo.reason,
-      merchantNote: merchantNote
-    };
-  } else if (gateway === "flutterwave") {
-    refundParams = {
-      transactionId: order.paymentInfo.providerTxId,
-      amount: finalRefundAmount < maxRefundAmount ? finalRefundAmount : undefined,
-      reason: order.refundInfo.reason,
-      merchantNote: merchantNote
-    };
-  } else if (gateway === "stripe") {
-    refundParams = {
-      paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
-      amount: finalRefundAmount < maxRefundAmount ? finalRefundAmount : undefined,
-      reason: "requested_by_customer",
-      merchantNote: merchantNote
-    };
-  } else {
-    return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
-  }
-
-  let refundResponse;
-  let finalStatus = "processing";
-  
-  // ✅ TEST MODE HANDLING
-  if (isTestMode()) {
-    console.log(`🧪 TEST MODE: Simulating refund for order ${orderId}...`);
-    
-    // Simulate gateway response in test mode
-    refundResponse = {
-      success: true,
-      refundId: `test_refund_${Date.now()}`,
-      status: "completed", // ✅ Auto-complete in test mode
-      amount: finalRefundAmount,
-      currency: order.paymentInfo.currency,
-      raw: {
-        test_mode: true,
-        message: "Refund completed in test mode"
-      }
-    };
-    
-    finalStatus = "completed";
-    console.log(`✅ TEST MODE: Refund auto-completed`);
-  } else {
-    // PRODUCTION MODE: Call actual gateway
-    try {
-      console.log(`🔄 PRODUCTION: Processing ${gateway} refund for order ${orderId}...`);
-      refundResponse = await PaymentFactory.refundPayment(gateway, refundParams);
-      console.log(`✅ Refund response:`, refundResponse);
-      
-      // Map gateway status
-      const gatewayStatus = refundResponse.status?.toLowerCase();
-      if (gatewayStatus === "succeeded" || gatewayStatus === "success" || gatewayStatus === "completed") {
-        finalStatus = "completed";
-      } else if (gatewayStatus === "failed") {
-        finalStatus = "failed";
-      } else {
-        finalStatus = "processing";
-      }
-    } catch (error) {
-      console.error("❌ Refund processing error:", error);
-      
-      order.refundInfo.status = "failed";
-      order.refundInfo.failureReason = error.message;
-      order.refundInfo.processedAt = new Date();
-      await order.save();
-
-      return next(new HandleError(`Refund failed: ${error.message}`, 500));
-    }
-  }
-
-  // Update order with refund details
-  order.refundInfo.status = finalStatus;
-  order.refundInfo.refundId = refundResponse.refundId;
-  order.refundInfo.refundAmount = refundResponse.amount;
-  order.refundInfo.refundCurrency = refundResponse.currency;
-  order.refundInfo.processedAt = new Date();
-  order.refundInfo.processedBy = req.user._id;
-  order.refundInfo.gatewayResponse = refundResponse.raw;
-
-  await order.save();
-  await invalidateAnalyticsCaches();
-
-  return res.status(200).json({
-    success: true,
-    message: `Refund ${finalStatus}. ${finalStatus === 'completed' ? 'Customer will receive funds in 3-10 business days.' : 'Refund is being processed.'}`,
-    refund: {
-      refundId: refundResponse.refundId,
-      status: finalStatus,
-      amount: refundResponse.amount,
-      currency: refundResponse.currency,
-      gateway: gateway,
-      testMode: isTestMode() // ✅ Indicate if this was a test mode refund
-    },
-    order
-  });
-});
-
-
-/**
- * Get refund status for an order
- * @route GET /api/v1/orders/:orderId/refund/status
+ * Get complete status history timeline for an order
+ * @route GET /api/v1/orders/:id/timeline
  * @access Private (User or Admin)
  */
-
-export const getRefundStatus = handleAsyncError(async (req, res, next) => {
-  const { orderId } = req.params;
+export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
   const userId = req.user._id;
-  const isAdmin = req.user.role === "admin";
+  const isAdmin = req.user.role === 'admin';
 
-  const order = await Order.findById(orderId);
+  const order = await Order.findById(id)
+    .populate('statusHistory.updatedBy', 'name email')
+    .select('statusHistory orderStatus user');
 
   if (!order) {
-    return next(new HandleError("Order not found", 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   // Verify access
   if (!isAdmin && order.user.toString() !== userId.toString()) {
-    return next(new HandleError("Unauthorized", 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
-  // Always return an object with consistent structure
-  // Check if refund exists and is not 'none'
-  const hasActiveRefund = order.refundInfo && order.refundInfo.status !== 'none';
-
-  if (!hasActiveRefund) {
-    return res.status(200).json({
-      success: true,
-      message: "No refund requested for this order",
-      refundInfo: {
-        status: 'none', 
-        hasRefund: false
-      },
-      isRefundable: order.isRefundable,
-      daysUntilDeadline: order.daysUntilRefundDeadline
-    });
-  }
-
-  // If refund is processing/completed, fetch latest status from gateway
-  if (order.refundInfo.status === "processing" || order.refundInfo.status === "completed") {
-    const gateway = order.paymentInfo.method;
-    const refundReference = order.refundInfo.refundId;
-
-    if (refundReference) {
-      try {
-        console.log(`🔍 Checking ${gateway} refund status for ${refundReference}...`);
-        const gatewayStatus = await PaymentFactory.getRefundStatus(gateway, refundReference);
-        
-        // Update order if status changed
-        if (gatewayStatus.status !== order.refundInfo.status) {
-          order.refundInfo.status = gatewayStatus.status;
-          await order.save();
-        }
-      } catch (error) {
-        console.error("⚠️ Failed to fetch refund status from gateway:", error);
-        // Continue with order's stored status
-      }
-    }
-  }
-
-  // Return consistent structure
   return res.status(200).json({
     success: true,
-    refundInfo: {
-      ...order.refundInfo.toObject(),
-      hasRefund: true 
-    },
-    order: {
-      _id: order._id,
-      orderStatus: order.orderStatus,
-      totalPrice: order.totalPrice,
-      amountPaid: order.amountPaid,
-      paymentMethod: order.paymentInfo.method
-    }
+    timeline: order.statusHistory,
+    currentStatus: order.orderStatus
+  });
+});
+
+// ============================================
+// 2. NOTES & COMMUNICATION
+// ============================================
+
+/**
+ * Add a note to an order
+ * @route POST /api/v1/orders/:id/notes
+ * @access Private (User for customer notes, Admin for all)
+ */
+export const addOrderNote = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { content, type = 'customer', attachments = [] } = req.body;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  if (!content || content.trim().length === 0) {
+    return next(new HandleError('Note content is required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Verify ownership
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  // Only admins can add internal notes
+  if (type === 'internal' && !isAdmin) {
+    return next(new HandleError('Only admins can add internal notes', 403));
+  }
+
+  // Add note using instance method
+  order.addNote(content, type, userId);
+
+  // Add audit entry
+  order.addAuditEntry('note_added', userId, {
+    field: 'notes',
+    newValue: { type, content: content.substring(0, 50) + '...' }
+  });
+
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Note added successfully',
+    note: order.notes[order.notes.length - 1]
   });
 });
 
 /**
- * Get all refund requests (Admin only)
- * @route GET /api/v1/admin/refunds?status=requested
+ * Get all notes for an order
+ * @route GET /api/v1/orders/:id/notes
+ * @access Private (User sees only customer notes, Admin sees all)
+ */
+export const getOrderNotes = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id)
+    .populate('notes.author', 'name email role')
+    .select('notes user');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Verify access
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  // Filter notes based on role
+  const notes = isAdmin 
+    ? order.notes 
+    : order.notes.filter(note => note.type === 'customer');
+
+  return res.status(200).json({
+    success: true,
+    count: notes.length,
+    notes
+  });
+});
+
+/**
+ * Edit a note
+ * @route PUT /api/v1/orders/:id/notes/:noteId
+ * @access Private (Author or Admin)
+ */
+export const editOrderNote = handleAsyncError(async (req, res, next) => {
+  const { id, noteId } = req.params;
+  const { content } = req.body;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  if (!content || content.trim().length === 0) {
+    return next(new HandleError('Note content is required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  const note = order.notes.id(noteId);
+  if (!note) {
+    return next(new HandleError('Note not found', 404));
+  }
+
+  // Only author or admin can edit
+  if (!isAdmin && note.author.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized to edit this note', 403));
+  }
+
+  note.content = content;
+  note.isEdited = true;
+  note.editedAt = new Date();
+
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Note updated successfully',
+    note
+  });
+});
+
+// ============================================
+// 3. TRACKING & SHIPMENT MANAGEMENT
+// ============================================
+
+/**
+ * Add tracking information to an order
+ * @route POST /api/v1/admin/orders/:id/tracking
  * @access Private (Admin only)
  */
-export const getAllRefundRequests = handleAsyncError(async (req, res, next) => {
-  const { status, from, to } = req.query;
+export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { carrier, trackingNumber, estimatedDelivery } = req.body;
 
-  // Build query
-  const query = { 'refundInfo.status': { $ne: 'none' } };
-  
+  if (!carrier || !trackingNumber) {
+    return next(new HandleError('Carrier and tracking number are required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Generate tracking URL based on carrier
+  const trackingUrls = {
+    'DHL': `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`,
+    'FedEx': `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`,
+    'UPS': `https://www.ups.com/track?tracknum=${trackingNumber}`,
+    'USPS': `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`
+  };
+
+  order.tracking = {
+    carrier,
+    trackingNumber,
+    trackingUrl: trackingUrls[carrier] || '',
+    estimatedDelivery: estimatedDelivery ? new Date(estimatedDelivery) : null,
+    lastUpdated: new Date()
+  };
+
+  // Add status history
+  order.addStatusHistory('Shipped', req.user._id, `Tracking number: ${trackingNumber}`);
+
+  // Add audit entry
+  order.addAuditEntry('tracking_added', req.user._id, {
+    field: 'tracking',
+    newValue: { carrier, trackingNumber }
+  });
+
+  await order.save();
+  await deleteCachePattern('admin_stats*');
+
+  return res.status(200).json({
+    success: true,
+    message: 'Tracking information added successfully',
+    tracking: order.tracking
+  });
+});
+
+/**
+ * Get tracking information for an order
+ * @route GET /api/v1/orders/:id/tracking
+ * @access Private (User or Admin)
+ */
+export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id)
+    .select('tracking orderStatus user');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Verify access
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  if (!order.tracking || !order.tracking.trackingNumber) {
+    return res.status(200).json({
+      success: true,
+      message: 'No tracking information available yet',
+      tracking: null
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    tracking: order.tracking
+  });
+});
+
+/**
+ * Create a shipment (for split shipments)
+ * @route POST /api/v1/admin/orders/:id/shipments
+ * @access Private (Admin only)
+ */
+export const createShipment = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { items, warehouse, carrier, weight, dimensions } = req.body;
+
+  if (!items || items.length === 0) {
+    return next(new HandleError('Shipment must contain at least one item', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  const shipmentId = `SHP-${Date.now()}`;
+
+  const shipment = {
+    shipmentId,
+    warehouse,
+    items,
+    carrier,
+    status: 'pending',
+    weight,
+    dimensions
+  };
+
+  if (!order.shipments) {
+    order.shipments = [];
+  }
+  order.shipments.push(shipment);
+
+  // Update item fulfillment status
+  items.forEach(shipItem => {
+    const orderItem = order.orderItems.find(
+      item => item.product.toString() === shipItem.product.toString()
+    );
+    if (orderItem) {
+      orderItem.quantityShipped = (orderItem.quantityShipped || 0) + shipItem.quantity;
+      if (orderItem.quantityShipped >= orderItem.quantityOrdered) {
+        orderItem.fulfillmentStatus = 'complete';
+      } else {
+        orderItem.fulfillmentStatus = 'partial';
+      }
+    }
+  });
+
+  order.addAuditEntry('shipment_created', req.user._id, { shipmentId });
+
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Shipment created successfully',
+    shipment
+  });
+});
+
+/**
+ * Update shipment status
+ * @route PUT /api/v1/admin/orders/:id/shipments/:shipmentId
+ * @access Private (Admin only)
+ */
+export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
+  const { id, shipmentId } = req.params;
+  const { status, trackingNumber } = req.body;
+
+  const validStatuses = ['pending', 'packed', 'shipped', 'delivered'];
+  if (!validStatuses.includes(status)) {
+    return next(new HandleError('Invalid shipment status', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  const shipment = order.shipments.find(s => s.shipmentId === shipmentId);
+  if (!shipment) {
+    return next(new HandleError('Shipment not found', 404));
+  }
+
+  shipment.status = status;
+  if (trackingNumber) shipment.trackingNumber = trackingNumber;
+
+  if (status === 'shipped') {
+    shipment.shippedAt = new Date();
+  }
+  if (status === 'delivered') {
+    shipment.deliveredAt = new Date();
+  }
+
+  order.addAuditEntry('shipment_updated', req.user._id, {
+    shipmentId,
+    status
+  });
+
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Shipment updated successfully',
+    shipment
+  });
+});
+
+// ============================================
+// 4. RETURN MANAGEMENT (RMA)
+// ============================================
+
+/**
+ * Request return for an order (RMA)
+ * @route POST /api/v1/orders/:id/return/request
+ * @access Private (User who owns the order)
+ */
+export const requestReturn = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { reason, itemsToReturn } = req.body;
+  const userId = req.user._id;
+
+  if (!reason || !itemsToReturn || itemsToReturn.length === 0) {
+    return next(new HandleError('Reason and items to return are required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Verify ownership
+  if (order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  // Check if order is delivered
+  if (order.orderStatus !== 'Delivered') {
+    return next(new HandleError('Can only return delivered orders', 400));
+  }
+
+  // Check return window (30 days from delivery)
+  const returnDeadline = new Date(order.deliveredAt);
+  returnDeadline.setDate(returnDeadline.getDate() + 30);
+
+  if (new Date() > returnDeadline) {
+    return next(new HandleError('Return period has expired (30 days from delivery)', 400));
+  }
+
+  // Check if return already exists
+  if (order.returnInfo && order.returnInfo.status !== 'none') {
+    return next(new HandleError('Return request already exists for this order', 400));
+  }
+
+  order.returnInfo = {
+    status: 'requested',
+    reason,
+    itemsToReturn,
+    requestedAt: new Date(),
+    requestedBy: userId
+  };
+
+  order.addStatusHistory('Return Requested', userId, reason);
+  order.addAuditEntry('return_requested', userId, { reason });
+
+  await order.save();
+  await deleteCachePattern('admin_stats*');
+
+  return res.status(200).json({
+    success: true,
+    message: 'Return request submitted successfully. You will receive an RMA number once approved.',
+    returnInfo: order.returnInfo
+  });
+});
+
+/**
+ * Admin approves/rejects return request
+ * @route PUT /api/v1/admin/orders/:id/return/review
+ * @access Private (Admin only)
+ */
+export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { action, restockFee = 0 } = req.body;
+
+  if (!['approve', 'reject'].includes(action)) {
+    return next(new HandleError('Action must be approve or reject', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!order.returnInfo || order.returnInfo.status !== 'requested') {
+    return next(new HandleError('No pending return request found', 400));
+  }
+
+  if (action === 'approve') {
+    order.returnInfo.status = 'approved';
+    order.returnInfo.approvedAt = new Date();
+    order.returnInfo.approvedBy = req.user._id;
+    order.returnInfo.restockFee = restockFee;
+    
+    // RMA number is auto-generated by pre-save hook
+
+    order.addAuditEntry('return_approved', req.user._id);
+
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Return approved. RMA number generated.',
+      returnInfo: order.returnInfo
+    });
+  } else {
+    order.returnInfo.status = 'rejected';
+    order.returnInfo.approvedAt = new Date();
+    order.returnInfo.approvedBy = req.user._id;
+
+    order.addAuditEntry('return_rejected', req.user._id);
+
+    await order.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Return request rejected',
+      returnInfo: order.returnInfo
+    });
+  }
+});
+
+/**
+ * Update return status (in_transit, received, inspected, completed)
+ * @route PUT /api/v1/admin/orders/:id/return/status
+ * @access Private (Admin only)
+ */
+export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { status, inspectionNotes } = req.body;
+
+  const validStatuses = ['in_transit', 'received', 'inspected', 'completed'];
+  if (!validStatuses.includes(status)) {
+    return next(new HandleError('Invalid return status', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!order.returnInfo || order.returnInfo.status === 'none') {
+    return next(new HandleError('No return request found', 400));
+  }
+
+  order.returnInfo.status = status;
+
+  if (status === 'received') {
+    order.returnInfo.receivedAt = new Date();
+  }
+
+  if (status === 'inspected') {
+    order.returnInfo.inspectedAt = new Date();
+    order.returnInfo.inspectedBy = req.user._id;
+    if (inspectionNotes) {
+      order.returnInfo.inspectionNotes = inspectionNotes;
+    }
+  }
+
+  if (status === 'completed') {
+    order.returnInfo.completedAt = new Date();
+    
+    // Restock items
+    for (const item of order.returnInfo.itemsToReturn) {
+      const product = await Product.findById(item.product);
+      if (product && item.condition !== 'damaged') {
+        product.stock += item.quantity;
+        await product.save({ validateBeforeSave: false });
+      }
+    }
+  }
+
+  order.addAuditEntry('return_status_updated', req.user._id, { status });
+
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: `Return status updated to ${status}`,
+    returnInfo: order.returnInfo
+  });
+});
+
+/**
+ * Get all active returns (Admin)
+ * @route GET /api/v1/admin/returns
+ * @access Private (Admin only)
+ */
+export const getAllReturns = handleAsyncError(async (req, res, next) => {
+  const { status } = req.query;
+
+  const query = {
+    'returnInfo.status': { 
+      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected'] 
+    }
+  };
+
   if (status) {
-    query['refundInfo.status'] = status;
+    query['returnInfo.status'] = status;
   }
 
-  // Date range filter
-  if (from || to) {
-    query['refundInfo.requestedAt'] = {};
-    if (from) query['refundInfo.requestedAt'].$gte = new Date(from);
-    if (to) query['refundInfo.requestedAt'].$lte = new Date(to);
-  }
-
-  // Find orders with refund requests
   const orders = await Order.find(query)
     .populate('user', 'name email')
-    .populate('refundInfo.requestedBy', 'name email')
-    .populate('refundInfo.approvedBy', 'name email')
-    .populate('refundInfo.rejectedBy', 'name email')
-    .populate('refundInfo.processedBy', 'name email')
-    .sort({ 'refundInfo.requestedAt': -1 });
-
-  // Calculate stats
-  const stats = {
-    total: orders.length,
-    requested: orders.filter(o => o.refundInfo.status === 'requested').length,
-    approved: orders.filter(o => o.refundInfo.status === 'approved').length,
-    rejected: orders.filter(o => o.refundInfo.status === 'rejected').length,
-    processing: orders.filter(o => o.refundInfo.status === 'processing').length,
-    completed: orders.filter(o => o.refundInfo.status === 'completed').length,
-    failed: orders.filter(o => o.refundInfo.status === 'failed').length,
-    totalRefundedAmount: orders
-      .filter(o => o.refundInfo.status === 'completed')
-      .reduce((sum, o) => sum + (o.refundInfo.refundAmount || 0), 0)
-  };
+    .populate('returnInfo.requestedBy', 'name email')
+    .populate('returnInfo.approvedBy', 'name email')
+    .sort({ 'returnInfo.requestedAt': -1 });
 
   return res.status(200).json({
     success: true,
     count: orders.length,
-    stats,
-    orders
+    returns: orders.map(order => ({
+      orderId: order._id,
+      user: order.user,
+      returnInfo: order.returnInfo,
+      orderStatus: order.orderStatus,
+      totalPrice: order.totalPrice
+    }))
+  });
+});
+
+// ============================================
+// 5. INVOICE MANAGEMENT
+// ============================================
+
+/**
+ * Generate/Download invoice for an order
+ * @route GET /api/v1/orders/:id/invoice
+ * @access Private (User or Admin)
+ */
+export const downloadInvoice = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id)
+    .populate('user', 'name email')
+    .populate('orderItems.product', 'name');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Verify access
+  if (!isAdmin && order.user._id.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  // Check if invoice exists
+  if (!order.invoiceInfo || !order.invoiceInfo.pdfUrl) {
+    return res.status(200).json({
+      success: false,
+      message: 'Invoice not yet generated for this order'
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    invoice: {
+      invoiceNumber: order.invoiceInfo.invoiceNumber,
+      invoiceDate: order.invoiceInfo.invoiceDate,
+      pdfUrl: order.invoiceInfo.pdfUrl,
+      version: order.invoiceInfo.version
+    }
+  });
+});
+
+// ============================================
+// 6. FRAUD PREVENTION & REVIEW
+// ============================================
+
+/**
+ * Get orders pending fraud review
+ * @route GET /api/v1/admin/orders/fraud-review
+ * @access Private (Admin only)
+ */
+export const getPendingFraudReviews = handleAsyncError(async (req, res, next) => {
+  const orders = await Order.getPendingFraudReviews();
+
+  return res.status(200).json({
+    success: true,
+    count: orders.length,
+    orders: orders.map(order => ({
+      _id: order._id,
+      user: order.user,
+      totalPrice: order.totalPrice,
+      fraudCheck: order.fraudCheck,
+      paymentInfo: order.paymentInfo,
+      shippingInfo: order.shippingInfo,
+      createdAt: order.createdAt
+    }))
+  });
+});
+
+/**
+ * Review flagged order (approve/reject)
+ * @route PUT /api/v1/admin/orders/:id/fraud-review
+ * @access Private (Admin only)
+ */
+export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { decision } = req.body; // 'approved' or 'rejected'
+
+  if (!['approved', 'rejected'].includes(decision)) {
+    return next(new HandleError('Decision must be approved or rejected', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!order.fraudCheck || !order.fraudCheck.reviewRequired) {
+    return next(new HandleError('This order does not require fraud review', 400));
+  }
+
+  order.fraudCheck.reviewDecision = decision;
+  order.fraudCheck.reviewedBy = req.user._id;
+  order.fraudCheck.reviewedAt = new Date();
+  order.fraudCheck.reviewRequired = false;
+
+  if (decision === 'rejected') {
+    // Cancel order and initiate refund
+    order.orderStatus = 'Cancelled';
+    order.cancelledAt = new Date();
+    order.cancellationReason = 'Fraud risk - order rejected';
+  }
+
+  order.addAuditEntry('fraud_review', req.user._id, { decision });
+
+  await order.save();
+  await deleteCachePattern('admin_stats*');
+
+  return res.status(200).json({
+    success: true,
+    message: `Order ${decision}`,
+    order
+  });
+});
+
+// ============================================
+// 7. AUDIT LOG
+// ============================================
+
+/**
+ * Get audit log for an order
+ * @route GET /api/v1/admin/orders/:id/audit
+ * @access Private (Admin only)
+ */
+export const getAuditLog = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+
+  const order = await Order.findById(id)
+    .populate('auditLog.performedBy', 'name email role')
+    .select('auditLog');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  return res.status(200).json({
+    success: true,
+    count: order.auditLog.length,
+    auditLog: order.auditLog
+  });
+});
+
+// ============================================
+// 8. ANALYTICS HELPERS
+// ============================================
+
+/**
+ * Get customer order analytics
+ * @route GET /api/v1/analytics/customer/:userId/orders
+ * @access Private (Admin only)
+ */
+export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next) => {
+  const { userId } = req.params;
+
+  const orders = await Order.find({ user: userId });
+
+  const analytics = {
+    totalOrders: orders.length,
+    totalSpent: orders.reduce((sum, order) => sum + order.totalPrice, 0),
+    averageOrderValue: orders.length > 0 
+      ? orders.reduce((sum, order) => sum + order.totalPrice, 0) / orders.length 
+      : 0,
+    firstOrderDate: orders.length > 0 
+      ? orders.sort((a, b) => a.createdAt - b.createdAt)[0].createdAt 
+      : null,
+    lastOrderDate: orders.length > 0 
+      ? orders.sort((a, b) => b.createdAt - a.createdAt)[0].createdAt 
+      : null,
+    refundedOrders: orders.filter(o => o.refundInfo?.status === 'completed').length,
+    returnedOrders: orders.filter(o => o.returnInfo?.status === 'completed').length,
+    cancelledOrders: orders.filter(o => o.orderStatus === 'Cancelled').length
+  };
+
+  return res.status(200).json({
+    success: true,
+    userId,
+    analytics
   });
 });

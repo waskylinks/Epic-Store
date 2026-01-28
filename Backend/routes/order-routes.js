@@ -1,172 +1,272 @@
+// ============================================
+// NEW ROUTES TO ADD TO YOUR order-routes.js
+// ============================================
+
 import express from 'express';
 import { roleBaseAccess, verifyUserAuth } from '../middleware/user-auth.js';
-import { 
-  allMyOrders, 
-  createNewOrder, 
-  deleteOrder, 
-  getAllOrders, 
-  getOrderByReference, 
-  getSingleOrder, 
-  updateOrderStatus,
-  // Refund controllers
-  requestRefund,
-  reviewRefundRequest,
-  processRefund,
-  getRefundStatus,
-  getAllRefundRequests
+import {
+  // ... your existing imports
+  
+  // NEW imports for enhanced features
+  getOrderTimeline,
+  addOrderNote,
+  getOrderNotes,
+  editOrderNote,
+  addTrackingInfo,
+  getTrackingInfo,
+  createShipment,
+  updateShipmentStatus,
+  requestReturn,
+  reviewReturnRequest,
+  updateReturnStatus,
+  getAllReturns,
+  downloadInvoice,
+  getPendingFraudReviews,
+  reviewFraudCheck,
+  getAuditLog,
+  getCustomerOrderAnalytics
 } from '../controller/order-controller.js';
-
-// Import validation schemas
-import { 
-  requestRefundSchema, 
-  reviewRefundSchema, 
-  processRefundSchema,
-  refundStatusQuerySchema 
-} from '../Validation/refund.validation.js';
-
-// Import validation middleware
-import { validateBody, validateRequest } from '../middleware/validateBody.js';
-
-// Import refund policy middleware
-import { 
-  checkRefundEligibility, 
-  validateRefundAmount, 
-  canProcessRefund 
-} from '../middleware/refund-policy.middleware.js';
 
 const router = express.Router();
 
-// ============================================
-// EXISTING ORDER ROUTES
-// ============================================
-
-/**
- * Create new order
- * @route POST /api/v1/new/order
- * @access Private
- */
-router.route('/new/order/')
-  .post(verifyUserAuth, createNewOrder);
-
-/**
- * Get all orders for logged-in user
- * @route GET /api/v1/orders/user
- * @access Private
- */
-router.route('/orders/user/')
-  .get(verifyUserAuth, allMyOrders);
-
-/**
- * Get order by payment reference
- * @route GET /api/v1/orders/reference/:reference
- * @access Private
- */
-router.get(
-  '/orders/reference/:reference',
-  verifyUserAuth,
-  getOrderByReference
-);
-
-/**
- * Get all orders (Admin)
- * @route GET /api/v1/admin/orders
- * @access Private (Admin)
- */
-router.route('/admin/orders/')
-  .get(verifyUserAuth, roleBaseAccess('admin'), getAllOrders);
-
-/**
- * Get single order details
- * @route GET /api/v1/order/:id
- * @access Private
- */
-router.route('/order/:id')
-  .get(verifyUserAuth, getSingleOrder);
-
-/**
- * Update order status (Admin)
- * @route PUT /api/v1/admin/order/:id
- * @access Private (Admin)
- * 
- * Delete order (Admin)
- * @route DELETE /api/v1/admin/order/:id
- * @access Private (Admin)
- */
-router.route('/admin/order/:id')
-  .put(verifyUserAuth, roleBaseAccess('admin'), updateOrderStatus)
-  .delete(verifyUserAuth, roleBaseAccess('admin'), deleteOrder);
+// ... your existing routes ...
 
 // ============================================
-// ✅ REFUND ROUTES
+// STATUS HISTORY & TIMELINE
 // ============================================
 
 /**
- * User requests refund for their order
- * @route POST /api/v1/orders/:orderId/refund/request
- * @access Private (User who owns the order)
- * @body { reason, description, refundType, requestedAmount? }
- */
-router.post(
-  '/orders/:orderId/refund/request',
-  verifyUserAuth,
-  validateBody(requestRefundSchema), // Validate refund request data
-  checkRefundEligibility, // Check if order is eligible for refund
-  requestRefund
-);
-
-/**
- * Get refund status for an order
- * @route GET /api/v1/orders/:orderId/refund/status
+ * Get order timeline/status history
+ * @route GET /api/v1/orders/:id/timeline
  * @access Private (User or Admin)
  */
 router.get(
-  '/orders/:orderId/refund/status',
+  '/orders/:id/timeline',
   verifyUserAuth,
-  getRefundStatus
+  getOrderTimeline
 );
 
-/**
- * Admin reviews refund request (approve/reject)
- * @route PUT /api/v1/admin/orders/:orderId/refund/review
- * @access Private (Admin only)
- * @body { action: "approve" | "reject", adminNote? }
- */
-router.put(
-  '/admin/orders/:orderId/refund/review',
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  validateBody(reviewRefundSchema), // Validate review action
-  reviewRefundRequest
-);
+// ============================================
+// NOTES & COMMUNICATION
+// ============================================
 
 /**
- * Admin processes refund (calls payment gateway)
- * @route POST /api/v1/admin/orders/:orderId/refund/process
- * @access Private (Admin only)
- * @body { refundAmount?, merchantNote? }
+ * Add note to order
+ * @route POST /api/v1/orders/:id/notes
+ * @access Private (User or Admin)
+ * @body { content, type?, attachments? }
  */
 router.post(
-  '/admin/orders/:orderId/refund/process',
+  '/orders/:id/notes',
   verifyUserAuth,
-  roleBaseAccess('admin'),
-  validateBody(processRefundSchema), // Validate refund amount
-  canProcessRefund, // Check if refund can be processed
-  validateRefundAmount, // Validate partial refund amount
-  processRefund
+  addOrderNote
 );
 
 /**
- * Admin gets all refund requests with optional filters
- * @route GET /api/v1/admin/refunds?status=requested&from=2024-01-01&to=2024-12-31
- * @access Private (Admin only)
- * @query { status?, from?, to? }
+ * Get all notes for an order
+ * @route GET /api/v1/orders/:id/notes
+ * @access Private (User sees customer notes, Admin sees all)
  */
 router.get(
-  '/admin/refunds',
+  '/orders/:id/notes',
+  verifyUserAuth,
+  getOrderNotes
+);
+
+/**
+ * Edit a note
+ * @route PUT /api/v1/orders/:id/notes/:noteId
+ * @access Private (Author or Admin)
+ * @body { content }
+ */
+router.put(
+  '/orders/:id/notes/:noteId',
+  verifyUserAuth,
+  editOrderNote
+);
+
+// ============================================
+// TRACKING & SHIPMENT
+// ============================================
+
+/**
+ * Add tracking information (Admin)
+ * @route POST /api/v1/admin/orders/:id/tracking
+ * @access Private (Admin only)
+ * @body { carrier, trackingNumber, estimatedDelivery? }
+ */
+router.post(
+  '/admin/orders/:id/tracking',
   verifyUserAuth,
   roleBaseAccess('admin'),
-  validateRequest(refundStatusQuerySchema, 'query'), // Validate query params
-  getAllRefundRequests
+  addTrackingInfo
+);
+
+/**
+ * Get tracking information
+ * @route GET /api/v1/orders/:id/tracking
+ * @access Private (User or Admin)
+ */
+router.get(
+  '/orders/:id/tracking',
+  verifyUserAuth,
+  getTrackingInfo
+);
+
+/**
+ * Create shipment for order (split shipments)
+ * @route POST /api/v1/admin/orders/:id/shipments
+ * @access Private (Admin only)
+ * @body { items, warehouse?, carrier?, weight?, dimensions? }
+ */
+router.post(
+  '/admin/orders/:id/shipments',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  createShipment
+);
+
+/**
+ * Update shipment status
+ * @route PUT /api/v1/admin/orders/:id/shipments/:shipmentId
+ * @access Private (Admin only)
+ * @body { status, trackingNumber? }
+ */
+router.put(
+  '/admin/orders/:id/shipments/:shipmentId',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  updateShipmentStatus
+);
+
+// ============================================
+// RETURN MANAGEMENT (RMA)
+// ============================================
+
+/**
+ * Request return for order
+ * @route POST /api/v1/orders/:id/return/request
+ * @access Private (User who owns order)
+ * @body { reason, itemsToReturn: [{ product, quantity, condition, reason }] }
+ */
+router.post(
+  '/orders/:id/return/request',
+  verifyUserAuth,
+  requestReturn
+);
+
+/**
+ * Review return request (Admin)
+ * @route PUT /api/v1/admin/orders/:id/return/review
+ * @access Private (Admin only)
+ * @body { action: 'approve' | 'reject', restockFee? }
+ */
+router.put(
+  '/admin/orders/:id/return/review',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  reviewReturnRequest
+);
+
+/**
+ * Update return status (Admin)
+ * @route PUT /api/v1/admin/orders/:id/return/status
+ * @access Private (Admin only)
+ * @body { status: 'in_transit' | 'received' | 'inspected' | 'completed', inspectionNotes? }
+ */
+router.put(
+  '/admin/orders/:id/return/status',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  updateReturnStatus
+);
+
+/**
+ * Get all active returns (Admin)
+ * @route GET /api/v1/admin/returns?status=requested
+ * @access Private (Admin only)
+ */
+router.get(
+  '/admin/returns',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAllReturns
+);
+
+// ============================================
+// INVOICE
+// ============================================
+
+/**
+ * Download invoice for order
+ * @route GET /api/v1/orders/:id/invoice
+ * @access Private (User or Admin)
+ */
+router.get(
+  '/orders/:id/invoice',
+  verifyUserAuth,
+  downloadInvoice
+);
+
+// ============================================
+// FRAUD PREVENTION
+// ============================================
+
+/**
+ * Get orders pending fraud review (Admin)
+ * @route GET /api/v1/admin/orders/fraud-review
+ * @access Private (Admin only)
+ */
+router.get(
+  '/admin/orders/fraud-review',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getPendingFraudReviews
+);
+
+/**
+ * Review fraud-flagged order (Admin)
+ * @route PUT /api/v1/admin/orders/:id/fraud-review
+ * @access Private (Admin only)
+ * @body { decision: 'approved' | 'rejected' }
+ */
+router.put(
+  '/admin/orders/:id/fraud-review',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  reviewFraudCheck
+);
+
+// ============================================
+// AUDIT LOG
+// ============================================
+
+/**
+ * Get audit log for order (Admin)
+ * @route GET /api/v1/admin/orders/:id/audit
+ * @access Private (Admin only)
+ */
+router.get(
+  '/admin/orders/:id/audit',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAuditLog
+);
+
+// ============================================
+// ANALYTICS
+// ============================================
+
+/**
+ * Get customer order analytics (Admin)
+ * @route GET /api/v1/analytics/customer/:userId/orders
+ * @access Private (Admin only)
+ */
+router.get(
+  '/analytics/customer/:userId/orders',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getCustomerOrderAnalytics
 );
 
 export default router;
