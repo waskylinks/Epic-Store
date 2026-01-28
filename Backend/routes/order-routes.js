@@ -25,6 +25,9 @@ import {
    ORDER CONTROLLERS
 ======================= */
 import {
+  getAllMyOrders,
+  getOrderDetails,
+  createOrder,
   getOrderTimeline,
   addOrderNote,
   getOrderNotes,
@@ -198,7 +201,32 @@ router.post(
 );
 
 /* ======================================================
-   ORDER ROUTES
+   BASIC ORDER ROUTES (Customer)
+====================================================== */
+
+// Get all user's orders
+router.get(
+  '/orders/user',
+  verifyUserAuth,
+  getAllMyOrders
+);
+
+// Create new order
+router.post(
+  '/order/new',
+  verifyUserAuth,
+  createOrder
+);
+
+// Get single order details
+router.get(
+  '/order/:id',
+  verifyUserAuth,
+  getOrderDetails
+);
+
+/* ======================================================
+   ORDER TIMELINE & NOTES
 ====================================================== */
 
 router.get(
@@ -228,6 +256,10 @@ router.put(
   validateOrderNote,
   editOrderNote
 );
+
+/* ======================================================
+   ORDER TRACKING & INVOICE
+====================================================== */
 
 router.get(
   '/orders/:id/tracking',

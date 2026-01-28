@@ -1,15 +1,112 @@
-// ============================================
-// NEW CONTROLLER FUNCTIONS FOR ENHANCED ORDER MODEL
-// Add these to your existing order-controller.js
-// ============================================
-
 import Order from '../models/order-model.js';
+import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
 // ============================================
-// 1. STATUS HISTORY & TIMELINE
+// BASIC ORDER OPERATIONS
+// ============================================
+
+/**
+ * Get all orders for the logged-in user
+ * @route GET /api/v1/orders/user
+ * @access Private (User)
+ */
+export const getAllMyOrders = handleAsyncError(async (req, res, next) => {
+  const userId = req.user._id;
+
+  const orders = await Order.find({ user: userId })
+    .populate('orderItems.product', 'name images price')
+    .sort({ createdAt: -1 });
+
+  if (!orders || orders.length === 0) {
+    return res.status(200).json({
+      success: true,
+      count: 0,
+      orders: [],
+      message: 'No orders found'
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    count: orders.length,
+    orders
+  });
+});
+
+/**
+ * Get single order details
+ * @route GET /api/v1/order/:id
+ * @access Private (User or Admin)
+ */
+export const getOrderDetails = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id)
+    .populate('user', 'name email')
+    .populate('orderItems.product', 'name images price');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!isAdmin && order.user._id.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  return res.status(200).json({
+    success: true,
+    order
+  });
+});
+
+/**
+ * Create new order
+ * @route POST /api/v1/order/new
+ * @access Private (User)
+ */
+export const createOrder = handleAsyncError(async (req, res, next) => {
+  const {
+    orderItems,
+    shippingInfo,
+    paymentInfo,
+    itemPrice,
+    taxPrice,
+    shippingPrice,
+    totalPrice
+  } = req.body;
+
+  if (!orderItems || orderItems.length === 0) {
+    return next(new HandleError('No order items provided', 400));
+  }
+
+  const order = await Order.create({
+    orderItems,
+    shippingInfo,
+    paymentInfo,
+    itemPrice,
+    taxPrice,
+    shippingPrice,
+    totalPrice,
+    user: req.user._id,
+    paidAt: paymentInfo?.status === 'paid' ? Date.now() : null
+  });
+
+  await order.populate('orderItems.product', 'name images price');
+
+  return res.status(201).json({
+    success: true,
+    message: 'Order created successfully',
+    order
+  });
+});
+
+// ============================================
+// STATUS HISTORY & TIMELINE
 // ============================================
 
 /**
@@ -30,7 +127,6 @@ export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify access
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -43,7 +139,7 @@ export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// 2. NOTES & COMMUNICATION
+// NOTES & COMMUNICATION
 // ============================================
 
 /**
@@ -53,7 +149,7 @@ export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
  */
 export const addOrderNote = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  const { content, type = 'customer', attachments = [] } = req.body;
+  const { content, type = 'customer' } = req.body;
   const userId = req.user._id;
   const isAdmin = req.user.role === 'admin';
 
@@ -66,24 +162,25 @@ export const addOrderNote = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify ownership
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  // Only admins can add internal notes
   if (type === 'internal' && !isAdmin) {
     return next(new HandleError('Only admins can add internal notes', 403));
   }
 
-  // Add note using instance method
-  order.addNote(content, type, userId);
+  const note = {
+    content,
+    type,
+    author: userId,
+    createdAt: new Date()
+  };
 
-  // Add audit entry
-  order.addAuditEntry('note_added', userId, {
-    field: 'notes',
-    newValue: { type, content: content.substring(0, 50) + '...' }
-  });
+  if (!order.notes) {
+    order.notes = [];
+  }
+  order.notes.push(note);
 
   await order.save();
 
@@ -112,15 +209,13 @@ export const getOrderNotes = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify access
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  // Filter notes based on role
   const notes = isAdmin 
     ? order.notes 
-    : order.notes.filter(note => note.type === 'customer');
+    : order.notes?.filter(note => note.type === 'customer') || [];
 
   return res.status(200).json({
     success: true,
@@ -154,7 +249,6 @@ export const editOrderNote = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Note not found', 404));
   }
 
-  // Only author or admin can edit
   if (!isAdmin && note.author.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized to edit this note', 403));
   }
@@ -173,8 +267,43 @@ export const editOrderNote = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// 3. TRACKING & SHIPMENT MANAGEMENT
+// TRACKING & SHIPMENT MANAGEMENT
 // ============================================
+
+/**
+ * Get tracking information for an order
+ * @route GET /api/v1/orders/:id/tracking
+ * @access Private (User or Admin)
+ */
+export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id)
+    .select('tracking orderStatus user');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  if (!order.tracking || !order.tracking.trackingNumber) {
+    return res.status(200).json({
+      success: true,
+      message: 'No tracking information available yet',
+      tracking: null
+    });
+  }
+
+  return res.status(200).json({
+    success: true,
+    tracking: order.tracking
+  });
+});
 
 /**
  * Add tracking information to an order
@@ -194,7 +323,6 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Generate tracking URL based on carrier
   const trackingUrls = {
     'DHL': `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`,
     'FedEx': `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`,
@@ -210,57 +338,13 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
     lastUpdated: new Date()
   };
 
-  // Add status history
-  order.addStatusHistory('Shipped', req.user._id, `Tracking number: ${trackingNumber}`);
-
-  // Add audit entry
-  order.addAuditEntry('tracking_added', req.user._id, {
-    field: 'tracking',
-    newValue: { carrier, trackingNumber }
-  });
-
+  order.orderStatus = 'Shipped';
   await order.save();
   await deleteCachePattern('admin_stats*');
 
   return res.status(200).json({
     success: true,
     message: 'Tracking information added successfully',
-    tracking: order.tracking
-  });
-});
-
-/**
- * Get tracking information for an order
- * @route GET /api/v1/orders/:id/tracking
- * @access Private (User or Admin)
- */
-export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
-  const userId = req.user._id;
-  const isAdmin = req.user.role === 'admin';
-
-  const order = await Order.findById(id)
-    .select('tracking orderStatus user');
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
-
-  // Verify access
-  if (!isAdmin && order.user.toString() !== userId.toString()) {
-    return next(new HandleError('Unauthorized', 403));
-  }
-
-  if (!order.tracking || !order.tracking.trackingNumber) {
-    return res.status(200).json({
-      success: true,
-      message: 'No tracking information available yet',
-      tracking: null
-    });
-  }
-
-  return res.status(200).json({
-    success: true,
     tracking: order.tracking
   });
 });
@@ -292,30 +376,14 @@ export const createShipment = handleAsyncError(async (req, res, next) => {
     carrier,
     status: 'pending',
     weight,
-    dimensions
+    dimensions,
+    createdAt: new Date()
   };
 
   if (!order.shipments) {
     order.shipments = [];
   }
   order.shipments.push(shipment);
-
-  // Update item fulfillment status
-  items.forEach(shipItem => {
-    const orderItem = order.orderItems.find(
-      item => item.product.toString() === shipItem.product.toString()
-    );
-    if (orderItem) {
-      orderItem.quantityShipped = (orderItem.quantityShipped || 0) + shipItem.quantity;
-      if (orderItem.quantityShipped >= orderItem.quantityOrdered) {
-        orderItem.fulfillmentStatus = 'complete';
-      } else {
-        orderItem.fulfillmentStatus = 'partial';
-      }
-    }
-  });
-
-  order.addAuditEntry('shipment_created', req.user._id, { shipmentId });
 
   await order.save();
 
@@ -345,7 +413,7 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  const shipment = order.shipments.find(s => s.shipmentId === shipmentId);
+  const shipment = order.shipments?.find(s => s.shipmentId === shipmentId);
   if (!shipment) {
     return next(new HandleError('Shipment not found', 404));
   }
@@ -360,11 +428,6 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
     shipment.deliveredAt = new Date();
   }
 
-  order.addAuditEntry('shipment_updated', req.user._id, {
-    shipmentId,
-    status
-  });
-
   await order.save();
 
   return res.status(200).json({
@@ -375,7 +438,7 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// 4. RETURN MANAGEMENT (RMA)
+// RETURN MANAGEMENT (RMA)
 // ============================================
 
 /**
@@ -397,25 +460,14 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify ownership
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  // Check if order is delivered
   if (order.orderStatus !== 'Delivered') {
     return next(new HandleError('Can only return delivered orders', 400));
   }
 
-  // Check return window (30 days from delivery)
-  const returnDeadline = new Date(order.deliveredAt);
-  returnDeadline.setDate(returnDeadline.getDate() + 30);
-
-  if (new Date() > returnDeadline) {
-    return next(new HandleError('Return period has expired (30 days from delivery)', 400));
-  }
-
-  // Check if return already exists
   if (order.returnInfo && order.returnInfo.status !== 'none') {
     return next(new HandleError('Return request already exists for this order', 400));
   }
@@ -428,15 +480,12 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     requestedBy: userId
   };
 
-  order.addStatusHistory('Return Requested', userId, reason);
-  order.addAuditEntry('return_requested', userId, { reason });
-
   await order.save();
   await deleteCachePattern('admin_stats*');
 
   return res.status(200).json({
     success: true,
-    message: 'Return request submitted successfully. You will receive an RMA number once approved.',
+    message: 'Return request submitted successfully',
     returnInfo: order.returnInfo
   });
 });
@@ -448,7 +497,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
  */
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  const { action, restockFee = 0 } = req.body;
+  const { action, restockFee = 0, adminNote = '' } = req.body;
 
   if (!['approve', 'reject'].includes(action)) {
     return next(new HandleError('Action must be approve or reject', 400));
@@ -468,10 +517,8 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     order.returnInfo.approvedAt = new Date();
     order.returnInfo.approvedBy = req.user._id;
     order.returnInfo.restockFee = restockFee;
-    
-    // RMA number is auto-generated by pre-save hook
-
-    order.addAuditEntry('return_approved', req.user._id);
+    order.returnInfo.rmaNumber = `RMA-${Date.now()}`;
+    if (adminNote) order.returnInfo.adminNote = adminNote;
 
     await order.save();
 
@@ -484,8 +531,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     order.returnInfo.status = 'rejected';
     order.returnInfo.approvedAt = new Date();
     order.returnInfo.approvedBy = req.user._id;
-
-    order.addAuditEntry('return_rejected', req.user._id);
+    if (adminNote) order.returnInfo.adminNote = adminNote;
 
     await order.save();
 
@@ -537,7 +583,6 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
     
-    // Restock items
     for (const item of order.returnInfo.itemsToReturn) {
       const product = await Product.findById(item.product);
       if (product && item.condition !== 'damaged') {
@@ -546,8 +591,6 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
       }
     }
   }
-
-  order.addAuditEntry('return_status_updated', req.user._id, { status });
 
   await order.save();
 
@@ -596,7 +639,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// 5. INVOICE MANAGEMENT
+// INVOICE MANAGEMENT
 // ============================================
 
 /**
@@ -617,16 +660,15 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify access
   if (!isAdmin && order.user._id.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  // Check if invoice exists
   if (!order.invoiceInfo || !order.invoiceInfo.pdfUrl) {
     return res.status(200).json({
       success: false,
-      message: 'Invoice not yet generated for this order'
+      message: 'Invoice not yet generated for this order',
+      invoice: null
     });
   }
 
@@ -642,7 +684,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// 6. FRAUD PREVENTION & REVIEW
+// FRAUD PREVENTION & REVIEW
 // ============================================
 
 /**
@@ -651,7 +693,11 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
  * @access Private (Admin only)
  */
 export const getPendingFraudReviews = handleAsyncError(async (req, res, next) => {
-  const orders = await Order.getPendingFraudReviews();
+  const orders = await Order.find({
+    'fraudCheck.reviewRequired': true
+  })
+    .populate('user', 'name email')
+    .sort({ createdAt: -1 });
 
   return res.status(200).json({
     success: true,
@@ -675,7 +721,7 @@ export const getPendingFraudReviews = handleAsyncError(async (req, res, next) =>
  */
 export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  const { decision } = req.body; // 'approved' or 'rejected'
+  const { decision } = req.body;
 
   if (!['approved', 'rejected'].includes(decision)) {
     return next(new HandleError('Decision must be approved or rejected', 400));
@@ -696,13 +742,10 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   order.fraudCheck.reviewRequired = false;
 
   if (decision === 'rejected') {
-    // Cancel order and initiate refund
     order.orderStatus = 'Cancelled';
     order.cancelledAt = new Date();
     order.cancellationReason = 'Fraud risk - order rejected';
   }
-
-  order.addAuditEntry('fraud_review', req.user._id, { decision });
 
   await order.save();
   await deleteCachePattern('admin_stats*');
@@ -715,7 +758,7 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// 7. AUDIT LOG
+// AUDIT LOG
 // ============================================
 
 /**
@@ -736,13 +779,13 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success: true,
-    count: order.auditLog.length,
-    auditLog: order.auditLog
+    count: order.auditLog?.length || 0,
+    auditLog: order.auditLog || []
   });
 });
 
 // ============================================
-// 8. ANALYTICS HELPERS
+// ANALYTICS HELPERS
 // ============================================
 
 /**
