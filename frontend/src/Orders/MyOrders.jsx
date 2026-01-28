@@ -21,10 +21,10 @@ import PageTitle from "../components/PageTitle";
 import Navbar from "../components/Navbar";
 import Footer from "../components/footer";
 
-import { getAllMyOrders } from "../features/order/orderSlice";
+import { getAllMyOrders } from "../features/cart/orderSlice";
 import { downloadReceiptPdf } from "../features/cart/receiptSlice";
 
-import "../CartStyles/MyOrders.css";
+import "../OrderStyles/MyOrders.css";
 
 function MyOrders() {
   const dispatch = useDispatch();
@@ -103,32 +103,32 @@ function MyOrders() {
 
   const getStatusIcon = (status) => {
     const statusLower = status?.toLowerCase() || "";
-    
+
     if (statusLower.includes("delivered") || statusLower.includes("completed")) {
-      return <FiCheckCircle className="status-icon success" />;
+      return <FiCheckCircle className="mo-status-icon mo-success" />;
     } else if (statusLower.includes("cancelled") || statusLower.includes("failed")) {
-      return <FiXCircle className="status-icon danger" />;
+      return <FiXCircle className="mo-status-icon mo-danger" />;
     } else if (statusLower.includes("processing") || statusLower.includes("pending")) {
-      return <FiClock className="status-icon warning" />;
+      return <FiClock className="mo-status-icon mo-warning" />;
     } else if (statusLower.includes("shipped") || statusLower.includes("transit")) {
-      return <FiTruck className="status-icon info" />;
+      return <FiTruck className="mo-status-icon mo-info" />;
     }
-    return <FiAlertCircle className="status-icon" />;
+    return <FiAlertCircle className="mo-status-icon" />;
   };
 
   const getStatusClass = (status) => {
     const statusLower = status?.toLowerCase() || "";
-    
+
     if (statusLower.includes("delivered") || statusLower.includes("completed")) {
-      return "status-badge success";
+      return "mo-status-badge mo-success";
     } else if (statusLower.includes("cancelled") || statusLower.includes("failed")) {
-      return "status-badge danger";
+      return "mo-status-badge mo-danger";
     } else if (statusLower.includes("processing") || statusLower.includes("pending")) {
-      return "status-badge warning";
+      return "mo-status-badge mo-warning";
     } else if (statusLower.includes("shipped") || statusLower.includes("transit")) {
-      return "status-badge info";
+      return "mo-status-badge mo-info";
     }
-    return "status-badge";
+    return "mo-status-badge";
   };
 
   const formatCurrency = (amount, currency = "NGN") => {
@@ -185,9 +185,9 @@ function MyOrders() {
       <>
         <PageTitle title="My Orders" />
         <Navbar />
-        <div className="orders-container">
-          <div className="orders-loading">
-            <div className="loading-spinner"></div>
+        <div className="mo-orders-container">
+          <div className="mo-orders-loading">
+            <div className="mo-loading-spinner"></div>
             <p>Loading your orders...</p>
           </div>
         </div>
@@ -201,36 +201,37 @@ function MyOrders() {
       <PageTitle title="My Orders" />
       <Navbar />
 
-      <div className="orders-container">
-        <div className="orders-header">
-          <div className="header-title">
-            <FiPackage className="header-icon" />
+      <div className="mo-orders-container">
+        <div className="mo-orders-header">
+          <div className="mo-header-title">
+            <FiPackage className="mo-header-icon" />
             <h1>My Orders</h1>
-            <span className="orders-count">
-              {filteredOrders?.length || 0} {filteredOrders?.length === 1 ? "order" : "orders"}
+            <span className="mo-orders-count">
+              {filteredOrders?.length || 0}{" "}
+              {filteredOrders?.length === 1 ? "order" : "orders"}
             </span>
           </div>
         </div>
 
-        <div className="orders-controls">
-          <div className="search-box">
-            <FiSearch className="search-icon" />
+        <div className="mo-orders-controls">
+          <div className="mo-search-box">
+            <FiSearch className="mo-search-icon" />
             <input
               type="text"
               placeholder="Search by Order ID or Reference..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="search-input"
+              className="mo-search-input"
             />
           </div>
 
-          <div className="filters-group">
-            <div className="filter-item">
-              <FiFilter className="filter-icon" />
+          <div className="mo-filters-group">
+            <div className="mo-filter-item">
+              <FiFilter className="mo-filter-icon" />
               <select
                 value={statusFilter}
                 onChange={(e) => setStatusFilter(e.target.value)}
-                className="filter-select"
+                className="mo-filter-select"
               >
                 <option value="all">All Status</option>
                 <option value="processing">Processing</option>
@@ -240,11 +241,11 @@ function MyOrders() {
               </select>
             </div>
 
-            <div className="filter-item">
+            <div className="mo-filter-item">
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="filter-select"
+                className="mo-filter-select"
               >
                 <option value="newest">Newest First</option>
                 <option value="oldest">Oldest First</option>
@@ -256,39 +257,43 @@ function MyOrders() {
         </div>
 
         {!filteredOrders || filteredOrders.length === 0 ? (
-          <div className="empty-orders">
-            <FiPackage className="empty-icon" />
+          <div className="mo-empty-orders">
+            <FiPackage className="mo-empty-icon" />
             <h2>No orders found</h2>
             <p>
               {searchTerm || statusFilter !== "all"
                 ? "Try adjusting your filters"
                 : "You haven't placed any orders yet"}
             </p>
-            <Link to="/products" className="shop-now-btn">
+            <Link to="/products" className="mo-shop-now-btn">
               Start Shopping
             </Link>
           </div>
         ) : (
-          <div className="orders-list">
+          <div className="mo-orders-list">
             {filteredOrders.map((order) => (
-              <div key={order._id} className="order-card">
-                <div className="order-card-header">
-                  <div className="order-header-left">
-                    <div className="order-id-section">
-                      <span className="order-label">Order ID:</span>
-                      <span className="order-id">#{order._id.slice(-8).toUpperCase()}</span>
+              <div key={order._id} className="mo-order-card">
+                <div className="mo-order-card-header">
+                  <div className="mo-order-header-left">
+                    <div className="mo-order-id-section">
+                      <span className="mo-order-label">Order ID:</span>
+                      <span className="mo-order-id">
+                        #{order._id.slice(-8).toUpperCase()}
+                      </span>
                     </div>
-                    <div className="order-reference-section">
-                      <span className="order-label">Reference:</span>
-                      <span className="order-reference">{order.paymentInfo?.reference}</span>
+                    <div className="mo-order-reference-section">
+                      <span className="mo-order-label">Reference:</span>
+                      <span className="mo-order-reference">
+                        {order.paymentInfo?.reference}
+                      </span>
                     </div>
-                    <div className="order-date">
-                      <FiClock className="date-icon" />
+                    <div className="mo-order-date">
+                      <FiClock className="mo-date-icon" />
                       {formatDate(order.createdAt)}
                     </div>
                   </div>
 
-                  <div className="order-header-right">
+                  <div className="mo-order-header-right">
                     <div className={getStatusClass(order.orderStatus)}>
                       {getStatusIcon(order.orderStatus)}
                       {order.orderStatus}
@@ -296,62 +301,66 @@ function MyOrders() {
                   </div>
                 </div>
 
-                <div className="order-card-body">
-                  <div className="order-items-preview">
+                <div className="mo-order-card-body">
+                  <div className="mo-order-items-preview">
                     {order.orderItems?.slice(0, 3).map((item, index) => (
-                      <div key={index} className="order-item-mini">
+                      <div key={index} className="mo-order-item-mini">
                         <img
                           src={item.image}
                           alt={item.name}
-                          className="item-mini-img"
+                          className="mo-item-mini-img"
                         />
-                        <div className="item-mini-info">
-                          <p className="item-mini-name">{item.name}</p>
-                          <p className="item-mini-qty">Qty: {item.quantity}</p>
+                        <div className="mo-item-mini-info">
+                          <p className="mo-item-mini-name">{item.name}</p>
+                          <p className="mo-item-mini-qty">Qty: {item.quantity}</p>
                         </div>
                       </div>
                     ))}
                     {order.orderItems?.length > 3 && (
-                      <div className="more-items">
+                      <div className="mo-more-items">
                         +{order.orderItems.length - 3} more item(s)
                       </div>
                     )}
                   </div>
 
-                  <div className="order-summary">
-                    <div className="summary-row">
-                      <span className="summary-label">Items:</span>
-                      <span className="summary-value">{order.orderItems?.length}</span>
+                  <div className="mo-order-summary">
+                    <div className="mo-summary-row">
+                      <span className="mo-summary-label">Items:</span>
+                      <span className="mo-summary-value">
+                        {order.orderItems?.length}
+                      </span>
                     </div>
-                    <div className="summary-row">
-                      <span className="summary-label">Total Amount:</span>
-                      <span className="summary-value total-amount">
+                    <div className="mo-summary-row">
+                      <span className="mo-summary-label">Total Amount:</span>
+                      <span className="mo-summary-value mo-total-amount">
                         {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
                       </span>
                     </div>
-                    <div className="summary-row">
-                      <span className="summary-label">Payment:</span>
-                      <span className="summary-value payment-status">
+                    <div className="mo-summary-row">
+                      <span className="mo-summary-label">Payment:</span>
+                      <span className="mo-summary-value mo-payment-status">
                         {order.paymentInfo?.status}
                       </span>
                     </div>
                   </div>
                 </div>
 
-                <div className="order-card-actions">
+                <div className="mo-order-card-actions">
                   <button
-                    className="action-btn view-details"
+                    className="mo-action-btn mo-view-details"
                     onClick={() => toggleOrderExpanded(order._id)}
                   >
                     <FiEye />
                     {expandedOrders.has(order._id) ? "Hide Details" : "View Details"}
                     <FiChevronDown
-                      className={`chevron ${expandedOrders.has(order._id) ? "rotated" : ""}`}
+                      className={`mo-chevron ${
+                        expandedOrders.has(order._id) ? "mo-rotated" : ""
+                      }`}
                     />
                   </button>
 
                   <button
-                    className="action-btn download-receipt"
+                    className="mo-action-btn mo-download-receipt"
                     onClick={() => handleDownloadReceipt(order.paymentInfo?.reference)}
                     disabled={downloadLoading}
                   >
@@ -360,7 +369,7 @@ function MyOrders() {
                   </button>
 
                   <button
-                    className="action-btn email-receipt"
+                    className="mo-action-btn mo-email-receipt"
                     onClick={() => handleEmailReceipt(order.paymentInfo?.reference)}
                   >
                     <FiMail />
@@ -369,7 +378,7 @@ function MyOrders() {
 
                   <Link
                     to={`/order/${order._id}`}
-                    className="action-btn track-order"
+                    className="mo-action-btn mo-track-order"
                   >
                     <FiTruck />
                     Track Order
@@ -377,60 +386,85 @@ function MyOrders() {
                 </div>
 
                 {expandedOrders.has(order._id) && (
-                  <div className="order-expanded-details">
-                    <div className="expanded-section">
-                      <h3 className="section-title">Order Items</h3>
-                      <div className="expanded-items-list">
+                  <div className="mo-order-expanded-details">
+                    <div className="mo-expanded-section">
+                      <h3 className="mo-section-title">Order Items</h3>
+                      <div className="mo-expanded-items-list">
                         {order.orderItems?.map((item, index) => (
-                          <div key={index} className="expanded-item">
+                          <div key={index} className="mo-expanded-item">
                             <img
                               src={item.image}
                               alt={item.name}
-                              className="expanded-item-img"
+                              className="mo-expanded-item-img"
                             />
-                            <div className="expanded-item-info">
-                              <p className="expanded-item-name">{item.name}</p>
-                              <p className="expanded-item-details">
-                                Quantity: {item.quantity} × {formatCurrency(item.price, order.paymentInfo?.currency)}
+                            <div className="mo-expanded-item-info">
+                              <p className="mo-expanded-item-name">{item.name}</p>
+                              <p className="mo-expanded-item-details">
+                                Quantity: {item.quantity} ×{" "}
+                                {formatCurrency(item.price, order.paymentInfo?.currency)}
                               </p>
                             </div>
-                            <p className="expanded-item-total">
-                              {formatCurrency(item.price * item.quantity, order.paymentInfo?.currency)}
+                            <p className="mo-expanded-item-total">
+                              {formatCurrency(
+                                item.price * item.quantity,
+                                order.paymentInfo?.currency
+                              )}
                             </p>
                           </div>
                         ))}
                       </div>
                     </div>
 
-                    <div className="expanded-section">
-                      <h3 className="section-title">Shipping Information</h3>
-                      <div className="shipping-info">
-                        <p><strong>Address:</strong> {order.shippingInfo?.address}</p>
-                        <p><strong>City:</strong> {order.shippingInfo?.city}</p>
-                        <p><strong>State:</strong> {order.shippingInfo?.state}</p>
-                        <p><strong>Country:</strong> {order.shippingInfo?.country}</p>
-                        <p><strong>Phone:</strong> {order.shippingInfo?.phoneNo}</p>
+                    <div className="mo-expanded-section">
+                      <h3 className="mo-section-title">Shipping Information</h3>
+                      <div className="mo-shipping-info">
+                        <p>
+                          <strong>Address:</strong> {order.shippingInfo?.address}
+                        </p>
+                        <p>
+                          <strong>City:</strong> {order.shippingInfo?.city}
+                        </p>
+                        <p>
+                          <strong>State:</strong> {order.shippingInfo?.state}
+                        </p>
+                        <p>
+                          <strong>Country:</strong> {order.shippingInfo?.country}
+                        </p>
+                        <p>
+                          <strong>Phone:</strong> {order.shippingInfo?.phoneNo}
+                        </p>
                       </div>
                     </div>
 
-                    <div className="expanded-section">
-                      <h3 className="section-title">Payment Details</h3>
-                      <div className="payment-breakdown">
-                        <div className="breakdown-row">
+                    <div className="mo-expanded-section">
+                      <h3 className="mo-section-title">Payment Details</h3>
+                      <div className="mo-payment-breakdown">
+                        <div className="mo-breakdown-row">
                           <span>Subtotal:</span>
-                          <span>{formatCurrency(order.itemPrice, order.paymentInfo?.currency)}</span>
+                          <span>
+                            {formatCurrency(order.itemPrice, order.paymentInfo?.currency)}
+                          </span>
                         </div>
-                        <div className="breakdown-row">
+                        <div className="mo-breakdown-row">
                           <span>Tax:</span>
-                          <span>{formatCurrency(order.taxPrice, order.paymentInfo?.currency)}</span>
+                          <span>
+                            {formatCurrency(order.taxPrice, order.paymentInfo?.currency)}
+                          </span>
                         </div>
-                        <div className="breakdown-row">
+                        <div className="mo-breakdown-row">
                           <span>Shipping:</span>
-                          <span>{formatCurrency(order.shippingPrice, order.paymentInfo?.currency)}</span>
+                          <span>
+                            {formatCurrency(
+                              order.shippingPrice,
+                              order.paymentInfo?.currency
+                            )}
+                          </span>
                         </div>
-                        <div className="breakdown-row total">
+                        <div className="mo-breakdown-row mo-total">
                           <span>Total:</span>
-                          <span>{formatCurrency(order.totalPrice, order.paymentInfo?.currency)}</span>
+                          <span>
+                            {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                          </span>
                         </div>
                       </div>
                     </div>

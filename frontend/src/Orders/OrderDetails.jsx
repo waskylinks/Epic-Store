@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import '../OrderStyles/RefundRequest.css';
+import '../OrderStyles/OrderDetails.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
@@ -70,25 +70,25 @@ function OrderDetails() {
   // Status badge classes
   const orderStatusClass =
     orderStatus === 'Delivered'
-      ? 'status-tag delivered'
-      : `status-tag ${orderStatus?.toLowerCase()}`;
+      ? 'od-status-tag od-delivered'
+      : `od-status-tag od-${orderStatus?.toLowerCase()}`;
 
-  const paymentStatusClass = `pay-tag ${isPaid ? 'paid' : 'not-paid'}`;
+  const paymentStatusClass = `od-pay-tag ${isPaid ? 'od-paid' : 'od-not-paid'}`;
 
   return (
     <>
       <PageTitle title={`Order ${id}`} />
       <Navbar />
 
-      <div className="order-box">
+      <div className="od-order-box">
         {/* ✅ FIX: Only show refund alert if there's an ACTIVE refund */}
         {hasActiveRefund && (
-          <div className="refund-alert">
-            <div className="refund-alert-header">
+          <div className="od-refund-alert">
+            <div className="od-refund-alert-header">
               <h3>Refund Status</h3>
               <RefundStatusBadge status={refundStatus.status} />
             </div>
-            <div className="refund-alert-body">
+            <div className="od-refund-alert-body">
               <p><strong>Reason:</strong> {refundStatus.reason?.replace(/_/g, ' ')}</p>
               {refundStatus.description && (
                 <p><strong>Description:</strong> {refundStatus.description}</p>
@@ -108,44 +108,44 @@ function OrderDetails() {
 
         {/* ✅ FIX: Show refund button only when eligible */}
         {isRefundable && !statusLoading && (
-          <div className="refund-action">
+          <div className="od-refund-action">
             <button
               onClick={() => navigate(`/orders/${id}/refund/request`)}
-              className="btn-refund"
+              className="od-btn-refund"
             >
               Request Refund
             </button>
-            <p className="refund-notice">
+            <p className="od-refund-notice">
               You have {order.daysUntilRefundDeadline || 30} days remaining to request a refund
             </p>
           </div>
         )}
 
         {/* ORDER ITEMS */}
-        <div className="table-block">
-          <h2 className="table-title">Order Items</h2>
-          <table className="table-main">
+        <div className="od-table-block">
+          <h2 className="od-table-title">Order Items</h2>
+          <table className="od-table-main">
             <thead>
               <tr>
-                <th className="head-cell">Image</th>
-                <th className="head-cell">Product Name</th>
-                <th className="head-cell">Quantity</th>
-                <th className="head-cell">Price</th>
+                <th className="od-head-cell">Image</th>
+                <th className="od-head-cell">Product Name</th>
+                <th className="od-head-cell">Quantity</th>
+                <th className="od-head-cell">Price</th>
               </tr>
             </thead>
             <tbody>
               {orderItems.map((item) => (
-                <tr key={item._id} className="table-row">
-                  <td className="table-cell">
+                <tr key={item._id} className="od-table-row">
+                  <td className="od-table-cell">
                     <img
                       src={item.image}
                       alt={item.name}
-                      className="item-img"
+                      className="od-item-img"
                     />
                   </td>
-                  <td className="table-cell">{item.name}</td>
-                  <td className="table-cell">{item.quantity}</td>
-                  <td className="table-cell">₦{item.price?.toLocaleString()}</td>
+                  <td className="od-table-cell">{item.name}</td>
+                  <td className="od-table-cell">{item.quantity}</td>
+                  <td className="od-table-cell">₦{item.price?.toLocaleString()}</td>
                 </tr>
               ))}
             </tbody>
@@ -153,43 +153,43 @@ function OrderDetails() {
         </div>
 
         {/* SHIPPING INFO */}
-        <div className="table-block">
-          <h2 className="table-title">Shipping Info</h2>
-          <table className="table-main">
+        <div className="od-table-block">
+          <h2 className="od-table-title">Shipping Info</h2>
+          <table className="od-table-main">
             <tbody>
-              <tr className="table-row">
-                <th className="table-cell">Address</th>
-                <td className="table-cell">
+              <tr className="od-table-row">
+                <th className="od-table-cell">Address</th>
+                <td className="od-table-cell">
                   {shippingInfo.address}, {shippingInfo.city},{' '}
                   {shippingInfo.state}, {shippingInfo.country},{' '}
                   {shippingInfo.pinCode}
                 </td>
               </tr>
-              <tr className="table-row">
-                <th className="table-cell">Phone</th>
-                <td className="table-cell">{shippingInfo.phoneNo}</td>
+              <tr className="od-table-row">
+                <th className="od-table-cell">Phone</th>
+                <td className="od-table-cell">{shippingInfo.phoneNo}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         {/* ORDER SUMMARY */}
-        <div className="table-block">
-          <h2 className="table-title">Order Summary</h2>
-          <table className="table-main">
+        <div className="od-table-block">
+          <h2 className="od-table-title">Order Summary</h2>
+          <table className="od-table-main">
             <tbody>
-              <tr className="table-row">
-                <th className="table-cell">Order Status</th>
-                <td className="table-cell">
+              <tr className="od-table-row">
+                <th className="od-table-cell">Order Status</th>
+                <td className="od-table-cell">
                   <span className={orderStatusClass}>
                     {orderStatus}
                   </span>
                 </td>
               </tr>
 
-              <tr className="table-row">
-                <th className="table-cell">Payment Status</th>
-                <td className="table-cell">
+              <tr className="od-table-row">
+                <th className="od-table-cell">Payment Status</th>
+                <td className="od-table-cell">
                   <span className={paymentStatusClass}>
                     {paymentStatus}
                   </span>
@@ -197,32 +197,32 @@ function OrderDetails() {
               </tr>
 
               {paidAt && (
-                <tr className="table-row">
-                  <th className="table-cell">Paid At</th>
-                  <td className="table-cell">
+                <tr className="od-table-row">
+                  <th className="od-table-cell">Paid At</th>
+                  <td className="od-table-cell">
                     {new Date(paidAt).toLocaleString()}
                   </td>
                 </tr>
               )}
 
-              <tr className="table-row">
-                <th className="table-cell">Item Price</th>
-                <td className="table-cell">₦{itemPrice?.toLocaleString()}</td>
+              <tr className="od-table-row">
+                <th className="od-table-cell">Item Price</th>
+                <td className="od-table-cell">₦{itemPrice?.toLocaleString()}</td>
               </tr>
 
-              <tr className="table-row">
-                <th className="table-cell">Tax</th>
-                <td className="table-cell">₦{taxPrice?.toLocaleString()}</td>
+              <tr className="od-table-row">
+                <th className="od-table-cell">Tax</th>
+                <td className="od-table-cell">₦{taxPrice?.toLocaleString()}</td>
               </tr>
 
-              <tr className="table-row">
-                <th className="table-cell">Shipping</th>
-                <td className="table-cell">₦{shippingPrice?.toLocaleString()}</td>
+              <tr className="od-table-row">
+                <th className="od-table-cell">Shipping</th>
+                <td className="od-table-cell">₦{shippingPrice?.toLocaleString()}</td>
               </tr>
 
-              <tr className="table-row">
-                <th className="table-cell">Total</th>
-                <td className="table-cell">₦{totalPrice?.toLocaleString()}</td>
+              <tr className="od-table-row">
+                <th className="od-table-cell">Total</th>
+                <td className="od-table-cell">₦{totalPrice?.toLocaleString()}</td>
               </tr>
             </tbody>
           </table>

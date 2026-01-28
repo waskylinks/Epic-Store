@@ -1,196 +1,55 @@
+
 /* =========================
    Design Tokens (Enterprise)
 ========================= */
 :root {
-  --bg-surface: #ffffff;
-  --bg-muted: #f8fafc;
-  --border-light: #e5e7eb;
-  --border-soft: #eef2f7;
+  --od-bg-surface: #ffffff;
+  --od-bg-muted: #f8fafc;
+  --od-border-light: #e5e7eb;
+  --od-border-soft: #eef2f7;
 
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #64748b;
+  --od-text-primary: #0f172a;
+  --od-text-secondary: #475569;
+  --od-text-muted: #64748b;
 
-  --primary: #2563eb;
-  --success: #16a34a;
-  --warning: #f59e0b;
-  --danger: #dc2626;
+  --od-primary: #2563eb;
+  --od-success: #16a34a;
+  --od-warning: #f59e0b;
+  --od-danger: #dc2626;
 
-  --radius-lg: 14px;
-  --radius-md: 10px;
-  --radius-sm: 6px;
+  --od-radius-lg: 14px;
+  --od-radius-md: 10px;
+  --od-radius-sm: 6px;
 
-  --shadow-sm: 0 1px 2px rgba(0,0,0,.04);
-  --shadow-md: 0 10px 25px rgba(0,0,0,.08);
+  --od-shadow-sm: 0 1px 2px rgba(0,0,0,.04);
+  --od-shadow-md: 0 10px 25px rgba(0,0,0,.08);
 }
 
 /* =========================
    Page Container
 ========================= */
-.order-box {
+.od-order-box {
   max-width: 1100px;
   margin: 4rem auto;
   padding: 2rem;
-  background: var(--bg-muted);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-md);
+  background: var(--od-bg-muted);
+  border-radius: var(--od-radius-lg);
+  box-shadow: var(--od-shadow-md);
   font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 /* =========================
-   Card Sections
-========================= */
-.table-block {
-  background: var(--bg-surface);
-  border-radius: var(--radius-md);
-  padding: 1.5rem 1.75rem;
-  margin-bottom: 2rem;
-  border: 1px solid var(--border-soft);
-}
-
-/* =========================
-   Section Titles
-========================= */
-.table-title {
-  font-size: 1.25rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 1.25rem;
-  padding-bottom: 0.75rem;
-  border-bottom: 1px solid var(--border-light);
-}
-
-/* =========================
-   Tables
-========================= */
-.table-main {
-  width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  font-size: 0.95rem;
-}
-
-.table-main thead tr {
-  background: #f1f5f9;
-}
-
-.head-cell {
-  padding: 0.85rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-light);
-}
-
-.table-row {
-  transition: background 0.15s ease;
-}
-
-.table-row:hover {
-  background: #f9fafb;
-}
-
-.table-cell {
-  padding: 0.85rem;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--text-primary);
-}
-
-/* =========================
-   Product Image
-========================= */
-.item-img {
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-sm);
-  object-fit: cover;
-  box-shadow: var(--shadow-sm);
-}
-
-/* =========================
-   Status Badges
-========================= */
-.status-tag,
-.pay-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.3rem 0.65rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  border-radius: 999px;
-  letter-spacing: 0.3px;
-}
-
-/* Order Status */
-.status-tag.processing {
-  color: var(--warning);
-  background: rgba(245, 158, 11, 0.12);
-}
-
-.status-tag.delivered {
-  color: var(--success);
-  background: rgba(22, 163, 74, 0.12);
-}
-
-.status-tag.cancelled {
-  color: var(--danger);
-  background: rgba(220, 38, 38, 0.12);
-}
-
-/* Payment Status */
-.pay-tag.paid {
-  color: var(--success);
-  background: rgba(22, 163, 74, 0.12);
-}
-
-.pay-tag.not-paid {
-  color: var(--danger);
-  background: rgba(220, 38, 38, 0.12);
-}
-
-/* =========================
-   Summary Emphasis
-========================= */
-.table-block:last-child .table-row:last-child .table-cell {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-/* =========================
-   Responsive Improvements
-========================= */
-@media (max-width: 768px) {
-  .order-box {
-    padding: 1.25rem;
-  }
-
-  .table-title {
-    font-size: 1.1rem;
-  }
-
-  .table-main {
-    font-size: 0.85rem;
-  }
-
-  .item-img {
-    width: 48px;
-    height: 48px;
-  }
-}
-
-/* Add these styles to your existing OrderDetails.css */
-
-/* =========================
    Refund Alert Section
 ========================= */
-.refund-alert {
+.od-refund-alert {
   background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
   border: 1px solid #bfdbfe;
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--od-radius-md);
   padding: 1.5rem;
   margin-bottom: 2rem;
 }
 
-.refund-alert-header {
+.od-refund-alert-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -199,37 +58,37 @@
   border-bottom: 1px solid #bfdbfe;
 }
 
-.refund-alert-header h3 {
+.od-refund-alert-header h3 {
   font-size: 1.1rem;
   font-weight: 600;
-  color: var(--text-primary, #0f172a);
+  color: var(--od-text-primary);
   margin: 0;
 }
 
-.refund-alert-body p {
+.od-refund-alert-body p {
   margin: 0.5rem 0;
   font-size: 0.95rem;
-  color: var(--text-secondary, #475569);
+  color: var(--od-text-secondary);
 }
 
-.refund-alert-body strong {
-  color: var(--text-primary, #0f172a);
+.od-refund-alert-body strong {
+  color: var(--od-text-primary);
   font-weight: 600;
 }
 
 /* =========================
    Refund Action Section
 ========================= */
-.refund-action {
-  background: var(--bg-surface, #ffffff);
-  border: 2px dashed var(--border-light, #e5e7eb);
-  border-radius: var(--radius-md, 10px);
+.od-refund-action {
+  background: var(--od-bg-surface);
+  border: 2px dashed var(--od-border-light);
+  border-radius: var(--od-radius-md);
   padding: 1.5rem;
   margin-bottom: 2rem;
   text-align: center;
 }
 
-.btn-refund {
+.od-btn-refund {
   background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
   color: #ffffff;
   font-weight: 600;
@@ -242,38 +101,245 @@
   box-shadow: 0 4px 6px rgba(220, 38, 38, 0.15);
 }
 
-.btn-refund:hover {
+.od-btn-refund:hover {
   background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
   transform: translateY(-1px);
   box-shadow: 0 6px 12px rgba(220, 38, 38, 0.2);
 }
 
-.btn-refund:active {
+.od-btn-refund:active {
   transform: translateY(0);
 }
 
-.refund-notice {
+.od-refund-notice {
   margin-top: 0.75rem;
   font-size: 0.85rem;
-  color: var(--text-muted, #64748b);
+  color: var(--od-text-muted);
 }
 
 /* =========================
-   Responsive Refund Styles
+   Card Sections
+========================= */
+.od-table-block {
+  background: var(--od-bg-surface);
+  border-radius: var(--od-radius-md);
+  padding: 1.5rem 1.75rem;
+  margin-bottom: 2rem;
+  border: 1px solid var(--od-border-soft);
+}
+
+/* =========================
+   Section Titles
+========================= */
+.od-table-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--od-text-primary);
+  margin-bottom: 1.25rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--od-border-light);
+}
+
+/* =========================
+   Tables
+========================= */
+.od-table-main {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.95rem;
+}
+
+.od-table-main thead tr {
+  background: #f1f5f9;
+}
+
+.od-head-cell {
+  padding: 0.85rem;
+  font-weight: 600;
+  color: var(--od-text-secondary);
+  border-bottom: 1px solid var(--od-border-light);
+}
+
+.od-table-row {
+  transition: background 0.15s ease;
+}
+
+.od-table-row:hover {
+  background: #f9fafb;
+}
+
+.od-table-cell {
+  padding: 0.85rem;
+  border-bottom: 1px solid var(--od-border-soft);
+  color: var(--od-text-primary);
+}
+
+/* =========================
+   Product Image
+========================= */
+.od-item-img {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--od-radius-sm);
+  object-fit: cover;
+  box-shadow: var(--od-shadow-sm);
+}
+
+/* =========================
+   Status Badges
+========================= */
+.od-status-tag,
+.od-pay-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.3rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+}
+
+/* Order Status */
+.od-status-tag.od-processing {
+  color: var(--od-warning);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.od-status-tag.od-delivered {
+  color: var(--od-success);
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.od-status-tag.od-cancelled {
+  color: var(--od-danger);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+.od-status-tag.od-shipped {
+  color: var(--od-primary);
+  background: rgba(37, 99, 235, 0.12);
+}
+
+/* Payment Status */
+.od-pay-tag.od-paid {
+  color: var(--od-success);
+  background: rgba(22, 163, 74, 0.12);
+}
+
+.od-pay-tag.od-not-paid {
+  color: var(--od-danger);
+  background: rgba(220, 38, 38, 0.12);
+}
+
+/* =========================
+   Summary Emphasis
+========================= */
+.od-table-block:last-child .od-table-row:last-child .od-table-cell {
+  font-weight: 600;
+  color: var(--od-text-primary);
+}
+
+/* =========================
+   Responsive Improvements
 ========================= */
 @media (max-width: 768px) {
-  .refund-alert {
+  .od-order-box {
+    margin: 2rem auto;
+    padding: 1.25rem;
+  }
+
+  .od-table-title {
+    font-size: 1.1rem;
+  }
+
+  .od-table-main {
+    font-size: 0.85rem;
+  }
+
+  .od-item-img {
+    width: 48px;
+    height: 48px;
+  }
+
+  .od-refund-alert {
     padding: 1rem;
   }
 
-  .refund-alert-header {
+  .od-refund-alert-header {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.75rem;
   }
 
-  .btn-refund {
+  .od-btn-refund {
     width: 100%;
     padding: 1rem;
   }
+
+  .od-table-block {
+    padding: 1.25rem;
+  }
+
+  .od-head-cell,
+  .od-table-cell {
+    padding: 0.65rem;
+  }
+}
+
+/* =========================
+   Mobile Table Optimization
+========================= */
+@media (max-width: 576px) {
+  .od-order-box {
+    margin: 1rem auto;
+    padding: 1rem;
+    border-radius: var(--od-radius-md);
+  }
+
+  .od-table-title {
+    font-size: 1rem;
+  }
+
+  .od-table-main {
+    font-size: 0.8rem;
+  }
+
+  .od-item-img {
+    width: 40px;
+    height: 40px;
+  }
+
+  .od-refund-alert-header h3 {
+    font-size: 1rem;
+  }
+
+  .od-refund-alert-body p {
+    font-size: 0.85rem;
+  }
+
+  .od-btn-refund {
+    font-size: 0.9rem;
+  }
+
+  .od-status-tag,
+  .od-pay-tag {
+    font-size: 0.7rem;
+    padding: 0.25rem 0.5rem;
+  }
+}
+
+/* =========================
+   Accessibility
+========================= */
+@media (prefers-reduced-motion: reduce) {
+  .od-btn-refund,
+  .od-table-row {
+    transition: none;
+  }
+}
+
+.od-btn-refund:focus-visible {
+  outline: 2px solid var(--od-danger);
+  outline-offset: 2px;
 }
