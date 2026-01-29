@@ -508,3 +508,99 @@ export const sanitizeInput = (req, res, next) => {
     }
     next();
 };
+
+// ADD THESE TO validation.js
+
+/**
+ * Validate order message
+ */
+export const validateOrderMessage = (req, res, next) => {
+  const { content } = req.body;
+  const errors = [];
+
+  if (!content || content.trim().length === 0) {
+    errors.push('Message content is required');
+  }
+  if (content && content.trim().length < 1) {
+    errors.push('Message cannot be empty');
+  }
+  if (content && content.length > 2000) {
+    errors.push('Message cannot exceed 2000 characters');
+  }
+
+  if (errors.length > 0) {
+    return next(new HandleError(errors.join('. '), 400));
+  }
+
+  next();
+};
+
+/**
+ * Validate return message
+ */
+export const validateReturnMessage = (req, res, next) => {
+  const { content } = req.body;
+  const errors = [];
+
+  if (!content || content.trim().length === 0) {
+    errors.push('Message content is required');
+  }
+  if (content && content.length > 2000) {
+    errors.push('Message cannot exceed 2000 characters');
+  }
+
+  if (errors.length > 0) {
+    return next(new HandleError(errors.join('. '), 400));
+  }
+
+  next();
+};
+
+/**
+ * Validate return review (admin)
+ */
+export const validateReturnReview = (req, res, next) => {
+  const { action, adminNote } = req.body;
+  const errors = [];
+
+  if (!action || !['approve', 'reject'].includes(action)) {
+    errors.push('Action must be either "approve" or "reject"');
+  }
+
+  if (action === 'reject' && (!adminNote || adminNote.trim().length < 10)) {
+    errors.push('Rejection reason must be at least 10 characters');
+  }
+
+  if (adminNote && adminNote.length > 1000) {
+    errors.push('Admin note cannot exceed 1000 characters');
+  }
+
+  if (errors.length > 0) {
+    return next(new HandleError(errors.join('. '), 400));
+  }
+
+  next();
+};
+
+/**
+ * Validate return status update
+ */
+export const validateReturnStatusUpdate = (req, res, next) => {
+  const { status, inspectionNotes } = req.body;
+  const errors = [];
+
+  const validStatuses = ['in_transit', 'received', 'inspected', 'completed'];
+  if (!status || !validStatuses.includes(status)) {
+    errors.push('Invalid return status. Must be: in_transit, received, inspected, or completed');
+  }
+
+  if (status === 'inspected' && inspectionNotes && inspectionNotes.length > 2000) {
+    errors.push('Inspection notes cannot exceed 2000 characters');
+  }
+
+  if (errors.length > 0) {
+    return next(new HandleError(errors.join('. '), 400));
+  }
+
+  next();
+};
