@@ -138,6 +138,46 @@ const orderSchema = new mongoose.Schema(
     },
 
     // ============================================
+    // ORDER MESSAGES (Customer ↔ Admin Chat)
+    // ============================================
+    orderMessages: [{
+      sender: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: true
+      },
+      senderType: {
+        type: String,
+        enum: ['customer', 'admin', 'system'],
+        required: true
+      },
+      content: {
+        type: String,
+        required: true
+      },
+      attachments: [{
+        url: String,
+        filename: String,
+        fileType: String,
+        fileSize: Number,
+        uploadedAt: { type: Date, default: Date.now }
+      }],
+      isRead: {
+        type: Boolean,
+        default: false
+      },
+      readAt: Date,
+      deliveredAt: Date,
+      createdAt: {
+        type: Date,
+        default: Date.now
+      },
+      isEdited: Boolean,
+      editedAt: Date,
+      metadata: mongoose.Schema.Types.Mixed
+    }],
+
+    // ============================================
     // REFUND INFORMATION
     // ============================================
     refundInfo: {
@@ -273,7 +313,9 @@ const orderSchema = new mongoose.Schema(
       notes: String
     },
 
-    // ✨ NEW: Return Management (RMA)
+    // ============================================
+    // RETURN INFORMATION (RMA)
+    // ============================================
     returnInfo: {
       status: {
         type: String,
@@ -302,7 +344,88 @@ const orderSchema = new mongoose.Schema(
       approvedAt: Date,
       approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       receivedAt: Date,
-      completedAt: Date
+      completedAt: Date,
+      adminNote: String,
+      
+      // ✨ NEW: Return Messages
+      messages: [{
+        sender: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true
+        },
+        senderType: {
+          type: String,
+          enum: ['customer', 'admin', 'system'],
+          required: true
+        },
+        content: {
+          type: String,
+          required: true
+        },
+        attachments: [{
+          url: String,
+          filename: String,
+          fileType: String,
+          fileSize: Number,
+          uploadedAt: { type: Date, default: Date.now }
+        }],
+        isRead: {
+          type: Boolean,
+          default: false
+        },
+        readAt: Date,
+        deliveredAt: Date,
+        createdAt: {
+          type: Date,
+          default: Date.now
+        },
+        isEdited: Boolean,
+        editedAt: Date
+      }],
+      
+      // ✨ NEW: Return Timeline
+      timeline: [{
+        event: {
+          type: String,
+          required: true
+        },
+        description: String,
+        performedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User"
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now
+        },
+        metadata: mongoose.Schema.Types.Mixed
+      }],
+      
+      // ✨ NEW: Return Documents
+      documents: [{
+        type: {
+          type: String,
+          enum: ['photo', 'video', 'receipt', 'other'],
+          required: true
+        },
+        url: {
+          type: String,
+          required: true
+        },
+        filename: String,
+        description: String,
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User"
+        },
+        uploadedAt: {
+          type: Date,
+          default: Date.now
+        },
+        fileSize: Number,
+        mimeType: String
+      }]
     },
 
     // ============================================
@@ -497,6 +620,10 @@ orderSchema.index({ "analytics.source": 1 });
 orderSchema.index({ "analytics.isFirstPurchase": 1 });
 orderSchema.index({ "refundInfo.messages.isRead": 1 });
 orderSchema.index({ "refundInfo.messages.createdAt": -1 });
+orderSchema.index({ "orderMessages.isRead": 1 });
+orderSchema.index({ "orderMessages.createdAt": -1 });
+orderSchema.index({ "returnInfo.messages.isRead": 1 });
+orderSchema.index({ "returnInfo.messages.createdAt": -1 });
 
 // ============================================
 // VIRTUALS
@@ -554,13 +681,40 @@ orderSchema.virtual("isFullyFulfilled").get(function() {
 // ✨ NEW: Count unread refund messages
 orderSchema.virtual("unreadRefundMessages").get(function() {
   if (!this.refundInfo || !this.refundInfo.messages) return 0;
-  return this.refundInfo.messages.filter(msg => !msg.isRead && msg.senderType !== 'admin').length;
+  const userType = this.user?.role === 'admin' ? 'customer' : 'admin';
+  return this.refundInfo.messages.filter(msg => !msg.isRead && msg.senderType === userType).length;
 });
 
 // ✨ NEW: Get latest refund message
 orderSchema.virtual("latestRefundMessage").get(function() {
   if (!this.refundInfo || !this.refundInfo.messages || this.refundInfo.messages.length === 0) return null;
   return this.refundInfo.messages[this.refundInfo.messages.length - 1];
+});
+
+// ✨ NEW: Count unread order messages
+orderSchema.virtual("unreadOrderMessages").get(function() {
+  if (!this.orderMessages) return 0;
+  const userType = this.user?.role === 'admin' ? 'customer' : 'admin';
+  return this.orderMessages.filter(msg => !msg.isRead && msg.senderType === userType).length;
+});
+
+// ✨ NEW: Count unread return messages
+orderSchema.virtual("unreadReturnMessages").get(function() {
+  if (!this.returnInfo || !this.returnInfo.messages) return 0;
+  const userType = this.user?.role === 'admin' ? 'customer' : 'admin';
+  return this.returnInfo.messages.filter(msg => !msg.isRead && msg.senderType === userType).length;
+});
+
+// ✨ NEW: Get latest order message
+orderSchema.virtual("latestOrderMessage").get(function() {
+  if (!this.orderMessages || this.orderMessages.length === 0) return null;
+  return this.orderMessages[this.orderMessages.length - 1];
+});
+
+// ✨ NEW: Get latest return message
+orderSchema.virtual("latestReturnMessage").get(function() {
+  if (!this.returnInfo || !this.returnInfo.messages || this.returnInfo.messages.length === 0) return null;
+  return this.returnInfo.messages[this.returnInfo.messages.length - 1];
 });
 
 orderSchema.set("toJSON", { virtuals: true });
@@ -642,6 +796,31 @@ orderSchema.statics.getRefundsWithUnreadMessages = async function() {
     .sort({ 'refundInfo.messages.createdAt': -1 });
 };
 
+orderSchema.statics.getOrdersWithUnreadMessages = async function() {
+  return this.find({
+    'orderMessages': {
+      $elemMatch: { isRead: false, senderType: 'customer' }
+    }
+  })
+    .populate('user', 'name email')
+    .populate('orderMessages.sender', 'name email')
+    .sort({ 'orderMessages.createdAt': -1 });
+};
+
+orderSchema.statics.getReturnsWithUnreadMessages = async function() {
+  return this.find({
+    'returnInfo.status': { 
+      $nin: ['none', 'completed', 'rejected'] 
+    },
+    'returnInfo.messages': {
+      $elemMatch: { isRead: false, senderType: 'customer' }
+    }
+  })
+    .populate('user', 'name email')
+    .populate('returnInfo.messages.sender', 'name email')
+    .sort({ 'returnInfo.messages.createdAt': -1 });
+};
+
 // ============================================
 // INSTANCE METHODS
 // ============================================
@@ -674,7 +853,49 @@ orderSchema.methods.addNote = function(content, type, author) {
   });
 };
 
-// ✨ NEW: Add refund message
+// ============================================
+// ORDER MESSAGES METHODS
+// ============================================
+orderSchema.methods.addOrderMessage = function(sender, senderType, content, attachments = []) {
+  if (!this.orderMessages) {
+    this.orderMessages = [];
+  }
+  
+  this.orderMessages.push({
+    sender,
+    senderType,
+    content,
+    attachments,
+    isRead: false,
+    deliveredAt: null,
+    createdAt: new Date()
+  });
+};
+
+orderSchema.methods.markOrderMessagesDelivered = function(senderType) {
+  if (!this.orderMessages) return;
+  
+  this.orderMessages.forEach(msg => {
+    if (msg.senderType !== senderType && !msg.deliveredAt) {
+      msg.deliveredAt = new Date();
+    }
+  });
+};
+
+orderSchema.methods.markOrderMessagesAsRead = function(senderType) {
+  if (!this.orderMessages) return;
+  
+  this.orderMessages.forEach(msg => {
+    if (msg.senderType !== senderType && !msg.isRead) {
+      msg.isRead = true;
+      msg.readAt = new Date();
+    }
+  });
+};
+
+// ============================================
+// REFUND MESSAGES METHODS
+// ============================================
 orderSchema.methods.addRefundMessage = function(sender, senderType, message, attachments = []) {
   if (!this.refundInfo) {
     this.refundInfo = { status: 'none' };
@@ -696,7 +917,6 @@ orderSchema.methods.addRefundMessage = function(sender, senderType, message, att
   this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
 };
 
-// ✨ NEW: Mark refund messages as read
 orderSchema.methods.markRefundMessagesAsRead = function(senderType) {
   if (!this.refundInfo || !this.refundInfo.messages) return;
   
@@ -708,7 +928,6 @@ orderSchema.methods.markRefundMessagesAsRead = function(senderType) {
   });
 };
 
-// ✨ NEW: Add refund document
 orderSchema.methods.addRefundDocument = function(type, url, filename, uploadedBy, description = '') {
   if (!this.refundInfo) {
     this.refundInfo = { status: 'none' };
@@ -730,7 +949,6 @@ orderSchema.methods.addRefundDocument = function(type, url, filename, uploadedBy
   this.addRefundTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
 
-// ✨ NEW: Add refund timeline event
 orderSchema.methods.addRefundTimeline = function(event, description, performedBy, metadata = {}) {
   if (!this.refundInfo) {
     this.refundInfo = { status: 'none' };
@@ -746,6 +964,87 @@ orderSchema.methods.addRefundTimeline = function(event, description, performedBy
     timestamp: new Date(),
     metadata
   });
+};
+
+// ============================================
+// RETURN MESSAGES METHODS
+// ============================================
+orderSchema.methods.addReturnMessage = function(sender, senderType, content, attachments = []) {
+  if (!this.returnInfo) {
+    this.returnInfo = { status: 'none' };
+  }
+  if (!this.returnInfo.messages) {
+    this.returnInfo.messages = [];
+  }
+  
+  this.returnInfo.messages.push({
+    sender,
+    senderType,
+    content,
+    attachments,
+    isRead: false,
+    deliveredAt: null,
+    createdAt: new Date()
+  });
+};
+
+orderSchema.methods.markReturnMessagesDelivered = function(senderType) {
+  if (!this.returnInfo || !this.returnInfo.messages) return;
+  
+  this.returnInfo.messages.forEach(msg => {
+    if (msg.senderType !== senderType && !msg.deliveredAt) {
+      msg.deliveredAt = new Date();
+    }
+  });
+};
+
+orderSchema.methods.markReturnMessagesAsRead = function(senderType) {
+  if (!this.returnInfo || !this.returnInfo.messages) return;
+  
+  this.returnInfo.messages.forEach(msg => {
+    if (msg.senderType !== senderType && !msg.isRead) {
+      msg.isRead = true;
+      msg.readAt = new Date();
+    }
+  });
+};
+
+orderSchema.methods.addReturnTimeline = function(event, description, performedBy, metadata = {}) {
+  if (!this.returnInfo) {
+    this.returnInfo = { status: 'none' };
+  }
+  if (!this.returnInfo.timeline) {
+    this.returnInfo.timeline = [];
+  }
+  
+  this.returnInfo.timeline.push({
+    event,
+    description,
+    performedBy,
+    timestamp: new Date(),
+    metadata
+  });
+};
+
+orderSchema.methods.addReturnDocument = function(type, url, filename, uploadedBy, description = '') {
+  if (!this.returnInfo) {
+    this.returnInfo = { status: 'none' };
+  }
+  if (!this.returnInfo.documents) {
+    this.returnInfo.documents = [];
+  }
+  
+  this.returnInfo.documents.push({
+    type,
+    url,
+    filename,
+    description,
+    uploadedBy,
+    uploadedAt: new Date()
+  });
+  
+  // Add to timeline
+  this.addReturnTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
 
 export default mongoose.model("Order", orderSchema);
