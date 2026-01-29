@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import '../CartStyles/EnterpriseCart.css';
+import '../CartStyles/Cart.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';

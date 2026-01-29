@@ -6,10 +6,9 @@ import {
   updateItemQuantity,
   moveToSavedForLater,
   removeErrors, 
-  removeMessage 
 } from '../features/cart/cartSlice';
 import { FiMinus, FiPlus, FiTrash2, FiHeart } from 'react-icons/fi';
-import '../CartStyles/EnterpriseCart.css';
+import '../CartStyles/Cart.css';
 
 function CartItem({ item }) {
   const { success, loading, error, message } = useSelector(state => state.cart);

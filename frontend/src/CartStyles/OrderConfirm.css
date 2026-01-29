@@ -1,100 +1,288 @@
-.confirm-container {
-    max-width: 1200px;
-    margin: 20px auto;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+/* ===========================
+   ENTERPRISE ORDER CONFIRM
+   =========================== */
+
+.eoc-container {
+  max-width: 1200px;
+  margin: 2rem auto;
+  padding: 0 2rem;
+  min-height: 60vh;
 }
 
-.confirm-header {
-    text-align: center;
-    font-size: 1.8rem;
-    margin-bottom: 20px;
-    color: #333;
+.eoc-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 2rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0 0 2rem 0;
 }
 
-.confirm-table-container {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+.eoc-header svg {
+  color: #28a745;
+  font-size: 2.5rem;
 }
 
-.confirm-table {
-    width: 100%;
-    border-collapse: collapse;
-    background-color: white;
-    border-radius: 8px;
-    overflow: hidden;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+/* ===========================
+   INFO BANNER
+   =========================== */
+.eoc-info-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  background-color: #e7f3ff;
+  border: 1px solid #2196f3;
+  border-radius: 8px;
+  margin-bottom: 2rem;
 }
 
-.confirm-table caption {
-    text-align: left;
-    font-weight: bold;
-    font-size: 1.2rem;
-    margin: 10px;
-    color: #555;
+.eoc-info-banner svg {
+  color: #2196f3;
+  font-size: 1.5rem;
+  flex-shrink: 0;
 }
 
-.confirm-table th,
-.confirm-table td {
-    text-align: left;
-    padding: 12px;
-    border: 1px solid #ddd;
+.eoc-info-banner p {
+  margin: 0;
+  color: #0d47a1;
+  font-size: 0.95rem;
 }
 
-.confirm-table th {
-    background-color: #f0f0f0;
-    font-weight: bold;
+/* ===========================
+   CONTENT
+   =========================== */
+.eoc-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
 }
 
-.confirm-table td {
-    font-size: 0.9rem;
-    color: #333;
+.eoc-section {
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
 }
 
-.order-product-image {
+.eoc-section-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0;
+  padding: 1.5rem 2rem;
+  background-color: #f8f9fa;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.eoc-table-container {
+  padding: 1.5rem 2rem;
+}
+
+/* ===========================
+   TABLES
+   =========================== */
+.eoc-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.eoc-table thead {
+  background-color: #f8f9fa;
+}
+
+.eoc-table th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: #666;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid #e0e0e0;
+}
+
+.eoc-table td {
+  padding: 1rem;
+  border-bottom: 1px solid #f0f0f0;
+  color: #1a1a1a;
+  font-size: 0.95rem;
+}
+
+.eoc-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.eoc-table tbody tr:hover {
+  background-color: #f8f9fa;
+}
+
+/* Product Image */
+.eoc-product-image {
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+}
+
+.eoc-product-name {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.eoc-item-total {
+  font-weight: 700;
+  color: #ff3c3c;
+}
+
+/* Summary Table */
+.eoc-summary-table th {
+  text-align: center;
+}
+
+.eoc-summary-table td {
+  text-align: center;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.eoc-total-amount {
+  color: #ff3c3c;
+  font-size: 1.25rem !important;
+  font-weight: 700 !important;
+}
+
+.eoc-free-shipping {
+  color: #28a745;
+  font-weight: 700;
+}
+
+.eoc-summary-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background-color: #f8f9fa;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.eoc-summary-note svg {
+  color: #17a2b8;
+  flex-shrink: 0;
+}
+
+/* ===========================
+   LOADING STATE
+   =========================== */
+.eoc-loading {
+  text-align: center;
+  padding: 2rem;
+  color: #666;
+}
+
+/* ===========================
+   ACTIONS
+   =========================== */
+.eoc-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 2rem;
+  padding: 2rem 0;
+  border-top: 2px solid #f0f0f0;
+}
+
+.eoc-back-btn,
+.eoc-proceed-btn {
+  padding: 1rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+}
+
+.eoc-back-btn {
+  background-color: #fff;
+  border: 2px solid #ddd;
+  color: #666;
+}
+
+.eoc-back-btn:hover:not(:disabled) {
+  border-color: #999;
+  color: #333;
+}
+
+.eoc-proceed-btn {
+  background-color: #ff3c3c;
+  color: #fff;
+  flex: 1;
+  max-width: 400px;
+  margin-left: auto;
+}
+
+.eoc-proceed-btn:hover:not(:disabled) {
+  background-color: #e03030;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
+}
+
+.eoc-back-btn:disabled,
+.eoc-proceed-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ===========================
+   RESPONSIVE
+   =========================== */
+@media (max-width: 768px) {
+  .eoc-container {
+    padding: 0 1rem;
+    margin: 1rem auto;
+  }
+
+  .eoc-header {
+    font-size: 1.5rem;
+  }
+
+  .eoc-section-title {
+    font-size: 1.125rem;
+    padding: 1.25rem 1rem;
+  }
+
+  .eoc-table-container {
+    padding: 1rem;
+    overflow-x: auto;
+  }
+
+  .eoc-table {
+    font-size: 0.85rem;
+  }
+
+  .eoc-table th,
+  .eoc-table td {
+    padding: 0.75rem 0.5rem;
+  }
+
+  .eoc-product-image {
     width: 50px;
     height: 50px;
-    object-fit: cover;
-    border-radius: 4px;
-}
+  }
 
-.proceed-button {
-    display: block;
-    margin: 20px auto 0;
-    padding: 12px 30px;
-    font-size: 1rem;
-    font-weight: bold;
-    color: white;
-    background-color: var(--bg-primary);
-    border: none;
-    border-radius: 8px;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-}
+  .eoc-actions {
+    flex-direction: column;
+  }
 
-.proceed-button:hover {
-    background-color: var(--bg-secondary);
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .confirm-table-container {
-        gap: 15px;
-    }
-
-    .confirm-table caption {
-        font-size: 1rem;
-    }
-
-    .confirm-table th,
-    .confirm-table td {
-        font-size: 0.8rem;
-    }
-
-    .proceed-button {
-        padding: 10px 25px;
-        font-size: 0.9rem;
-    }
+  .eoc-proceed-btn {
+    max-width: 100%;
+  }
 }
