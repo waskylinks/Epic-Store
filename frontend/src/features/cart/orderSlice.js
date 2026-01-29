@@ -512,6 +512,134 @@ export const downloadInvoice = createAsyncThunk(
   }
 );
 
+// 1. Get refund messages (lazy load)
+export const getRefundMessages = createAsyncThunk(
+  "order/getRefundMessages",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/refund/messages`,
+        { withCredentials: true }
+      );
+      return { orderId, messages: data.messages };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch messages"
+      );
+    }
+  }
+);
+
+// 2. Add refund message
+export const addRefundMessage = createAsyncThunk(
+  "order/addRefundMessage",
+  async ({ orderId, message, attachments = [] }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/refund/messages`,
+        { message, attachments },
+        { withCredentials: true }
+      );
+      return { orderId, message: data.data.message };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to send message"
+      );
+    }
+  }
+);
+
+// 3. Upload refund files
+export const uploadRefundFiles = createAsyncThunk(
+  "order/uploadRefundFiles",
+  async ({ orderId, files }, { rejectWithValue, dispatch }) => { // Add 'dispatch' here
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('attachments', file);
+      });
+
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/refund/upload`,
+        formData,
+        {
+          withCredentials: true,
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            dispatch(setUploadProgress(percentCompleted)); // Use it here
+          }
+        }
+      );
+      
+      dispatch(setUploadProgress(0)); // Reset after success
+      return { orderId, files: data.files };
+    } catch (error) {
+      dispatch(setUploadProgress(0)); // Reset on error
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to upload files"
+      );
+    }
+  }
+);
+
+// 4. Cancel refund request
+export const cancelRefundRequest = createAsyncThunk(
+  "order/cancelRefundRequest",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      await axios.put(
+        `${API_BASE}/orders/${orderId}/refund/cancel`,
+        {},
+        { withCredentials: true }
+      );
+      return { orderId };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to cancel refund"
+      );
+    }
+  }
+);
+
+// 5. Get refund timeline
+export const getRefundTimeline = createAsyncThunk(
+  "order/getRefundTimeline",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/refund/timeline`,
+        { withCredentials: true }
+      );
+      return { orderId, timeline: data.timeline };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch timeline"
+      );
+    }
+  }
+);
+
+// 6. Get refund documents
+export const getRefundDocuments = createAsyncThunk(
+  "order/getRefundDocuments",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/refund/documents`,
+        { withCredentials: true }
+      );
+      return { orderId, documents: data.documents };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch documents"
+      );
+    }
+  }
+);
+
 // ============================================
 // FRAUD PREVENTION & REVIEW
 // ============================================
@@ -790,6 +918,10 @@ const orderSlice = createSlice({
     shipments: [],
     returns: [],
     refunds: [],
+    refundMessages: [],
+    refundTimeline: [],
+    refundDocuments: [],
+    uploadProgress: 0,
     returnInfo: null,
     refundInfo: null,
     invoice: null,
@@ -826,6 +958,11 @@ const orderSlice = createSlice({
     setActionLoading: (state, action) => {
       state.actionLoading = action.payload;
     },
+
+    setUploadProgress: (state, action) => {
+    state.uploadProgress = action.payload;
+    },
+
   },
   extraReducers: (builder) => {
     // ============================================
@@ -1355,9 +1492,25 @@ const orderSlice = createSlice({
       .addCase(cancelReturnRequest.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload;
-      });
+      })
+
+      // Refund messages
+      builder
+        .addCase(getRefundMessages.fulfilled, (state, action) => {
+          state.refundMessages = action.payload.messages;
+        })
+        .addCase(addRefundMessage.fulfilled, (state, action) => {
+          state.refundMessages.push(action.payload.message);
+        })
+        .addCase(uploadRefundFiles.fulfilled, (state, action) => {
+          state.refundDocuments.push(...action.payload.files);
+        })
+        .addCase(cancelRefundRequest.fulfilled, (state) => {
+          state.refundInfo = null;
+          state.message = "Refund request cancelled";
+        });
   },
 });
 
-export const { removeErrors, clearMessage, clearOrder, setActionLoading } = orderSlice.actions;
+export const { removeErrors, clearMessage, clearOrder, setActionLoading, setUploadProgress } = orderSlice.actions;
 export default orderSlice.reducer;

@@ -12,15 +12,12 @@ import {
   FiX,
   FiFile,
   FiImage,
-  FiDownload,
+  FiVideo,
   FiMessageSquare,
+  FiDollarSign,
   FiInfo,
   FiArrowLeft,
-  FiRotateCw,
-  FiUser,
-  FiMapPin,
-  FiTruck,
-  FiBox,
+  FiXCircle,
 } from 'react-icons/fi';
 
 import PageTitle from '../components/PageTitle';
@@ -28,66 +25,266 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
 
-import {
-  getOrderDetails,
-  requestReturn,
-  getReturnMessages,
-  addReturnMessage,
-  getReturnTimeline,
-  getReturnDocuments,
-  cancelReturnRequest,
+import { 
+  getOrderDetails, 
+  requestRefund,
+  getRefundMessages,
+  addRefundMessage,
+  uploadRefundFiles,
+  cancelRefundRequest,
+  getRefundTimeline,
+  getRefundDocuments,
+  removeErrors,
+  clearMessage
 } from '../features/cart/orderSlice';
 
-import '../OrderStyles/ReturnRequest.css';
+import '../OrderStyles/RefundRequest.css';
 
-const RETURN_REASONS = [
-  { value: 'defective', label: 'Defective or Faulty' },
+// Note: Add these styles to your RefundRequest.css:
+/*
+.rr-upload-progress {
+  margin-top: 1rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.rr-progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.rr-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #495057 0%, #6c757d 100%);
+  transition: width 0.3s ease;
+}
+
+.rr-progress-text {
+  font-size: 0.85rem;
+  color: #666;
+  font-weight: 600;
+}
+
+.rr-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+}
+
+.rr-modal-content {
+  background: white;
+  border-radius: 16px;
+  max-width: 500px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: rr-modalSlideUp 0.3s ease;
+}
+
+@keyframes rr-modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rr-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.5rem;
+  border-bottom: 1px solid #e9ecef;
+}
+
+.rr-modal-header h2 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.rr-modal-close {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.rr-modal-close:hover {
+  background: #f8f9fa;
+  color: #1a1a1a;
+}
+
+.rr-modal-body {
+  padding: 1.5rem;
+}
+
+.rr-modal-body p {
+  margin: 0 0 1rem 0;
+  color: #333;
+  line-height: 1.6;
+}
+
+.rr-modal-warning {
+  color: #f59e0b;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.rr-modal-actions {
+  display: flex;
+  gap: 1rem;
+  padding: 1.5rem;
+  border-top: 1px solid #e9ecef;
+}
+
+.rr-btn-danger {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1.5rem;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+  outline: none;
+  background: #dc2626;
+  color: white;
+}
+
+.rr-btn-danger:hover:not(:disabled) {
+  background: #b91c1c;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(220, 38, 38, 0.3);
+}
+
+.rr-btn-danger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+*/
+
+const REFUND_REASONS = [
+  { value: 'defective_product', label: 'Defective or Damaged Product' },
   { value: 'wrong_item', label: 'Wrong Item Received' },
-  { value: 'not_as_described', label: 'Not As Described' },
-  { value: 'damaged_shipping', label: 'Damaged During Shipping' },
-  { value: 'size_fit', label: 'Size/Fit Issues' },
-  { value: 'quality_issues', label: 'Quality Not Satisfactory' },
+  { value: 'not_as_described', label: 'Product Not As Described' },
+  { value: 'damaged_in_shipping', label: 'Damaged During Shipping' },
   { value: 'changed_mind', label: 'Changed My Mind' },
-  { value: 'better_price', label: 'Found Better Price' },
-  { value: 'other', label: 'Other Reason' }
+  { value: 'duplicate_order', label: 'Duplicate Order' },
+  { value: 'unauthorized_purchase', label: 'Unauthorized Purchase' },
+  { value: 'other', label: 'Other' }
 ];
 
-const ITEM_CONDITIONS = [
-  { value: 'unopened', label: 'Unopened/Sealed' },
-  { value: 'opened_unused', label: 'Opened but Unused' },
-  { value: 'lightly_used', label: 'Lightly Used' },
-  { value: 'damaged', label: 'Damaged/Defective' }
-];
+const MAX_FILES = 5;
+const ALLOWED_FILE_TYPES = {
+  images: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'],
+  videos: ['video/mp4', 'video/webm', 'video/quicktime'],
+  documents: ['application/pdf']
+};
 
-const MAX_FILES_PER_ITEM = 3;
-const MAX_TOTAL_FILES = 10;
+// Inline RefundStatusBadge Component
+const RefundStatusBadge = ({ status }) => {
+  const getStatusConfig = (status) => {
+    const configs = {
+      none: { label: 'No Refund', className: 'rr-refund-badge-none', icon: '○' },
+      requested: { label: 'Refund Requested', className: 'rr-refund-badge-requested', icon: '⏳' },
+      approved: { label: 'Approved', className: 'rr-refund-badge-approved', icon: '✓' },
+      rejected: { label: 'Rejected', className: 'rr-refund-badge-rejected', icon: '✗' },
+      processing: { label: 'Processing', className: 'rr-refund-badge-processing', icon: '⟳' },
+      completed: { label: 'Refunded', className: 'rr-refund-badge-completed', icon: '✓' },
+      failed: { label: 'Failed', className: 'rr-refund-badge-failed', icon: '✗' }
+    };
+    return configs[status] || configs.none;
+  };
 
-function ReturnRequest() {
+  const config = getStatusConfig(status);
+
+  return (
+    <span className={`rr-refund-badge ${config.className}`}>
+      <span className="rr-refund-badge-icon">{config.icon}</span>
+      <span className="rr-refund-badge-label">{config.label}</span>
+    </span>
+  );
+};
+
+function RefundRequest() {
   const { id: orderId } = useParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const messageFileInputRef = useRef(null);
+  const pollingIntervalRef = useRef(null);
 
-  const { order, returnMessages = [], returnTimeline = [], returnDocuments = [], loading: orderLoading, actionLoading } = useSelector((state) => state.order);
+  const { 
+    order, 
+    loading: orderLoading, 
+    actionLoading,
+    refundMessages,
+    refundTimeline,
+    refundDocuments,
+    uploadProgress,
+    error,
+    message: successMessage
+  } = useSelector((state) => state.order);
 
-  // Determine if tracking existing return
-  const hasActiveReturn = order?.returnInfo?.status && order.returnInfo.status !== 'none';
-  const isTracking = hasActiveReturn;
+  const [formData, setFormData] = useState({
+    reason: '',
+    description: '',
+    refundType: 'full',
+    requestedAmount: ''
+  });
 
-  // Selected items state
-  const [selectedItems, setSelectedItems] = useState([]);
-  const [itemDetails, setItemDetails] = useState({});
-  const [itemFiles, setItemFiles] = useState({});
-
-  // Form state
-  const [generalReason, setGeneralReason] = useState('');
-  const [generalDescription, setGeneralDescription] = useState('');
   const [formErrors, setFormErrors] = useState({});
-
-  // Message state
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [filePreviews, setFilePreviews] = useState([]);
   const [newMessage, setNewMessage] = useState('');
-  const [messageFiles, setMessageFiles] = useState([]);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+
+  // Determine if this is a new request or tracking existing refund
+  const hasActiveRefund = order?.refundInfo?.status && order.refundInfo.status !== 'none';
+  const isTracking = hasActiveRefund;
+  const canCancelRefund = isTracking && order?.refundInfo?.status === 'requested';
+
+  // Get currency symbol helper
+  const getCurrencySymbol = (currency = 'NGN') => {
+    const symbols = {
+      NGN: '₦',
+      USD: '$',
+      EUR: '€',
+      GBP: '£',
+      GHS: '₵',
+      KES: 'KSh',
+      ZAR: 'R'
+    };
+    return symbols[currency] || currency;
+  };
 
   // Fetch order details
   useEffect(() => {
@@ -96,155 +293,165 @@ function ReturnRequest() {
     }
   }, [dispatch, orderId]);
 
-  // Fetch return data when tracking
+  // Fetch refund messages separately (lazy load)
   useEffect(() => {
     if (isTracking && orderId) {
-      dispatch(getReturnMessages(orderId));
-      dispatch(getReturnTimeline(orderId));
-      dispatch(getReturnDocuments(orderId));
+      dispatch(getRefundMessages(orderId));
+      dispatch(getRefundTimeline(orderId));
+      dispatch(getRefundDocuments(orderId));
     }
   }, [isTracking, orderId, dispatch]);
 
-  // Pre-populate form when tracking
+  // Polling for real-time updates (every 15 seconds)
   useEffect(() => {
-    if (isTracking && order?.returnInfo) {
-      setGeneralReason(order.returnInfo.reason || '');
-      setGeneralDescription(order.returnInfo.description || '');
-      
-      if (order.returnInfo.items) {
-        const selectedIds = order.returnInfo.items.map(item => item.productId);
-        setSelectedItems(selectedIds);
-        
-        const details = {};
-        order.returnInfo.items.forEach(item => {
-          details[item.productId] = {
-            reason: item.reason || '',
-            condition: item.condition || '',
-            notes: item.notes || ''
+    if (isTracking && orderId) {
+      pollingIntervalRef.current = setInterval(() => {
+        dispatch(getRefundMessages(orderId));
+        dispatch(getOrderDetails(orderId)); // Refresh order status
+      }, 15000);
+
+      return () => {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+        }
+      };
+    }
+  }, [isTracking, orderId, dispatch]);
+
+  // Pre-fill form data when order refund info becomes available (fixed dependency loop)
+  useEffect(() => {
+    if (isTracking && order?.refundInfo) {
+      setFormData(prev => {
+        // Only update if values are different to avoid infinite loop
+        if (prev.reason !== order.refundInfo.reason) {
+          return {
+            reason: order.refundInfo.reason || '',
+            description: order.refundInfo.description || '',
+            refundType: order.refundInfo.refundType || 'full',
+            requestedAmount: order.refundInfo.requestedAmount || ''
           };
-        });
-        setItemDetails(details);
-      }
-    }
-  }, [isTracking, order?.returnInfo]);
-
-  // Auto-scroll messages
-  useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [returnMessages]);
-
-  // Handle item selection
-  const toggleItemSelection = (itemId) => {
-    setSelectedItems(prev => {
-      if (prev.includes(itemId)) {
-        // Remove item
-        const newSelected = prev.filter(id => id !== itemId);
-        
-        // Clean up item details and files
-        const newDetails = { ...itemDetails };
-        const newFiles = { ...itemFiles };
-        delete newDetails[itemId];
-        delete newFiles[itemId];
-        setItemDetails(newDetails);
-        setItemFiles(newFiles);
-        
-        return newSelected;
-      } else {
-        // Add item
-        return [...prev, itemId];
-      }
-    });
-  };
-
-  // Handle item detail change
-  const handleItemDetailChange = (itemId, field, value) => {
-    setItemDetails(prev => ({
-      ...prev,
-      [itemId]: {
-        ...prev[itemId],
-        [field]: value
-      }
-    }));
-
-    // Clear errors
-    if (formErrors[`item_${itemId}_${field}`]) {
-      setFormErrors(prev => {
-        const newErrors = { ...prev };
-        delete newErrors[`item_${itemId}_${field}`];
-        return newErrors;
+        }
+        return prev;
       });
     }
+  }, [isTracking, order?.refundInfo]);
+
+  // Scroll to bottom of messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [refundMessages]);
+
+  // Handle errors
+  useEffect(() => {
+    if (error) {
+      toast.error(error, { position: 'top-center' });
+      dispatch(removeErrors());
+    }
+  }, [error, dispatch]);
+
+  // Handle success messages
+  useEffect(() => {
+    if (successMessage) {
+      toast.success(successMessage, { position: 'top-center' });
+      dispatch(clearMessage());
+    }
+  }, [successMessage, dispatch]);
+
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+    
+    if (formErrors[name]) {
+      setFormErrors(prev => ({ ...prev, [name]: '' }));
+    }
   };
 
-  // Handle item file selection
-  const handleItemFileSelect = (itemId, e) => {
-    const files = Array.from(e.target.files);
-    const currentItemFiles = itemFiles[itemId] || [];
-    
-    if (currentItemFiles.length + files.length > MAX_FILES_PER_ITEM) {
-      toast.error(`Maximum ${MAX_FILES_PER_ITEM} files per item`, { position: 'top-center' });
-      return;
-    }
+  const isFileTypeAllowed = (file) => {
+    const allAllowedTypes = [
+      ...ALLOWED_FILE_TYPES.images,
+      ...ALLOWED_FILE_TYPES.videos,
+      ...ALLOWED_FILE_TYPES.documents
+    ];
+    return allAllowedTypes.includes(file.type);
+  };
 
-    const totalFiles = Object.values(itemFiles).flat().length + files.length;
-    if (totalFiles > MAX_TOTAL_FILES) {
-      toast.error(`Maximum ${MAX_TOTAL_FILES} files total`, { position: 'top-center' });
+  const getFileIcon = (fileType) => {
+    if (ALLOWED_FILE_TYPES.images.includes(fileType)) return <FiImage />;
+    if (ALLOWED_FILE_TYPES.videos.includes(fileType)) return <FiVideo />;
+    if (ALLOWED_FILE_TYPES.documents.includes(fileType)) return <FiFile />;
+    return <FiFile />;
+  };
+
+  const handleFileSelect = (e) => {
+    const files = Array.from(e.target.files);
+    
+    if (selectedFiles.length + files.length > MAX_FILES) {
+      toast.error(`You can only upload up to ${MAX_FILES} files`, {
+        position: 'top-center'
+      });
       return;
     }
 
     const validFiles = files.filter(file => {
+      if (!isFileTypeAllowed(file)) {
+        toast.error(`${file.name} is not a supported file type`, {
+          position: 'top-center'
+        });
+        return false;
+      }
       if (file.size > 10 * 1024 * 1024) {
-        toast.error(`${file.name} exceeds 10MB`, { position: 'top-center' });
+        toast.error(`${file.name} exceeds 10MB limit`, {
+          position: 'top-center'
+        });
         return false;
       }
       return true;
     });
 
-    setItemFiles(prev => ({
-      ...prev,
-      [itemId]: [...(prev[itemId] || []), ...validFiles]
-    }));
+    setSelectedFiles(prev => [...prev, ...validFiles]);
+
+    validFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFilePreviews(prev => [...prev, {
+          file,
+          preview: reader.result,
+          type: file.type
+        }]);
+      };
+      reader.readAsDataURL(file);
+    });
   };
 
-  // Remove item file
-  const removeItemFile = (itemId, fileIndex) => {
-    setItemFiles(prev => ({
-      ...prev,
-      [itemId]: prev[itemId].filter((_, i) => i !== fileIndex)
-    }));
+  const removeFile = (index) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+    setFilePreviews(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Validate form
   const validateForm = () => {
     const errors = {};
 
-    if (selectedItems.length === 0) {
-      errors.items = 'Please select at least one item to return';
+    if (!formData.reason) {
+      errors.reason = 'Please select a refund reason';
     }
 
-    selectedItems.forEach(itemId => {
-      const details = itemDetails[itemId] || {};
-      
-      if (!details.reason) {
-        errors[`item_${itemId}_reason`] = 'Required';
-      }
-      
-      if (!details.condition) {
-        errors[`item_${itemId}_condition`] = 'Required';
-      }
-    });
+    if (!formData.description || formData.description.length < 10) {
+      errors.description = 'Description must be at least 10 characters';
+    }
 
-    if (!generalDescription || generalDescription.length < 20) {
-      errors.generalDescription = 'Please provide at least 20 characters';
+    if (formData.refundType === 'partial') {
+      const amount = parseFloat(formData.requestedAmount);
+      if (!amount || amount <= 0) {
+        errors.requestedAmount = 'Please enter a valid amount';
+      } else if (amount > order?.totalPrice) {
+        errors.requestedAmount = `Amount cannot exceed ${formatCurrency(order.totalPrice, order.paymentInfo?.currency)}`;
+      }
     }
 
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  // Submit return request
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -254,94 +461,85 @@ function ReturnRequest() {
     }
 
     try {
-      const itemsToReturn = selectedItems.map(itemId => {
-        const item = order.orderItems.find(oi => oi._id === itemId);
-        const details = itemDetails[itemId] || {};
-        
-        return {
-          productId: itemId,
-          name: item.name,
-          quantity: item.quantity,
-          price: item.price,
-          reason: details.reason,
-          condition: details.condition,
-          notes: details.notes || ''
-        };
-      });
-
-      const allFiles = Object.values(itemFiles).flat();
-
-      await dispatch(requestReturn({
+      await dispatch(requestRefund({
         orderId,
-        reason: generalReason || 'multiple_items',
-        itemsToReturn,
-        description: generalDescription,
-        images: allFiles
+        reason: formData.reason,
+        description: formData.description,
+        refundType: formData.refundType,
+        requestedAmount: formData.refundType === 'partial' ? parseFloat(formData.requestedAmount) : undefined,
+        images: selectedFiles
       })).unwrap();
 
-      toast.success('Return request submitted successfully!', {
+      toast.success('Refund request submitted successfully!', {
         position: 'top-center',
         autoClose: 3000
       });
 
-      setTimeout(() => navigate(`/order/${orderId}`), 2000);
+      // Refresh order details
+      dispatch(getOrderDetails(orderId));
+
+      // Clear form
+      setFormData({
+        reason: '',
+        description: '',
+        refundType: 'full',
+        requestedAmount: ''
+      });
+      setSelectedFiles([]);
+      setFilePreviews([]);
     } catch (error) {
-      toast.error(error || 'Failed to submit return request', {
-        position: 'top-center',
-        autoClose: 3000
-      });
+      // Error handled by useEffect
     }
   };
 
-  // Handle message file selection
-  const handleMessageFileSelect = (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length + messageFiles.length > 5) {
-      toast.error('Maximum 5 files per message', { position: 'top-center' });
-      return;
-    }
-    setMessageFiles(prev => [...prev, ...files]);
-  };
-
-  // Remove message file
-  const removeMessageFile = (index) => {
-    setMessageFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Send message
   const handleSendMessage = async () => {
-    if (!newMessage.trim() && messageFiles.length === 0) return;
+    if (!newMessage.trim()) return;
 
     try {
-      await dispatch(addReturnMessage({
+      await dispatch(addRefundMessage({
         orderId,
-        content: newMessage,
-        attachments: messageFiles
+        message: newMessage,
+        attachments: []
       })).unwrap();
 
       setNewMessage('');
-      setMessageFiles([]);
-      toast.success('Message sent', { position: 'top-center' });
-    } catch (err) {
-      toast.error(err || 'Failed to send message', { position: 'top-center' });
+    } catch (error) {
+      // Error handled by useEffect
     }
   };
 
-  // Cancel return request
-  const handleCancelReturn = async () => {
-    if (!window.confirm('Are you sure you want to cancel this return request?')) return;
-
+  const handleCancelRefund = async () => {
     try {
-      await dispatch(cancelReturnRequest(orderId)).unwrap();
-      toast.success('Return request cancelled', { position: 'top-center' });
-      navigate(`/order/${orderId}`);
-    } catch (err) {
-      toast.error(err || 'Failed to cancel return', { position: 'top-center' });
+      await dispatch(cancelRefundRequest(orderId)).unwrap();
+      
+      toast.success('Refund request cancelled successfully', {
+        position: 'top-center'
+      });
+
+      setShowCancelModal(false);
+      
+      // Refresh order
+      dispatch(getOrderDetails(orderId));
+      
+      setTimeout(() => navigate(`/order/${orderId}`), 1500);
+    } catch (error) {
+      // Error handled by useEffect
     }
   };
 
-  // Format timestamp
+  const formatCurrency = (amount, currency = 'NGN') => {
+    if (!amount) return `${getCurrencySymbol(currency)}0.00`;
+    
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: currency,
+      minimumFractionDigits: 2,
+    }).format(amount);
+  };
+
   const formatTimestamp = (timestamp) => {
+    if (!timestamp) return '';
+    
     const date = new Date(timestamp);
     const now = new Date();
     const diffMs = now - date;
@@ -361,29 +559,6 @@ function ReturnRequest() {
     });
   };
 
-  // Format currency
-  const formatCurrency = (amount, currency = 'NGN') => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: 2,
-    }).format(amount);
-  };
-
-  // Get status icon
-  const getStatusIcon = (status) => {
-    const statusLower = status?.toLowerCase() || '';
-    if (statusLower.includes('approved') || statusLower.includes('completed')) {
-      return <FiCheckCircle className="rrr-status-icon rrr-success" />;
-    } else if (statusLower.includes('shipped') || statusLower.includes('transit')) {
-      return <FiTruck className="rrr-status-icon rrr-info" />;
-    } else if (statusLower.includes('received') || statusLower.includes('inspecting')) {
-      return <FiBox className="rrr-status-icon rrr-warning" />;
-    }
-    return <FiClock className="rrr-status-icon rrr-pending" />;
-  };
-
-  // Loading state
   if (orderLoading) return <Loader />;
 
   if (!order?._id) {
@@ -391,12 +566,12 @@ function ReturnRequest() {
       <>
         <PageTitle title="Order Not Found" />
         <Navbar />
-        <div className="rrr-error-container">
-          <div className="rrr-error-card">
-            <FiAlertCircle className="rrr-error-icon" />
+        <div className="rr-refund-error-container">
+          <div className="rr-error-card">
+            <FiAlertCircle className="rr-error-icon" />
             <h2>Order not found</h2>
             <p>The order you're looking for doesn't exist or you don't have permission to view it.</p>
-            <button onClick={() => navigate('/orders/user')} className="rrr-btn-secondary">
+            <button onClick={() => navigate('/orders/user')} className="rr-btn-secondary">
               Back to My Orders
             </button>
           </div>
@@ -408,327 +583,424 @@ function ReturnRequest() {
 
   return (
     <>
-      <PageTitle title={isTracking ? `Return Tracking - Order ${orderId}` : `Request Return - Order ${orderId}`} />
+      <PageTitle title={isTracking ? `Refund Status - Order ${orderId}` : `Request Refund - Order ${orderId}`} />
       <Navbar />
 
-      <div className="rrr-return-container">
+      <div className="rr-refund-request-container">
         {/* Back Button */}
         <button 
           onClick={() => navigate(`/order/${orderId}`)} 
-          className="rrr-btn-back"
+          className="rr-btn-back-nav"
         >
           <FiArrowLeft />
           Back to Order Details
         </button>
 
-        {/* Header */}
-        <div className="rrr-header">
-          <div className="rrr-header-content">
-            <FiPackage className="rrr-header-icon" />
+        <div className="rr-refund-header">
+          <div className="rr-header-content">
+            <FiDollarSign className="rr-header-icon" />
             <div>
-              <h1>{isTracking ? 'Return Status' : 'Request Return'}</h1>
-              <p className="rrr-order-ref">Order: #{orderId.slice(-8).toUpperCase()}</p>
+              <h1>{isTracking ? 'Refund Status' : 'Request Refund'}</h1>
+              <p className="rr-order-reference">Order: #{orderId.slice(-8).toUpperCase()}</p>
             </div>
           </div>
         </div>
 
-        <div className="rrr-content">
-          {/* Return Status Card - Only show if tracking */}
+        <div className="rr-refund-content">
+          {/* Refund Status Card - Only show if tracking */}
           {isTracking && (
-            <div className="rrr-status-card">
-              <div className="rrr-card-header">
-                <FiInfo className="rrr-card-icon" />
-                <h2>Return Information</h2>
-                <span className={`rrr-status-badge rrr-status-${order.returnInfo.status}`}>
-                  {order.returnInfo.status?.replace(/_/g, ' ')}
-                </span>
+            <div className="rr-refund-status-card">
+              <div className="rr-card-header">
+                <FiInfo className="rr-card-icon" />
+                <h2>Refund Information</h2>
+                <RefundStatusBadge status={order.refundInfo.status} />
               </div>
               
-              <div className="rrr-status-details">
-                {/* RMA Number */}
-                {order.returnInfo.rmaNumber && (
-                  <div className="rrr-rma-section">
-                    <span className="rrr-rma-label">RMA Number:</span>
-                    <span className="rrr-rma-number">{order.returnInfo.rmaNumber}</span>
-                  </div>
-                )}
-
-                {/* Timeline */}
-                <div className="rrr-timeline">
-                  <h3 className="rrr-timeline-title">Return Progress</h3>
-                  {returnTimeline.length === 0 ? (
-                    <div className="rrr-empty">
-                      <FiClock className="rrr-empty-icon" />
-                      <p>No timeline events yet</p>
+              <div className="rr-status-details">
+                <div className="rr-status-timeline">
+                  <div className="rr-timeline-item">
+                    <div className="rr-timeline-dot rr-active"></div>
+                    <div className="rr-timeline-content">
+                      <span className="rr-timeline-label">Requested</span>
+                      <span className="rr-timeline-date">
+                        {order.refundInfo.requestedAt 
+                          ? new Date(order.refundInfo.requestedAt).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric'
+                            })
+                          : 'N/A'}
+                      </span>
                     </div>
-                  ) : (
-                    <div className="rrr-timeline-list">
-                      {returnTimeline.map((event, index) => (
-                        <div key={index} className="rrr-timeline-item">
-                          <div className="rrr-timeline-marker">
-                            {getStatusIcon(event.status)}
-                            {index < returnTimeline.length - 1 && <div className="rrr-timeline-line" />}
-                          </div>
-                          <div className="rrr-timeline-content">
-                            <h4>{event.status}</h4>
-                            <p className="rrr-timeline-date">
-                              {new Date(event.timestamp).toLocaleDateString('en-US', {
-                                month: 'short',
-                                day: 'numeric',
-                                year: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              })}
-                            </p>
-                            {event.description && <p className="rrr-timeline-desc">{event.description}</p>}
-                            {event.location && (
-                              <div className="rrr-timeline-location">
-                                <FiMapPin />
-                                <span>{event.location}</span>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                  </div>
+
+                  {order.refundInfo.approvedAt && (
+                    <div className="rr-timeline-item">
+                      <div className={`rr-timeline-dot ${order.refundInfo.status === 'approved' || order.refundInfo.status === 'processing' || order.refundInfo.status === 'completed' ? 'rr-active' : 'rr-rejected'}`}></div>
+                      <div className="rr-timeline-content">
+                        <span className="rr-timeline-label">
+                          {order.refundInfo.status === 'rejected' ? 'Rejected' : 'Approved'}
+                        </span>
+                        <span className="rr-timeline-date">
+                          {new Date(order.refundInfo.approvedAt).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                          })}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {order.refundInfo.processedAt && (
+                    <div className="rr-timeline-item">
+                      <div className={`rr-timeline-dot ${order.refundInfo.status === 'completed' ? 'rr-active' : order.refundInfo.status === 'failed' ? 'rr-rejected' : ''}`}></div>
+                      <div className="rr-timeline-content">
+                        <span className="rr-timeline-label">
+                          {order.refundInfo.status === 'completed' ? 'Completed' : order.refundInfo.status === 'failed' ? 'Failed' : 'Processing'}
+                        </span>
+                        <span className="rr-timeline-date">
+                          {new Date(order.refundInfo.processedAt).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric'
+                          })}
+                        </span>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Return Info Grid */}
-                <div className="rrr-info-grid">
-                  <div className="rrr-info-item">
-                    <span className="rrr-info-label">Items to Return:</span>
-                    <span className="rrr-info-value">{order.returnInfo.items?.length || 0}</span>
+                <div className="rr-refund-info-grid">
+                  <div className="rr-info-item">
+                    <span className="rr-info-label">Refund Type:</span>
+                    <span className="rr-info-value">{order.refundInfo.refundType === 'full' ? 'Full Refund' : 'Partial Refund'}</span>
                   </div>
-                  <div className="rrr-info-item">
-                    <span className="rrr-info-label">Requested On:</span>
-                    <span className="rrr-info-value">
-                      {order.returnInfo.requestedAt 
-                        ? new Date(order.returnInfo.requestedAt).toLocaleDateString()
-                        : 'N/A'}
+                  <div className="rr-info-item">
+                    <span className="rr-info-label">Refund Amount:</span>
+                    <span className="rr-info-value rr-strong">
+                      {formatCurrency(
+                        order.refundInfo.requestedAmount || order.refundInfo.refundAmount || order.totalPrice,
+                        order.paymentInfo?.currency
+                      )}
                     </span>
                   </div>
-                  {order.returnInfo.inspectionNotes && (
-                    <div className="rrr-info-item rrr-full-width rrr-inspection">
-                      <span className="rrr-info-label">Inspection Notes:</span>
-                      <span className="rrr-info-value">{order.returnInfo.inspectionNotes}</span>
+                  <div className="rr-info-item">
+                    <span className="rr-info-label">Reason:</span>
+                    <span className="rr-info-value">{order.refundInfo.reason?.replace(/_/g, ' ')}</span>
+                  </div>
+                  {order.refundInfo.description && (
+                    <div className="rr-info-item rr-full-width">
+                      <span className="rr-info-label">Description:</span>
+                      <span className="rr-info-value">{order.refundInfo.description}</span>
+                    </div>
+                  )}
+                  {order.refundInfo.adminNote && (
+                    <div className="rr-info-item rr-full-width rr-admin-note">
+                      <span className="rr-info-label">Admin Response:</span>
+                      <span className="rr-info-value">{order.refundInfo.adminNote}</span>
                     </div>
                   )}
                 </div>
 
-                {/* Cancel button if pending */}
-                {order.returnInfo.status === 'requested' && (
-                  <button onClick={handleCancelReturn} className="rrr-btn-cancel" disabled={actionLoading}>
-                    {actionLoading ? 'Cancelling...' : 'Cancel Return Request'}
-                  </button>
+                {/* Cancel Refund Button */}
+                {canCancelRefund && (
+                  <div style={{ marginTop: '1.5rem' }}>
+                    <button
+                      onClick={() => setShowCancelModal(true)}
+                      className="rr-btn-secondary"
+                      style={{ width: '100%', justifyContent: 'center' }}
+                    >
+                      <FiXCircle />
+                      Cancel Refund Request
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
           )}
 
-          {/* Order Summary */}
-          <div className="rrr-summary-card">
-            <div className="rrr-card-header">
-              <FiPackage className="rrr-card-icon" />
+          {/* Order Summary Card */}
+          <div className="rr-summary-card">
+            <div className="rr-card-header">
+              <FiPackage className="rr-card-icon" />
               <h2>Order Summary</h2>
             </div>
-            <div className="rrr-summary-details">
-              <div className="rrr-summary-row">
-                <span>Total Amount:</span>
-                <span className="rrr-strong">{formatCurrency(order.totalPrice, order.paymentInfo?.currency)}</span>
+            <div className="rr-summary-details">
+              <div className="rr-summary-row">
+                <span className="rr-label">Total Amount:</span>
+                <span className="rr-value rr-strong">{formatCurrency(order.totalPrice, order.paymentInfo?.currency)}</span>
               </div>
-              <div className="rrr-summary-row">
-                <span>Order Status:</span>
-                <span className={`rrr-status-badge rrr-status-${order.orderStatus?.toLowerCase()}`}>
-                  {order.orderStatus}
+              <div className="rr-summary-row">
+                <span className="rr-label">Order Status:</span>
+                <span className="rr-value">
+                  <span className={`rr-status-badge rr-status-${order.orderStatus.toLowerCase()}`}>
+                    {order.orderStatus}
+                  </span>
                 </span>
               </div>
-              <div className="rrr-summary-row">
-                <span>Items in Order:</span>
-                <span>{order.orderItems?.length || 0}</span>
+              <div className="rr-summary-row">
+                <span className="rr-label">Payment Status:</span>
+                <span className="rr-value">
+                  <span className={`rr-status-badge ${order.paymentInfo?.status === 'success' ? 'rr-status-success' : 'rr-status-danger'}`}>
+                    {order.paymentInfo?.status === 'success' ? 'Paid' : 'Not Paid'}
+                  </span>
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Return Form - Only show if NOT tracking */}
+          {/* Refund Form - Only show if NOT tracking */}
           {!isTracking && (
-            <div className="rrr-form-card">
-              <div className="rrr-card-header">
-                <FiInfo className="rrr-card-icon" />
-                <h2>Select Items to Return</h2>
+            <div className="rr-refund-form-card">
+              <div className="rr-card-header">
+                <FiInfo className="rr-card-icon" />
+                <h2>Refund Details</h2>
               </div>
 
-              <form onSubmit={handleSubmit} className="rrr-form">
-                {/* Items Selection */}
-                <div className="rrr-items-section">
-                  {formErrors.items && (
-                    <div className="rrr-error-alert">
-                      <FiAlertCircle />
-                      {formErrors.items}
-                    </div>
-                  )}
-
-                  {order.orderItems?.map((item) => (
-                    <div key={item._id} className={`rrr-item-card ${selectedItems.includes(item._id) ? 'rrr-selected' : ''}`}>
-                      {/* Item Header */}
-                      <div className="rrr-item-header">
-                        <label className="rrr-checkbox-wrapper">
-                          <input
-                            type="checkbox"
-                            checked={selectedItems.includes(item._id)}
-                            onChange={() => toggleItemSelection(item._id)}
-                          />
-                          <span className="rrr-checkmark"></span>
-                        </label>
-                        <img src={item.image} alt={item.name} className="rrr-item-img" />
-                        <div className="rrr-item-info">
-                          <h3>{item.name}</h3>
-                          <p>Qty: {item.quantity} × {formatCurrency(item.price, order.paymentInfo?.currency)}</p>
-                        </div>
+              <form onSubmit={handleSubmit} className="rr-refund-form">
+                {/* Refund Type */}
+                <div className="rr-form-section">
+                  <label className="rr-section-label">Refund Type</label>
+                  <div className="rr-radio-group">
+                    <label className={`rr-radio-option ${formData.refundType === 'full' ? 'rr-selected' : ''}`}>
+                      <input
+                        type="radio"
+                        name="refundType"
+                        value="full"
+                        checked={formData.refundType === 'full'}
+                        onChange={handleChange}
+                        aria-label="Full refund option"
+                      />
+                      <div className="rr-radio-content">
+                        <span className="rr-radio-title">Full Refund</span>
+                        <span className="rr-radio-subtitle">
+                          {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                        </span>
                       </div>
+                      <FiCheckCircle className="rr-radio-check" aria-hidden="true" />
+                    </label>
 
-                      {/* Item Details - Show when selected */}
-                      {selectedItems.includes(item._id) && (
-                        <div className="rrr-item-details">
-                          <div className="rrr-form-row">
-                            <div className="rrr-form-group">
-                              <label>Return Reason *</label>
-                              <select
-                                value={itemDetails[item._id]?.reason || ''}
-                                onChange={(e) => handleItemDetailChange(item._id, 'reason', e.target.value)}
-                                className={formErrors[`item_${item._id}_reason`] ? 'rrr-error' : ''}
-                              >
-                                <option value="">Select reason</option>
-                                {RETURN_REASONS.map(r => (
-                                  <option key={r.value} value={r.value}>{r.label}</option>
-                                ))}
-                              </select>
-                              {formErrors[`item_${item._id}_reason`] && (
-                                <span className="rrr-error-text">{formErrors[`item_${item._id}_reason`]}</span>
-                              )}
-                            </div>
-
-                            <div className="rrr-form-group">
-                              <label>Item Condition *</label>
-                              <select
-                                value={itemDetails[item._id]?.condition || ''}
-                                onChange={(e) => handleItemDetailChange(item._id, 'condition', e.target.value)}
-                                className={formErrors[`item_${item._id}_condition`] ? 'rrr-error' : ''}
-                              >
-                                <option value="">Select condition</option>
-                                {ITEM_CONDITIONS.map(c => (
-                                  <option key={c.value} value={c.value}>{c.label}</option>
-                                ))}
-                              </select>
-                              {formErrors[`item_${item._id}_condition`] && (
-                                <span className="rrr-error-text">{formErrors[`item_${item._id}_condition`]}</span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="rrr-form-group">
-                            <label>Additional Notes (Optional)</label>
-                            <textarea
-                              value={itemDetails[item._id]?.notes || ''}
-                              onChange={(e) => handleItemDetailChange(item._id, 'notes', e.target.value)}
-                              placeholder="Any specific details about this item..."
-                              rows="2"
-                            />
-                          </div>
-
-                          {/* File Upload */}
-                          <div className="rrr-form-group">
-                            <label>Photos (Optional - Max {MAX_FILES_PER_ITEM})</label>
-                            <input
-                              type="file"
-                              multiple
-                              accept="image/*"
-                              onChange={(e) => handleItemFileSelect(item._id, e)}
-                              style={{ display: 'none' }}
-                              id={`file-${item._id}`}
-                            />
-                            <button
-                              type="button"
-                              onClick={() => document.getElementById(`file-${item._id}`).click()}
-                              className="rrr-upload-btn"
-                              disabled={(itemFiles[item._id]?.length || 0) >= MAX_FILES_PER_ITEM}
-                            >
-                              <FiPaperclip />
-                              Upload Photos
-                            </button>
-
-                            {itemFiles[item._id]?.length > 0 && (
-                              <div className="rrr-file-previews">
-                                {itemFiles[item._id].map((file, index) => (
-                                  <div key={index} className="rrr-file-preview">
-                                    <FiImage />
-                                    <span>{file.name}</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => removeItemFile(item._id, index)}
-                                      className="rrr-remove-file"
-                                    >
-                                      <FiX />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                    <label className={`rr-radio-option ${formData.refundType === 'partial' ? 'rr-selected' : ''}`}>
+                      <input
+                        type="radio"
+                        name="refundType"
+                        value="partial"
+                        checked={formData.refundType === 'partial'}
+                        onChange={handleChange}
+                        aria-label="Partial refund option"
+                      />
+                      <div className="rr-radio-content">
+                        <span className="rr-radio-title">Partial Refund</span>
+                        <span className="rr-radio-subtitle">Specify custom amount</span>
+                      </div>
+                      <FiCheckCircle className="rr-radio-check" aria-hidden="true" />
+                    </label>
+                  </div>
                 </div>
 
-                {/* General Description */}
-                <div className="rrr-form-group">
-                  <label>Overall Description *</label>
+                {/* Partial Amount */}
+                {formData.refundType === 'partial' && (
+                  <div className="rr-form-group">
+                    <label htmlFor="requestedAmount" className="rr-form-label">
+                      Refund Amount ({getCurrencySymbol(order.paymentInfo?.currency)})
+                    </label>
+                    <div className="rr-input-wrapper">
+                      <FiDollarSign className="rr-input-icon" aria-hidden="true" />
+                      <input
+                        type="number"
+                        id="requestedAmount"
+                        name="requestedAmount"
+                        className={`rr-form-input rr-has-icon ${formErrors.requestedAmount ? 'rr-error' : ''}`}
+                        value={formData.requestedAmount}
+                        onChange={handleChange}
+                        placeholder="Enter amount"
+                        step="0.01"
+                        min="0"
+                        max={order.totalPrice}
+                        aria-describedby={formErrors.requestedAmount ? "amount-error" : "amount-helper"}
+                      />
+                    </div>
+                    {formErrors.requestedAmount && (
+                      <span className="rr-error-message" id="amount-error" role="alert">
+                        <FiAlertCircle aria-hidden="true" /> {formErrors.requestedAmount}
+                      </span>
+                    )}
+                    <span className="rr-helper-text" id="amount-helper">
+                      Maximum: {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                    </span>
+                  </div>
+                )}
+
+                {/* Refund Reason */}
+                <div className="rr-form-group">
+                  <label htmlFor="reason" className="rr-form-label">
+                    Reason for Refund *
+                  </label>
+                  <select
+                    id="reason"
+                    name="reason"
+                    className={`rr-form-select ${formErrors.reason ? 'rr-error' : ''}`}
+                    value={formData.reason}
+                    onChange={handleChange}
+                    aria-describedby={formErrors.reason ? "reason-error" : undefined}
+                    required
+                  >
+                    <option value="">Select a reason</option>
+                    {REFUND_REASONS.map(reason => (
+                      <option key={reason.value} value={reason.value}>
+                        {reason.label}
+                      </option>
+                    ))}
+                  </select>
+                  {formErrors.reason && (
+                    <span className="rr-error-message" id="reason-error" role="alert">
+                      <FiAlertCircle aria-hidden="true" /> {formErrors.reason}
+                    </span>
+                  )}
+                </div>
+
+                {/* Description */}
+                <div className="rr-form-group">
+                  <label htmlFor="description" className="rr-form-label">
+                    Detailed Description *
+                  </label>
                   <textarea
-                    value={generalDescription}
-                    onChange={(e) => {
-                      setGeneralDescription(e.target.value);
-                      if (formErrors.generalDescription) {
-                        setFormErrors(prev => ({ ...prev, generalDescription: '' }));
-                      }
-                    }}
-                    placeholder="Provide a detailed explanation for your return request (minimum 20 characters)..."
-                    rows="4"
+                    id="description"
+                    name="description"
+                    className={`rr-form-textarea ${formErrors.description ? 'rr-error' : ''}`}
+                    value={formData.description}
+                    onChange={handleChange}
+                    placeholder="Please provide details about why you're requesting a refund (minimum 10 characters)"
+                    rows="5"
                     maxLength="500"
-                    className={formErrors.generalDescription ? 'rrr-error' : ''}
+                    aria-describedby="description-count"
+                    required
                   />
-                  <div className="rrr-textarea-footer">
-                    <span className="rrr-char-count">{generalDescription.length} / 500</span>
-                    {formErrors.generalDescription && (
-                      <span className="rrr-error-text">{formErrors.generalDescription}</span>
+                  <div className="rr-textarea-footer">
+                    <span className="rr-char-count" id="description-count" aria-live="polite">
+                      {formData.description.length} / 500
+                    </span>
+                    {formErrors.description && (
+                      <span className="rr-error-message" role="alert">
+                        <FiAlertCircle aria-hidden="true" /> {formErrors.description}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* File Upload */}
+                <div className="rr-form-group">
+                  <label className="rr-form-label">
+                    Supporting Documents (Optional)
+                  </label>
+                  <p className="rr-helper-text">
+                    Upload up to {MAX_FILES} files (images, videos, or PDFs). Max 10MB each.
+                  </p>
+
+                  <div className="rr-file-upload-area">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept=".jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mov,.pdf"
+                      onChange={handleFileSelect}
+                      style={{ display: 'none' }}
+                      aria-label="Upload supporting documents"
+                    />
+                    
+                    <button
+                      type="button"
+                      className="rr-btn-upload"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={selectedFiles.length >= MAX_FILES}
+                      aria-label={`Choose files to upload. ${selectedFiles.length} of ${MAX_FILES} files selected`}
+                    >
+                      <FiPaperclip aria-hidden="true" />
+                      Choose Files
+                    </button>
+
+                    {/* Upload Progress */}
+                    {uploadProgress > 0 && uploadProgress < 100 && (
+                      <div className="rr-upload-progress">
+                        <div className="rr-progress-bar">
+                          <div 
+                            className="rr-progress-fill" 
+                            style={{ width: `${uploadProgress}%` }}
+                            role="progressbar"
+                            aria-valuenow={uploadProgress}
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                          />
+                        </div>
+                        <span className="rr-progress-text">{uploadProgress}% uploaded</span>
+                      </div>
+                    )}
+
+                    {selectedFiles.length > 0 && (
+                      <div className="rr-file-previews">
+                        {filePreviews.map((item, index) => (
+                          <div key={index} className="rr-file-preview-item">
+                            {ALLOWED_FILE_TYPES.images.includes(item.type) ? (
+                              <img 
+                                src={item.preview} 
+                                alt={`Preview of ${item.file.name}`} 
+                                className="rr-preview-image" 
+                              />
+                            ) : ALLOWED_FILE_TYPES.videos.includes(item.type) ? (
+                              <div className="rr-preview-placeholder" aria-label="Video file">
+                                <FiVideo aria-hidden="true" />
+                              </div>
+                            ) : (
+                              <div className="rr-preview-placeholder" aria-label="Document file">
+                                <FiFile aria-hidden="true" />
+                              </div>
+                            )}
+                            <div className="rr-file-info">
+                              <span className="rr-file-name">{item.file.name}</span>
+                              <span className="rr-file-size">
+                                {(item.file.size / 1024 / 1024).toFixed(2)} MB
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              className="rr-btn-remove-file"
+                              onClick={() => removeFile(index)}
+                              aria-label={`Remove ${item.file.name}`}
+                            >
+                              <FiX aria-hidden="true" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
                 </div>
 
                 {/* Form Actions */}
-                <div className="rrr-form-actions">
+                <div className="rr-form-actions">
                   <button
                     type="button"
                     onClick={() => navigate(`/order/${orderId}`)}
-                    className="rrr-btn-secondary"
+                    className="rr-btn-secondary"
                     disabled={actionLoading}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="rrr-btn-primary"
-                    disabled={actionLoading || selectedItems.length === 0}
+                    className="rr-btn-primary"
+                    disabled={actionLoading}
                   >
                     {actionLoading ? (
                       <>
-                        <FiRotateCw className="rrr-spin" />
+                        <FiClock className="rr-spin" aria-hidden="true" />
                         Submitting...
                       </>
                     ) : (
                       <>
-                        <FiSend />
-                        Submit Return Request
+                        <FiSend aria-hidden="true" />
+                        Submit Refund Request
                       </>
                     )}
                   </button>
@@ -737,113 +1009,79 @@ function ReturnRequest() {
             </div>
           )}
 
-          {/* Messages Section */}
-          <div className="rrr-messages-card">
-            <div className="rrr-card-header">
-              <FiMessageSquare className="rrr-card-icon" />
+          {/* Messaging Section */}
+          <div className="rr-messaging-card">
+            <div className="rr-card-header">
+              <FiMessageSquare className="rr-card-icon" aria-hidden="true" />
               <h2>Messages</h2>
             </div>
 
-            <div className="rrr-messages-container">
-              <div className="rrr-messages-list">
-                {returnMessages.length === 0 ? (
-                  <div className="rrr-empty">
-                    <FiMessageSquare className="rrr-empty-icon" />
-                    <p>{isTracking ? 'No messages yet. Start a conversation!' : 'Submit your return request to start messaging'}</p>
-                  </div>
-                ) : (
-                  <>
-                    {returnMessages.map((msg, index) => (
-                      <div
-                        key={msg._id || index}
-                        className={`rrr-message ${msg.sender === 'customer' ? 'rrr-sent' : 'rrr-received'}`}
-                      >
-                        {msg.sender !== 'customer' && (
-                          <div className="rrr-avatar">
-                            <FiUser />
+            <div className="rr-messages-container">
+              {!refundMessages || refundMessages.length === 0 ? (
+                <div className="rr-empty-messages">
+                  <FiMessageSquare className="rr-empty-icon" aria-hidden="true" />
+                  <p>{isTracking ? 'No messages yet. Start the conversation!' : 'Submit your refund request to start messaging'}</p>
+                </div>
+              ) : (
+                <div className="rr-messages-list" role="log" aria-label="Refund messages">
+                  {refundMessages.map((msg, index) => (
+                    <div
+                      key={msg._id || index}
+                      className={`rr-message ${msg.senderType === 'customer' ? 'rr-message-sent' : 'rr-message-received'}`}
+                    >
+                      <div className="rr-message-content">
+                        <p>{msg.message || msg.content}</p>
+                        {msg.attachments?.map((attachment, i) => (
+                          <div key={i} className="rr-message-attachment">
+                            {getFileIcon(attachment.type)}
+                            <a 
+                              href={attachment.url} 
+                              download 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              aria-label={`Download ${attachment.filename || 'attachment'}`}
+                            >
+                              {attachment.filename || attachment.name || 'Download'}
+                            </a>
                           </div>
-                        )}
-                        <div className="rrr-message-content">
-                          {msg.sender !== 'customer' && (
-                            <span className="rrr-sender">Support Team</span>
-                          )}
-                          <div className="rrr-bubble">
-                            <p>{msg.content || msg.text}</p>
-                            {msg.attachments?.map((file, i) => (
-                              <a
-                                key={i}
-                                href={file.url}
-                                className="rrr-attachment"
-                                download
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <FiPaperclip />
-                                {file.name}
-                              </a>
-                            ))}
-                          </div>
-                          <div className="rrr-message-footer">
-                            <span className="rrr-time">{formatTimestamp(msg.createdAt || msg.timestamp)}</span>
-                            {msg.sender === 'customer' && (
-                              <span className="rrr-status">
-                                {msg.isRead ? '✓✓ Read' : msg.delivered ? '✓✓ Delivered' : '✓ Sent'}
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                        ))}
                       </div>
-                    ))}
-                    <div ref={messagesEndRef} />
-                  </>
-                )}
-              </div>
+                      <div className="rr-message-footer">
+                        <span className="rr-message-time">
+                          {formatTimestamp(msg.createdAt)}
+                        </span>
+                        {msg.senderType === 'customer' && (
+                          <span className={`rr-read-receipt ${msg.isRead ? 'rr-read' : ''}`}>
+                            {msg.isRead ? 'Read' : 'Sent'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
 
               {isTracking && (
-                <div className="rrr-input-area">
-                  {messageFiles.length > 0 && (
-                    <div className="rrr-selected-files">
-                      {messageFiles.map((file, index) => (
-                        <div key={index} className="rrr-selected-file">
-                          <span>{file.name}</span>
-                          <button type="button" onClick={() => removeMessageFile(index)}>×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="rrr-input-row">
-                    <input
-                      ref={messageFileInputRef}
-                      type="file"
-                      multiple
-                      accept="image/*,.pdf"
-                      onChange={handleMessageFileSelect}
-                      style={{ display: 'none' }}
-                    />
-                    <button
-                      type="button"
-                      className="rrr-attach-btn"
-                      onClick={() => messageFileInputRef.current?.click()}
-                    >
-                      <FiPaperclip />
-                    </button>
-                    <input
-                      type="text"
-                      className="rrr-message-input"
-                      placeholder="Type your message..."
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    />
-                    <button
-                      type="button"
-                      className="rrr-send-btn"
-                      onClick={handleSendMessage}
-                      disabled={!newMessage.trim() && messageFiles.length === 0}
-                    >
-                      <FiSend />
-                    </button>
-                  </div>
+                <div className="rr-message-input-area">
+                  <input
+                    type="text"
+                    placeholder="Type your message..."
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                    className="rr-message-input"
+                    aria-label="Type message"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendMessage}
+                    className="rr-btn-send"
+                    disabled={!newMessage.trim() || actionLoading}
+                    aria-label="Send message"
+                  >
+                    <FiSend aria-hidden="true" />
+                  </button>
                 </div>
               )}
             </div>
@@ -851,9 +1089,57 @@ function ReturnRequest() {
         </div>
       </div>
 
+      {/* Cancel Refund Modal */}
+      {showCancelModal && (
+        <div className="rr-modal-overlay" onClick={() => setShowCancelModal(false)} role="dialog" aria-modal="true" aria-labelledby="cancel-modal-title">
+          <div className="rr-modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="rr-modal-header">
+              <h2 id="cancel-modal-title">Cancel Refund Request?</h2>
+              <button 
+                onClick={() => setShowCancelModal(false)} 
+                className="rr-modal-close"
+                aria-label="Close modal"
+              >
+                <FiX />
+              </button>
+            </div>
+            <div className="rr-modal-body">
+              <p>Are you sure you want to cancel your refund request? This action cannot be undone.</p>
+              <p className="rr-modal-warning">You can submit a new refund request later if needed.</p>
+            </div>
+            <div className="rr-modal-actions">
+              <button
+                onClick={() => setShowCancelModal(false)}
+                className="rr-btn-secondary"
+                disabled={actionLoading}
+              >
+                Keep Request
+              </button>
+              <button
+                onClick={handleCancelRefund}
+                className="rr-btn-danger"
+                disabled={actionLoading}
+              >
+                {actionLoading ? (
+                  <>
+                    <FiClock className="rr-spin" aria-hidden="true" />
+                    Cancelling...
+                  </>
+                ) : (
+                  <>
+                    <FiXCircle aria-hidden="true" />
+                    Cancel Request
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <Footer />
     </>
   );
 }
 
-export default ReturnRequest;
+export default RefundRequest;
