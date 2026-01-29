@@ -1,7 +1,12 @@
+// adminSlice.js - COMPLETE UPDATED VERSION
+
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
-// Fetch all products - admin
+// ============================================
+// PRODUCT MANAGEMENT
+// ============================================
+
 export const fetchAdminProducts = createAsyncThunk(
     'admin/fetchAdminProducts',
     async (_, { rejectWithValue }) => {
@@ -14,7 +19,6 @@ export const fetchAdminProducts = createAsyncThunk(
     }
 );
 
-// Create product
 export const createProduct = createAsyncThunk(
     'admin/createProduct',
     async (productData, { rejectWithValue }) => {
@@ -27,7 +31,6 @@ export const createProduct = createAsyncThunk(
     }
 );
 
-// Update product
 export const updateProduct = createAsyncThunk(
     'admin/updateProduct',
     async ({ id, productData }, { rejectWithValue }) => {
@@ -40,7 +43,6 @@ export const updateProduct = createAsyncThunk(
     }
 );
 
-// Delete product
 export const deleteProduct = createAsyncThunk(
     'admin/deleteProduct',
     async (id, { rejectWithValue }) => {
@@ -53,7 +55,9 @@ export const deleteProduct = createAsyncThunk(
     }
 );
 
-// === USER MANAGEMENT ===
+// ============================================
+// USER MANAGEMENT
+// ============================================
 
 export const fetchAllUsers = createAsyncThunk(
     'admin/fetchAllUsers',
@@ -103,7 +107,9 @@ export const deleteUser = createAsyncThunk(
     }
 );
 
-// === DASHBOARD STATS & ANALYTICS ===
+// ============================================
+// DASHBOARD STATS & ANALYTICS
+// ============================================
 
 export const fetchAdminStats = createAsyncThunk(
     'admin/fetchAdminStats',
@@ -129,7 +135,9 @@ export const fetchAnalytics = createAsyncThunk(
     }
 );
 
-// === ORDER MANAGEMENT ===
+// ============================================
+// ORDER MANAGEMENT
+// ============================================
 
 export const fetchAllOrders = createAsyncThunk(
     'admin/fetchAllOrders',
@@ -191,7 +199,119 @@ export const cancelOrder = createAsyncThunk(
     }
 );
 
-// === REVIEW MANAGEMENT ===
+// ============================================
+// ORDER MESSAGES (ADMIN)
+// ============================================
+
+/**
+ * Get orders with unread messages
+ */
+export const getOrdersWithUnreadMessages = createAsyncThunk(
+    'admin/getOrdersWithUnreadMessages',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/orders/unread-messages');
+            return data.orders;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch unread messages');
+        }
+    }
+);
+
+/**
+ * Add message to order (Admin)
+ */
+export const addOrderMessage = createAsyncThunk(
+    'admin/addOrderMessage',
+    async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.post(
+                `/api/v1/orders/${orderId}/messages`,
+                { content, attachments }
+            );
+            return { orderId, message: data.orderMessage };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to send message');
+        }
+    }
+);
+
+/**
+ * Get order messages (Admin)
+ */
+export const getOrderMessages = createAsyncThunk(
+    'admin/getOrderMessages',
+    async (orderId, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/orders/${orderId}/messages`);
+            return { orderId, messages: data.messages };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch messages');
+        }
+    }
+);
+
+// ============================================
+// TRACKING & SHIPMENT MANAGEMENT
+// ============================================
+
+/**
+ * Add tracking info to order
+ */
+export const addTrackingInfo = createAsyncThunk(
+    'admin/addTrackingInfo',
+    async ({ orderId, carrier, trackingNumber, estimatedDelivery }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.post(
+                `/api/v1/admin/orders/${orderId}/tracking`,
+                { carrier, trackingNumber, estimatedDelivery }
+            );
+            return { orderId, tracking: data.tracking };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to add tracking info');
+        }
+    }
+);
+
+/**
+ * Create shipment
+ */
+export const createShipment = createAsyncThunk(
+    'admin/createShipment',
+    async ({ orderId, items, warehouse, carrier, weight, dimensions }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.post(
+                `/api/v1/admin/orders/${orderId}/shipments`,
+                { items, warehouse, carrier, weight, dimensions }
+            );
+            return { orderId, shipment: data.shipment };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to create shipment');
+        }
+    }
+);
+
+/**
+ * Update shipment status
+ */
+export const updateShipmentStatus = createAsyncThunk(
+    'admin/updateShipmentStatus',
+    async ({ orderId, shipmentId, status, trackingNumber }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/orders/${orderId}/shipments/${shipmentId}`,
+                { status, trackingNumber }
+            );
+            return { orderId, shipmentId, shipment: data.shipment };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to update shipment');
+        }
+    }
+);
+
+// ============================================
+// REVIEW MANAGEMENT
+// ============================================
 
 export const fetchAllReviews = createAsyncThunk(
     'admin/fetchAllReviews',
@@ -232,7 +352,9 @@ export const deleteReview = createAsyncThunk(
     }
 );
 
-// === REFUND MANAGEMENT ===
+// ============================================
+// REFUND MANAGEMENT
+// ============================================
 
 export const fetchAllRefunds = createAsyncThunk(
     'admin/fetchAllRefunds',
@@ -245,6 +367,18 @@ export const fetchAllRefunds = createAsyncThunk(
             return data;
         } catch (error) {
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch refunds');
+        }
+    }
+);
+
+export const getSingleRefund = createAsyncThunk(
+    'admin/getSingleRefund',
+    async (orderId, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/admin/refunds/${orderId}`);
+            return data.order;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch refund');
         }
     }
 );
@@ -279,9 +413,6 @@ export const processRefundPayment = createAsyncThunk(
     }
 );
 
-/**
- * Add message to refund conversation
- */
 export const addRefundMessage = createAsyncThunk(
     'admin/addRefundMessage',
     async ({ orderId, message, attachments }, { rejectWithValue }) => {
@@ -303,9 +434,6 @@ export const addRefundMessage = createAsyncThunk(
     }
 );
 
-/**
- * Upload files for refund
- */
 export const uploadRefundFiles = createAsyncThunk(
     'admin/uploadRefundFiles',
     async ({ orderId, files }, { rejectWithValue }) => {
@@ -331,14 +459,190 @@ export const uploadRefundFiles = createAsyncThunk(
     }
 );
 
+export const getRefundsWithUnreadMessages = createAsyncThunk(
+    'admin/getRefundsWithUnreadMessages',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/refunds/unread');
+            return data.orders;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch unread refund messages');
+        }
+    }
+);
 
+// ============================================
+// RETURN MANAGEMENT (NEW)
+// ============================================
+
+export const fetchAllReturns = createAsyncThunk(
+    'admin/fetchAllReturns',
+    async (filters = {}, { rejectWithValue }) => {
+        try {
+            const params = new URLSearchParams(filters).toString();
+            const { data } = await axios.get(
+                `/api/v1/admin/returns${params ? `?${params}` : ''}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch returns');
+        }
+    }
+);
+
+export const getSingleReturn = createAsyncThunk(
+    'admin/getSingleReturn',
+    async (orderId, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/admin/returns/${orderId}`);
+            return data.order;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch return');
+        }
+    }
+);
+
+export const reviewReturnRequest = createAsyncThunk(
+    'admin/reviewReturn',
+    async ({ orderId, action, restockFee = 0, adminNote = '' }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/orders/${orderId}/return/review`,
+                { action, restockFee, adminNote }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to review return');
+        }
+    }
+);
+
+export const updateReturnStatus = createAsyncThunk(
+    'admin/updateReturnStatus',
+    async ({ orderId, status, inspectionNotes }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/orders/${orderId}/return/status`,
+                { status, inspectionNotes }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to update return status');
+        }
+    }
+);
+
+export const addReturnMessage = createAsyncThunk(
+    'admin/addReturnMessage',
+    async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.post(
+                `/api/v1/admin/returns/${orderId}/messages`,
+                { content, attachments }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to send message');
+        }
+    }
+);
+
+export const uploadReturnFiles = createAsyncThunk(
+    'admin/uploadReturnFiles',
+    async ({ orderId, files }, { rejectWithValue }) => {
+        try {
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('attachments', file);
+            });
+            
+            const { data } = await axios.post(
+                `/api/v1/admin/returns/${orderId}/upload`,
+                formData,
+                {
+                    headers: {
+                        'Content-Type': 'multipart/form-data'
+                    }
+                }
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to upload files');
+        }
+    }
+);
+
+export const getReturnsWithUnreadMessages = createAsyncThunk(
+    'admin/getReturnsWithUnreadMessages',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/returns/unread');
+            return data.returns;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch unread return messages');
+        }
+    }
+);
+
+// ============================================
+// FRAUD & ANALYTICS
+// ============================================
+
+export const getPendingFraudReviews = createAsyncThunk(
+    'admin/getPendingFraudReviews',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get('/api/v1/admin/orders/fraud-review');
+            return data.orders;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch fraud reviews');
+        }
+    }
+);
+
+export const reviewFraudCheck = createAsyncThunk(
+    'admin/reviewFraudCheck',
+    async ({ orderId, decision }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/orders/${orderId}/fraud-review`,
+                { decision }
+            );
+            return { orderId, order: data.order };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to review fraud check');
+        }
+    }
+);
+
+export const getCustomerOrderAnalytics = createAsyncThunk(
+    'admin/getCustomerOrderAnalytics',
+    async (userId, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/analytics/customer/${userId}/orders`);
+            return data.analytics;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch customer analytics');
+        }
+    }
+);
+
+// ============================================
+// SLICE DEFINITION
+// ============================================
 
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
+        // Products
         products: [],
-        users: [],  
-        stats: {              
+        
+        // Users
+        users: [],
+        currentUser: null,
+        
+        // Dashboard & Analytics
+        stats: {
             products: 0,
             orders: 0,
             revenue: 0,
@@ -375,12 +679,36 @@ const adminSlice = createSlice({
                 products: 0
             }
         },
-        currentUser: null, 
-        orders: [],  
-        currentOrder: null,    
+        
+        // Orders
+        orders: [],
+        currentOrder: null,
+        orderMessages: [],
+        unreadOrders: [],
+        
+        // Reviews
         reviews: [],
-        refunds: [], 
-        refundStats: null, 
+        
+        // Refunds
+        refunds: [],
+        refundStats: null,
+        currentRefund: null,
+        unreadRefunds: [],
+        
+        // Returns (NEW)
+        returns: [],
+        returnStats: null,
+        currentReturn: null,
+        unreadReturns: [],
+        returnMessages: [],
+        
+        // Fraud
+        fraudReviews: [],
+        
+        // Customer Analytics
+        customerAnalytics: null,
+        
+        // UI States
         success: false,
         loading: false,
         analyticsLoading: false,
@@ -400,11 +728,19 @@ const adminSlice = createSlice({
         },
         clearCurrentOrder: (state) => {
             state.currentOrder = null;
+        },
+        clearCurrentRefund: (state) => {
+            state.currentRefund = null;
+        },
+        clearCurrentReturn: (state) => {
+            state.currentReturn = null;
         }
     },
     extraReducers: (builder) => {
+        // ============================================
+        // PRODUCTS
+        // ============================================
         builder
-            // Products
             .addCase(fetchAdminProducts.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -459,9 +795,12 @@ const adminSlice = createSlice({
             .addCase(deleteProduct.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload || 'Failed to Delete Product';
-            })
+            });
 
-            // Users
+        // ============================================
+        // USERS
+        // ============================================
+        builder
             .addCase(fetchAllUsers.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -518,23 +857,25 @@ const adminSlice = createSlice({
             .addCase(deleteUser.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            })
+            });
 
-            // Admin Stats 
+        // ============================================
+        // STATS & ANALYTICS
+        // ============================================
+        builder
             .addCase(fetchAdminStats.pending, (state) => {
                 state.loading = true;
                 state.error = null;
             })
             .addCase(fetchAdminStats.fulfilled, (state, action) => {
                 state.loading = false;
-                state.stats = action.payload; 
+                state.stats = action.payload;
             })
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             })
 
-            // Analytics
             .addCase(fetchAnalytics.pending, (state) => {
                 state.analyticsLoading = true;
                 state.error = null;
@@ -546,9 +887,12 @@ const adminSlice = createSlice({
             .addCase(fetchAnalytics.rejected, (state, action) => {
                 state.analyticsLoading = false;
                 state.error = action.payload;
-            })
+            });
 
-            // Orders
+        // ============================================
+        // ORDERS
+        // ============================================
+        builder
             .addCase(fetchAllOrders.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -623,9 +967,102 @@ const adminSlice = createSlice({
             .addCase(cancelOrder.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
+            });
+
+        // ============================================
+        // ORDER MESSAGES (NEW)
+        // ============================================
+        builder
+            .addCase(getOrdersWithUnreadMessages.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getOrdersWithUnreadMessages.fulfilled, (state, action) => {
+                state.loading = false;
+                state.unreadOrders = action.payload;
+            })
+            .addCase(getOrdersWithUnreadMessages.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
             })
 
-            // Reviews
+            .addCase(addOrderMessage.pending, (state) => {
+                state.messageLoading = true;
+                state.error = null;
+            })
+            .addCase(addOrderMessage.fulfilled, (state, action) => {
+                state.messageLoading = false;
+                state.success = true;
+                state.orderMessages.push(action.payload.message);
+            })
+            .addCase(addOrderMessage.rejected, (state, action) => {
+                state.messageLoading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(getOrderMessages.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getOrderMessages.fulfilled, (state, action) => {
+                state.loading = false;
+                state.orderMessages = action.payload.messages;
+            })
+            .addCase(getOrderMessages.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            });
+
+        // ============================================
+        // TRACKING & SHIPMENTS (NEW)
+        // ============================================
+        builder
+            .addCase(addTrackingInfo.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(addTrackingInfo.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                if (state.currentOrder?._id === action.payload.orderId) {
+                    state.currentOrder.tracking = action.payload.tracking;
+                }
+            })
+            .addCase(addTrackingInfo.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(createShipment.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(createShipment.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+            })
+            .addCase(createShipment.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(updateShipmentStatus.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(updateShipmentStatus.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+            })
+            .addCase(updateShipmentStatus.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            });
+
+        // ============================================
+        // REVIEWS
+        // ============================================
+        builder
             .addCase(fetchAllReviews.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -653,9 +1090,12 @@ const adminSlice = createSlice({
             .addCase(deleteReview.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            })
+            });
 
-            // Refunds
+        // ============================================
+        // REFUNDS
+        // ============================================
+        builder
             .addCase(fetchAllRefunds.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -670,6 +1110,19 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
+            .addCase(getSingleRefund.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getSingleRefund.fulfilled, (state, action) => {
+                state.loading = false;
+                state.currentRefund = action.payload;
+            })
+            .addCase(getSingleRefund.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
             .addCase(reviewRefundRequest.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -677,7 +1130,6 @@ const adminSlice = createSlice({
             .addCase(reviewRefundRequest.fulfilled, (state, action) => {
                 state.loading = false;
                 state.success = true;
-                // Update the refund in the list
                 const index = state.refunds.findIndex(r => r._id === action.payload.order._id);
                 if (index !== -1) state.refunds[index] = action.payload.order;
             })
@@ -693,7 +1145,6 @@ const adminSlice = createSlice({
             .addCase(processRefundPayment.fulfilled, (state, action) => {
                 state.loading = false;
                 state.success = true;
-                // Update the refund in the list
                 const index = state.refunds.findIndex(r => r._id === action.payload.order._id);
                 if (index !== -1) state.refunds[index] = action.payload.order;
             })
@@ -702,7 +1153,6 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
-            // Add message
             .addCase(addRefundMessage.pending, (state) => {
                 state.messageLoading = true;
                 state.error = null;
@@ -710,11 +1160,8 @@ const adminSlice = createSlice({
             .addCase(addRefundMessage.fulfilled, (state, action) => {
                 state.messageLoading = false;
                 state.success = true;
-                
-                // Update the current refund if it's loaded
                 const index = state.refunds.findIndex(r => r._id === action.payload.orderId);
                 if (index !== -1 && state.refunds[index].refundInfo) {
-                    // Add message to the messages array
                     if (!state.refunds[index].refundInfo.messages) {
                         state.refunds[index].refundInfo.messages = [];
                     }
@@ -726,22 +1173,190 @@ const adminSlice = createSlice({
                 state.error = action.payload;
             })
 
-            // Upload files
             .addCase(uploadRefundFiles.pending, (state) => {
                 state.uploadLoading = true;
                 state.error = null;
             })
             .addCase(uploadRefundFiles.fulfilled, (state, action) => {
                 state.uploadLoading = false;
-                // Uploaded files are returned and can be attached to messages
             })
             .addCase(uploadRefundFiles.rejected, (state, action) => {
                 state.uploadLoading = false;
                 state.error = action.payload;
             })
 
+            .addCase(getRefundsWithUnreadMessages.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getRefundsWithUnreadMessages.fulfilled, (state, action) => {
+                state.loading = false;
+                state.unreadRefunds = action.payload;
+            })
+            .addCase(getRefundsWithUnreadMessages.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            });
+
+        // ============================================
+        // RETURNS (NEW)
+        // ============================================
+        builder
+            .addCase(fetchAllReturns.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(fetchAllReturns.fulfilled, (state, action) => {
+                state.loading = false;
+                state.returns = action.payload.returns;
+                state.returnStats = action.payload.stats;
+            })
+            .addCase(fetchAllReturns.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(getSingleReturn.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getSingleReturn.fulfilled, (state, action) => {
+                state.loading = false;
+                state.currentReturn = action.payload;
+            })
+            .addCase(getSingleReturn.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(reviewReturnRequest.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(reviewReturnRequest.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                const index = state.returns.findIndex(r => r.orderId === action.payload.returnInfo?._id);
+                if (index !== -1) {
+                    state.returns[index].returnInfo = action.payload.returnInfo;
+                }
+            })
+            .addCase(reviewReturnRequest.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(updateReturnStatus.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(updateReturnStatus.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                const index = state.returns.findIndex(r => r.orderId === action.payload.returnInfo?._id);
+                if (index !== -1) {
+                    state.returns[index].returnInfo = action.payload.returnInfo;
+                }
+            })
+            .addCase(updateReturnStatus.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(addReturnMessage.pending, (state) => {
+                state.messageLoading = true;
+                state.error = null;
+            })
+            .addCase(addReturnMessage.fulfilled, (state, action) => {
+                state.messageLoading = false;
+                state.success = true;
+                state.returnMessages.push(action.payload.data.message);
+            })
+            .addCase(addReturnMessage.rejected, (state, action) => {
+                state.messageLoading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(uploadReturnFiles.pending, (state) => {
+                state.uploadLoading = true;
+                state.error = null;
+            })
+            .addCase(uploadReturnFiles.fulfilled, (state, action) => {
+                state.uploadLoading = false;
+            })
+            .addCase(uploadReturnFiles.rejected, (state, action) => {
+                state.uploadLoading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(getReturnsWithUnreadMessages.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getReturnsWithUnreadMessages.fulfilled, (state, action) => {
+                state.loading = false;
+                state.unreadReturns = action.payload;
+            })
+            .addCase(getReturnsWithUnreadMessages.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            });
+
+        // ============================================
+        // FRAUD & ANALYTICS (NEW)
+        // ============================================
+        builder
+            .addCase(getPendingFraudReviews.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getPendingFraudReviews.fulfilled, (state, action) => {
+                state.loading = false;
+                state.fraudReviews = action.payload;
+            })
+            .addCase(getPendingFraudReviews.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(reviewFraudCheck.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(reviewFraudCheck.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                state.fraudReviews = state.fraudReviews.filter(
+                    f => f._id !== action.payload.orderId
+                );
+            })
+            .addCase(reviewFraudCheck.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(getCustomerOrderAnalytics.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getCustomerOrderAnalytics.fulfilled, (state, action) => {
+                state.loading = false;
+                state.customerAnalytics = action.payload;
+            })
+            .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            });
     }
 });
 
-export const { removeErrors, removeSuccess, clearCurrentUser, clearCurrentOrder } = adminSlice.actions;
+export const { 
+    removeErrors, 
+    removeSuccess, 
+    clearCurrentUser, 
+    clearCurrentOrder,
+    clearCurrentRefund,
+    clearCurrentReturn
+} = adminSlice.actions;
+
 export default adminSlice.reducer;

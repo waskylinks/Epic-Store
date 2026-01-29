@@ -31,7 +31,7 @@ const createFormDataWithFiles = (data, files = []) => {
   });
   
   // Add files
-  files.forEach((file, index) => {
+  files.forEach((file) => {
     formData.append(`images`, file);
   });
   
@@ -655,7 +655,7 @@ export const markOrderMessagesRead = createAsyncThunk(
   "order/markOrderMessagesRead",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(
+      await axios.put(
         `${API_BASE}/orders/${orderId}/messages/read`,
         {},
         { withCredentials: true }
@@ -761,7 +761,7 @@ export const cancelReturnRequest = createAsyncThunk(
   "order/cancelReturnRequest",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(
+      await axios.put(
         `${API_BASE}/orders/${orderId}/return/cancel`,
         {},
         { withCredentials: true }
@@ -1347,7 +1347,7 @@ const orderSlice = createSlice({
         state.actionLoading = true;
         state.error = null;
       })
-      .addCase(cancelReturnRequest.fulfilled, (state, action) => {
+      .addCase(cancelReturnRequest.fulfilled, (state) => {
         state.actionLoading = false;
         state.returnInfo = null;
         state.message = "Return request cancelled successfully";
