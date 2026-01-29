@@ -949,30 +949,3 @@ export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, nex
   });
 });
 
-// UPDATE YOUR EXPORTS at the bottom of order-controller.js:
-export {
-  getAllMyOrders,
-  getOrderDetails,
-  createOrder,
-  getOrderTimeline,
-  addOrderNote,
-  getOrderNotes,
-  editOrderNote,
-  addTrackingInfo,
-  getTrackingInfo,
-  createShipment,
-  updateShipmentStatus,
-  requestReturn,
-  reviewReturnRequest,
-  updateReturnStatus,
-  getAllReturns,
-  downloadInvoice,
-  getPendingFraudReviews,
-  reviewFraudCheck,
-  getAuditLog,
-  getCustomerOrderAnalytics,
-  addOrderMessage,
-  getOrderMessages,
-  markOrderMessagesRead,
-  getOrdersWithUnreadMessages
-};
