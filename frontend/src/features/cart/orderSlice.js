@@ -604,43 +604,205 @@ export const getCustomerOrderAnalytics = createAsyncThunk(
 );
 
 // ============================================
+// ORDER MESSAGES (Customer)
+// ============================================
+
+/**
+ * Add message to order
+ */
+export const addOrderMessage = createAsyncThunk(
+  "order/addOrderMessage",
+  async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/messages`,
+        { content, attachments },
+        { withCredentials: true }
+      );
+      return { orderId, message: data.orderMessage };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to send message"
+      );
+    }
+  }
+);
+
+/**
+ * Get order messages
+ */
+export const getOrderMessages = createAsyncThunk(
+  "order/getOrderMessages",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/messages`,
+        { withCredentials: true }
+      );
+      return { orderId, messages: data.messages };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch messages"
+      );
+    }
+  }
+);
+
+/**
+ * Mark order messages as read
+ */
+export const markOrderMessagesRead = createAsyncThunk(
+  "order/markOrderMessagesRead",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.put(
+        `${API_BASE}/orders/${orderId}/messages/read`,
+        {},
+        { withCredentials: true }
+      );
+      return { orderId };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to mark messages as read"
+      );
+    }
+  }
+);
+
+// ============================================
+// RETURN MESSAGES (Customer)
+// ============================================
+
+/**
+ * Add message to return
+ */
+export const addReturnMessage = createAsyncThunk(
+  "order/addReturnMessage",
+  async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/return/messages`,
+        { content, attachments },
+        { withCredentials: true }
+      );
+      return { orderId, message: data.data.message };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to send message"
+      );
+    }
+  }
+);
+
+/**
+ * Get return messages
+ */
+export const getReturnMessages = createAsyncThunk(
+  "order/getReturnMessages",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/return/messages`,
+        { withCredentials: true }
+      );
+      return { orderId, messages: data.messages };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch messages"
+      );
+    }
+  }
+);
+
+/**
+ * Get return timeline
+ */
+export const getReturnTimeline = createAsyncThunk(
+  "order/getReturnTimeline",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/return/timeline`,
+        { withCredentials: true }
+      );
+      return { orderId, timeline: data.timeline };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch timeline"
+      );
+    }
+  }
+);
+
+/**
+ * Get return documents
+ */
+export const getReturnDocuments = createAsyncThunk(
+  "order/getReturnDocuments",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/return/documents`,
+        { withCredentials: true }
+      );
+      return { orderId, documents: data.documents };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch documents"
+      );
+    }
+  }
+);
+
+/**
+ * Cancel return request
+ */
+export const cancelReturnRequest = createAsyncThunk(
+  "order/cancelReturnRequest",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.put(
+        `${API_BASE}/orders/${orderId}/return/cancel`,
+        {},
+        { withCredentials: true }
+      );
+      return { orderId };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to cancel return"
+      );
+    }
+  }
+);
+
+// ============================================
 // SLICE DEFINITION
 // ============================================
 
 const orderSlice = createSlice({
   name: "order",
   initialState: {
-    // Orders data
     orders: [],
     order: null,
-    
-    // Timeline & Notes
     timeline: [],
     notes: [],
-    
-    // Tracking & Shipments
     tracking: null,
     shipments: [],
-    
-    // Returns & Refunds
     returns: [],
     refunds: [],
     returnInfo: null,
     refundInfo: null,
-    
-    // Invoice
     invoice: null,
-    
-    // Fraud & Audit
     fraudReviews: [],
     auditLog: [],
-    
-    // Analytics
     analytics: null,
+    orderMessages: [],
+    returnMessages: [],
+    returnTimeline: [],
+    returnDocuments: [],
     
-    // UI States
     loading: false,
-    actionLoading: false, // For individual actions like notes, tracking
+    actionLoading: false,
     error: null,
     success: false,
     message: null,
@@ -1095,6 +1257,103 @@ const orderSlice = createSlice({
       })
       .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
         state.loading = false;
+        state.error = action.payload;
+      });
+
+    // ============================================
+    // ORDER MESSAGES
+    // ============================================
+    builder
+      .addCase(addOrderMessage.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(addOrderMessage.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.orderMessages.push(action.payload.message);
+        state.message = "Message sent successfully";
+      })
+      .addCase(addOrderMessage.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
+
+    builder
+      .addCase(getOrderMessages.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(getOrderMessages.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.orderMessages = action.payload.messages;
+      })
+      .addCase(getOrderMessages.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
+
+    builder
+      .addCase(markOrderMessagesRead.fulfilled, (state) => {
+        state.orderMessages = state.orderMessages.map(msg => ({
+          ...msg,
+          isRead: true
+        }));
+      });
+
+    // ============================================
+    // RETURN MESSAGES
+    // ============================================
+    builder
+      .addCase(addReturnMessage.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(addReturnMessage.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.returnMessages.push(action.payload.message);
+        state.message = "Message sent successfully";
+      })
+      .addCase(addReturnMessage.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
+
+    builder
+      .addCase(getReturnMessages.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(getReturnMessages.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.returnMessages = action.payload.messages;
+      })
+      .addCase(getReturnMessages.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
+
+    builder
+      .addCase(getReturnTimeline.fulfilled, (state, action) => {
+        state.returnTimeline = action.payload.timeline;
+      });
+
+    builder
+      .addCase(getReturnDocuments.fulfilled, (state, action) => {
+        state.returnDocuments = action.payload.documents;
+      });
+
+    builder
+      .addCase(cancelReturnRequest.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(cancelReturnRequest.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.returnInfo = null;
+        state.message = "Return request cancelled successfully";
+      })
+      .addCase(cancelReturnRequest.rejected, (state, action) => {
+        state.actionLoading = false;
         state.error = action.payload;
       });
   },
