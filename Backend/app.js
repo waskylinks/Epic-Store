@@ -26,6 +26,8 @@ import analyticsRoutes from './routes/analytics-routes.js';
 import paymentRoutes from './routes/payment-routes.js';
 import receiptRoutes from './routes/receipts-routes.js';
 import wishlistRoutes from './routes/wishlist-routes.js';
+import cartRoutes from './routes/cart-routes.js';
+import shippingRoutes from './routes/shipping-routes.js';
 
 // Import passport configuration
 import './config/passport.js';
@@ -232,6 +234,9 @@ app.use('/api/v1', analyticsRoutes);
 app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/receipts', receiptRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
+app.use('/api/v1/cart', cartRoutes);
+app.use('/api/v1', cartRoutes); // For /products/:id/availability endpoint
+app.use('/api/v1/shipping', shippingRoutes);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
