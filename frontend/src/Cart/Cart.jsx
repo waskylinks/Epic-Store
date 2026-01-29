@@ -27,7 +27,7 @@ import {
 function Cart() {
   const { 
     cartItems, 
-    pricing, 
+    pricing = {}, 
     validation,
     loading, 
     pricingLoading,
@@ -42,6 +42,26 @@ function Cart() {
   const navigate = useNavigate();
 
   const [isValidating, setIsValidating] = useState(false);
+
+  // Calculate local pricing as fallback - handles both qty and quantity
+  const calculateLocalPricing = () => {
+    const itemPrice = cartItems.reduce((acc, item) => {
+      const itemQty = item.qty || item.quantity || 1;
+      const itemPrice = item.price || 0;
+      return acc + (itemPrice * itemQty);
+    }, 0);
+    
+    const taxPrice = itemPrice * 0.18;
+    const shippingPrice = itemPrice >= 500 ? 0 : 50;
+    const totalPrice = itemPrice + taxPrice + shippingPrice;
+    
+    return { itemPrice, taxPrice, shippingPrice, totalPrice };
+  };
+
+  // Use server pricing if available and valid, otherwise use local calculation
+  const displayPricing = (pricing && typeof pricing.totalPrice === 'number') 
+    ? pricing 
+    : calculateLocalPricing();
 
   // Check cart expiry on mount
   useEffect(() => {
@@ -59,6 +79,7 @@ function Cart() {
           })).unwrap();
         } catch (err) {
           console.error('Pricing calculation error:', err);
+          // Fallback to local calculation will be used automatically
         }
       };
       fetchPricing();
@@ -139,17 +160,6 @@ function Cart() {
     }
   };
 
-  // Show loader while initial pricing loads
-  if (cartItems.length > 0 && pricingLoading && !pricing.lastUpdated) {
-    return (
-      <>
-        <Navbar />
-        <Loader />
-        <Footer />
-      </>
-    );
-  }
-
   return (
     <>
       <PageTitle title='Shopping Cart' />
@@ -205,7 +215,7 @@ function Cart() {
                     disabled={validationLoading}
                   >
                     <FiRefreshCw className={validationLoading ? 'ec-spinning' : ''} />
-                    {validationLoading ? 'Validating...' : 'Validate Cart'}
+                    {validationLoading ? 'Validating..' : 'Validate Cart'}
                   </button>
                 )}
               </div>
@@ -232,72 +242,63 @@ function Cart() {
               <div className="ec-summary">
                 <h3 className="ec-summary-heading">Order Summary</h3>
 
-                {pricingLoading ? (
-                  <div className="ec-summary-loading">
-                    <FiRefreshCw className="ec-spinning" />
-                    <span>Calculating prices...</span>
-                  </div>
-                ) : (
-                  <>
-                    <div className="ec-summary-item">
-                      <span className="ec-summary-label">Subtotal:</span>
-                      <span className="ec-summary-value">
-                        {formatNGN(pricing.itemPrice)}
-                      </span>
-                    </div>
+                <div className="ec-summary-item">
+                  <span className="ec-summary-label">Subtotal:</span>
+                  <span className="ec-summary-value">
+                    {formatNGN(displayPricing.itemPrice || 0)}
+                  </span>
+                </div>
 
-                    <div className="ec-summary-item">
-                      <span className="ec-summary-label">Tax (18%):</span>
-                      <span className="ec-summary-value">
-                        {formatNGN(pricing.taxPrice)}
-                      </span>
-                    </div>
+                <div className="ec-summary-item">
+                  <span className="ec-summary-label">Tax (18%):</span>
+                  <span className="ec-summary-value">
+                    {formatNGN(displayPricing.taxPrice || 0)}
+                  </span>
+                </div>
 
-                    <div className="ec-summary-item">
-                      <span className="ec-summary-label">Shipping:</span>
-                      <span className="ec-summary-value">
-                        {pricing.shippingPrice === 0 ? (
-                          <span className="ec-free-shipping">FREE</span>
-                        ) : (
-                          formatNGN(pricing.shippingPrice)
-                        )}
-                      </span>
-                    </div>
-
-                    {pricing.shippingPrice > 0 && (
-                      <div className="ec-summary-note">
-                        <FiAlertCircle />
-                        <span>Add {formatNGN(500 - pricing.itemPrice)} more for free shipping</span>
-                      </div>
+                <div className="ec-summary-item">
+                  <span className="ec-summary-label">Shipping:</span>
+                  <span className="ec-summary-value">
+                    {displayPricing.shippingPrice === 0 ? (
+                      <span className="ec-free-shipping">FREE</span>
+                    ) : (
+                      formatNGN(displayPricing.shippingPrice || 0)
                     )}
+                  </span>
+                </div>
 
-                    <div className="ec-summary-divider"></div>
-
-                    <div className="ec-summary-total">
-                      <span className="ec-total-label">Total:</span>
-                      <span className="ec-total-value">
-                        {formatNGN(pricing.totalPrice)}
-                      </span>
-                    </div>
-
-                    <p className="ec-summary-disclaimer">
-                      <FiAlertCircle />
-                      Prices are calculated securely on our servers
-                    </p>
-
-                    <button 
-                      className="ec-checkout-btn"
-                      onClick={handleValidateCart}
-                      disabled={isValidating || validationLoading || pricingLoading}
-                    >
-                      {isValidating ? 'Validating...' : 'Proceed to Checkout'}
-                    </button>
-
-                    <Link to="/products" className="ec-continue-shopping">
-                      Continue Shopping
-                    </Link>
-                  </>
+                {displayPricing.itemPrice > 0 && displayPricing.shippingPrice > 0 && (
+                  <div className="ec-summary-note">
+                    <FiAlertCircle />
+                    <span>Add {formatNGN(Math.max(0, 500 - displayPricing.itemPrice))} more for free shipping</span>
+                  </div>
                 )}
+
+                <div className="ec-summary-divider"></div>
+
+                <div className="ec-summary-total">
+                  <span className="ec-total-label">Total:</span>
+                  <span className="ec-total-value">
+                    {formatNGN(displayPricing.totalPrice || 0)}
+                  </span>
+                </div>
+
+                <p className="ec-summary-disclaimer">
+                  <FiAlertCircle />
+                  Prices are calculated securely on our servers
+                </p>
+
+                <button 
+                  className="ec-checkout-btn"
+                  onClick={handleValidateCart}
+                  disabled={isValidating || validationLoading}
+                >
+                  {isValidating ? 'Validating...' : 'Proceed to Checkout'}
+                </button>
+
+                <Link to="/products" className="ec-continue-shopping">
+                  Continue Shopping
+                </Link>
               </div>
 
               {/* Trust Badges */}

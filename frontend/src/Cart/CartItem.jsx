@@ -12,9 +12,17 @@ import '../CartStyles/Cart.css';
 
 function CartItem({ item }) {
   const { success, loading, error, message } = useSelector(state => state.cart);
-  const [quantity, setQuantity] = useState(item.quantity);
+  
+  // Handle both qty and quantity properties
+  const currentQty = item.qty || item.quantity || 1;
+  const [quantity, setQuantity] = useState(currentQty);
   const [isUpdating, setIsUpdating] = useState(false);
   const dispatch = useDispatch();
+
+  // Sync quantity when item changes
+  useEffect(() => {
+    setQuantity(item.qty || item.quantity || 1);
+  }, [item.qty, item.quantity]);
 
   // Format currency
   const formatNGN = (amount) => {
@@ -51,7 +59,8 @@ function CartItem({ item }) {
 
   // Update quantity
   const handleUpdate = async () => {
-    if (quantity !== item.quantity) {
+    const itemQty = item.qty || item.quantity || 1;
+    if (quantity !== itemQty) {
       setIsUpdating(true);
       try {
         dispatch(updateItemQuantity({
@@ -166,7 +175,7 @@ function CartItem({ item }) {
         <button 
           className="ec-item-update-btn"
           onClick={handleUpdate}
-          disabled={loading || isUpdating || quantity === item.quantity}
+          disabled={loading || isUpdating || quantity === currentQty}
         >
           {isUpdating ? 'Updating...' : 'Update'}
         </button>

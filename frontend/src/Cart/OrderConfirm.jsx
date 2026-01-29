@@ -12,12 +12,40 @@ import Loader from '../components/Loader';
 import { FiAlertCircle, FiCheckCircle, FiLock } from 'react-icons/fi';
 
 function OrderConfirm() {
-  const { shippingInfo, cartItems, pricing, pricingLoading } = useSelector(state => state.cart);
+  const { shippingInfo, cartItems, pricing = {}, pricingLoading } = useSelector(state => state.cart);
   const { user } = useSelector(state => state.user);
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // Calculate local pricing as fallback
+  const calculateLocalPricing = () => {
+    const itemPrice = cartItems.reduce((acc, item) => {
+      const itemQty = item.qty || item.quantity || 1;
+      const itemPrice = item.price || 0;
+      return acc + (itemPrice * itemQty);
+    }, 0);
+    
+    const taxPrice = itemPrice * 0.18;
+    const shippingPrice = itemPrice >= 500 ? 0 : 50;
+    const totalPrice = itemPrice + taxPrice + shippingPrice;
+    
+    return { itemPrice, taxPrice, shippingPrice, totalPrice };
+  };
+
+  // Use server pricing if available, otherwise calculate locally
+  const displayPricing = (pricing && typeof pricing.totalPrice === 'number') 
+    ? pricing 
+    : calculateLocalPricing();
+
+  // Get user's full name
+  const getUserFullName = () => {
+    if (user?.firstName && user?.lastName) {
+      return `${user.firstName} ${user.lastName}`;
+    }
+    return user?.name || 'N/A';
+  };
 
   // Fetch server-calculated pricing on mount
   useEffect(() => {
@@ -29,11 +57,8 @@ function OrderConfirm() {
             currency: 'NGN' 
           })).unwrap();
         } catch (err) {
-          toast.error('Failed to calculate prices', {
-            position: 'top-center',
-            autoClose: 3000
-          });
-          navigate('/cart');
+          console.error('Pricing calculation error:', err);
+          // Fallback to local pricing will be used
         }
       };
       fetchPricing();
@@ -69,9 +94,9 @@ function OrderConfirm() {
     const orderData = {
       cartItems,
       shippingInfo,
-      pricing,
+      pricing: displayPricing,
       user: {
-        name: user.name,
+        name: getUserFullName(),
         email: user.email
       }
     };
@@ -80,14 +105,8 @@ function OrderConfirm() {
     navigate('/process/payment');
   };
 
-  if (pricingLoading && !pricing.lastUpdated) {
-    return (
-      <>
-        <Navbar />
-        <Loader />
-        <Footer />
-      </>
-    );
+  if (cartItems.length === 0) {
+    return null; // Will redirect via useEffect
   }
 
   return (
@@ -125,7 +144,7 @@ function OrderConfirm() {
                 </thead>
                 <tbody>
                   <tr>
-                    <td>{user?.name || 'N/A'}</td>
+                    <td>{getUserFullName()}</td>
                     <td>{shippingInfo.phoneNo || 'N/A'}</td>
                     <td>
                       {shippingInfo.address}, {shippingInfo.city}, {shippingInfo.state}, {shippingInfo.country} - {shippingInfo.pinCode}
@@ -151,26 +170,29 @@ function OrderConfirm() {
                   </tr>
                 </thead>
                 <tbody>
-                  {cartItems.map(item => (
-                    <tr key={item.product}>
-                      <td>
-                        <img 
-                          src={item.image} 
-                          alt={item.name} 
-                          className='eoc-product-image'
-                          onError={(e) => {
-                            e.target.src = '/images/placeholder.png';
-                          }}
-                        />
-                      </td>
-                      <td className="eoc-product-name">{item.name}</td>
-                      <td>{formatNGN(item.price)}</td>
-                      <td>{item.quantity}</td>
-                      <td className="eoc-item-total">
-                        {formatNGN(item.price * item.quantity)}
-                      </td>
-                    </tr>
-                  ))}
+                  {cartItems.map(item => {
+                    const itemQty = item.qty || item.quantity || 1;
+                    return (
+                      <tr key={item.product}>
+                        <td>
+                          <img 
+                            src={item.image} 
+                            alt={item.name} 
+                            className='eoc-product-image'
+                            onError={(e) => {
+                              e.target.src = '/images/placeholder.png';
+                            }}
+                          />
+                        </td>
+                        <td className="eoc-product-name">{item.name}</td>
+                        <td>{formatNGN(item.price)}</td>
+                        <td>{itemQty}</td>
+                        <td className="eoc-item-total">
+                          {formatNGN(item.price * itemQty)}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -180,45 +202,48 @@ function OrderConfirm() {
           <div className="eoc-section">
             <h2 className="eoc-section-title">Order Summary</h2>
             
-            {pricingLoading ? (
-              <div className="eoc-loading">
-                <p>Calculating final prices...</p>
-              </div>
-            ) : (
-              <div className="eoc-table-container">
-                <table className="eoc-table eoc-summary-table">
-                  <thead>
-                    <tr>
-                      <th>Subtotal</th>
-                      <th>Shipping</th>
-                      <th>Tax (18%)</th>
-                      <th>Total</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
-                      <td>{formatNGN(pricing.itemPrice)}</td>
-                      <td>
-                        {pricing.shippingPrice === 0 ? (
-                          <span className="eoc-free-shipping">FREE</span>
-                        ) : (
-                          formatNGN(pricing.shippingPrice)
-                        )}
-                      </td>
-                      <td>{formatNGN(pricing.taxPrice)}</td>
-                      <td className="eoc-total-amount">
-                        {formatNGN(pricing.totalPrice)}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+            <div className="eoc-table-container">
+              <table className="eoc-table eoc-summary-table">
+                <thead>
+                  <tr>
+                    <th>Subtotal</th>
+                    <th>Shipping</th>
+                    <th>Tax (18%)</th>
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>{formatNGN(displayPricing.itemPrice || 0)}</td>
+                    <td>
+                      {displayPricing.shippingPrice === 0 ? (
+                        <span className="eoc-free-shipping">FREE</span>
+                      ) : (
+                        formatNGN(displayPricing.shippingPrice || 0)
+                      )}
+                    </td>
+                    <td>{formatNGN(displayPricing.taxPrice || 0)}</td>
+                    <td className="eoc-total-amount">
+                      {formatNGN(displayPricing.totalPrice || 0)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
 
+              {pricing.lastUpdated && (
                 <p className="eoc-summary-note">
                   <FiAlertCircle />
-                  Final amount calculated at {new Date(pricing.lastUpdated).toLocaleString()}
+                  Server pricing calculated at {new Date(pricing.lastUpdated).toLocaleString()}
                 </p>
-              </div>
-            )}
+              )}
+              
+              {!pricing.lastUpdated && (
+                <p className="eoc-summary-note">
+                  <FiAlertCircle />
+                  Using local price calculation
+                </p>
+              )}
+            </div>
           </div>
         </div>
 
@@ -237,7 +262,7 @@ function OrderConfirm() {
             type="button"
             className="eoc-proceed-btn"
             onClick={proceedToPayment}
-            disabled={isProcessing || pricingLoading || cartItems.length === 0}
+            disabled={isProcessing || cartItems.length === 0}
           >
             {isProcessing ? 'Processing...' : 'Proceed to Payment'}
           </button>

@@ -1,54 +1,331 @@
-.checkoutPath {
-    display: flex;
-    justify-content: center;
-    gap: 2rem;
-    padding: 6rem;
-    border-bottom: 1px solid #e5e7eb;
+/* ===========================
+   ENTERPRISE CHECKOUT PATH
+   =========================== */
+
+.cp-container {
+  background: #ffffff;
+  padding: 1.5rem 2rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.cp-wrapper {
+  max-width: 700px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+/* ===========================
+   STEP WRAPPER
+   =========================== */
+.cp-step-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.cp-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+/* ===========================
+   ICON CONTAINER
+   =========================== */
+.cp-icon-container {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cp-step-icon,
+.cp-check-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.125rem;
+  background: #f3f4f6;
+  color: #9ca3af;
+  border: 2px solid #e5e7eb;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  z-index: 2;
+}
+
+.cp-step-number {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #e5e7eb;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #6b7280;
+  z-index: 3;
+  transition: all 0.3s ease;
+}
+
+/* ===========================
+   STEP CONTENT
+   =========================== */
+.cp-step-content {
+  margin-top: 0.25rem;
+}
+
+.cp-step-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #9ca3af;
+  margin: 0 0 0.125rem 0;
+  transition: all 0.3s ease;
+}
+
+.cp-step-description {
+  font-size: 0.7rem;
+  color: #9ca3af;
+  margin: 0;
+  transition: all 0.3s ease;
+}
+
+/* ===========================
+   CONNECTOR
+   =========================== */
+.cp-connector-wrapper {
+  flex: 0 0 60px;
+  display: flex;
+  align-items: center;
+  padding: 0 0.25rem;
+  margin-bottom: 2.5rem;
+}
+
+.cp-connector {
+  width: 100%;
+  height: 2px;
+  background: #e5e7eb;
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.cp-connector-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, #10b981, #059669);
+  border-radius: 2px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cp-connector-completed .cp-connector-progress {
+  width: 100%;
+}
+
+/* ===========================
+   ACTIVE STATE
+   =========================== */
+.cp-step.cp-active .cp-step-icon {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #fff;
+  border-color: #10b981;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+  transform: scale(1.05);
+}
+
+.cp-step.cp-active .cp-step-number {
+  background: #10b981;
+  border-color: #10b981;
+  color: #fff;
+}
+
+.cp-step.cp-active .cp-step-label {
+  color: #1a1a1a;
+  font-weight: 700;
+}
+
+.cp-step.cp-active .cp-step-description {
+  color: #4b5563;
+}
+
+/* ===========================
+   COMPLETED STATE
+   =========================== */
+.cp-step.cp-completed .cp-check-icon {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: #fff;
+  border-color: #10b981;
+  animation: checkPulse 0.6s ease-in-out;
+}
+
+.cp-step.cp-completed .cp-step-number {
+  background: #10b981;
+  border-color: #10b981;
+  color: #fff;
+}
+
+.cp-step.cp-completed .cp-step-label {
+  color: #10b981;
+  font-weight: 600;
+}
+
+.cp-step.cp-completed .cp-step-description {
+  color: #059669;
+}
+
+/* ===========================
+   ANIMATIONS
+   =========================== */
+@keyframes checkPulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 0;
   }
-  
-  .checkoutPath-step {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.5rem;
-    color: #9ca3af;
-    position: relative;
-    flex: 1;
+  50% {
+    transform: scale(1.1);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ===========================
+   HOVER EFFECTS
+   =========================== */
+.cp-step:not(.cp-active):not(.cp-completed):hover .cp-step-icon {
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  transform: translateY(-2px);
+}
+
+.cp-step:not(.cp-active):not(.cp-completed):hover .cp-step-label {
+  color: #6b7280;
+}
+
+/* ===========================
+   RESPONSIVE DESIGN
+   =========================== */
+@media (max-width: 768px) {
+  .cp-container {
+    padding: 1.25rem 1rem;
   }
 
-  .checkoutPath-step[completed="true"] {
-    color: #10b981;
+  .cp-wrapper {
+    flex-direction: column;
+    gap: 1.25rem;
   }
-  
-  .checkoutPath-icon {
-    background: #f3f4f6;
-    padding: 0.75rem;
-    border-radius: 50%;
+
+  .cp-connector-wrapper {
+    flex: 0 0 auto;
+    width: 2px;
+    height: 30px;
+    padding: 0.25rem 0;
+    margin: 0;
   }
-  
-  .checkoutPath-step[active="true"] .checkoutPath-icon {
-    background: #dbeafe;
+
+  .cp-connector {
+    width: 2px;
+    height: 100%;
   }
-  
-  .checkoutPath-step[completed="true"] .checkoutPath-icon {
-    background: #d1fae5;
-  }
-  
-  .checkoutPath-label {
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-  
-  .checkoutPath-step:not(:last-child)::after {
-    content: '';
-    position: absolute;
-    top: 1.5rem;
-    left: 60%;
+
+  .cp-connector-progress {
     width: 100%;
-    height: 2px;
-    background: #e5e7eb;
+    height: 0;
+    transition: height 0.6s cubic-bezier(0.4, 0, 0.2, 1);
   }
-  
-  .checkoutPath-step[completed="true"]::after {
-    background: #10b981;
+
+  .cp-connector-completed .cp-connector-progress {
+    height: 100%;
   }
+
+  .cp-icon-container {
+    width: 36px;
+    height: 36px;
+  }
+
+  .cp-step-icon,
+  .cp-check-icon {
+    width: 36px;
+    height: 36px;
+    font-size: 1rem;
+  }
+
+  .cp-step-number {
+    width: 16px;
+    height: 16px;
+    font-size: 0.6rem;
+    bottom: -2px;
+    right: -2px;
+  }
+
+  .cp-step-label {
+    font-size: 0.75rem;
+  }
+
+  .cp-step-description {
+    font-size: 0.65rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .cp-container {
+    padding: 1rem 0.75rem;
+  }
+
+  .cp-icon-container {
+    width: 32px;
+    height: 32px;
+  }
+
+  .cp-step-icon,
+  .cp-check-icon {
+    width: 32px;
+    height: 32px;
+    font-size: 0.875rem;
+    border-width: 2px;
+  }
+
+  .cp-step-number {
+    width: 14px;
+    height: 14px;
+    font-size: 0.55rem;
+  }
+
+  .cp-step-label {
+    font-size: 0.7rem;
+  }
+
+  .cp-step-description {
+    font-size: 0.6rem;
+  }
+}
+
+/* ===========================
+   DARK MODE SUPPORT (Optional)
+   =========================== */
+@media (prefers-color-scheme: dark) {
+  .cp-container {
+    background: #ffffff;
+    border-bottom-color: #e5e7eb;
+  }
+}

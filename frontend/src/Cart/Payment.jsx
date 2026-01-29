@@ -19,6 +19,13 @@ import {
 } from "../features/cart/paymentSlice";
 import { clearCart } from "../features/cart/cartSlice";
 
+import { 
+  FiCreditCard, 
+  FiLock, 
+  FiCheckCircle,
+  FiAlertCircle 
+} from 'react-icons/fi';
+
 /* ===============================
    FLUTTERWAVE
 ================================ */
@@ -71,10 +78,10 @@ function StripeCheckout({ clientSecret, onSuccess }) {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="stripe-form">
+    <form onSubmit={handleSubmit} className="ep-stripe-form">
       <PaymentElement />
       <button 
-        className="payment-btn stripe-pay-btn" 
+        className="ep-pay-btn" 
         disabled={!stripe || processing}
         type="submit"
       >
@@ -102,6 +109,38 @@ function Payment() {
   // Refs to prevent double-triggering
   const paystackTriggered = useRef(false);
   const flutterwaveTriggered = useRef(false);
+
+  // Calculate order summary with fallback
+  const calculateOrderSummary = () => {
+    if (orderItem?.pricing) {
+      return {
+        subtotal: orderItem.pricing.itemPrice || 0,
+        tax: orderItem.pricing.taxPrice || 0,
+        shipping: orderItem.pricing.shippingPrice || 0,
+        total: orderItem.pricing.totalPrice || 0
+      };
+    }
+    
+    // Fallback: calculate from cart items
+    const itemPrice = cartItems.reduce((acc, item) => {
+      const itemQty = item.qty || item.quantity || 1;
+      const itemPrice = item.price || 0;
+      return acc + (itemPrice * itemQty);
+    }, 0);
+    
+    const taxPrice = itemPrice * 0.18;
+    const shippingPrice = itemPrice >= 500 ? 0 : 50;
+    const totalPrice = itemPrice + taxPrice + shippingPrice;
+    
+    return {
+      subtotal: itemPrice,
+      tax: taxPrice,
+      shipping: shippingPrice,
+      total: totalPrice
+    };
+  };
+
+  const orderSummary = calculateOrderSummary();
 
   /* ===============================
      LOAD PAYSTACK SCRIPT
@@ -226,12 +265,9 @@ function Payment() {
       callback: (response) => {
         console.log("Flutterwave response:", response);
         
-        // Close modal FIRST
         closePaymentModal();
         
         if (response.status === "successful" || response.status === "completed") {
-          // ✅ FIXED: Use transaction_id for verification
-          // Convert to string as Flutterwave returns it as a number in test mode
           const transactionId = String(response.transaction_id);
           
           console.log("Verifying Flutterwave with transaction ID:", transactionId);
@@ -239,7 +275,7 @@ function Payment() {
           dispatch(
             verifyPayment({
               gateway: "flutterwave",
-              reference: transactionId  // Pass transaction_id, not tx_ref
+              reference: transactionId
             })
           )
             .unwrap()
@@ -247,7 +283,6 @@ function Payment() {
               dispatch(clearCart());
               dispatch(clearPaymentData());
               sessionStorage.removeItem("orderItem");
-              // Add delay to ensure modal is fully closed
               setTimeout(() => {
                 navigate(`/order/success?reference=${response.tx_ref}`);
               }, 500);
@@ -275,7 +310,6 @@ function Payment() {
   ================================ */
   useEffect(() => {
     if (!paymentData) {
-      // Reset triggers when payment data is cleared
       paystackTriggered.current = false;
       flutterwaveTriggered.current = false;
       return;
@@ -286,7 +320,6 @@ function Payment() {
       openPaystackPopup();
     } else if (selectedGateway === "flutterwave" && flutterwaveConfig && !flutterwaveTriggered.current) {
       flutterwaveTriggered.current = true;
-      // Add small delay to prevent double trigger
       setTimeout(() => {
         triggerFlutterwavePayment();
       }, 300);
@@ -323,10 +356,9 @@ function Payment() {
 
     const cartPayload = cartItems.map((item) => ({
       product: item.product,
-      quantity: item.quantity
+      quantity: item.qty || item.quantity || 1
     }));
 
-    // Reset triggers
     paystackTriggered.current = false;
     flutterwaveTriggered.current = false;
 
@@ -352,7 +384,7 @@ function Payment() {
     dispatch(
       verifyPayment({
         gateway: "stripe",
-        reference: paymentIntentId  // ✅ FIXED: Pass payment intent ID, not order reference
+        reference: paymentIntentId
       })
     )
       .unwrap()
@@ -393,9 +425,24 @@ function Payment() {
      GATEWAY OPTIONS
   ================================ */
   const gateways = [
-    { value: "paystack", label: "Paystack", currencies: ["NGN", "GHS", "ZAR", "USD"] },
-    { value: "flutterwave", label: "Flutterwave", currencies: ["NGN", "USD", "GBP", "EUR", "GHS", "KES"] },
-    { value: "stripe", label: "Stripe", currencies: ["USD", "EUR", "GBP"] }
+    { 
+      value: "paystack", 
+      label: "Paystack", 
+      currencies: ["NGN", "GHS", "ZAR", "USD"], 
+      logo: "https://paystack.com/assets/developer/paystack-icon-blue.png" 
+    },
+    { 
+      value: "flutterwave", 
+      label: "Flutterwave", 
+      currencies: ["NGN", "USD", "GBP", "EUR", "GHS", "KES"], 
+      logo: "https://flutterwave.com/images/logo/full.svg" 
+    },
+    { 
+      value: "stripe", 
+      label: "Stripe", 
+      currencies: ["USD", "EUR", "GBP"], 
+      logo: "https://stripe.com/img/v3/home/social.png" 
+    }
   ];
 
   const selectedGatewayConfig = gateways.find((g) => g.value === selectedGateway);
@@ -404,100 +451,193 @@ function Payment() {
     <>
       <PageTitle title="Payment" />
       <Navbar />
-      <CheckoutPath activePath={2} />
 
-      <div className="payment-container">
-        {/* Gateway Selection */}
-        <div className="payment-options">
-          <h2>Select Payment Gateway</h2>
-          <div className="gateway-selection">
-            {gateways.map((gateway) => (
-              <label key={gateway.value} className="gateway-option">
-                <input
-                  type="radio"
-                  name="gateway"
-                  value={gateway.value}
-                  checked={selectedGateway === gateway.value}
-                  onChange={(e) => {
-                    setSelectedGateway(e.target.value);
-                    setSelectedCurrency(gateway.currencies[0]);
-                    dispatch(clearPaymentData());
-                    paystackTriggered.current = false;
-                    flutterwaveTriggered.current = false;
-                  }}
-                />
-                <span>{gateway.label}</span>
-              </label>
-            ))}
-          </div>
-
-          {/* Currency Selection */}
-          <h3>Select Currency</h3>
-          <div className="currency-selection">
-            {selectedGatewayConfig?.currencies.map((currency) => (
-              <label key={currency} className="currency-option">
-                <input
-                  type="radio"
-                  name="currency"
-                  value={currency}
-                  checked={selectedCurrency === currency}
-                  onChange={(e) => setSelectedCurrency(e.target.value)}
-                />
-                <span>{currency}</span>
-              </label>
-            ))}
-          </div>
+      <div className="ep-container">
+        <div className="ep-header">
+          <FiCreditCard className="ep-header-icon" />
+          <h1>Complete Your Payment</h1>
+          <p>Choose your preferred payment method</p>
         </div>
 
-        {/* Order Summary */}
-        <div className="payment-summary">
-          <h3>Order Summary</h3>
-          <p>Subtotal: {formatCurrency(orderItem?.subtotal, selectedCurrency)}</p>
-          <p>Tax: {formatCurrency(orderItem?.tax, selectedCurrency)}</p>
-          <p>Shipping: {formatCurrency(orderItem?.shipping, selectedCurrency)}</p>
-          <h4>Total: {formatCurrency(orderItem?.total, selectedCurrency)}</h4>
-        </div>
+        <div className="ep-content">
+          {/* Left Column - Payment Method Selection */}
+          <div className="ep-payment-section">
+            <div className="ep-section-card">
+              <h2 className="ep-section-title">
+                <FiCreditCard />
+                Select Payment Gateway
+              </h2>
+              
+              <div className="ep-gateway-grid">
+                {gateways.map((gateway) => (
+                  <label 
+                    key={gateway.value} 
+                    className={`ep-gateway-card ${selectedGateway === gateway.value ? 'ep-selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="gateway"
+                      value={gateway.value}
+                      checked={selectedGateway === gateway.value}
+                      onChange={(e) => {
+                        setSelectedGateway(e.target.value);
+                        setSelectedCurrency(gateway.currencies[0]);
+                        dispatch(clearPaymentData());
+                        paystackTriggered.current = false;
+                        flutterwaveTriggered.current = false;
+                      }}
+                    />
+                    <div className="ep-gateway-content">
+                      <img 
+                        src={gateway.logo} 
+                        alt={gateway.label}
+                        className="ep-gateway-logo-img"
+                        onError={(e) => {
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'block';
+                        }}
+                      />
+                      <span className="ep-gateway-name">{gateway.label}</span>
+                      {selectedGateway === gateway.value && (
+                        <FiCheckCircle className="ep-check-icon" />
+                      )}
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
 
-        {/* Stripe Payment Form */}
-        {selectedGateway === "stripe" && paymentData?.client_secret ? (
-          <div className="stripe-payment-section">
-            <h3>Enter Card Details</h3>
-            {stripePromise ? (
-              <Elements
-                stripe={stripePromise}
-                options={{
-                  clientSecret: paymentData.client_secret,
-                  appearance: {
-                    theme: 'stripe',
-                    variables: {
-                      colorPrimary: '#007bff'
-                    }
-                  }
-                }}
-              >
-                <StripeCheckout
-                  clientSecret={paymentData.client_secret}
-                  onSuccess={handleStripeSuccess}
-                />
-              </Elements>
-            ) : (
-              <p style={{ color: 'red' }}>Stripe is not configured properly. Please check your environment variables.</p>
+            {/* Currency Selection */}
+            <div className="ep-section-card">
+              <h3 className="ep-section-subtitle">Select Currency</h3>
+              <div className="ep-currency-grid">
+                {selectedGatewayConfig?.currencies.map((currency) => (
+                  <label 
+                    key={currency} 
+                    className={`ep-currency-option ${selectedCurrency === currency ? 'ep-selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name="currency"
+                      value={currency}
+                      checked={selectedCurrency === currency}
+                      onChange={(e) => setSelectedCurrency(e.target.value)}
+                    />
+                    <span>{currency}</span>
+                    {selectedCurrency === currency && (
+                      <FiCheckCircle className="ep-check-icon-small" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {/* Stripe Payment Form */}
+            {selectedGateway === "stripe" && paymentData?.client_secret && (
+              <div className="ep-section-card">
+                <h3 className="ep-section-subtitle">
+                  <FiLock />
+                  Enter Card Details
+                </h3>
+                {stripePromise ? (
+                  <Elements
+                    stripe={stripePromise}
+                    options={{
+                      clientSecret: paymentData.client_secret,
+                      appearance: {
+                        theme: 'stripe',
+                        variables: {
+                          colorPrimary: '#10b981',
+                          borderRadius: '8px'
+                        }
+                      }
+                    }}
+                  >
+                    <StripeCheckout
+                      clientSecret={paymentData.client_secret}
+                      onSuccess={handleStripeSuccess}
+                    />
+                  </Elements>
+                ) : (
+                  <div className="ep-error-message">
+                    <FiAlertCircle />
+                    <p>Stripe is not configured properly. Please contact support.</p>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-        ) : (
-          /* Initialize Button (Paystack & Flutterwave) */
-          <button
-            className="payment-btn"
-            onClick={handleInitializePayment}
-            disabled={loading || initLoading || !orderItem}
-          >
-            {initLoading
-              ? "Initializing..."
-              : loading
-              ? "Verifying..."
-              : `Pay ${formatCurrency(orderItem?.total, selectedCurrency)}`}
-          </button>
-        )}
+
+          {/* Right Column - Order Summary */}
+          <div className="ep-summary-section">
+            <div className="ep-summary-card">
+              <h2 className="ep-summary-title">Order Summary</h2>
+              
+              <div className="ep-summary-items">
+                <div className="ep-summary-row">
+                  <span className="ep-summary-label">Subtotal</span>
+                  <span className="ep-summary-value">
+                    {formatCurrency(orderSummary.subtotal, selectedCurrency)}
+                  </span>
+                </div>
+
+                <div className="ep-summary-row">
+                  <span className="ep-summary-label">Tax (18%)</span>
+                  <span className="ep-summary-value">
+                    {formatCurrency(orderSummary.tax, selectedCurrency)}
+                  </span>
+                </div>
+
+                <div className="ep-summary-row">
+                  <span className="ep-summary-label">Shipping</span>
+                  <span className="ep-summary-value">
+                    {orderSummary.shipping === 0 ? (
+                      <span className="ep-free-badge">FREE</span>
+                    ) : (
+                      formatCurrency(orderSummary.shipping, selectedCurrency)
+                    )}
+                  </span>
+                </div>
+
+                <div className="ep-summary-divider"></div>
+
+                <div className="ep-summary-row ep-summary-total">
+                  <span className="ep-summary-label">Total Amount</span>
+                  <span className="ep-summary-value">
+                    {formatCurrency(orderSummary.total, selectedCurrency)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Security Badge */}
+              <div className="ep-security-badge">
+                <FiLock />
+                <span>Secure Payment</span>
+              </div>
+
+              {/* Pay Button (for Paystack & Flutterwave) */}
+              {selectedGateway !== "stripe" && (
+                <button
+                  className="ep-pay-btn"
+                  onClick={handleInitializePayment}
+                  disabled={loading || initLoading || !orderItem}
+                >
+                  {initLoading
+                    ? "Initializing..."
+                    : loading
+                    ? "Verifying..."
+                    : `Pay ${formatCurrency(orderSummary.total, selectedCurrency)}`}
+                </button>
+              )}
+
+              {/* Payment Info */}
+              <div className="ep-payment-info">
+                <FiAlertCircle />
+                <p>Your payment information is encrypted and secure</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <Footer />
