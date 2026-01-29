@@ -1,141 +1,198 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
-import { addItemsToCart, removeErrors, removeItemFromCart, removeMessage } from '../features/cart/cartSlice';
+import { 
+  removeItemFromCart, 
+  updateItemQuantity,
+  moveToSavedForLater,
+  removeErrors, 
+  removeMessage 
+} from '../features/cart/cartSlice';
+import { FiMinus, FiPlus, FiTrash2, FiHeart } from 'react-icons/fi';
+import '../CartStyles/EnterpriseCart.css';
 
-function CartItem({item}) {
-    const {success, loading, error, message, CartItems} = useSelector(state => state.cart)
-    const [quantity, setQuantity] = useState(item.quantity);
-    const dispatch = useDispatch();
+function CartItem({ item }) {
+  const { success, loading, error, message } = useSelector(state => state.cart);
+  const [quantity, setQuantity] = useState(item.quantity);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const dispatch = useDispatch();
 
-    //quantity control
-    const decreaseQuantity = () => {
-        if(quantity <= 1) {
-            toast.error('Quantity cannot be less than 1',
-            {position: 'top-center', autoClose: 2000}
-            )
-            dispatch(removeErrors())
-            return;
-        }
-        setQuantity(qty => qty - 1)
-    }
-    
-    const increaseQuantity = () => {
-        if(item.stock <= quantity) {
-            toast.error('Cannot exceed available stock',
-            {position: 'top-center', autoClose: 2000}
-            )
-            dispatch(removeErrors())
-            return;
-        }
-        setQuantity(qty => qty + 1)
-    }
+  // Format currency
+  const formatNGN = (amount) => {
+    return new Intl.NumberFormat('en-NG', {
+      style: 'currency',
+      currency: 'NGN',
+      minimumFractionDigits: 2
+    }).format(amount);
+  };
 
-    const handleUpdate = () => {
-        if (quantity !== item.quantity) {
-            dispatch(addItemsToCart({
-                id: item.product,
-                quantity 
-            }));
-        }
-    }
-
-    useEffect(() => {
-        if(error) {
-            toast.error(error.message, {position: 'top-center', autoClose: 2000, toastId: 'cart-error'});
-            dispatch(removeErrors())
-        }
-    }, [dispatch, error])
-
-    useEffect(() => {
-        if(success) {
-            toast.success(
-                message, 
-                {position: 'top-center', 
-                autoClose: 2000, 
-                toastId: 'cart-update'}
-                );
-
-            dispatch(removeMessage())
-        }
-    }, [dispatch, success, message])
-    
-    const handleRemove = () => {
-    dispatch(removeItemFromCart(item.product))
-    toast.success('Item removed from cart successfully', {
-        position: 'top-center', 
+  // Decrease quantity
+  const decreaseQuantity = () => {
+    if (quantity <= 1) {
+      toast.error('Quantity cannot be less than 1', {
+        position: 'top-center',
         autoClose: 2000
-    });
-}
+      });
+      return;
+    }
+    setQuantity(qty => qty - 1);
+  };
 
+  // Increase quantity
+  const increaseQuantity = () => {
+    if (item.stock <= quantity) {
+      toast.error(`Only ${item.stock} available`, {
+        position: 'top-center',
+        autoClose: 2000
+      });
+      return;
+    }
+    setQuantity(qty => qty + 1);
+  };
+
+  // Update quantity
+  const handleUpdate = async () => {
+    if (quantity !== item.quantity) {
+      setIsUpdating(true);
+      try {
+        dispatch(updateItemQuantity({
+          productId: item.product,
+          quantity
+        }));
+        toast.success('Quantity updated', {
+          position: 'top-center',
+          autoClose: 2000
+        });
+      } catch (err) {
+        toast.error('Failed to update quantity', {
+          position: 'top-center',
+          autoClose: 2000
+        });
+      } finally {
+        setIsUpdating(false);
+      }
+    }
+  };
+
+  // Remove item
+  const handleRemove = () => {
+    if (window.confirm(`Remove ${item.name} from cart?`)) {
+      dispatch(removeItemFromCart(item.product));
+      toast.success('Item removed from cart', {
+        position: 'top-center',
+        autoClose: 2000
+      });
+    }
+  };
+
+  // Save for later
+  const handleSaveForLater = () => {
+    dispatch(moveToSavedForLater(item.product));
+    toast.success('Moved to saved for later', {
+      position: 'top-center',
+      autoClose: 2000
+    });
+  };
+
+  // Handle errors
+  useEffect(() => {
+    if (error) {
+      toast.error(error, { position: 'top-center', autoClose: 2000 });
+      dispatch(removeErrors());
+    }
+  }, [error, dispatch]);
 
   return (
-    <div>
-        <div className="cart-item">
-            <div className="item-info">
-                <img src={item.image}
-                alt={item.name} 
-                className='item-image'/>
-                <div className="item-details">
-                    <h3 className="item-name">
-                        {item.name}
-                    </h3>
-                    <p className="item-price">
-                        <strong>Price : </strong>
-                        {item.price.toFixed(2)}/-
-                    </p>
-                    <p className="item-quantity">
-                        <strong>Quantity : </strong>
-                        {item.quantity}/-
-                    </p>
-                </div>
-            </div>
-
-            <div className="quantity-controls">
-                <button 
-                className="quantity-button decrease-btn"
-                onClick={decreaseQuantity} 
-                disabled={loading}>
-                    -
-                </button>
-                <input 
-                type="number" 
-                value={quantity}
-                className='quantity-input'
-                readOnly
-                min={1}/>
-                <button 
-                className="quantity-button increase-btn"
-                onClick={increaseQuantity}
-                disabled={loading}>
-                    +
-                </button>
-            </div>
-
-            <div className="item-total">
-                <span className="item-total-price">
-                    {(item.price * quantity).toFixed(2)}
-                </span>
-
-            </div>
-
-            <div className="item-action">
-                <button 
-                className="update-item-btn"
-                onClick={handleUpdate}
-                disabled={loading || quantity === item.quantity}>
-                    {loading ? 'Updating' : 'Update'}
-                </button>
-                <button 
-                className="remove-item-btn"
-                disabled={loading}
-                onClick={handleRemove}>
-                    Remove
-                </button>
-            </div>
+    <div className="ec-item">
+      <div className="ec-item-info">
+        <img 
+          src={item.image} 
+          alt={item.name} 
+          className='ec-item-image'
+          onError={(e) => {
+            e.target.src = '/images/placeholder.png';
+          }}
+        />
+        <div className="ec-item-details">
+          <h3 className="ec-item-name">{item.name}</h3>
+          <p className="ec-item-price">
+            <strong>Price:</strong> {formatNGN(item.price)}
+          </p>
+          <p className="ec-item-stock">
+            {item.stock > 0 ? (
+              <span className="ec-in-stock">
+                {item.stock <= 5 ? `Only ${item.stock} left` : 'In Stock'}
+              </span>
+            ) : (
+              <span className="ec-out-stock">Out of Stock</span>
+            )}
+          </p>
         </div>
+      </div>
+
+      <div className="ec-item-qty-controls">
+        <button 
+          className="ec-item-qty-btn ec-qty-decrease"
+          onClick={decreaseQuantity} 
+          disabled={loading || isUpdating || quantity <= 1}
+          aria-label="Decrease quantity"
+        >
+          <FiMinus />
+        </button>
+        <input 
+          type="number" 
+          value={quantity}
+          className='ec-item-qty-input'
+          readOnly
+          min={1}
+          max={item.stock}
+        />
+        <button 
+          className="ec-item-qty-btn ec-qty-increase"
+          onClick={increaseQuantity}
+          disabled={loading || isUpdating || quantity >= item.stock}
+          aria-label="Increase quantity"
+        >
+          <FiPlus />
+        </button>
+      </div>
+
+      <div className="ec-item-total">
+        <span className="ec-item-total-price">
+          {formatNGN(item.price * quantity)}
+        </span>
+      </div>
+
+      <div className="ec-item-action">
+        <button 
+          className="ec-item-update-btn"
+          onClick={handleUpdate}
+          disabled={loading || isUpdating || quantity === item.quantity}
+        >
+          {isUpdating ? 'Updating...' : 'Update'}
+        </button>
+        
+        <div className="ec-item-secondary-actions">
+          <button 
+            className="ec-item-save-btn"
+            onClick={handleSaveForLater}
+            disabled={loading}
+            title="Save for later"
+          >
+            <FiHeart /> Save
+          </button>
+          <button 
+            className="ec-item-remove-btn"
+            disabled={loading}
+            onClick={handleRemove}
+            title="Remove from cart"
+          >
+            <FiTrash2 /> Remove
+          </button>
+        </div>
+      </div>
     </div>
-  )
+  );
 }
 
-export default CartItem
+export default CartItem;
