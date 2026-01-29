@@ -126,11 +126,12 @@ function OrderDetails() {
     refundableStatuses.includes(orderStatus);
 
   // Return eligibility check
+  const hasActiveReturn = order?.returnInfo?.status && order.returnInfo.status !== 'none';
   const returnableStatuses = ['Delivered'];
   const isReturnable = isPaid && 
     !hasActiveRefund && 
-    returnableStatuses.includes(orderStatus) &&
-    !order?.returnInfo;
+    !hasActiveReturn &&
+    returnableStatuses.includes(orderStatus);
 
   // Status badge classes
   const orderStatusClass =

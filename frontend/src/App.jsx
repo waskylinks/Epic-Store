@@ -39,6 +39,7 @@ import CategoriesPage from './pages/CategoriesPage';
 import SalePage from './pages/SalePage';
 import Wishlist from './pages/Wishlist';
 import NewArrivals from './pages/NewArrivals';
+import ReturnRequest from './Orders/ReturnRequest';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -92,6 +93,7 @@ function App() {
         <Route path='/orders/user' element={<ProtectedRoute element={<MyOrders />} />} />
         <Route path='/order/:id' element={<ProtectedRoute element={<OrderDetails />} />} />
         <Route path="/orders/:id/refund/request" element={<ProtectedRoute element={<RefundRequest />} />} />
+        <Route path="/orders/:id/return/request" element={<ProtectedRoute element={<ReturnRequest />} />} />
 
         {/* Admin Routes */}
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard />} adminOnly={true} />} />
