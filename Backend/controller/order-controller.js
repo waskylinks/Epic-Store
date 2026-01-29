@@ -821,3 +821,158 @@ export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next)
     analytics
   });
 });
+
+// ADD THESE TO order-controller.js
+
+// ============================================
+// ORDER MESSAGES (Customer ↔ Admin Chat)
+// ============================================
+
+/**
+ * Add message to order
+ * @route POST /api/v1/orders/:id/messages
+ * @access Private (User or Admin)
+ */
+export const addOrderMessage = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { content, attachments = [] } = req.body;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  if (!content || content.trim().length === 0) {
+    return next(new HandleError('Message content is required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  const senderType = isAdmin ? 'admin' : 'customer';
+  
+  order.addOrderMessage(userId, senderType, content, attachments);
+
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Message sent successfully',
+    orderMessage: order.orderMessages[order.orderMessages.length - 1]
+  });
+});
+
+/**
+ * Get all messages for order
+ * @route GET /api/v1/orders/:id/messages
+ * @access Private (User or Admin)
+ */
+export const getOrderMessages = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id)
+    .populate('orderMessages.sender', 'name email role')
+    .select('orderMessages user');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  const senderType = isAdmin ? 'admin' : 'customer';
+  order.markOrderMessagesDelivered(senderType);
+  order.markOrderMessagesAsRead(senderType);
+  await order.save({ validateBeforeSave: false });
+
+  return res.status(200).json({
+    success: true,
+    count: order.orderMessages?.length || 0,
+    messages: order.orderMessages || []
+  });
+});
+
+/**
+ * Mark messages as read
+ * @route PUT /api/v1/orders/:id/messages/read
+ * @access Private (User or Admin)
+ */
+export const markOrderMessagesRead = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (!isAdmin && order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  const senderType = isAdmin ? 'admin' : 'customer';
+  order.markOrderMessagesAsRead(senderType);
+  await order.save({ validateBeforeSave: false });
+
+  return res.status(200).json({
+    success: true,
+    message: 'Messages marked as read'
+  });
+});
+
+/**
+ * Get orders with unread messages (Admin)
+ * @route GET /api/v1/admin/orders/unread-messages
+ * @access Private (Admin only)
+ */
+export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, next) => {
+  const orders = await Order.getOrdersWithUnreadMessages();
+
+  return res.status(200).json({
+    success: true,
+    count: orders.length,
+    orders: orders.map(order => ({
+      _id: order._id,
+      user: order.user,
+      orderStatus: order.orderStatus,
+      unreadCount: order.unreadOrderMessages,
+      latestMessage: order.latestOrderMessage
+    }))
+  });
+});
+
+// UPDATE YOUR EXPORTS at the bottom of order-controller.js:
+export {
+  getAllMyOrders,
+  getOrderDetails,
+  createOrder,
+  getOrderTimeline,
+  addOrderNote,
+  getOrderNotes,
+  editOrderNote,
+  addTrackingInfo,
+  getTrackingInfo,
+  createShipment,
+  updateShipmentStatus,
+  requestReturn,
+  reviewReturnRequest,
+  updateReturnStatus,
+  getAllReturns,
+  downloadInvoice,
+  getPendingFraudReviews,
+  reviewFraudCheck,
+  getAuditLog,
+  getCustomerOrderAnalytics,
+  addOrderMessage,
+  getOrderMessages,
+  markOrderMessagesRead,
+  getOrdersWithUnreadMessages
+};
