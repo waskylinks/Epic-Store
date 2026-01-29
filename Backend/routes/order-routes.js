@@ -1,3 +1,5 @@
+// COMPLETE routes file with ALL new routes integrated
+
 import express from 'express';
 import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
 
@@ -22,6 +24,26 @@ import {
 } from '../controller/refund-controller.js';
 
 /* =======================
+   RETURN CONTROLLERS (NEW)
+======================= */
+import {
+  getAllReturns,
+  getSingleReturn,
+  requestReturn,
+  reviewReturnRequest,
+  updateReturnStatus,
+  addReturnMessage,
+  addCustomerReturnMessage,
+  getReturnMessages,
+  getReturnTimeline,
+  getReturnDocuments,
+  uploadReturnFiles,
+  uploadCustomerReturnFiles,
+  getReturnsWithUnreadMessages,
+  cancelReturnRequest
+} from '../controller/return-controller.js';
+
+/* =======================
    ORDER CONTROLLERS
 ======================= */
 import {
@@ -36,15 +58,16 @@ import {
   getTrackingInfo,
   createShipment,
   updateShipmentStatus,
-  requestReturn,
-  reviewReturnRequest,
-  updateReturnStatus,
-  getAllReturns,
   downloadInvoice,
   getPendingFraudReviews,
   reviewFraudCheck,
   getAuditLog,
-  getCustomerOrderAnalytics
+  getCustomerOrderAnalytics,
+  // ✅ NEW: Order Messages
+  addOrderMessage,
+  getOrderMessages,
+  markOrderMessagesRead,
+  getOrdersWithUnreadMessages
 } from '../controller/order-controller.js';
 
 /* =======================
@@ -59,11 +82,16 @@ import {
   validateTrackingInfo,
   validateReturnRequest,
   validateFraudReview,
-  sanitizeInput
+  sanitizeInput,
+  // ✅ NEW
+  validateOrderMessage,
+  validateReturnMessage,
+  validateReturnReview,
+  validateReturnStatusUpdate
 } from '../middleware/validation.js';
 
 /* =======================
-   POLICY MIDDLEWARE
+   REFUND POLICY MIDDLEWARE
 ======================= */
 import {
   checkRefundEligibility,
@@ -72,9 +100,19 @@ import {
   canProcessRefund,
   canAddRefundMessage,
   canCancelRefund,
-  checkReturnEligibility,
   validateRefundFileUpload
 } from '../middleware/refund-policy.middleware.js';
+
+/* =======================
+   RETURN POLICY MIDDLEWARE (NEW)
+======================= */
+import {
+  checkReturnEligibility,
+  canReviewReturn,
+  canAddReturnMessage,
+  canCancelReturn,
+  validateReturnFileUpload
+} from '../middleware/return-policy.middleware.js';
 
 import upload from '../middleware/multer.js';
 
@@ -201,24 +239,139 @@ router.post(
 );
 
 /* ======================================================
+   CUSTOMER RETURN ROUTES (NEW)
+====================================================== */
+
+router.post(
+  '/orders/:id/return/request',
+  verifyUserAuth,
+  sanitizeInput,
+  validateReturnRequest,
+  checkReturnEligibility,
+  requestReturn
+);
+
+router.post(
+  '/orders/:id/return/messages',
+  verifyUserAuth,
+  sanitizeInput,
+  validateReturnMessage,
+  canAddReturnMessage,
+  addCustomerReturnMessage
+);
+
+router.get(
+  '/orders/:id/return/messages',
+  verifyUserAuth,
+  getReturnMessages
+);
+
+router.get(
+  '/orders/:id/return/timeline',
+  verifyUserAuth,
+  getReturnTimeline
+);
+
+router.get(
+  '/orders/:id/return/documents',
+  verifyUserAuth,
+  getReturnDocuments
+);
+
+router.post(
+  '/orders/:id/return/upload',
+  verifyUserAuth,
+  upload.array('attachments', 5),
+  validateReturnFileUpload,
+  uploadCustomerReturnFiles
+);
+
+router.put(
+  '/orders/:id/return/cancel',
+  verifyUserAuth,
+  canCancelReturn,
+  cancelReturnRequest
+);
+
+/* ======================================================
+   ADMIN RETURN ROUTES (NEW)
+====================================================== */
+
+router.get(
+  '/admin/returns',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAllReturns
+);
+
+router.get(
+  '/admin/returns/unread',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getReturnsWithUnreadMessages
+);
+
+router.get(
+  '/admin/returns/:id',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getSingleReturn
+);
+
+router.put(
+  '/admin/orders/:id/return/review',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  sanitizeInput,
+  validateReturnReview,
+  canReviewReturn,
+  reviewReturnRequest
+);
+
+router.put(
+  '/admin/orders/:id/return/status',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  sanitizeInput,
+  validateReturnStatusUpdate,
+  updateReturnStatus
+);
+
+router.post(
+  '/admin/returns/:id/messages',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  sanitizeInput,
+  validateReturnMessage,
+  canAddReturnMessage,
+  addReturnMessage
+);
+
+router.post(
+  '/admin/returns/:id/upload',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  upload.array('attachments', 5),
+  validateReturnFileUpload,
+  uploadReturnFiles
+);
+
+/* ======================================================
    BASIC ORDER ROUTES (Customer)
 ====================================================== */
 
-// Get all user's orders
 router.get(
   '/orders/user',
   verifyUserAuth,
   getAllMyOrders
 );
 
-// Create new order
 router.post(
   '/order/new',
   verifyUserAuth,
   createOrder
 );
 
-// Get single order details
 router.get(
   '/order/:id',
   verifyUserAuth,
@@ -255,6 +408,37 @@ router.put(
   sanitizeInput,
   validateOrderNote,
   editOrderNote
+);
+
+/* ======================================================
+   ORDER MESSAGES (NEW)
+====================================================== */
+
+router.post(
+  '/orders/:id/messages',
+  verifyUserAuth,
+  sanitizeInput,
+  validateOrderMessage,
+  addOrderMessage
+);
+
+router.get(
+  '/orders/:id/messages',
+  verifyUserAuth,
+  getOrderMessages
+);
+
+router.put(
+  '/orders/:id/messages/read',
+  verifyUserAuth,
+  markOrderMessagesRead
+);
+
+router.get(
+  '/admin/orders/unread-messages',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getOrdersWithUnreadMessages
 );
 
 /* ======================================================
@@ -305,40 +489,6 @@ router.get(
   verifyUserAuth,
   roleBaseAccess('admin'),
   getAuditLog
-);
-
-/* ======================================================
-   RETURNS (RMA)
-====================================================== */
-
-router.post(
-  '/orders/:id/return/request',
-  verifyUserAuth,
-  sanitizeInput,
-  validateReturnRequest,
-  checkReturnEligibility,
-  requestReturn
-);
-
-router.get(
-  '/admin/returns',
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  getAllReturns
-);
-
-router.put(
-  '/admin/orders/:id/return/review',
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  reviewReturnRequest
-);
-
-router.put(
-  '/admin/orders/:id/return/status',
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  updateReturnStatus
 );
 
 /* ======================================================
