@@ -20,7 +20,7 @@
 }
 
 .es-header svg {
-  color: #10b981;
+  color: #ff3c3c;
   font-size: 2.5rem;
 }
 
@@ -56,7 +56,7 @@
 }
 
 .es-saved-heading svg {
-  color: #10b981;
+  color: #ff3c3c;
 }
 
 .es-loading {
@@ -83,8 +83,8 @@
 }
 
 .es-saved-item:hover {
-  border-color: #10b981;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  border-color: #ff3c3c;
+  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.15);
 }
 
 .es-saved-item.es-default {
@@ -130,9 +130,6 @@
 }
 
 .es-saved-phone {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
   font-size: 0.875rem;
   color: #999;
   margin: 0;
@@ -158,12 +155,12 @@
 }
 
 .es-select-btn {
-  background-color: #10b981;
+  background-color: #ff3c3c;
   color: #fff;
 }
 
 .es-select-btn:hover {
-  background-color: #059669;
+  background-color: #e03030;
   transform: translateY(-2px);
 }
 
@@ -213,7 +210,7 @@
 }
 
 .es-form-heading svg {
-  color: #10b981;
+  color: #28a745;
 }
 
 .es-form {
@@ -235,17 +232,9 @@
 }
 
 .es-label {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
   font-size: 0.95rem;
   font-weight: 600;
   color: #333;
-}
-
-.es-label svg {
-  font-size: 1rem;
-  color: #10b981;
 }
 
 .es-required {
@@ -263,13 +252,8 @@
 
 .es-input:focus {
   outline: none;
-  border-color: #10b981;
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
-}
-
-.es-input:disabled {
-  background: #f3f4f6;
-  cursor: not-allowed;
+  border-color: #ff3c3c;
+  box-shadow: 0 0 0 3px rgba(255, 60, 60, 0.1);
 }
 
 .es-input-error {
@@ -287,92 +271,6 @@
   margin-top: 0.25rem;
 }
 
-/* ===========================
-   DROPDOWN STYLES
-   =========================== */
-.es-dropdown-wrapper {
-  position: relative;
-}
-
-.es-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  max-height: 200px;
-  overflow-y: auto;
-  background: #fff;
-  border: 2px solid #10b981;
-  border-top: none;
-  border-radius: 0 0 8px 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 1000;
-  margin-top: -2px;
-}
-
-.es-dropdown-item {
-  padding: 0.75rem 1rem;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 0.95rem;
-  color: #333;
-}
-
-.es-dropdown-item:hover {
-  background: #f0fdf4;
-  color: #10b981;
-}
-
-.es-dropdown-item:not(:last-child) {
-  border-bottom: 1px solid #f0f0f0;
-}
-
-/* Scrollbar styling */
-.es-dropdown::-webkit-scrollbar {
-  width: 8px;
-}
-
-.es-dropdown::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 0 0 8px 0;
-}
-
-.es-dropdown::-webkit-scrollbar-thumb {
-  background: #10b981;
-  border-radius: 4px;
-}
-
-.es-dropdown::-webkit-scrollbar-thumb:hover {
-  background: #059669;
-}
-
-/* ===========================
-   PHONE INPUT STYLES
-   =========================== */
-.es-phone-input {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.es-country-code {
-  padding: 0.875rem 1rem;
-  background: #f0fdf4;
-  border: 2px solid #10b981;
-  border-radius: 8px;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #059669;
-  white-space: nowrap;
-}
-
-.es-phone-field {
-  flex: 1;
-}
-
-/* ===========================
-   CHECKBOX GROUP
-   =========================== */
 .es-checkbox-group {
   display: flex;
   flex-direction: column;
@@ -395,12 +293,12 @@
   width: 18px;
   height: 18px;
   cursor: pointer;
-  accent-color: #10b981;
+  accent-color: #ff3c3c;
 }
 
 .es-submit-btn {
   padding: 1rem 2rem;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  background-color: #ff3c3c;
   color: #fff;
   border: none;
   border-radius: 8px;
@@ -409,13 +307,12 @@
   cursor: pointer;
   transition: all 0.3s ease;
   margin-top: 1rem;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
 }
 
 .es-submit-btn:hover:not(:disabled) {
-  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  background-color: #e03030;
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
 }
 
 .es-submit-btn:disabled {
@@ -480,15 +377,6 @@
     right: 0.75rem;
     font-size: 0.7rem;
     padding: 0.25rem 0.625rem;
-  }
-
-  .es-phone-input {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .es-country-code {
-    text-align: center;
   }
 }
 

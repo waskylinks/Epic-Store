@@ -903,6 +903,24 @@ export const cancelReturnRequest = createAsyncThunk(
   }
 );
 
+export const cancelOrder = createAsyncThunk(
+  "order/cancelOrder",
+  async ({ orderId, reason, skipRefund = false }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.put(
+        `${API_BASE}/admin/orders/${orderId}/cancel`,
+        { reason, skipRefund },
+        { withCredentials: true }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to cancel order"
+      );
+    }
+  }
+);
+
 // ============================================
 // SLICE DEFINITION
 // ============================================
@@ -1508,7 +1526,37 @@ const orderSlice = createSlice({
         .addCase(cancelRefundRequest.fulfilled, (state) => {
           state.refundInfo = null;
           state.message = "Refund request cancelled";
+        })
+
+        builder
+        .addCase(cancelOrder.pending, (state) => {
+          state.actionLoading = true;
+          state.error = null;
+        })
+        .addCase(cancelOrder.fulfilled, (state, action) => {
+          state.actionLoading = false;
+          state.success = true;
+          state.message = action.payload.message;
+          
+          // Update order in state
+          if (state.order && state.order._id === action.payload.order._id) {
+            state.order.orderStatus = 'Cancelled';
+            state.order.cancelledAt = action.payload.order.cancelledAt;
+            state.order.refundInfo = action.payload.order.refundInfo;
+          }
+          
+          // Update in orders list
+          const orderIndex = state.orders.findIndex(o => o._id === action.payload.order._id);
+          if (orderIndex !== -1) {
+            state.orders[orderIndex].orderStatus = 'Cancelled';
+          }
+        })
+        .addCase(cancelOrder.rejected, (state, action) => {
+          state.actionLoading = false;
+          state.error = action.payload;
         });
+
+
   },
 });
 

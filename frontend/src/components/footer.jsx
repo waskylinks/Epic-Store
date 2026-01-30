@@ -12,11 +12,7 @@ import {
   Instagram,
   YouTube,
   Storefront as StorefrontIcon,
-  LocationOn,
-  Schedule,
   CreditCard,
-  LocalShipping,
-  Security,
   ArrowForward
 } from '@mui/icons-material';
 
@@ -63,27 +59,10 @@ function Footer() {
     { icon: <GitHub />, url: 'https://github.com', label: 'GitHub' }
   ];
 
-  const trustFeatures = [
-    { icon: <Security />, text: 'Secure Payment' },
-    { icon: <LocalShipping />, text: 'Free Shipping' },
-    { icon: <CreditCard />, text: 'Easy Returns' }
-  ];
+ 
 
   return (
     <footer className="footer">
-      {/* Trust Banner */}
-      <div className="footer-trust-banner">
-        <div className="footer-container">
-          <div className="trust-features">
-            {trustFeatures.map((feature, index) => (
-              <div key={index} className="trust-feature">
-                {feature.icon}
-                <span>{feature.text}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
 
       {/* Main Footer Content */}
       <div className="footer-main">

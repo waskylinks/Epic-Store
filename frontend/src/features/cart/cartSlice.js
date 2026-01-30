@@ -239,7 +239,7 @@ const initialState = {
     taxPrice: 0,
     shippingPrice: 0,
     totalPrice: 0,
-    currency: "NGN",
+    currency: "USD",
     breakdown: [],
     lastUpdated: null,
   },

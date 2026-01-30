@@ -104,7 +104,7 @@ function Payment() {
   const navigate = useNavigate();
 
   const [selectedGateway, setSelectedGateway] = useState("paystack");
-  const [selectedCurrency, setSelectedCurrency] = useState("NGN");
+  const [selectedCurrency, setSelectedCurrency] = useState("USD");
   
   // Refs to prevent double-triggering
   const paystackTriggered = useRef(false);

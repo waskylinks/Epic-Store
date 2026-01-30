@@ -16,37 +16,6 @@
 }
 
 /* ===========================
-   TRUST BANNER
-   =========================== */
-.footer-trust-banner {
-  background: #801414 ;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  width: 100%;
-}
-
-.trust-features {
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 2rem;
-}
-
-.trust-feature {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  color: white;
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.trust-feature svg {
-  font-size: 1.75rem !important;
-}
-
-/* ===========================
    MAIN FOOTER
    =========================== */
 .footer-main {
