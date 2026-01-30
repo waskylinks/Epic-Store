@@ -1119,4 +1119,46 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   });
 });
 
+// Add this function to your order-controller.js file
+
+/**
+ * Get order by payment reference
+ * @route GET /api/v1/orders/reference/:reference
+ * @access Private (User or Admin)
+ */
+export const getOrderByReference = handleAsyncError(async (req, res, next) => {
+  const { reference } = req.params;
+  const userId = req.user._id;
+  const isAdmin = req.user.role === 'admin';
+
+  if (!reference || reference.trim() === '') {
+    return next(new HandleError('Payment reference is required', 400));
+  }
+
+  // Search for order by payment reference
+  const order = await Order.findOne({
+    $or: [
+      { 'paymentInfo.reference': reference },
+      { 'paymentReference': reference },
+      { '_id': reference } // In case reference is actually the order ID
+    ]
+  })
+    .populate('user', 'name email')
+    .populate('orderItems.product', 'name images price');
+
+  if (!order) {
+    return next(new HandleError('Order not found with this reference', 404));
+  }
+
+  // Check authorization
+  if (!isAdmin && order.user._id.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized to view this order', 403));
+  }
+
+  return res.status(200).json({
+    success: true,
+    order
+  });
+});
+
 

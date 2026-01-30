@@ -68,7 +68,8 @@ import {
   getOrderMessages,
   markOrderMessagesRead,
   getOrdersWithUnreadMessages,
-  cancelOrderWithRefund
+  cancelOrderWithRefund,
+  getOrderByReference
 } from '../controller/order-controller.js';
 
 /* =======================
@@ -360,6 +361,12 @@ router.post(
 /* ======================================================
    BASIC ORDER ROUTES (Customer)
 ====================================================== */
+
+router.get(
+  '/orders/reference/:reference',
+  verifyUserAuth,
+  getOrderByReference
+);
 
 router.get(
   '/orders/user',
