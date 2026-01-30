@@ -1,4 +1,4 @@
-// adminSlice.js - COMPLETE UPDATED VERSION
+// adminSlice.js - COMPLETE UPDATED VERSION WITH ALL ADMIN FUNCTIONALITY
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -136,7 +136,7 @@ export const fetchAnalytics = createAsyncThunk(
 );
 
 // ============================================
-// ORDER MANAGEMENT
+// ORDER MANAGEMENT (ADMIN)
 // ============================================
 
 export const fetchAllOrders = createAsyncThunk(
@@ -193,6 +193,24 @@ export const cancelOrder = createAsyncThunk(
         try {
             const { data } = await axios.put(`/api/v1/admin/order/${id}`, { status: 'Cancelled' });
             return data.order;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to cancel order');
+        }
+    }
+);
+
+/**
+ * Cancel order with optional automatic refund initiation
+ */
+export const cancelOrderWithRefund = createAsyncThunk(
+    'admin/cancelOrderWithRefund',
+    async ({ orderId, reason, skipRefund = false }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.put(
+                `/api/v1/admin/orders/${orderId}/cancel`,
+                { reason, skipRefund }
+            );
+            return data;
         } catch (error) {
             return rejectWithValue(error.response?.data?.message || 'Failed to cancel order');
         }
@@ -627,6 +645,21 @@ export const getCustomerOrderAnalytics = createAsyncThunk(
     }
 );
 
+/**
+ * Get audit log for specific order (Admin)
+ */
+export const getOrderAuditLog = createAsyncThunk(
+    'admin/getOrderAuditLog',
+    async (orderId, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`/api/v1/admin/orders/${orderId}/audit`);
+            return { orderId, auditLog: data.auditLog };
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch audit log');
+        }
+    }
+);
+
 // ============================================
 // SLICE DEFINITION
 // ============================================
@@ -685,6 +718,7 @@ const adminSlice = createSlice({
         currentOrder: null,
         orderMessages: [],
         unreadOrders: [],
+        auditLog: [],
         
         // Reviews
         reviews: [],
@@ -965,6 +999,32 @@ const adminSlice = createSlice({
                 }
             })
             .addCase(cancelOrder.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            });
+
+        // ============================================
+        // CANCEL ORDER WITH REFUND
+        // ============================================
+        builder
+            .addCase(cancelOrderWithRefund.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(cancelOrderWithRefund.fulfilled, (state, action) => {
+                state.loading = false;
+                state.success = true;
+                const index = state.orders.findIndex(o => o._id === action.payload.order._id);
+                if (index !== -1) {
+                    state.orders[index].orderStatus = 'Cancelled';
+                    state.orders[index].refundInfo = action.payload.order.refundInfo;
+                }
+                if (state.currentOrder?._id === action.payload.order._id) {
+                    state.currentOrder.orderStatus = 'Cancelled';
+                    state.currentOrder.refundInfo = action.payload.order.refundInfo;
+                }
+            })
+            .addCase(cancelOrderWithRefund.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             });
@@ -1344,6 +1404,19 @@ const adminSlice = createSlice({
                 state.customerAnalytics = action.payload;
             })
             .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(getOrderAuditLog.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+            .addCase(getOrderAuditLog.fulfilled, (state, action) => {
+                state.loading = false;
+                state.auditLog = action.payload.auditLog;
+            })
+            .addCase(getOrderAuditLog.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             });

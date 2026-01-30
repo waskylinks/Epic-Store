@@ -1,4 +1,4 @@
-// features/order/orderSlice.js
+// features/order/orderSlice.js - CUSTOMER ONLY (Admin moved to adminSlice)
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -75,6 +75,25 @@ export const getOrderDetails = createAsyncThunk(
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch order details"
+      );
+    }
+  }
+);
+
+/**
+ * Get order by reference number
+ */
+export const getOrderByReference = createAsyncThunk(
+  "order/getOrderByReference",
+  async (reference, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${API_BASE}/orders/reference/${reference}`, {
+        withCredentials: true,
+      });
+      return data.order;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch order"
       );
     }
   }
@@ -198,7 +217,7 @@ export const editOrderNote = createAsyncThunk(
 );
 
 // ============================================
-// TRACKING & SHIPMENT MANAGEMENT
+// TRACKING INFORMATION
 // ============================================
 
 /**
@@ -215,517 +234,6 @@ export const getTrackingInfo = createAsyncThunk(
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch tracking info"
-      );
-    }
-  }
-);
-
-/**
- * Add tracking information (Admin only)
- */
-export const addTrackingInfo = createAsyncThunk(
-  "order/addTrackingInfo",
-  async ({ orderId, carrier, trackingNumber, estimatedDelivery }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(
-        `${API_BASE}/admin/orders/${orderId}/tracking`,
-        { carrier, trackingNumber, estimatedDelivery },
-        { withCredentials: true }
-      );
-      return { orderId, tracking: data.tracking };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to add tracking info"
-      );
-    }
-  }
-);
-
-/**
- * Create shipment (Admin only)
- */
-export const createShipment = createAsyncThunk(
-  "order/createShipment",
-  async ({ orderId, items, warehouse, carrier, weight, dimensions }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(
-        `${API_BASE}/admin/orders/${orderId}/shipments`,
-        { items, warehouse, carrier, weight, dimensions },
-        { withCredentials: true }
-      );
-      return { orderId, shipment: data.shipment };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to create shipment"
-      );
-    }
-  }
-);
-
-/**
- * Update shipment status (Admin only)
- */
-export const updateShipmentStatus = createAsyncThunk(
-  "order/updateShipmentStatus",
-  async ({ orderId, shipmentId, status, trackingNumber }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(
-        `${API_BASE}/admin/orders/${orderId}/shipments/${shipmentId}`,
-        { status, trackingNumber },
-        { withCredentials: true }
-      );
-      return { orderId, shipmentId, shipment: data.shipment };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to update shipment"
-      );
-    }
-  }
-);
-
-// ============================================
-// RETURN MANAGEMENT (RMA)
-// ============================================
-
-/**
- * Request return for order
- */
-export const requestReturn = createAsyncThunk(
-  "order/requestReturn",
-  async ({ orderId, reason, itemsToReturn, images = [] }, { rejectWithValue }) => {
-    try {
-      const formData = createFormDataWithFiles(
-        { reason, itemsToReturn: JSON.stringify(itemsToReturn) },
-        images
-      );
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/return/request`,
-        formData,
-        {
-          withCredentials: true,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-      return { orderId, returnInfo: data.returnInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to request return"
-      );
-    }
-  }
-);
-
-/**
- * Review return request (Admin only)
- */
-export const reviewReturnRequest = createAsyncThunk(
-  "order/reviewReturnRequest",
-  async ({ orderId, action, restockFee = 0, adminNote = '' }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(
-        `${API_BASE}/admin/orders/${orderId}/return/review`,
-        { action, restockFee, adminNote },
-        { withCredentials: true }
-      );
-      return { orderId, returnInfo: data.returnInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to review return request"
-      );
-    }
-  }
-);
-
-/**
- * Update return status (Admin only)
- */
-export const updateReturnStatus = createAsyncThunk(
-  "order/updateReturnStatus",
-  async ({ orderId, status, inspectionNotes }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(
-        `${API_BASE}/admin/orders/${orderId}/return/status`,
-        { status, inspectionNotes },
-        { withCredentials: true }
-      );
-      return { orderId, returnInfo: data.returnInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to update return status"
-      );
-    }
-  }
-);
-
-/**
- * Get all active returns (Admin only)
- */
-export const getAllReturns = createAsyncThunk(
-  "order/getAllReturns",
-  async (status = '', { rejectWithValue }) => {
-    try {
-      const url = status 
-        ? `${API_BASE}/admin/returns?status=${status}`
-        : `${API_BASE}/admin/returns`;
-      
-      const { data } = await axios.get(url, {
-        withCredentials: true,
-      });
-      return data.returns;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch returns"
-      );
-    }
-  }
-);
-
-// ============================================
-// REFUND MANAGEMENT
-// ============================================
-
-/**
- * Request refund for order (with images)
- */
-export const requestRefund = createAsyncThunk(
-  "order/requestRefund",
-  async ({ orderId, reason, description, refundType = 'full', requestedAmount, images = [] }, { rejectWithValue }) => {
-    try {
-      const formData = createFormDataWithFiles(
-        { reason, description, refundType, requestedAmount },
-        images
-      );
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/refund/request`,
-        formData,
-        {
-          withCredentials: true,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-      return { orderId, refundInfo: data.refundInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to request refund"
-      );
-    }
-  }
-);
-
-/**
- * Review refund request (Admin only)
- */
-export const reviewRefundRequest = createAsyncThunk(
-  "order/reviewRefundRequest",
-  async ({ orderId, action, adminNote = '' }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(
-        `${API_BASE}/admin/orders/${orderId}/refund/review`,
-        { action, adminNote },
-        { withCredentials: true }
-      );
-      return { orderId, refundInfo: data.refundInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to review refund request"
-      );
-    }
-  }
-);
-
-/**
- * Process refund (Admin only)
- */
-export const processRefund = createAsyncThunk(
-  "order/processRefund",
-  async ({ orderId, refundAmount, merchantNote = '' }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(
-        `${API_BASE}/admin/orders/${orderId}/refund/process`,
-        { refundAmount, merchantNote },
-        { withCredentials: true }
-      );
-      return { orderId, refundInfo: data.refundInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to process refund"
-      );
-    }
-  }
-);
-
-/**
- * Get all refunds (Admin only)
- */
-export const getAllRefunds = createAsyncThunk(
-  "order/getAllRefunds",
-  async ({ status = '', from, to } = {}, { rejectWithValue }) => {
-    try {
-      let url = `${API_BASE}/admin/refunds`;
-      const params = new URLSearchParams();
-      
-      if (status) params.append('status', status);
-      if (from) params.append('from', from);
-      if (to) params.append('to', to);
-      
-      const queryString = params.toString();
-      if (queryString) url += `?${queryString}`;
-      
-      const { data } = await axios.get(url, {
-        withCredentials: true,
-      });
-      return data.refunds;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch refunds"
-      );
-    }
-  }
-);
-
-// ============================================
-// INVOICE MANAGEMENT
-// ============================================
-
-/**
- * Download invoice for order
- */
-export const downloadInvoice = createAsyncThunk(
-  "order/downloadInvoice",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`${API_BASE}/orders/${orderId}/invoice`, {
-        withCredentials: true,
-      });
-      return { orderId, invoice: data.invoice };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to download invoice"
-      );
-    }
-  }
-);
-
-// 1. Get refund messages (lazy load)
-export const getRefundMessages = createAsyncThunk(
-  "order/getRefundMessages",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/refund/messages`,
-        { withCredentials: true }
-      );
-      return { orderId, messages: data.messages };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch messages"
-      );
-    }
-  }
-);
-
-// 2. Add refund message
-export const addRefundMessage = createAsyncThunk(
-  "order/addRefundMessage",
-  async ({ orderId, message, attachments = [] }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/refund/messages`,
-        { message, attachments },
-        { withCredentials: true }
-      );
-      return { orderId, message: data.data.message };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to send message"
-      );
-    }
-  }
-);
-
-// 3. Upload refund files
-export const uploadRefundFiles = createAsyncThunk(
-  "order/uploadRefundFiles",
-  async ({ orderId, files }, { rejectWithValue, dispatch }) => { // Add 'dispatch' here
-    try {
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append('attachments', file);
-      });
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/refund/upload`,
-        formData,
-        {
-          withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' },
-          onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round(
-              (progressEvent.loaded * 100) / progressEvent.total
-            );
-            dispatch(setUploadProgress(percentCompleted)); // Use it here
-          }
-        }
-      );
-      
-      dispatch(setUploadProgress(0)); // Reset after success
-      return { orderId, files: data.files };
-    } catch (error) {
-      dispatch(setUploadProgress(0)); // Reset on error
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to upload files"
-      );
-    }
-  }
-);
-
-// 4. Cancel refund request
-export const cancelRefundRequest = createAsyncThunk(
-  "order/cancelRefundRequest",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      await axios.put(
-        `${API_BASE}/orders/${orderId}/refund/cancel`,
-        {},
-        { withCredentials: true }
-      );
-      return { orderId };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to cancel refund"
-      );
-    }
-  }
-);
-
-// 5. Get refund timeline
-export const getRefundTimeline = createAsyncThunk(
-  "order/getRefundTimeline",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/refund/timeline`,
-        { withCredentials: true }
-      );
-      return { orderId, timeline: data.timeline };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch timeline"
-      );
-    }
-  }
-);
-
-// 6. Get refund documents
-export const getRefundDocuments = createAsyncThunk(
-  "order/getRefundDocuments",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/refund/documents`,
-        { withCredentials: true }
-      );
-      return { orderId, documents: data.documents };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch documents"
-      );
-    }
-  }
-);
-
-// ============================================
-// FRAUD PREVENTION & REVIEW
-// ============================================
-
-/**
- * Get orders pending fraud review (Admin only)
- */
-export const getPendingFraudReviews = createAsyncThunk(
-  "order/getPendingFraudReviews",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`${API_BASE}/admin/orders/fraud-review`, {
-        withCredentials: true,
-      });
-      return data.orders;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch fraud reviews"
-      );
-    }
-  }
-);
-
-/**
- * Review fraud-flagged order (Admin only)
- */
-export const reviewFraudCheck = createAsyncThunk(
-  "order/reviewFraudCheck",
-  async ({ orderId, decision }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(
-        `${API_BASE}/admin/orders/${orderId}/fraud-review`,
-        { decision },
-        { withCredentials: true }
-      );
-      return { orderId, order: data.order };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to review fraud check"
-      );
-    }
-  }
-);
-
-// ============================================
-// AUDIT LOG
-// ============================================
-
-/**
- * Get audit log for order (Admin only)
- */
-export const getAuditLog = createAsyncThunk(
-  "order/getAuditLog",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`${API_BASE}/admin/orders/${orderId}/audit`, {
-        withCredentials: true,
-      });
-      return { orderId, auditLog: data.auditLog };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch audit log"
-      );
-    }
-  }
-);
-
-// ============================================
-// ANALYTICS
-// ============================================
-
-/**
- * Get customer order analytics (Admin only)
- */
-export const getCustomerOrderAnalytics = createAsyncThunk(
-  "order/getCustomerOrderAnalytics",
-  async (userId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/analytics/customer/${userId}/orders`,
-        { withCredentials: true }
-      );
-      return data.analytics;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch analytics"
       );
     }
   }
@@ -798,8 +306,39 @@ export const markOrderMessagesRead = createAsyncThunk(
 );
 
 // ============================================
-// RETURN MESSAGES (Customer)
+// RETURN MANAGEMENT (Customer)
 // ============================================
+
+/**
+ * Request return for order
+ */
+export const requestReturn = createAsyncThunk(
+  "order/requestReturn",
+  async ({ orderId, reason, itemsToReturn, images = [] }, { rejectWithValue }) => {
+    try {
+      const formData = createFormDataWithFiles(
+        { reason, itemsToReturn: JSON.stringify(itemsToReturn) },
+        images
+      );
+
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/return/request`,
+        formData,
+        {
+          withCredentials: true,
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+      return { orderId, returnInfo: data.returnInfo };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to request return"
+      );
+    }
+  }
+);
 
 /**
  * Add message to return
@@ -883,6 +422,44 @@ export const getReturnDocuments = createAsyncThunk(
 );
 
 /**
+ * Upload files for return
+ */
+export const uploadReturnFiles = createAsyncThunk(
+  "order/uploadReturnFiles",
+  async ({ orderId, files }, { rejectWithValue, dispatch }) => {
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('attachments', file);
+      });
+
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/return/upload`,
+        formData,
+        {
+          withCredentials: true,
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            dispatch(setUploadProgress(percentCompleted));
+          }
+        }
+      );
+      
+      dispatch(setUploadProgress(0));
+      return { orderId, files: data.files };
+    } catch (error) {
+      dispatch(setUploadProgress(0));
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to upload files"
+      );
+    }
+  }
+);
+
+/**
  * Cancel return request
  */
 export const cancelReturnRequest = createAsyncThunk(
@@ -903,19 +480,199 @@ export const cancelReturnRequest = createAsyncThunk(
   }
 );
 
-export const cancelOrder = createAsyncThunk(
-  "order/cancelOrder",
-  async ({ orderId, reason, skipRefund = false }, { rejectWithValue }) => {
+// ============================================
+// REFUND MANAGEMENT (Customer)
+// ============================================
+
+/**
+ * Request refund for order (with images)
+ */
+export const requestRefund = createAsyncThunk(
+  "order/requestRefund",
+  async ({ orderId, reason, description, refundType = 'full', requestedAmount, images = [] }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(
-        `${API_BASE}/admin/orders/${orderId}/cancel`,
-        { reason, skipRefund },
-        { withCredentials: true }
+      const formData = createFormDataWithFiles(
+        { reason, description, refundType, requestedAmount },
+        images
       );
-      return data;
+
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/refund/request`,
+        formData,
+        {
+          withCredentials: true,
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        }
+      );
+      return { orderId, refundInfo: data.refundInfo };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to cancel order"
+        error.response?.data?.message || "Failed to request refund"
+      );
+    }
+  }
+);
+
+/**
+ * Get refund messages (lazy load)
+ */
+export const getRefundMessages = createAsyncThunk(
+  "order/getRefundMessages",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/refund/messages`,
+        { withCredentials: true }
+      );
+      return { orderId, messages: data.messages };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch messages"
+      );
+    }
+  }
+);
+
+/**
+ * Add refund message
+ */
+export const addRefundMessage = createAsyncThunk(
+  "order/addRefundMessage",
+  async ({ orderId, message, attachments = [] }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/refund/messages`,
+        { message, attachments },
+        { withCredentials: true }
+      );
+      return { orderId, message: data.data.message };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to send message"
+      );
+    }
+  }
+);
+
+/**
+ * Upload refund files
+ */
+export const uploadRefundFiles = createAsyncThunk(
+  "order/uploadRefundFiles",
+  async ({ orderId, files }, { rejectWithValue, dispatch }) => {
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('attachments', file);
+      });
+
+      const { data } = await axios.post(
+        `${API_BASE}/orders/${orderId}/refund/upload`,
+        formData,
+        {
+          withCredentials: true,
+          headers: { 'Content-Type': 'multipart/form-data' },
+          onUploadProgress: (progressEvent) => {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            dispatch(setUploadProgress(percentCompleted));
+          }
+        }
+      );
+      
+      dispatch(setUploadProgress(0));
+      return { orderId, files: data.files };
+    } catch (error) {
+      dispatch(setUploadProgress(0));
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to upload files"
+      );
+    }
+  }
+);
+
+/**
+ * Cancel refund request
+ */
+export const cancelRefundRequest = createAsyncThunk(
+  "order/cancelRefundRequest",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      await axios.put(
+        `${API_BASE}/orders/${orderId}/refund/cancel`,
+        {},
+        { withCredentials: true }
+      );
+      return { orderId };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to cancel refund"
+      );
+    }
+  }
+);
+
+/**
+ * Get refund timeline
+ */
+export const getRefundTimeline = createAsyncThunk(
+  "order/getRefundTimeline",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/refund/timeline`,
+        { withCredentials: true }
+      );
+      return { orderId, timeline: data.timeline };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch timeline"
+      );
+    }
+  }
+);
+
+/**
+ * Get refund documents
+ */
+export const getRefundDocuments = createAsyncThunk(
+  "order/getRefundDocuments",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/refund/documents`,
+        { withCredentials: true }
+      );
+      return { orderId, documents: data.documents };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch documents"
+      );
+    }
+  }
+);
+
+// ============================================
+// INVOICE MANAGEMENT
+// ============================================
+
+/**
+ * Download invoice for order
+ */
+export const downloadInvoice = createAsyncThunk(
+  "order/downloadInvoice",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${API_BASE}/orders/${orderId}/invoice`, {
+        withCredentials: true,
+      });
+      return { orderId, invoice: data.invoice };
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to download invoice"
       );
     }
   }
@@ -933,9 +690,6 @@ const orderSlice = createSlice({
     timeline: [],
     notes: [],
     tracking: null,
-    shipments: [],
-    returns: [],
-    refunds: [],
     refundMessages: [],
     refundTimeline: [],
     refundDocuments: [],
@@ -943,9 +697,6 @@ const orderSlice = createSlice({
     returnInfo: null,
     refundInfo: null,
     invoice: null,
-    fraudReviews: [],
-    auditLog: [],
-    analytics: null,
     orderMessages: [],
     returnMessages: [],
     returnTimeline: [],
@@ -971,16 +722,13 @@ const orderSlice = createSlice({
       state.notes = [];
       state.tracking = null;
       state.invoice = null;
-      state.auditLog = [];
     },
     setActionLoading: (state, action) => {
       state.actionLoading = action.payload;
     },
-
     setUploadProgress: (state, action) => {
-    state.uploadProgress = action.payload;
+      state.uploadProgress = action.payload;
     },
-
   },
   extraReducers: (builder) => {
     // ============================================
@@ -1014,6 +762,24 @@ const orderSlice = createSlice({
         state.success = true;
       })
       .addCase(getOrderDetails.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+
+    // ============================================
+    // GET ORDER BY REFERENCE
+    // ============================================
+    builder
+      .addCase(getOrderByReference.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(getOrderByReference.fulfilled, (state, action) => {
+        state.loading = false;
+        state.order = action.payload;
+        state.success = true;
+      })
+      .addCase(getOrderByReference.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
@@ -1130,291 +896,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    builder
-      .addCase(addTrackingInfo.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(addTrackingInfo.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.tracking = action.payload.tracking;
-        if (state.order) {
-          state.order.tracking = action.payload.tracking;
-        }
-        state.message = "Tracking information added successfully";
-      })
-      .addCase(addTrackingInfo.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // SHIPMENT MANAGEMENT
-    // ============================================
-    builder
-      .addCase(createShipment.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(createShipment.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.shipments.push(action.payload.shipment);
-        if (state.order?.shipments) {
-          state.order.shipments.push(action.payload.shipment);
-        }
-        state.message = "Shipment created successfully";
-      })
-      .addCase(createShipment.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(updateShipmentStatus.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(updateShipmentStatus.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        const index = state.shipments.findIndex(
-          s => s.shipmentId === action.payload.shipmentId
-        );
-        if (index !== -1) {
-          state.shipments[index] = action.payload.shipment;
-        }
-        state.message = "Shipment updated successfully";
-      })
-      .addCase(updateShipmentStatus.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // RETURN MANAGEMENT
-    // ============================================
-    builder
-      .addCase(requestReturn.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(requestReturn.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.returnInfo = action.payload.returnInfo;
-        if (state.order) {
-          state.order.returnInfo = action.payload.returnInfo;
-        }
-        state.message = "Return request submitted successfully";
-        state.success = true;
-      })
-      .addCase(requestReturn.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(reviewReturnRequest.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(reviewReturnRequest.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.returnInfo = action.payload.returnInfo;
-        if (state.order) {
-          state.order.returnInfo = action.payload.returnInfo;
-        }
-        state.message = "Return request reviewed successfully";
-      })
-      .addCase(reviewReturnRequest.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(updateReturnStatus.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(updateReturnStatus.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.returnInfo = action.payload.returnInfo;
-        if (state.order) {
-          state.order.returnInfo = action.payload.returnInfo;
-        }
-        state.message = "Return status updated successfully";
-      })
-      .addCase(updateReturnStatus.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(getAllReturns.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getAllReturns.fulfilled, (state, action) => {
-        state.loading = false;
-        state.returns = action.payload;
-      })
-      .addCase(getAllReturns.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // REFUND MANAGEMENT
-    // ============================================
-    builder
-      .addCase(requestRefund.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(requestRefund.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.refundInfo = action.payload.refundInfo;
-        if (state.order) {
-          state.order.refundInfo = action.payload.refundInfo;
-        }
-        state.message = "Refund request submitted successfully";
-        state.success = true;
-      })
-      .addCase(requestRefund.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(reviewRefundRequest.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(reviewRefundRequest.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.refundInfo = action.payload.refundInfo;
-        if (state.order) {
-          state.order.refundInfo = action.payload.refundInfo;
-        }
-        state.message = "Refund request reviewed successfully";
-      })
-      .addCase(reviewRefundRequest.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(processRefund.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(processRefund.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.refundInfo = action.payload.refundInfo;
-        if (state.order) {
-          state.order.refundInfo = action.payload.refundInfo;
-        }
-        state.message = "Refund processed successfully";
-      })
-      .addCase(processRefund.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(getAllRefunds.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getAllRefunds.fulfilled, (state, action) => {
-        state.loading = false;
-        state.refunds = action.payload;
-      })
-      .addCase(getAllRefunds.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // INVOICE MANAGEMENT
-    // ============================================
-    builder
-      .addCase(downloadInvoice.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(downloadInvoice.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.invoice = action.payload.invoice;
-      })
-      .addCase(downloadInvoice.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // FRAUD PREVENTION
-    // ============================================
-    builder
-      .addCase(getPendingFraudReviews.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getPendingFraudReviews.fulfilled, (state, action) => {
-        state.loading = false;
-        state.fraudReviews = action.payload;
-      })
-      .addCase(getPendingFraudReviews.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(reviewFraudCheck.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(reviewFraudCheck.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.message = "Fraud review completed successfully";
-      })
-      .addCase(reviewFraudCheck.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // AUDIT LOG
-    // ============================================
-    builder
-      .addCase(getAuditLog.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(getAuditLog.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.auditLog = action.payload.auditLog;
-      })
-      .addCase(getAuditLog.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    // ============================================
-    // ANALYTICS
-    // ============================================
-    builder
-      .addCase(getCustomerOrderAnalytics.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getCustomerOrderAnalytics.fulfilled, (state, action) => {
-        state.loading = false;
-        state.analytics = action.payload;
-      })
-      .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
-
     // ============================================
     // ORDER MESSAGES
     // ============================================
@@ -1456,8 +937,27 @@ const orderSlice = createSlice({
       });
 
     // ============================================
-    // RETURN MESSAGES
+    // RETURN MANAGEMENT
     // ============================================
+    builder
+      .addCase(requestReturn.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(requestReturn.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.returnInfo = action.payload.returnInfo;
+        if (state.order) {
+          state.order.returnInfo = action.payload.returnInfo;
+        }
+        state.message = "Return request submitted successfully";
+        state.success = true;
+      })
+      .addCase(requestReturn.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
+
     builder
       .addCase(addReturnMessage.pending, (state) => {
         state.actionLoading = true;
@@ -1498,6 +998,11 @@ const orderSlice = createSlice({
       });
 
     builder
+      .addCase(uploadReturnFiles.fulfilled, (state, action) => {
+        state.returnDocuments.push(...action.payload.files);
+      });
+
+    builder
       .addCase(cancelReturnRequest.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
@@ -1510,55 +1015,76 @@ const orderSlice = createSlice({
       .addCase(cancelReturnRequest.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload;
+      });
+
+    // ============================================
+    // REFUND MANAGEMENT
+    // ============================================
+    builder
+      .addCase(requestRefund.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
       })
+      .addCase(requestRefund.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.refundInfo = action.payload.refundInfo;
+        if (state.order) {
+          state.order.refundInfo = action.payload.refundInfo;
+        }
+        state.message = "Refund request submitted successfully";
+        state.success = true;
+      })
+      .addCase(requestRefund.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
 
-      // Refund messages
-      builder
-        .addCase(getRefundMessages.fulfilled, (state, action) => {
-          state.refundMessages = action.payload.messages;
-        })
-        .addCase(addRefundMessage.fulfilled, (state, action) => {
-          state.refundMessages.push(action.payload.message);
-        })
-        .addCase(uploadRefundFiles.fulfilled, (state, action) => {
-          state.refundDocuments.push(...action.payload.files);
-        })
-        .addCase(cancelRefundRequest.fulfilled, (state) => {
-          state.refundInfo = null;
-          state.message = "Refund request cancelled";
-        })
+    builder
+      .addCase(getRefundMessages.fulfilled, (state, action) => {
+        state.refundMessages = action.payload.messages;
+      })
+      .addCase(addRefundMessage.fulfilled, (state, action) => {
+        state.refundMessages.push(action.payload.message);
+      })
+      .addCase(uploadRefundFiles.fulfilled, (state, action) => {
+        state.refundDocuments.push(...action.payload.files);
+      })
+      .addCase(cancelRefundRequest.fulfilled, (state) => {
+        state.refundInfo = null;
+        state.message = "Refund request cancelled";
+      })
+      .addCase(getRefundTimeline.fulfilled, (state, action) => {
+        state.refundTimeline = action.payload.timeline;
+      })
+      .addCase(getRefundDocuments.fulfilled, (state, action) => {
+        state.refundDocuments = action.payload.documents;
+      });
 
-        builder
-        .addCase(cancelOrder.pending, (state) => {
-          state.actionLoading = true;
-          state.error = null;
-        })
-        .addCase(cancelOrder.fulfilled, (state, action) => {
-          state.actionLoading = false;
-          state.success = true;
-          state.message = action.payload.message;
-          
-          // Update order in state
-          if (state.order && state.order._id === action.payload.order._id) {
-            state.order.orderStatus = 'Cancelled';
-            state.order.cancelledAt = action.payload.order.cancelledAt;
-            state.order.refundInfo = action.payload.order.refundInfo;
-          }
-          
-          // Update in orders list
-          const orderIndex = state.orders.findIndex(o => o._id === action.payload.order._id);
-          if (orderIndex !== -1) {
-            state.orders[orderIndex].orderStatus = 'Cancelled';
-          }
-        })
-        .addCase(cancelOrder.rejected, (state, action) => {
-          state.actionLoading = false;
-          state.error = action.payload;
-        });
-
-
+    // ============================================
+    // INVOICE MANAGEMENT
+    // ============================================
+    builder
+      .addCase(downloadInvoice.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(downloadInvoice.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.invoice = action.payload.invoice;
+      })
+      .addCase(downloadInvoice.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
   },
 });
 
-export const { removeErrors, clearMessage, clearOrder, setActionLoading, setUploadProgress } = orderSlice.actions;
+export const { 
+  removeErrors, 
+  clearMessage, 
+  clearOrder, 
+  setActionLoading, 
+  setUploadProgress 
+} = orderSlice.actions;
+
 export default orderSlice.reducer;

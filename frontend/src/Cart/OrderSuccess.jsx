@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { useDispatch, useSelector } from "react-redux";
 import { toast } from "react-toastify";
@@ -18,12 +18,41 @@ function OrderSuccess() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  const { selectedReceipt, loading, error } = useSelector((state) => state.order);
+  // Select from the correct state slice
+  const { selectedReceipt, loading: receiptLoading } = useSelector((state) => state.receipt || {});
   
   const [orderDetails, setOrderDetails] = useState(null);
+  const [orderLoading, setOrderLoading] = useState(false);
   const [receiptReady, setReceiptReady] = useState(false);
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const [downloadLoading, setDownloadLoading] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+
+  // Fetch order by payment reference using the new backend route
+  const fetchOrderByReference = useCallback(async () => {
+    if (!reference) return;
+    
+    setOrderLoading(true);
+    try {
+      const { data } = await axios.get(
+        `/api/v1/orders/reference/${reference}`,
+        { withCredentials: true }
+      );
+      setOrderDetails(data.order);
+    } catch (err) {
+      console.error("Failed to fetch order:", err);
+      
+      // Only show error if it's not a 404 (order might still be processing)
+      if (err.response?.status !== 404) {
+        toast.error(
+          err.response?.data?.message || "Unable to load order details. Your order may still be processing.", 
+          { position: "top-center" }
+        );
+      }
+    } finally {
+      setOrderLoading(false);
+    }
+  }, [reference]);
 
   // Validate reference on mount
   useEffect(() => {
@@ -35,7 +64,7 @@ function OrderSuccess() {
 
     // Fetch order details by reference
     fetchOrderByReference();
-  }, [reference]);
+  }, [reference, navigate, fetchOrderByReference]);
 
   // Poll for receipt availability
   useEffect(() => {
@@ -52,6 +81,11 @@ function OrderSuccess() {
           setReceiptReady(true);
           // Fetch full receipt details
           dispatch(fetchReceiptByReference(reference));
+          
+          // If order details not loaded yet, try again
+          if (!orderDetails) {
+            fetchOrderByReference();
+          }
         } else {
           // Retry after delay
           setPollingAttempts(prev => prev + 1);
@@ -68,20 +102,7 @@ function OrderSuccess() {
     }, 2000);
 
     return () => clearTimeout(timerId);
-  }, [reference, receiptReady, pollingAttempts, dispatch]);
-
-  const fetchOrderByReference = async () => {
-    try {
-      const { data } = await axios.get(
-        `/api/v1/orders/reference/${reference}`,
-        { withCredentials: true }
-      );
-      setOrderDetails(data.order);
-    } catch (err) {
-      console.error("Failed to fetch order:", err);
-      toast.error("Failed to load order details", { position: "top-center" });
-    }
-  };
+  }, [reference, receiptReady, pollingAttempts, dispatch, orderDetails, fetchOrderByReference]);
 
   const handleDownloadReceipt = async () => {
     if (!reference) {
@@ -115,21 +136,40 @@ function OrderSuccess() {
   };
 
   const handleEmailReceipt = async () => {
-    if (!reference) return;
+    if (!reference) {
+      toast.error("Invalid receipt reference", {
+        position: "top-center",
+      });
+      return;
+    }
+
+    if (!receiptReady) {
+      toast.info("Receipt is being prepared, please wait...", {
+        position: "top-center",
+      });
+      return;
+    }
+
+    setEmailLoading(true);
 
     try {
-      await axios.post(
+      const response = await axios.post(
         `/api/v1/receipts/${reference}/email`,
         {},
         { withCredentials: true }
       );
-      toast.success("Receipt sent to your email", {
+      
+      toast.success(response.data.message || "Receipt sent to your email successfully", {
         position: "top-center",
       });
     } catch (err) {
-      toast.error("Failed to send receipt email", {
+      const errorMessage = err.response?.data?.message || "Failed to send receipt email";
+      toast.error(errorMessage, {
         position: "top-center",
       });
+      console.error("Email receipt error:", err);
+    } finally {
+      setEmailLoading(false);
     }
   };
 
@@ -158,6 +198,25 @@ function OrderSuccess() {
     return methods[method] || method;
   };
 
+  // Show loading state
+  if (orderLoading) {
+    return (
+      <>
+        <PageTitle title="Order Confirmed" />
+        <Navbar />
+        <div className="payment-success-container">
+          <div className="success-content">
+            <div className="loading-spinner">
+              <div className="spinner"></div>
+              <p>Loading order details...</p>
+            </div>
+          </div>
+        </div>
+        <Footer />
+      </>
+    );
+  }
+
   return (
     <>
       <PageTitle title="Order Confirmed" />
@@ -181,7 +240,7 @@ function OrderSuccess() {
           </div>
 
           {/* Order Details */}
-          {orderDetails && (
+          {orderDetails ? (
             <div className="order-details-section">
               <h2>Order Details</h2>
               
@@ -189,7 +248,7 @@ function OrderSuccess() {
                 <div className="info-item">
                   <span className="info-label">Payment Method:</span>
                   <span className="info-value">
-                    {getPaymentMethodDisplay(orderDetails.paymentInfo.method)}
+                    {getPaymentMethodDisplay(orderDetails.paymentInfo?.method)}
                   </span>
                 </div>
 
@@ -198,7 +257,7 @@ function OrderSuccess() {
                   <span className="info-value">
                     {formatCurrency(
                       orderDetails.totalPrice,
-                      orderDetails.paymentInfo.currency
+                      orderDetails.paymentInfo?.currency
                     )}
                   </span>
                 </div>
@@ -206,14 +265,14 @@ function OrderSuccess() {
                 <div className="info-item">
                   <span className="info-label">Currency:</span>
                   <span className="info-value">
-                    {orderDetails.paymentInfo.currency}
+                    {orderDetails.paymentInfo?.currency}
                   </span>
                 </div>
 
                 <div className="info-item">
                   <span className="info-label">Items:</span>
                   <span className="info-value">
-                    {orderDetails.orderItems.length} item(s)
+                    {orderDetails.orderItems?.length || 0} item(s)
                   </span>
                 </div>
 
@@ -227,36 +286,38 @@ function OrderSuccess() {
                 <div className="info-item">
                   <span className="info-label">Payment Status:</span>
                   <span className="info-value payment-status-success">
-                    {orderDetails.paymentInfo.status}
+                    {orderDetails.paymentInfo?.status}
                   </span>
                 </div>
               </div>
 
               {/* Order Items Preview */}
-              <div className="order-items-preview">
-                <h3>Ordered Items</h3>
-                <div className="items-list">
-                  {orderDetails.orderItems.map((item, index) => (
-                    <div key={index} className="item-row">
-                      <img 
-                        src={item.image} 
-                        alt={item.name} 
-                        className="item-thumbnail"
-                      />
-                      <div className="item-details">
-                        <p className="item-name">{item.name}</p>
-                        <p className="item-quantity">Qty: {item.quantity}</p>
+              {orderDetails.orderItems && orderDetails.orderItems.length > 0 && (
+                <div className="order-items-preview">
+                  <h3>Ordered Items</h3>
+                  <div className="items-list">
+                    {orderDetails.orderItems.map((item, index) => (
+                      <div key={index} className="item-row">
+                        <img 
+                          src={item.image} 
+                          alt={item.name} 
+                          className="item-thumbnail"
+                        />
+                        <div className="item-details">
+                          <p className="item-name">{item.name}</p>
+                          <p className="item-quantity">Qty: {item.quantity}</p>
+                        </div>
+                        <p className="item-price">
+                          {formatCurrency(
+                            item.price * item.quantity,
+                            orderDetails.paymentInfo?.currency
+                          )}
+                        </p>
                       </div>
-                      <p className="item-price">
-                        {formatCurrency(
-                          item.price * item.quantity,
-                          orderDetails.paymentInfo.currency
-                        )}
-                      </p>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Price Breakdown */}
               <div className="price-breakdown">
@@ -264,8 +325,8 @@ function OrderSuccess() {
                   <span>Subtotal:</span>
                   <span>
                     {formatCurrency(
-                      orderDetails.itemPrice,
-                      orderDetails.paymentInfo.currency
+                      orderDetails.itemPrice || 0,
+                      orderDetails.paymentInfo?.currency
                     )}
                   </span>
                 </div>
@@ -273,8 +334,8 @@ function OrderSuccess() {
                   <span>Tax:</span>
                   <span>
                     {formatCurrency(
-                      orderDetails.taxPrice,
-                      orderDetails.paymentInfo.currency
+                      orderDetails.taxPrice || 0,
+                      orderDetails.paymentInfo?.currency
                     )}
                   </span>
                 </div>
@@ -282,8 +343,8 @@ function OrderSuccess() {
                   <span>Shipping:</span>
                   <span>
                     {formatCurrency(
-                      orderDetails.shippingPrice,
-                      orderDetails.paymentInfo.currency
+                      orderDetails.shippingPrice || 0,
+                      orderDetails.paymentInfo?.currency
                     )}
                   </span>
                 </div>
@@ -291,12 +352,23 @@ function OrderSuccess() {
                   <span>Total:</span>
                   <span>
                     {formatCurrency(
-                      orderDetails.totalPrice,
-                      orderDetails.paymentInfo.currency
+                      orderDetails.totalPrice || 0,
+                      orderDetails.paymentInfo?.currency
                     )}
                   </span>
                 </div>
               </div>
+            </div>
+          ) : (
+            <div className="order-details-error">
+              <p>Your order is being processed. Details will appear shortly.</p>
+              <button 
+                className="retry-btn" 
+                onClick={fetchOrderByReference}
+                style={{ marginTop: '1rem' }}
+              >
+                Refresh Order Details
+              </button>
             </div>
           )}
 
@@ -324,8 +396,9 @@ function OrderSuccess() {
                 <button
                   className="email-receipt-btn"
                   onClick={handleEmailReceipt}
+                  disabled={emailLoading}
                 >
-                  Email Receipt
+                  {emailLoading ? "Sending..." : "Email Receipt"}
                 </button>
               </div>
             )}
