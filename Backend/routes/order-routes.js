@@ -69,7 +69,17 @@ import {
   markOrderMessagesRead,
   getOrdersWithUnreadMessages,
   cancelOrderWithRefund,
-  getOrderByReference
+  getOrderByReference,
+  getAdminAnalytics,
+  getAdminStats,
+  deleteAdminOrderNote,
+  editAdminOrderNote,
+  getAdminOrderNotes,
+  addAdminOrderNote,
+  deleteOrder,
+  updateOrder,
+  getSingleOrder,
+  getAllOrders
 } from '../controller/order-controller.js';
 
 /* =======================
@@ -526,6 +536,139 @@ router.get(
   verifyUserAuth,
   roleBaseAccess('admin'),
   getCustomerOrderAnalytics
+);
+
+
+/**
+ * Get all orders (Admin)
+ * @route GET /api/v1/admin/orders
+ */
+router.get(
+  '/admin/orders',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAllOrders
+);
+
+/**
+ * Get single order (Admin)
+ * @route GET /api/v1/admin/order/:id
+ */
+router.get(
+  '/admin/order/:id',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getSingleOrder
+);
+
+/**
+ * Update order status (Admin)
+ * @route PUT /api/v1/admin/order/:id
+ */
+router.put(
+  '/admin/order/:id',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  updateOrder
+);
+
+/**
+ * Delete order (Admin)
+ * @route DELETE /api/v1/admin/order/:id
+ */
+router.delete(
+  '/admin/order/:id',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  deleteOrder
+);
+
+/**
+ * Cancel order (simple status change)
+ * @route PUT /api/v1/admin/order/:id/cancel-simple
+ */
+router.put(
+  '/admin/order/:id/cancel-simple',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  cancelOrderWithRefund
+);
+
+/* ======================================================
+   ADMIN ORDER NOTES MANAGEMENT
+====================================================== */
+
+/**
+ * Add note to order (Admin)
+ * @route POST /api/v1/admin/orders/:id/notes
+ */
+router.post(
+  '/admin/orders/:id/notes',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  upload.array('attachments', 5),
+  validateOrderNote,
+  addAdminOrderNote
+);
+
+/**
+ * Get all notes for order (Admin)
+ * @route GET /api/v1/admin/orders/:id/notes
+ */
+router.get(
+  '/admin/orders/:id/notes',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAdminOrderNotes
+);
+
+/**
+ * Edit order note (Admin)
+ * @route PUT /api/v1/admin/orders/:id/notes/:noteId
+ */
+router.put(
+  '/admin/orders/:id/notes/:noteId',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  validateOrderNote,
+  editAdminOrderNote
+);
+
+/**
+ * Delete order note (Admin)
+ * @route DELETE /api/v1/admin/orders/:id/notes/:noteId
+ */
+router.delete(
+  '/admin/orders/:id/notes/:noteId',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  deleteAdminOrderNote
+);
+
+/* ======================================================
+   ADMIN STATISTICS & ANALYTICS
+====================================================== */
+
+/**
+ * Get admin dashboard statistics
+ * @route GET /api/v1/admin/stats
+ */
+router.get(
+  '/admin/stats',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAdminStats
+);
+
+/**
+ * Get admin analytics
+ * @route GET /api/v1/admin/analytics
+ */
+router.get(
+  '/admin/analytics',
+  verifyUserAuth,
+  roleBaseAccess('admin'),
+  getAdminAnalytics
 );
 
 export default router;

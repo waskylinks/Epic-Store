@@ -949,166 +949,613 @@ export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, nex
   });
 });
 
-export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => {
+
+
+// ============================================
+// ADMIN ORDER CRUD OPERATIONS
+// ============================================
+
+/**
+ * Get all orders (Admin only)
+ * @route GET /api/v1/admin/orders
+ * @access Private (Admin only)
+ */
+export const getAllOrders = handleAsyncError(async (req, res, next) => {
+  const { status, page = 1, limit = 20, from, to } = req.query;
+
+  const query = {};
+
+  // Filter by status if provided
+  if (status && status !== 'all') {
+    query.orderStatus = status;
+  }
+
+  // Filter by date range
+  if (from || to) {
+    query.createdAt = {};
+    if (from) query.createdAt.$gte = new Date(from);
+    if (to) query.createdAt.$lte = new Date(to);
+  }
+
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  const orders = await Order.find(query)
+    .populate('user', 'name email phone')
+    .populate('orderItems.product', 'name images price')
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(parseInt(limit));
+
+  const totalOrders = await Order.countDocuments(query);
+
+  // Calculate stats
+  const stats = {
+    total: totalOrders,
+    processing: await Order.countDocuments({ orderStatus: 'Processing' }),
+    shipped: await Order.countDocuments({ orderStatus: 'Shipped' }),
+    delivered: await Order.countDocuments({ orderStatus: 'Delivered' }),
+    cancelled: await Order.countDocuments({ orderStatus: 'Cancelled' }),
+  };
+
+  return res.status(200).json({
+    success: true,
+    count: orders.length,
+    totalOrders,
+    currentPage: parseInt(page),
+    totalPages: Math.ceil(totalOrders / parseInt(limit)),
+    stats,
+    orders
+  });
+});
+
+/**
+ * Get single order details (Admin)
+ * @route GET /api/v1/admin/order/:id
+ * @access Private (Admin only)
+ */
+export const getSingleOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  const { reason, skipRefund = false } = req.body;
+
+  const order = await Order.findById(id)
+    .populate('user', 'name email phone')
+    .populate('orderItems.product', 'name images price stock')
+    .populate('statusHistory.updatedBy', 'name email')
+    .populate('notes.createdBy', 'name email role')
+    .populate('refundInfo.requestedBy', 'name email')
+    .populate('refundInfo.approvedBy', 'name email')
+    .populate('returnInfo.requestedBy', 'name email')
+    .populate('returnInfo.approvedBy', 'name email');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  return res.status(200).json({
+    success: true,
+    order
+  });
+});
+
+/**
+ * Update order status (Admin)
+ * @route PUT /api/v1/admin/order/:id
+ * @access Private (Admin only)
+ */
+export const updateOrder = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { status, note } = req.body;
+
+  if (!status) {
+    return next(new HandleError('Order status is required', 400));
+  }
+
+  const validStatuses = ['Processing', 'Shipped', 'Delivered', 'Cancelled'];
+  if (!validStatuses.includes(status)) {
+    return next(new HandleError('Invalid order status', 400));
+  }
 
   const order = await Order.findById(id);
   if (!order) {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Check if already cancelled
-  if (order.orderStatus === 'Cancelled') {
-    return next(new HandleError('Order is already cancelled', 400));
+  // Don't allow status change if already cancelled or delivered
+  if (order.orderStatus === 'Cancelled' && status !== 'Cancelled') {
+    return next(new HandleError('Cannot update a cancelled order', 400));
   }
 
-  // Check if already delivered
-  if (order.orderStatus === 'Delivered') {
-    return next(new HandleError('Cannot cancel delivered orders. Use refund instead.', 400));
+  const oldStatus = order.orderStatus;
+  order.orderStatus = status;
+
+  // Update delivery date if status is Delivered
+  if (status === 'Delivered' && !order.deliveredAt) {
+    order.deliveredAt = new Date();
   }
 
-  // Update order status
-  order.orderStatus = 'Cancelled';
-  order.cancelledAt = new Date();
-  order.cancellationReason = reason || 'Cancelled by admin';
+  // Add status history
+  order.addStatusHistory(status, req.user._id, note || `Status updated from ${oldStatus} to ${status}`);
+  order.addAuditEntry('status_updated', req.user._id, { oldStatus, newStatus: status, note });
 
-  // Add to status history
-  order.addStatusHistory('Cancelled', req.user._id, reason || 'Cancelled by admin');
-  order.addAuditEntry('order_cancelled', req.user._id, { reason });
-
-  // Restore stock for all items
-  for (const item of order.orderItems) {
-    try {
+  // If status is delivered, update product stock
+  if (status === 'Delivered' && oldStatus !== 'Delivered') {
+    for (const item of order.orderItems) {
       const product = await Product.findById(item.product);
       if (product) {
-        if (product.inventory?.stock !== undefined) {
-          product.inventory.stock += item.quantity;
-        } else if (product.stock !== undefined) {
-          product.stock += item.quantity;
-        }
+        product.stock -= item.quantity;
         await product.save({ validateBeforeSave: false });
       }
-    } catch (err) {
-      console.error(`Failed to restore stock for product ${item.product}:`, err);
-    }
-  }
-
-  // Process refund if payment was successful and not skipped
-  if (!skipRefund && order.paymentInfo.status === 'success' && order.amountPaid > 0) {
-    try {
-      // Import payment factory
-      const { PaymentFactory } = await import('../Services/payment/paymentFactory.js');
-      
-      // Get the payment gateway that was used
-      const gateway = order.paymentInfo.method;
-      
-      // Prepare refund parameters based on gateway
-      let refundParams = {};
-      
-      if (gateway === 'stripe') {
-        refundParams = {
-          paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
-          reason: 'requested_by_customer',
-          merchantNote: `Order cancelled by admin: ${reason || 'No reason provided'}`
-        };
-      } else if (gateway === 'flutterwave') {
-        refundParams = {
-          transactionId: order.paymentInfo.providerTxId,
-          reason: reason || 'Order cancelled by admin',
-          merchantNote: `Cancelled by admin on ${new Date().toISOString()}`
-        };
-      } else if (gateway === 'paystack') {
-        refundParams = {
-          reference: order.paymentInfo.reference,
-          amount: order.amountPaid,
-          merchantNote: `Order cancelled by admin: ${reason || 'No reason provided'}`
-        };
-      }
-
-      // Process refund through payment gateway
-      const refundResult = await PaymentFactory.refundPayment(gateway, refundParams);
-
-      // Update refund info
-      order.refundInfo = {
-        status: 'completed',
-        reason: 'Order cancelled by admin',
-        description: reason || 'No additional details',
-        refundType: 'full',
-        requestedAmount: order.amountPaid,
-        requestedAt: new Date(),
-        requestedBy: req.user._id,
-        approvedAt: new Date(),
-        approvedBy: req.user._id,
-        refundId: refundResult.refundId,
-        refundAmount: refundResult.amount || order.amountPaid,
-        refundCurrency: refundResult.currency || order.paymentInfo.currency,
-        processedAt: new Date(),
-        processedBy: req.user._id,
-        refundedAt: new Date(),
-        gatewayResponse: refundResult.raw,
-        adminNote: reason || 'Auto-refund on cancellation',
-        messages: [],
-        documents: [],
-        timeline: [{
-          event: 'auto_refund_on_cancellation',
-          description: 'Automatic refund processed due to order cancellation',
-          performedBy: req.user._id,
-          timestamp: new Date(),
-          metadata: { gateway, refundId: refundResult.refundId }
-        }]
-      };
-
-      order.addAuditEntry('auto_refund_processed', req.user._id, {
-        refundId: refundResult.refundId,
-        amount: refundResult.amount,
-        gateway
-      });
-
-    } catch (refundError) {
-      console.error('❌ Auto-refund failed:', refundError);
-      
-      // Mark refund as failed but still cancel the order
-      order.refundInfo = {
-        status: 'failed',
-        reason: 'Order cancelled by admin',
-        description: reason || 'No additional details',
-        refundType: 'full',
-        requestedAmount: order.amountPaid,
-        requestedAt: new Date(),
-        requestedBy: req.user._id,
-        failureReason: refundError.message,
-        adminNote: 'Auto-refund failed. Manual refund required.',
-        messages: [],
-        documents: [],
-        timeline: [{
-          event: 'auto_refund_failed',
-          description: `Automatic refund failed: ${refundError.message}`,
-          performedBy: req.user._id,
-          timestamp: new Date(),
-          metadata: { error: refundError.message }
-        }]
-      };
-
-      order.addAuditEntry('auto_refund_failed', req.user._id, {
-        error: refundError.message,
-        amount: order.amountPaid
-      });
     }
   }
 
   await order.save();
   await deleteCachePattern('admin_stats*');
 
-  const refundMessage = order.refundInfo?.status === 'completed' 
-    ? 'Order cancelled and refund processed automatically'
-    : order.refundInfo?.status === 'failed'
-    ? 'Order cancelled but auto-refund failed. Please process refund manually.'
-    : 'Order cancelled successfully';
+  return res.status(200).json({
+    success: true,
+    message: `Order status updated to ${status}`,
+    order
+  });
+});
+
+/**
+ * Delete order (Admin)
+ * @route DELETE /api/v1/admin/order/:id
+ * @access Private (Admin only)
+ */
+export const deleteOrder = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Don't allow deletion of delivered orders or orders with completed refunds
+  if (order.orderStatus === 'Delivered') {
+    return next(new HandleError('Cannot delete delivered orders', 400));
+  }
+
+  if (order.refundInfo && order.refundInfo.status === 'completed') {
+    return next(new HandleError('Cannot delete orders with completed refunds', 400));
+  }
+
+  await order.deleteOne();
+  await deleteCachePattern('admin_stats*');
 
   return res.status(200).json({
     success: true,
-    message: refundMessage,
+    message: 'Order deleted successfully'
+  });
+});
+
+// ============================================
+// ORDER NOTES MANAGEMENT (Admin)
+// ============================================
+
+/**
+ * Add note to order (Admin)
+ * @route POST /api/v1/admin/orders/:id/notes
+ * @access Private (Admin only)
+ */
+export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { content, type = 'admin' } = req.body;
+
+  if (!content || content.trim().length === 0) {
+    return next(new HandleError('Note content is required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  const note = {
+    content: content.trim(),
+    type,
+    createdBy: req.user._id,
+    createdAt: new Date(),
+    attachments: []
+  };
+
+  // Handle file uploads if any
+  if (req.files && req.files.length > 0) {
+    note.attachments = req.files.map(file => ({
+      url: `/uploads/orders/${order._id}/${file.filename}`,
+      filename: file.originalname,
+      fileType: file.mimetype,
+      fileSize: file.size
+    }));
+  }
+
+  order.notes.push(note);
+  order.addAuditEntry('note_added', req.user._id, { noteType: type });
+
+  await order.save();
+
+  const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'name email role');
+  const addedNote = populatedOrder.notes[populatedOrder.notes.length - 1];
+
+  return res.status(200).json({
+    success: true,
+    message: 'Note added successfully',
+    note: addedNote
+  });
+});
+
+/**
+ * Get all notes for order (Admin)
+ * @route GET /api/v1/admin/orders/:id/notes
+ * @access Private (Admin only)
+ */
+export const getAdminOrderNotes = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+
+  const order = await Order.findById(id)
+    .populate('notes.createdBy', 'name email role')
+    .select('notes');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  return res.status(200).json({
+    success: true,
+    count: order.notes.length,
+    notes: order.notes
+  });
+});
+
+/**
+ * Edit note (Admin only - can only edit own notes)
+ * @route PUT /api/v1/admin/orders/:id/notes/:noteId
+ * @access Private (Admin only)
+ */
+export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
+  const { id, noteId } = req.params;
+  const { content } = req.body;
+
+  if (!content || content.trim().length === 0) {
+    return next(new HandleError('Note content is required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  const note = order.notes.id(noteId);
+  if (!note) {
+    return next(new HandleError('Note not found', 404));
+  }
+
+  // Only allow editing own notes
+  if (note.createdBy.toString() !== req.user._id.toString()) {
+    return next(new HandleError('You can only edit your own notes', 403));
+  }
+
+  note.content = content.trim();
+  note.editedAt = new Date();
+  note.isEdited = true;
+
+  await order.save();
+
+  const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'name email role');
+  const updatedNote = populatedOrder.notes.id(noteId);
+
+  return res.status(200).json({
+    success: true,
+    message: 'Note updated successfully',
+    note: updatedNote
+  });
+});
+
+/**
+ * Delete note (Admin only - can only delete own notes or if super admin)
+ * @route DELETE /api/v1/admin/orders/:id/notes/:noteId
+ * @access Private (Admin only)
+ */
+export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
+  const { id, noteId } = req.params;
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  const note = order.notes.id(noteId);
+  if (!note) {
+    return next(new HandleError('Note not found', 404));
+  }
+
+  // Only allow deleting own notes
+  if (note.createdBy.toString() !== req.user._id.toString()) {
+    return next(new HandleError('You can only delete your own notes', 403));
+  }
+
+  note.deleteOne();
+  await order.save();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Note deleted successfully'
+  });
+});
+
+// ============================================
+// ADMIN STATISTICS & DASHBOARD
+// ============================================
+
+/**
+ * Get admin dashboard statistics
+ * @route GET /api/v1/admin/stats
+ * @access Private (Admin only)
+ */
+export const getAdminStats = handleAsyncError(async (req, res, next) => {
+  const Product = require('../models/product-model.js').default;
+  const User = require('../models/user-model.js').default;
+
+  // Total orders
+  const totalOrders = await Order.countDocuments();
+  
+  // Total revenue (from delivered orders)
+  const revenueResult = await Order.aggregate([
+    { $match: { orderStatus: 'Delivered' } },
+    { $group: { _id: null, total: { $sum: '$amountPaid' } } }
+  ]);
+  const totalRevenue = revenueResult[0]?.total || 0;
+
+  // Order status breakdown
+  const orderStatusBreakdown = {
+    processing: await Order.countDocuments({ orderStatus: 'Processing' }),
+    shipped: await Order.countDocuments({ orderStatus: 'Shipped' }),
+    delivered: await Order.countDocuments({ orderStatus: 'Delivered' }),
+    cancelled: await Order.countDocuments({ orderStatus: 'Cancelled' })
+  };
+
+  // Product stats
+  const totalProducts = await Product.countDocuments();
+  const outOfStock = await Product.countDocuments({ stock: 0 });
+  const inStock = await Product.countDocuments({ stock: { $gt: 0 } });
+
+  // User stats
+  const totalUsers = await User.countDocuments();
+  const adminCount = await User.countDocuments({ role: 'admin' });
+
+  // Recent orders (last 5)
+  const recentOrders = await Order.find()
+    .populate('user', 'name email')
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .select('_id orderStatus totalPrice createdAt user');
+
+  // Pending refunds
+  const pendingRefunds = await Order.countDocuments({ 'refundInfo.status': 'requested' });
+
+  // Pending returns
+  const pendingReturns = await Order.countDocuments({ 'returnInfo.status': 'requested' });
+
+  // Fraud reviews pending
+  const fraudReviews = await Order.countDocuments({ requiresFraudReview: true });
+
+  return res.status(200).json({
+    success: true,
+    stats: {
+      orders: totalOrders,
+      revenue: totalRevenue,
+      products: totalProducts,
+      users: totalUsers,
+      outOfStock,
+      inStock,
+      adminCount,
+      orderStatusBreakdown,
+      pendingRefunds,
+      pendingReturns,
+      fraudReviews
+    },
+    recentOrders
+  });
+});
+
+/**
+ * Get analytics data for dashboard
+ * @route GET /api/v1/admin/analytics
+ * @access Private (Admin only)
+ */
+export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
+  const { timeframe = 'month' } = req.query;
+
+  // Calculate date ranges
+  const now = new Date();
+  let currentPeriodStart, previousPeriodStart, previousPeriodEnd;
+
+  switch (timeframe) {
+    case 'week':
+      currentPeriodStart = new Date(now.setDate(now.getDate() - 7));
+      previousPeriodStart = new Date(now.setDate(now.getDate() - 14));
+      previousPeriodEnd = currentPeriodStart;
+      break;
+    case 'year':
+      currentPeriodStart = new Date(now.setFullYear(now.getFullYear() - 1));
+      previousPeriodStart = new Date(now.setFullYear(now.getFullYear() - 2));
+      previousPeriodEnd = currentPeriodStart;
+      break;
+    case 'month':
+    default:
+      currentPeriodStart = new Date(now.setMonth(now.getMonth() - 1));
+      previousPeriodStart = new Date(now.setMonth(now.getMonth() - 2));
+      previousPeriodEnd = currentPeriodStart;
+  }
+
+  // Current period stats
+  const currentOrders = await Order.countDocuments({
+    createdAt: { $gte: currentPeriodStart }
+  });
+
+  const currentRevenueResult = await Order.aggregate([
+    { 
+      $match: { 
+        orderStatus: 'Delivered',
+        createdAt: { $gte: currentPeriodStart }
+      } 
+    },
+    { $group: { _id: null, total: { $sum: '$amountPaid' } } }
+  ]);
+  const currentRevenue = currentRevenueResult[0]?.total || 0;
+
+  // Previous period stats
+  const previousOrders = await Order.countDocuments({
+    createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
+  });
+
+  const previousRevenueResult = await Order.aggregate([
+    { 
+      $match: { 
+        orderStatus: 'Delivered',
+        createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
+      } 
+    },
+    { $group: { _id: null, total: { $sum: '$amountPaid' } } }
+  ]);
+  const previousRevenue = previousRevenueResult[0]?.total || 0;
+
+  // Calculate trends
+  const ordersTrend = previousOrders > 0 
+    ? ((currentOrders - previousOrders) / previousOrders * 100).toFixed(2)
+    : 100;
+  
+  const revenueTrend = previousRevenue > 0
+    ? ((currentRevenue - previousRevenue) / previousRevenue * 100).toFixed(2)
+    : 100;
+
+  // Top products
+  const topProducts = await Order.aggregate([
+    { $match: { createdAt: { $gte: currentPeriodStart } } },
+    { $unwind: '$orderItems' },
+    { 
+      $group: {
+        _id: '$orderItems.product',
+        totalQuantity: { $sum: '$orderItems.quantity' },
+        totalRevenue: { $sum: { $multiply: ['$orderItems.price', '$orderItems.quantity'] } }
+      }
+    },
+    { $sort: { totalQuantity: -1 } },
+    { $limit: 5 }
+  ]);
+
+  // Populate product details
+  const Product = require('../models/product-model.js').default;
+  const populatedTopProducts = await Promise.all(
+    topProducts.map(async (item) => {
+      const product = await Product.findById(item._id).select('name images');
+      return {
+        product,
+        totalQuantity: item.totalQuantity,
+        totalRevenue: item.totalRevenue
+      };
+    })
+  );
+
+  return res.status(200).json({
+    success: true,
+    timeframe,
+    currentPeriod: {
+      orders: currentOrders,
+      revenue: currentRevenue
+    },
+    previousPeriod: {
+      orders: previousOrders,
+      revenue: previousRevenue
+    },
+    trends: {
+      orders: parseFloat(ordersTrend),
+      revenue: parseFloat(revenueTrend)
+    },
+    topProducts: populatedTopProducts
+  });
+});
+
+
+// ============================================
+// ADMIN ORDER CANCELLATION WITH REFUND
+// ============================================
+
+/**
+ * Cancel order and optionally initiate refund (Admin only)
+ * @route PUT /api/v1/admin/orders/:id/cancel
+ * @access Private (Admin only)
+ */
+export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { reason, skipRefund = false } = req.body;
+
+  if (!reason) {
+    return next(new HandleError('Cancellation reason is required', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Check if order can be cancelled
+  if (order.orderStatus === 'Delivered') {
+    return next(new HandleError('Cannot cancel delivered orders. Use refund process instead.', 400));
+  }
+
+  if (order.orderStatus === 'Cancelled') {
+    return next(new HandleError('Order is already cancelled', 400));
+  }
+
+  // Update order status to cancelled
+  order.orderStatus = 'Cancelled';
+  order.cancelledAt = new Date();
+  order.cancelledBy = req.user._id;
+  order.cancellationReason = reason;
+
+  // Add to status history
+  order.addStatusHistory('Cancelled', req.user._id, reason);
+  order.addAuditEntry('order_cancelled', req.user._id, { reason, skipRefund });
+
+  // If payment was made and skipRefund is false, initiate refund
+  if (!skipRefund && order.paymentInfo.status === 'success' && order.amountPaid > 0) {
+    order.refundInfo = {
+      status: 'requested',
+      reason: 'Order Cancellation',
+      description: `Order cancelled by admin. Reason: ${reason}`,
+      refundType: 'full',
+      requestedAmount: order.amountPaid,
+      requestedAt: new Date(),
+      requestedBy: req.user._id,
+      messages: [],
+      documents: [],
+      timeline: []
+    };
+
+    order.addRefundTimeline(
+      'refund_requested',
+      'Automatic refund initiated due to order cancellation',
+      req.user._id,
+      { refundType: 'full', requestedAmount: order.amountPaid }
+    );
+
+    // Auto-approve the refund since it's admin-initiated
+    order.refundInfo.status = 'approved';
+    order.refundInfo.approvedAt = new Date();
+    order.refundInfo.approvedBy = req.user._id;
+    order.refundInfo.adminNote = 'Auto-approved due to admin order cancellation';
+
+    order.addRefundTimeline('refund_approved', 'Refund auto-approved', req.user._id);
+  }
+
+  await order.save();
+  await deleteCachePattern('admin_stats*');
+
+  return res.status(200).json({
+    success: true,
+    message: skipRefund 
+      ? 'Order cancelled successfully' 
+      : 'Order cancelled and refund initiated successfully',
     order: {
       _id: order._id,
       orderStatus: order.orderStatus,
@@ -1119,38 +1566,35 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   });
 });
 
-// Add this function to your order-controller.js file
-
 /**
- * Get order by payment reference
+ * Get order by reference number
  * @route GET /api/v1/orders/reference/:reference
- * @access Private (User or Admin)
+ * @access Private (User)
  */
 export const getOrderByReference = handleAsyncError(async (req, res, next) => {
   const { reference } = req.params;
   const userId = req.user._id;
-  const isAdmin = req.user.role === 'admin';
 
-  if (!reference || reference.trim() === '') {
-    return next(new HandleError('Payment reference is required', 400));
+  if (!reference) {
+    return next(new HandleError('Reference number is required', 400));
   }
 
-  // Search for order by payment reference
-  const order = await Order.findOne({
-    $or: [
-      { 'paymentInfo.reference': reference },
-      { 'paymentReference': reference },
-      { '_id': reference } // In case reference is actually the order ID
-    ]
-  })
-    .populate('user', 'name email')
-    .populate('orderItems.product', 'name images price');
+  // Try to find by payment reference first
+  let order = await Order.findOne({
+    'paymentInfo.reference': reference
+  }).populate('user', 'name email');
+
+  // If not found, try by order ID (if reference looks like ObjectId)
+  if (!order && reference.match(/^[0-9a-fA-F]{24}$/)) {
+    order = await Order.findById(reference).populate('user', 'name email');
+  }
 
   if (!order) {
     return next(new HandleError('Order not found with this reference', 404));
   }
 
-  // Check authorization
+  // Verify ownership (unless admin)
+  const isAdmin = req.user.role === 'admin';
   if (!isAdmin && order.user._id.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized to view this order', 403));
   }
@@ -1160,5 +1604,4 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
     order
   });
 });
-
 
