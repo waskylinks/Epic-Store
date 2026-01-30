@@ -6,10 +6,11 @@ import HandleError from '../utils/handleError.js';
  * These can be moved to database or environment variables for flexibility
  */
 const PRICING_CONFIG = {
-  TAX_RATE: 0.18, // 18% tax
-  FREE_SHIPPING_THRESHOLD: 500, // Free shipping for orders above this amount
+  TAX_RATE: 0.18,
+  FREE_SHIPPING_THRESHOLD: 500,
   STANDARD_SHIPPING_FEE: 50,
-  SUPPORTED_CURRENCIES: ['NGN', 'USD', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR']
+  SUPPORTED_CURRENCIES: ['USD', 'NGN', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR'], // USD first
+  DEFAULT_CURRENCY: 'USD' // Changed from NGN
 };
 
 /**
@@ -21,128 +22,154 @@ const PRICING_CONFIG = {
  * @returns {Object} Validated order with calculated prices
  * @throws {HandleError} If validation fails
  */
-export const validateAndCalculateOrder = async (cartItems, currency = 'NGN') => {
-  // 1. Input validation
-  if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
-    throw new HandleError('Cart is empty or invalid', 400);
-  }
-
-  // Validate currency
-  const normalizedCurrency = currency.toUpperCase();
-  if (!PRICING_CONFIG.SUPPORTED_CURRENCIES.includes(normalizedCurrency)) {
-    throw new HandleError(
-      `Unsupported currency: ${currency}. Supported: ${PRICING_CONFIG.SUPPORTED_CURRENCIES.join(', ')}`,
-      400
-    );
-  }
-
-  // 2. Extract product IDs and validate quantities
-  const productIds = cartItems.map(item => {
-    if (!item.product) {
-      throw new HandleError('Invalid cart item: missing product ID', 400);
+export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => {
+  try {
+    // 1. Input validation
+    if (!cartItems || !Array.isArray(cartItems) || cartItems.length === 0) {
+      throw new HandleError('Cart is empty or invalid', 400);
     }
-    if (!item.quantity || item.quantity < 1 || !Number.isInteger(item.quantity)) {
+
+    // Validate currency
+    const normalizedCurrency = currency.toUpperCase();
+    if (!PRICING_CONFIG.SUPPORTED_CURRENCIES.includes(normalizedCurrency)) {
       throw new HandleError(
-        `Invalid quantity for product ${item.product}: must be a positive integer`,
-        400
-      );
-    }
-    return item.product;
-  });
-
-  // 3. Fetch products from database (CRITICAL: Use DB prices, not client prices)
-  const products = await Product.find({
-    _id: { $in: productIds }
-  }).select('_id name price stock category images');
-
-  // 4. Check if all products exist
-  if (products.length !== productIds.length) {
-    const foundIds = products.map(p => p._id.toString());
-    const missingIds = productIds.filter(id => !foundIds.includes(id.toString()));
-    throw new HandleError(
-      `Products not found: ${missingIds.join(', ')}`,
-      404
-    );
-  }
-
-  // 5. Create product lookup map for fast access
-  const productMap = {};
-  products.forEach(product => {
-    productMap[product._id.toString()] = product;
-  });
-
-  // 6. Validate each cart item and calculate totals
-  let itemPrice = 0;
-  const validatedOrderItems = [];
-
-  for (const cartItem of cartItems) {
-    const productId = cartItem.product.toString();
-    const product = productMap[productId];
-    const quantity = cartItem.quantity;
-
-    // Check if product is active/available (add this field to your Product model if needed)
-    // if (!product.isActive) {
-    //   throw new HandleError(`Product "${product.name}" is no longer available`, 400);
-    // }
-
-    // CRITICAL: Check stock availability
-    if (product.stock < quantity) {
-      throw new HandleError(
-        `Insufficient stock for "${product.name}". Available: ${product.stock}, Requested: ${quantity}`,
+        `Unsupported currency: ${currency}. Supported: ${PRICING_CONFIG.SUPPORTED_CURRENCIES.join(', ')}`,
         400
       );
     }
 
-    // CRITICAL: Use database price, not client-provided price
-    const dbPrice = Number(product.price);
-    if (isNaN(dbPrice) || dbPrice <= 0) {
-      throw new HandleError(
-        `Invalid price for product "${product.name}"`,
-        500
-      );
-    }
-
-    // Calculate line total
-    const lineTotal = dbPrice * quantity;
-    itemPrice += lineTotal;
-
-    // Build validated order item with database values
-    validatedOrderItems.push({
-      product: product._id,
-      name: product.name,
-      price: dbPrice, // Database price, not client price
-      quantity: quantity,
-      image: product.images?.[0]?.url || product.images?.[0] || ''
+    // 2. Extract product IDs and validate quantities
+    const productIds = cartItems.map(item => {
+      if (!item.product) {
+        throw new HandleError('Invalid cart item: missing product ID', 400);
+      }
+      if (!item.quantity || item.quantity < 1 || !Number.isInteger(item.quantity)) {
+        throw new HandleError(
+          `Invalid quantity for product ${item.product}: must be a positive integer`,
+          400
+        );
+      }
+      return item.product;
     });
-  }
 
-  // 7. Calculate tax (server-controlled rate)
-  const taxPrice = Number((itemPrice * PRICING_CONFIG.TAX_RATE).toFixed(2));
+    // 3. Fetch products from database
+    const products = await Product.find({
+      _id: { $in: productIds }
+    }).select('_id name price pricing stock inventory category images');
 
-  // 8. Calculate shipping (server-controlled rules)
-  const shippingPrice = itemPrice > PRICING_CONFIG.FREE_SHIPPING_THRESHOLD 
-    ? 0 
-    : PRICING_CONFIG.STANDARD_SHIPPING_FEE;
-
-  // 9. Calculate total
-  const totalPrice = Number((itemPrice + taxPrice + shippingPrice).toFixed(2));
-
-  // 10. Return validated and calculated order data
-  return {
-    orderItems: validatedOrderItems,
-    itemPrice: Number(itemPrice.toFixed(2)),
-    taxPrice,
-    shippingPrice,
-    totalPrice,
-    currency: normalizedCurrency,
-    // Metadata for auditing
-    validation: {
-      productsValidated: products.length,
-      stockChecked: true,
-      pricesFromDatabase: true,
-      calculatedAt: new Date().toISOString()
+    // 4. Check if all products exist
+    if (products.length !== productIds.length) {
+      const foundIds = products.map(p => p._id.toString());
+      const missingIds = productIds.filter(id => !foundIds.includes(id.toString()));
+      throw new HandleError(
+        `Products not found: ${missingIds.join(', ')}`,
+        404
+      );
     }
-  };
+
+    // 5. Create product lookup map
+    const productMap = {};
+    products.forEach(product => {
+      productMap[product._id.toString()] = product;
+    });
+
+    // 6. Validate each cart item and calculate totals
+    let itemPrice = 0;
+    const validatedOrderItems = [];
+
+    for (const cartItem of cartItems) {
+      const productId = cartItem.product.toString();
+      const product = productMap[productId];
+      const quantity = cartItem.quantity;
+
+      // FIXED: Better price extraction with multiple fallbacks
+      let dbPrice = 0;
+      
+      if (product.pricing?.sale && product.pricing.sale > 0) {
+        dbPrice = Number(product.pricing.sale);
+      } else if (product.pricing?.regular && product.pricing.regular > 0) {
+        dbPrice = Number(product.pricing.regular);
+      } else if (product.price && product.price > 0) {
+        dbPrice = Number(product.price);
+      } else {
+        throw new HandleError(
+          `Product "${product.name}" has no valid price`,
+          500
+        );
+      }
+
+      if (isNaN(dbPrice) || dbPrice <= 0) {
+        throw new HandleError(
+          `Invalid price for product "${product.name}"`,
+          500
+        );
+      }
+
+      // FIXED: Better stock extraction with fallbacks
+      const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+
+      // Check stock availability
+      if (availableStock < quantity) {
+        throw new HandleError(
+          `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${quantity}`,
+          400
+        );
+      }
+
+      // Calculate line total
+      const lineTotal = dbPrice * quantity;
+      itemPrice += lineTotal;
+
+      // Build validated order item
+      validatedOrderItems.push({
+        product: product._id,
+        name: product.name,
+        price: dbPrice,
+        quantity: quantity,
+        image: product.images?.[0]?.url || product.images?.[0] || ''
+      });
+    }
+
+    // 7. Calculate tax
+    const taxPrice = Number((itemPrice * PRICING_CONFIG.TAX_RATE).toFixed(2));
+
+    // 8. Calculate shipping
+    const shippingPrice = itemPrice > PRICING_CONFIG.FREE_SHIPPING_THRESHOLD 
+      ? 0 
+      : PRICING_CONFIG.STANDARD_SHIPPING_FEE;
+
+    // 9. Calculate total
+    const totalPrice = Number((itemPrice + taxPrice + shippingPrice).toFixed(2));
+
+    // 10. Return validated data
+    return {
+      orderItems: validatedOrderItems,
+      itemPrice: Number(itemPrice.toFixed(2)),
+      taxPrice,
+      shippingPrice,
+      totalPrice,
+      currency: normalizedCurrency,
+      validation: {
+        productsValidated: products.length,
+        stockChecked: true,
+        pricesFromDatabase: true,
+        calculatedAt: new Date().toISOString()
+      }
+    };
+  } catch (error) {
+    console.error('❌ validateAndCalculateOrder error:', error);
+    
+    // If it's already a HandleError, rethrow it
+    if (error.statusCode) {
+      throw error;
+    }
+    
+    // Otherwise wrap in HandleError
+    throw new HandleError(
+      error.message || 'Failed to validate and calculate order',
+      error.statusCode || 500
+    );
+  }
 };
 
 /**

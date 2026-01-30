@@ -4,6 +4,7 @@ import { PaymentFactory } from "../Services/payment/paymentFactory.js";
 import { createReceiptIfNotExists } from "../Services/receipt.service.js"; 
 import { validateAndCalculateOrder } from "../Services/pricing.service.js";
 import { deleteCachePattern } from '../utils/redis.js';
+import { createPaymentSession, getPaymentSession, deletePaymentSession } from "../Services/paymentSession.service.js";
 import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
 import crypto from 'crypto';
@@ -53,41 +54,35 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     try {
         validatedOrder = await validateAndCalculateOrder(cartItems, currency);
     } catch (err) {
-        return next(err); // Pricing service throws HandleError already
+        return next(err);
     }
 
-    // 3. Generate unique payment reference
-    const reference = generatePaymentReference();
-
-    // 4. Create pending order with locked prices
-    let pendingOrder;
+    // 3. ✅ NEW: Create payment session in Redis (NOT in database)
+    // This stores all the validated data temporarily for 30 minutes
+    let reference;
     try {
-        pendingOrder = await Order.create({
-            user: userId,
+        reference = await createPaymentSession({
+            userId: userId.toString(),
+            gateway,
+            currency: validatedOrder.currency,
             shippingInfo,
             orderItems: validatedOrder.orderItems,
             itemPrice: validatedOrder.itemPrice,
             taxPrice: validatedOrder.taxPrice,
             shippingPrice: validatedOrder.shippingPrice,
             totalPrice: validatedOrder.totalPrice,
-            amountPaid: 0, // Not paid yet
-            paymentInfo: {
-                reference,
-                status: "pending",
-                method: gateway,
-                currency: validatedOrder.currency,
-                amount: validatedOrder.totalPrice
-            },
-            orderStatus: "Processing" // Will remain Processing until payment verified
+            userEmail: user.email,
+            userName: user.name,
+            validation: validatedOrder.validation
         });
 
-        console.log(`✅ Pending order created: ${pendingOrder._id} with reference: ${reference}`);
+        console.log(`✅ Payment session created in Redis: ${reference} (expires in 30min)`);
     } catch (err) {
-        console.error("Pending order creation failed:", err);
-        return next(new HandleError("Failed to initialize payment", 500));
+        console.error("Payment session creation failed:", err);
+        return next(new HandleError("Failed to initialize payment session", 500));
     }
 
-    // 5. Initialize payment with the gateway
+    // 4. Initialize payment with the gateway
     let gatewayResponse = null;
     
     try {
@@ -110,17 +105,9 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         
         console.log(`✅ ${gateway} payment initialized for reference: ${reference}`);
         
-        // ✅ OPTIONAL: Store payment intent ID for Stripe (for better security)
-        if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
-            pendingOrder.paymentInfo.stripePaymentIntentId = gatewayResponse.payment_intent_id;
-            await pendingOrder.save();
-            console.log(`✅ Stripe payment intent ID stored: ${gatewayResponse.payment_intent_id}`);
-        }
-        
     } catch (err) {
-        // If gateway initialization fails, mark order as failed and clean up
-        pendingOrder.paymentInfo.status = "failed";
-        await pendingOrder.save();
+        // ✅ If gateway fails, clean up the Redis session
+        await deletePaymentSession(reference);
         
         console.error(`❌ ${gateway} initialization error:`, err);
         return next(new HandleError(
@@ -129,10 +116,9 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         ));
     }
 
-    // 6. Return payment initialization data to frontend
+    // 5. Return payment initialization data to frontend
     const responseData = {
         reference,
-        orderId: pendingOrder._id,
         amount: validatedOrder.totalPrice,
         currency: validatedOrder.currency,
         gateway,
@@ -169,7 +155,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 });
 
 /**
- * Verify Payment - Updates pending order after successful payment
+ * Verify Payment - Creates order ONLY after successful payment verification
+ * ✅ FIXED: Only creates orders for successful payments
  * @route POST /api/v1/payment/verify
  * @access Private
  */
@@ -183,7 +170,49 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     console.log(`🔍 Verifying ${gateway} payment with reference: ${reference}`);
 
-    // 1. Get payment service for the gateway
+    // 1. ✅ NEW: Get payment session from Redis
+    const session = await getPaymentSession(reference);
+    
+    if (!session) {
+        return next(new HandleError(
+            "Payment session not found or expired. Please restart the payment process.",
+            404
+        ));
+    }
+
+    // 2. Verify user owns this payment session
+    if (session.userId !== userId.toString()) {
+        return next(new HandleError("Unauthorized: Payment session does not belong to user", 403));
+    }
+
+    // 3. Verify gateway matches
+    if (session.gateway !== gateway) {
+        return next(new HandleError(
+            `Gateway mismatch: session is for ${session.gateway}, not ${gateway}`,
+            400
+        ));
+    }
+
+    // 4. Check if order already exists (idempotency check)
+    const existingOrder = await Order.findOne({
+        "paymentInfo.reference": reference
+    });
+
+    if (existingOrder) {
+        console.log(`ℹ️ Order already exists for reference: ${reference}`);
+        
+        // Clean up session
+        await deletePaymentSession(reference);
+        
+        return res.status(200).json({
+            success: true,
+            message: "Payment already verified",
+            order: existingOrder,
+            idempotent: true
+        });
+    }
+
+    // 5. Get payment service for the gateway
     let paymentService;
     try {
         paymentService = PaymentFactory.getService(gateway);
@@ -191,140 +220,203 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         return next(new HandleError(err.message, 400));
     }
 
-    // 2. Find the pending order
-    // ✅ IMPROVED: Different lookup strategies per gateway
-    let pendingOrder;
-    
-    if (gateway === 'stripe' && reference.startsWith('pi_')) {
-        // Stripe: Search by payment intent ID first, then fallback to reference
-        pendingOrder = await Order.findOne({
-            "paymentInfo.stripePaymentIntentId": reference,
-            user: userId
-        });
-        
-        if (!pendingOrder) {
-            pendingOrder = await Order.findOne({
-                "paymentInfo.reference": reference,
-                user: userId
-            });
-        }
-    } else if (gateway === 'flutterwave') {
-        // Flutterwave: We receive transaction_id but need to verify first to get tx_ref
-        // Pass null as orderId - the service will find the order using tx_ref from Flutterwave
-        console.log(`🔍 Flutterwave: Will verify transaction ${reference} and find order by tx_ref`);
-        
-        // For Flutterwave, we skip the order lookup here
-        // The service will verify with Flutterwave, get tx_ref, then find the order
-        pendingOrder = null; // Will be found by the service
-    } else {
-        // Paystack: Search by reference directly
-        pendingOrder = await Order.findOne({
-            "paymentInfo.reference": reference,
-            user: userId
-        });
-    }
+    // 6. Verify payment with gateway
+    let paymentVerified = false;
+    let gatewayResponse = null;
 
-    // For non-Flutterwave gateways, check if order was found
-    if (gateway !== 'flutterwave' && !pendingOrder) {
-        console.error(`❌ Order not found for ${gateway} reference: ${reference}`);
-        return next(new HandleError("Order not found for this reference", 404));
-    }
-
-    // For non-Flutterwave, check if already processed
-    if (gateway !== 'flutterwave' && pendingOrder.paymentInfo.status === "success") {
-        console.log(`ℹ️ Payment already verified for order: ${pendingOrder._id}`);
-        return res.status(200).json({
-            success: true,
-            message: "Payment already verified",
-            order: pendingOrder,
-            idempotent: true
-        });
-    }
-
-    console.log(gateway === 'flutterwave' 
-        ? `✅ Will find order after Flutterwave verification` 
-        : `✅ Order found: ${pendingOrder._id}`
-    );
-
-    // 4. Verify payment with gateway and update order
     try {
-        let result;
-
-        if (gateway === 'flutterwave') {
-            // For Flutterwave: only pass reference and userId
-            // The service will verify, get tx_ref, find order, and validate
-            result = await paymentService.verifyAndUpdateOrder({
-                reference,
-                userId
-            });
-        } else {
-            // For Stripe and Paystack: pass all order details
-            result = await paymentService.verifyAndUpdateOrder({
-                reference,
-                orderId: pendingOrder._id,
-                expectedAmount: pendingOrder.totalPrice,
-                expectedCurrency: pendingOrder.paymentInfo.currency,
-                userId
-            });
+        if (gateway === 'stripe') {
+            // For Stripe, reference is payment_intent_id
+            gatewayResponse = await paymentService.verifyStripeTransaction(reference);
+            paymentVerified = gatewayResponse.status === "succeeded";
+        } else if (gateway === 'paystack') {
+            gatewayResponse = await paymentService.verifyPaystackTransaction(reference);
+            paymentVerified = gatewayResponse.status === "success";
+        } else if (gateway === 'flutterwave') {
+            // For Flutterwave, reference is transaction_id
+            gatewayResponse = await paymentService.verifyFlutterwaveTransaction(reference);
+            paymentVerified = gatewayResponse.status === "successful";
         }
 
-        console.log(`✅ ${gateway} payment verified for order: ${result.order._id}`);
-
-        // 5. Create receipt if payment was successful
-        if (result.success) {
-            try {
-                const receipt = await createReceiptIfNotExists({
-                    orderId: result.order._id,
-                    userId,
-                    reference: result.order.paymentInfo.reference, // Use order's reference
-                    orderItems: result.order.orderItems,
-                    itemPrice: result.order.itemPrice,
-                    taxPrice: result.order.taxPrice,
-                    shippingPrice: result.order.shippingPrice,
-                    totalPrice: result.order.totalPrice,
-                    shippingInfo: result.order.shippingInfo,
-                    currency: result.order.paymentInfo.currency,
-                    paymentGateway: gateway
-                });
-                console.log(`✅ Receipt created: ${receipt._id}`);
-            } catch (receiptErr) {
-                // Log but don't fail the verification
-                console.error("❌ Receipt creation failed:", receiptErr);
-            }
-
-            // Invalidate caches after successful payment
-            await invalidatePaymentCaches();
+        if (!paymentVerified) {
+            throw new Error(`Payment not successful. Status: ${gatewayResponse?.status}`);
         }
 
-        return res.status(200).json({
-            success: true,
-            message: result.success 
-                ? "Payment verified successfully" 
-                : "Payment verification failed",
-            order: result.order,
-            idempotent: false
-        });
-
+        console.log(`✅ ${gateway} payment verified successfully`);
     } catch (err) {
-        console.error(`❌ ${gateway} verification error:`, err);
+        console.error(`❌ ${gateway} verification failed:`, err);
         
-        // Update order status to failed (skip for Flutterwave if order wasn't found yet)
-        if (pendingOrder) {
-            try {
-                pendingOrder.paymentInfo.status = "failed";
-                await pendingOrder.save();
-                console.log(`⚠️ Order marked as failed: ${pendingOrder._id}`);
-            } catch (saveErr) {
-                console.error("Failed to update order status:", saveErr);
-            }
-        }
-
-        // ✅ IMPROVED: Return specific error message from gateway
+        // Keep session for retry
         return next(new HandleError(
             `Payment verification failed: ${err.message}`,
-            err.message?.includes("currency") || 
-            err.message?.includes("amount") ||
-            err.message?.includes("mismatch") ? 400 : 500
+            500
         ));
     }
+
+    // 7. Validate amount and currency from gateway response
+    let gatewayAmount, gatewayCurrency;
+    
+    if (gateway === 'stripe') {
+        gatewayAmount = gatewayResponse.amount / 100; // Convert from cents
+        gatewayCurrency = gatewayResponse.currency.toUpperCase();
+    } else if (gateway === 'paystack') {
+        gatewayAmount = gatewayResponse.amount / 100; // Convert from kobo
+        gatewayCurrency = gatewayResponse.currency;
+    } else if (gateway === 'flutterwave') {
+        gatewayAmount = parseFloat(gatewayResponse.amount);
+        gatewayCurrency = gatewayResponse.currency;
+    }
+
+    // Validate currency
+    if (gatewayCurrency !== session.currency) {
+        return next(new HandleError(
+            `Currency mismatch: expected ${session.currency}, got ${gatewayCurrency}`,
+            400
+        ));
+    }
+
+    // Validate amount (allow 1 cent difference for rounding)
+    if (Math.abs(session.totalPrice - gatewayAmount) > 0.01) {
+        return next(new HandleError(
+            `Amount mismatch: expected ${session.totalPrice}, gateway charged ${gatewayAmount}`,
+            400
+        ));
+    }
+
+    // 8. ✅ NOW create the order (only after successful payment verification)
+    let order;
+    try {
+        order = await Order.create({
+            user: userId,
+            shippingInfo: session.shippingInfo,
+            orderItems: session.orderItems,
+            itemPrice: session.itemPrice,
+            taxPrice: session.taxPrice,
+            shippingPrice: session.shippingPrice,
+            totalPrice: session.totalPrice,
+            amountPaid: gatewayAmount,
+            paymentInfo: {
+                reference,
+                providerTxId: gatewayResponse.id || gatewayResponse.tx_id,
+                stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
+                status: "success",
+                method: gateway,
+                currency: gatewayCurrency,
+                amount: gatewayAmount,
+                paidAt: new Date()
+            },
+            orderStatus: "Processing" // Order is confirmed and processing
+        });
+
+        // Store payment metadata
+        if (gateway === 'stripe') {
+            const paymentMethod = gatewayResponse.charges?.data[0]?.payment_method_details;
+            order.paymentMeta = {
+                channel: paymentMethod?.type || "card",
+                customer: { email: gatewayResponse.receipt_email },
+                cardDetails: paymentMethod?.card ? {
+                    last4: paymentMethod.card.last4,
+                    brand: paymentMethod.card.brand,
+                    expMonth: paymentMethod.card.exp_month,
+                    expYear: paymentMethod.card.exp_year
+                } : undefined,
+                customMetadata: gatewayResponse.metadata,
+                raw: gatewayResponse
+            };
+        } else if (gateway === 'paystack') {
+            order.paymentMeta = {
+                channel: gatewayResponse.channel,
+                ipAddress: gatewayResponse.ip_address,
+                customer: gatewayResponse.customer,
+                authorization: gatewayResponse.authorization,
+                cardDetails: {
+                    last4: gatewayResponse.authorization?.last4,
+                    brand: gatewayResponse.authorization?.brand,
+                    expMonth: gatewayResponse.authorization?.exp_month,
+                    expYear: gatewayResponse.authorization?.exp_year
+                },
+                customMetadata: gatewayResponse.metadata,
+                raw: gatewayResponse
+            };
+        } else if (gateway === 'flutterwave') {
+            order.paymentMeta = {
+                channel: gatewayResponse.payment_type,
+                ipAddress: gatewayResponse.ip,
+                customer: gatewayResponse.customer,
+                cardDetails: gatewayResponse.card ? {
+                    last4: gatewayResponse.card.last_4digits,
+                    brand: gatewayResponse.card.type,
+                    expMonth: gatewayResponse.card.expiry?.split('/')[0],
+                    expYear: gatewayResponse.card.expiry?.split('/')[1]
+                } : undefined,
+                customMetadata: gatewayResponse.meta,
+                raw: gatewayResponse
+            };
+        }
+
+        await order.save();
+        await order.populate('orderItems.product', 'name images price');
+
+        console.log(`✅ Order created successfully: ${order._id} for reference: ${reference}`);
+
+        // 9. Update product stock
+        for (const item of session.orderItems) {
+            try {
+                const product = await Product.findById(item.product);
+                if (product) {
+                    if (product.inventory?.stock !== undefined) {
+                        product.inventory.stock -= item.quantity;
+                    } else if (product.stock !== undefined) {
+                        product.stock -= item.quantity;
+                    }
+                    await product.save({ validateBeforeSave: false });
+                }
+            } catch (err) {
+                console.error(`Failed to update stock for product ${item.product}:`, err);
+                // Don't fail the order creation if stock update fails
+            }
+        }
+
+    } catch (err) {
+        console.error("❌ Order creation failed:", err);
+        return next(new HandleError(
+            "Payment verified but order creation failed. Please contact support with reference: " + reference,
+            500
+        ));
+    }
+
+    // 10. Create receipt
+    try {
+        const receipt = await createReceiptIfNotExists({
+            orderId: order._id,
+            userId,
+            reference,
+            orderItems: order.orderItems,
+            itemPrice: order.itemPrice,
+            taxPrice: order.taxPrice,
+            shippingPrice: order.shippingPrice,
+            totalPrice: order.totalPrice,
+            shippingInfo: order.shippingInfo,
+            currency: order.paymentInfo.currency,
+            paymentGateway: gateway
+        });
+        console.log(`✅ Receipt created: ${receipt._id}`);
+    } catch (receiptErr) {
+        // Log but don't fail the verification
+        console.error("❌ Receipt creation failed:", receiptErr);
+    }
+
+    // 11. ✅ Clean up Redis session after successful order creation
+    await deletePaymentSession(reference);
+    console.log(`✅ Payment session cleaned up: ${reference}`);
+
+    // 12. Invalidate caches
+    await invalidatePaymentCaches();
+
+    return res.status(200).json({
+        success: true,
+        message: "Payment verified and order created successfully",
+        order,
+        idempotent: false
+    });
 });

@@ -123,8 +123,8 @@ const productSchema = new mongoose.Schema(
       },
       status: {
         type: String,
-        enum: ['in_stock', 'low_stock', 'out_of_stock', 'discontinued'],
-        default: 'in_stock'
+        enum: ["InStock", "LowStock", "OutOfStock", "Discontinued"],
+        default: 'InStock'
       }
     },
 

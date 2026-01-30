@@ -949,3 +949,174 @@ export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, nex
   });
 });
 
+export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const { reason, skipRefund = false } = req.body;
+
+  const order = await Order.findById(id);
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  // Check if already cancelled
+  if (order.orderStatus === 'Cancelled') {
+    return next(new HandleError('Order is already cancelled', 400));
+  }
+
+  // Check if already delivered
+  if (order.orderStatus === 'Delivered') {
+    return next(new HandleError('Cannot cancel delivered orders. Use refund instead.', 400));
+  }
+
+  // Update order status
+  order.orderStatus = 'Cancelled';
+  order.cancelledAt = new Date();
+  order.cancellationReason = reason || 'Cancelled by admin';
+
+  // Add to status history
+  order.addStatusHistory('Cancelled', req.user._id, reason || 'Cancelled by admin');
+  order.addAuditEntry('order_cancelled', req.user._id, { reason });
+
+  // Restore stock for all items
+  for (const item of order.orderItems) {
+    try {
+      const product = await Product.findById(item.product);
+      if (product) {
+        if (product.inventory?.stock !== undefined) {
+          product.inventory.stock += item.quantity;
+        } else if (product.stock !== undefined) {
+          product.stock += item.quantity;
+        }
+        await product.save({ validateBeforeSave: false });
+      }
+    } catch (err) {
+      console.error(`Failed to restore stock for product ${item.product}:`, err);
+    }
+  }
+
+  // Process refund if payment was successful and not skipped
+  if (!skipRefund && order.paymentInfo.status === 'success' && order.amountPaid > 0) {
+    try {
+      // Import payment factory
+      const { PaymentFactory } = await import('../Services/payment/paymentFactory.js');
+      
+      // Get the payment gateway that was used
+      const gateway = order.paymentInfo.method;
+      
+      // Prepare refund parameters based on gateway
+      let refundParams = {};
+      
+      if (gateway === 'stripe') {
+        refundParams = {
+          paymentIntentId: order.paymentInfo.stripePaymentIntentId || order.paymentInfo.providerTxId,
+          reason: 'requested_by_customer',
+          merchantNote: `Order cancelled by admin: ${reason || 'No reason provided'}`
+        };
+      } else if (gateway === 'flutterwave') {
+        refundParams = {
+          transactionId: order.paymentInfo.providerTxId,
+          reason: reason || 'Order cancelled by admin',
+          merchantNote: `Cancelled by admin on ${new Date().toISOString()}`
+        };
+      } else if (gateway === 'paystack') {
+        refundParams = {
+          reference: order.paymentInfo.reference,
+          amount: order.amountPaid,
+          merchantNote: `Order cancelled by admin: ${reason || 'No reason provided'}`
+        };
+      }
+
+      // Process refund through payment gateway
+      const refundResult = await PaymentFactory.refundPayment(gateway, refundParams);
+
+      // Update refund info
+      order.refundInfo = {
+        status: 'completed',
+        reason: 'Order cancelled by admin',
+        description: reason || 'No additional details',
+        refundType: 'full',
+        requestedAmount: order.amountPaid,
+        requestedAt: new Date(),
+        requestedBy: req.user._id,
+        approvedAt: new Date(),
+        approvedBy: req.user._id,
+        refundId: refundResult.refundId,
+        refundAmount: refundResult.amount || order.amountPaid,
+        refundCurrency: refundResult.currency || order.paymentInfo.currency,
+        processedAt: new Date(),
+        processedBy: req.user._id,
+        refundedAt: new Date(),
+        gatewayResponse: refundResult.raw,
+        adminNote: reason || 'Auto-refund on cancellation',
+        messages: [],
+        documents: [],
+        timeline: [{
+          event: 'auto_refund_on_cancellation',
+          description: 'Automatic refund processed due to order cancellation',
+          performedBy: req.user._id,
+          timestamp: new Date(),
+          metadata: { gateway, refundId: refundResult.refundId }
+        }]
+      };
+
+      order.addAuditEntry('auto_refund_processed', req.user._id, {
+        refundId: refundResult.refundId,
+        amount: refundResult.amount,
+        gateway
+      });
+
+    } catch (refundError) {
+      console.error('❌ Auto-refund failed:', refundError);
+      
+      // Mark refund as failed but still cancel the order
+      order.refundInfo = {
+        status: 'failed',
+        reason: 'Order cancelled by admin',
+        description: reason || 'No additional details',
+        refundType: 'full',
+        requestedAmount: order.amountPaid,
+        requestedAt: new Date(),
+        requestedBy: req.user._id,
+        failureReason: refundError.message,
+        adminNote: 'Auto-refund failed. Manual refund required.',
+        messages: [],
+        documents: [],
+        timeline: [{
+          event: 'auto_refund_failed',
+          description: `Automatic refund failed: ${refundError.message}`,
+          performedBy: req.user._id,
+          timestamp: new Date(),
+          metadata: { error: refundError.message }
+        }]
+      };
+
+      order.addAuditEntry('auto_refund_failed', req.user._id, {
+        error: refundError.message,
+        amount: order.amountPaid
+      });
+    }
+  }
+
+  await order.save();
+  await deleteCachePattern('admin_stats*');
+
+  const refundMessage = order.refundInfo?.status === 'completed' 
+    ? 'Order cancelled and refund processed automatically'
+    : order.refundInfo?.status === 'failed'
+    ? 'Order cancelled but auto-refund failed. Please process refund manually.'
+    : 'Order cancelled successfully';
+
+  return res.status(200).json({
+    success: true,
+    message: refundMessage,
+    order: {
+      _id: order._id,
+      orderStatus: order.orderStatus,
+      cancelledAt: order.cancelledAt,
+      cancellationReason: order.cancellationReason,
+      refundInfo: order.refundInfo
+    }
+  });
+});
+
+

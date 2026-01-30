@@ -13,7 +13,7 @@ import User from '../models/userModel.js';
  * @access Public (can be used before login)
  */
 export const calculateCart = handleAsyncError(async (req, res, next) => {
-    const { cartItems, currency = 'NGN' } = req.body;
+    const { cartItems, currency = 'USD' } = req.body; // Changed default to USD
 
     if (!cartItems || cartItems.length === 0) {
         return next(new HandleError('Cart is empty', 400));
@@ -30,10 +30,19 @@ export const calculateCart = handleAsyncError(async (req, res, next) => {
             return next(new HandleError(`Product not found: ${item.product}`, 404));
         }
 
-        // Use sale price if available, otherwise regular price
-        const unitPrice = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+        // FIXED: Use robust price extraction
+        let unitPrice = 0;
+        if (product.pricing?.sale && product.pricing.sale > 0) {
+            unitPrice = product.pricing.sale;
+        } else if (product.pricing?.regular && product.pricing.regular > 0) {
+            unitPrice = product.pricing.regular;
+        } else if (product.price && product.price > 0) {
+            unitPrice = product.price;
+        } else {
+            return next(new HandleError(`Product "${product.name}" has no valid price`, 500));
+        }
+
         const itemTotal = unitPrice * item.quantity;
-        
         itemPrice += itemTotal;
 
         breakdown.push({
@@ -45,11 +54,11 @@ export const calculateCart = handleAsyncError(async (req, res, next) => {
         });
     }
 
-    // Calculate tax (18% for Nigeria)
-    const taxRate = currency === 'NGN' ? 0.18 : 0.00;
+    // Calculate tax (18%)
+    const taxRate = 0.18; // Remove currency-specific tax
     const taxPrice = Math.round(itemPrice * taxRate * 100) / 100;
 
-    // Calculate shipping (free if over 500 NGN)
+    // Calculate shipping
     const shippingPrice = itemPrice >= 500 ? 0 : 50;
 
     // Calculate total

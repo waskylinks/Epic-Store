@@ -67,7 +67,8 @@ import {
   addOrderMessage,
   getOrderMessages,
   markOrderMessagesRead,
-  getOrdersWithUnreadMessages
+  getOrdersWithUnreadMessages,
+  cancelOrderWithRefund
 } from '../controller/order-controller.js';
 
 /* =======================
@@ -490,6 +491,9 @@ router.get(
   roleBaseAccess('admin'),
   getAuditLog
 );
+
+router.put('/admin/orders/:id/cancel', verifyUserAuth,
+  roleBaseAccess('admin'), cancelOrderWithRefund);
 
 /* ======================================================
    FRAUD & ANALYTICS

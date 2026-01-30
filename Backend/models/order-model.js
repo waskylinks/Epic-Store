@@ -110,7 +110,7 @@ const orderSchema = new mongoose.Schema(
       },
       currency: { 
         type: String, 
-        default: "NGN",
+        default: "USD",
         uppercase: true
       },
       amount: Number,
@@ -467,8 +467,8 @@ const orderSchema = new mongoose.Schema(
       trackingNumber: String,
       status: {
         type: String,
-        enum: ['pending', 'packed', 'shipped', 'delivered'],
-        default: 'pending'
+        enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
+        default: 'Processing'
       },
       shippedAt: Date,
       deliveredAt: Date,
@@ -571,7 +571,7 @@ const orderSchema = new mongoose.Schema(
       reviewRequired: Boolean,
       reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       reviewedAt: Date,
-      reviewDecision: { type: String, enum: ['approved', 'rejected', 'pending'] },
+      reviewDecision: { type: String, enum: ['Approved', 'Rejected', 'Pending'] },
       ipAddress: String,
       deviceFingerprint: String,
       checks: {
