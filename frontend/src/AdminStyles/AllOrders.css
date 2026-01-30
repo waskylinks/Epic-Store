@@ -1,23 +1,56 @@
-/* All Orders - Professional Light Theme */
+/* All Orders - Professional Admin Interface */
 
 .all-orders-container {
     min-height: 100vh;
     background: #ffffff;
-    padding: 100px 20px 40px 20px; /* Top padding: 72px navbar + 28px spacing */
+    padding: 100px 20px 40px 20px;
     color: #1f2937;
 }
 
-/* Title Section */
+/* Header Section */
+.orders-header {
+    margin-bottom: 30px;
+    padding: 0 20px;
+}
+
 .all-orders-title {
     font-size: 2rem;
     font-weight: 700;
     color: #111827;
-    margin: 0 0 30px 0;
-    text-align: left;
-    padding: 0 20px;
+    margin: 0 0 20px 0;
 }
 
-/* Search Bar - Unique Styling */
+/* Status Filter Pills */
+.status-filters {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.filter-pill {
+    padding: 8px 16px;
+    background: #f3f4f6;
+    border: 2px solid #e5e7eb;
+    border-radius: 20px;
+    color: #6b7280;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.filter-pill:hover {
+    background: #e5e7eb;
+    border-color: #d1d5db;
+}
+
+.filter-pill.active {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #ffffff;
+}
+
+/* Search Bar */
 .search-bar {
     margin: 0 20px 30px 20px;
     max-width: 500px;
@@ -32,7 +65,7 @@
     color: #111827;
     font-size: 0.95rem;
     transition: all 0.3s ease;
-    opacity: 1; /* Override navbar styles */
+    opacity: 1;
 }
 
 .search-bar .search-input::placeholder {
@@ -88,7 +121,6 @@
     background: #f9fafb;
 }
 
-/* Processing Row Highlight */
 .orders-table tbody tr.processing-row {
     background: rgba(59, 130, 246, 0.05);
     border-left: 4px solid #3b82f6;
@@ -147,7 +179,8 @@
 /* Action Buttons */
 .actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
+    flex-wrap: wrap;
 }
 
 .action-btn {
@@ -161,12 +194,17 @@
     justify-content: center;
 }
 
+.action-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
 .action-btn.view {
     background: #dbeafe;
     color: #1e40af;
 }
 
-.action-btn.view:hover {
+.action-btn.view:hover:not(:disabled) {
     background: #bfdbfe;
 }
 
@@ -175,8 +213,44 @@
     color: #065f46;
 }
 
-.action-btn.update:hover {
+.action-btn.update:hover:not(:disabled) {
     background: #a7f3d0;
+}
+
+.action-btn.message {
+    background: #e0e7ff;
+    color: #4338ca;
+}
+
+.action-btn.message:hover:not(:disabled) {
+    background: #c7d2fe;
+}
+
+.action-btn.tracking {
+    background: #fef3c7;
+    color: #b45309;
+}
+
+.action-btn.tracking:hover:not(:disabled) {
+    background: #fde68a;
+}
+
+.action-btn.cancel {
+    background: #fed7aa;
+    color: #9a3412;
+}
+
+.action-btn.cancel:hover:not(:disabled) {
+    background: #fdba74;
+}
+
+.action-btn.audit {
+    background: #e9d5ff;
+    color: #6b21a8;
+}
+
+.action-btn.audit:hover:not(:disabled) {
+    background: #d8b4fe;
 }
 
 .action-btn.delete {
@@ -184,11 +258,11 @@
     color: #991b1b;
 }
 
-.action-btn.delete:hover {
+.action-btn.delete:hover:not(:disabled) {
     background: #fecaca;
 }
 
-/* No Results Message */
+/* No Results */
 .no-results {
     text-align: center;
     padding: 40px 20px !important;
@@ -196,7 +270,7 @@
     font-style: italic;
 }
 
-/* Modal Styles */
+/* Modal Overlay */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -269,7 +343,31 @@
 .view-content h3 {
     font-size: 1.1rem;
     color: #111827;
-    margin: 0 0 16px 0;
+    margin: 20px 0 16px 0;
+}
+
+.shipping-info {
+    background: #f9fafb;
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.shipping-info p {
+    margin: 6px 0;
+    color: #374151;
+}
+
+.tracking-info {
+    background: #fef3c7;
+    padding: 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+}
+
+.tracking-info p {
+    margin: 6px 0;
+    color: #78350f;
 }
 
 /* Items Table */
@@ -353,7 +451,8 @@
     box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
 }
 
-.update-content .warning-text {
+.update-content .warning-text,
+.info-text {
     margin-top: 16px;
     padding: 12px;
     background: #fef3c7;
@@ -361,6 +460,12 @@
     border-radius: 6px;
     color: #92400e;
     font-size: 0.9rem;
+}
+
+.info-text {
+    background: #dbeafe;
+    border-left-color: #3b82f6;
+    color: #1e40af;
 }
 
 /* Delete Content */
@@ -389,6 +494,279 @@
 .delete-content .order-summary-box strong {
     color: #6b7280;
     margin-right: 8px;
+}
+
+/* Cancel Content */
+.cancel-content .order-summary {
+    margin-bottom: 20px;
+    color: #374151;
+}
+
+.cancel-content .form-label {
+    display: block;
+    color: #374151;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.cancel-content .form-textarea {
+    width: 100%;
+    padding: 12px 14px;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    color: #111827;
+    font-size: 0.95rem;
+    font-family: inherit;
+    resize: vertical;
+    transition: all 0.2s ease;
+}
+
+.cancel-content .form-textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.cancel-content .form-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 16px;
+}
+
+.cancel-content .form-checkbox input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.cancel-content .form-checkbox label {
+    color: #374151;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+/* Messages Content */
+.messages-content {
+    max-height: 500px;
+    display: flex;
+    flex-direction: column;
+}
+
+.messages-list {
+    flex: 1;
+    overflow-y: auto;
+    margin-bottom: 20px;
+    padding-right: 10px;
+}
+
+.no-messages {
+    text-align: center;
+    color: #6b7280;
+    padding: 40px 20px;
+    font-style: italic;
+}
+
+.message-item {
+    margin-bottom: 16px;
+    padding: 14px;
+    border-radius: 8px;
+    border-left: 3px solid;
+}
+
+.message-item.admin-message {
+    background: #e0e7ff;
+    border-left-color: #4338ca;
+}
+
+.message-item.user-message {
+    background: #f3f4f6;
+    border-left-color: #6b7280;
+}
+
+.message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.message-header strong {
+    color: #111827;
+    font-size: 0.9rem;
+}
+
+.message-header small {
+    color: #6b7280;
+    font-size: 0.75rem;
+}
+
+.message-text {
+    color: #374151;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.message-attachments {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.message-attachments a {
+    color: #3b82f6;
+    font-size: 0.85rem;
+    text-decoration: none;
+}
+
+.message-attachments a:hover {
+    text-decoration: underline;
+}
+
+.send-message-btn {
+    width: 100%;
+    padding: 12px;
+    background: #3b82f6;
+    color: #ffffff;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.send-message-btn:hover {
+    background: #2563eb;
+}
+
+/* Send Message Content */
+.send-message-content .form-label {
+    display: block;
+    color: #374151;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.send-message-content .form-textarea {
+    width: 100%;
+    padding: 12px 14px;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    color: #111827;
+    font-size: 0.95rem;
+    font-family: inherit;
+    resize: vertical;
+    transition: all 0.2s ease;
+}
+
+.send-message-content .form-textarea:focus {
+    outline: none;
+    border-color: #3b82f6;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Tracking Content */
+.tracking-content .order-summary {
+    margin-bottom: 20px;
+    color: #374151;
+}
+
+.tracking-content .form-label {
+    display: block;
+    color: #374151;
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin: 16px 0 8px 0;
+}
+
+.tracking-content .form-label:first-of-type {
+    margin-top: 0;
+}
+
+.tracking-content .form-select,
+.tracking-content .form-input {
+    width: 100%;
+    padding: 12px 14px;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    color: #111827;
+    font-size: 0.95rem;
+    transition: all 0.2s ease;
+}
+
+.tracking-content .form-select {
+    cursor: pointer;
+}
+
+.tracking-content .form-select:focus,
+.tracking-content .form-input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    background: #ffffff;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+/* Audit Content */
+.audit-content {
+    max-height: 500px;
+    overflow-y: auto;
+}
+
+.no-audit {
+    text-align: center;
+    color: #6b7280;
+    padding: 40px 20px;
+    font-style: italic;
+}
+
+.audit-log {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.audit-item {
+    padding: 14px;
+    background: #f9fafb;
+    border-radius: 8px;
+    border-left: 3px solid #6b7280;
+}
+
+.audit-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.audit-header strong {
+    color: #111827;
+    font-size: 0.95rem;
+}
+
+.audit-header small {
+    color: #6b7280;
+    font-size: 0.75rem;
+}
+
+.audit-item p {
+    color: #374151;
+    margin: 4px 0;
+    font-size: 0.9rem;
+}
+
+.audit-details {
+    color: #6b7280 !important;
+    font-style: italic;
 }
 
 /* Modal Footer */
@@ -451,16 +829,36 @@
     .orders-table tbody td {
         padding: 12px;
     }
+
+    .actions {
+        gap: 4px;
+    }
+
+    .action-btn {
+        padding: 6px;
+    }
 }
 
 @media (max-width: 768px) {
     .all-orders-container {
-        padding: 20px 10px;
+        padding: 80px 10px 40px 10px;
+    }
+
+    .orders-header {
+        padding: 0 10px;
     }
 
     .all-orders-title {
         font-size: 1.5rem;
-        padding: 0 10px;
+    }
+
+    .status-filters {
+        gap: 8px;
+    }
+
+    .filter-pill {
+        padding: 6px 12px;
+        font-size: 0.85rem;
     }
 
     .search-bar {
@@ -476,11 +874,16 @@
     }
 
     .orders-table {
-        min-width: 900px;
+        min-width: 1100px;
     }
 
     .enterprise-modal {
         margin: 10px;
+        max-width: calc(100% - 20px);
+    }
+
+    .modal-body {
+        padding: 20px;
     }
 
     .view-content .info-grid {
@@ -491,5 +894,29 @@
     .table-row,
     .table-footer {
         font-size: 0.85rem;
+        padding: 12px;
+    }
+
+    .modal-footer {
+        flex-direction: column;
+    }
+
+    .modal-btn {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .all-orders-title {
+        font-size: 1.3rem;
+    }
+
+    .filter-pill {
+        font-size: 0.8rem;
+        padding: 5px 10px;
+    }
+
+    .modal-title {
+        font-size: 1.2rem;
     }
 }
