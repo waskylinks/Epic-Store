@@ -15,6 +15,11 @@ import {
   FiSearch,
   FiChevronDown,
   FiEye,
+  FiMessageCircle,
+  FiMapPin,
+  FiX,
+  FiSend,
+  FiUser,
 } from "react-icons/fi";
 
 import PageTitle from "../components/PageTitle";
@@ -29,12 +34,17 @@ import "../OrderStyles/MyOrders.css";
 function MyOrders() {
   const dispatch = useDispatch();
   const { orders, loading, error } = useSelector((state) => state.order);
-  const { downloadLoading } = useSelector((state) => state.order);
+  const { downloadLoading } = useSelector((state) => state.receipt);
 
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
   const [expandedOrders, setExpandedOrders] = useState(new Set());
+  const [unreadCounts, setUnreadCounts] = useState({});
+  const [trackingModal, setTrackingModal] = useState({ open: false, order: null });
+  const [messagesModal, setMessagesModal] = useState({ open: false, order: null, messages: [], loading: false });
+  const [newMessage, setNewMessage] = useState("");
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   useEffect(() => {
     dispatch(getAllMyOrders());
@@ -45,6 +55,32 @@ function MyOrders() {
       toast.error(error, { position: "top-center" });
     }
   }, [error]);
+
+  // Fetch unread message counts for each order
+  useEffect(() => {
+    const fetchUnreadCounts = async () => {
+      const counts = {};
+      for (const order of orders) {
+        try {
+          const response = await fetch(`/api/v1/orders/${order._id}/messages`, {
+            credentials: 'include'
+          });
+          if (response.ok) {
+            const data = await response.json();
+            const unread = data.messages?.filter(msg => !msg.isRead && msg.sender !== 'customer').length || 0;
+            counts[order._id] = unread;
+          }
+        } catch (err) {
+          console.error('Failed to fetch messages:', err);
+        }
+      }
+      setUnreadCounts(counts);
+    };
+
+    if (orders && orders.length > 0) {
+      fetchUnreadCounts();
+    }
+  }, [orders]);
 
   const handleDownloadReceipt = async (reference) => {
     if (!reference) {
@@ -67,23 +103,33 @@ function MyOrders() {
   };
 
   const handleEmailReceipt = async (reference) => {
-    if (!reference) return;
+    if (!reference) {
+      toast.error("Receipt reference not found", {
+        position: "top-center",
+      });
+      return;
+    }
 
     try {
       const response = await fetch(`/api/v1/receipts/${reference}/email`, {
         method: "POST",
         credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
       });
 
+      const data = await response.json();
+
       if (response.ok) {
-        toast.success("Receipt sent to your email", {
+        toast.success(data.message || "Receipt sent to your email", {
           position: "top-center",
         });
       } else {
-        throw new Error("Failed to send email");
+        throw new Error(data.message || "Failed to send email");
       }
     } catch (err) {
-      toast.error("Failed to send receipt email", {
+      toast.error(err.message || "Failed to send receipt email", {
         position: "top-center",
       });
     }
@@ -98,6 +144,108 @@ function MyOrders() {
         newSet.add(orderId);
       }
       return newSet;
+    });
+  };
+
+  const openTrackingModal = (order) => {
+    setTrackingModal({ open: true, order });
+  };
+
+  const closeTrackingModal = () => {
+    setTrackingModal({ open: false, order: null });
+  };
+
+  const openMessagesModal = async (order) => {
+    setMessagesModal({ open: true, order, messages: [], loading: true });
+    
+    try {
+      const response = await fetch(`/api/v1/orders/${order._id}/messages`, {
+        credentials: 'include'
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setMessagesModal(prev => ({ 
+          ...prev, 
+          messages: data.messages || [], 
+          loading: false 
+        }));
+        
+        // Mark messages as read
+        await fetch(`/api/v1/orders/${order._id}/messages/read`, {
+          method: 'PUT',
+          credentials: 'include'
+        });
+        
+        // Update unread count
+        setUnreadCounts(prev => ({ ...prev, [order._id]: 0 }));
+      } else {
+        throw new Error('Failed to fetch messages');
+      }
+    } catch (err) {
+      console.error('Failed to fetch messages:', err);
+      setMessagesModal(prev => ({ ...prev, loading: false }));
+      toast.error('Failed to load messages', { position: 'top-center' });
+    }
+  };
+
+  const closeMessagesModal = () => {
+    setMessagesModal({ open: false, order: null, messages: [], loading: false });
+    setNewMessage("");
+  };
+
+  const handleSendMessage = async () => {
+    if (!newMessage.trim() || !messagesModal.order) return;
+
+    setSendingMessage(true);
+    try {
+      const response = await fetch(`/api/v1/orders/${messagesModal.order._id}/messages`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: newMessage.trim(),
+          attachments: []
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setMessagesModal(prev => ({
+          ...prev,
+          messages: [...prev.messages, data.orderMessage]
+        }));
+        setNewMessage("");
+        toast.success('Message sent', { position: 'top-center' });
+      } else {
+        throw new Error('Failed to send message');
+      }
+    } catch (err) {
+      toast.error('Failed to send message', { position: 'top-center' });
+    } finally {
+      setSendingMessage(false);
+    }
+  };
+
+  const formatTimestamp = (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
     });
   };
 
@@ -131,17 +279,10 @@ function MyOrders() {
     return "mo-status-badge";
   };
 
-  const formatCurrency = (amount, currency = "NGN") => {
-    const localeMap = {
-      NGN: "en-NG",
-      USD: "en-US",
-      GBP: "en-GB",
-      EUR: "en-DE",
-    };
-
-    return new Intl.NumberFormat(localeMap[currency] || "en-US", {
-      style: "currency",
-      currency: currency,
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
       minimumFractionDigits: 2,
     }).format(amount);
   };
@@ -333,7 +474,7 @@ function MyOrders() {
                     <div className="mo-summary-row">
                       <span className="mo-summary-label">Total Amount:</span>
                       <span className="mo-summary-value mo-total-amount">
-                        {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                        {formatCurrency(order.totalPrice)}
                       </span>
                     </div>
                     <div className="mo-summary-row">
@@ -376,13 +517,24 @@ function MyOrders() {
                     Email
                   </button>
 
-                  <Link
-                    to={`/order/${order._id}`}
+                  <button
+                    onClick={() => openMessagesModal(order)}
+                    className="mo-action-btn mo-messages-btn"
+                  >
+                    <FiMessageCircle />
+                    Messages
+                    {unreadCounts[order._id] > 0 && (
+                      <span className="mo-unread-badge">{unreadCounts[order._id]}</span>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => openTrackingModal(order)}
                     className="mo-action-btn mo-track-order"
                   >
                     <FiTruck />
                     Track Order
-                  </Link>
+                  </button>
                 </div>
 
                 {expandedOrders.has(order._id) && (
@@ -400,15 +552,11 @@ function MyOrders() {
                             <div className="mo-expanded-item-info">
                               <p className="mo-expanded-item-name">{item.name}</p>
                               <p className="mo-expanded-item-details">
-                                Quantity: {item.quantity} ×{" "}
-                                {formatCurrency(item.price, order.paymentInfo?.currency)}
+                                Quantity: {item.quantity} × {formatCurrency(item.price)}
                               </p>
                             </div>
                             <p className="mo-expanded-item-total">
-                              {formatCurrency(
-                                item.price * item.quantity,
-                                order.paymentInfo?.currency
-                              )}
+                              {formatCurrency(item.price * item.quantity)}
                             </p>
                           </div>
                         ))}
@@ -441,30 +589,19 @@ function MyOrders() {
                       <div className="mo-payment-breakdown">
                         <div className="mo-breakdown-row">
                           <span>Subtotal:</span>
-                          <span>
-                            {formatCurrency(order.itemPrice, order.paymentInfo?.currency)}
-                          </span>
+                          <span>{formatCurrency(order.itemPrice)}</span>
                         </div>
                         <div className="mo-breakdown-row">
                           <span>Tax:</span>
-                          <span>
-                            {formatCurrency(order.taxPrice, order.paymentInfo?.currency)}
-                          </span>
+                          <span>{formatCurrency(order.taxPrice)}</span>
                         </div>
                         <div className="mo-breakdown-row">
                           <span>Shipping:</span>
-                          <span>
-                            {formatCurrency(
-                              order.shippingPrice,
-                              order.paymentInfo?.currency
-                            )}
-                          </span>
+                          <span>{formatCurrency(order.shippingPrice)}</span>
                         </div>
                         <div className="mo-breakdown-row mo-total">
                           <span>Total:</span>
-                          <span>
-                            {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
-                          </span>
+                          <span>{formatCurrency(order.totalPrice)}</span>
                         </div>
                       </div>
                     </div>
@@ -475,6 +612,167 @@ function MyOrders() {
           </div>
         )}
       </div>
+
+      {/* Tracking Modal */}
+      {trackingModal.open && trackingModal.order && (
+        <div className="mo-modal-overlay" onClick={closeTrackingModal}>
+          <div className="mo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="mo-modal-header">
+              <h2>Order Tracking</h2>
+              <button 
+                className="mo-modal-close"
+                onClick={closeTrackingModal}
+                aria-label="Close modal"
+              >
+                <FiX />
+              </button>
+            </div>
+            
+            <div className="mo-modal-body">
+              <div className="mo-tracking-info">
+                <p><strong>Order ID:</strong> #{trackingModal.order._id.slice(-8).toUpperCase()}</p>
+                <p>
+                  <strong>Status:</strong>{" "}
+                  <span className={getStatusClass(trackingModal.order.orderStatus)}>
+                    {getStatusIcon(trackingModal.order.orderStatus)}
+                    {trackingModal.order.orderStatus}
+                  </span>
+                </p>
+                <p><strong>Order Date:</strong> {formatDate(trackingModal.order.createdAt)}</p>
+              </div>
+
+              {trackingModal.order.tracking ? (
+                <div className="mo-tracking-details">
+                  <h3>Shipping Details</h3>
+                  <p><strong>Carrier:</strong> {trackingModal.order.tracking.carrier}</p>
+                  <p><strong>Tracking Number:</strong> {trackingModal.order.tracking.trackingNumber}</p>
+                  {trackingModal.order.tracking.trackingUrl && (
+                    <a 
+                      href={trackingModal.order.tracking.trackingUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mo-track-link"
+                    >
+                      Track on {trackingModal.order.tracking.carrier} Website
+                    </a>
+                  )}
+                  {trackingModal.order.tracking.estimatedDelivery && (
+                    <p><strong>Estimated Delivery:</strong> {formatDate(trackingModal.order.tracking.estimatedDelivery)}</p>
+                  )}
+                </div>
+              ) : (
+                <div className="mo-no-tracking">
+                  <FiTruck className="mo-no-tracking-icon" />
+                  <p>Tracking information not available yet</p>
+                  <small>We'll update this once your order ships</small>
+                </div>
+              )}
+
+              <Link 
+                to={`/order/${trackingModal.order._id}`}
+                className="mo-view-full-details"
+                onClick={closeTrackingModal}
+              >
+                View Full Order Details
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Messages Modal */}
+      {messagesModal.open && messagesModal.order && (
+        <div className="mo-modal-overlay" onClick={closeMessagesModal}>
+          <div className="mo-modal mo-messages-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="mo-modal-header">
+              <div>
+                <h2>Order Messages</h2>
+                <p className="mo-modal-subtitle">Order #{messagesModal.order._id.slice(-8).toUpperCase()}</p>
+              </div>
+              <button 
+                className="mo-modal-close"
+                onClick={closeMessagesModal}
+                aria-label="Close modal"
+              >
+                <FiX />
+              </button>
+            </div>
+            
+            <div className="mo-modal-body mo-messages-body">
+              {messagesModal.loading ? (
+                <div className="mo-messages-loading">
+                  <div className="mo-loading-spinner"></div>
+                  <p>Loading messages...</p>
+                </div>
+              ) : messagesModal.messages.length === 0 ? (
+                <div className="mo-no-messages">
+                  <FiMessageCircle className="mo-no-messages-icon" />
+                  <p>No messages yet</p>
+                  <small>Start a conversation with support</small>
+                </div>
+              ) : (
+                <div className="mo-messages-list">
+                  {messagesModal.messages.map((msg, idx) => (
+                    <div
+                      key={idx}
+                      className={`mo-message ${
+                        msg.sender === 'customer' || msg.senderType === 'customer'
+                          ? 'mo-message-sent'
+                          : 'mo-message-received'
+                      }`}
+                    >
+                      {(msg.sender !== 'customer' && msg.senderType !== 'customer') && (
+                        <div className="mo-message-avatar">
+                          <FiUser />
+                        </div>
+                      )}
+                      <div className="mo-message-content">
+                        {(msg.sender !== 'customer' && msg.senderType !== 'customer') && (
+                          <span className="mo-message-sender">Support Team</span>
+                        )}
+                        <div className="mo-message-bubble">
+                          <p>{msg.content || msg.text}</p>
+                        </div>
+                        <div className="mo-message-footer">
+                          <span className="mo-message-time">
+                            {formatTimestamp(msg.createdAt || msg.timestamp)}
+                          </span>
+                          {(msg.sender === 'customer' || msg.senderType === 'customer') && (
+                            <span className="mo-message-status">
+                              {msg.isRead ? '✓✓ Read' : msg.delivered ? '✓✓ Delivered' : '✓ Sent'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Message Input */}
+              <div className="mo-message-input-container">
+                <input
+                  type="text"
+                  className="mo-message-input"
+                  placeholder="Type your message..."
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                  disabled={sendingMessage}
+                />
+                <button
+                  type="button"
+                  className="mo-send-btn"
+                  onClick={handleSendMessage}
+                  disabled={!newMessage.trim() || sendingMessage}
+                >
+                  <FiSend />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </>

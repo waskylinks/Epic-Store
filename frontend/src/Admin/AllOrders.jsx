@@ -250,11 +250,11 @@ function AllOrders() {
                                         >
                                             <td>#{order._id.slice(-8)}</td>
                                             <td>
-                                                <div>
-                                                    <strong>{order.user?.name || 'N/A'}</strong>
-                                                    <br />
-                                                    <small>{order.user?.email || ''}</small>
-                                                </div>
+                                            <div>
+                                                <strong>{order.user?.name || order.user?.firstName + ' ' + order.user?.lastName || 'N/A'}</strong>
+                                                <br />
+                                                <small>{order.user?.email || ''}</small>
+                                            </div>
                                             </td>
                                             <td>{order.orderItems?.length || 0}</td>
                                             <td>${order.totalPrice?.toFixed(2) || '0.00'}</td>
