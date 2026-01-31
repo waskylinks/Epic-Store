@@ -1,5 +1,6 @@
 import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
+import User from '../models/userModel.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
@@ -1292,9 +1293,6 @@ export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
  * @access Private (Admin only)
  */
 export const getAdminStats = handleAsyncError(async (req, res, next) => {
-  const Product = require('../models/product-model.js').default;
-  const User = require('../models/user-model.js').default;
-
   // Total orders
   const totalOrders = await Order.countDocuments();
   
@@ -1444,7 +1442,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   ]);
 
   // Populate product details
-  const Product = require('../models/product-model.js').default;
   const populatedTopProducts = await Promise.all(
     topProducts.map(async (item) => {
       const product = await Product.findById(item._id).select('name images');
