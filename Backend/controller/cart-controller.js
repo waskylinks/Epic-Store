@@ -1,36 +1,122 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import Product from '../models/product-model.js';
-import User from '../models/userModel.js';
 
 // ============================================
-// CART CALCULATION
+// GET CART DETAILS - Fetch fresh product data
 // ============================================
 
 /**
- * Calculate cart totals (itemPrice, taxPrice, shippingPrice, totalPrice)
- * @route POST /api/v1/cart/calculate
- * @access Public (can be used before login)
+ * Get cart details with current prices and stock
+ * @route POST /api/v1/cart/details
+ * @access Public
  */
-export const calculateCart = handleAsyncError(async (req, res, next) => {
-    const { cartItems, currency = 'USD' } = req.body; // Changed default to USD
+export const getCartDetails = handleAsyncError(async (req, res, next) => {
+    const { items } = req.body;
 
-    if (!cartItems || cartItems.length === 0) {
+    if (!items || items.length === 0) {
+        return res.status(200).json({
+            success: true,
+            cartItems: []
+        });
+    }
+
+    const cartItems = [];
+
+    for (const item of items) {
+        const product = await Product.findById(item.product);
+
+        if (!product || product.status !== 'published') {
+            continue; // Skip unavailable products
+        }
+
+        // Get current price (prioritize sale price)
+        let currentPrice = 0;
+        if (product.pricing?.sale && product.pricing.sale > 0) {
+            currentPrice = product.pricing.sale;
+        } else if (product.pricing?.regular && product.pricing.regular > 0) {
+            currentPrice = product.pricing.regular;
+        } else if (product.price && product.price > 0) {
+            currentPrice = product.price;
+        }
+
+        const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+
+        cartItems.push({
+            product: product._id,
+            name: product.name,
+            price: currentPrice,
+            stock: availableStock,
+            image: product.images?.[0]?.url || product.image?.[0]?.url,
+            quantity: Math.min(item.quantity, availableStock) // Cap at available stock
+        });
+    }
+
+    return res.status(200).json({
+        success: true,
+        cartItems
+    });
+});
+
+// ============================================
+// VALIDATE CHECKOUT - Validate and calculate totals
+// ============================================
+
+/**
+ * Validate cart and calculate final pricing before checkout
+ * @route POST /api/v1/cart/checkout/validate
+ * @access Public
+ */
+export const validateCheckout = handleAsyncError(async (req, res, next) => {
+    const { items } = req.body;
+
+    if (!items || items.length === 0) {
         return next(new HandleError('Cart is empty', 400));
     }
 
     let itemPrice = 0;
-    const breakdown = [];
+    const validItems = [];
+    const invalidItems = [];
 
-    // Calculate item prices from database
-    for (const item of cartItems) {
+    // Validate each item and calculate pricing
+    for (const item of items) {
         const product = await Product.findById(item.product);
 
+        // Product doesn't exist
         if (!product) {
-            return next(new HandleError(`Product not found: ${item.product}`, 404));
+            invalidItems.push({
+                productId: item.product,
+                reason: 'Product not found',
+                requestedQuantity: item.quantity
+            });
+            continue;
         }
 
-        // FIXED: Use robust price extraction
+        // Product not published
+        if (product.status !== 'published') {
+            invalidItems.push({
+                productId: product._id,
+                name: product.name,
+                reason: 'Product unavailable',
+                requestedQuantity: item.quantity
+            });
+            continue;
+        }
+
+        // Check stock
+        const availableStock = product.inventory?.stock || product.stock || 0;
+        if (availableStock < item.quantity) {
+            invalidItems.push({
+                productId: product._id,
+                name: product.name,
+                reason: 'Insufficient stock',
+                requestedQuantity: item.quantity,
+                availableQuantity: availableStock
+            });
+            continue;
+        }
+
+        // Get current price
         let unitPrice = 0;
         if (product.pricing?.sale && product.pricing.sale > 0) {
             unitPrice = product.pricing.sale;
@@ -45,7 +131,7 @@ export const calculateCart = handleAsyncError(async (req, res, next) => {
         const itemTotal = unitPrice * item.quantity;
         itemPrice += itemTotal;
 
-        breakdown.push({
+        validItems.push({
             product: product._id,
             name: product.name,
             quantity: item.quantity,
@@ -54,255 +140,37 @@ export const calculateCart = handleAsyncError(async (req, res, next) => {
         });
     }
 
-    // Calculate tax (18%)
-    const taxRate = 0.18; // Remove currency-specific tax
-    const taxPrice = Math.round(itemPrice * taxRate * 100) / 100;
+    // If there are invalid items, return error
+    if (invalidItems.length > 0) {
+        return res.status(400).json({
+            success: false,
+            isValid: false,
+            invalidItems,
+            message: `${invalidItems.length} item(s) are no longer available`
+        });
+    }
 
-    // Calculate shipping
+    // Calculate totals
+    const taxPrice = Math.round(itemPrice * 0.18 * 100) / 100;
     const shippingPrice = itemPrice >= 500 ? 0 : 50;
-
-    // Calculate total
     const totalPrice = Math.round((itemPrice + taxPrice + shippingPrice) * 100) / 100;
 
     return res.status(200).json({
         success: true,
+        isValid: true,
         pricing: {
             itemPrice: Math.round(itemPrice * 100) / 100,
             taxPrice,
             shippingPrice,
             totalPrice,
-            currency,
-            breakdown,
-            lastUpdated: new Date().toISOString()
-        }
+            currency: 'USD'
+        },
+        items: validItems
     });
 });
 
 // ============================================
-// CART VALIDATION
-// ============================================
-
-/**
- * Validate entire cart before checkout
- * @route POST /api/v1/cart/validate
- * @access Public
- */
-export const validateCart = handleAsyncError(async (req, res, next) => {
-    const { cartItems } = req.body;
-
-    if (!cartItems || cartItems.length === 0) {
-        return res.status(200).json({
-            success: true,
-            isValid: true,
-            errors: [],
-            invalidItems: []
-        });
-    }
-
-    const errors = [];
-    const invalidItems = [];
-
-    for (const item of cartItems) {
-        const product = await Product.findById(item.product);
-
-        // Product doesn't exist
-        if (!product) {
-            errors.push(`Product ${item.product} not found`);
-            invalidItems.push({
-                productId: item.product,
-                reason: 'Product not found',
-                requestedQuantity: item.quantity
-            });
-            continue;
-        }
-
-        // Product is not published
-        if (product.status !== 'published') {
-            errors.push(`${product.name} is no longer available`);
-            invalidItems.push({
-                productId: product._id,
-                name: product.name,
-                reason: 'Product unavailable',
-                requestedQuantity: item.quantity
-            });
-            continue;
-        }
-
-        // Insufficient stock
-        const availableStock = product.inventory?.stock || product.stock || 0;
-        if (availableStock < item.quantity) {
-            errors.push(`Only ${availableStock} available for ${product.name}`);
-            invalidItems.push({
-                productId: product._id,
-                name: product.name,
-                reason: 'Insufficient stock',
-                requestedQuantity: item.quantity,
-                availableQuantity: availableStock
-            });
-        }
-    }
-
-    return res.status(200).json({
-        success: true,
-        isValid: errors.length === 0,
-        errors,
-        invalidItems
-    });
-});
-
-/**
- * Batch validate cart items
- * @route POST /api/v1/cart/validate-items
- * @access Public
- */
-export const validateCartItems = handleAsyncError(async (req, res, next) => {
-    const { items } = req.body;
-
-    if (!items || items.length === 0) {
-        return res.status(200).json({
-            success: true,
-            validItems: [],
-            invalidItems: []
-        });
-    }
-
-    const validItems = [];
-    const invalidItems = [];
-
-    for (const item of items) {
-        const product = await Product.findById(item.product);
-
-        if (!product || product.status !== 'published') {
-            invalidItems.push({
-                productId: item.product,
-                reason: !product ? 'Product not found' : 'Product unavailable',
-                requestedQuantity: item.quantity
-            });
-            continue;
-        }
-
-        const availableStock = product.inventory?.stock || product.stock || 0;
-        
-        if (availableStock < item.quantity) {
-            invalidItems.push({
-                productId: product._id,
-                name: product.name,
-                reason: 'Insufficient stock',
-                requestedQuantity: item.quantity,
-                availableQuantity: availableStock
-            });
-        } else {
-            validItems.push({
-                productId: product._id,
-                name: product.name,
-                quantity: item.quantity,
-                price: product.pricing?.sale || product.pricing?.regular || product.price,
-                stock: availableStock
-            });
-        }
-    }
-
-    return res.status(200).json({
-        success: true,
-        validItems,
-        invalidItems
-    });
-});
-
-// ============================================
-// PRODUCT AVAILABILITY CHECK
-// ============================================
-
-/**
- * Check product availability
- * @route GET /api/v1/products/:id/availability
- * @access Public
- */
-export const checkProductAvailability = handleAsyncError(async (req, res, next) => {
-    const { id } = req.params;
-    const { quantity } = req.query;
-
-    const product = await Product.findById(id);
-
-    if (!product) {
-        return next(new HandleError('Product not found', 404));
-    }
-
-    if (product.status !== 'published') {
-        return res.status(200).json({
-            success: true,
-            isAvailable: false,
-            name: product.name,
-            reason: 'Product not available',
-            maxAvailable: 0
-        });
-    }
-
-    const availableStock = product.inventory?.stock || product.stock || 0;
-    const requestedQty = parseInt(quantity) || 1;
-
-    return res.status(200).json({
-        success: true,
-        isAvailable: availableStock >= requestedQty,
-        name: product.name,
-        maxAvailable: availableStock,
-        requestedQuantity: requestedQty,
-        stockStatus: availableStock === 0 ? 'out_of_stock' : 
-                     availableStock <= 5 ? 'low_stock' : 'in_stock'
-    });
-});
-
-// ============================================
-// GUEST CART MERGE
-// ============================================
-
-/**
- * Merge guest cart to user cart on login
- * @route POST /api/v1/cart/merge
- * @access Private
- */
-export const mergeGuestCart = handleAsyncError(async (req, res, next) => {
-    const userId = req.user._id;
-    const { guestItems } = req.body;
-
-    if (!guestItems || guestItems.length === 0) {
-        return res.status(200).json({
-            success: true,
-            message: 'No guest cart to merge',
-            cartItems: []
-        });
-    }
-
-    // In a real implementation, you would fetch user's existing cart from database
-    // For now, we'll just validate the guest items and return them
-    const validatedItems = [];
-
-    for (const item of guestItems) {
-        const product = await Product.findById(item.product);
-
-        if (product && product.status === 'published') {
-            const availableStock = product.inventory?.stock || product.stock || 0;
-            
-            validatedItems.push({
-                product: product._id,
-                name: product.name,
-                price: product.pricing?.sale || product.pricing?.regular || product.price,
-                quantity: Math.min(item.quantity, availableStock),
-                image: product.images?.[0]?.url,
-                stock: availableStock
-            });
-        }
-    }
-
-    return res.status(200).json({
-        success: true,
-        message: 'Guest cart merged successfully',
-        cartItems: validatedItems
-    });
-});
-
-// ============================================
-// DISCOUNT CODE
+// APPLY DISCOUNT CODE
 // ============================================
 
 /**
@@ -311,7 +179,7 @@ export const mergeGuestCart = handleAsyncError(async (req, res, next) => {
  * @access Public
  */
 export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
-    const { code, cartItems } = req.body;
+    const { code, items } = req.body;
 
     if (!code) {
         return next(new HandleError('Discount code is required', 400));
@@ -332,7 +200,7 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
 
     // Calculate original pricing
     let itemPrice = 0;
-    for (const item of cartItems) {
+    for (const item of items) {
         const product = await Product.findById(item.product);
         if (product) {
             const unitPrice = product.pricing?.sale || product.pricing?.regular || product.price || 0;
@@ -357,47 +225,13 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
         success: true,
         code: code.toUpperCase(),
         type: discount.type,
-        amount: discountAmount,
+        discountAmount: Math.round(discountAmount * 100) / 100,
         pricing: {
             itemPrice: Math.round(discountedItemPrice * 100) / 100,
             taxPrice,
             shippingPrice,
             totalPrice,
-            currency: 'NGN',
-            lastUpdated: new Date().toISOString()
+            currency: 'USD'
         }
-    });
-});
-
-// ============================================
-// SAVE FOR LATER
-// ============================================
-
-/**
- * Save item for later
- * @route POST /api/v1/cart/save-for-later
- * @access Private
- */
-export const saveForLater = handleAsyncError(async (req, res, next) => {
-    const { productId } = req.body;
-    const userId = req.user._id;
-
-    if (!productId) {
-        return next(new HandleError('Product ID is required', 400));
-    }
-
-    const product = await Product.findById(productId);
-
-    if (!product) {
-        return next(new HandleError('Product not found', 404));
-    }
-
-    // In production, save to user's "saved for later" list in database
-    // For now, just return success
-
-    return res.status(200).json({
-        success: true,
-        message: `${product.name} saved for later`,
-        productId: product._id
     });
 });
