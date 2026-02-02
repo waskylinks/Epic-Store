@@ -21,6 +21,17 @@ const invalidateProductCaches = async () => {
     }
 };
 
+// Helper: Parse JSON safely
+const parseJSONSafe = (field) => {
+    if (!field) return null;
+    if (typeof field === 'object') return field;
+    try { 
+        return JSON.parse(field); 
+    } catch { 
+        return null; 
+    }
+};
+
 // ============================================
 // GET ALL PRODUCTS
 // ============================================
@@ -58,70 +69,71 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// CREATE PRODUCT - CLEAN VERSION
+// CREATE PRODUCT
 // ============================================
 export const createProducts = async (req, res, next) => {
   let uploadedImages = [];
 
   try {
     console.log('📝 Creating new product...');
-    console.log('📤 Files received:', req.files?.length || 0);
+    console.log('📦 Request body fields:', Object.keys(req.body));
 
-    // Parse JSON fields safely
-    const parseJSONSafe = (field) => {
-      if (!req.body[field]) return undefined;
-      try { 
-        return JSON.parse(req.body[field]); 
-      } catch { 
-        return undefined; 
-      }
-    };
+    // Parse nested JSON fields - these come as JSON strings from FormData
+    const pricing = parseJSONSafe(req.body.pricing);
+    const inventory = parseJSONSafe(req.body.inventory);
+    const subcategories = parseJSONSafe(req.body.subcategories);
+    const tags = parseJSONSafe(req.body.tags);
+    const specifications = parseJSONSafe(req.body.specifications);
+    const variants = parseJSONSafe(req.body.variants);
+    const dimensions = parseJSONSafe(req.body.dimensions);
+    const weight = parseJSONSafe(req.body.weight);
+    const seo = parseJSONSafe(req.body.seo);
 
-    // Build inventory object
-    const inventoryData = parseJSONSafe('inventory');
-    const inventory = inventoryData || {
-      stock: Number(req.body.stock) || 0,
-      sku: req.body.sku || undefined,
-      barcode: req.body.barcode || undefined,
-      trackInventory: true,
-      lowStockThreshold: 5
-    };
+    console.log('📊 Parsed data:', {
+      pricing,
+      inventory,
+      subcategories,
+      tags,
+      specifications: specifications?.length || 0,
+      variants: variants?.length || 0,
+      hasDimensions: !!dimensions,
+      hasWeight: !!weight,
+      hasSeo: !!seo
+    });
 
-    console.log('✅ Inventory data:', inventory);
-
-    // Build pricing object
-    const pricingData = parseJSONSafe('pricing');
-    const pricing = pricingData || {
-      regular: Number(req.body.price) || 0,
-      sale: req.body.salePrice ? Number(req.body.salePrice) : undefined,
-      cost: req.body.cost ? Number(req.body.cost) : undefined,
-      currency: req.body.currency || 'USD'
-    };
-
-    console.log('✅ Pricing data:', pricing);
-
-    // Build product data
+    // Build product data - Always include all fields
     const productData = {
       name: req.body.name,
       description: req.body.description,
-      shortDescription: req.body.shortDescription,
+      shortDescription: req.body.shortDescription || '',
       category: req.body.category,
       brand: req.body.brand || '',
-      pricing,
-      inventory,
-      subcategories: parseJSONSafe('subcategories') || [],
-      tags: parseJSONSafe('tags') || [],
-      specifications: parseJSONSafe('specifications') || [],
-      variants: parseJSONSafe('variants') || [],
-      dimensions: parseJSONSafe('dimensions'),
-      weight: parseJSONSafe('weight'),
-      seo: parseJSONSafe('seo'),
+      pricing: pricing || {},
+      inventory: inventory || {},
+      subcategories: Array.isArray(subcategories) ? subcategories : [],
+      tags: Array.isArray(tags) ? tags : [],
+      specifications: Array.isArray(specifications) ? specifications : [],
+      variants: Array.isArray(variants) ? variants : [],
+      dimensions: dimensions || {},
+      weight: weight || {},
+      seo: seo || { metaTitle: '', metaDescription: '', keywords: [] },
       isFeatured: req.body.isFeatured === 'true',
       isNewArrival: req.body.isNewArrival === 'true',
       isBestseller: req.body.isBestseller === 'true',
       status: req.body.status || 'published',
       user: req.user._id
     };
+
+    console.log('📦 Final product data:', {
+      name: productData.name,
+      category: productData.category,
+      pricing: productData.pricing,
+      inventory: productData.inventory,
+      subcategories: productData.subcategories,
+      tags: productData.tags,
+      specifications: productData.specifications?.length,
+      variants: productData.variants?.length
+    });
 
     // Handle images
     if (req.files && req.files.length > 0) {
@@ -156,8 +168,7 @@ export const createProducts = async (req, res, next) => {
 
     await invalidateProductCaches();
 
-    console.log('✅ Product created successfully');
-    console.log('✅ Stock:', product.inventory.stock);
+    console.log('✅ Product created successfully:', product._id);
 
     res.status(201).json({
       success: true,
@@ -174,7 +185,7 @@ export const createProducts = async (req, res, next) => {
 };
 
 // ============================================
-// UPDATE PRODUCT - CLEAN VERSION
+// UPDATE PRODUCT
 // ============================================
 export const updateProduct = async (req, res, next) => {
   let newlyUploadedImages = [];
@@ -184,49 +195,34 @@ export const updateProduct = async (req, res, next) => {
     let product = await Product.findById(id);
     if (!product) return next(new HandleError('Product not found', 404));
 
-    const parseJSONSafe = (field) => {
-      if (!req.body[field]) return undefined;
-      try { 
-        return JSON.parse(req.body[field]); 
-      } catch { 
-        return undefined; 
-      }
-    };
+    console.log('📝 Updating product...');
 
-    // Build inventory object
-    const inventoryData = parseJSONSafe('inventory');
-    const inventory = inventoryData || {
-      stock: Number(req.body.stock) || product.inventory?.stock || 0,
-      sku: req.body.sku || product.inventory?.sku,
-      barcode: req.body.barcode || product.inventory?.barcode,
-      trackInventory: product.inventory?.trackInventory ?? true,
-      lowStockThreshold: product.inventory?.lowStockThreshold ?? 5
-    };
-
-    // Build pricing object
-    const pricingData = parseJSONSafe('pricing');
-    const pricing = pricingData || {
-      regular: Number(req.body.price) || product.pricing?.regular || 0,
-      sale: req.body.salePrice ? Number(req.body.salePrice) : product.pricing?.sale,
-      cost: req.body.cost ? Number(req.body.cost) : product.pricing?.cost,
-      currency: req.body.currency || product.pricing?.currency || 'USD'
-    };
+    // Parse nested JSON fields
+    const pricing = parseJSONSafe(req.body.pricing);
+    const inventory = parseJSONSafe(req.body.inventory);
+    const subcategories = parseJSONSafe(req.body.subcategories);
+    const tags = parseJSONSafe(req.body.tags);
+    const specifications = parseJSONSafe(req.body.specifications);
+    const variants = parseJSONSafe(req.body.variants);
+    const dimensions = parseJSONSafe(req.body.dimensions);
+    const weight = parseJSONSafe(req.body.weight);
+    const seo = parseJSONSafe(req.body.seo);
 
     const updateData = {
       name: req.body.name,
       description: req.body.description,
-      shortDescription: req.body.shortDescription,
+      shortDescription: req.body.shortDescription || '',
       category: req.body.category,
       brand: req.body.brand || '',
-      pricing,
-      inventory,
-      subcategories: parseJSONSafe('subcategories') || product.subcategories,
-      tags: parseJSONSafe('tags') || product.tags,
-      specifications: parseJSONSafe('specifications') || product.specifications,
-      variants: parseJSONSafe('variants') || product.variants,
-      dimensions: parseJSONSafe('dimensions') || product.dimensions,
-      weight: parseJSONSafe('weight') || product.weight,
-      seo: parseJSONSafe('seo') || product.seo,
+      pricing: pricing || product.pricing || {},
+      inventory: inventory || product.inventory || {},
+      subcategories: Array.isArray(subcategories) ? subcategories : product.subcategories || [],
+      tags: Array.isArray(tags) ? tags : product.tags || [],
+      specifications: Array.isArray(specifications) ? specifications : product.specifications || [],
+      variants: Array.isArray(variants) ? variants : product.variants || [],
+      dimensions: dimensions || product.dimensions || {},
+      weight: weight || product.weight || {},
+      seo: seo || product.seo || { metaTitle: '', metaDescription: '', keywords: [] },
       isFeatured: req.body.isFeatured === 'true',
       isNewArrival: req.body.isNewArrival === 'true',
       isBestseller: req.body.isBestseller === 'true',
@@ -235,18 +231,14 @@ export const updateProduct = async (req, res, next) => {
     };
 
     // Handle image deletion
-    const imagesToDelete = parseJSONSafe('imagesToDelete') || [];
+    const imagesToDelete = parseJSONSafe(req.body.imagesToDelete) || [];
     if (imagesToDelete.length > 0) {
       product.images = product.images.filter(img => !imagesToDelete.includes(img.public_id));
     }
 
     // Handle existing images reordering
-    const existingImages = parseJSONSafe('existingImages');
-    let currentImages = product.images;
-
-    if (existingImages && Array.isArray(existingImages)) {
-      currentImages = existingImages;
-    }
+    const existingImages = parseJSONSafe(req.body.existingImages);
+    let currentImages = existingImages || product.images;
 
     // Handle new images
     if (req.files && req.files.length > 0) {
@@ -292,6 +284,8 @@ export const updateProduct = async (req, res, next) => {
 
     await invalidateProductCaches();
 
+    console.log('✅ Product updated successfully');
+
     res.status(200).json({
       success: true,
       product
@@ -326,7 +320,7 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
             console.log(`📸 Deleting ${publicIds.length} images from Cloudinary...`);
             
             try {
-                const results = await deleteMultipleFromCloudinary(publicIds);
+                await deleteMultipleFromCloudinary(publicIds);
                 console.log(`✅ Images deleted from Cloudinary`);
             } catch (cloudinaryError) {
                 console.error('❌ Cloudinary deletion error:', cloudinaryError.message);
