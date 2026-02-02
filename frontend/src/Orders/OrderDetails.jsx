@@ -12,6 +12,8 @@ import {
   getOrderMessages,
   addOrderMessage,
   markOrderMessagesRead,
+  requestRefund,
+  requestReturn,
 } from '../features/cart/orderSlice';
 import { getRefundStatus } from '../features/refunds/refundSlice';
 import { toast } from 'react-toastify';
@@ -31,6 +33,8 @@ import {
   FiUser,
   FiDownload,
   FiRotateCw,
+  FiX,
+  FiUpload,
 } from 'react-icons/fi';
 
 function OrderDetails() {
@@ -39,6 +43,8 @@ function OrderDetails() {
   const dispatch = useDispatch();
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
+  const refundFileInputRef = useRef(null);
+  const returnFileInputRef = useRef(null);
 
   const { order = {}, timeline = [], orderMessages = [], loading, error, actionLoading } = useSelector((state) => state.order);
   const { refundStatus, statusLoading } = useSelector((state) => state.refund);
@@ -50,6 +56,26 @@ function OrderDetails() {
   // Message state
   const [newMessage, setNewMessage] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
+
+  // Modal states
+  const [showRefundModal, setShowRefundModal] = useState(false);
+  const [showReturnModal, setShowReturnModal] = useState(false);
+
+  // Refund form state
+  const [refundForm, setRefundForm] = useState({
+    reason: '',
+    description: '',
+    refundType: 'full',
+    requestedAmount: '',
+  });
+  const [refundImages, setRefundImages] = useState([]);
+
+  // Return form state
+  const [returnForm, setReturnForm] = useState({
+    reason: '',
+    itemsToReturn: [],
+  });
+  const [returnImages, setReturnImages] = useState([]);
 
   // Fetch order details, refund status, timeline, and messages
   useEffect(() => {
@@ -120,7 +146,7 @@ function OrderDetails() {
   const hasActiveRefund = refundStatus?.hasRefund === true || 
                           (refundStatus?.status && refundStatus.status !== 'none');
 
-  const refundableStatuses = ['Delivered', 'Shipped', 'Cancelled'];
+  const refundableStatuses = ['Delivered', 'Shipped'];
   const isRefundable = isPaid && 
     !hasActiveRefund && 
     refundableStatuses.includes(orderStatus);
@@ -175,6 +201,105 @@ function OrderDetails() {
       toast.success('Message sent', { position: 'top-center' });
     } catch (err) {
       toast.error(err || 'Failed to send message', { position: 'top-center' });
+    }
+  };
+
+  // Handle refund images
+  const handleRefundImageSelect = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length + refundImages.length > 5) {
+      toast.error('Maximum 5 images allowed', { position: 'top-center' });
+      return;
+    }
+    setRefundImages(prev => [...prev, ...files]);
+  };
+
+  const removeRefundImage = (index) => {
+    setRefundImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Handle return images
+  const handleReturnImageSelect = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length + returnImages.length > 5) {
+      toast.error('Maximum 5 images allowed', { position: 'top-center' });
+      return;
+    }
+    setReturnImages(prev => [...prev, ...files]);
+  };
+
+  const removeReturnImage = (index) => {
+    setReturnImages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Handle item selection for return
+  const handleItemToggle = (itemId) => {
+    setReturnForm(prev => ({
+      ...prev,
+      itemsToReturn: prev.itemsToReturn.includes(itemId)
+        ? prev.itemsToReturn.filter(id => id !== itemId)
+        : [...prev.itemsToReturn, itemId]
+    }));
+  };
+
+  // Submit refund request
+  const handleRefundSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!refundForm.reason) {
+      toast.error('Please select a reason', { position: 'top-center' });
+      return;
+    }
+
+    try {
+      await dispatch(requestRefund({
+        orderId: id,
+        reason: refundForm.reason,
+        description: refundForm.description,
+        refundType: refundForm.refundType,
+        requestedAmount: refundForm.requestedAmount,
+        images: refundImages,
+      })).unwrap();
+
+      toast.success('Refund request submitted successfully', { position: 'top-center' });
+      setShowRefundModal(false);
+      setRefundForm({ reason: '', description: '', refundType: 'full', requestedAmount: '' });
+      setRefundImages([]);
+      dispatch(getOrderDetails(id));
+    } catch (err) {
+      toast.error(err || 'Failed to submit refund request', { position: 'top-center' });
+    }
+  };
+
+  // Submit return request
+  const handleReturnSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (!returnForm.reason) {
+      toast.error('Please select a reason', { position: 'top-center' });
+      return;
+    }
+
+    if (returnForm.itemsToReturn.length === 0) {
+      toast.error('Please select at least one item to return', { position: 'top-center' });
+      return;
+    }
+
+    try {
+      await dispatch(requestReturn({
+        orderId: id,
+        reason: returnForm.reason,
+        itemsToReturn: returnForm.itemsToReturn,
+        images: returnImages,
+      })).unwrap();
+
+      toast.success('Return request submitted successfully', { position: 'top-center' });
+      setShowReturnModal(false);
+      setReturnForm({ reason: '', itemsToReturn: [] });
+      setReturnImages([]);
+      dispatch(getOrderDetails(id));
+    } catch (err) {
+      toast.error(err || 'Failed to submit return request', { position: 'top-center' });
     }
   };
 
@@ -350,7 +475,7 @@ function OrderDetails() {
           </table>
         </div>
 
-        {/* 🆕 TIMELINE/TRACKING ACCORDION */}
+        {/* TIMELINE ACCORDION */}
         <div className="od-table-block ot-accordion">
           <button
             className="ot-accordion-header"
@@ -423,7 +548,7 @@ function OrderDetails() {
           )}
         </div>
 
-        {/* 🆕 MESSAGES ACCORDION */}
+        {/* MESSAGES ACCORDION */}
         <div className="od-table-block om-accordion">
           <button
             className="om-accordion-header"
@@ -571,7 +696,7 @@ function OrderDetails() {
         <div className="od-action-buttons">
           {isRefundable && !statusLoading && (
             <button
-              onClick={() => navigate(`/orders/${id}/refund/request`)}
+              onClick={() => setShowRefundModal(true)}
               className="od-btn od-btn-refund"
             >
               Request Refund
@@ -580,7 +705,7 @@ function OrderDetails() {
 
           {isReturnable && (
             <button
-              onClick={() => navigate(`/orders/${id}/return/request`)}
+              onClick={() => setShowReturnModal(true)}
               className="od-btn od-btn-return"
             >
               Request Return
@@ -596,6 +721,206 @@ function OrderDetails() {
           </button>
         </div>
       </div>
+
+      {/* REFUND MODAL */}
+      {showRefundModal && (
+        <div className="modal-overlay" onClick={() => setShowRefundModal(false)}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Request Refund</h2>
+              <button className="modal-close" onClick={() => setShowRefundModal(false)}>
+                <FiX />
+              </button>
+            </div>
+            <form onSubmit={handleRefundSubmit} className="modal-form">
+              <div className="form-group">
+                <label>Refund Type</label>
+                <select
+                  value={refundForm.refundType}
+                  onChange={(e) => setRefundForm({ ...refundForm, refundType: e.target.value })}
+                  required
+                >
+                  <option value="full">Full Refund</option>
+                  <option value="partial">Partial Refund</option>
+                </select>
+              </div>
+
+              {refundForm.refundType === 'partial' && (
+                <div className="form-group">
+                  <label>Requested Amount (₦)</label>
+                  <input
+                    type="number"
+                    value={refundForm.requestedAmount}
+                    onChange={(e) => setRefundForm({ ...refundForm, requestedAmount: e.target.value })}
+                    placeholder="Enter amount"
+                    max={totalPrice}
+                    required
+                  />
+                </div>
+              )}
+
+              <div className="form-group">
+                <label>Reason *</label>
+                <select
+                  value={refundForm.reason}
+                  onChange={(e) => setRefundForm({ ...refundForm, reason: e.target.value })}
+                  required
+                >
+                  <option value="">Select a reason</option>
+                  <option value="damaged_product">Damaged Product</option>
+                  <option value="wrong_item">Wrong Item Received</option>
+                  <option value="not_as_described">Not as Described</option>
+                  <option value="defective">Defective Product</option>
+                  <option value="changed_mind">Changed Mind</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Description</label>
+                <textarea
+                  value={refundForm.description}
+                  onChange={(e) => setRefundForm({ ...refundForm, description: e.target.value })}
+                  placeholder="Provide additional details about your refund request..."
+                  rows={4}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Upload Images (Optional - Max 5)</label>
+                <input
+                  ref={refundFileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleRefundImageSelect}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  className="upload-btn"
+                  onClick={() => refundFileInputRef.current?.click()}
+                >
+                  <FiUpload /> Choose Images
+                </button>
+                {refundImages.length > 0 && (
+                  <div className="selected-images">
+                    {refundImages.map((img, index) => (
+                      <div key={index} className="selected-image">
+                        <span>{img.name}</span>
+                        <button type="button" onClick={() => removeRefundImage(index)}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setShowRefundModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={actionLoading}>
+                  {actionLoading ? 'Submitting...' : 'Submit Request'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* RETURN MODAL */}
+      {showReturnModal && (
+        <div className="modal-overlay" onClick={() => setShowReturnModal(false)}>
+          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Request Return</h2>
+              <button className="modal-close" onClick={() => setShowReturnModal(false)}>
+                <FiX />
+              </button>
+            </div>
+            <form onSubmit={handleReturnSubmit} className="modal-form">
+              <div className="form-group">
+                <label>Select Items to Return *</label>
+                <div className="items-list">
+                  {orderItems.map((item) => (
+                    <div key={item._id} className="item-checkbox">
+                      <input
+                        type="checkbox"
+                        id={`item-${item._id}`}
+                        checked={returnForm.itemsToReturn.includes(item._id)}
+                        onChange={() => handleItemToggle(item._id)}
+                      />
+                      <label htmlFor={`item-${item._id}`}>
+                        <img src={item.image} alt={item.name} />
+                        <div>
+                          <p>{item.name}</p>
+                          <span>Qty: {item.quantity} • ₦{item.price?.toLocaleString()}</span>
+                        </div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Reason *</label>
+                <select
+                  value={returnForm.reason}
+                  onChange={(e) => setReturnForm({ ...returnForm, reason: e.target.value })}
+                  required
+                >
+                  <option value="">Select a reason</option>
+                  <option value="damaged_product">Damaged Product</option>
+                  <option value="wrong_item">Wrong Item Received</option>
+                  <option value="not_as_described">Not as Described</option>
+                  <option value="defective">Defective Product</option>
+                  <option value="size_fit">Size/Fit Issue</option>
+                  <option value="quality_issue">Quality Issue</option>
+                  <option value="other">Other</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Upload Images (Optional - Max 5)</label>
+                <input
+                  ref={returnFileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleReturnImageSelect}
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  className="upload-btn"
+                  onClick={() => returnFileInputRef.current?.click()}
+                >
+                  <FiUpload /> Choose Images
+                </button>
+                {returnImages.length > 0 && (
+                  <div className="selected-images">
+                    {returnImages.map((img, index) => (
+                      <div key={index} className="selected-image">
+                        <span>{img.name}</span>
+                        <button type="button" onClick={() => removeReturnImage(index)}>×</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn-secondary" onClick={() => setShowReturnModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary" disabled={actionLoading}>
+                  {actionLoading ? 'Submitting...' : 'Submit Request'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <Footer />
     </>

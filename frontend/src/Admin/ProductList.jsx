@@ -113,16 +113,16 @@ function ProductList() {
                 filtered.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
                 break;
             case 'price-low':
-                filtered.sort((a, b) => (a.pricing?.regular || a.price || 0) - (b.pricing?.regular || b.price || 0));
+                filtered.sort((a, b) => (a.pricing?.regular || 0) - (b.pricing?.regular || 0));
                 break;
             case 'price-high':
-                filtered.sort((a, b) => (b.pricing?.regular || b.price || 0) - (a.pricing?.regular || a.price || 0));
+                filtered.sort((a, b) => (b.pricing?.regular || 0) - (a.pricing?.regular || 0));
                 break;
             case 'name':
                 filtered.sort((a, b) => a.name.localeCompare(b.name));
                 break;
             case 'stock-low':
-                filtered.sort((a, b) => (a.inventory?.stock || a.stock || 0) - (b.inventory?.stock || b.stock || 0));
+                filtered.sort((a, b) => (a.inventory?.stock || 0) - (b.inventory?.stock || 0));
                 break;
             default:
                 break;
@@ -133,20 +133,20 @@ function ProductList() {
 
     const filteredProducts = getFilteredProducts();
 
-    // Get stock status
     const getStockStatus = (product) => {
-        const stock = product.inventory?.stock ?? product.stock ?? 0;
-        const threshold = product.inventory?.lowStockThreshold || 5;
+    const stock = product.inventory?.stock ?? 0;
+    const threshold = product.inventory?.lowStockThreshold ?? 5;
 
-        if (stock === 0) return { label: 'Out of Stock', class: 'out-of-stock' };
-        if (stock <= threshold) return { label: 'Low Stock', class: 'low-stock' };
-        return { label: 'In Stock', class: 'in-stock' };
-    };
+    if (stock === 0) return { label: 'Out of Stock', class: 'out-of-stock' };
+    if (stock <= threshold) return { label: 'Low Stock', class: 'low-stock' };
+    return { label: 'In Stock', class: 'in-stock' };
+};
+
 
     // Get product price
     const getProductPrice = (product) => {
-        return product.pricing?.regular || product.price || 0;
-    };
+    return product.pricing?.sale || product.pricing?.regular || 0;
+};
 
     // Get product image
     const getProductImage = (product) => {
@@ -293,7 +293,7 @@ function ProductList() {
                             const stockStatus = getStockStatus(product);
                             const price = getProductPrice(product);
                             const image = getProductImage(product);
-                            const stock = product.inventory?.stock ?? product.stock ?? 0;
+                            const stock = product.inventory?.stock ?? 0;
 
                             return (
                                 <div key={product._id} className="epl-card">
@@ -375,7 +375,7 @@ function ProductList() {
                                     const stockStatus = getStockStatus(product);
                                     const price = getProductPrice(product);
                                     const image = getProductImage(product);
-                                    const stock = product.inventory?.stock ?? product.stock ?? 0;
+                                    const stock = product.inventory?.stock ?? 0;
 
                                     return (
                                         <tr key={product._id}>
@@ -467,7 +467,7 @@ function ProductList() {
                                         <h3>{productToDelete.name}</h3>
                                         <p className="epl-modal-meta">
                                             ${getProductPrice(productToDelete).toFixed(2)} • 
-                                            Stock: {productToDelete.inventory?.stock ?? productToDelete.stock ?? 0}
+                                            Stock: {productToDelete.inventory?.stock ?? 0}
                                         </p>
                                     </div>
                                 </div>

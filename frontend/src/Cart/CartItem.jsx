@@ -47,15 +47,17 @@ function CartItem({ item }) {
 
   // Increase quantity
   const increaseQuantity = () => {
-    if (item.stock <= quantity) {
-      toast.error(`Only ${item.stock} available`, {
-        position: 'top-center',
-        autoClose: 2000
-      });
-      return;
+    const maxStock = item.inventory?.stock ?? item.stock ?? 0;
+    
+    if (maxStock <= quantity) {
+        toast.error(`Only ${maxStock} available`, {
+            position: 'top-center',
+            autoClose: 2000
+        });
+        return;
     }
     setQuantity(qty => qty + 1);
-  };
+};
 
   // Update quantity
   const handleUpdate = async () => {
@@ -124,17 +126,21 @@ function CartItem({ item }) {
         <div className="ec-item-details">
           <h3 className="ec-item-name">{item.name}</h3>
           <p className="ec-item-price">
-            <strong>Price:</strong> {formatNGN(item.price)}
-          </p>
+            <strong>Price:</strong> {formatNGN(item.pricing?.sale || item.pricing?.regular || item.price || 0)}
+        </p>
+
           <p className="ec-item-stock">
-            {item.stock > 0 ? (
-              <span className="ec-in-stock">
-                {item.stock <= 5 ? `Only ${item.stock} left` : 'In Stock'}
-              </span>
-            ) : (
-              <span className="ec-out-stock">Out of Stock</span>
-            )}
-          </p>
+            {(() => {
+                const stock = item.inventory?.stock ?? item.stock ?? 0;
+                return stock > 0 ? (
+                    <span className="ec-in-stock">
+                        {stock <= 5 ? `Only ${stock} left` : 'In Stock'}
+                    </span>
+                ) : (
+                    <span className="ec-out-stock">Out of Stock</span>
+                );
+            })()}
+        </p>
         </div>
       </div>
 
@@ -148,28 +154,29 @@ function CartItem({ item }) {
           <FiMinus />
         </button>
         <input 
-          type="number" 
-          value={quantity}
-          className='ec-item-qty-input'
-          readOnly
-          min={1}
-          max={item.stock}
+            type="number" 
+            value={quantity}
+            className='ec-item-qty-input'
+            readOnly
+            min={1}
+            max={item.inventory?.stock ?? item.stock ?? 0}
         />
         <button 
-          className="ec-item-qty-btn ec-qty-increase"
-          onClick={increaseQuantity}
-          disabled={loading || isUpdating || quantity >= item.stock}
-          aria-label="Increase quantity"
+            className="ec-item-qty-btn ec-qty-increase"
+            onClick={increaseQuantity}
+            disabled={loading || isUpdating || quantity >= (item.inventory?.stock ?? item.stock ?? 0)}
+            aria-label="Increase quantity"
         >
-          <FiPlus />
+            <FiPlus />
         </button>
       </div>
 
       <div className="ec-item-total">
-        <span className="ec-item-total-price">
-          {formatNGN(item.price * quantity)}
-        </span>
+          <span className="ec-item-total-price">
+              {formatNGN((item.pricing?.sale || item.pricing?.regular || item.price || 0) * quantity)}
+          </span>
       </div>
+
 
       <div className="ec-item-action">
         <button 

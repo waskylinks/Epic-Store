@@ -61,14 +61,22 @@ export const addItemsToCart = createAsyncThunk(
 
       // Step 2: Get product details
       const { data } = await axios.get(`/api/v1/product/${id}`);
-
-      // Step 3: Return cart item with database values
+      const product = data.product;
       return {
-        product: data.product._id,
-        name: data.product.name,
-        price: data.product.pricing?.regular || data.product.price, // Use pricing structure
-        image: data.product.images?.[0]?.url || data.product.image?.[0]?.url,
-        stock: data.product.inventory?.stock || data.product.stock,
+        product: product._id,
+        name: product.name,
+        pricing: {
+          regular: product.pricing?.regular || product.price || 0,
+          sale: product.pricing?.sale || null,
+          currency: product.pricing?.currency || 'USD'
+        },
+        inventory: {
+          stock: product.inventory?.stock ?? product.stock ?? 0,
+          sku: product.inventory?.sku || null
+        },
+        price: product.pricing?.sale || product.pricing?.regular || product.price || 0,
+        stock: product.inventory?.stock ?? product.stock ?? 0,
+        image: product.images?.[0]?.url || product.image?.[0]?.url,
         quantity,
       };
     } catch (error) {
@@ -321,8 +329,10 @@ const cartSlice = createSlice({
       const item = state.cartItems.find((i) => i.product === productId);
       
       if (item) {
-        if (quantity > item.stock) {
-          state.error = `Only ${item.stock} available`;
+        const maxStock = item.inventory?.stock ?? item.stock ?? 0;
+        
+        if (quantity > maxStock) {
+          state.error = `Only ${maxStock} available`;
           return;
         }
         
@@ -453,41 +463,37 @@ const cartSlice = createSlice({
     // ADD ITEM TO CART
     // ============================================
     builder
-      .addCase(addItemsToCart.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-        state.success = false;
-      })
       .addCase(addItemsToCart.fulfilled, (state, action) => {
-        const item = action.payload;
-        const existingItem = state.cartItems.find((i) => i.product === item.product);
+      const item = action.payload;
+      const existingItem = state.cartItems.find((i) => i.product === item.product);
 
-        if (existingItem) {
-          // Update existing item
-          existingItem.quantity = item.quantity;
-          existingItem.price = item.price; // Update with latest DB price
-          existingItem.stock = item.stock; // Update stock
-          state.message = `Updated ${item.name} quantity`;
-        } else {
-          // Add new item
-          state.cartItems.push(item);
-          state.message = `${item.name} added to cart`;
-        }
+      if (existingItem) {
+        
+        existingItem.quantity = item.quantity;
+        existingItem.pricing = item.pricing;
+        existingItem.inventory = item.inventory;
+        
+        // Update legacy fields for backward compatibility
+        existingItem.price = item.price;
+        existingItem.stock = item.stock;
+        existingItem.image = item.image; // Also update image
+        
+        state.message = `Updated ${item.name} quantity`;
+      } else {
+        // Add new item (already has correct structure from thunk)
+        state.cartItems.push(item);
+        state.message = `${item.name} added to cart`;
+      }
 
-        state.loading = false;
-        state.success = true;
-        
-        // Save to localStorage (IDs + quantities only)
-        localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
-        
-        // Mark pricing as stale (needs recalculation)
-        state.pricing.lastUpdated = null;
-      })
-      .addCase(addItemsToCart.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload?.message || "Failed to add to cart";
-        state.success = false;
-      });
+      state.loading = false;
+      state.success = true;
+      
+      // Save to localStorage with full structure
+      localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
+      
+      // Mark pricing as stale (needs recalculation)
+      state.pricing.lastUpdated = null;
+    })
 
     // ============================================
     // CALCULATE CART PRICING

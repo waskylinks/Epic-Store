@@ -46,9 +46,10 @@ function Cart() {
   // Calculate local pricing as fallback - handles both qty and quantity
   const calculateLocalPricing = () => {
     const itemPrice = cartItems.reduce((acc, item) => {
-      const itemQty = item.qty || item.quantity || 1;
-      const itemPrice = item.price || 0;
-      return acc + (itemPrice * itemQty);
+        const itemQty = item.qty || item.quantity || 1;
+        // ✅ FIXED: Use pricing.sale or pricing.regular, fallback to legacy price
+        const itemPrice = item.pricing?.sale || item.pricing?.regular || item.price || 0;
+        return acc + (itemPrice * itemQty);
     }, 0);
     
     const taxPrice = itemPrice * 0.18;
@@ -56,7 +57,7 @@ function Cart() {
     const totalPrice = itemPrice + taxPrice + shippingPrice;
     
     return { itemPrice, taxPrice, shippingPrice, totalPrice };
-  };
+};
 
   // Use server pricing if available and valid, otherwise use local calculation
   const displayPricing = (pricing && typeof pricing.totalPrice === 'number') 
