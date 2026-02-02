@@ -106,7 +106,7 @@ function UpdateProfile() {
         };
 
         // Only include avatar if it was changed
-        if (avatar && avatar !== '') {
+        if (avatar && avatar !== '' && avatar !== avatarPreview) {
             updateData.avatar = avatar;
         }
         
@@ -135,7 +135,9 @@ function UpdateProfile() {
             setFirstName(user.firstName || '');
             setLastName(user.lastName || '');
             setEmail(user.email || '');
-            setAvatarPreview(user?.avatar?.url || './images/profile.webp');
+            const userAvatar = user?.avatar?.url || './images/profile.webp';
+            setAvatarPreview(userAvatar);
+            setAvatar(''); // Reset avatar to empty initially
         }
     }, [user]);
 
@@ -165,7 +167,7 @@ function UpdateProfile() {
 
                             {/* Form Card */}
                             <div className="update-profile-card">
-                                <div className="update-profile-form-wrapper">
+                                <form className="update-profile-form-wrapper" onSubmit={updateSubmit}>
                                     {/* Avatar Upload Section */}
                                     <div className="avatar-upload-section">
                                         <div 
@@ -174,7 +176,7 @@ function UpdateProfile() {
                                             onDragLeave={handleDragLeave}
                                             onDrop={handleDrop}
                                         >
-                                            <div className="avatar-preview-container">
+                                            <label htmlFor="avatar-input" className="avatar-preview-container">
                                                 <img 
                                                     src={avatarPreview} 
                                                     alt="Profile preview" 
@@ -192,7 +194,7 @@ function UpdateProfile() {
                                                     name="avatar"
                                                     id="avatar-input"
                                                 />
-                                            </div>
+                                            </label>
                                         </div>
                                         <div className="avatar-upload-hint">
                                             <p className="hint-title">Profile Picture</p>
@@ -265,15 +267,14 @@ function UpdateProfile() {
                                             Cancel
                                         </button>
                                         <button 
-                                            type="button" 
+                                            type="submit" 
                                             className="save-button"
-                                            onClick={updateSubmit}
                                         >
                                             <Save />
                                             <span>Save Changes</span>
                                         </button>
                                     </div>
-                                </div>
+                                </form>
                             </div>
                         </div>
                     </div>

@@ -94,12 +94,11 @@ function MessagesModal({
                 // Determine if message is from admin
                 const isAdminMessage = msg.sender === 'admin' || msg.senderType === 'admin';
                 
-                // Determine if current user sent this message
-                const isCurrentUser = userType === 'admin' ? isAdminMessage : !isAdminMessage;
-                
                 // Get customer info from order
-                const customerName = order?.user?.firstName && order?.user?.lastName 
-                  ? `${order.user.firstName} ${order.user.lastName}`
+                const customerFirstName = order?.user?.firstName || '';
+                const customerLastName = order?.user?.lastName || '';
+                const customerName = customerFirstName && customerLastName 
+                  ? `${customerFirstName} ${customerLastName}`
                   : order?.user?.name || 'Customer';
                 
                 const customerAvatar = order?.user?.avatar?.url;
@@ -107,14 +106,15 @@ function MessagesModal({
                 return (
                   <div
                     key={idx}
-                    className={`mm-message ${isCurrentUser ? 'mm-message-sent' : 'mm-message-received'}`}
+                    className={`mm-message ${isAdminMessage ? 'mm-message-admin' : 'mm-message-user'}`}
                   >
-                    {!isCurrentUser && (
+                    {/* USER AVATAR ON LEFT */}
+                    {!isAdminMessage && (
                       <div className="mm-message-avatar">
-                        {userType === 'admin' && customerAvatar ? (
+                        {customerAvatar ? (
                           <img src={customerAvatar} alt={customerName} />
                         ) : (
-                          <div className={userType === 'admin' ? 'mm-customer-avatar-icon' : 'mm-support-avatar-icon'}>
+                          <div className="mm-customer-avatar-icon">
                             <FiUser />
                           </div>
                         )}
@@ -123,10 +123,7 @@ function MessagesModal({
                     
                     <div className="mm-message-content">
                       <span className="mm-message-sender">
-                        {isCurrentUser 
-                          ? 'You' 
-                          : (userType === 'admin' ? customerName : 'Support Team')
-                        }
+                        {isAdminMessage ? 'Support Team' : customerName}
                       </span>
                       
                       <div className="mm-message-bubble">
@@ -137,30 +134,25 @@ function MessagesModal({
                         <span className="mm-message-time">
                           {formatTimestamp(msg.createdAt || msg.timestamp)}
                         </span>
-                        {isCurrentUser && (
-                          <span className={`mm-message-status ${msg.isRead ? 'mm-read' : ''}`}>
-                            {msg.isRead ? (
-                              <>
-                                <FiCheck className="mm-check" />
-                                <FiCheck className="mm-check mm-check-double" />
-                              </>
-                            ) : (
+                        <span className={`mm-message-status ${msg.isRead ? 'mm-read' : ''}`}>
+                          {msg.isRead ? (
+                            <>
                               <FiCheck className="mm-check" />
-                            )}
-                          </span>
-                        )}
+                              <FiCheck className="mm-check mm-check-double" />
+                            </>
+                          ) : (
+                            <FiCheck className="mm-check" />
+                          )}
+                        </span>
                       </div>
                     </div>
 
-                    {isCurrentUser && (
+                    {/* ADMIN AVATAR ON RIGHT */}
+                    {isAdminMessage && (
                       <div className="mm-message-avatar">
-                        {userType === 'customer' && user?.avatar?.url ? (
-                          <img src={user.avatar.url} alt={user.firstName} />
-                        ) : (
-                          <div className={userType === 'admin' ? 'mm-support-avatar-icon' : 'mm-customer-avatar-icon'}>
-                            <FiUser />
-                          </div>
-                        )}
+                        <div className="mm-support-avatar-icon">
+                          <FiUser />
+                        </div>
                       </div>
                     )}
                   </div>

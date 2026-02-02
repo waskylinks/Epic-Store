@@ -58,7 +58,7 @@ function MyOrders() {
     }
   }, [error]);
 
-  // Fetch unread message counts for each order
+  // Fetch unread message counts for each order (ONLY ADMIN MESSAGES)
   useEffect(() => {
     const fetchUnreadCounts = async () => {
       const counts = {};
@@ -69,7 +69,10 @@ function MyOrders() {
           });
           if (response.ok) {
             const data = await response.json();
-            const unread = data.messages?.filter(msg => !msg.isRead && msg.sender !== 'customer').length || 0;
+            // ONLY count unread messages from ADMIN (not customer's own messages)
+            const unread = data.messages?.filter(msg => 
+              !msg.isRead && (msg.sender === 'admin' || msg.senderType === 'admin')
+            ).length || 0;
             counts[order._id] = unread;
           }
         } catch (err) {
@@ -146,7 +149,7 @@ function MyOrders() {
           credentials: 'include'
         });
         
-        // Update unread count
+        // Update unread count to 0
         setUnreadCounts(prev => ({ ...prev, [order._id]: 0 }));
       } else {
         throw new Error('Failed to fetch messages');
@@ -173,6 +176,7 @@ function MyOrders() {
       },
       body: JSON.stringify({
         content: content,
+        sender: 'customer',
         attachments: []
       })
     });

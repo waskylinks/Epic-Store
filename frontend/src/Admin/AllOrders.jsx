@@ -146,6 +146,8 @@ function AllOrders() {
 
     const handleCloseMessagesModal = () => {
         setMessagesModal({ open: false, order: null });
+        // Refresh orders to update unread counts
+        dispatch(fetchAllOrders());
     };
 
     const executeAction = () => {
@@ -285,6 +287,13 @@ function AllOrders() {
                                     sortedOrders.map(order => {
                                         const unreadCount = getUnreadCount(order);
                                         
+                                        // Get customer name properly
+                                        const customerFirstName = order.user?.firstName || '';
+                                        const customerLastName = order.user?.lastName || '';
+                                        const customerName = customerFirstName && customerLastName 
+                                            ? `${customerFirstName} ${customerLastName}`
+                                            : order.user?.name || 'N/A';
+                                        
                                         return (
                                             <tr 
                                                 key={order._id} 
@@ -293,7 +302,7 @@ function AllOrders() {
                                                 <td>#{order._id.slice(-8)}</td>
                                                 <td>
                                                     <div>
-                                                        <strong>{order.user?.name || order.user?.firstName + ' ' + order.user?.lastName || 'N/A'}</strong>
+                                                        <strong>{customerName}</strong>
                                                         <br />
                                                         <small>{order.user?.email || ''}</small>
                                                     </div>
@@ -411,7 +420,7 @@ function AllOrders() {
                                         </div>
                                         <div>
                                             <strong>Customer</strong>
-                                            <p>{modal.order.user?.name}</p>
+                                            <p>{modal.order.user?.firstName} {modal.order.user?.lastName}</p>
                                             <p>{modal.order.user?.email}</p>
                                         </div>
                                         <div>
@@ -514,7 +523,7 @@ function AllOrders() {
                                     </p>
                                     <div className="order-summary-box">
                                         <p><strong>ID:</strong> #{modal.order._id.slice(-8)}</p>
-                                        <p><strong>Customer:</strong> {modal.order.user?.name}</p>
+                                        <p><strong>Customer:</strong> {modal.order.user?.firstName} {modal.order.user?.lastName}</p>
                                         <p><strong>Total:</strong> ${modal.order.totalPrice?.toFixed(2)}</p>
                                     </div>
                                 </div>
