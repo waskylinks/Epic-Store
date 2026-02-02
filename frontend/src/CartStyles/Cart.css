@@ -48,6 +48,12 @@
   color: #155724;
 }
 
+.ec-validation-info {
+  background-color: #d1ecf1;
+  border: 1px solid #17a2b8;
+  color: #0c5460;
+}
+
 .ec-validation-action {
   margin-left: auto;
   padding: 0.5rem 1rem;
@@ -84,6 +90,12 @@
   background-color: #f8f9fa;
 }
 
+.ec-header-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
 .ec-items-heading {
   display: flex;
   align-items: center;
@@ -99,7 +111,8 @@
   font-size: 1.75rem;
 }
 
-.ec-validate-btn {
+.ec-validate-btn,
+.ec-sync-btn {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -110,6 +123,7 @@
   cursor: pointer;
   font-weight: 500;
   transition: all 0.3s ease;
+  white-space: nowrap;
 }
 
 .ec-validate-btn:hover {
@@ -117,7 +131,13 @@
   color: #ff3c3c;
 }
 
-.ec-validate-btn:disabled {
+.ec-sync-btn:hover {
+  border-color: #17a2b8;
+  color: #17a2b8;
+}
+
+.ec-validate-btn:disabled,
+.ec-sync-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -583,6 +603,10 @@
   .ec-summary-section {
     position: static;
   }
+
+  .ec-header-actions {
+    flex-wrap: wrap;
+  }
 }
 
 @media (max-width: 768px) {
@@ -620,7 +644,13 @@
     align-items: flex-start;
   }
 
-  .ec-validate-btn {
+  .ec-header-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .ec-validate-btn,
+  .ec-sync-btn {
     width: 100%;
     justify-content: center;
   }

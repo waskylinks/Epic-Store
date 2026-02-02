@@ -6,25 +6,23 @@ import Footer from '../components/footer';
 import { useSelector, useDispatch } from 'react-redux';
 import CheckoutPath from './CheckoutPath';
 import { useNavigate } from 'react-router-dom';
-import { calculateCartPricing } from '../features/cart/cartSlice';
+import { getCartDetails } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { FiAlertCircle, FiCheckCircle, FiLock } from 'react-icons/fi';
 
 function OrderConfirm() {
-  const { shippingInfo, cartItems, pricing = {}, pricingLoading } = useSelector(state => state.cart);
+  const { shippingInfo, cartItems, cartDetails, loading } = useSelector(state => state.cart);
   const { user } = useSelector(state => state.user);
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Calculate local pricing as fallback
-  const calculateLocalPricing = () => {
-    const itemPrice = cartItems.reduce((acc, item) => {
-      const itemQty = item.qty || item.quantity || 1;
-      const itemPrice = item.price || 0;
-      return acc + (itemPrice * itemQty);
+  // Calculate pricing from cart details
+  const calculatePricing = () => {
+    const itemPrice = cartDetails.reduce((acc, item) => {
+      return acc + (item.price * item.quantity);
     }, 0);
     
     const taxPrice = itemPrice * 0.18;
@@ -34,10 +32,7 @@ function OrderConfirm() {
     return { itemPrice, taxPrice, shippingPrice, totalPrice };
   };
 
-  // Use server pricing if available, otherwise calculate locally
-  const displayPricing = (pricing && typeof pricing.totalPrice === 'number') 
-    ? pricing 
-    : calculateLocalPricing();
+  const displayPricing = cartDetails.length > 0 ? calculatePricing() : { itemPrice: 0, taxPrice: 0, shippingPrice: 0, totalPrice: 0 };
 
   // Get user's full name
   const getUserFullName = () => {
@@ -47,25 +42,14 @@ function OrderConfirm() {
     return user?.name || 'N/A';
   };
 
-  // Fetch server-calculated pricing on mount
+  // Fetch fresh cart details on mount
   useEffect(() => {
     if (cartItems.length > 0) {
-      const fetchPricing = async () => {
-        try {
-          await dispatch(calculateCartPricing({ 
-            cartItems,
-            currency: 'NGN' 
-          })).unwrap();
-        } catch (err) {
-          console.error('Pricing calculation error:', err);
-          // Fallback to local pricing will be used
-        }
-      };
-      fetchPricing();
+      dispatch(getCartDetails());
     } else {
       navigate('/cart');
     }
-  }, [cartItems, dispatch, navigate]);
+  }, [cartItems.length, dispatch, navigate]);
 
   // Redirect if no shipping info
   useEffect(() => {
@@ -90,9 +74,9 @@ function OrderConfirm() {
   const proceedToPayment = () => {
     setIsProcessing(true);
     
-    // Store order data for payment page (display only)
+    // Store order data for payment page
     const orderData = {
-      cartItems,
+      cartItems: cartDetails,
       shippingInfo,
       pricing: displayPricing,
       user: {
@@ -105,8 +89,19 @@ function OrderConfirm() {
     navigate('/process/payment');
   };
 
+  if (loading && cartDetails.length === 0) {
+    return (
+      <>
+        <PageTitle title='Order Confirmation' />
+        <Navbar />
+        <Loader />
+        <Footer />
+      </>
+    );
+  }
+
   if (cartItems.length === 0) {
-    return null; // Will redirect via useEffect
+    return null;
   }
 
   return (
@@ -125,7 +120,7 @@ function OrderConfirm() {
         <div className="eoc-info-banner">
           <FiLock />
           <p>
-            Please review your order details carefully. Final prices are calculated securely on our servers to ensure accuracy.
+            Please review your order details carefully. All prices are fetched fresh from our servers.
           </p>
         </div>
 
@@ -170,29 +165,26 @@ function OrderConfirm() {
                   </tr>
                 </thead>
                 <tbody>
-                  {cartItems.map(item => {
-                    const itemQty = item.qty || item.quantity || 1;
-                    return (
-                      <tr key={item.product}>
-                        <td>
-                          <img 
-                            src={item.image} 
-                            alt={item.name} 
-                            className='eoc-product-image'
-                            onError={(e) => {
-                              e.target.src = '/images/placeholder.png';
-                            }}
-                          />
-                        </td>
-                        <td className="eoc-product-name">{item.name}</td>
-                        <td>{formatNGN(item.price)}</td>
-                        <td>{itemQty}</td>
-                        <td className="eoc-item-total">
-                          {formatNGN(item.price * itemQty)}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {cartDetails.map(item => (
+                    <tr key={item.product}>
+                      <td>
+                        <img 
+                          src={item.image} 
+                          alt={item.name} 
+                          className='eoc-product-image'
+                          onError={(e) => {
+                            e.target.src = '/images/placeholder.png';
+                          }}
+                        />
+                      </td>
+                      <td className="eoc-product-name">{item.name}</td>
+                      <td>{formatNGN(item.price)}</td>
+                      <td>{item.quantity}</td>
+                      <td className="eoc-item-total">
+                        {formatNGN(item.price * item.quantity)}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -229,20 +221,6 @@ function OrderConfirm() {
                   </tr>
                 </tbody>
               </table>
-
-              {pricing.lastUpdated && (
-                <p className="eoc-summary-note">
-                  <FiAlertCircle />
-                  Server pricing calculated at {new Date(pricing.lastUpdated).toLocaleString()}
-                </p>
-              )}
-              
-              {!pricing.lastUpdated && (
-                <p className="eoc-summary-note">
-                  <FiAlertCircle />
-                  Using local price calculation
-                </p>
-              )}
             </div>
           </div>
         </div>
