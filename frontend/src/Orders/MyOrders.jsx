@@ -5,7 +5,6 @@ import { toast } from "react-toastify";
 import {
   FiPackage,
   FiDownload,
-  FiMail,
   FiClock,
   FiTruck,
   FiCheckCircle,
@@ -16,15 +15,13 @@ import {
   FiChevronDown,
   FiEye,
   FiMessageCircle,
-  FiMapPin,
   FiX,
-  FiSend,
-  FiUser,
 } from "react-icons/fi";
 
 import PageTitle from "../components/PageTitle";
 import Navbar from "../components/Navbar";
 import Footer from "../components/footer";
+import MessagesModal from "../components/MessagesModal";
 
 import { getAllMyOrders } from "../features/cart/orderSlice";
 import { downloadReceiptPdf } from "../features/cart/receiptSlice";
@@ -35,6 +32,8 @@ function MyOrders() {
   const dispatch = useDispatch();
   const { orders, loading, error } = useSelector((state) => state.order);
   const { downloadLoading } = useSelector((state) => state.receipt);
+  const authState = useSelector((state) => state.auth);
+  const user = authState?.user || null;
 
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -42,9 +41,12 @@ function MyOrders() {
   const [expandedOrders, setExpandedOrders] = useState(new Set());
   const [unreadCounts, setUnreadCounts] = useState({});
   const [trackingModal, setTrackingModal] = useState({ open: false, order: null });
-  const [messagesModal, setMessagesModal] = useState({ open: false, order: null, messages: [], loading: false });
-  const [newMessage, setNewMessage] = useState("");
-  const [sendingMessage, setSendingMessage] = useState(false);
+  const [messagesModal, setMessagesModal] = useState({ 
+    open: false, 
+    order: null, 
+    messages: [], 
+    loading: false 
+  });
 
   useEffect(() => {
     dispatch(getAllMyOrders());
@@ -97,39 +99,6 @@ function MyOrders() {
       });
     } catch (err) {
       toast.error(err || "Failed to download receipt", {
-        position: "top-center",
-      });
-    }
-  };
-
-  const handleEmailReceipt = async (reference) => {
-    if (!reference) {
-      toast.error("Receipt reference not found", {
-        position: "top-center",
-      });
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/v1/receipts/${reference}/email`, {
-        method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-      });
-
-      const data = await response.json();
-
-      if (response.ok) {
-        toast.success(data.message || "Receipt sent to your email", {
-          position: "top-center",
-        });
-      } else {
-        throw new Error(data.message || "Failed to send email");
-      }
-    } catch (err) {
-      toast.error(err.message || "Failed to send receipt email", {
         position: "top-center",
       });
     }
@@ -191,62 +160,33 @@ function MyOrders() {
 
   const closeMessagesModal = () => {
     setMessagesModal({ open: false, order: null, messages: [], loading: false });
-    setNewMessage("");
   };
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() || !messagesModal.order) return;
+  const handleSendMessage = async (content) => {
+    if (!messagesModal.order) return;
 
-    setSendingMessage(true);
-    try {
-      const response = await fetch(`/api/v1/orders/${messagesModal.order._id}/messages`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          content: newMessage.trim(),
-          attachments: []
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setMessagesModal(prev => ({
-          ...prev,
-          messages: [...prev.messages, data.orderMessage]
-        }));
-        setNewMessage("");
-        toast.success('Message sent', { position: 'top-center' });
-      } else {
-        throw new Error('Failed to send message');
-      }
-    } catch (err) {
-      toast.error('Failed to send message', { position: 'top-center' });
-    } finally {
-      setSendingMessage(false);
-    }
-  };
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+    const response = await fetch(`/api/v1/orders/${messagesModal.order._id}/messages`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        content: content,
+        attachments: []
+      })
     });
+
+    if (response.ok) {
+      const data = await response.json();
+      setMessagesModal(prev => ({
+        ...prev,
+        messages: [...prev.messages, data.orderMessage]
+      }));
+      toast.success('Message sent', { position: 'top-center' });
+    } else {
+      throw new Error('Failed to send message');
+    }
   };
 
   const getStatusIcon = (status) => {
@@ -510,14 +450,6 @@ function MyOrders() {
                   </button>
 
                   <button
-                    className="mo-action-btn mo-email-receipt"
-                    onClick={() => handleEmailReceipt(order.paymentInfo?.reference)}
-                  >
-                    <FiMail />
-                    Email
-                  </button>
-
-                  <button
                     onClick={() => openMessagesModal(order)}
                     className="mo-action-btn mo-messages-btn"
                   >
@@ -616,7 +548,7 @@ function MyOrders() {
       {/* Tracking Modal */}
       {trackingModal.open && trackingModal.order && (
         <div className="mo-modal-overlay" onClick={closeTrackingModal}>
-          <div className="mo-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="mo-tracking-modal" onClick={(e) => e.stopPropagation()}>
             <div className="mo-modal-header">
               <h2>Order Tracking</h2>
               <button 
@@ -667,112 +599,22 @@ function MyOrders() {
                   <small>We'll update this once your order ships</small>
                 </div>
               )}
-
-              <Link 
-                to={`/order/${trackingModal.order._id}`}
-                className="mo-view-full-details"
-                onClick={closeTrackingModal}
-              >
-                View Full Order Details
-              </Link>
             </div>
           </div>
         </div>
       )}
 
       {/* Messages Modal */}
-      {messagesModal.open && messagesModal.order && (
-        <div className="mo-modal-overlay" onClick={closeMessagesModal}>
-          <div className="mo-modal mo-messages-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="mo-modal-header">
-              <div>
-                <h2>Order Messages</h2>
-                <p className="mo-modal-subtitle">Order #{messagesModal.order._id.slice(-8).toUpperCase()}</p>
-              </div>
-              <button 
-                className="mo-modal-close"
-                onClick={closeMessagesModal}
-                aria-label="Close modal"
-              >
-                <FiX />
-              </button>
-            </div>
-            
-            <div className="mo-modal-body mo-messages-body">
-              {messagesModal.loading ? (
-                <div className="mo-messages-loading">
-                  <div className="mo-loading-spinner"></div>
-                  <p>Loading messages...</p>
-                </div>
-              ) : messagesModal.messages.length === 0 ? (
-                <div className="mo-no-messages">
-                  <FiMessageCircle className="mo-no-messages-icon" />
-                  <p>No messages yet</p>
-                  <small>Start a conversation with support</small>
-                </div>
-              ) : (
-                <div className="mo-messages-list">
-                  {messagesModal.messages.map((msg, idx) => (
-                    <div
-                      key={idx}
-                      className={`mo-message ${
-                        msg.sender === 'customer' || msg.senderType === 'customer'
-                          ? 'mo-message-sent'
-                          : 'mo-message-received'
-                      }`}
-                    >
-                      {(msg.sender !== 'customer' && msg.senderType !== 'customer') && (
-                        <div className="mo-message-avatar">
-                          <FiUser />
-                        </div>
-                      )}
-                      <div className="mo-message-content">
-                        {(msg.sender !== 'customer' && msg.senderType !== 'customer') && (
-                          <span className="mo-message-sender">Support Team</span>
-                        )}
-                        <div className="mo-message-bubble">
-                          <p>{msg.content || msg.text}</p>
-                        </div>
-                        <div className="mo-message-footer">
-                          <span className="mo-message-time">
-                            {formatTimestamp(msg.createdAt || msg.timestamp)}
-                          </span>
-                          {(msg.sender === 'customer' || msg.senderType === 'customer') && (
-                            <span className="mo-message-status">
-                              {msg.isRead ? '✓✓ Read' : msg.delivered ? '✓✓ Delivered' : '✓ Sent'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Message Input */}
-              <div className="mo-message-input-container">
-                <input
-                  type="text"
-                  className="mo-message-input"
-                  placeholder="Type your message..."
-                  value={newMessage}
-                  onChange={(e) => setNewMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  disabled={sendingMessage}
-                />
-                <button
-                  type="button"
-                  className="mo-send-btn"
-                  onClick={handleSendMessage}
-                  disabled={!newMessage.trim() || sendingMessage}
-                >
-                  <FiSend />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <MessagesModal
+        isOpen={messagesModal.open}
+        onClose={closeMessagesModal}
+        order={messagesModal.order}
+        messages={messagesModal.messages}
+        loading={messagesModal.loading}
+        user={user}
+        userType="customer"
+        onSendMessage={handleSendMessage}
+      />
 
       <Footer />
     </>

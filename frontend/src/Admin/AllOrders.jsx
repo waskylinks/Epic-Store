@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
+import MessagesModal from '../components/MessagesModal';
 import '../AdminStyles/AllOrders.css';
 import { 
     Delete, Edit, Visibility, Message, LocalShipping, 
@@ -35,10 +36,15 @@ function AllOrders() {
         order: null, 
         loading: false 
     });
+    
+    // Messages Modal State
+    const [messagesModal, setMessagesModal] = useState({
+        open: false,
+        order: null
+    });
 
     // Form states for different modals
     const [cancelForm, setCancelForm] = useState({ reason: '', skipRefund: false });
-    const [messageForm, setMessageForm] = useState({ content: '', attachments: [] });
     const [trackingForm, setTrackingForm] = useState({
         carrier: '',
         trackingNumber: '',
@@ -61,7 +67,6 @@ function AllOrders() {
             setModal({ type: '', open: false, order: null, loading: false });
             // Reset forms
             setCancelForm({ reason: '', skipRefund: false });
-            setMessageForm({ content: '', attachments: [] });
             setTrackingForm({ carrier: '', trackingNumber: '', estimatedDelivery: '' });
         }
     }, [error, success, dispatch]);
@@ -98,15 +103,49 @@ function AllOrders() {
         });
     }, [filteredOrders]);
 
+    // Count unread messages per order (only count customer messages)
+    const getUnreadCount = (order) => {
+        if (!order.messages || !Array.isArray(order.messages)) return 0;
+        return order.messages.filter(msg => 
+            !msg.isRead && (msg.sender === 'customer' || msg.senderType === 'customer')
+        ).length;
+    };
+
+    // Total unread messages across all orders (only customer messages)
+    const totalUnreadMessages = useMemo(() => {
+        return orders.reduce((total, order) => total + getUnreadCount(order), 0);
+    }, [orders]);
+
     const handleAction = (type, order) => {
-        setModal({ type, open: true, order, loading: false });
-        
-        // Load additional data for specific modals
         if (type === 'messages') {
+            // Open MessagesModal instead of regular modal
+            setMessagesModal({ open: true, order });
             dispatch(getOrderMessages(order._id));
-        } else if (type === 'audit') {
-            dispatch(getOrderAuditLog(order._id));
+        } else {
+            setModal({ type, open: true, order, loading: false });
+            
+            // Load additional data for specific modals
+            if (type === 'audit') {
+                dispatch(getOrderAuditLog(order._id));
+            }
         }
+    };
+
+    const handleSendMessage = async (content) => {
+        if (!messagesModal.order) return;
+        
+        await dispatch(addOrderMessage({
+            orderId: messagesModal.order._id,
+            content,
+            sender: 'admin'
+        })).unwrap();
+        
+        // Refresh messages
+        dispatch(getOrderMessages(messagesModal.order._id));
+    };
+
+    const handleCloseMessagesModal = () => {
+        setMessagesModal({ open: false, order: null });
     };
 
     const executeAction = () => {
@@ -138,14 +177,6 @@ function AllOrders() {
                 }));
                 break;
                 
-            case 'send-message':
-                dispatch(addOrderMessage({
-                    orderId: modal.order._id,
-                    content: messageForm.content,
-                    attachments: messageForm.attachments
-                }));
-                break;
-                
             default:
                 setModal(prev => ({ ...prev, loading: false }));
         }
@@ -172,7 +203,15 @@ function AllOrders() {
 
             <div className="all-orders-container">
                 <div className="orders-header">
-                    <h1 className="all-orders-title">All Orders ({orders.length})</h1>
+                    <div className="orders-header-top">
+                        <h1 className="all-orders-title">All Orders ({orders.length})</h1>
+                        {totalUnreadMessages > 0 && (
+                            <div className="unread-messages-badge">
+                                <Message fontSize="small" />
+                                <span>{totalUnreadMessages} unread message{totalUnreadMessages > 1 ? 's' : ''}</span>
+                            </div>
+                        )}
+                    </div>
                     
                     {/* Status Filter Pills */}
                     <div className="status-filters">
@@ -243,81 +282,89 @@ function AllOrders() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    sortedOrders.map(order => (
-                                        <tr 
-                                            key={order._id} 
-                                            className={order.orderStatus === 'Processing' ? 'processing-row' : ''}
-                                        >
-                                            <td>#{order._id.slice(-8)}</td>
-                                            <td>
-                                            <div>
-                                                <strong>{order.user?.name || order.user?.firstName + ' ' + order.user?.lastName || 'N/A'}</strong>
-                                                <br />
-                                                <small>{order.user?.email || ''}</small>
-                                            </div>
-                                            </td>
-                                            <td>{order.orderItems?.length || 0}</td>
-                                            <td>${order.totalPrice?.toFixed(2) || '0.00'}</td>
-                                            <td>
-                                                <span className={`status-badge ${order.orderStatus.toLowerCase()}`}>
-                                                    {order.orderStatus}
-                                                </span>
-                                            </td>
-                                            <td>{new Date(order.createdAt).toLocaleString()}</td>
-                                            <td className="actions">
-                                                <button 
-                                                    onClick={() => handleAction('view', order)} 
-                                                    className="action-btn view"
-                                                    title="View Details"
-                                                >
-                                                    <Visibility fontSize="small" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleAction('update', order)} 
-                                                    className="action-btn update"
-                                                    title="Update Status"
-                                                >
-                                                    <Edit fontSize="small" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleAction('messages', order)} 
-                                                    className="action-btn message"
-                                                    title="Messages"
-                                                >
-                                                    <Message fontSize="small" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleAction('tracking', order)} 
-                                                    className="action-btn tracking"
-                                                    title="Add Tracking"
-                                                >
-                                                    <LocalShipping fontSize="small" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleAction('cancel', order)} 
-                                                    className="action-btn cancel"
-                                                    title="Cancel Order"
-                                                    disabled={order.orderStatus === 'Cancelled' || order.orderStatus === 'Delivered'}
-                                                >
-                                                    <Cancel fontSize="small" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleAction('audit', order)} 
-                                                    className="action-btn audit"
-                                                    title="Audit Log"
-                                                >
-                                                    <History fontSize="small" />
-                                                </button>
-                                                <button 
-                                                    onClick={() => handleAction('delete', order)} 
-                                                    className="action-btn delete"
-                                                    title="Delete Order"
-                                                >
-                                                    <Delete fontSize="small" />
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    ))
+                                    sortedOrders.map(order => {
+                                        const unreadCount = getUnreadCount(order);
+                                        
+                                        return (
+                                            <tr 
+                                                key={order._id} 
+                                                className={order.orderStatus === 'Processing' ? 'processing-row' : ''}
+                                            >
+                                                <td>#{order._id.slice(-8)}</td>
+                                                <td>
+                                                    <div>
+                                                        <strong>{order.user?.name || order.user?.firstName + ' ' + order.user?.lastName || 'N/A'}</strong>
+                                                        <br />
+                                                        <small>{order.user?.email || ''}</small>
+                                                    </div>
+                                                </td>
+                                                <td>{order.orderItems?.length || 0}</td>
+                                                <td>${order.totalPrice?.toFixed(2) || '0.00'}</td>
+                                                <td>
+                                                    <span className={`status-badge ${order.orderStatus.toLowerCase()}`}>
+                                                        {order.orderStatus}
+                                                    </span>
+                                                </td>
+                                                <td>{new Date(order.createdAt).toLocaleString()}</td>
+                                                <td className="actions">
+                                                    <button 
+                                                        onClick={() => handleAction('view', order)} 
+                                                        className="action-btn view"
+                                                        title="View Details"
+                                                    >
+                                                        <Visibility fontSize="small" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleAction('update', order)} 
+                                                        className="action-btn update"
+                                                        title="Update Status"
+                                                    >
+                                                        <Edit fontSize="small" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleAction('messages', order)} 
+                                                        className="action-btn message"
+                                                        title="Messages"
+                                                        style={{ position: 'relative' }}
+                                                    >
+                                                        <Message fontSize="small" />
+                                                        {unreadCount > 0 && (
+                                                            <span className="message-badge">{unreadCount}</span>
+                                                        )}
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleAction('tracking', order)} 
+                                                        className="action-btn tracking"
+                                                        title="Add Tracking"
+                                                    >
+                                                        <LocalShipping fontSize="small" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleAction('cancel', order)} 
+                                                        className="action-btn cancel"
+                                                        title="Cancel Order"
+                                                        disabled={order.orderStatus === 'Cancelled' || order.orderStatus === 'Delivered'}
+                                                    >
+                                                        <Cancel fontSize="small" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleAction('audit', order)} 
+                                                        className="action-btn audit"
+                                                        title="Audit Log"
+                                                    >
+                                                        <History fontSize="small" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleAction('delete', order)} 
+                                                        className="action-btn delete"
+                                                        title="Delete Order"
+                                                    >
+                                                        <Delete fontSize="small" />
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        );
+                                    })
                                 )}
                             </tbody>
                         </table>
@@ -326,6 +373,17 @@ function AllOrders() {
             </div>
 
             <Footer />
+
+            {/* Messages Modal */}
+            <MessagesModal
+                isOpen={messagesModal.open}
+                onClose={handleCloseMessagesModal}
+                order={messagesModal.order}
+                messages={orderMessages}
+                loading={messageLoading}
+                userType="admin"
+                onSendMessage={handleSendMessage}
+            />
 
             {/* Unified Modal System */}
             {modal.open && modal.order && (
@@ -337,8 +395,6 @@ function AllOrders() {
                                 {modal.type === 'update' && 'Update Order Status'}
                                 {modal.type === 'delete' && 'Delete Order'}
                                 {modal.type === 'cancel' && 'Cancel Order'}
-                                {modal.type === 'messages' && 'Order Messages'}
-                                {modal.type === 'send-message' && 'Send Message'}
                                 {modal.type === 'tracking' && 'Add Tracking Information'}
                                 {modal.type === 'audit' && 'Order Audit Log'}
                             </h2>
@@ -498,56 +554,6 @@ function AllOrders() {
                                 </div>
                             )}
 
-                            {/* MESSAGES MODAL */}
-                            {modal.type === 'messages' && (
-                                <div className="messages-content">
-                                    <div className="messages-list">
-                                        {orderMessages.length === 0 ? (
-                                            <p className="no-messages">No messages yet</p>
-                                        ) : (
-                                            orderMessages.map((msg, idx) => (
-                                                <div key={idx} className={`message-item ${msg.sender === 'admin' ? 'admin-message' : 'user-message'}`}>
-                                                    <div className="message-header">
-                                                        <strong>{msg.sender === 'admin' ? 'Admin' : modal.order.user?.name}</strong>
-                                                        <small>{new Date(msg.timestamp).toLocaleString()}</small>
-                                                    </div>
-                                                    <p className="message-text">{msg.content}</p>
-                                                    {msg.attachments && msg.attachments.length > 0 && (
-                                                        <div className="message-attachments">
-                                                            {msg.attachments.map((att, i) => (
-                                                                <a key={i} href={att.url} target="_blank" rel="noopener noreferrer">
-                                                                    {att.filename}
-                                                                </a>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-                                    <button 
-                                        className="send-message-btn"
-                                        onClick={() => setModal(prev => ({ ...prev, type: 'send-message' }))}
-                                    >
-                                        Send New Message
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* SEND MESSAGE MODAL */}
-                            {modal.type === 'send-message' && (
-                                <div className="send-message-content">
-                                    <label className="form-label">Message</label>
-                                    <textarea
-                                        className="form-textarea"
-                                        rows="5"
-                                        placeholder="Type your message..."
-                                        value={messageForm.content}
-                                        onChange={(e) => setMessageForm(prev => ({ ...prev, content: e.target.value }))}
-                                    />
-                                </div>
-                            )}
-
                             {/* TRACKING MODAL */}
                             {modal.type === 'tracking' && (
                                 <div className="tracking-content">
@@ -615,21 +621,20 @@ function AllOrders() {
                             <button
                                 onClick={() => setModal({ type: '', open: false, order: null, loading: false })}
                                 className="modal-btn cancel"
-                                disabled={modal.loading || messageLoading}
+                                disabled={modal.loading}
                             >
-                                {modal.type === 'view' || modal.type === 'messages' || modal.type === 'audit' ? 'Close' : 'Cancel'}
+                                {modal.type === 'view' || modal.type === 'audit' ? 'Close' : 'Cancel'}
                             </button>
-                            {!['view', 'messages', 'audit'].includes(modal.type) && (
+                            {!['view', 'audit'].includes(modal.type) && (
                                 <button
                                     onClick={executeAction}
                                     className={`modal-btn confirm ${modal.type === 'delete' ? 'danger' : ''}`}
-                                    disabled={modal.loading || messageLoading}
+                                    disabled={modal.loading}
                                 >
-                                    {modal.loading || messageLoading ? 'Processing...' :
+                                    {modal.loading ? 'Processing...' :
                                         modal.type === 'update' ? 'Update Status' :
                                         modal.type === 'delete' ? 'Delete Order' :
                                         modal.type === 'cancel' ? 'Cancel Order' :
-                                        modal.type === 'send-message' ? 'Send Message' :
                                         modal.type === 'tracking' ? 'Add Tracking' :
                                         'Confirm'}
                                 </button>
