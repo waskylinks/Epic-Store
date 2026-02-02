@@ -95,7 +95,9 @@ const productSchema = new mongoose.Schema(
       }
     ],
 
-    // Inventory Management
+    // ============================================
+    // Inventory Management (SIMPLIFIED - No duplicate stock field)
+    // ============================================
     inventory: {
       stock: { 
         type: Number, 
@@ -126,12 +128,6 @@ const productSchema = new mongoose.Schema(
         enum: ["InStock", "LowStock", "OutOfStock", "Discontinued"],
         default: 'InStock'
       }
-    },
-
-    // Legacy stock field
-    stock: { 
-      type: Number, 
-      default: 1 
     },
 
     // Product Variants
@@ -288,7 +284,9 @@ productSchema.pre('validate', function (next) {
   next();
 });
 
-// Virtuals
+// ============================================
+// VIRTUALS
+// ============================================
 productSchema.virtual('finalPrice').get(function() {
   return this.pricing?.sale ?? this.pricing?.regular;
 });
@@ -301,17 +299,24 @@ productSchema.virtual('discountPercentage').get(function() {
 });
 
 productSchema.virtual('isLowStock').get(function() {
-  const stock = this.inventory?.stock ?? this.stock;
+  const stock = this.inventory?.stock ?? 0;
   const threshold = this.inventory?.lowStockThreshold ?? 5;
   return stock > 0 && stock <= threshold;
 });
 
 productSchema.virtual('isOutOfStock').get(function() {
-  const stock = this.inventory?.stock ?? this.stock;
+  const stock = this.inventory?.stock ?? 0;
   return stock === 0;
 });
 
-// Indexes
+// For backward compatibility - virtual for legacy 'stock' field
+productSchema.virtual('stock').get(function() {
+  return this.inventory?.stock ?? 0;
+});
+
+// ============================================
+// INDEXES
+// ============================================
 productSchema.index({ createdAt: -1 });
 productSchema.index({ 'inventory.stock': 1 });
 productSchema.index({ category: 1 });
@@ -335,7 +340,9 @@ productSchema.index({
 productSchema.index({ category: 1, status: 1, createdAt: -1 });
 productSchema.index({ status: 1, isFeatured: 1, ratings: -1 });
 
-// Pre-save middleware
+// ============================================
+// PRE-SAVE MIDDLEWARE
+// ============================================
 productSchema.pre('save', function(next) {
   // Auto-generate slug
   if (this.isModified('name') && !this.slug) {
@@ -347,14 +354,14 @@ productSchema.pre('save', function(next) {
       .trim();
   }
 
-  // Update inventory status
+  // Update inventory status based on stock
   if (this.inventory) {
     if (this.inventory.stock === 0) {
-      this.inventory.status = 'out_of_stock';
+      this.inventory.status = 'OutOfStock';
     } else if (this.inventory.stock <= this.inventory.lowStockThreshold) {
-      this.inventory.status = 'low_stock';
+      this.inventory.status = 'LowStock';
     } else {
-      this.inventory.status = 'in_stock';
+      this.inventory.status = 'InStock';
     }
   }
 
@@ -377,7 +384,9 @@ productSchema.pre('save', function(next) {
   next();
 });
 
-// Static methods
+// ============================================
+// STATIC METHODS
+// ============================================
 productSchema.statics.getTrendingProducts = async function(limit = 10) {
   return this.find({ status: 'published' })
     .sort({ 'analytics.purchases': -1, 'analytics.views': -1 })
@@ -411,7 +420,9 @@ productSchema.statics.getBestsellers = async function(limit = 10) {
     .limit(limit);
 };
 
-// Instance methods
+// ============================================
+// INSTANCE METHODS
+// ============================================
 productSchema.methods.incrementView = async function() {
   this.analytics.views += 1;
   this.analytics.lastViewed = new Date();
