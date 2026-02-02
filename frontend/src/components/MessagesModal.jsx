@@ -8,28 +8,25 @@ import {
 } from "react-icons/fi";
 import "../componentStyles/MessagesModal.css";
 
-function MessagesModal({ 
-  isOpen, 
-  onClose, 
-  order, 
-  messages, 
-  loading, 
+function MessagesModal({
+  isOpen,
+  onClose,
+  order,
+  messages = [],
+  loading,
   user,
-  userType = "customer", // "customer" or "admin"
-  onSendMessage 
+  userType = "customer", // "customer" | "admin"
+  onSendMessage,
 }) {
   const [newMessage, setNewMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !order) return;
-
     setSendingMessage(true);
     try {
       await onSendMessage(newMessage.trim());
       setNewMessage("");
-    } catch (err) {
-      console.error('Failed to send message:', err);
     } finally {
       setSendingMessage(false);
     }
@@ -43,15 +40,15 @@ function MessagesModal({
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
 
-    if (diffMins < 1) return 'Just now';
+    if (diffMins < 1) return "Just now";
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
+
+    return date.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: date.getFullYear() !== now.getFullYear() ? "numeric" : undefined,
     });
   };
 
@@ -67,19 +64,15 @@ function MessagesModal({
               Order #{order?._id?.slice(-8).toUpperCase()}
             </p>
           </div>
-          <button 
-            className="mm-modal-close"
-            onClick={onClose}
-            aria-label="Close modal"
-          >
+          <button className="mm-modal-close" onClick={onClose}>
             <FiX />
           </button>
         </div>
-        
+
         <div className="mm-modal-body">
           {loading ? (
             <div className="mm-messages-loading">
-              <div className="mm-loading-spinner"></div>
+              <div className="mm-loading-spinner" />
               <p>Loading messages...</p>
             </div>
           ) : messages.length === 0 ? (
@@ -91,28 +84,33 @@ function MessagesModal({
           ) : (
             <div className="mm-messages-list">
               {messages.map((msg, idx) => {
-                // Determine if message is from admin
-                const isAdminMessage = msg.sender === 'admin' || msg.senderType === 'admin';
-                
-                // Get customer info from order
-                const customerFirstName = order?.user?.firstName || '';
-                const customerLastName = order?.user?.lastName || '';
-                const customerName = customerFirstName && customerLastName 
-                  ? `${customerFirstName} ${customerLastName}`
-                  : order?.user?.name || 'Customer';
-                
-                const customerAvatar = order?.user?.avatar?.url;
-                
+                const isAdminMessage =
+                  msg.sender === "admin" || msg.senderType === "admin";
+
+                const isOutgoing =
+                  (userType === "admin" && isAdminMessage) ||
+                  (userType === "customer" && !isAdminMessage);
+
+                const customerName =
+                  order?.user?.firstName && order?.user?.lastName
+                    ? `${order.user.firstName} ${order.user.lastName}`
+                    : order?.user?.name || "Customer";
+
+                const avatarUrl = isAdminMessage
+                  ? null
+                  : order?.user?.avatar?.url;
+
                 return (
                   <div
                     key={idx}
-                    className={`mm-message ${isAdminMessage ? 'mm-message-admin' : 'mm-message-user'}`}
+                    className={`mm-message ${
+                      isOutgoing ? "mm-message-outgoing" : "mm-message-incoming"
+                    }`}
                   >
-                    {/* USER AVATAR ON LEFT */}
-                    {!isAdminMessage && (
+                    {!isOutgoing && (
                       <div className="mm-message-avatar">
-                        {customerAvatar ? (
-                          <img src={customerAvatar} alt={customerName} />
+                        {avatarUrl ? (
+                          <img src={avatarUrl} alt={customerName} />
                         ) : (
                           <div className="mm-customer-avatar-icon">
                             <FiUser />
@@ -120,35 +118,36 @@ function MessagesModal({
                         )}
                       </div>
                     )}
-                    
+
                     <div className="mm-message-content">
-                      <span className="mm-message-sender">
-                        {isAdminMessage ? 'Support Team' : customerName}
-                      </span>
-                      
                       <div className="mm-message-bubble">
                         <p>{msg.content || msg.text}</p>
                       </div>
-                      
+
                       <div className="mm-message-footer">
                         <span className="mm-message-time">
                           {formatTimestamp(msg.createdAt || msg.timestamp)}
                         </span>
-                        <span className={`mm-message-status ${msg.isRead ? 'mm-read' : ''}`}>
-                          {msg.isRead ? (
-                            <>
+                        {isOutgoing && (
+                          <span
+                            className={`mm-message-status ${
+                              msg.isRead ? "mm-read" : ""
+                            }`}
+                          >
+                            {msg.isRead ? (
+                              <>
+                                <FiCheck className="mm-check" />
+                                <FiCheck className="mm-check mm-check-double" />
+                              </>
+                            ) : (
                               <FiCheck className="mm-check" />
-                              <FiCheck className="mm-check mm-check-double" />
-                            </>
-                          ) : (
-                            <FiCheck className="mm-check" />
-                          )}
-                        </span>
+                            )}
+                          </span>
+                        )}
                       </div>
                     </div>
 
-                    {/* ADMIN AVATAR ON RIGHT */}
-                    {isAdminMessage && (
+                    {isOutgoing && (
                       <div className="mm-message-avatar">
                         <div className="mm-support-avatar-icon">
                           <FiUser />
@@ -161,19 +160,16 @@ function MessagesModal({
             </div>
           )}
 
-          {/* Message Input */}
           <div className="mm-message-input-container">
             <input
-              type="text"
               className="mm-message-input"
-              placeholder="Type your message..."
+              placeholder="iMessage…"
               value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
               disabled={sendingMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
             />
             <button
-              type="button"
               className="mm-send-btn"
               onClick={handleSendMessage}
               disabled={!newMessage.trim() || sendingMessage}

@@ -1,28 +1,128 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { toast } from 'react-toastify';
+import { Link } from 'react-router-dom';
 import { 
   removeItemFromCart, 
   updateItemQuantity,
-  removeErrors,
   getCartDetails
 } from '../features/cart/cartSlice';
-import { FiMinus, FiPlus, FiTrash2 } from 'react-icons/fi';
-import CartModal from './CartModal';
-import '../CartStyles/Cart.css';
+import { 
+  addToWishlist, 
+  removeFromWishlist 
+} from '../features/products/wishlistSlice';
+import { FiMinus, FiPlus, FiTrash2, FiHeart } from 'react-icons/fi';
+import { toast } from 'react-toastify';
 
 function CartItem({ item }) {
-  const { loading } = useSelector(state => state.cart);
-  
-  const [quantity, setQuantity] = useState(item.quantity || 1);
-  const [showRemoveModal, setShowRemoveModal] = useState(false);
-  const [isRemoving, setIsRemoving] = useState(false);
   const dispatch = useDispatch();
+  
+  // Use separate selectors to avoid memoization issues
+  const wishlistItems = useSelector(state => state.wishlist.items);
+  const itemLoading = useSelector(state => state.wishlist.itemLoading);
+  
+  const [quantity, setQuantity] = useState(item.quantity);
+  const [hasChanges, setHasChanges] = useState(false);
 
-  // Sync quantity when item changes
+  // Sync quantity when item.quantity changes
   useEffect(() => {
-    setQuantity(item.quantity || 1);
+    setQuantity(item.quantity);
+    setHasChanges(false);
   }, [item.quantity]);
+
+  // Check if item is in wishlist
+  const isInWishlist = wishlistItems.some(
+    wishItem => wishItem.product._id === item.product
+  );
+  
+  const isWishlistLoading = itemLoading[item.product] || false;
+
+  // Handle quantity input change
+  const handleQuantityChange = (e) => {
+    const value = e.target.value;
+    
+    // Allow empty string while typing
+    if (value === '') {
+      setQuantity('');
+      setHasChanges(true);
+      return;
+    }
+
+    const numValue = parseInt(value);
+    
+    // Validate quantity
+    if (numValue >= 1 && numValue <= item.stock) {
+      setQuantity(numValue);
+      setHasChanges(numValue !== item.quantity);
+    }
+  };
+
+  // Handle quantity input blur (when user finishes editing)
+  const handleQuantityBlur = () => {
+    // If empty or invalid, reset to original quantity
+    if (quantity === '' || quantity < 1) {
+      setQuantity(item.quantity);
+      setHasChanges(false);
+      return;
+    }
+  };
+
+  // Handle increment
+  const handleIncrement = () => {
+    if (quantity < item.stock) {
+      const newQty = parseInt(quantity) + 1;
+      setQuantity(newQty);
+      setHasChanges(true);
+    } else {
+      toast.warning(`Only ${item.stock} items available in stock`, {
+        position: 'top-center',
+        autoClose: 2000
+      });
+    }
+  };
+
+  // Handle decrement
+  const handleDecrement = () => {
+    if (quantity > 1) {
+      const newQty = parseInt(quantity) - 1;
+      setQuantity(newQty);
+      setHasChanges(true);
+    }
+  };
+
+  // Handle update cart
+  const handleUpdate = () => {
+    if (hasChanges && quantity >= 1 && quantity <= item.stock) {
+      dispatch(updateItemQuantity({ 
+        productId: item.product, 
+        quantity: parseInt(quantity) 
+      }));
+      setHasChanges(false);
+      
+      // Refresh cart details to update order summary immediately
+      setTimeout(() => {
+        dispatch(getCartDetails());
+      }, 100);
+    }
+  };
+
+  // Handle remove from cart
+  const handleRemove = () => {
+    dispatch(removeItemFromCart(item.product));
+  };
+
+  // Handle wishlist toggle
+  const handleWishlistToggle = async () => {
+    try {
+      if (isInWishlist) {
+        await dispatch(removeFromWishlist(item.product)).unwrap();
+      } else {
+        await dispatch(addToWishlist(item.product)).unwrap();
+      }
+    } catch (error) {
+      // Error already handled by slice
+      console.error('Wishlist error:', error);
+    }
+  };
 
   // Format currency
   const formatUSD = (amount) => {
@@ -33,164 +133,118 @@ function CartItem({ item }) {
     }).format(amount);
   };
 
-  // Decrease quantity
-  const decreaseQuantity = () => {
-    if (quantity <= 1) {
-      toast.error('Quantity cannot be less than 1', {
-        position: 'top-center',
-        autoClose: 2000,
-        toastId: `qty-min-${item.product}`
-      });
-      return;
-    }
-    setQuantity(qty => qty - 1);
-  };
-
-  // Increase quantity
-  const increaseQuantity = () => {
-    const maxStock = item.stock || 0;
-    
-    if (maxStock <= quantity) {
-      toast.error(`Only ${maxStock} available`, {
-        position: 'top-center',
-        autoClose: 2000,
-        toastId: `qty-max-${item.product}`
-      });
-      return;
-    }
-    setQuantity(qty => qty + 1);
-  };
-
-  // Update quantity
-  const handleUpdate = () => {
-    if (quantity !== item.quantity) {
-      dispatch(updateItemQuantity({
-        productId: item.product,
-        quantity
-      }));
-      
-      // Refresh cart details to get updated prices
-      setTimeout(() => {
-        dispatch(getCartDetails());
-      }, 100);
-    }
-  };
-
-  // Open remove modal
-  const handleRemoveClick = () => {
-    setShowRemoveModal(true);
-  };
-
-  // Close remove modal
-  const handleCloseModal = () => {
-    setShowRemoveModal(false);
-  };
-
-  // Confirm removal
-  const handleConfirmRemove = () => {
-    setIsRemoving(true);
-    dispatch(removeItemFromCart(item.product));
-    setShowRemoveModal(false);
-    setIsRemoving(false);
-  };
+  const itemTotal = item.price * quantity;
 
   return (
-    <>
-      <div className="ec-item">
-        <div className="ec-item-info">
+    <div className="ec-item">
+      {/* Product Info */}
+      <div className="ec-item-info">
+        <Link to={`/product/${item.product}`}>
           <img 
             src={item.image} 
-            alt={item.name} 
-            className='ec-item-image'
-            onError={(e) => {
-              e.target.src = '/images/placeholder.png';
-            }}
+            alt={item.name}
+            className="ec-item-image"
           />
-          <div className="ec-item-details">
-            <h3 className="ec-item-name">{item.name}</h3>
-            <p className="ec-item-price">
-              <strong>Price:</strong> {formatUSD(item.price || 0)}
-            </p>
-
-            <p className="ec-item-stock">
-              {(() => {
-                const stock = item.stock || 0;
-                return stock > 0 ? (
-                  <span className="ec-in-stock">
-                    {stock <= 5 ? `Only ${stock} left` : 'In Stock'}
-                  </span>
-                ) : (
-                  <span className="ec-out-stock">Out of Stock</span>
-                );
-              })()}
-            </p>
-          </div>
-        </div>
-
-        <div className="ec-item-qty-controls">
-          <button 
-            className="ec-item-qty-btn ec-qty-decrease"
-            onClick={decreaseQuantity} 
-            disabled={loading || quantity <= 1}
-            aria-label="Decrease quantity"
-          >
-            <FiMinus />
-          </button>
-          <input 
-            type="number" 
-            value={quantity}
-            className='ec-item-qty-input'
-            readOnly
-            min={1}
-            max={item.stock || 0}
-          />
-          <button 
-            className="ec-item-qty-btn ec-qty-increase"
-            onClick={increaseQuantity}
-            disabled={loading || quantity >= (item.stock || 0)}
-            aria-label="Increase quantity"
-          >
-            <FiPlus />
-          </button>
-        </div>
-
-        <div className="ec-item-total">
-          <span className="ec-item-total-price">
-            {formatUSD((item.price || 0) * quantity)}
-          </span>
-        </div>
-
-        <div className="ec-item-action">
-          <button 
-            className="ec-item-update-btn"
-            onClick={handleUpdate}
-            disabled={loading || quantity === item.quantity}
-          >
-            Update
-          </button>
-          
-          <div className="ec-item-secondary-actions">
-            <button 
-              className="ec-item-remove-btn"
-              disabled={loading}
-              onClick={handleRemoveClick}
-              title="Remove from cart"
-            >
-              <FiTrash2 /> Remove
-            </button>
-          </div>
+        </Link>
+        <div className="ec-item-details">
+          <Link to={`/product/${item.product}`}>
+            <h4 className="ec-item-name">{item.name}</h4>
+          </Link>
+          <p className="ec-item-price">
+            <strong>{formatUSD(item.price)}</strong> each
+          </p>
+          <p className={`ec-item-stock ${item.stock > 0 ? 'ec-in-stock' : 'ec-out-stock'}`}>
+            {item.stock > 0 ? `${item.stock} in stock` : 'Out of stock'}
+          </p>
         </div>
       </div>
 
-      {/* Remove Confirmation Modal */}
-      <CartModal 
-        isOpen={showRemoveModal}
-        onClose={handleCloseModal}
-        onConfirm={handleConfirmRemove}
-        itemName={item.name}
-        isLoading={isRemoving}
-      />
-    </>
+      {/* Quantity Controls */}
+      <div className="ec-item-qty-controls">
+        <button 
+          className="ec-item-qty-btn"
+          onClick={handleDecrement}
+          disabled={quantity <= 1}
+          aria-label="Decrease quantity"
+        >
+          <FiMinus />
+        </button>
+        
+        <input
+          type="number"
+          className="ec-item-qty-input"
+          value={quantity}
+          onChange={handleQuantityChange}
+          onBlur={handleQuantityBlur}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.target.blur();
+              if (hasChanges) {
+                handleUpdate();
+              }
+            }
+          }}
+          min="1"
+          max={item.stock}
+          aria-label="Quantity"
+        />
+        
+        <button 
+          className="ec-item-qty-btn"
+          onClick={handleIncrement}
+          disabled={quantity >= item.stock}
+          aria-label="Increase quantity"
+        >
+          <FiPlus />
+        </button>
+      </div>
+
+      {/* Item Total */}
+      <div className="ec-item-total">
+        <span className="ec-item-total-price">
+          {formatUSD(itemTotal)}
+        </span>
+      </div>
+
+      {/* Actions */}
+      <div className="ec-item-action">
+        <button 
+          className="ec-item-update-btn"
+          onClick={handleUpdate}
+          disabled={!hasChanges}
+          aria-label="Update quantity"
+        >
+          Update Cart
+        </button>
+
+        <div className="ec-item-secondary-actions">
+          <button 
+            className="ec-item-save-btn"
+            onClick={handleWishlistToggle}
+            disabled={isWishlistLoading}
+            aria-label={isInWishlist ? "Remove from wishlist" : "Add to wishlist"}
+          >
+            <FiHeart 
+              className={isWishlistLoading ? 'ec-heart-filling' : ''}
+              style={{ 
+                fill: isInWishlist ? '#ff3c3c' : 'none',
+                color: isInWishlist ? '#ff3c3c' : 'currentColor'
+              }}
+            />
+            {isWishlistLoading ? 'Saving...' : isInWishlist ? 'Saved' : 'Save'}
+          </button>
+          
+          <button 
+            className="ec-item-remove-btn"
+            onClick={handleRemove}
+            aria-label="Remove from cart"
+          >
+            <FiTrash2 />
+            Remove
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -17,7 +17,8 @@ import Loader from '../components/Loader';
 import { 
   FiShoppingCart, 
   FiAlertCircle, 
-  FiCheckCircle
+  FiCheckCircle,
+  FiArrowLeft
 } from 'react-icons/fi';
 
 function Cart() {
@@ -208,6 +209,10 @@ function Cart() {
                 )}
 
                 <div className="ec-summary-divider"></div>
+                <div className="ec-trust-item">
+                  <FiCheckCircle />
+                  <span>Prices are calculated securely on our servers</span>
+                </div>
 
                 <div className="ec-summary-total">
                   <span className="ec-total-label">Total:</span>
@@ -225,6 +230,7 @@ function Cart() {
                 </button>
 
                 <Link to="/products" className="ec-continue-shopping">
+                  <FiArrowLeft />
                   Continue Shopping
                 </Link>
               </div>

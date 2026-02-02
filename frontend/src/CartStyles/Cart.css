@@ -224,6 +224,7 @@
   color: #1a1a1a;
   margin: 0;
   line-height: 1.4;
+  text-decoration: none;
 }
 
 .ec-item-price {
@@ -356,16 +357,39 @@
   justify-content: center;
   gap: 0.375rem;
   transition: all 0.2s ease;
+  font-weight: 500;
 }
 
-.ec-item-save-btn:hover {
+.ec-item-save-btn:hover:not(:disabled) {
   border-color: #ff3c3c;
+  color: #ff3c3c;
+  background-color: #fff5f5;
+}
+
+.ec-item-save-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ec-item-remove-btn:hover:not(:disabled) {
+  border-color: #dc3545;
+  color: #dc3545;
+  background-color: #fff5f5;
+}
+
+/* Heart filling animation */
+.ec-heart-filling {
+  animation: heartFill 0.6s ease-in-out infinite;
   color: #ff3c3c;
 }
 
-.ec-item-remove-btn:hover {
-  border-color: #dc3545;
-  color: #dc3545;
+@keyframes heartFill {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.2);
+  }
 }
 
 /* ===========================
@@ -439,6 +463,25 @@
   flex-shrink: 0;
 }
 
+.ec-summary-disclaimer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background-color: #f8f9fa;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #666;
+  margin: 0.5rem 0;
+  border: 1px solid #e9ecef;
+}
+
+.ec-summary-disclaimer svg {
+  color: #28a745;
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
 .ec-summary-divider {
   height: 1px;
   background-color: #e0e0e0;
@@ -462,23 +505,6 @@
   font-size: 1.5rem;
   font-weight: 700;
   color: #ff3c3c;
-}
-
-.ec-summary-disclaimer {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 1rem;
-  background-color: #f8f9fa;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  color: #666;
-  margin: 1rem 0;
-}
-
-.ec-summary-disclaimer svg {
-  color: #17a2b8;
-  flex-shrink: 0;
 }
 
 .ec-checkout-btn {
@@ -508,17 +534,28 @@
 }
 
 .ec-continue-shopping {
-  display: block;
-  text-align: center;
-  padding: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.875rem;
   color: #666;
   text-decoration: none;
   font-weight: 500;
-  transition: color 0.3s ease;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+  background-color: #fff;
 }
 
 .ec-continue-shopping:hover {
   color: #ff3c3c;
+  border-color: #ff3c3c;
+  background-color: #fff5f5;
+}
+
+.ec-continue-shopping svg {
+  font-size: 1.125rem;
 }
 
 /* Trust Badges */
@@ -653,5 +690,9 @@
   .ec-sync-btn {
     width: 100%;
     justify-content: center;
+  }
+
+  .ec-continue-shopping {
+    padding: 0.75rem;
   }
 }

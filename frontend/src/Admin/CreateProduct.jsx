@@ -130,9 +130,8 @@ function CreateProduct() {
   };
 
   const setPrimaryImage = (index) => {
-    if (index === 0) return; // Already primary, do nothing
+    if (index === 0) return;
 
-    // Swap the selected image with the first image
     const newImages = [...images];
     const newPreviews = [...imagePreview];
 
@@ -142,7 +141,6 @@ function CreateProduct() {
     setImages(newImages);
     setImagePreview(newPreviews);
   };
-
 
   // Add/Remove subcategories
   const addSubcategory = () => {
@@ -232,71 +230,206 @@ function CreateProduct() {
   const handleSubmit = (e, publishStatus = 'draft') => {
     e.preventDefault();
 
+    // ============================================
+    // COMPREHENSIVE VALIDATION - ENTERPRISE STANDARD
+    // All fields must be filled (except variants)
+    // ============================================
+
+    // Basic Info
     if (!formData.name.trim()) {
       toast.error('Please enter product name');
+      setActiveTab('basic');
       return;
     }
     if (!formData.category) {
       toast.error('Please select a category');
+      setActiveTab('basic');
       return;
     }
-    if (images.length === 0) {
-      toast.error('Please upload at least one image');
-      return;
-    }
-    if (!formData.pricing.regular) {
-      toast.error('Please enter regular price');
+    if (!formData.brand.trim()) {
+      toast.error('Please enter brand name');
+      setActiveTab('basic');
       return;
     }
     if (!formData.description.trim()) {
       toast.error('Please enter product description');
+      setActiveTab('basic');
+      return;
+    }
+    if (!formData.shortDescription.trim()) {
+      toast.error('Please enter short description');
+      setActiveTab('basic');
+      return;
+    }
+    
+    // Subcategories - Required (at least one)
+    if (subcategories.length === 0) {
+      toast.error('Please add at least one subcategory');
+      setActiveTab('basic');
+      return;
+    }
+    
+    // Tags - Required (at least one)
+    if (tags.length === 0) {
+      toast.error('Please add at least one tag');
+      setActiveTab('basic');
+      return;
+    }
+    
+    // Specifications - Required (at least one)
+    if (specifications.length === 0) {
+      toast.error('Please add at least one specification');
+      setActiveTab('basic');
+      return;
+    }
+    const validSpecs = specifications.filter(s => s.key && s.value);
+    if (validSpecs.length === 0) {
+      toast.error('Please complete all specification fields');
+      setActiveTab('basic');
       return;
     }
 
+    // Pricing
+    if (!formData.pricing.regular) {
+      toast.error('Please enter regular price');
+      setActiveTab('pricing');
+      return;
+    }
+    if (formData.pricing.sale && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
+      toast.error('Sale price must be less than regular price');
+      setActiveTab('pricing');
+      return;
+    }
+    if (!formData.pricing.cost) {
+      toast.error('Please enter cost price');
+      setActiveTab('pricing');
+      return;
+    }
+    
+    // Shipping - Weight required
+    if (!formData.weight.value) {
+      toast.error('Please enter product weight');
+      setActiveTab('pricing');
+      return;
+    }
+    
+    // Shipping - Dimensions required
+    if (!formData.dimensions.length || !formData.dimensions.width || !formData.dimensions.height) {
+      toast.error('Please enter all product dimensions (length, width, height)');
+      setActiveTab('pricing');
+      return;
+    }
+
+    // Inventory
+    if (!formData.inventory.stock && formData.inventory.stock !== 0) {
+      toast.error('Please enter stock quantity');
+      setActiveTab('inventory');
+      return;
+    }
+    if (!formData.inventory.sku || !formData.inventory.sku.trim()) {
+      toast.error('Please enter SKU');
+      setActiveTab('inventory');
+      return;
+    }
+    if (!formData.inventory.barcode || !formData.inventory.barcode.trim()) {
+      toast.error('Please enter barcode');
+      setActiveTab('inventory');
+      return;
+    }
+
+    // Media - Images required
+    if (images.length === 0) {
+      toast.error('Please upload at least one product image');
+      setActiveTab('media');
+      return;
+    }
+
+    // SEO - All fields required
+    if (!formData.seo.metaTitle.trim()) {
+      toast.error('Please enter SEO meta title');
+      setActiveTab('seo');
+      return;
+    }
+    if (!formData.seo.metaDescription.trim()) {
+      toast.error('Please enter SEO meta description');
+      setActiveTab('seo');
+      return;
+    }
+    if (seoKeywords.length === 0) {
+      toast.error('Please add at least one SEO keyword');
+      setActiveTab('seo');
+      return;
+    }
+
+    // Variants - Optional but if added, must be complete
+    if (variants.length > 0) {
+      for (let i = 0; i < variants.length; i++) {
+        const variant = variants[i];
+        if (!variant.name || !variant.name.trim()) {
+          toast.error(`Please enter name for variant ${i + 1}`);
+          setActiveTab('variants');
+          return;
+        }
+        if (variant.options.length === 0) {
+          toast.error(`Please add options for variant "${variant.name}"`);
+          setActiveTab('variants');
+          return;
+        }
+        for (let j = 0; j < variant.options.length; j++) {
+          const option = variant.options[j];
+          if (!option.value || !option.value.trim()) {
+            toast.error(`Please complete all option values for variant "${variant.name}"`);
+            setActiveTab('variants');
+            return;
+          }
+        }
+      }
+    }
+
+    // ============================================
+    // ALL VALIDATIONS PASSED - BUILD FORM DATA
+    // ============================================
+
     const myForm = new FormData();
     
-    // Basic info
+    // Basic info - ALL REQUIRED
     myForm.append('name', formData.name.trim());
     myForm.append('description', formData.description.trim());
     myForm.append('shortDescription', formData.shortDescription.trim());
     myForm.append('category', formData.category);
     myForm.append('brand', formData.brand.trim());
     
-    // Pricing (legacy fields for backward compatibility)
-    myForm.append('price', formData.pricing.regular);
+    // Pricing - ALL REQUIRED (clean undefined values)
+    const pricingData = {
+      regular: Number(formData.pricing.regular),
+      cost: Number(formData.pricing.cost),
+      currency: formData.pricing.currency
+    };
     if (formData.pricing.sale) {
-      myForm.append('salePrice', formData.pricing.sale);
+      pricingData.sale = Number(formData.pricing.sale);
     }
-    // FIX: Add cost price to FormData
-    if (formData.pricing.cost) {
-      myForm.append('cost', formData.pricing.cost);
-    }
-    myForm.append('currency', formData.pricing.currency);
+    myForm.append('pricing', JSON.stringify(pricingData));
     
-    // Inventory (legacy field)
-    myForm.append('stock', formData.inventory.stock || 0);
-    if (formData.inventory.sku) {
-      myForm.append('sku', formData.inventory.sku);
-    }
-    if (formData.inventory.barcode) {
-      myForm.append('barcode', formData.inventory.barcode);
-    }
-    myForm.append('trackInventory', formData.inventory.trackInventory);
-    myForm.append('lowStockThreshold', formData.inventory.lowStockThreshold);
+    // Inventory - ALL REQUIRED
+    const inventoryData = {
+      stock: Number(formData.inventory.stock),
+      sku: formData.inventory.sku.trim(),
+      barcode: formData.inventory.barcode.trim(),
+      trackInventory: formData.inventory.trackInventory,
+      lowStockThreshold: Number(formData.inventory.lowStockThreshold)
+    };
+    myForm.append('inventory', JSON.stringify(inventoryData));
     
-    // Arrays
-    subcategories.forEach(sub => myForm.append('subcategories', sub));
-    tags.forEach(tag => myForm.append('tags', tag));
+    // Subcategories - REQUIRED (validated to have at least 1)
+    myForm.append('subcategories', JSON.stringify(subcategories));
     
-    // Specifications
-    if (specifications.length > 0) {
-      const validSpecs = specifications.filter(s => s.key && s.value);
-      if (validSpecs.length > 0) {
-        myForm.append('specifications', JSON.stringify(validSpecs));
-      }
-    }
+    // Tags - REQUIRED (validated to have at least 1)
+    myForm.append('tags', JSON.stringify(tags));
     
-    // Variants
+    // Specifications - REQUIRED (validated to have at least 1)
+    myForm.append('specifications', JSON.stringify(validSpecs));
+    
+    // Variants - OPTIONAL (but validated if provided)
     if (variants.length > 0) {
       const validVariants = variants.filter(v => v.name && v.options.length > 0);
       if (validVariants.length > 0) {
@@ -304,22 +437,29 @@ function CreateProduct() {
       }
     }
     
-    // Dimensions & Weight
-    if (formData.dimensions.length || formData.dimensions.width || formData.dimensions.height) {
-      myForm.append('dimensions', JSON.stringify(formData.dimensions));
-    }
-    if (formData.weight.value) {
-      myForm.append('weight', JSON.stringify(formData.weight));
-    }
+    // Dimensions - ALL REQUIRED
+    const dimensionsData = {
+      length: Number(formData.dimensions.length),
+      width: Number(formData.dimensions.width),
+      height: Number(formData.dimensions.height),
+      unit: formData.dimensions.unit
+    };
+    myForm.append('dimensions', JSON.stringify(dimensionsData));
     
-    // SEO
+    // Weight - REQUIRED
+    const weightData = {
+      value: Number(formData.weight.value),
+      unit: formData.weight.unit
+    };
+    myForm.append('weight', JSON.stringify(weightData));
+    
+    // SEO - ALL REQUIRED
     const seoData = {
-      ...formData.seo,
+      metaTitle: formData.seo.metaTitle.trim(),
+      metaDescription: formData.seo.metaDescription.trim(),
       keywords: seoKeywords
     };
-    if (seoData.metaTitle || seoData.metaDescription || seoKeywords.length > 0) {
-      myForm.append('seo', JSON.stringify(seoData));
-    }
+    myForm.append('seo', JSON.stringify(seoData));
     
     // Flags
     myForm.append('isFeatured', formData.isFeatured);
@@ -327,10 +467,26 @@ function CreateProduct() {
     myForm.append('isBestseller', formData.isBestseller);
     myForm.append('status', publishStatus);
     
-    // FIX: Images - The first image in the array is automatically the primary image
-    // This ensures index [0] is always the primary image
+    // Images - REQUIRED (validated to have at least 1)
     images.forEach((img) => myForm.append('image', img));
 
+    console.log('📤 Submitting complete product with all required fields:', {
+      name: formData.name,
+      category: formData.category,
+      brand: formData.brand,
+      subcategories: subcategories.length,
+      tags: tags.length,
+      specifications: validSpecs.length,
+      variants: variants.length,
+      seoKeywords: seoKeywords.length,
+      images: images.length,
+      pricing: 'complete',
+      inventory: 'complete',
+      dimensions: 'complete',
+      weight: 'complete',
+      seo: 'complete'
+    });
+    
     dispatch(createProduct(myForm));
   };
 
@@ -482,7 +638,7 @@ function CreateProduct() {
                     </div>
 
                     <div className="ecp-form-group">
-                      <label className="ecp-label">Brand</label>
+                      <label className="ecp-label required">Brand</label>
                       <input
                         type="text"
                         className="ecp-input"
@@ -490,12 +646,13 @@ function CreateProduct() {
                         name="brand"
                         value={formData.brand}
                         onChange={handleInputChange}
+                        required
                       />
                     </div>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Short Description</label>
+                    <label className="ecp-label required">Short Description</label>
                     <textarea
                       className="ecp-textarea"
                       placeholder="Brief product description"
@@ -504,6 +661,7 @@ function CreateProduct() {
                       onChange={handleInputChange}
                       rows={3}
                       maxLength={500}
+                      required
                     />
                     <span className="ecp-char-count">{formData.shortDescription.length}/500</span>
                   </div>
@@ -525,7 +683,7 @@ function CreateProduct() {
 
                   {/* Subcategories */}
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Subcategories</label>
+                    <label className="ecp-label required">Subcategories (at least 1)</label>
                     <div className="ecp-input-with-btn">
                       <input
                         type="text"
@@ -553,7 +711,7 @@ function CreateProduct() {
 
                   {/* Tags */}
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Tags</label>
+                    <label className="ecp-label required">Tags (at least 1)</label>
                     <div className="ecp-input-with-btn">
                       <input
                         type="text"
@@ -582,7 +740,7 @@ function CreateProduct() {
                   {/* Specifications */}
                   <div className="ecp-form-group">
                     <div className="ecp-label-with-btn">
-                      <label className="ecp-label">Specifications</label>
+                      <label className="ecp-label required">Specifications (at least 1)</label>
                       <button type="button" className="ecp-btn-small" onClick={addSpecification}>
                         <FiPlus /> Add Spec
                       </button>
@@ -671,7 +829,7 @@ function CreateProduct() {
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label">Cost Price</label>
+                      <label className="ecp-label required">Cost Price</label>
                       <div className="ecp-input-with-icon">
                         <FiDollarSign className="ecp-input-icon" />
                         <input
@@ -683,6 +841,7 @@ function CreateProduct() {
                           onChange={handleInputChange}
                           min="0"
                           step="0.01"
+                          required
                         />
                       </div>
                       <small className="ecp-help-text">Your cost for this product</small>
@@ -708,7 +867,7 @@ function CreateProduct() {
                   
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label">Weight</label>
+                      <label className="ecp-label required">Weight</label>
                       <div className="ecp-input-group">
                         <input
                           type="number"
@@ -719,6 +878,7 @@ function CreateProduct() {
                           onChange={handleInputChange}
                           min="0"
                           step="0.01"
+                          required
                         />
                         <select
                           className="ecp-select-addon"
@@ -735,7 +895,7 @@ function CreateProduct() {
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Dimensions</label>
+                    <label className="ecp-label required">Dimensions (L × W × H)</label>
                     <div className="ecp-dimensions-grid">
                       <input
                         type="number"
@@ -746,6 +906,7 @@ function CreateProduct() {
                         onChange={handleInputChange}
                         min="0"
                         step="0.01"
+                        required
                       />
                       <input
                         type="number"
@@ -756,6 +917,7 @@ function CreateProduct() {
                         onChange={handleInputChange}
                         min="0"
                         step="0.01"
+                        required
                       />
                       <input
                         type="number"
@@ -766,6 +928,7 @@ function CreateProduct() {
                         onChange={handleInputChange}
                         min="0"
                         step="0.01"
+                        required
                       />
                       <select
                         className="ecp-select"
@@ -791,7 +954,7 @@ function CreateProduct() {
                   
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label">Stock Quantity</label>
+                      <label className="ecp-label required">Stock Quantity</label>
                       <input
                         type="number"
                         className="ecp-input"
@@ -800,6 +963,7 @@ function CreateProduct() {
                         value={formData.inventory.stock}
                         onChange={handleInputChange}
                         min="0"
+                        required
                       />
                     </div>
 
@@ -819,7 +983,7 @@ function CreateProduct() {
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label">SKU</label>
+                      <label className="ecp-label required">SKU</label>
                       <input
                         type="text"
                         className="ecp-input"
@@ -827,11 +991,12 @@ function CreateProduct() {
                         name="inventory.sku"
                         value={formData.inventory.sku}
                         onChange={handleInputChange}
+                        required
                       />
                     </div>
 
                     <div className="ecp-form-group">
-                      <label className="ecp-label">Barcode</label>
+                      <label className="ecp-label required">Barcode</label>
                       <input
                         type="text"
                         className="ecp-input"
@@ -839,6 +1004,7 @@ function CreateProduct() {
                         name="inventory.barcode"
                         value={formData.inventory.barcode}
                         onChange={handleInputChange}
+                        required
                       />
                     </div>
                   </div>
@@ -923,7 +1089,7 @@ function CreateProduct() {
               <div className="ecp-tab-content">
                 <div className="ecp-section">
                   <div className="ecp-label-with-btn">
-                    <h3 className="ecp-section-title">Product Variants</h3>
+                    <h3 className="ecp-section-title">Product Variants (Optional)</h3>
                     <button type="button" className="ecp-btn-small" onClick={addVariant}>
                       <FiPlus /> Add Variant
                     </button>
@@ -1004,7 +1170,7 @@ function CreateProduct() {
                   <h3 className="ecp-section-title">Search Engine Optimization</h3>
                   
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Meta Title</label>
+                    <label className="ecp-label required">Meta Title</label>
                     <input
                       type="text"
                       className="ecp-input"
@@ -1013,12 +1179,13 @@ function CreateProduct() {
                       value={formData.seo.metaTitle}
                       onChange={handleInputChange}
                       maxLength={60}
+                      required
                     />
                     <span className="ecp-char-count">{formData.seo.metaTitle.length}/60</span>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Meta Description</label>
+                    <label className="ecp-label required">Meta Description</label>
                     <textarea
                       className="ecp-textarea"
                       placeholder="Product meta description"
@@ -1027,12 +1194,13 @@ function CreateProduct() {
                       onChange={handleInputChange}
                       rows={3}
                       maxLength={160}
+                      required
                     />
                     <span className="ecp-char-count">{formData.seo.metaDescription.length}/160</span>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Keywords</label>
+                    <label className="ecp-label required">Keywords (at least 1)</label>
                     <div className="ecp-input-with-btn">
                       <input
                         type="text"
