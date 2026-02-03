@@ -2,11 +2,11 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { toast } from 'react-toastify';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { removeErrors, removeSuccess, updateProfile } from '../features/products/userSlice';
+import { removeErrors, removeSuccess, updateProfile, loadUser } from '../features/products/userSlice';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
-import { User, Mail, Camera, ArrowLeft, Save } from 'lucide-react';
+import { Camera, ArrowLeft, Save } from 'lucide-react';
 import '../UserStyles/UpdateProfile.css';
 
 function UpdateProfile() {
@@ -25,13 +25,11 @@ function UpdateProfile() {
         const file = e.target.files[0];
         if (!file) return;
 
-        // Validate file type
         if (!file.type.startsWith('image/')) {
             toast.error('Please select an image file');
             return;
         }
 
-        // Validate file size (5MB max)
         if (file.size > 5 * 1024 * 1024) {
             toast.error('Image size should be less than 5MB');
             return;
@@ -73,10 +71,9 @@ function UpdateProfile() {
         }
     };
 
-    const updateSubmit = (e) => {
+    const updateSubmit = async (e) => {
         e.preventDefault();
 
-        // Validation
         if (!firstName.trim()) {
             toast.error('First name is required');
             return;
@@ -98,20 +95,23 @@ function UpdateProfile() {
             return;
         }
 
-        // Create update object
         const updateData = {
             firstName: firstName.trim(),
             lastName: lastName.trim(),
             email: email.trim()
         };
 
-        // Only include avatar if it was changed
-        if (avatar && avatar !== '' && avatar !== avatarPreview) {
+        if (avatar && avatar !== '') {
             updateData.avatar = avatar;
         }
         
-        console.log('📤 Updating profile with:', updateData);
-        dispatch(updateProfile(updateData));
+        try {
+            await dispatch(updateProfile(updateData)).unwrap();
+            // Reload user to get fresh avatar from server
+            await dispatch(loadUser());
+        } catch (err) {
+            // Error already handled
+        }
     };
 
     useEffect(() => {
@@ -131,13 +131,12 @@ function UpdateProfile() {
 
     useLayoutEffect(() => {
         if (user) {
-            console.log('👤 Current user data:', user);
             setFirstName(user.firstName || '');
             setLastName(user.lastName || '');
             setEmail(user.email || '');
             const userAvatar = user?.avatar?.url || './images/profile.webp';
             setAvatarPreview(userAvatar);
-            setAvatar(''); // Reset avatar to empty initially
+            setAvatar('');
         }
     }, [user]);
 
@@ -151,7 +150,6 @@ function UpdateProfile() {
 
                     <div className="update-profile-page">
                         <div className="update-profile-container">
-                            {/* Header */}
                             <div className="update-profile-header">
                                 <button 
                                     className="back-button"
@@ -165,10 +163,8 @@ function UpdateProfile() {
                                 <p>Keep your information up to date</p>
                             </div>
 
-                            {/* Form Card */}
                             <div className="update-profile-card">
                                 <form className="update-profile-form-wrapper" onSubmit={updateSubmit}>
-                                    {/* Avatar Upload Section */}
                                     <div className="avatar-upload-section">
                                         <div 
                                             className={`avatar-upload-wrapper ${isDragging ? 'dragging' : ''}`}
@@ -203,61 +199,50 @@ function UpdateProfile() {
                                         </div>
                                     </div>
 
-                                    {/* Form Fields */}
                                     <div className="form-fields">
-                                        {/* First Name Field */}
                                         <div className="form-group">
                                             <label htmlFor="firstName">First Name</label>
-                                            <div className="input-wrapper">
-                                                <User className="input-icon" />
-                                                <input 
-                                                    type="text" 
-                                                    id="firstName"
-                                                    value={firstName} 
-                                                    onChange={(e) => setFirstName(e.target.value)}
-                                                    name="firstName"
-                                                    placeholder="Enter your first name"
-                                                    required
-                                                />
-                                            </div>
+                                            <input 
+                                                type="text" 
+                                                id="firstName"
+                                                value={firstName} 
+                                                onChange={(e) => setFirstName(e.target.value)}
+                                                name="firstName"
+                                                placeholder="Enter your first name"
+                                                className="form-input"
+                                                required
+                                            />
                                         </div>
 
-                                        {/* Last Name Field */}
                                         <div className="form-group">
                                             <label htmlFor="lastName">Last Name</label>
-                                            <div className="input-wrapper">
-                                                <User className="input-icon" />
-                                                <input 
-                                                    type="text" 
-                                                    id="lastName"
-                                                    value={lastName} 
-                                                    onChange={(e) => setLastName(e.target.value)}
-                                                    name="lastName"
-                                                    placeholder="Enter your last name"
-                                                    required
-                                                />
-                                            </div>
+                                            <input 
+                                                type="text" 
+                                                id="lastName"
+                                                value={lastName} 
+                                                onChange={(e) => setLastName(e.target.value)}
+                                                name="lastName"
+                                                placeholder="Enter your last name"
+                                                className="form-input"
+                                                required
+                                            />
                                         </div>
 
-                                        {/* Email Field */}
                                         <div className="form-group">
                                             <label htmlFor="email">Email Address</label>
-                                            <div className="input-wrapper">
-                                                <Mail className="input-icon" />
-                                                <input 
-                                                    type="email" 
-                                                    id="email"
-                                                    value={email} 
-                                                    onChange={(e) => setEmail(e.target.value)}
-                                                    name="email"
-                                                    placeholder="Enter your email"
-                                                    required
-                                                />
-                                            </div>
+                                            <input 
+                                                type="email" 
+                                                id="email"
+                                                value={email} 
+                                                onChange={(e) => setEmail(e.target.value)}
+                                                name="email"
+                                                placeholder="Enter your email"
+                                                className="form-input"
+                                                required
+                                            />
                                         </div>
                                     </div>
 
-                                    {/* Action Buttons */}
                                     <div className="form-actions">
                                         <button 
                                             type="button" 
@@ -269,9 +254,10 @@ function UpdateProfile() {
                                         <button 
                                             type="submit" 
                                             className="save-button"
+                                            disabled={loading}
                                         >
                                             <Save />
-                                            <span>Save Changes</span>
+                                            <span>{loading ? 'Saving...' : 'Save Changes'}</span>
                                         </button>
                                     </div>
                                 </form>

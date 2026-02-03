@@ -187,7 +187,7 @@
 }
 
 /* ===========================
-   FORM FIELDS
+   FORM FIELDS - NO ICONS
    =========================== */
 .form-fields {
   display: flex;
@@ -207,25 +207,9 @@
   color: #1a1a1a;
 }
 
-.input-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-icon {
-  position: absolute;
-  left: 1rem;
-  width: 20px;
-  height: 20px;
-  color: #999;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.input-wrapper input {
+.form-input {
   width: 100%;
-  padding: 0.875rem 1rem 0.875rem 3rem;
+  padding: 0.875rem 1rem;
   border: 2px solid #e8e8e8;
   border-radius: 10px;
   font-size: 0.95rem;
@@ -234,14 +218,14 @@
   background: #fafafa;
 }
 
-.input-wrapper input:focus {
+.form-input:focus {
   outline: none;
   border-color: #ff3c3c;
   background: white;
   box-shadow: 0 0 0 4px rgba(255, 60, 60, 0.1);
 }
 
-.input-wrapper input::placeholder {
+.form-input::placeholder {
   color: #999;
 }
 
@@ -291,13 +275,18 @@
   box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
 }
 
-.save-button:hover {
+.save-button:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(255, 60, 60, 0.4);
 }
 
 .save-button:active {
   transform: translateY(0);
+}
+
+.save-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .save-button svg {
@@ -399,15 +388,9 @@
     font-size: 0.8rem;
   }
 
-  .input-wrapper input {
-    padding: 0.75rem 1rem 0.75rem 2.75rem;
+  .form-input {
+    padding: 0.75rem 1rem;
     font-size: 0.9rem;
-  }
-
-  .input-icon {
-    width: 18px;
-    height: 18px;
-    left: 0.875rem;
   }
 
   .cancel-button,
@@ -430,26 +413,13 @@
   }
 }
 
-/* Focus visible for keyboard navigation */
 .back-button:focus-visible,
 .cancel-button:focus-visible,
 .save-button:focus-visible,
-.input-wrapper input:focus-visible,
+.form-input:focus-visible,
 .avatar-preview-container:focus-within {
   outline: 3px solid #ff3c3c;
   outline-offset: 3px;
-}
-
-/* Loading state for buttons */
-.save-button:disabled,
-.cancel-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.save-button:disabled:hover {
-  transform: none;
-  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
 }
 
 /* ===========================

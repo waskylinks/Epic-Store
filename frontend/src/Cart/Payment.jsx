@@ -53,6 +53,7 @@ function StripeCheckout({ clientSecret, onSuccess }) {
     e.preventDefault();
     
     if (!stripe || !elements) {
+      toast.error("Stripe is not ready yet. Please wait.");
       return;
     }
 
@@ -109,6 +110,7 @@ function Payment() {
   // Refs to prevent double-triggering
   const paystackTriggered = useRef(false);
   const flutterwaveTriggered = useRef(false);
+  const stripeFormRef = useRef(null);
 
   // Calculate order summary with fallback
   const calculateOrderSummary = () => {
@@ -169,6 +171,24 @@ function Payment() {
       dispatch(removePaymentMessage());
     }
   }, [error, message, dispatch]);
+
+  /* ===============================
+     SCROLL TO STRIPE FORM WHEN READY
+  ================================ */
+  useEffect(() => {
+    if (selectedGateway === "stripe" && paymentData?.client_secret && stripeFormRef.current) {
+      setTimeout(() => {
+        stripeFormRef.current?.scrollIntoView({ 
+          behavior: 'smooth', 
+          block: 'center' 
+        });
+        toast.info("Please fill in your card details below", {
+          position: "top-center",
+          autoClose: 3000
+        });
+      }, 500);
+    }
+  }, [selectedGateway, paymentData?.client_secret]);
 
   /* ===============================
      PAYSTACK HANDLER
@@ -371,7 +391,14 @@ function Payment() {
       })
     )
       .unwrap()
+      .then((data) => {
+        console.log("Payment initialized:", data);
+        if (selectedGateway === "stripe" && !data.client_secret) {
+          toast.error("Failed to initialize Stripe payment. Missing client secret.");
+        }
+      })
       .catch((err) => {
+        console.error("Payment initialization error:", err);
         toast.error(err.message || "Failed to initialize payment");
       });
   };
@@ -404,7 +431,7 @@ function Payment() {
   /* ===============================
      FORMAT CURRENCY
   ================================ */
-  const formatCurrency = (amount, currency = "NGN") => {
+  const formatCurrency = (amount, currency = "USD") => {
     const localeMap = {
       NGN: "en-NG",
       USD: "en-US",
@@ -532,9 +559,24 @@ function Payment() {
               </div>
             </div>
 
+            {/* Initialize Payment Button (for Stripe) */}
+            {selectedGateway === "stripe" && !paymentData?.client_secret && (
+              <div className="ep-section-card">
+                <button
+                  className="ep-pay-btn"
+                  onClick={handleInitializePayment}
+                  disabled={loading || initLoading || !orderItem}
+                >
+                  {initLoading
+                    ? "Initializing Stripe..."
+                    : `Initialize Payment - ${formatCurrency(orderSummary.total, selectedCurrency)}`}
+                </button>
+              </div>
+            )}
+
             {/* Stripe Payment Form */}
             {selectedGateway === "stripe" && paymentData?.client_secret && (
-              <div className="ep-section-card">
+              <div className="ep-section-card" ref={stripeFormRef}>
                 <h3 className="ep-section-subtitle">
                   <FiLock />
                   Enter Card Details

@@ -62,11 +62,11 @@ function OrderConfirm() {
     }
   }, [shippingInfo, navigate]);
 
-  const formatNGN = (amount) => {
-    if (!amount && amount !== 0) return '₦0.00';
-    return new Intl.NumberFormat('en-NG', {
+  const formatUSD = (amount) => {
+    if (!amount && amount !== 0) return '$0.00';
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'NGN',
+      currency: 'USD',
       minimumFractionDigits: 2
     }).format(amount);
   };
@@ -178,10 +178,10 @@ function OrderConfirm() {
                         />
                       </td>
                       <td className="eoc-product-name">{item.name}</td>
-                      <td>{formatNGN(item.price)}</td>
+                      <td>{formatUSD(item.price)}</td>
                       <td>{item.quantity}</td>
                       <td className="eoc-item-total">
-                        {formatNGN(item.price * item.quantity)}
+                        {formatUSD(item.price * item.quantity)}
                       </td>
                     </tr>
                   ))}
@@ -206,17 +206,17 @@ function OrderConfirm() {
                 </thead>
                 <tbody>
                   <tr>
-                    <td>{formatNGN(displayPricing.itemPrice || 0)}</td>
+                    <td>{formatUSD(displayPricing.itemPrice || 0)}</td>
                     <td>
                       {displayPricing.shippingPrice === 0 ? (
                         <span className="eoc-free-shipping">FREE</span>
                       ) : (
-                        formatNGN(displayPricing.shippingPrice || 0)
+                        formatUSD(displayPricing.shippingPrice || 0)
                       )}
                     </td>
-                    <td>{formatNGN(displayPricing.taxPrice || 0)}</td>
+                    <td>{formatUSD(displayPricing.taxPrice || 0)}</td>
                     <td className="eoc-total-amount">
-                      {formatNGN(displayPricing.totalPrice || 0)}
+                      {formatUSD(displayPricing.totalPrice || 0)}
                     </td>
                   </tr>
                 </tbody>
