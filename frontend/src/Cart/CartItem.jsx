@@ -8,7 +8,10 @@ import {
 } from '../features/cart/cartSlice';
 import { 
   addToWishlist, 
-  removeFromWishlist 
+  removeFromWishlist,
+  getWishlist,
+  optimisticAdd,
+  optimisticRemove
 } from '../features/products/wishlistSlice';
 import { FiMinus, FiPlus, FiTrash2, FiHeart } from 'react-icons/fi';
 import { toast } from 'react-toastify';
@@ -29,9 +32,12 @@ function CartItem({ item }) {
     setHasChanges(false);
   }, [item.quantity]);
 
-  // Check if item is in wishlist
+  // Check if item is in wishlist - check against product._id
   const isInWishlist = wishlistItems.some(
-    wishItem => wishItem.product._id === item.product
+    wishItem => {
+      const wishlistProductId = wishItem.product?._id || wishItem.product;
+      return wishlistProductId === item.product;
+    }
   );
   
   const isWishlistLoading = itemLoading[item.product] || false;
@@ -110,17 +116,47 @@ function CartItem({ item }) {
     dispatch(removeItemFromCart(item.product));
   };
 
-  // Handle wishlist toggle
+  // Handle wishlist toggle - OPTIMISTIC UPDATE for instant feedback
   const handleWishlistToggle = async () => {
-    try {
-      if (isInWishlist) {
+    if (isInWishlist) {
+      // OPTIMISTIC: Remove immediately from UI
+      dispatch(optimisticRemove(item.product));
+      
+      // Then sync with server in background
+      try {
         await dispatch(removeFromWishlist(item.product)).unwrap();
-      } else {
-        await dispatch(addToWishlist(item.product)).unwrap();
+      } catch (error) {
+        // If server fails, add it back (rollback)
+        dispatch(optimisticAdd({ 
+          _id: item.product, 
+          name: item.name, 
+          image: item.image 
+        }));
+        toast.error('Failed to remove from wishlist', {
+          position: 'top-center',
+          autoClose: 2000
+        });
       }
-    } catch (error) {
-      // Error already handled by slice
-      console.error('Wishlist error:', error);
+    } else {
+      // OPTIMISTIC: Add immediately to UI
+      dispatch(optimisticAdd({ 
+        _id: item.product, 
+        name: item.name, 
+        images: [{ url: item.image }],
+        price: item.price
+      }));
+      
+      // Then sync with server in background
+      try {
+        await dispatch(addToWishlist(item.product)).unwrap();
+      } catch (error) {
+        // If server fails, remove it (rollback)
+        dispatch(optimisticRemove(item.product));
+        toast.error('Failed to add to wishlist', {
+          position: 'top-center',
+          autoClose: 2000
+        });
+      }
     }
   };
 
@@ -147,7 +183,7 @@ function CartItem({ item }) {
           />
         </Link>
         <div className="ec-item-details">
-          <Link to={`/product/${item.product}`}>
+          <Link to={`/product/${item.product}`} style={{ textDecoration: 'none' }}>
             <h4 className="ec-item-name">{item.name}</h4>
           </Link>
           <p className="ec-item-price">
@@ -231,7 +267,7 @@ function CartItem({ item }) {
                 color: isInWishlist ? '#ff3c3c' : 'currentColor'
               }}
             />
-            {isWishlistLoading ? 'Saving...' : isInWishlist ? 'Saved' : 'Save'}
+            {isInWishlist ? 'Saved' : 'Save'}
           </button>
           
           <button 

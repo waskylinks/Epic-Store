@@ -6,6 +6,13 @@ import Footer from '../components/footer';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams, useNavigate } from 'react-router-dom';
 import { createReviews, getProductDetails, removeErrors, removeSuccess } from '../features/products/productSlice';
+import { 
+    addToWishlist, 
+    removeFromWishlist, 
+    getWishlist,
+    optimisticAdd,
+    optimisticRemove
+} from '../features/products/wishlistSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
@@ -26,10 +33,29 @@ function ProductDetails() {
 
     const { loading, error, product, reviewSuccess, reviewLoading } = useSelector((state) => state.product);
     const { loading: cartLoading, error: cartError, success, message } = useSelector((state) => state.cart);
+    const { items: wishlistItems, itemLoading } = useSelector(state => state.wishlist);
+    const { isAuthenticated } = useSelector(state => state.user);
 
     const dispatch = useDispatch();
     const navigate = useNavigate();
     const { id } = useParams();
+
+    // Fetch wishlist on mount
+    useEffect(() => {
+        if (isAuthenticated) {
+            dispatch(getWishlist());
+        }
+    }, [dispatch, isAuthenticated]);
+
+    // Check if current product is in wishlist
+    const isInWishlist = wishlistItems.some(
+        wishItem => {
+            const wishlistProductId = wishItem.product?._id || wishItem.product;
+            return wishlistProductId === id;
+        }
+    );
+
+    const isWishlistLoading = itemLoading[id] || false;
 
     const formatPrice = (amount) => {
         return new Intl.NumberFormat('en-NG', {
@@ -50,6 +76,68 @@ function ProductDetails() {
             comment,
             productID: id
         }));
+    };
+
+    // Handle wishlist toggle - OPTIMISTIC UPDATE for instant feedback
+    const handleWishlistToggle = async () => {
+        if (!isAuthenticated) {
+            toast.info('Please login to add to wishlist', {
+                position: 'top-center',
+                autoClose: 2000
+            });
+            navigate('/login');
+            return;
+        }
+
+        if (isInWishlist) {
+            // OPTIMISTIC: Remove immediately from UI
+            dispatch(optimisticRemove(id));
+            
+            // Then sync with server in background
+            try {
+                await dispatch(removeFromWishlist(id)).unwrap();
+            } catch (error) {
+                // If server fails, add it back (rollback)
+                dispatch(optimisticAdd({ 
+                    _id: id,
+                    name: product.name,
+                    images: product.images || product.image || [],
+                    price: product.price,
+                    pricing: product.pricing,
+                    category: product.category
+                }));
+                toast.error('Failed to remove from wishlist', {
+                    position: 'top-center',
+                    autoClose: 2000
+                });
+            }
+        } else {
+            // OPTIMISTIC: Add immediately to UI
+            dispatch(optimisticAdd({ 
+                _id: id,
+                name: product.name,
+                images: product.images || product.image || [],
+                price: product.price,
+                pricing: product.pricing,
+                category: product.category,
+                ratings: product.ratings,
+                numOfReviews: product.numOfReviews,
+                inventory: product.inventory,
+                stock: product.stock
+            }));
+            
+            // Then sync with server in background
+            try {
+                await dispatch(addToWishlist(id)).unwrap();
+            } catch (error) {
+                // If server fails, remove it (rollback)
+                dispatch(optimisticRemove(id));
+                toast.error('Failed to add to wishlist', {
+                    position: 'top-center',
+                    autoClose: 2000
+                });
+            }
+        }
     };
 
     useEffect(() => {
@@ -306,8 +394,18 @@ function ProductDetails() {
                                     >
                                         <FiShoppingCart /> {cartLoading ? 'Adding...' : 'Add to Cart'}
                                     </button>
-                                    <button className="epd-btn epd-btn-secondary">
-                                        <FiHeart /> Wishlist
+                                    <button 
+                                        className="epd-btn epd-btn-secondary"
+                                        onClick={handleWishlistToggle}
+                                        disabled={isWishlistLoading}
+                                    >
+                                        <FiHeart 
+                                            style={{ 
+                                                fill: isInWishlist ? '#ff3c3c' : 'none',
+                                                color: isInWishlist ? '#ff3c3c' : 'currentColor'
+                                            }}
+                                        /> 
+                                        {isInWishlist ? 'Saved' : 'Wishlist'}
                                     </button>
                                     <button className="epd-btn epd-btn-icon">
                                         <FiShare2 />

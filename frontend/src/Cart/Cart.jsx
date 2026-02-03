@@ -12,6 +12,7 @@ import {
   removeErrors, 
   removeMessage
 } from '../features/cart/cartSlice';
+import { getWishlist } from '../features/products/wishlistSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { 
@@ -38,12 +39,16 @@ function Cart() {
 
   const [isValidating, setIsValidating] = useState(false);
 
-  // Fetch fresh product data on mount
+  // Fetch fresh product data and wishlist on mount
   useEffect(() => {
     if (cartItems.length > 0) {
       dispatch(getCartDetails());
     }
-  }, [dispatch, cartItems.length]);
+    // Fetch wishlist to sync state
+    if (isAuthenticated) {
+      dispatch(getWishlist());
+    }
+  }, [dispatch, cartItems.length, isAuthenticated]);
 
   // Handle error messages
   useEffect(() => {
@@ -209,11 +214,7 @@ function Cart() {
                 )}
 
                 <div className="ec-summary-divider"></div>
-                <div className="ec-trust-item">
-                  <FiCheckCircle />
-                  <span>Prices are calculated securely on our servers</span>
-                </div>
-
+                
                 <div className="ec-summary-total">
                   <span className="ec-total-label">Total:</span>
                   <span className="ec-total-value">
@@ -237,6 +238,10 @@ function Cart() {
 
               {/* Trust Badges */}
               <div className="ec-trust-badges">
+                <div className="ec-trust-item">
+                  <FiCheckCircle />
+                  <span>Prices are calculated securely on our servers</span>
+                </div>
                 <div className="ec-trust-item">
                   <FiCheckCircle />
                   <span>Secure Checkout</span>
