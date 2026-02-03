@@ -4,9 +4,10 @@ import { PaymentFactory } from "../Services/payment/paymentFactory.js";
 import { createReceiptIfNotExists } from "../Services/receipt.service.js"; 
 import { validateAndCalculateOrder } from "../Services/pricing.service.js";
 import { deleteCachePattern } from '../utils/redis.js';
-import { createPaymentSession, getPaymentSession, deletePaymentSession } from "../Services/paymentSession.service.js";
+import { createPaymentSession, getPaymentSession, deletePaymentSession, createSessionAlias } from "../Services/paymentSession.service.js";
 import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
+import Product from '../models/product-model.js';
 import crypto from 'crypto';
 
 // Helper: Invalidate payment-related caches
@@ -19,15 +20,6 @@ const invalidatePaymentCaches = async () => {
     } catch (error) {
         console.error('Cache invalidation error:', error);
     }
-};
-
-/**
- * Generate unique payment reference
- */
-const generatePaymentReference = () => {
-    const timestamp = Date.now();
-    const randomStr = crypto.randomBytes(6).toString('hex').toUpperCase();
-    return `ORD-${timestamp}-${randomStr}`;
 };
 
 /**
@@ -57,8 +49,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(err);
     }
 
-    // 3. ✅ NEW: Create payment session in Redis (NOT in database)
-    // This stores all the validated data temporarily for 30 minutes
+    // 3. ✅ Create payment session in Redis with OUR generated reference
     let reference;
     try {
         reference = await createPaymentSession({
@@ -116,7 +107,18 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         ));
     }
 
-    // 5. Return payment initialization data to frontend
+    // 5. ✅ CRITICAL FIX: For Stripe, create alias session with payment_intent_id
+    if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
+        try {
+            await createSessionAlias(gatewayResponse.payment_intent_id, reference);
+            console.log(`✅ Stripe alias created: ${gatewayResponse.payment_intent_id} → ${reference}`);
+        } catch (err) {
+            console.error("Failed to create Stripe alias:", err);
+            // Continue anyway - this is not critical enough to fail the request
+        }
+    }
+
+    // 6. Return payment initialization data to frontend
     const responseData = {
         reference,
         amount: validatedOrder.totalPrice,
@@ -156,7 +158,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
 /**
  * Verify Payment - Creates order ONLY after successful payment verification
- * ✅ FIXED: Only creates orders for successful payments
+ * ✅ FIXED: Handles Stripe payment_intent_id lookup via alias
  * @route POST /api/v1/payment/verify
  * @access Private
  */
@@ -170,7 +172,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     console.log(`🔍 Verifying ${gateway} payment with reference: ${reference}`);
 
-    // 1. ✅ NEW: Get payment session from Redis
+    // 1. ✅ Get payment session from Redis (handles alias lookup automatically)
     const session = await getPaymentSession(reference);
     
     if (!session) {
@@ -179,6 +181,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             404
         ));
     }
+
+    // Get the actual order reference (in case we got an alias)
+    const orderReference = session.reference;
 
     // 2. Verify user owns this payment session
     if (session.userId !== userId.toString()) {
@@ -194,15 +199,22 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     }
 
     // 4. Check if order already exists (idempotency check)
+    // Use the actual order reference, not the payment_intent_id
     const existingOrder = await Order.findOne({
-        "paymentInfo.reference": reference
+        $or: [
+            { "paymentInfo.reference": orderReference },
+            { "paymentInfo.stripePaymentIntentId": reference }
+        ]
     });
 
     if (existingOrder) {
-        console.log(`ℹ️ Order already exists for reference: ${reference}`);
+        console.log(`ℹ️ Order already exists for reference: ${orderReference}`);
         
-        // Clean up session
+        // Clean up both session keys
         await deletePaymentSession(reference);
+        if (reference !== orderReference) {
+            await deletePaymentSession(orderReference);
+        }
         
         return res.status(200).json({
             success: true,
@@ -283,7 +295,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 8. ✅ NOW create the order (only after successful payment verification)
+    // 8. ✅ Create the order with the ORIGINAL order reference
     let order;
     try {
         order = await Order.create({
@@ -296,7 +308,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             totalPrice: session.totalPrice,
             amountPaid: gatewayAmount,
             paymentInfo: {
-                reference,
+                reference: orderReference, // Use original order reference
                 providerTxId: gatewayResponse.id || gatewayResponse.tx_id,
                 stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
                 status: "success",
@@ -305,7 +317,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 amount: gatewayAmount,
                 paidAt: new Date()
             },
-            orderStatus: "Processing" // Order is confirmed and processing
+            orderStatus: "Processing"
         });
 
         // Store payment metadata
@@ -357,7 +369,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         await order.save();
         await order.populate('orderItems.product', 'name images price');
 
-        console.log(`✅ Order created successfully: ${order._id} for reference: ${reference}`);
+        console.log(`✅ Order created successfully: ${order._id} for reference: ${orderReference}`);
 
         // 9. Update product stock
         for (const item of session.orderItems) {
@@ -380,7 +392,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     } catch (err) {
         console.error("❌ Order creation failed:", err);
         return next(new HandleError(
-            "Payment verified but order creation failed. Please contact support with reference: " + reference,
+            "Payment verified but order creation failed. Please contact support with reference: " + orderReference,
             500
         ));
     }
@@ -390,7 +402,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         const receipt = await createReceiptIfNotExists({
             orderId: order._id,
             userId,
-            reference,
+            reference: orderReference,
             orderItems: order.orderItems,
             itemPrice: order.itemPrice,
             taxPrice: order.taxPrice,
@@ -406,9 +418,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.error("❌ Receipt creation failed:", receiptErr);
     }
 
-    // 11. ✅ Clean up Redis session after successful order creation
+    // 11. ✅ Clean up BOTH Redis sessions (original + alias)
     await deletePaymentSession(reference);
-    console.log(`✅ Payment session cleaned up: ${reference}`);
+    if (reference !== orderReference) {
+        await deletePaymentSession(orderReference);
+    }
+    console.log(`✅ Payment sessions cleaned up: ${reference} & ${orderReference}`);
 
     // 12. Invalidate caches
     await invalidatePaymentCaches();

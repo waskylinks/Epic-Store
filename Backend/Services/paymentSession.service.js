@@ -5,9 +5,12 @@ import crypto from 'crypto';
  * Payment Session Service
  * Stores temporary payment data in Redis instead of creating pending orders
  * Sessions expire after 30 minutes
+ * 
+ * ✅ NEW: Supports alias keys for Stripe (payment_intent_id → order reference)
  */
 
 const SESSION_PREFIX = 'payment_session:';
+const ALIAS_PREFIX = 'payment_alias:';
 const SESSION_TTL = 1800; // 30 minutes in seconds
 
 /**
@@ -50,20 +53,55 @@ export const createPaymentSession = async (sessionData) => {
 };
 
 /**
- * Get payment session from Redis
- * @param {string} reference - Payment reference
+ * ✅ NEW: Create an alias that points to an existing session
+ * Used for Stripe to map payment_intent_id → order reference
+ * @param {string} aliasKey - The alias key (e.g., payment_intent_id)
+ * @param {string} targetReference - The actual session reference
+ */
+export const createSessionAlias = async (aliasKey, targetReference) => {
+  try {
+    await redis.set(
+      `${ALIAS_PREFIX}${aliasKey}`,
+      targetReference,
+      { EX: SESSION_TTL }
+    );
+    
+    console.log(`✅ Payment alias created: ${aliasKey} → ${targetReference}`);
+  } catch (error) {
+    console.error('❌ Failed to create payment alias:', error);
+    throw new Error('Failed to create payment alias');
+  }
+};
+
+/**
+ * ✅ UPDATED: Get payment session from Redis
+ * Automatically resolves aliases (e.g., Stripe payment_intent_id)
+ * @param {string} reference - Payment reference or alias
  * @returns {Object|null} Session data or null if not found/expired
  */
 export const getPaymentSession = async (reference) => {
   try {
-    const sessionData = await redis.get(`${SESSION_PREFIX}${reference}`);
+    // First, try to get the session directly
+    let sessionData = await redis.get(`${SESSION_PREFIX}${reference}`);
     
-    if (!sessionData) {
-      console.warn(`⚠️ Payment session not found or expired: ${reference}`);
-      return null;
+    if (sessionData) {
+      return JSON.parse(sessionData);
     }
 
-    return JSON.parse(sessionData);
+    // If not found, check if it's an alias
+    const actualReference = await redis.get(`${ALIAS_PREFIX}${reference}`);
+    
+    if (actualReference) {
+      console.log(`🔗 Alias resolved: ${reference} → ${actualReference}`);
+      sessionData = await redis.get(`${SESSION_PREFIX}${actualReference}`);
+      
+      if (sessionData) {
+        return JSON.parse(sessionData);
+      }
+    }
+
+    console.warn(`⚠️ Payment session not found or expired: ${reference}`);
+    return null;
   } catch (error) {
     console.error('❌ Failed to get payment session:', error);
     return null;
@@ -71,12 +109,18 @@ export const getPaymentSession = async (reference) => {
 };
 
 /**
- * Delete payment session from Redis
- * @param {string} reference - Payment reference
+ * ✅ UPDATED: Delete payment session from Redis
+ * Also deletes any aliases pointing to this session
+ * @param {string} reference - Payment reference or alias
  */
 export const deletePaymentSession = async (reference) => {
   try {
+    // Delete the session
     await redis.del(`${SESSION_PREFIX}${reference}`);
+    
+    // Delete the alias (if it exists)
+    await redis.del(`${ALIAS_PREFIX}${reference}`);
+    
     console.log(`✅ Payment session deleted: ${reference}`);
   } catch (error) {
     console.error('❌ Failed to delete payment session:', error);
