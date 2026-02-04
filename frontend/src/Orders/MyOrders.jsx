@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import {
   FiPackage,
@@ -12,10 +12,14 @@ import {
   FiAlertCircle,
   FiFilter,
   FiSearch,
-  FiChevronDown,
   FiEye,
   FiMessageCircle,
   FiX,
+  FiRefreshCw,
+  FiChevronRight,
+  FiCalendar,
+  FiDollarSign,
+  FiBox,
 } from "react-icons/fi";
 
 import PageTitle from "../components/PageTitle";
@@ -30,6 +34,7 @@ import "../OrderStyles/MyOrders.css";
 
 function MyOrders() {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
   const { orders, loading, error } = useSelector((state) => state.order);
   const { downloadLoading } = useSelector((state) => state.receipt);
   const authState = useSelector((state) => state.auth);
@@ -38,7 +43,6 @@ function MyOrders() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
-  const [expandedOrders, setExpandedOrders] = useState(new Set());
   const [unreadCounts, setUnreadCounts] = useState({});
   const [trackingModal, setTrackingModal] = useState({ open: false, order: null });
   const [messagesModal, setMessagesModal] = useState({ 
@@ -47,6 +51,7 @@ function MyOrders() {
     messages: [], 
     loading: false 
   });
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     dispatch(getAllMyOrders());
@@ -69,7 +74,6 @@ function MyOrders() {
           });
           if (response.ok) {
             const data = await response.json();
-            // ONLY count unread messages from ADMIN (not customer's own messages)
             const unread = data.messages?.filter(msg => 
               !msg.isRead && (msg.sender === 'admin' || msg.senderType === 'admin')
             ).length || 0;
@@ -87,7 +91,19 @@ function MyOrders() {
     }
   }, [orders]);
 
-  const handleDownloadReceipt = async (reference) => {
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await dispatch(getAllMyOrders()).unwrap();
+      toast.success("Orders refreshed", { position: "top-center" });
+    } catch (err) {
+      toast.error("Failed to refresh orders", { position: "top-center" });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const handleDownloadReceipt = async (reference, orderId) => {
     if (!reference) {
       toast.error("Receipt not found for this order", {
         position: "top-center",
@@ -105,18 +121,6 @@ function MyOrders() {
         position: "top-center",
       });
     }
-  };
-
-  const toggleOrderExpanded = (orderId) => {
-    setExpandedOrders((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(orderId)) {
-        newSet.delete(orderId);
-      } else {
-        newSet.add(orderId);
-      }
-      return newSet;
-    });
   };
 
   const openTrackingModal = (order) => {
@@ -143,13 +147,11 @@ function MyOrders() {
           loading: false 
         }));
         
-        // Mark messages as read
         await fetch(`/api/v1/orders/${order._id}/messages/read`, {
           method: 'PUT',
           credentials: 'include'
         });
         
-        // Update unread count to 0
         setUnreadCounts(prev => ({ ...prev, [order._id]: 0 }));
       } else {
         throw new Error('Failed to fetch messages');
@@ -240,6 +242,17 @@ function MyOrders() {
     });
   };
 
+  const formatDateWithTime = (dateString) => {
+    const date = new Date(dateString);
+    return date.toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   const filteredOrders = orders
     ?.filter((order) => {
       const matchesSearch =
@@ -265,6 +278,19 @@ function MyOrders() {
       return 0;
     });
 
+  const getOrderStats = () => {
+    if (!orders || orders.length === 0) return null;
+    
+    return {
+      total: orders.length,
+      processing: orders.filter(o => o.orderStatus?.toLowerCase().includes('processing')).length,
+      shipped: orders.filter(o => o.orderStatus?.toLowerCase().includes('shipped')).length,
+      delivered: orders.filter(o => o.orderStatus?.toLowerCase().includes('delivered')).length,
+    };
+  };
+
+  const stats = getOrderStats();
+
   if (loading && !orders?.length) {
     return (
       <>
@@ -288,14 +314,66 @@ function MyOrders() {
 
       <div className="mo-orders-container">
         <div className="mo-orders-header">
-          <div className="mo-header-title">
-            <FiPackage className="mo-header-icon" />
-            <h1>My Orders</h1>
-            <span className="mo-orders-count">
-              {filteredOrders?.length || 0}{" "}
-              {filteredOrders?.length === 1 ? "order" : "orders"}
-            </span>
+          <div className="mo-header-content">
+            <div className="mo-header-title-section">
+              <div className="mo-header-title">
+                <FiPackage className="mo-header-icon" />
+                <h1>My Orders</h1>
+              </div>
+              <p className="mo-header-subtitle">
+                Track and manage all your orders in one place
+              </p>
+            </div>
+            <button 
+              className="mo-refresh-btn"
+              onClick={handleRefresh}
+              disabled={refreshing}
+            >
+              <FiRefreshCw className={refreshing ? "mo-spinning" : ""} />
+              Refresh
+            </button>
           </div>
+
+          {stats && (
+            <div className="mo-stats-grid">
+              <div className="mo-stat-card">
+                <div className="mo-stat-icon mo-stat-total">
+                  <FiBox />
+                </div>
+                <div className="mo-stat-content">
+                  <span className="mo-stat-value">{stats.total}</span>
+                  <span className="mo-stat-label">Total Orders</span>
+                </div>
+              </div>
+              <div className="mo-stat-card">
+                <div className="mo-stat-icon mo-stat-processing">
+                  <FiClock />
+                </div>
+                <div className="mo-stat-content">
+                  <span className="mo-stat-value">{stats.processing}</span>
+                  <span className="mo-stat-label">Processing</span>
+                </div>
+              </div>
+              <div className="mo-stat-card">
+                <div className="mo-stat-icon mo-stat-shipped">
+                  <FiTruck />
+                </div>
+                <div className="mo-stat-content">
+                  <span className="mo-stat-value">{stats.shipped}</span>
+                  <span className="mo-stat-label">Shipped</span>
+                </div>
+              </div>
+              <div className="mo-stat-card">
+                <div className="mo-stat-icon mo-stat-delivered">
+                  <FiCheckCircle />
+                </div>
+                <div className="mo-stat-content">
+                  <span className="mo-stat-value">{stats.delivered}</span>
+                  <span className="mo-stat-label">Delivered</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="mo-orders-controls">
@@ -308,6 +386,15 @@ function MyOrders() {
               onChange={(e) => setSearchTerm(e.target.value)}
               className="mo-search-input"
             />
+            {searchTerm && (
+              <button
+                className="mo-search-clear"
+                onClick={() => setSearchTerm("")}
+                aria-label="Clear search"
+              >
+                <FiX />
+              </button>
+            )}
           </div>
 
           <div className="mo-filters-group">
@@ -343,15 +430,17 @@ function MyOrders() {
 
         {!filteredOrders || filteredOrders.length === 0 ? (
           <div className="mo-empty-orders">
-            <FiPackage className="mo-empty-icon" />
+            <div className="mo-empty-icon-wrapper">
+              <FiPackage className="mo-empty-icon" />
+            </div>
             <h2>No orders found</h2>
             <p>
               {searchTerm || statusFilter !== "all"
-                ? "Try adjusting your filters"
-                : "You haven't placed any orders yet"}
+                ? "Try adjusting your filters to find what you're looking for"
+                : "You haven't placed any orders yet. Start shopping to see your orders here!"}
             </p>
             <Link to="/products" className="mo-shop-now-btn">
-              Start Shopping
+              Browse Products
             </Link>
           </div>
         ) : (
@@ -359,106 +448,97 @@ function MyOrders() {
             {filteredOrders.map((order) => (
               <div key={order._id} className="mo-order-card">
                 <div className="mo-order-card-header">
-                  <div className="mo-order-header-left">
+                  <div className="mo-order-meta">
                     <div className="mo-order-id-section">
-                      <span className="mo-order-label">Order ID:</span>
+                      <span className="mo-order-label">Order</span>
                       <span className="mo-order-id">
                         #{order._id.slice(-8).toUpperCase()}
                       </span>
                     </div>
-                    <div className="mo-order-reference-section">
-                      <span className="mo-order-label">Reference:</span>
-                      <span className="mo-order-reference">
-                        {order.paymentInfo?.reference}
-                      </span>
-                    </div>
                     <div className="mo-order-date">
-                      <FiClock className="mo-date-icon" />
+                      <FiCalendar className="mo-date-icon" />
                       {formatDate(order.createdAt)}
                     </div>
                   </div>
 
-                  <div className="mo-order-header-right">
-                    <div className={getStatusClass(order.orderStatus)}>
-                      {getStatusIcon(order.orderStatus)}
-                      {order.orderStatus}
-                    </div>
+                  <div className={getStatusClass(order.orderStatus)}>
+                    {getStatusIcon(order.orderStatus)}
+                    {order.orderStatus}
                   </div>
                 </div>
 
                 <div className="mo-order-card-body">
                   <div className="mo-order-items-preview">
-                    {order.orderItems?.slice(0, 3).map((item, index) => (
+                    {order.orderItems?.slice(0, 2).map((item, index) => (
                       <div key={index} className="mo-order-item-mini">
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="mo-item-mini-img"
-                        />
+                        <div className="mo-item-mini-img-wrapper">
+                          <img
+                            src={item.image}
+                            alt={item.name}
+                            className="mo-item-mini-img"
+                          />
+                        </div>
                         <div className="mo-item-mini-info">
                           <p className="mo-item-mini-name">{item.name}</p>
                           <p className="mo-item-mini-qty">Qty: {item.quantity}</p>
                         </div>
                       </div>
                     ))}
-                    {order.orderItems?.length > 3 && (
+                    {order.orderItems?.length > 2 && (
                       <div className="mo-more-items">
-                        +{order.orderItems.length - 3} more item(s)
+                        <FiBox className="mo-more-icon" />
+                        <span>+{order.orderItems.length - 2} more item(s)</span>
                       </div>
                     )}
                   </div>
 
-                  <div className="mo-order-summary">
-                    <div className="mo-summary-row">
-                      <span className="mo-summary-label">Items:</span>
-                      <span className="mo-summary-value">
-                        {order.orderItems?.length}
-                      </span>
+                  <div className="mo-order-summary-section">
+                    <div className="mo-summary-item">
+                      <FiBox className="mo-summary-icon" />
+                      <div className="mo-summary-details">
+                        <span className="mo-summary-label">Items</span>
+                        <span className="mo-summary-value">
+                          {order.orderItems?.length}
+                        </span>
+                      </div>
                     </div>
-                    <div className="mo-summary-row">
-                      <span className="mo-summary-label">Total Amount:</span>
-                      <span className="mo-summary-value mo-total-amount">
-                        {formatCurrency(order.totalPrice)}
-                      </span>
-                    </div>
-                    <div className="mo-summary-row">
-                      <span className="mo-summary-label">Payment:</span>
-                      <span className="mo-summary-value mo-payment-status">
-                        {order.paymentInfo?.status}
-                      </span>
+                    <div className="mo-summary-item">
+                      <FiDollarSign className="mo-summary-icon" />
+                      <div className="mo-summary-details">
+                        <span className="mo-summary-label">Total</span>
+                        <span className="mo-summary-value mo-total-amount">
+                          {formatCurrency(order.totalPrice)}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </div>
 
                 <div className="mo-order-card-actions">
-                  <button
-                    className="mo-action-btn mo-view-details"
-                    onClick={() => toggleOrderExpanded(order._id)}
+                  <Link
+                    to={`/order/${order._id}`}
+                    className="mo-action-btn mo-view-details-btn"
                   >
                     <FiEye />
-                    {expandedOrders.has(order._id) ? "Hide Details" : "View Details"}
-                    <FiChevronDown
-                      className={`mo-chevron ${
-                        expandedOrders.has(order._id) ? "mo-rotated" : ""
-                      }`}
-                    />
-                  </button>
+                    <span>View Details</span>
+                    <FiChevronRight className="mo-chevron-icon" />
+                  </Link>
 
                   <button
-                    className="mo-action-btn mo-download-receipt"
-                    onClick={() => handleDownloadReceipt(order.paymentInfo?.reference)}
+                    className="mo-action-btn mo-secondary-btn"
+                    onClick={() => handleDownloadReceipt(order.paymentInfo?.reference, order._id)}
                     disabled={downloadLoading}
                   >
                     <FiDownload />
-                    {downloadLoading ? "Downloading..." : "Receipt"}
+                    <span>{downloadLoading ? "Downloading..." : "Receipt"}</span>
                   </button>
 
                   <button
                     onClick={() => openMessagesModal(order)}
-                    className="mo-action-btn mo-messages-btn"
+                    className="mo-action-btn mo-secondary-btn mo-messages-btn"
                   >
                     <FiMessageCircle />
-                    Messages
+                    <span>Messages</span>
                     {unreadCounts[order._id] > 0 && (
                       <span className="mo-unread-badge">{unreadCounts[order._id]}</span>
                     )}
@@ -466,83 +546,12 @@ function MyOrders() {
 
                   <button
                     onClick={() => openTrackingModal(order)}
-                    className="mo-action-btn mo-track-order"
+                    className="mo-action-btn mo-secondary-btn"
                   >
                     <FiTruck />
-                    Track Order
+                    <span>Track</span>
                   </button>
                 </div>
-
-                {expandedOrders.has(order._id) && (
-                  <div className="mo-order-expanded-details">
-                    <div className="mo-expanded-section">
-                      <h3 className="mo-section-title">Order Items</h3>
-                      <div className="mo-expanded-items-list">
-                        {order.orderItems?.map((item, index) => (
-                          <div key={index} className="mo-expanded-item">
-                            <img
-                              src={item.image}
-                              alt={item.name}
-                              className="mo-expanded-item-img"
-                            />
-                            <div className="mo-expanded-item-info">
-                              <p className="mo-expanded-item-name">{item.name}</p>
-                              <p className="mo-expanded-item-details">
-                                Quantity: {item.quantity} × {formatCurrency(item.price)}
-                              </p>
-                            </div>
-                            <p className="mo-expanded-item-total">
-                              {formatCurrency(item.price * item.quantity)}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="mo-expanded-section">
-                      <h3 className="mo-section-title">Shipping Information</h3>
-                      <div className="mo-shipping-info">
-                        <p>
-                          <strong>Address:</strong> {order.shippingInfo?.address}
-                        </p>
-                        <p>
-                          <strong>City:</strong> {order.shippingInfo?.city}
-                        </p>
-                        <p>
-                          <strong>State:</strong> {order.shippingInfo?.state}
-                        </p>
-                        <p>
-                          <strong>Country:</strong> {order.shippingInfo?.country}
-                        </p>
-                        <p>
-                          <strong>Phone:</strong> {order.shippingInfo?.phoneNo}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mo-expanded-section">
-                      <h3 className="mo-section-title">Payment Details</h3>
-                      <div className="mo-payment-breakdown">
-                        <div className="mo-breakdown-row">
-                          <span>Subtotal:</span>
-                          <span>{formatCurrency(order.itemPrice)}</span>
-                        </div>
-                        <div className="mo-breakdown-row">
-                          <span>Tax:</span>
-                          <span>{formatCurrency(order.taxPrice)}</span>
-                        </div>
-                        <div className="mo-breakdown-row">
-                          <span>Shipping:</span>
-                          <span>{formatCurrency(order.shippingPrice)}</span>
-                        </div>
-                        <div className="mo-breakdown-row mo-total">
-                          <span>Total:</span>
-                          <span>{formatCurrency(order.totalPrice)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             ))}
           </div>
@@ -566,22 +575,52 @@ function MyOrders() {
             
             <div className="mo-modal-body">
               <div className="mo-tracking-info">
-                <p><strong>Order ID:</strong> #{trackingModal.order._id.slice(-8).toUpperCase()}</p>
-                <p>
-                  <strong>Status:</strong>{" "}
+                <div className="mo-tracking-info-item">
+                  <span className="mo-tracking-label">Order ID</span>
+                  <span className="mo-tracking-value">
+                    #{trackingModal.order._id.slice(-8).toUpperCase()}
+                  </span>
+                </div>
+                <div className="mo-tracking-info-item">
+                  <span className="mo-tracking-label">Status</span>
                   <span className={getStatusClass(trackingModal.order.orderStatus)}>
                     {getStatusIcon(trackingModal.order.orderStatus)}
                     {trackingModal.order.orderStatus}
                   </span>
-                </p>
-                <p><strong>Order Date:</strong> {formatDate(trackingModal.order.createdAt)}</p>
+                </div>
+                <div className="mo-tracking-info-item">
+                  <span className="mo-tracking-label">Order Date</span>
+                  <span className="mo-tracking-value">
+                    {formatDateWithTime(trackingModal.order.createdAt)}
+                  </span>
+                </div>
               </div>
 
               {trackingModal.order.tracking ? (
                 <div className="mo-tracking-details">
                   <h3>Shipping Details</h3>
-                  <p><strong>Carrier:</strong> {trackingModal.order.tracking.carrier}</p>
-                  <p><strong>Tracking Number:</strong> {trackingModal.order.tracking.trackingNumber}</p>
+                  <div className="mo-tracking-details-grid">
+                    <div className="mo-tracking-detail-item">
+                      <span className="mo-tracking-label">Carrier</span>
+                      <span className="mo-tracking-value">
+                        {trackingModal.order.tracking.carrier}
+                      </span>
+                    </div>
+                    <div className="mo-tracking-detail-item">
+                      <span className="mo-tracking-label">Tracking Number</span>
+                      <span className="mo-tracking-value mo-tracking-number">
+                        {trackingModal.order.tracking.trackingNumber}
+                      </span>
+                    </div>
+                    {trackingModal.order.tracking.estimatedDelivery && (
+                      <div className="mo-tracking-detail-item">
+                        <span className="mo-tracking-label">Estimated Delivery</span>
+                        <span className="mo-tracking-value">
+                          {formatDate(trackingModal.order.tracking.estimatedDelivery)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
                   {trackingModal.order.tracking.trackingUrl && (
                     <a 
                       href={trackingModal.order.tracking.trackingUrl}
@@ -590,10 +629,8 @@ function MyOrders() {
                       className="mo-track-link"
                     >
                       Track on {trackingModal.order.tracking.carrier} Website
+                      <FiChevronRight />
                     </a>
-                  )}
-                  {trackingModal.order.tracking.estimatedDelivery && (
-                    <p><strong>Estimated Delivery:</strong> {formatDate(trackingModal.order.tracking.estimatedDelivery)}</p>
                   )}
                 </div>
               ) : (

@@ -12,13 +12,9 @@ import {
   getOrderMessages,
   addOrderMessage,
   markOrderMessagesRead,
-  requestRefund,
-  requestReturn,
 } from '../features/cart/orderSlice';
-import { getRefundStatus } from '../features/refunds/refundSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
-import RefundStatusBadge from '../components/RefundStatusBadge';
 import {
   FiChevronDown,
   FiChevronUp,
@@ -33,8 +29,8 @@ import {
   FiUser,
   FiDownload,
   FiRotateCw,
-  FiX,
-  FiUpload,
+  FiDollarSign,
+  FiRotateCcw,
 } from 'react-icons/fi';
 
 function OrderDetails() {
@@ -43,77 +39,44 @@ function OrderDetails() {
   const dispatch = useDispatch();
   const messagesEndRef = useRef(null);
   const fileInputRef = useRef(null);
-  const refundFileInputRef = useRef(null);
-  const returnFileInputRef = useRef(null);
 
   const { order = {}, timeline = [], orderMessages = [], loading, error, actionLoading } = useSelector((state) => state.order);
-  const { refundStatus, statusLoading } = useSelector((state) => state.refund);
 
-  // Accordion state
   const [isTimelineOpen, setIsTimelineOpen] = useState(false);
   const [isMessagesOpen, setIsMessagesOpen] = useState(false);
-
-  // Message state
   const [newMessage, setNewMessage] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
 
-  // Modal states
-  const [showRefundModal, setShowRefundModal] = useState(false);
-  const [showReturnModal, setShowReturnModal] = useState(false);
-
-  // Refund form state
-  const [refundForm, setRefundForm] = useState({
-    reason: '',
-    description: '',
-    refundType: 'full',
-    requestedAmount: '',
-  });
-  const [refundImages, setRefundImages] = useState([]);
-
-  // Return form state
-  const [returnForm, setReturnForm] = useState({
-    reason: '',
-    itemsToReturn: [],
-  });
-  const [returnImages, setReturnImages] = useState([]);
-
-  // Fetch order details, refund status, timeline, and messages
   useEffect(() => {
     if (id) {
       dispatch(getOrderDetails(id));
-      dispatch(getRefundStatus(id));
     }
   }, [dispatch, id]);
 
-  // Fetch timeline when accordion opens
   useEffect(() => {
     if (isTimelineOpen && id && timeline.length === 0) {
       dispatch(getOrderTimeline(id));
     }
   }, [isTimelineOpen, id, timeline.length, dispatch]);
 
-  // Fetch messages when accordion opens
   useEffect(() => {
     if (isMessagesOpen && id && orderMessages.length === 0) {
       dispatch(getOrderMessages(id));
     }
   }, [isMessagesOpen, id, orderMessages.length, dispatch]);
 
-  // Auto-scroll to latest message
   useEffect(() => {
     if (isMessagesOpen && messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [orderMessages, isMessagesOpen]);
 
-  // Mark messages as read when opening
   useEffect(() => {
     if (isMessagesOpen && id && orderMessages.some(msg => !msg.isRead && msg.sender !== 'customer')) {
       dispatch(markOrderMessagesRead(id));
     }
   }, [isMessagesOpen, id, orderMessages, dispatch]);
 
-  // Handle API errors
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center', autoClose: 2000 });
@@ -121,7 +84,16 @@ function OrderDetails() {
     }
   }, [error, dispatch]);
 
-  // Safe destructuring
+  // Check for order existence BEFORE destructuring
+  if (loading) return (
+    <>
+    <Navbar />
+    <Loader />
+    <Footer />
+    </>
+  ) 
+  if (!order?._id) return null;
+
   const {
     shippingInfo = {},
     orderItems = [],
@@ -133,44 +105,18 @@ function OrderDetails() {
     itemPrice,
   } = order;
 
-  // Loading state
-  if (loading) return <Loader />;
-  if (!order?._id) return null;
-
-  // Payment status
   const isPaid = paymentInfo?.status === 'success';
   const paymentStatus = isPaid ? 'Paid' : 'Not Paid';
   const paidAt = paymentInfo?.paidAt;
 
-  // Refund eligibility check
-  const hasActiveRefund = refundStatus?.hasRefund === true || 
-                          (refundStatus?.status && refundStatus.status !== 'none');
-
-  const refundableStatuses = ['Delivered', 'Shipped'];
-  const isRefundable = isPaid && 
-    !hasActiveRefund && 
-    refundableStatuses.includes(orderStatus);
-
-  // Return eligibility check
-  const hasActiveReturn = order?.returnInfo?.status && order.returnInfo.status !== 'none';
-  const returnableStatuses = ['Delivered'];
-  const isReturnable = isPaid && 
-    !hasActiveRefund && 
-    !hasActiveReturn &&
-    returnableStatuses.includes(orderStatus);
-
-  // Status badge classes
   const orderStatusClass =
     orderStatus === 'Delivered'
       ? 'od-status-tag od-delivered'
       : `od-status-tag od-${orderStatus?.toLowerCase()}`;
 
   const paymentStatusClass = `od-pay-tag ${isPaid ? 'od-paid' : 'od-not-paid'}`;
-
-  // Count unread messages
   const unreadCount = orderMessages.filter(msg => !msg.isRead && msg.sender !== 'customer').length;
 
-  // Handle file selection
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files);
     if (files.length + selectedFiles.length > 5) {
@@ -180,12 +126,10 @@ function OrderDetails() {
     setSelectedFiles(prev => [...prev, ...files]);
   };
 
-  // Remove selected file
   const removeFile = (index) => {
     setSelectedFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Send message
   const handleSendMessage = async () => {
     if (!newMessage.trim() && selectedFiles.length === 0) return;
 
@@ -204,106 +148,6 @@ function OrderDetails() {
     }
   };
 
-  // Handle refund images
-  const handleRefundImageSelect = (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length + refundImages.length > 5) {
-      toast.error('Maximum 5 images allowed', { position: 'top-center' });
-      return;
-    }
-    setRefundImages(prev => [...prev, ...files]);
-  };
-
-  const removeRefundImage = (index) => {
-    setRefundImages(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Handle return images
-  const handleReturnImageSelect = (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length + returnImages.length > 5) {
-      toast.error('Maximum 5 images allowed', { position: 'top-center' });
-      return;
-    }
-    setReturnImages(prev => [...prev, ...files]);
-  };
-
-  const removeReturnImage = (index) => {
-    setReturnImages(prev => prev.filter((_, i) => i !== index));
-  };
-
-  // Handle item selection for return
-  const handleItemToggle = (itemId) => {
-    setReturnForm(prev => ({
-      ...prev,
-      itemsToReturn: prev.itemsToReturn.includes(itemId)
-        ? prev.itemsToReturn.filter(id => id !== itemId)
-        : [...prev.itemsToReturn, itemId]
-    }));
-  };
-
-  // Submit refund request
-  const handleRefundSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!refundForm.reason) {
-      toast.error('Please select a reason', { position: 'top-center' });
-      return;
-    }
-
-    try {
-      await dispatch(requestRefund({
-        orderId: id,
-        reason: refundForm.reason,
-        description: refundForm.description,
-        refundType: refundForm.refundType,
-        requestedAmount: refundForm.requestedAmount,
-        images: refundImages,
-      })).unwrap();
-
-      toast.success('Refund request submitted successfully', { position: 'top-center' });
-      setShowRefundModal(false);
-      setRefundForm({ reason: '', description: '', refundType: 'full', requestedAmount: '' });
-      setRefundImages([]);
-      dispatch(getOrderDetails(id));
-    } catch (err) {
-      toast.error(err || 'Failed to submit refund request', { position: 'top-center' });
-    }
-  };
-
-  // Submit return request
-  const handleReturnSubmit = async (e) => {
-    e.preventDefault();
-    
-    if (!returnForm.reason) {
-      toast.error('Please select a reason', { position: 'top-center' });
-      return;
-    }
-
-    if (returnForm.itemsToReturn.length === 0) {
-      toast.error('Please select at least one item to return', { position: 'top-center' });
-      return;
-    }
-
-    try {
-      await dispatch(requestReturn({
-        orderId: id,
-        reason: returnForm.reason,
-        itemsToReturn: returnForm.itemsToReturn,
-        images: returnImages,
-      })).unwrap();
-
-      toast.success('Return request submitted successfully', { position: 'top-center' });
-      setShowReturnModal(false);
-      setReturnForm({ reason: '', itemsToReturn: [] });
-      setReturnImages([]);
-      dispatch(getOrderDetails(id));
-    } catch (err) {
-      toast.error(err || 'Failed to submit return request', { position: 'top-center' });
-    }
-  };
-
-  // Format timestamp
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -324,7 +168,6 @@ function OrderDetails() {
     });
   };
 
-  // Get status icon for timeline
   const getStatusIcon = (status) => {
     const statusLower = status?.toLowerCase() || '';
     if (statusLower.includes('delivered') || statusLower.includes('completed')) {
@@ -343,32 +186,6 @@ function OrderDetails() {
       <Navbar />
 
       <div className="od-order-box">
-        {/* Refund Alert */}
-        {hasActiveRefund && (
-          <div className="od-refund-alert">
-            <div className="od-refund-alert-header">
-              <h3>Refund Status</h3>
-              <RefundStatusBadge status={refundStatus.status} />
-            </div>
-            <div className="od-refund-alert-body">
-              <p><strong>Reason:</strong> {refundStatus.reason?.replace(/_/g, ' ')}</p>
-              {refundStatus.description && (
-                <p><strong>Description:</strong> {refundStatus.description}</p>
-              )}
-              {refundStatus.refundAmount && (
-                <p><strong>Refund Amount:</strong> ₦{refundStatus.refundAmount?.toLocaleString()}</p>
-              )}
-              {refundStatus.requestedAt && (
-                <p><strong>Requested On:</strong> {new Date(refundStatus.requestedAt).toLocaleDateString()}</p>
-              )}
-              {refundStatus.adminNote && (
-                <p><strong>Admin Note:</strong> {refundStatus.adminNote}</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ORDER ITEMS */}
         <div className="od-table-block">
           <h2 className="od-table-title">Order Items</h2>
           <table className="od-table-main">
@@ -384,11 +201,7 @@ function OrderDetails() {
               {orderItems.map((item) => (
                 <tr key={item._id} className="od-table-row">
                   <td className="od-table-cell">
-                    <img
-                      src={item.image}
-                      alt={item.name}
-                      className="od-item-img"
-                    />
+                    <img src={item.image} alt={item.name} className="od-item-img" />
                   </td>
                   <td className="od-table-cell">{item.name}</td>
                   <td className="od-table-cell">{item.quantity}</td>
@@ -399,7 +212,6 @@ function OrderDetails() {
           </table>
         </div>
 
-        {/* SHIPPING INFO */}
         <div className="od-table-block">
           <h2 className="od-table-title">Shipping Info</h2>
           <table className="od-table-main">
@@ -407,9 +219,7 @@ function OrderDetails() {
               <tr className="od-table-row">
                 <th className="od-table-cell">Address</th>
                 <td className="od-table-cell">
-                  {shippingInfo.address}, {shippingInfo.city},{' '}
-                  {shippingInfo.state}, {shippingInfo.country},{' '}
-                  {shippingInfo.pinCode}
+                  {shippingInfo.address}, {shippingInfo.city}, {shippingInfo.state}, {shippingInfo.country}, {shippingInfo.pinCode}
                 </td>
               </tr>
               <tr className="od-table-row">
@@ -420,7 +230,6 @@ function OrderDetails() {
           </table>
         </div>
 
-        {/* ORDER SUMMARY */}
         <div className="od-table-block">
           <h2 className="od-table-title">Order Summary</h2>
           <table className="od-table-main">
@@ -428,45 +237,33 @@ function OrderDetails() {
               <tr className="od-table-row">
                 <th className="od-table-cell">Order Status</th>
                 <td className="od-table-cell">
-                  <span className={orderStatusClass}>
-                    {orderStatus}
-                  </span>
+                  <span className={orderStatusClass}>{orderStatus}</span>
                 </td>
               </tr>
-
               <tr className="od-table-row">
                 <th className="od-table-cell">Payment Status</th>
                 <td className="od-table-cell">
-                  <span className={paymentStatusClass}>
-                    {paymentStatus}
-                  </span>
+                  <span className={paymentStatusClass}>{paymentStatus}</span>
                 </td>
               </tr>
-
               {paidAt && (
                 <tr className="od-table-row">
                   <th className="od-table-cell">Paid At</th>
-                  <td className="od-table-cell">
-                    {new Date(paidAt).toLocaleString()}
-                  </td>
+                  <td className="od-table-cell">{new Date(paidAt).toLocaleString()}</td>
                 </tr>
               )}
-
               <tr className="od-table-row">
                 <th className="od-table-cell">Item Price</th>
                 <td className="od-table-cell">₦{itemPrice?.toLocaleString()}</td>
               </tr>
-
               <tr className="od-table-row">
                 <th className="od-table-cell">Tax</th>
                 <td className="od-table-cell">₦{taxPrice?.toLocaleString()}</td>
               </tr>
-
               <tr className="od-table-row">
                 <th className="od-table-cell">Shipping</th>
                 <td className="od-table-cell">₦{shippingPrice?.toLocaleString()}</td>
               </tr>
-
               <tr className="od-table-row">
                 <th className="od-table-cell">Total</th>
                 <td className="od-table-cell">₦{totalPrice?.toLocaleString()}</td>
@@ -475,13 +272,8 @@ function OrderDetails() {
           </table>
         </div>
 
-        {/* TIMELINE ACCORDION */}
         <div className="od-table-block ot-accordion">
-          <button
-            className="ot-accordion-header"
-            onClick={() => setIsTimelineOpen(!isTimelineOpen)}
-            aria-expanded={isTimelineOpen}
-          >
+          <button className="ot-accordion-header" onClick={() => setIsTimelineOpen(!isTimelineOpen)} aria-expanded={isTimelineOpen}>
             <div className="ot-header-content">
               <FiTruck className="ot-header-icon" />
               <div>
@@ -525,9 +317,7 @@ function OrderDetails() {
                             })}
                           </span>
                         </div>
-                        {event.description && (
-                          <p className="ot-timeline-description">{event.description}</p>
-                        )}
+                        {event.description && <p className="ot-timeline-description">{event.description}</p>}
                         {event.location && (
                           <div className="ot-timeline-location">
                             <FiMapPin />
@@ -548,22 +338,15 @@ function OrderDetails() {
           )}
         </div>
 
-        {/* MESSAGES ACCORDION */}
         <div className="od-table-block om-accordion">
-          <button
-            className="om-accordion-header"
-            onClick={() => setIsMessagesOpen(!isMessagesOpen)}
-            aria-expanded={isMessagesOpen}
-          >
+          <button className="om-accordion-header" onClick={() => setIsMessagesOpen(!isMessagesOpen)} aria-expanded={isMessagesOpen}>
             <div className="om-header-content">
               <FiMessageSquare className="om-header-icon" />
               <div>
                 <h2 className="om-accordion-title">Messages</h2>
                 <p className="om-accordion-subtitle">Chat with support about this order</p>
               </div>
-              {unreadCount > 0 && (
-                <span className="om-unread-badge">{unreadCount}</span>
-              )}
+              {unreadCount > 0 && <span className="om-unread-badge">{unreadCount}</span>}
             </div>
             {isMessagesOpen ? <FiChevronUp /> : <FiChevronDown />}
           </button>
@@ -585,41 +368,25 @@ function OrderDetails() {
                   ) : (
                     <>
                       {orderMessages.map((msg, index) => (
-                        <div
-                          key={msg._id || index}
-                          className={`om-message ${
-                            msg.sender === 'customer' ? 'om-message-sent' : 'om-message-received'
-                          }`}
-                        >
+                        <div key={msg._id || index} className={`om-message ${msg.sender === 'customer' ? 'om-message-sent' : 'om-message-received'}`}>
                           {msg.sender !== 'customer' && (
                             <div className="om-message-avatar">
                               <FiUser />
                             </div>
                           )}
                           <div className="om-message-content">
-                            {msg.sender !== 'customer' && (
-                              <span className="om-message-sender">Support Team</span>
-                            )}
+                            {msg.sender !== 'customer' && <span className="om-message-sender">Support Team</span>}
                             <div className="om-message-bubble">
                               <p>{msg.content || msg.text}</p>
                               {msg.attachments?.map((file, i) => (
-                                <a
-                                  key={i}
-                                  href={file.url}
-                                  className="om-message-attachment"
-                                  download
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
+                                <a key={i} href={file.url} className="om-message-attachment" download target="_blank" rel="noopener noreferrer">
                                   <FiPaperclip />
                                   {file.name}
                                 </a>
                               ))}
                             </div>
                             <div className="om-message-footer">
-                              <span className="om-message-time">
-                                {formatTimestamp(msg.createdAt || msg.timestamp)}
-                              </span>
+                              <span className="om-message-time">{formatTimestamp(msg.createdAt || msg.timestamp)}</span>
                               {msg.sender === 'customer' && (
                                 <span className="om-message-status">
                                   {msg.isRead ? '✓✓ Read' : msg.delivered ? '✓✓ Delivered' : '✓ Sent'}
@@ -634,20 +401,13 @@ function OrderDetails() {
                   )}
                 </div>
 
-                {/* Message Input */}
                 <div className="om-input-area">
                   {selectedFiles.length > 0 && (
                     <div className="om-selected-files">
                       {selectedFiles.map((file, index) => (
                         <div key={index} className="om-selected-file">
                           <span>{file.name}</span>
-                          <button
-                            type="button"
-                            onClick={() => removeFile(index)}
-                            className="om-remove-file"
-                          >
-                            ×
-                          </button>
+                          <button type="button" onClick={() => removeFile(index)} className="om-remove-file">×</button>
                         </div>
                       ))}
                     </div>
@@ -661,12 +421,7 @@ function OrderDetails() {
                       onChange={handleFileSelect}
                       style={{ display: 'none' }}
                     />
-                    <button
-                      type="button"
-                      className="om-attach-btn"
-                      onClick={() => fileInputRef.current?.click()}
-                      title="Attach files"
-                    >
+                    <button type="button" className="om-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">
                       <FiPaperclip />
                     </button>
                     <input
@@ -677,12 +432,7 @@ function OrderDetails() {
                       onChange={(e) => setNewMessage(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     />
-                    <button
-                      type="button"
-                      className="om-send-btn"
-                      onClick={handleSendMessage}
-                      disabled={!newMessage.trim() && selectedFiles.length === 0}
-                    >
+                    <button type="button" className="om-send-btn" onClick={handleSendMessage} disabled={!newMessage.trim() && selectedFiles.length === 0}>
                       <FiSend />
                     </button>
                   </div>
@@ -692,235 +442,24 @@ function OrderDetails() {
           )}
         </div>
 
-        {/* ACTION BUTTONS */}
-        <div className="od-action-buttons">
-          {isRefundable && !statusLoading && (
-            <button
-              onClick={() => setShowRefundModal(true)}
-              className="od-btn od-btn-refund"
-            >
-              Request Refund
-            </button>
-          )}
+        {/* ACTION BUTTONS - ALWAYS VISIBLE */}
+        <div className="od-details-action-buttons">
+          <button onClick={() => navigate(`/order/${id}/refund`)} className="od-details-btn od-details-btn-refund">
+            <FiDollarSign />
+            Request Refund
+          </button>
 
-          {isReturnable && (
-            <button
-              onClick={() => setShowReturnModal(true)}
-              className="od-btn od-btn-return"
-            >
-              Request Return
-            </button>
-          )}
+          <button onClick={() => navigate(`/order/${id}/return`)} className="od-details-btn od-details-btn-return">
+            <FiRotateCcw />
+            Request Return
+          </button>
 
-          <button
-            onClick={() => {/* Handle download invoice */}}
-            className="od-btn od-btn-invoice"
-          >
+          <button onClick={() => {/* Handle download invoice */}} className="od-details-btn od-details-btn-invoice">
             <FiDownload />
             Download Invoice
           </button>
         </div>
       </div>
-
-      {/* REFUND MODAL */}
-      {showRefundModal && (
-        <div className="modal-overlay" onClick={() => setShowRefundModal(false)}>
-          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Request Refund</h2>
-              <button className="modal-close" onClick={() => setShowRefundModal(false)}>
-                <FiX />
-              </button>
-            </div>
-            <form onSubmit={handleRefundSubmit} className="modal-form">
-              <div className="form-group">
-                <label>Refund Type</label>
-                <select
-                  value={refundForm.refundType}
-                  onChange={(e) => setRefundForm({ ...refundForm, refundType: e.target.value })}
-                  required
-                >
-                  <option value="full">Full Refund</option>
-                  <option value="partial">Partial Refund</option>
-                </select>
-              </div>
-
-              {refundForm.refundType === 'partial' && (
-                <div className="form-group">
-                  <label>Requested Amount (₦)</label>
-                  <input
-                    type="number"
-                    value={refundForm.requestedAmount}
-                    onChange={(e) => setRefundForm({ ...refundForm, requestedAmount: e.target.value })}
-                    placeholder="Enter amount"
-                    max={totalPrice}
-                    required
-                  />
-                </div>
-              )}
-
-              <div className="form-group">
-                <label>Reason *</label>
-                <select
-                  value={refundForm.reason}
-                  onChange={(e) => setRefundForm({ ...refundForm, reason: e.target.value })}
-                  required
-                >
-                  <option value="">Select a reason</option>
-                  <option value="damaged_product">Damaged Product</option>
-                  <option value="wrong_item">Wrong Item Received</option>
-                  <option value="not_as_described">Not as Described</option>
-                  <option value="defective">Defective Product</option>
-                  <option value="changed_mind">Changed Mind</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Description</label>
-                <textarea
-                  value={refundForm.description}
-                  onChange={(e) => setRefundForm({ ...refundForm, description: e.target.value })}
-                  placeholder="Provide additional details about your refund request..."
-                  rows={4}
-                />
-              </div>
-
-              <div className="form-group">
-                <label>Upload Images (Optional - Max 5)</label>
-                <input
-                  ref={refundFileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={handleRefundImageSelect}
-                  style={{ display: 'none' }}
-                />
-                <button
-                  type="button"
-                  className="upload-btn"
-                  onClick={() => refundFileInputRef.current?.click()}
-                >
-                  <FiUpload /> Choose Images
-                </button>
-                {refundImages.length > 0 && (
-                  <div className="selected-images">
-                    {refundImages.map((img, index) => (
-                      <div key={index} className="selected-image">
-                        <span>{img.name}</span>
-                        <button type="button" onClick={() => removeRefundImage(index)}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowRefundModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary" disabled={actionLoading}>
-                  {actionLoading ? 'Submitting...' : 'Submit Request'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* RETURN MODAL */}
-      {showReturnModal && (
-        <div className="modal-overlay" onClick={() => setShowReturnModal(false)}>
-          <div className="modal-container" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>Request Return</h2>
-              <button className="modal-close" onClick={() => setShowReturnModal(false)}>
-                <FiX />
-              </button>
-            </div>
-            <form onSubmit={handleReturnSubmit} className="modal-form">
-              <div className="form-group">
-                <label>Select Items to Return *</label>
-                <div className="items-list">
-                  {orderItems.map((item) => (
-                    <div key={item._id} className="item-checkbox">
-                      <input
-                        type="checkbox"
-                        id={`item-${item._id}`}
-                        checked={returnForm.itemsToReturn.includes(item._id)}
-                        onChange={() => handleItemToggle(item._id)}
-                      />
-                      <label htmlFor={`item-${item._id}`}>
-                        <img src={item.image} alt={item.name} />
-                        <div>
-                          <p>{item.name}</p>
-                          <span>Qty: {item.quantity} • ₦{item.price?.toLocaleString()}</span>
-                        </div>
-                      </label>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="form-group">
-                <label>Reason *</label>
-                <select
-                  value={returnForm.reason}
-                  onChange={(e) => setReturnForm({ ...returnForm, reason: e.target.value })}
-                  required
-                >
-                  <option value="">Select a reason</option>
-                  <option value="damaged_product">Damaged Product</option>
-                  <option value="wrong_item">Wrong Item Received</option>
-                  <option value="not_as_described">Not as Described</option>
-                  <option value="defective">Defective Product</option>
-                  <option value="size_fit">Size/Fit Issue</option>
-                  <option value="quality_issue">Quality Issue</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Upload Images (Optional - Max 5)</label>
-                <input
-                  ref={returnFileInputRef}
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={handleReturnImageSelect}
-                  style={{ display: 'none' }}
-                />
-                <button
-                  type="button"
-                  className="upload-btn"
-                  onClick={() => returnFileInputRef.current?.click()}
-                >
-                  <FiUpload /> Choose Images
-                </button>
-                {returnImages.length > 0 && (
-                  <div className="selected-images">
-                    {returnImages.map((img, index) => (
-                      <div key={index} className="selected-image">
-                        <span>{img.name}</span>
-                        <button type="button" onClick={() => removeReturnImage(index)}>×</button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="modal-actions">
-                <button type="button" className="btn-secondary" onClick={() => setShowReturnModal(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="btn-primary" disabled={actionLoading}>
-                  {actionLoading ? 'Submitting...' : 'Submit Request'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       <Footer />
     </>
