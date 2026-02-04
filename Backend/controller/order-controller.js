@@ -4,6 +4,7 @@ import User from '../models/userModel.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
+import generateInvoicePDF from '../utils/generateInvoicePDF.js';
 
 // ============================================
 // BASIC ORDER OPERATIONS
@@ -643,6 +644,10 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 // INVOICE MANAGEMENT
 // ============================================
 
+// ============================================
+// INVOICE MANAGEMENT
+// ============================================
+
 /**
  * Generate/Download invoice for an order
  * @route GET /api/v1/orders/:id/invoice
@@ -665,24 +670,45 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  if (!order.invoiceInfo || !order.invoiceInfo.pdfUrl) {
-    return res.status(200).json({
+  // Check if order is eligible for invoice
+  // Only generate invoices for paid orders
+  if (order.paymentInfo?.status !== 'success') {
+    return res.status(400).json({
       success: false,
-      message: 'Invoice not yet generated for this order',
-      invoice: null
+      message: 'Invoice can only be generated for paid orders'
     });
   }
 
-  return res.status(200).json({
-    success: true,
-    invoice: {
-      invoiceNumber: order.invoiceInfo.invoiceNumber,
-      invoiceDate: order.invoiceInfo.invoiceDate,
-      pdfUrl: order.invoiceInfo.pdfUrl,
-      version: order.invoiceInfo.version
-    }
-  });
+  try {
+    // Company information (could be stored in env or database)
+    const companyInfo = {
+      name: process.env.COMPANY_NAME || 'EPIC STORE Inc.',
+      address: process.env.COMPANY_ADDRESS || '123 Commerce Street',
+      city: process.env.COMPANY_CITY || 'New York, NY 10001',
+      country: process.env.COMPANY_COUNTRY || 'United States',
+      taxId: process.env.COMPANY_TAX_ID || 'XX-XXXXXXX'
+    };
+
+    // Generate PDF buffer
+    const pdfBuffer = await generateInvoicePDF(order, companyInfo);
+
+    // Set response headers for PDF download
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename=Invoice-${order.invoiceInfo?.invoiceNumber || order._id}.pdf`
+    );
+    res.setHeader('Content-Length', pdfBuffer.length);
+
+    // Send PDF
+    return res.send(pdfBuffer);
+
+  } catch (error) {
+    console.error('Invoice generation error:', error);
+    return next(new HandleError('Failed to generate invoice', 500));
+  }
 });
+
 
 // ============================================
 // FRAUD PREVENTION & REVIEW
