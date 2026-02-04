@@ -5,6 +5,8 @@ import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import generateInvoicePDF from '../utils/generateInvoicePDF.js';
+import fs from 'fs';
+import path from 'path';
 
 // ============================================
 // BASIC ORDER OPERATIONS
@@ -671,7 +673,6 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   }
 
   // Check if order is eligible for invoice
-  // Only generate invoices for paid orders
   if (order.paymentInfo?.status !== 'success') {
     return res.status(400).json({
       success: false,
@@ -680,7 +681,25 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   }
 
   try {
-    // Company information (could be stored in env or database)
+    // Check if invoice already exists and is valid
+    if (order.invoiceInfo?.pdfUrl) {
+      const invoicePath = path.join(process.cwd(), 'public', order.invoiceInfo.pdfUrl);
+      
+      // Check if file exists
+      if (fs.existsSync(invoicePath)) {
+        // Return existing invoice
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename=Invoice-${order.invoiceInfo.invoiceNumber}.pdf`
+        );
+        
+        const fileStream = fs.createReadStream(invoicePath);
+        return fileStream.pipe(res);
+      }
+    }
+
+    // Company information
     const companyInfo = {
       name: process.env.COMPANY_NAME || 'EPIC STORE Inc.',
       address: process.env.COMPANY_ADDRESS || '123 Commerce Street',
@@ -692,11 +711,51 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     // Generate PDF buffer
     const pdfBuffer = await generateInvoicePDF(order, companyInfo);
 
+    // Create invoices directory if it doesn't exist
+    const invoicesDir = path.join(process.cwd(), 'public', 'invoices');
+    if (!fs.existsSync(invoicesDir)) {
+      fs.mkdirSync(invoicesDir, { recursive: true });
+    }
+
+    // Generate filename
+    const invoiceNumber = order.invoiceInfo?.invoiceNumber || `INV-${order._id}`;
+    const filename = `${invoiceNumber}.pdf`;
+    const filepath = path.join(invoicesDir, filename);
+
+    // Save PDF to filesystem
+    fs.writeFileSync(filepath, pdfBuffer);
+
+    // Update order with invoice info
+    if (!order.invoiceInfo) {
+      order.invoiceInfo = {};
+    }
+    
+    const pdfUrl = `/invoices/${filename}`;
+    
+    // Store in history if this is a regeneration
+    if (order.invoiceInfo.pdfUrl) {
+      if (!order.invoiceInfo.history) {
+        order.invoiceInfo.history = [];
+      }
+      order.invoiceInfo.history.push({
+        version: order.invoiceInfo.version || 1,
+        pdfUrl: order.invoiceInfo.pdfUrl,
+        generatedAt: order.invoiceInfo.invoiceDate || new Date(),
+        reason: 'Regenerated'
+      });
+      order.invoiceInfo.version = (order.invoiceInfo.version || 1) + 1;
+    }
+
+    order.invoiceInfo.pdfUrl = pdfUrl;
+    order.invoiceInfo.invoiceDate = new Date();
+    
+    await order.save({ validateBeforeSave: false });
+
     // Set response headers for PDF download
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename=Invoice-${order.invoiceInfo?.invoiceNumber || order._id}.pdf`
+      `attachment; filename=Invoice-${invoiceNumber}.pdf`
     );
     res.setHeader('Content-Length', pdfBuffer.length);
 
@@ -708,6 +767,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Failed to generate invoice', 500));
   }
 });
+
 
 
 // ============================================
