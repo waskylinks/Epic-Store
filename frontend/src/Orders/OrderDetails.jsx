@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect } from 'react';
 import '../OrderStyles/OrderDetails.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
@@ -8,44 +8,22 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   getOrderDetails,
   removeErrors,
-  getOrderTimeline,
-  getOrderMessages,
-  addOrderMessage,
-  markOrderMessagesRead,
+  downloadInvoice,
 } from '../features/cart/orderSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import {
-  FiChevronDown,
-  FiChevronUp,
-  FiClock,
-  FiPackage,
-  FiTruck,
-  FiCheckCircle,
-  FiMapPin,
-  FiMessageSquare,
-  FiSend,
-  FiPaperclip,
-  FiUser,
-  FiDownload,
-  FiRotateCw,
   FiDollarSign,
   FiRotateCcw,
+  FiDownload,
 } from 'react-icons/fi';
 
 function OrderDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
   const dispatch = useDispatch();
-  const messagesEndRef = useRef(null);
-  const fileInputRef = useRef(null);
 
-  const { order = {}, timeline = [], orderMessages = [], loading, error, actionLoading } = useSelector((state) => state.order);
-
-  const [isTimelineOpen, setIsTimelineOpen] = useState(false);
-  const [isMessagesOpen, setIsMessagesOpen] = useState(false);
-  const [newMessage, setNewMessage] = useState('');
-  const [selectedFiles, setSelectedFiles] = useState([]);
+  const { order = {}, loading, error, actionLoading } = useSelector((state) => state.order);
 
   useEffect(() => {
     if (id) {
@@ -54,44 +32,20 @@ function OrderDetails() {
   }, [dispatch, id]);
 
   useEffect(() => {
-    if (isTimelineOpen && id && timeline.length === 0) {
-      dispatch(getOrderTimeline(id));
-    }
-  }, [isTimelineOpen, id, timeline.length, dispatch]);
-
-  useEffect(() => {
-    if (isMessagesOpen && id && orderMessages.length === 0) {
-      dispatch(getOrderMessages(id));
-    }
-  }, [isMessagesOpen, id, orderMessages.length, dispatch]);
-
-  useEffect(() => {
-    if (isMessagesOpen && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [orderMessages, isMessagesOpen]);
-
-  useEffect(() => {
-    if (isMessagesOpen && id && orderMessages.some(msg => !msg.isRead && msg.sender !== 'customer')) {
-      dispatch(markOrderMessagesRead(id));
-    }
-  }, [isMessagesOpen, id, orderMessages, dispatch]);
-
-  useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center', autoClose: 2000 });
       dispatch(removeErrors());
     }
   }, [error, dispatch]);
 
-  // Check for order existence BEFORE destructuring
   if (loading) return (
     <>
-    <Navbar />
-    <Loader />
-    <Footer />
+      <Navbar />
+      <Loader />
+      <Footer />
     </>
-  ) 
+  );
+  
   if (!order?._id) return null;
 
   const {
@@ -115,69 +69,58 @@ function OrderDetails() {
       : `od-status-tag od-${orderStatus?.toLowerCase()}`;
 
   const paymentStatusClass = `od-pay-tag ${isPaid ? 'od-paid' : 'od-not-paid'}`;
-  const unreadCount = orderMessages.filter(msg => !msg.isRead && msg.sender !== 'customer').length;
 
-  const handleFileSelect = (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length + selectedFiles.length > 5) {
-      toast.error('Maximum 5 files allowed', { position: 'top-center' });
-      return;
-    }
-    setSelectedFiles(prev => [...prev, ...files]);
-  };
-
-  const removeFile = (index) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const handleSendMessage = async () => {
-    if (!newMessage.trim() && selectedFiles.length === 0) return;
-
+  const handleDownloadInvoice = async () => {
     try {
-      await dispatch(addOrderMessage({
-        orderId: id,
-        content: newMessage,
-        attachments: selectedFiles,
-      })).unwrap();
-
-      setNewMessage('');
-      setSelectedFiles([]);
-      toast.success('Message sent', { position: 'top-center' });
+      const result = await dispatch(downloadInvoice(id)).unwrap();
+      
+      // Check if invoice exists and has a PDF URL
+      if (result?.invoice?.pdfUrl) {
+        window.open(result.invoice.pdfUrl, '_blank');
+        toast.success('Invoice opened successfully', { 
+          position: 'top-center',
+          autoClose: 2000 
+        });
+      } 
+      // Check if invoice has base64 data
+      else if (result?.invoice?.data) {
+        const linkSource = `data:application/pdf;base64,${result.invoice.data}`;
+        const downloadLink = document.createElement('a');
+        const fileName = `invoice-${id}.pdf`;
+        
+        downloadLink.href = linkSource;
+        downloadLink.download = fileName;
+        downloadLink.click();
+        
+        toast.success('Invoice downloaded successfully', { 
+          position: 'top-center',
+          autoClose: 2000 
+        });
+      } 
+      // Invoice not generated yet
+      else {
+        toast.info('Invoice not yet generated for this order', { 
+          position: 'top-center',
+          autoClose: 3000 
+        });
+      }
     } catch (err) {
-      toast.error(err || 'Failed to send message', { position: 'top-center' });
+      // Handle specific error message from backend
+      const errorMessage = err || 'Failed to download invoice';
+      
+      if (errorMessage.toLowerCase().includes('not yet generated') || 
+          errorMessage.toLowerCase().includes('not generated')) {
+        toast.info('Invoice not yet generated for this order', { 
+          position: 'top-center',
+          autoClose: 3000 
+        });
+      } else {
+        toast.error(errorMessage, { 
+          position: 'top-center',
+          autoClose: 3000 
+        });
+      }
     }
-  };
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-    });
-  };
-
-  const getStatusIcon = (status) => {
-    const statusLower = status?.toLowerCase() || '';
-    if (statusLower.includes('delivered') || statusLower.includes('completed')) {
-      return <FiCheckCircle className="ot-status-icon ot-completed" />;
-    } else if (statusLower.includes('shipped') || statusLower.includes('transit')) {
-      return <FiTruck className="ot-status-icon ot-shipping" />;
-    } else if (statusLower.includes('processing') || statusLower.includes('confirmed')) {
-      return <FiPackage className="ot-status-icon ot-processing" />;
-    }
-    return <FiClock className="ot-status-icon ot-pending" />;
   };
 
   return (
@@ -188,275 +131,119 @@ function OrderDetails() {
       <div className="od-order-box">
         <div className="od-table-block">
           <h2 className="od-table-title">Order Items</h2>
-          <table className="od-table-main">
-            <thead>
-              <tr>
-                <th className="od-head-cell">Image</th>
-                <th className="od-head-cell">Product Name</th>
-                <th className="od-head-cell">Quantity</th>
-                <th className="od-head-cell">Price</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orderItems.map((item) => (
-                <tr key={item._id} className="od-table-row">
-                  <td className="od-table-cell">
-                    <img src={item.image} alt={item.name} className="od-item-img" />
-                  </td>
-                  <td className="od-table-cell">{item.name}</td>
-                  <td className="od-table-cell">{item.quantity}</td>
-                  <td className="od-table-cell">₦{item.price?.toLocaleString()}</td>
+          <div className="od-table-wrapper">
+            <table className="od-table-main">
+              <thead>
+                <tr>
+                  <th className="od-head-cell">Image</th>
+                  <th className="od-head-cell">Product Name</th>
+                  <th className="od-head-cell">Quantity</th>
+                  <th className="od-head-cell">Price</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {orderItems.map((item) => (
+                  <tr key={item._id} className="od-table-row">
+                    <td className="od-table-cell" data-label="Image">
+                      <img src={item.image} alt={item.name} className="od-item-img" />
+                    </td>
+                    <td className="od-table-cell" data-label="Product">{item.name}</td>
+                    <td className="od-table-cell" data-label="Quantity">{item.quantity}</td>
+                    <td className="od-table-cell" data-label="Price">${item.price?.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div className="od-table-block">
-          <h2 className="od-table-title">Shipping Info</h2>
-          <table className="od-table-main">
-            <tbody>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Address</th>
-                <td className="od-table-cell">
-                  {shippingInfo.address}, {shippingInfo.city}, {shippingInfo.state}, {shippingInfo.country}, {shippingInfo.pinCode}
-                </td>
-              </tr>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Phone</th>
-                <td className="od-table-cell">{shippingInfo.phoneNo}</td>
-              </tr>
-            </tbody>
-          </table>
+          <h2 className="od-table-title">Shipping Information</h2>
+          <div className="od-info-grid">
+            <div className="od-info-item">
+              <span className="od-info-label">Address</span>
+              <span className="od-info-value">
+                {shippingInfo.address}, {shippingInfo.city}, {shippingInfo.state}, {shippingInfo.country}, {shippingInfo.pinCode}
+              </span>
+            </div>
+            <div className="od-info-item">
+              <span className="od-info-label">Phone</span>
+              <span className="od-info-value">{shippingInfo.phoneNo}</span>
+            </div>
+          </div>
         </div>
 
         <div className="od-table-block">
           <h2 className="od-table-title">Order Summary</h2>
-          <table className="od-table-main">
-            <tbody>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Order Status</th>
-                <td className="od-table-cell">
-                  <span className={orderStatusClass}>{orderStatus}</span>
-                </td>
-              </tr>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Payment Status</th>
-                <td className="od-table-cell">
-                  <span className={paymentStatusClass}>{paymentStatus}</span>
-                </td>
-              </tr>
-              {paidAt && (
-                <tr className="od-table-row">
-                  <th className="od-table-cell">Paid At</th>
-                  <td className="od-table-cell">{new Date(paidAt).toLocaleString()}</td>
-                </tr>
-              )}
-              <tr className="od-table-row">
-                <th className="od-table-cell">Item Price</th>
-                <td className="od-table-cell">₦{itemPrice?.toLocaleString()}</td>
-              </tr>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Tax</th>
-                <td className="od-table-cell">₦{taxPrice?.toLocaleString()}</td>
-              </tr>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Shipping</th>
-                <td className="od-table-cell">₦{shippingPrice?.toLocaleString()}</td>
-              </tr>
-              <tr className="od-table-row">
-                <th className="od-table-cell">Total</th>
-                <td className="od-table-cell">₦{totalPrice?.toLocaleString()}</td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="od-summary-grid">
+            <div className="od-summary-item">
+              <span className="od-summary-label">Order Status</span>
+              <span className={orderStatusClass}>{orderStatus}</span>
+            </div>
+            <div className="od-summary-item">
+              <span className="od-summary-label">Payment Status</span>
+              <span className={paymentStatusClass}>{paymentStatus}</span>
+            </div>
+            {paidAt && (
+              <div className="od-summary-item">
+                <span className="od-summary-label">Paid At</span>
+                <span className="od-summary-value">{new Date(paidAt).toLocaleString()}</span>
+              </div>
+            )}
+            <div className="od-summary-divider"></div>
+            <div className="od-summary-item">
+              <span className="od-summary-label">Item Price</span>
+              <span className="od-summary-value">${itemPrice?.toLocaleString()}</span>
+            </div>
+            <div className="od-summary-item">
+              <span className="od-summary-label">Tax</span>
+              <span className="od-summary-value">${taxPrice?.toLocaleString()}</span>
+            </div>
+            <div className="od-summary-item">
+              <span className="od-summary-label">Shipping</span>
+              <span className="od-summary-value">${shippingPrice?.toLocaleString()}</span>
+            </div>
+            <div className="od-summary-item od-summary-total">
+              <span className="od-summary-label">Total</span>
+              <span className="od-summary-value">${totalPrice?.toLocaleString()}</span>
+            </div>
+          </div>
         </div>
 
-        <div className="od-table-block ot-accordion">
-          <button className="ot-accordion-header" onClick={() => setIsTimelineOpen(!isTimelineOpen)} aria-expanded={isTimelineOpen}>
-            <div className="ot-header-content">
-              <FiTruck className="ot-header-icon" />
-              <div>
-                <h2 className="ot-accordion-title">Order Timeline & Tracking</h2>
-                <p className="ot-accordion-subtitle">View your order's journey</p>
-              </div>
-            </div>
-            {isTimelineOpen ? <FiChevronUp /> : <FiChevronDown />}
-          </button>
-
-          {isTimelineOpen && (
-            <div className="ot-accordion-content">
-              {actionLoading && timeline.length === 0 ? (
-                <div className="ot-loading">
-                  <FiRotateCw className="ot-spin" />
-                  <p>Loading timeline...</p>
-                </div>
-              ) : timeline.length === 0 ? (
-                <div className="ot-empty">
-                  <FiClock className="ot-empty-icon" />
-                  <p>No timeline events available yet</p>
-                </div>
-              ) : (
-                <div className="ot-timeline">
-                  {timeline.map((event, index) => (
-                    <div key={index} className="ot-timeline-item">
-                      <div className="ot-timeline-marker">
-                        {getStatusIcon(event.status)}
-                        {index < timeline.length - 1 && <div className="ot-timeline-line" />}
-                      </div>
-                      <div className="ot-timeline-content">
-                        <div className="ot-timeline-header">
-                          <h3 className="ot-timeline-status">{event.status}</h3>
-                          <span className="ot-timeline-date">
-                            {new Date(event.timestamp).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                        {event.description && <p className="ot-timeline-description">{event.description}</p>}
-                        {event.location && (
-                          <div className="ot-timeline-location">
-                            <FiMapPin />
-                            <span>{event.location}</span>
-                          </div>
-                        )}
-                        {event.trackingNumber && (
-                          <div className="ot-timeline-tracking">
-                            <strong>Tracking:</strong> {event.trackingNumber}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="od-table-block om-accordion">
-          <button className="om-accordion-header" onClick={() => setIsMessagesOpen(!isMessagesOpen)} aria-expanded={isMessagesOpen}>
-            <div className="om-header-content">
-              <FiMessageSquare className="om-header-icon" />
-              <div>
-                <h2 className="om-accordion-title">Messages</h2>
-                <p className="om-accordion-subtitle">Chat with support about this order</p>
-              </div>
-              {unreadCount > 0 && <span className="om-unread-badge">{unreadCount}</span>}
-            </div>
-            {isMessagesOpen ? <FiChevronUp /> : <FiChevronDown />}
-          </button>
-
-          {isMessagesOpen && (
-            <div className="om-accordion-content">
-              <div className="om-messages-container">
-                <div className="om-messages-list">
-                  {actionLoading && orderMessages.length === 0 ? (
-                    <div className="om-loading">
-                      <FiRotateCw className="om-spin" />
-                      <p>Loading messages...</p>
-                    </div>
-                  ) : orderMessages.length === 0 ? (
-                    <div className="om-empty">
-                      <FiMessageSquare className="om-empty-icon" />
-                      <p>No messages yet. Start a conversation!</p>
-                    </div>
-                  ) : (
-                    <>
-                      {orderMessages.map((msg, index) => (
-                        <div key={msg._id || index} className={`om-message ${msg.sender === 'customer' ? 'om-message-sent' : 'om-message-received'}`}>
-                          {msg.sender !== 'customer' && (
-                            <div className="om-message-avatar">
-                              <FiUser />
-                            </div>
-                          )}
-                          <div className="om-message-content">
-                            {msg.sender !== 'customer' && <span className="om-message-sender">Support Team</span>}
-                            <div className="om-message-bubble">
-                              <p>{msg.content || msg.text}</p>
-                              {msg.attachments?.map((file, i) => (
-                                <a key={i} href={file.url} className="om-message-attachment" download target="_blank" rel="noopener noreferrer">
-                                  <FiPaperclip />
-                                  {file.name}
-                                </a>
-                              ))}
-                            </div>
-                            <div className="om-message-footer">
-                              <span className="om-message-time">{formatTimestamp(msg.createdAt || msg.timestamp)}</span>
-                              {msg.sender === 'customer' && (
-                                <span className="om-message-status">
-                                  {msg.isRead ? '✓✓ Read' : msg.delivered ? '✓✓ Delivered' : '✓ Sent'}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                      <div ref={messagesEndRef} />
-                    </>
-                  )}
-                </div>
-
-                <div className="om-input-area">
-                  {selectedFiles.length > 0 && (
-                    <div className="om-selected-files">
-                      {selectedFiles.map((file, index) => (
-                        <div key={index} className="om-selected-file">
-                          <span>{file.name}</span>
-                          <button type="button" onClick={() => removeFile(index)} className="om-remove-file">×</button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="om-input-row">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      multiple
-                      accept="image/*,.pdf"
-                      onChange={handleFileSelect}
-                      style={{ display: 'none' }}
-                    />
-                    <button type="button" className="om-attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">
-                      <FiPaperclip />
-                    </button>
-                    <input
-                      type="text"
-                      className="om-message-input"
-                      placeholder="Type your message..."
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    />
-                    <button type="button" className="om-send-btn" onClick={handleSendMessage} disabled={!newMessage.trim() && selectedFiles.length === 0}>
-                      <FiSend />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* ACTION BUTTONS - ALWAYS VISIBLE */}
+        {/* ACTION BUTTONS */}
         <div className="od-details-action-buttons">
-          <button onClick={() => navigate(`/order/${id}/refund`)} className="od-details-btn od-details-btn-refund">
+          <button 
+            onClick={() => navigate(`/order/${id}/refund`)} 
+            className="od-details-btn od-details-btn-refund"
+          >
             <FiDollarSign />
             Request Refund
           </button>
 
-          <button onClick={() => navigate(`/order/${id}/return`)} className="od-details-btn od-details-btn-return">
+          <button 
+            onClick={() => navigate(`/order/${id}/return`)} 
+            className="od-details-btn od-details-btn-return"
+          >
             <FiRotateCcw />
             Request Return
           </button>
 
-          <button onClick={() => {/* Handle download invoice */}} className="od-details-btn od-details-btn-invoice">
-            <FiDownload />
-            Download Invoice
+          <button 
+            onClick={handleDownloadInvoice} 
+            className="od-details-btn od-details-btn-invoice"
+            disabled={actionLoading}
+          >
+            {actionLoading ? (
+              <>
+                <FiDownload className="od-btn-spinner" />
+                Downloading...
+              </>
+            ) : (
+              <>
+                <FiDownload />
+                Download Invoice
+              </>
+            )}
           </button>
         </div>
       </div>

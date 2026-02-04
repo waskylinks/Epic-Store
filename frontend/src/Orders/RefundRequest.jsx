@@ -302,7 +302,13 @@ function RefundRequest() {
     });
   };
 
-  if (orderLoading) return <Loader />;
+  if (orderLoading) return (
+    <>
+    <Navbar />
+    <Loader />
+    <Footer />
+    </>
+  );
 
   if (!order?._id) {
     return (

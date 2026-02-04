@@ -40,6 +40,7 @@ import SalePage from './pages/SalePage';
 import Wishlist from './pages/Wishlist';
 import NewArrivals from './pages/NewArrivals';
 import ReturnRequest from './Orders/ReturnRequest';
+import ScrollToTop from './components/ScrollToTop';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -57,6 +58,7 @@ function App() {
 
   return (
     <Router>
+      <ScrollToTop />
       <Routes>
         {/* Public Routes */}
         <Route path='/' element={<Home />} />
@@ -92,8 +94,8 @@ function App() {
         <Route path='/order/success' element={<ProtectedRoute element={<OrderSuccess />} />} />
         <Route path='/orders/user' element={<ProtectedRoute element={<MyOrders />} />} />
         <Route path='/order/:id' element={<ProtectedRoute element={<OrderDetails />} />} />
-        <Route path="/orders/:id/refund/request" element={<ProtectedRoute element={<RefundRequest />} />} />
-        <Route path="/orders/:id/return/request" element={<ProtectedRoute element={<ReturnRequest />} />} />
+        <Route path="/order/:id/refund" element={<ProtectedRoute element={<RefundRequest />} />} />
+        <Route path="/order/:id/return" element={<ProtectedRoute element={<ReturnRequest />} />} />
 
         {/* Admin Routes */}
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard />} adminOnly={true} />} />
