@@ -505,11 +505,12 @@ const orderSchema = new mongoose.Schema(
       invoiceNumber: { type: String, unique: true, sparse: true },
       invoiceDate: Date,
       dueDate: Date,
-      pdfUrl: String,
+      pdfData: String,  
+      generatedAt: Date, 
       version: { type: Number, default: 1 },
       history: [{
         version: Number,
-        pdfUrl: String,
+        pdfData: String,  
         generatedAt: Date,
         reason: String
       }],

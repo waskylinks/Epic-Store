@@ -646,9 +646,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 // INVOICE MANAGEMENT
 // ============================================
 
-// ============================================
-// INVOICE MANAGEMENT
-// ============================================
 
 /**
  * Generate/Download invoice for an order
@@ -681,77 +678,45 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   }
 
   try {
-    // Check if invoice already exists and is valid
-    if (order.invoiceInfo?.pdfUrl) {
-      const invoicePath = path.join(process.cwd(), 'public', order.invoiceInfo.pdfUrl);
+    let pdfBuffer;
+
+    // Check if invoice already exists in database
+    if (order.invoiceInfo?.pdfData) {
+      // Use existing invoice from database
+      pdfBuffer = Buffer.from(order.invoiceInfo.pdfData, 'base64');
+      console.log('Serving existing invoice from database');
+    } else {
+      // Generate new invoice
+      console.log('Generating new invoice');
       
-      // Check if file exists
-      if (fs.existsSync(invoicePath)) {
-        // Return existing invoice
-        res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader(
-          'Content-Disposition',
-          `attachment; filename=Invoice-${order.invoiceInfo.invoiceNumber}.pdf`
-        );
-        
-        const fileStream = fs.createReadStream(invoicePath);
-        return fileStream.pipe(res);
+      const companyInfo = {
+        name: process.env.COMPANY_NAME || 'EPIC STORE Inc.',
+        address: process.env.COMPANY_ADDRESS || '123 Commerce Street',
+        city: process.env.COMPANY_CITY || 'New York, NY 10001',
+        country: process.env.COMPANY_COUNTRY || 'United States',
+        taxId: process.env.COMPANY_TAX_ID || 'XX-XXXXXXX'
+      };
+
+      // Generate PDF buffer
+      pdfBuffer = await generateInvoicePDF(order, companyInfo);
+
+      // Convert buffer to base64 for database storage
+      const base64PDF = pdfBuffer.toString('base64');
+
+      // Update order with invoice info
+      if (!order.invoiceInfo) {
+        order.invoiceInfo = {};
       }
+      
+      order.invoiceInfo.pdfData = base64PDF;
+      order.invoiceInfo.invoiceDate = new Date();
+      order.invoiceInfo.generatedAt = new Date();
+      
+      await order.save({ validateBeforeSave: false });
     }
-
-    // Company information
-    const companyInfo = {
-      name: process.env.COMPANY_NAME || 'EPIC STORE Inc.',
-      address: process.env.COMPANY_ADDRESS || '123 Commerce Street',
-      city: process.env.COMPANY_CITY || 'New York, NY 10001',
-      country: process.env.COMPANY_COUNTRY || 'United States',
-      taxId: process.env.COMPANY_TAX_ID || 'XX-XXXXXXX'
-    };
-
-    // Generate PDF buffer
-    const pdfBuffer = await generateInvoicePDF(order, companyInfo);
-
-    // Create invoices directory if it doesn't exist
-    const invoicesDir = path.join(process.cwd(), 'public', 'invoices');
-    if (!fs.existsSync(invoicesDir)) {
-      fs.mkdirSync(invoicesDir, { recursive: true });
-    }
-
-    // Generate filename
-    const invoiceNumber = order.invoiceInfo?.invoiceNumber || `INV-${order._id}`;
-    const filename = `${invoiceNumber}.pdf`;
-    const filepath = path.join(invoicesDir, filename);
-
-    // Save PDF to filesystem
-    fs.writeFileSync(filepath, pdfBuffer);
-
-    // Update order with invoice info
-    if (!order.invoiceInfo) {
-      order.invoiceInfo = {};
-    }
-    
-    const pdfUrl = `/invoices/${filename}`;
-    
-    // Store in history if this is a regeneration
-    if (order.invoiceInfo.pdfUrl) {
-      if (!order.invoiceInfo.history) {
-        order.invoiceInfo.history = [];
-      }
-      order.invoiceInfo.history.push({
-        version: order.invoiceInfo.version || 1,
-        pdfUrl: order.invoiceInfo.pdfUrl,
-        generatedAt: order.invoiceInfo.invoiceDate || new Date(),
-        reason: 'Regenerated'
-      });
-      order.invoiceInfo.version = (order.invoiceInfo.version || 1) + 1;
-    }
-
-    order.invoiceInfo.pdfUrl = pdfUrl;
-    order.invoiceInfo.invoiceDate = new Date();
-    
-    await order.save({ validateBeforeSave: false });
 
     // Set response headers for PDF download
+    const invoiceNumber = order.invoiceInfo?.invoiceNumber || order._id;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
@@ -759,7 +724,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     );
     res.setHeader('Content-Length', pdfBuffer.length);
 
-    // Send PDF
+    // Send PDF buffer
     return res.send(pdfBuffer);
 
   } catch (error) {
@@ -767,6 +732,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Failed to generate invoice', 500));
   }
 });
+
 
 
 
