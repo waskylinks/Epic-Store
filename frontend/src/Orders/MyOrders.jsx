@@ -103,26 +103,6 @@ function MyOrders() {
     }
   };
 
-  const handleDownloadReceipt = async (reference, orderId) => {
-    if (!reference) {
-      toast.error("Receipt not found for this order", {
-        position: "top-center",
-      });
-      return;
-    }
-
-    try {
-      await dispatch(downloadReceiptPdf({ reference })).unwrap();
-      toast.success("Receipt downloaded successfully", {
-        position: "top-center",
-      });
-    } catch (err) {
-      toast.error(err || "Failed to download receipt", {
-        position: "top-center",
-      });
-    }
-  };
-
   const openTrackingModal = (order) => {
     setTrackingModal({ open: true, order });
   };
@@ -523,15 +503,6 @@ function MyOrders() {
                     <span>View Details</span>
                     <FiChevronRight className="mo-chevron-icon" />
                   </Link>
-
-                  <button
-                    className="mo-action-btn mo-secondary-btn"
-                    onClick={() => handleDownloadReceipt(order.paymentInfo?.reference, order._id)}
-                    disabled={downloadLoading}
-                  >
-                    <FiDownload />
-                    <span>{downloadLoading ? "Downloading..." : "Receipt"}</span>
-                  </button>
 
                   <button
                     onClick={() => openMessagesModal(order)}
