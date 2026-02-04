@@ -274,13 +274,14 @@ function RefundRequest() {
     toast.success('Message sent', { position: 'top-center' });
   };
 
-  const formatCurrency = (amount, currency = 'NGN') => {
-    return new Intl.NumberFormat('en-NG', {
+  const formatCurrency = (amount, currency = 'USD') => {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currency,
+      currency,
       minimumFractionDigits: 2,
     }).format(amount);
   };
+
 
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
