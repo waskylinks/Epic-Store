@@ -72,45 +72,16 @@ function OrderDetails() {
 
   const handleDownloadInvoice = async () => {
     try {
-      const result = await dispatch(downloadInvoice(id)).unwrap();
-      
-      // Check if invoice exists and has a PDF URL
-      if (result?.invoice?.pdfUrl) {
-        window.open(result.invoice.pdfUrl, '_blank');
-        toast.success('Invoice opened successfully', { 
-          position: 'top-center',
-          autoClose: 2000 
-        });
-      } 
-      // Check if invoice has base64 data
-      else if (result?.invoice?.data) {
-        const linkSource = `data:application/pdf;base64,${result.invoice.data}`;
-        const downloadLink = document.createElement('a');
-        const fileName = `invoice-${id}.pdf`;
-        
-        downloadLink.href = linkSource;
-        downloadLink.download = fileName;
-        downloadLink.click();
-        
-        toast.success('Invoice downloaded successfully', { 
-          position: 'top-center',
-          autoClose: 2000 
-        });
-      } 
-      // Invoice not generated yet
-      else {
-        toast.info('Invoice not yet generated for this order', { 
-          position: 'top-center',
-          autoClose: 3000 
-        });
-      }
+      await dispatch(downloadInvoice(id)).unwrap();
+      toast.success('Invoice downloaded successfully', { 
+        position: 'top-center',
+        autoClose: 2000 
+      });
     } catch (err) {
-      // Handle specific error message from backend
       const errorMessage = err || 'Failed to download invoice';
       
-      if (errorMessage.toLowerCase().includes('not yet generated') || 
-          errorMessage.toLowerCase().includes('not generated')) {
-        toast.info('Invoice not yet generated for this order', { 
+      if (errorMessage.toLowerCase().includes('paid orders')) {
+        toast.info('Invoice can only be generated for paid orders', { 
           position: 'top-center',
           autoClose: 3000 
         });

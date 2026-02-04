@@ -666,17 +666,51 @@ export const downloadInvoice = createAsyncThunk(
   "order/downloadInvoice",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${API_BASE}/orders/${orderId}/invoice`, {
-        withCredentials: true,
-      });
-      return { orderId, invoice: data.invoice };
+      const response = await axios.get(
+        `${API_BASE}/orders/${orderId}/invoice`,
+        {
+          withCredentials: true,
+          responseType: 'blob', // Important for PDF download
+        }
+      );
+
+      // Create blob URL for the PDF
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      
+      // Create download link
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `Invoice-${orderId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      return { 
+        success: true, 
+        message: 'Invoice downloaded successfully' 
+      };
     } catch (error) {
+      // Handle non-PDF responses (error messages)
+      if (error.response?.data instanceof Blob) {
+        const text = await error.response.data.text();
+        try {
+          const jsonError = JSON.parse(text);
+          return rejectWithValue(jsonError.message || "Failed to download invoice");
+        } catch {
+          return rejectWithValue(text || "Failed to download invoice");
+        }
+      }
       return rejectWithValue(
         error.response?.data?.message || "Failed to download invoice"
       );
     }
   }
 );
+
 
 // ============================================
 // SLICE DEFINITION
@@ -1063,19 +1097,21 @@ const orderSlice = createSlice({
     // ============================================
     // INVOICE MANAGEMENT
     // ============================================
-    builder
-      .addCase(downloadInvoice.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(downloadInvoice.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.invoice = action.payload.invoice;
-      })
-      .addCase(downloadInvoice.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
+      builder
+        .addCase(downloadInvoice.pending, (state) => {
+          state.actionLoading = true;
+          state.error = null;
+        })
+        .addCase(downloadInvoice.fulfilled, (state, action) => {
+          state.actionLoading = false;
+          state.message = action.payload.message;
+          state.success = true;
+        })
+        .addCase(downloadInvoice.rejected, (state, action) => {
+          state.actionLoading = false;
+          state.error = action.payload;
+        });
+
   },
 });
 
