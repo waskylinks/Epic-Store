@@ -9,6 +9,8 @@ import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
 import Product from '../models/product-model.js';
 import crypto from 'crypto';
+import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
+import Cart from '../models/cart-model.js';
 
 // Helper: Invalidate payment-related caches
 const invalidatePaymentCaches = async () => {
@@ -159,6 +161,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 /**
  * Verify Payment - Creates order ONLY after successful payment verification
  * ✅ FIXED: Handles Stripe payment_intent_id lookup via alias
+ * Verify Payment - with customer analytics and cart conversion tracking
  * @route POST /api/v1/payment/verify
  * @access Private
  */
@@ -172,7 +175,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     console.log(`🔍 Verifying ${gateway} payment with reference: ${reference}`);
 
-    // 1. ✅ Get payment session from Redis (handles alias lookup automatically)
+    // 1. Get payment session from Redis
     const session = await getPaymentSession(reference);
     
     if (!session) {
@@ -182,7 +185,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // Get the actual order reference (in case we got an alias)
     const orderReference = session.reference;
 
     // 2. Verify user owns this payment session
@@ -199,7 +201,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     }
 
     // 4. Check if order already exists (idempotency check)
-    // Use the actual order reference, not the payment_intent_id
     const existingOrder = await Order.findOne({
         $or: [
             { "paymentInfo.reference": orderReference },
@@ -210,7 +211,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     if (existingOrder) {
         console.log(`ℹ️ Order already exists for reference: ${orderReference}`);
         
-        // Clean up both session keys
         await deletePaymentSession(reference);
         if (reference !== orderReference) {
             await deletePaymentSession(orderReference);
@@ -238,14 +238,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     try {
         if (gateway === 'stripe') {
-            // For Stripe, reference is payment_intent_id
             gatewayResponse = await paymentService.verifyStripeTransaction(reference);
             paymentVerified = gatewayResponse.status === "succeeded";
         } else if (gateway === 'paystack') {
             gatewayResponse = await paymentService.verifyPaystackTransaction(reference);
             paymentVerified = gatewayResponse.status === "success";
         } else if (gateway === 'flutterwave') {
-            // For Flutterwave, reference is transaction_id
             gatewayResponse = await paymentService.verifyFlutterwaveTransaction(reference);
             paymentVerified = gatewayResponse.status === "successful";
         }
@@ -257,8 +255,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.log(`✅ ${gateway} payment verified successfully`);
     } catch (err) {
         console.error(`❌ ${gateway} verification failed:`, err);
-        
-        // Keep session for retry
         return next(new HandleError(
             `Payment verification failed: ${err.message}`,
             500
@@ -269,17 +265,16 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     let gatewayAmount, gatewayCurrency;
     
     if (gateway === 'stripe') {
-        gatewayAmount = gatewayResponse.amount / 100; // Convert from cents
+        gatewayAmount = gatewayResponse.amount / 100;
         gatewayCurrency = gatewayResponse.currency.toUpperCase();
     } else if (gateway === 'paystack') {
-        gatewayAmount = gatewayResponse.amount / 100; // Convert from kobo
+        gatewayAmount = gatewayResponse.amount / 100;
         gatewayCurrency = gatewayResponse.currency;
     } else if (gateway === 'flutterwave') {
         gatewayAmount = parseFloat(gatewayResponse.amount);
         gatewayCurrency = gatewayResponse.currency;
     }
 
-    // Validate currency
     if (gatewayCurrency !== session.currency) {
         return next(new HandleError(
             `Currency mismatch: expected ${session.currency}, got ${gatewayCurrency}`,
@@ -287,7 +282,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // Validate amount (allow 1 cent difference for rounding)
     if (Math.abs(session.totalPrice - gatewayAmount) > 0.01) {
         return next(new HandleError(
             `Amount mismatch: expected ${session.totalPrice}, gateway charged ${gatewayAmount}`,
@@ -295,7 +289,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 8. ✅ Create the order with the ORIGINAL order reference
+    // 8. Create the order
     let order;
     try {
         order = await Order.create({
@@ -308,7 +302,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             totalPrice: session.totalPrice,
             amountPaid: gatewayAmount,
             paymentInfo: {
-                reference: orderReference, // Use original order reference
+                reference: orderReference,
                 providerTxId: gatewayResponse.id || gatewayResponse.tx_id,
                 stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
                 status: "success",
@@ -317,7 +311,13 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 amount: gatewayAmount,
                 paidAt: new Date()
             },
-            orderStatus: "Processing"
+            orderStatus: "Processing",
+            // NEW: Add analytics data from session if available
+            analytics: session.analytics || {
+                source: 'direct',
+                device: session.device,
+                browser: session.browser
+            }
         });
 
         // Store payment metadata
@@ -385,8 +385,33 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 }
             } catch (err) {
                 console.error(`Failed to update stock for product ${item.product}:`, err);
-                // Don't fail the order creation if stock update fails
             }
+        }
+
+        // 10. NEW: Mark cart as converted (if cart session exists)
+        try {
+            const cartSession = await Cart.findOne({
+                user: userId,
+                status: 'active'
+            }).sort({ lastActivityAt: -1 }).limit(1);
+
+            if (cartSession) {
+                cartSession.markAsConverted(order._id);
+                await cartSession.save();
+                console.log(`✅ Cart session ${cartSession._id} marked as converted`);
+            }
+        } catch (cartErr) {
+            console.error('Failed to mark cart as converted:', cartErr);
+            // Don't fail the order if cart tracking fails
+        }
+
+        // 11. NEW: Sync customer analytics
+        try {
+            await syncCustomerAfterOrder(order._id);
+            console.log(`✅ Customer analytics synced for user ${userId} after order ${order._id}`);
+        } catch (analyticsErr) {
+            console.error('Failed to sync customer analytics:', analyticsErr);
+            // Don't fail the order if analytics sync fails
         }
 
     } catch (err) {
@@ -397,7 +422,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 10. Create receipt
+    // 12. Create receipt
     try {
         const receipt = await createReceiptIfNotExists({
             orderId: order._id,
@@ -414,18 +439,17 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         });
         console.log(`✅ Receipt created: ${receipt._id}`);
     } catch (receiptErr) {
-        // Log but don't fail the verification
         console.error("❌ Receipt creation failed:", receiptErr);
     }
 
-    // 11. ✅ Clean up BOTH Redis sessions (original + alias)
+    // 13. Clean up Redis sessions
     await deletePaymentSession(reference);
     if (reference !== orderReference) {
         await deletePaymentSession(orderReference);
     }
     console.log(`✅ Payment sessions cleaned up: ${reference} & ${orderReference}`);
 
-    // 12. Invalidate caches
+    // 14. Invalidate caches
     await invalidatePaymentCaches();
 
     return res.status(200).json({

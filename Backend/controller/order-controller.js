@@ -7,6 +7,8 @@ import { deleteCachePattern } from '../utils/redis.js';
 import generateInvoicePDF from '../utils/generateInvoicePDF.js';
 import fs from 'fs';
 import path from 'path';
+import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
+
 
 // ============================================
 // BASIC ORDER OPERATIONS
@@ -81,13 +83,15 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     itemPrice,
     taxPrice,
     shippingPrice,
-    totalPrice
+    totalPrice,
+    analytics // NEW: Accept analytics data from frontend
   } = req.body;
 
   if (!orderItems || orderItems.length === 0) {
     return next(new HandleError('No order items provided', 400));
   }
 
+  // Create order with analytics data
   const order = await Order.create({
     orderItems,
     shippingInfo,
@@ -97,10 +101,26 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     shippingPrice,
     totalPrice,
     user: req.user._id,
-    paidAt: paymentInfo?.status === 'paid' ? Date.now() : null
+    paidAt: paymentInfo?.status === 'paid' ? Date.now() : null,
+    // NEW: Include analytics/attribution data
+    analytics: analytics || {
+      source: 'direct',
+      isFirstPurchase: true // Will be calculated properly in customer analytics
+    }
   });
 
   await order.populate('orderItems.product', 'name images price');
+
+  // NEW: Sync customer analytics after successful order creation
+  if (paymentInfo?.status === 'success' || paymentInfo?.status === 'paid') {
+    try {
+      await syncCustomerAfterOrder(order._id);
+      console.log(`Customer analytics synced for user ${req.user._id} after order ${order._id}`);
+    } catch (error) {
+      // Log but don't fail the order creation
+      console.error('Failed to sync customer analytics:', error);
+    }
+  }
 
   return res.status(201).json({
     success: true,
@@ -1093,6 +1113,7 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
  * Update order status (Admin)
  * @route PUT /api/v1/admin/order/:id
  * @access Private (Admin only)
+ * with analytics sync on delivery
  */
 export const updateOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
@@ -1112,7 +1133,6 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Don't allow status change if already cancelled or delivered
   if (order.orderStatus === 'Cancelled' && status !== 'Cancelled') {
     return next(new HandleError('Cannot update a cancelled order', 400));
   }
@@ -1120,23 +1140,32 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
   const oldStatus = order.orderStatus;
   order.orderStatus = status;
 
-  // Update delivery date if status is Delivered
   if (status === 'Delivered' && !order.deliveredAt) {
     order.deliveredAt = new Date();
   }
 
-  // Add status history
   order.addStatusHistory(status, req.user._id, note || `Status updated from ${oldStatus} to ${status}`);
   order.addAuditEntry('status_updated', req.user._id, { oldStatus, newStatus: status, note });
 
-  // If status is delivered, update product stock
   if (status === 'Delivered' && oldStatus !== 'Delivered') {
     for (const item of order.orderItems) {
       const product = await Product.findById(item.product);
       if (product) {
-        product.stock -= item.quantity;
+        if (product.inventory?.stock !== undefined) {
+          product.inventory.stock -= item.quantity;
+        } else {
+          product.stock -= item.quantity;
+        }
         await product.save({ validateBeforeSave: false });
       }
+    }
+
+    // NEW: Sync customer analytics when order is delivered
+    try {
+      await syncCustomerAfterOrder(order._id);
+      console.log(`Customer analytics synced after delivery of order ${order._id}`);
+    } catch (error) {
+      console.error('Failed to sync customer analytics on delivery:', error);
     }
   }
 
@@ -1149,6 +1178,7 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
     order
   });
 });
+
 
 /**
  * Delete order (Admin)
