@@ -1,6 +1,10 @@
 import express from 'express';
 import {
   getCartDetails,
+  addToCart,
+  updateCartItem,
+  removeFromCart,
+  clearCart,
   validateCheckout,
   applyDiscountCode
 } from '../controller/cart-controller.js';
@@ -9,11 +13,12 @@ import {
   syncCartWithRequestBody,
   trackFunnelStep
 } from '../middleware/cart-tracking-middleware.js';
+import { trackAddToCart } from '../middleware/product-tracking-middleware.js';
 
 const router = express.Router();
 
 // ============================================
-// CART ROUTES (with analytics tracking)
+// CART CRUD OPERATIONS (with analytics tracking)
 // ============================================
 
 /**
@@ -28,6 +33,59 @@ router.post(
   trackCartEvent('view'),
   getCartDetails
 );
+
+/**
+ * Add item to cart
+ * Tracks: add to cart event + product analytics
+ * @route POST /api/v1/cart/add
+ * @access Public
+ */
+router.post(
+  '/add',
+  trackAddToCart,
+  trackCartEvent('add'),
+  addToCart
+);
+
+/**
+ * Update cart item quantity
+ * Tracks: update cart event
+ * @route PUT /api/v1/cart/update
+ * @access Public
+ */
+router.put(
+  '/update',
+  trackCartEvent('update'),
+  updateCartItem
+);
+
+/**
+ * Remove item from cart
+ * Tracks: remove from cart event
+ * @route DELETE /api/v1/cart/remove/:productId
+ * @access Public
+ */
+router.delete(
+  '/remove/:productId',
+  trackCartEvent('remove'),
+  removeFromCart
+);
+
+/**
+ * Clear entire cart
+ * Tracks: clear cart event
+ * @route DELETE /api/v1/cart/clear
+ * @access Public
+ */
+router.delete(
+  '/clear',
+  trackCartEvent('remove'),
+  clearCart
+);
+
+// ============================================
+// CHECKOUT FLOW (with funnel tracking)
+// ============================================
 
 /**
  * Validate cart and calculate totals before checkout
@@ -55,7 +113,7 @@ router.post(
 );
 
 // ============================================
-// ADDITIONAL CART TRACKING ENDPOINTS
+// FUNNEL TRACKING ENDPOINTS
 // ============================================
 
 /**

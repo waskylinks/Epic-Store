@@ -59,6 +59,154 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
+// ADD TO CART - Add item to cart
+// ============================================
+
+/**
+ * Add item to cart (or update quantity)
+ * @route POST /api/v1/cart/add
+ * @access Public
+ */
+export const addToCart = handleAsyncError(async (req, res, next) => {
+    const { product: productId, quantity = 1 } = req.body;
+
+    if (!productId) {
+        return next(new HandleError('Product ID is required', 400));
+    }
+
+    // Validate product exists and is available
+    const product = await Product.findById(productId);
+
+    if (!product) {
+        return next(new HandleError('Product not found', 404));
+    }
+
+    if (product.status !== 'published') {
+        return next(new HandleError('Product is not available', 400));
+    }
+
+    // Check stock
+    const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+    if (availableStock < quantity) {
+        return next(new HandleError(
+            `Only ${availableStock} items available in stock`, 
+            400
+        ));
+    }
+
+    // Get current price
+    let currentPrice = 0;
+    if (product.pricing?.sale && product.pricing.sale > 0) {
+        currentPrice = product.pricing.sale;
+    } else if (product.pricing?.regular && product.pricing.regular > 0) {
+        currentPrice = product.pricing.regular;
+    } else if (product.price && product.price > 0) {
+        currentPrice = product.price;
+    } else {
+        return next(new HandleError('Product has no valid price', 500));
+    }
+
+    // Return item details
+    return res.status(200).json({
+        success: true,
+        message: 'Item added to cart',
+        item: {
+            product: product._id,
+            name: product.name,
+            price: currentPrice,
+            quantity,
+            image: product.images?.[0]?.url || product.image?.[0]?.url,
+            stock: availableStock
+        }
+    });
+});
+
+// ============================================
+// UPDATE CART ITEM - Update quantity
+// ============================================
+
+/**
+ * Update cart item quantity
+ * @route PUT /api/v1/cart/update
+ * @access Public
+ */
+export const updateCartItem = handleAsyncError(async (req, res, next) => {
+    const { product: productId, quantity } = req.body;
+
+    if (!productId || !quantity) {
+        return next(new HandleError('Product ID and quantity are required', 400));
+    }
+
+    if (quantity < 1) {
+        return next(new HandleError('Quantity must be at least 1', 400));
+    }
+
+    // Validate product
+    const product = await Product.findById(productId);
+
+    if (!product) {
+        return next(new HandleError('Product not found', 404));
+    }
+
+    // Check stock
+    const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+    if (availableStock < quantity) {
+        return next(new HandleError(
+            `Only ${availableStock} items available in stock`, 
+            400
+        ));
+    }
+
+    return res.status(200).json({
+        success: true,
+        message: 'Cart updated',
+        item: {
+            product: product._id,
+            quantity: Math.min(quantity, availableStock)
+        }
+    });
+});
+
+// ============================================
+// REMOVE FROM CART
+// ============================================
+
+/**
+ * Remove item from cart
+ * @route DELETE /api/v1/cart/remove/:productId
+ * @access Public
+ */
+export const removeFromCart = handleAsyncError(async (req, res, next) => {
+    const { productId } = req.params;
+
+    if (!productId) {
+        return next(new HandleError('Product ID is required', 400));
+    }
+
+    return res.status(200).json({
+        success: true,
+        message: 'Item removed from cart',
+        productId
+    });
+});
+
+// ============================================
+// CLEAR CART
+// ============================================
+
+/**
+ * Clear entire cart
+ * @route DELETE /api/v1/cart/clear
+ * @access Public
+ */
+export const clearCart = handleAsyncError(async (req, res, next) => {
+    return res.status(200).json({
+        success: true,
+        message: 'Cart cleared'
+    });
+});
+
+// ============================================
 // VALIDATE CHECKOUT - Validate and calculate totals
 // ============================================
 

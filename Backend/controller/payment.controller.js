@@ -17,7 +17,8 @@ const invalidatePaymentCaches = async () => {
     try {
         await Promise.all([
             deleteCachePattern('admin_stats*'),
-            deleteCachePattern('analytics_*')
+            deleteCachePattern('analytics_*'),
+            deleteCachePattern('customer_*')
         ]);
     } catch (error) {
         console.error('Cache invalidation error:', error);
@@ -51,7 +52,21 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(err);
     }
 
-    // 3. ✅ Create payment session in Redis with OUR generated reference
+    // 3. ✅ NEW: Capture attribution data from request
+    const attributionData = req.attributionData || {
+        source: 'direct',
+        medium: null,
+        campaign: null,
+        referrer: null,
+        landingPage: null
+    };
+
+    const deviceInfo = req.deviceInfo || {
+        device: 'desktop',
+        browser: 'unknown'
+    };
+
+    // 4. Create payment session in Redis with attribution data
     let reference;
     try {
         reference = await createPaymentSession({
@@ -66,20 +81,29 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             totalPrice: validatedOrder.totalPrice,
             userEmail: user.email,
             userName: user.name,
-            validation: validatedOrder.validation
+            validation: validatedOrder.validation,
+            // ✅ NEW: Store attribution data in session
+            analytics: {
+                source: attributionData.source,
+                medium: attributionData.medium,
+                campaign: attributionData.campaign,
+                referrer: attributionData.referrer,
+                landingPage: attributionData.landingPage,
+                device: deviceInfo.device,
+                browser: deviceInfo.browser
+            }
         });
 
-        console.log(`✅ Payment session created in Redis: ${reference} (expires in 30min)`);
+        console.log(`✅ Payment session created with attribution: ${reference}`);
     } catch (err) {
         console.error("Payment session creation failed:", err);
         return next(new HandleError("Failed to initialize payment session", 500));
     }
 
-    // 4. Initialize payment with the gateway
+    // 5. Initialize payment with the gateway
     let gatewayResponse = null;
     
     try {
-        // Common parameters for all gateways
         const initParams = {
             email: user.email,
             amount: validatedOrder.totalPrice,
@@ -93,15 +117,11 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             customer_phone: shippingInfo.phoneNo
         };
 
-        // Initialize payment using the factory
         gatewayResponse = await PaymentFactory.initializePayment(gateway, initParams);
-        
         console.log(`✅ ${gateway} payment initialized for reference: ${reference}`);
         
     } catch (err) {
-        // ✅ If gateway fails, clean up the Redis session
         await deletePaymentSession(reference);
-        
         console.error(`❌ ${gateway} initialization error:`, err);
         return next(new HandleError(
             `Failed to initialize ${gateway} payment: ${err.message}`, 
@@ -109,24 +129,22 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         ));
     }
 
-    // 5. ✅ CRITICAL FIX: For Stripe, create alias session with payment_intent_id
+    // 6. For Stripe, create alias session with payment_intent_id
     if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
         try {
             await createSessionAlias(gatewayResponse.payment_intent_id, reference);
             console.log(`✅ Stripe alias created: ${gatewayResponse.payment_intent_id} → ${reference}`);
         } catch (err) {
             console.error("Failed to create Stripe alias:", err);
-            // Continue anyway - this is not critical enough to fail the request
         }
     }
 
-    // 6. Return payment initialization data to frontend
+    // 7. Return payment initialization data
     const responseData = {
         reference,
         amount: validatedOrder.totalPrice,
         currency: validatedOrder.currency,
         gateway,
-        // Order details for display
         orderItems: validatedOrder.orderItems.map(item => ({
             name: item.name,
             quantity: item.quantity,
@@ -140,7 +158,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         }
     };
 
-    // Add gateway-specific data
     if (gateway === 'paystack') {
         responseData.authorization_url = gatewayResponse.authorization_url;
         responseData.access_code = gatewayResponse.access_code;
@@ -159,9 +176,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 });
 
 /**
- * Verify Payment - Creates order ONLY after successful payment verification
- * ✅ FIXED: Handles Stripe payment_intent_id lookup via alias
- * Verify Payment - with customer analytics and cart conversion tracking
+ * Verify Payment - Creates order with complete analytics tracking
  * @route POST /api/v1/payment/verify
  * @access Private
  */
@@ -200,7 +215,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 4. Check if order already exists (idempotency check)
+    // 4. Check if order already exists (idempotency)
     const existingOrder = await Order.findOne({
         $or: [
             { "paymentInfo.reference": orderReference },
@@ -224,7 +239,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         });
     }
 
-    // 5. Get payment service for the gateway
+    // 5. Get payment service
     let paymentService;
     try {
         paymentService = PaymentFactory.getService(gateway);
@@ -261,7 +276,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 7. Validate amount and currency from gateway response
+    // 7. Validate amount and currency
     let gatewayAmount, gatewayCurrency;
     
     if (gateway === 'stripe') {
@@ -289,7 +304,16 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 8. Create the order
+    // 8. ✅ Calculate isFirstPurchase and purchaseNumber
+    const userOrderCount = await Order.countDocuments({
+        user: userId,
+        'paymentInfo.status': 'success'
+    });
+
+    const isFirstPurchase = userOrderCount === 0;
+    const purchaseNumber = userOrderCount + 1;
+
+    // 9. Create the order with complete analytics
     let order;
     try {
         order = await Order.create({
@@ -312,11 +336,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 paidAt: new Date()
             },
             orderStatus: "Processing",
-            // NEW: Add analytics data from session if available
-            analytics: session.analytics || {
-                source: 'direct',
-                device: session.device,
-                browser: session.browser
+            // ✅ COMPLETE ANALYTICS DATA
+            analytics: {
+                source: session.analytics?.source || 'direct',
+                medium: session.analytics?.medium || null,
+                campaign: session.analytics?.campaign || null,
+                referrer: session.analytics?.referrer || null,
+                landingPage: session.analytics?.landingPage || null,
+                device: session.analytics?.device || 'desktop',
+                browser: session.analytics?.browser || 'unknown',
+                customerSegment: null, // Will be calculated by customer analytics
+                isFirstPurchase,
+                purchaseNumber
             }
         });
 
@@ -369,9 +400,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         await order.save();
         await order.populate('orderItems.product', 'name images price');
 
-        console.log(`✅ Order created successfully: ${order._id} for reference: ${orderReference}`);
+        console.log(`✅ Order created with analytics: ${order._id}`);
 
-        // 9. Update product stock
+        // 10. Update product stock
         for (const item of session.orderItems) {
             try {
                 const product = await Product.findById(item.product);
@@ -388,7 +419,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             }
         }
 
-        // 10. NEW: Mark cart as converted (if cart session exists)
+        // 11. Mark cart as converted
         try {
             const cartSession = await Cart.findOne({
                 user: userId,
@@ -398,20 +429,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             if (cartSession) {
                 cartSession.markAsConverted(order._id);
                 await cartSession.save();
-                console.log(`✅ Cart session ${cartSession._id} marked as converted`);
+                console.log(`✅ Cart converted: ${cartSession._id}`);
             }
         } catch (cartErr) {
             console.error('Failed to mark cart as converted:', cartErr);
-            // Don't fail the order if cart tracking fails
         }
 
-        // 11. NEW: Sync customer analytics
+        // 12. Sync customer analytics
         try {
             await syncCustomerAfterOrder(order._id);
-            console.log(`✅ Customer analytics synced for user ${userId} after order ${order._id}`);
+            console.log(`✅ Customer analytics synced for order ${order._id}`);
         } catch (analyticsErr) {
             console.error('Failed to sync customer analytics:', analyticsErr);
-            // Don't fail the order if analytics sync fails
         }
 
     } catch (err) {
@@ -422,7 +451,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 12. Create receipt
+    // 13. Create receipt
     try {
         const receipt = await createReceiptIfNotExists({
             orderId: order._id,
@@ -442,14 +471,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.error("❌ Receipt creation failed:", receiptErr);
     }
 
-    // 13. Clean up Redis sessions
+    // 14. Clean up Redis sessions
     await deletePaymentSession(reference);
     if (reference !== orderReference) {
         await deletePaymentSession(orderReference);
     }
-    console.log(`✅ Payment sessions cleaned up: ${reference} & ${orderReference}`);
+    console.log(`✅ Sessions cleaned up`);
 
-    // 14. Invalidate caches
+    // 15. Invalidate caches
     await invalidatePaymentCaches();
 
     return res.status(200).json({
