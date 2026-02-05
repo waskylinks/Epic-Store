@@ -18,7 +18,6 @@ import {
   FiRefreshCw,
   FiChevronRight,
   FiCalendar,
-  FiDollarSign,
   FiBox,
 } from "react-icons/fi";
 
@@ -74,6 +73,7 @@ function MyOrders() {
           });
           if (response.ok) {
             const data = await response.json();
+            // Only count unread messages from admin
             const unread = data.messages?.filter(msg => 
               !msg.isRead && (msg.sender === 'admin' || msg.senderType === 'admin')
             ).length || 0;
@@ -114,6 +114,9 @@ function MyOrders() {
   const openMessagesModal = async (order) => {
     setMessagesModal({ open: true, order, messages: [], loading: true });
     
+    // Immediately mark as read in UI
+    setUnreadCounts(prev => ({ ...prev, [order._id]: 0 }));
+    
     try {
       const response = await fetch(`/api/v1/orders/${order._id}/messages`, {
         credentials: 'include'
@@ -127,12 +130,11 @@ function MyOrders() {
           loading: false 
         }));
         
+        // Mark messages as read on server
         await fetch(`/api/v1/orders/${order._id}/messages/read`, {
           method: 'PUT',
           credentials: 'include'
         });
-        
-        setUnreadCounts(prev => ({ ...prev, [order._id]: 0 }));
       } else {
         throw new Error('Failed to fetch messages');
       }
@@ -482,8 +484,7 @@ function MyOrders() {
                         </span>
                       </div>
                     </div>
-                    <div className="mo-summary-item">
-                      <FiDollarSign className="mo-summary-icon" />
+                    <div className="mo-summary-item mo-summary-total">
                       <div className="mo-summary-details">
                         <span className="mo-summary-label">Total</span>
                         <span className="mo-summary-value mo-total-amount">

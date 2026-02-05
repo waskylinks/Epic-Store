@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   FiX,
   FiSend,
@@ -19,6 +19,23 @@ function MessagesModal({
 }) {
   const [newMessage, setNewMessage] = useState("");
   const [sendingMessage, setSendingMessage] = useState(false);
+
+  // Mark messages as read when modal opens
+  useEffect(() => {
+    if (isOpen && order?._id) {
+      const markAsRead = async () => {
+        try {
+          await fetch(`/api/v1/orders/${order._id}/messages/read`, {
+            method: 'PUT',
+            credentials: 'include'
+          });
+        } catch (err) {
+          console.error('Failed to mark messages as read:', err);
+        }
+      };
+      markAsRead();
+    }
+  }, [isOpen, order?._id]);
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !order) return;
