@@ -30,6 +30,15 @@ import cartRoutes from './routes/cart-routes.js';
 import shippingRoutes from './routes/shipping-routes.js';
 import cartAnalyticsRoutes from './routes/cart-analytics-routes.js';
 
+import customerAnalyticsRoutes from './routes/customer-analytics-routes.js';
+import returnRefundAnalyticsRoutes from './routes/return-refund-analytics-routes.js';
+import operationalAnalyticsRoutes from './routes/operational-analytics-routes.js';
+import productAnalyticsRoutes from './routes/product-analytics-routes.js';
+import attributionAnalyticsRoutes from './routes/attribution-analytics-routes.js';
+
+import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
+
+
 // Import passport configuration
 import './config/passport.js';
 
@@ -226,6 +235,9 @@ app.use(helmetConfig);
 app.use(hppProtection);
 app.use(additionalSecurityHeaders);
 
+// Track UTM parameters and attribution data on ALL requests
+app.use(trackAttribution);
+
 /* ================= ROUTES ================= */
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
@@ -239,6 +251,15 @@ app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1', cartRoutes); // For /products/:id/availability endpoint
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/analytics/cart', cartAnalyticsRoutes);
+
+
+
+app.use('/api/v1/analytics/customers', customerAnalyticsRoutes);
+app.use('/api/v1/analytics', returnRefundAnalyticsRoutes);
+app.use('/api/v1/analytics/operations', operationalAnalyticsRoutes);
+app.use('/api/v1/analytics/products', productAnalyticsRoutes);
+app.use('/api/v1/analytics/attribution', attributionAnalyticsRoutes);
+
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {

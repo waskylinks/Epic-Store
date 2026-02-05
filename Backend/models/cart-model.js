@@ -8,15 +8,12 @@ const cartSchema = new mongoose.Schema(
     sessionId: {
       type: String,
       required: true,
-      index: true,
       unique: true
     },
     
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      index: true
-      // Optional - can be null for guest carts
     },
 
     // ============================================
@@ -246,7 +243,6 @@ const cartSchema = new mongoose.Schema(
 
     expiresAt: {
       type: Date,
-      index: true
       // Auto-set to 30 days from last activity
     },
 

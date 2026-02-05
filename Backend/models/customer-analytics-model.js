@@ -468,7 +468,7 @@ const customerAnalyticsSchema = new mongoose.Schema(
 // ============================================
 // INDEXES
 // ============================================
-customerAnalyticsSchema.index({ user: 1 }, { unique: true });
+
 customerAnalyticsSchema.index({ 'rfm.segment': 1, 'clv.totalRevenue': -1 });
 customerAnalyticsSchema.index({ valueTier: 1, 'clv.totalRevenue': -1 });
 customerAnalyticsSchema.index({ 'risk.churnPrediction': 1, 'risk.isAtRisk': 1 });
