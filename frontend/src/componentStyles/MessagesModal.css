@@ -169,54 +169,9 @@
 
 .mm-message {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  gap: 8px;
+  align-items: flex-end;
   animation: mm-fadeIn 0.2s ease;
-}
-
-/* USER MESSAGES - ALWAYS LEFT */
-.mm-message-user {
-  flex-direction: row;
-}
-
-/* ADMIN MESSAGES - ALWAYS RIGHT */
-.mm-message-admin {
-  flex-direction: row-reverse;
-}
-
-.mm-message-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  overflow: hidden;
-}
-
-.mm-message-avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 50%;
-}
-
-.mm-support-avatar-icon,
-.mm-customer-avatar-icon {
-  width: 100%;
-  height: 100%;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 18px;
-  color: white;
-}
-
-.mm-support-avatar-icon {
-  background: #4f46e5;
-}
-
-.mm-customer-avatar-icon {
-  background: #ff3c3c;
 }
 
 .mm-message-content {
@@ -227,45 +182,21 @@
   min-width: 0;
 }
 
-/* USER MESSAGES - LEFT ALIGNED */
-.mm-message-user .mm-message-content {
-  align-items: flex-start;
-}
-
-/* ADMIN MESSAGES - RIGHT ALIGNED */
-.mm-message-admin .mm-message-content {
-  align-items: flex-end;
-}
-
+/* Sender Name Styling */
 .mm-message-sender {
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: #6b7280;
   font-weight: 600;
-  padding: 0 8px;
+  padding: 0 12px 2px;
+  line-height: 1;
 }
 
 .mm-message-bubble {
   padding: 12px 16px;
-  border-radius: 12px;
+  border-radius: 18px;
   word-wrap: break-word;
   overflow-wrap: break-word;
   max-width: 100%;
-}
-
-/* USER MESSAGE BUBBLES - GRAY */
-.mm-message-user .mm-message-bubble {
-  background: white;
-  color: #1f2937;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px 12px 12px 4px;
-}
-
-/* ADMIN MESSAGE BUBBLES - BLUE */
-.mm-message-admin .mm-message-bubble {
-  background: #4f46e5;
-  color: white;
-  border-color: #4f46e5;
-  border-radius: 12px 12px 4px 12px;
 }
 
 .mm-message-bubble p {
@@ -279,9 +210,9 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   color: #9ca3af;
-  padding: 0 8px;
+  padding: 0 12px;
 }
 
 .mm-message-time {
@@ -367,6 +298,56 @@
 }
 
 /* ===========================
+   MESSAGE DIRECTION (iMessage Style)
+   =========================== */
+
+/* OUTGOING = RIGHT (Blue bubbles) */
+.mm-message-outgoing {
+  justify-content: flex-end;
+}
+
+.mm-message-outgoing .mm-message-content {
+  align-items: flex-end;
+}
+
+.mm-message-outgoing .mm-message-sender {
+  text-align: right;
+}
+
+.mm-message-outgoing .mm-message-bubble {
+  background: #4f46e5;
+  color: white;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.mm-message-outgoing .mm-message-footer {
+  justify-content: flex-end;
+}
+
+/* INCOMING = LEFT (Gray bubbles) */
+.mm-message-incoming {
+  justify-content: flex-start;
+}
+
+.mm-message-incoming .mm-message-content {
+  align-items: flex-start;
+}
+
+.mm-message-incoming .mm-message-sender {
+  text-align: left;
+}
+
+.mm-message-incoming .mm-message-bubble {
+  background: #e5e7eb;
+  color: #1f2937;
+  border-radius: 18px 18px 18px 4px;
+}
+
+.mm-message-incoming .mm-message-footer {
+  justify-content: flex-start;
+}
+
+/* ===========================
    RESPONSIVE - TABLET
    =========================== */
 @media (max-width: 1024px) {
@@ -442,16 +423,6 @@
   .mm-message-bubble {
     padding: 10px 14px;
   }
-
-  .mm-message-avatar {
-    width: 32px;
-    height: 32px;
-  }
-
-  .mm-support-avatar-icon,
-  .mm-customer-avatar-icon {
-    font-size: 16px;
-  }
 }
 
 /* ===========================
@@ -492,41 +463,4 @@
 
 .mm-messages-list::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
-}
-
-/* ===========================
-   MESSAGE DIRECTION FIX
-   (Maps React classes to existing layout)
-   =========================== */
-
-/* OUTGOING = RIGHT (same as admin) */
-.mm-message-outgoing {
-  flex-direction: row-reverse;
-}
-
-.mm-message-outgoing .mm-message-content {
-  align-items: flex-end;
-}
-
-.mm-message-outgoing .mm-message-bubble {
-  background: #4f46e5;
-  color: white;
-  border-color: #4f46e5;
-  border-radius: 12px 12px 4px 12px;
-}
-
-/* INCOMING = LEFT (same as user) */
-.mm-message-incoming {
-  flex-direction: row;
-}
-
-.mm-message-incoming .mm-message-content {
-  align-items: flex-start;
-}
-
-.mm-message-incoming .mm-message-bubble {
-  background: white;
-  color: #1f2937;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px 12px 12px 4px;
 }

@@ -2,7 +2,6 @@ import React, { useState } from "react";
 import {
   FiX,
   FiSend,
-  FiUser,
   FiCheck,
   FiMessageCircle,
 } from "react-icons/fi";
@@ -96,9 +95,18 @@ function MessagesModal({
                     ? `${order.user.firstName} ${order.user.lastName}`
                     : order?.user?.name || "Customer";
 
-                const avatarUrl = isAdminMessage
-                  ? null
-                  : order?.user?.avatar?.url;
+                // Determine sender name to display
+                let senderName;
+                if (isOutgoing) {
+                  senderName = "You";
+                } else {
+                  // Incoming message
+                  if (userType === "admin") {
+                    senderName = customerName;
+                  } else {
+                    senderName = "Customer Service";
+                  }
+                }
 
                 return (
                   <div
@@ -108,14 +116,8 @@ function MessagesModal({
                     }`}
                   >
                     {!isOutgoing && (
-                      <div className="mm-message-avatar">
-                        {avatarUrl ? (
-                          <img src={avatarUrl} alt={customerName} />
-                        ) : (
-                          <div className="mm-customer-avatar-icon">
-                            <FiUser />
-                          </div>
-                        )}
+                      <div className="mm-message-sender">
+                        <span className="mm-sender-name">{senderName}</span>
                       </div>
                     )}
 
@@ -148,10 +150,8 @@ function MessagesModal({
                     </div>
 
                     {isOutgoing && (
-                      <div className="mm-message-avatar">
-                        <div className="mm-support-avatar-icon">
-                          <FiUser />
-                        </div>
+                      <div className="mm-message-sender">
+                        <span className="mm-sender-name">{senderName}</span>
                       </div>
                     )}
                   </div>
@@ -163,7 +163,7 @@ function MessagesModal({
           <div className="mm-message-input-container">
             <input
               className="mm-message-input"
-              placeholder="iMessage…"
+              placeholder="Message…"
               value={newMessage}
               disabled={sendingMessage}
               onChange={(e) => setNewMessage(e.target.value)}
