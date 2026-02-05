@@ -541,7 +541,7 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // ✨ NEW: Marketing attribution and customer insights
     analytics: {
-      source: { type: String, enum: ['organic', 'paid', 'referral', 'email', 'social'] },
+      source: { type: String, enum: ['organic', 'paid', 'referral', 'email', 'social', 'direct'] },
       medium: String,
       campaign: String,
       referrer: String,
