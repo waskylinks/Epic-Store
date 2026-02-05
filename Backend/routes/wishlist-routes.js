@@ -8,6 +8,7 @@ import {
   moveToCart
 } from "../controller/wishlist-controller.js";
 import { verifyUserAuth } from "../middleware/user-auth.js";
+import { trackAddToWishlist } from "../middleware/product-tracking-middleware.js";
 
 const router = express.Router();
 
@@ -21,7 +22,7 @@ router.route("/")
 
 // Add product to wishlist
 router.route("/add")
-  .post(addToWishlist);
+  .post(trackAddToWishlist, addToWishlist);
 
 // Remove product from wishlist
 router.route("/remove/:productId")

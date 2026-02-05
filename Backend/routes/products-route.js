@@ -19,6 +19,7 @@ import {
 import { roleBaseAccess, verifyUserAuth } from '../middleware/user-auth.js';
 import { publicProductLimiter } from '../middleware/rateLimiter.js';
 import upload from '../middleware/multer.js';
+import { trackProductView } from '../middleware/product-tracking-middleware.js';
 
 const router = express.Router();
 
@@ -33,7 +34,7 @@ router.route('/products/featured').get(publicProductLimiter, getFeaturedProducts
 router.route('/products/bestsellers').get(publicProductLimiter, getBestsellers);
 
 // Single product details
-router.route('/product/:id').get(publicProductLimiter, getProductDetails);
+router.route('/product/:id').get(publicProductLimiter, trackProductView, getProductDetails);
 
 // Reviews routes
 router.route('/review').put(verifyUserAuth, createProductReview);
