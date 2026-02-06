@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import { 
-  removeItemFromCart, 
-  updateItemQuantity,
-  getCartDetails
+  removeCartItem,
+  updateCartItemQuantity,
+  getCartDetails,
+  updateLastActivity
 } from '../features/cart/cartSlice';
 import { 
   addToWishlist, 
@@ -25,6 +26,7 @@ function CartItem({ item }) {
   
   const [quantity, setQuantity] = useState(item.quantity);
   const [hasChanges, setHasChanges] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
 
   // Sync quantity when item.quantity changes
   useEffect(() => {
@@ -41,6 +43,20 @@ function CartItem({ item }) {
   );
   
   const isWishlistLoading = itemLoading[item.product] || false;
+
+  // Track activity when quantity changes
+  const trackQuantityChange = (newQty, oldQty) => {
+    dispatch(updateLastActivity());
+    
+    // Log analytics event
+    console.log('[Cart Analytics] Quantity changed:', {
+      productId: item.product,
+      productName: item.name,
+      oldQuantity: oldQty,
+      newQuantity: newQty,
+      timestamp: new Date().toISOString()
+    });
+  };
 
   // Handle quantity input change
   const handleQuantityChange = (e) => {
@@ -59,6 +75,10 @@ function CartItem({ item }) {
     if (numValue >= 1 && numValue <= item.stock) {
       setQuantity(numValue);
       setHasChanges(numValue !== item.quantity);
+      
+      if (numValue !== item.quantity) {
+        trackQuantityChange(numValue, item.quantity);
+      }
     }
   };
 
@@ -78,6 +98,7 @@ function CartItem({ item }) {
       const newQty = parseInt(quantity) + 1;
       setQuantity(newQty);
       setHasChanges(true);
+      trackQuantityChange(newQty, quantity);
     } else {
       toast.warning(`Only ${item.stock} items available in stock`, {
         position: 'top-center',
@@ -92,32 +113,78 @@ function CartItem({ item }) {
       const newQty = parseInt(quantity) - 1;
       setQuantity(newQty);
       setHasChanges(true);
+      trackQuantityChange(newQty, quantity);
     }
   };
 
-  // Handle update cart
-  const handleUpdate = () => {
+  // Handle update cart with backend call
+  const handleUpdate = async () => {
     if (hasChanges && quantity >= 1 && quantity <= item.stock) {
-      dispatch(updateItemQuantity({ 
-        productId: item.product, 
-        quantity: parseInt(quantity) 
-      }));
-      setHasChanges(false);
+      setIsUpdating(true);
       
-      // Refresh cart details to update order summary immediately
+      try {
+        await dispatch(updateCartItemQuantity({ 
+          productId: item.product, 
+          quantity: parseInt(quantity) 
+        })).unwrap();
+        
+        setHasChanges(false);
+        
+        // Refresh cart details to update order summary immediately
+        setTimeout(() => {
+          dispatch(getCartDetails());
+        }, 100);
+        
+        // Log analytics
+        console.log('[Cart Analytics] Item updated:', {
+          productId: item.product,
+          newQuantity: quantity,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        toast.error(error.message || 'Failed to update cart', {
+          position: 'top-center',
+          autoClose: 2000
+        });
+        // Revert to original quantity on error
+        setQuantity(item.quantity);
+        setHasChanges(false);
+      } finally {
+        setIsUpdating(false);
+      }
+    }
+  };
+
+  // Handle remove from cart with backend call
+  const handleRemove = async () => {
+    try {
+      await dispatch(removeCartItem(item.product)).unwrap();
+      
+      // Log analytics
+      console.log('[Cart Analytics] Item removed:', {
+        productId: item.product,
+        productName: item.name,
+        quantity: item.quantity,
+        price: item.price,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Refresh cart after removal
       setTimeout(() => {
         dispatch(getCartDetails());
       }, 100);
+    } catch (error) {
+      toast.error(error.message || 'Failed to remove item', {
+        position: 'top-center',
+        autoClose: 2000
+      });
     }
-  };
-
-  // Handle remove from cart
-  const handleRemove = () => {
-    dispatch(removeItemFromCart(item.product));
   };
 
   // Handle wishlist toggle - OPTIMISTIC UPDATE for instant feedback
   const handleWishlistToggle = async () => {
+    dispatch(updateLastActivity());
+    
     if (isInWishlist) {
       // OPTIMISTIC: Remove immediately from UI
       dispatch(optimisticRemove(item.product));
@@ -125,12 +192,20 @@ function CartItem({ item }) {
       // Then sync with server in background
       try {
         await dispatch(removeFromWishlist(item.product)).unwrap();
+        
+        // Log analytics
+        console.log('[Wishlist Analytics] Removed from wishlist (from cart):', {
+          productId: item.product,
+          productName: item.name,
+          timestamp: new Date().toISOString()
+        });
       } catch (error) {
         // If server fails, add it back (rollback)
         dispatch(optimisticAdd({ 
           _id: item.product, 
           name: item.name, 
-          image: item.image 
+          images: [{ url: item.image }],
+          price: item.price
         }));
         toast.error('Failed to remove from wishlist', {
           position: 'top-center',
@@ -149,6 +224,13 @@ function CartItem({ item }) {
       // Then sync with server in background
       try {
         await dispatch(addToWishlist(item.product)).unwrap();
+        
+        // Log analytics
+        console.log('[Wishlist Analytics] Added to wishlist (from cart):', {
+          productId: item.product,
+          productName: item.name,
+          timestamp: new Date().toISOString()
+        });
       } catch (error) {
         // If server fails, remove it (rollback)
         dispatch(optimisticRemove(item.product));
@@ -200,7 +282,7 @@ function CartItem({ item }) {
         <button 
           className="ec-item-qty-btn"
           onClick={handleDecrement}
-          disabled={quantity <= 1}
+          disabled={quantity <= 1 || isUpdating}
           aria-label="Decrease quantity"
         >
           <FiMinus />
@@ -222,13 +304,14 @@ function CartItem({ item }) {
           }}
           min="1"
           max={item.stock}
+          disabled={isUpdating}
           aria-label="Quantity"
         />
         
         <button 
           className="ec-item-qty-btn"
           onClick={handleIncrement}
-          disabled={quantity >= item.stock}
+          disabled={quantity >= item.stock || isUpdating}
           aria-label="Increase quantity"
         >
           <FiPlus />
@@ -247,10 +330,10 @@ function CartItem({ item }) {
         <button 
           className="ec-item-update-btn"
           onClick={handleUpdate}
-          disabled={!hasChanges}
+          disabled={!hasChanges || isUpdating}
           aria-label="Update quantity"
         >
-          Update Cart
+          {isUpdating ? 'Updating...' : 'Update Cart'}
         </button>
 
         <div className="ec-item-secondary-actions">
@@ -273,6 +356,7 @@ function CartItem({ item }) {
           <button 
             className="ec-item-remove-btn"
             onClick={handleRemove}
+            disabled={isUpdating}
             aria-label="Remove from cart"
           >
             <FiTrash2 />

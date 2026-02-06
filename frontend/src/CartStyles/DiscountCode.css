@@ -1,0 +1,234 @@
+/* ============================================ */
+/* DISCOUNT CODE SECTION STYLES */
+/* ============================================ */
+
+.ec-discount-section {
+  margin: 16px 0;
+  padding: 12px 0;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ec-discount-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ec-discount-toggle-btn:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  color: #374151;
+}
+
+.ec-discount-toggle-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Discount Form */
+.ec-discount-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ec-discount-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.ec-discount-input-icon {
+  position: absolute;
+  left: 12px;
+  width: 18px;
+  height: 18px;
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+.ec-discount-input {
+  flex: 1;
+  padding: 10px 12px 10px 38px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: uppercase;
+  transition: all 0.2s ease;
+}
+
+.ec-discount-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.ec-discount-input:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.ec-discount-apply-btn {
+  padding: 10px 20px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.ec-discount-apply-btn:hover:not(:disabled) {
+  background: #2563eb;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px rgba(59, 130, 246, 0.2);
+}
+
+.ec-discount-apply-btn:disabled {
+  background: #d1d5db;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.ec-discount-cancel-btn {
+  padding: 10px;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 8px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ec-discount-cancel-btn:hover:not(:disabled) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.ec-discount-cancel-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.ec-discount-hints {
+  padding: 0 4px;
+}
+
+.ec-discount-hint-text {
+  font-size: 12px;
+  color: #9ca3af;
+  margin: 0;
+}
+
+/* Applied Discount Badge */
+.ec-discount-applied-container {
+  margin: 16px 0;
+  padding: 12px 0;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.ec-discount-applied-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+  border: 1px solid #10b981;
+  border-radius: 8px;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ec-discount-check-icon {
+  width: 18px;
+  height: 18px;
+  color: #10b981;
+  flex-shrink: 0;
+}
+
+.ec-discount-code-text {
+  font-size: 14px;
+  font-weight: 700;
+  color: #065f46;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ec-discount-type-text {
+  font-size: 13px;
+  color: #047857;
+  font-weight: 500;
+}
+
+.ec-discount-remove-btn {
+  margin-left: auto;
+  padding: 4px;
+  background: transparent;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ec-discount-remove-btn:hover {
+  background: rgba(107, 114, 128, 0.1);
+  color: #374151;
+}
+
+.ec-discount-remove-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Mobile Responsive */
+@media (max-width: 640px) {
+  .ec-discount-input-group {
+    flex-wrap: wrap;
+  }
+
+  .ec-discount-input {
+    width: 100%;
+  }
+
+  .ec-discount-apply-btn {
+    flex: 1;
+  }
+
+  .ec-discount-hint-text {
+    font-size: 11px;
+  }
+}

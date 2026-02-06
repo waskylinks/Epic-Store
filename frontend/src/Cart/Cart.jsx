@@ -4,11 +4,14 @@ import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import CartItem from './CartItem';
+import DiscountCodeSection from './DiscountCodeSection';
 import { useSelector, useDispatch } from 'react-redux';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   getCartDetails,
   validateCheckout,
+  trackFunnelStep,
+  updateLastActivity,
   removeErrors, 
   removeMessage
 } from '../features/cart/cartSlice';
@@ -19,7 +22,11 @@ import {
   FiShoppingCart, 
   FiAlertCircle, 
   FiCheckCircle,
-  FiArrowLeft
+  FiArrowLeft,
+  FiTruck,
+  FiShield,
+  FiHeadphones,
+  FiRefreshCw
 } from 'react-icons/fi';
 
 function Cart() {
@@ -27,6 +34,7 @@ function Cart() {
     cartItems,
     cartDetails,
     pricing,
+    discount,
     loading, 
     error, 
     success, 
@@ -38,17 +46,61 @@ function Cart() {
   const navigate = useNavigate();
 
   const [isValidating, setIsValidating] = useState(false);
+  const [activityTracker, setActivityTracker] = useState(null);
 
-  // Fetch fresh product data and wishlist on mount
+  // Track cart view on mount
   useEffect(() => {
     if (cartItems.length > 0) {
       dispatch(getCartDetails());
+      
+      // Track cart_view funnel step
+      dispatch(trackFunnelStep({ 
+        step: 'cart_view',
+        metadata: {
+          itemCount: cartItems.length,
+          timestamp: new Date().toISOString()
+        }
+      }));
     }
+    
     // Fetch wishlist to sync state
     if (isAuthenticated) {
       dispatch(getWishlist());
     }
-  }, [dispatch, cartItems.length, isAuthenticated]);
+  }, [dispatch, isAuthenticated]);
+
+  // Track user activity to prevent abandonment timeout
+  useEffect(() => {
+    // Update activity every 30 seconds
+    const tracker = setInterval(() => {
+      if (cartItems.length > 0) {
+        dispatch(updateLastActivity());
+      }
+    }, 30000); // 30 seconds
+
+    setActivityTracker(tracker);
+
+    return () => {
+      if (tracker) {
+        clearInterval(tracker);
+      }
+    };
+  }, [dispatch, cartItems.length]);
+
+  // Track visibility changes (tab switching)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && cartItems.length > 0) {
+        dispatch(updateLastActivity());
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [dispatch, cartItems.length]);
 
   // Handle error messages
   useEffect(() => {
@@ -90,11 +142,21 @@ function Cart() {
       return acc + (item.price * item.quantity);
     }, 0);
     
-    const taxPrice = itemPrice * 0.18;
-    const shippingPrice = itemPrice >= 500 ? 0 : 50;
-    const totalPrice = itemPrice + taxPrice + shippingPrice;
+    const discountAmount = discount.applied ? discount.discountAmount : 0;
+    const discountedItemPrice = Math.max(0, itemPrice - discountAmount);
     
-    return { itemPrice, taxPrice, shippingPrice, totalPrice };
+    const taxPrice = discountedItemPrice * 0.18;
+    const shippingPrice = discountedItemPrice >= 500 ? 0 : 50;
+    const totalPrice = discountedItemPrice + taxPrice + shippingPrice;
+    
+    return { 
+      itemPrice: discountedItemPrice, 
+      originalItemPrice: itemPrice,
+      taxPrice, 
+      shippingPrice, 
+      totalPrice,
+      discountAmount
+    };
   };
 
   const displayPricing = cartDetails.length > 0 ? calculateLocalPricing() : pricing;
@@ -104,6 +166,16 @@ function Cart() {
     setIsValidating(true);
     try {
       await dispatch(validateCheckout()).unwrap();
+      
+      // Track checkout_start funnel step (already done in middleware, but confirm)
+      await dispatch(trackFunnelStep({
+        step: 'checkout_start',
+        metadata: {
+          cartValue: displayPricing.totalPrice,
+          itemCount: cartItems.length,
+          hasDiscount: discount.applied
+        }
+      }));
       
       // Validation passed, proceed to shipping
       if (isAuthenticated) {
@@ -156,7 +228,7 @@ function Cart() {
               <div className="ec-items-header">
                 <h2 className="ec-items-heading">
                   <FiShoppingCart />
-                  Your Cart ({cartItems.length} {cartItems.length === 1 ? 'item' : 'items'})
+                  Your Cart ({cartItems.reduce((sum, item) => sum + item.quantity, 0)} {cartItems.reduce((sum, item) => sum + item.quantity, 0) === 1 ? 'item' : 'items'})
                 </h2>
               </div>
 
@@ -184,9 +256,32 @@ function Cart() {
                 <div className="ec-summary-item">
                   <span className="ec-summary-label">Subtotal:</span>
                   <span className="ec-summary-value">
-                    {formatUSD(displayPricing.itemPrice || 0)}
+                    {discount.applied && displayPricing.originalItemPrice > displayPricing.itemPrice ? (
+                      <>
+                        <span style={{ textDecoration: 'line-through', marginRight: '8px', color: '#999' }}>
+                          {formatUSD(displayPricing.originalItemPrice || 0)}
+                        </span>
+                        {formatUSD(displayPricing.itemPrice || 0)}
+                      </>
+                    ) : (
+                      formatUSD(displayPricing.itemPrice || 0)
+                    )}
                   </span>
                 </div>
+
+                {/* Discount Code Section */}
+                <DiscountCodeSection />
+
+                {discount.applied && (
+                  <div className="ec-summary-item ec-discount-applied">
+                    <span className="ec-summary-label" style={{ color: '#10b981' }}>
+                      Discount ({discount.code}):
+                    </span>
+                    <span className="ec-summary-value" style={{ color: '#10b981' }}>
+                      -{formatUSD(displayPricing.discountAmount || 0)}
+                    </span>
+                  </div>
+                )}
 
                 <div className="ec-summary-item">
                   <span className="ec-summary-label">Tax (18%):</span>
@@ -208,7 +303,7 @@ function Cart() {
 
                 {displayPricing.itemPrice > 0 && displayPricing.shippingPrice > 0 && (
                   <div className="ec-summary-note">
-                    <FiAlertCircle />
+                    <FiTruck />
                     <span>Add {formatUSD(Math.max(0, 500 - displayPricing.itemPrice))} more for free shipping</span>
                   </div>
                 )}
@@ -227,7 +322,14 @@ function Cart() {
                   onClick={handleProceedToCheckout}
                   disabled={isValidating || loading}
                 >
-                  {isValidating ? 'Validating...' : 'Proceed to Checkout'}
+                  {isValidating ? (
+                    <>
+                      <FiRefreshCw className="ec-btn-spinner" />
+                      Validating...
+                    </>
+                  ) : (
+                    'Proceed to Checkout'
+                  )}
                 </button>
 
                 <Link to="/products" className="ec-continue-shopping">
@@ -240,18 +342,18 @@ function Cart() {
               <div className="ec-trust-badges">
                 <div className="ec-trust-item">
                   <FiCheckCircle />
-                  <span>Prices are calculated securely on our servers</span>
-                </div>
-                <div className="ec-trust-item">
-                  <FiCheckCircle />
                   <span>Secure Checkout</span>
                 </div>
                 <div className="ec-trust-item">
-                  <FiCheckCircle />
+                  <FiShield />
+                  <span>Buyer Protection</span>
+                </div>
+                <div className="ec-trust-item">
+                  <FiRefreshCw />
                   <span>Free Returns</span>
                 </div>
                 <div className="ec-trust-item">
-                  <FiCheckCircle />
+                  <FiHeadphones />
                   <span>24/7 Support</span>
                 </div>
               </div>
