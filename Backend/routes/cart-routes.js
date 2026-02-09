@@ -12,7 +12,7 @@ import {
 const router = express.Router();
 
 // ============================================
-// CART OPERATIONS (No Analytics)
+// CART OPERATIONS
 // ============================================
 
 /**
@@ -62,7 +62,7 @@ router.delete('/clear', clearCart);
 router.post('/checkout/validate', validateCheckout);
 
 /**
- * Apply discount code
+ * Apply discount code (integrated with Discount model)
  * @route POST /api/v1/cart/apply-discount
  * @access Public
  */

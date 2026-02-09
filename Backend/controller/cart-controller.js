@@ -1,6 +1,7 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import Product from '../models/product-model.js';
+import Discount from '../models/discount-model.js';
 
 // ============================================
 // GET CART DETAILS - Fetch fresh product data
@@ -318,7 +319,7 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// APPLY DISCOUNT CODE
+// APPLY DISCOUNT CODE - INTEGRATED WITH DISCOUNT MODEL
 // ============================================
 
 /**
@@ -333,37 +334,60 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
         return next(new HandleError('Discount code is required', 400));
     }
 
-    // Mock discount codes (replace with database lookup in production)
-    const discountCodes = {
-        'SAVE10': { type: 'percentage', amount: 10 },
-        'SAVE20': { type: 'percentage', amount: 20 },
-        'FLAT50': { type: 'fixed', amount: 50 }
-    };
-
-    const discount = discountCodes[code.toUpperCase()];
-
-    if (!discount) {
-        return next(new HandleError('Invalid discount code', 400));
+    if (!items || items.length === 0) {
+        return next(new HandleError('Cart is empty', 400));
     }
 
-    // Calculate original pricing
+    // Find discount from database
+    const discount = await Discount.findActiveByCode(code);
+
+    if (!discount) {
+        return next(new HandleError('Invalid or expired discount code', 400));
+    }
+
+    // Calculate original cart pricing
     let itemPrice = 0;
+    const validItems = [];
+
     for (const item of items) {
         const product = await Product.findById(item.product);
-        if (product) {
-            const unitPrice = product.pricing?.sale || product.pricing?.regular || product.price || 0;
-            itemPrice += unitPrice * item.quantity;
+        
+        if (!product || product.status !== 'published') {
+            continue;
+        }
+
+        const unitPrice = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+        const itemTotal = unitPrice * item.quantity;
+        itemPrice += itemTotal;
+
+        validItems.push({
+            product: product._id,
+            name: product.name,
+            quantity: item.quantity,
+            unitPrice,
+            itemTotal
+        });
+    }
+
+    // Check if user can use this discount (if logged in)
+    const userId = req.user?._id;
+    if (userId) {
+        const canUse = await discount.canUserUse(userId);
+        if (!canUse.canUse) {
+            return next(new HandleError(canUse.reason, 400));
         }
     }
 
-    // Apply discount
-    let discountAmount = 0;
-    if (discount.type === 'percentage') {
-        discountAmount = (itemPrice * discount.amount) / 100;
-    } else {
-        discountAmount = discount.amount;
+    // Validate cart against discount conditions
+    const validation = discount.validateCart(itemPrice, validItems, userId);
+    if (!validation.valid) {
+        return next(new HandleError(validation.reason, 400));
     }
 
+    // Calculate discount amount using model method
+    const discountAmount = discount.calculateDiscount(itemPrice, validItems);
+
+    // Calculate final pricing
     const discountedItemPrice = Math.max(0, itemPrice - discountAmount);
     const taxPrice = Math.round(discountedItemPrice * 0.18 * 100) / 100;
     const shippingPrice = discountedItemPrice >= 500 ? 0 : 50;
@@ -371,15 +395,22 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
 
     return res.status(200).json({
         success: true,
-        code: code.toUpperCase(),
-        type: discount.type,
-        discountAmount: Math.round(discountAmount * 100) / 100,
+        discount: {
+            code: discount.code,
+            type: discount.type,
+            value: discount.value,
+            description: discount.description,
+            discountAmount: Math.round(discountAmount * 100) / 100
+        },
         pricing: {
-            itemPrice: Math.round(discountedItemPrice * 100) / 100,
+            itemPrice: Math.round(itemPrice * 100) / 100,
+            discountAmount: Math.round(discountAmount * 100) / 100,
+            discountedItemPrice: Math.round(discountedItemPrice * 100) / 100,
             taxPrice,
             shippingPrice,
             totalPrice,
             currency: 'USD'
-        }
+        },
+        items: validItems
     });
 });
