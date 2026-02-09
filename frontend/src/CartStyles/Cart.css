@@ -111,6 +111,36 @@
   font-size: 1.75rem;
 }
 
+/* Clear Cart Button */
+.ec-clear-cart-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  background-color: #fff;
+  border: 1px solid #dc3545;
+  border-radius: 8px;
+  color: #dc3545;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.ec-clear-cart-btn:hover:not(:disabled) {
+  background-color: #dc3545;
+  color: #fff;
+}
+
+.ec-clear-cart-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ec-clear-cart-btn svg {
+  font-size: 1rem;
+}
+
 .ec-validate-btn,
 .ec-sync-btn {
   display: flex;
@@ -143,6 +173,10 @@
 }
 
 .ec-spinning {
+  animation: spin 1s linear infinite;
+}
+
+.ec-btn-spinner {
   animation: spin 1s linear infinite;
 }
 
@@ -519,6 +553,10 @@
   cursor: pointer;
   transition: all 0.3s ease;
   margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
 }
 
 .ec-checkout-btn:hover:not(:disabled) {
@@ -644,6 +682,16 @@
   .ec-header-actions {
     flex-wrap: wrap;
   }
+
+  .ec-items-header {
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .ec-clear-cart-btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 @media (max-width: 768px) {
@@ -687,7 +735,8 @@
   }
 
   .ec-validate-btn,
-  .ec-sync-btn {
+  .ec-sync-btn,
+  .ec-clear-cart-btn {
     width: 100%;
     justify-content: center;
   }

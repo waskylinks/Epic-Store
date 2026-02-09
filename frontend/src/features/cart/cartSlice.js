@@ -287,8 +287,7 @@ const cartSlice = createSlice({
         }
 
         localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
-        state.success = true;
-        state.loading = false;
+        
       })
       .addCase(addItemsToCart.rejected, (state, action) => {
         state.loading = false;

@@ -5,13 +5,13 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import CartItem from './CartItem';
 import DiscountCodeSection from './DiscountCodeSection';
+import ClearCartModal from './ClearCartModal';
 import { useSelector, useDispatch } from 'react-redux';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   getCartDetails,
   validateCheckout,
-  trackFunnelStep,
-  updateLastActivity,
+  clearEntireCart,
   removeErrors, 
   removeMessage
 } from '../features/cart/cartSlice';
@@ -20,13 +20,13 @@ import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { 
   FiShoppingCart, 
-  FiAlertCircle, 
-  FiCheckCircle,
   FiArrowLeft,
   FiTruck,
   FiShield,
   FiHeadphones,
-  FiRefreshCw
+  FiRefreshCw,
+  FiTrash2,
+  FiCheckCircle
 } from 'react-icons/fi';
 
 function Cart() {
@@ -46,61 +46,20 @@ function Cart() {
   const navigate = useNavigate();
 
   const [isValidating, setIsValidating] = useState(false);
-  const [activityTracker, setActivityTracker] = useState(null);
+  const [showClearModal, setShowClearModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
-  // Track cart view on mount
+  // Fetch cart details and wishlist on mount
   useEffect(() => {
     if (cartItems.length > 0) {
       dispatch(getCartDetails());
-      
-      // Track cart_view funnel step
-      dispatch(trackFunnelStep({ 
-        step: 'cart_view',
-        metadata: {
-          itemCount: cartItems.length,
-          timestamp: new Date().toISOString()
-        }
-      }));
     }
     
     // Fetch wishlist to sync state
     if (isAuthenticated) {
       dispatch(getWishlist());
     }
-  }, [dispatch, isAuthenticated]);
-
-  // Track user activity to prevent abandonment timeout
-  useEffect(() => {
-    // Update activity every 30 seconds
-    const tracker = setInterval(() => {
-      if (cartItems.length > 0) {
-        dispatch(updateLastActivity());
-      }
-    }, 30000); // 30 seconds
-
-    setActivityTracker(tracker);
-
-    return () => {
-      if (tracker) {
-        clearInterval(tracker);
-      }
-    };
-  }, [dispatch, cartItems.length]);
-
-  // Track visibility changes (tab switching)
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden && cartItems.length > 0) {
-        dispatch(updateLastActivity());
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [dispatch, cartItems.length]);
+  }, [dispatch, isAuthenticated, cartItems.length]);
 
   // Handle error messages
   useEffect(() => {
@@ -167,16 +126,6 @@ function Cart() {
     try {
       await dispatch(validateCheckout()).unwrap();
       
-      // Track checkout_start funnel step (already done in middleware, but confirm)
-      await dispatch(trackFunnelStep({
-        step: 'checkout_start',
-        metadata: {
-          cartValue: displayPricing.totalPrice,
-          itemCount: cartItems.length,
-          hasDiscount: discount.applied
-        }
-      }));
-      
       // Validation passed, proceed to shipping
       if (isAuthenticated) {
         navigate('/shipping');
@@ -192,6 +141,35 @@ function Cart() {
       });
     } finally {
       setIsValidating(false);
+    }
+  };
+
+  // Open clear cart modal
+  const handleOpenClearModal = () => {
+    setShowClearModal(true);
+  };
+
+  // Close clear cart modal
+  const handleCloseClearModal = () => {
+    if (!isClearing) {
+      setShowClearModal(false);
+    }
+  };
+
+  // Confirm clear cart
+  const handleConfirmClearCart = async () => {
+    setIsClearing(true);
+    try {
+      await dispatch(clearEntireCart()).unwrap();
+      setShowClearModal(false);
+      
+    } catch (error) {
+      toast.error('Failed to clear cart', {
+        position: 'top-center',
+        autoClose: 2000
+      });
+    } finally {
+      setIsClearing(false);
     }
   };
 
@@ -230,6 +208,16 @@ function Cart() {
                   <FiShoppingCart />
                   Your Cart ({cartItems.reduce((sum, item) => sum + item.quantity, 0)} {cartItems.reduce((sum, item) => sum + item.quantity, 0) === 1 ? 'item' : 'items'})
                 </h2>
+                
+                {/* Clear Cart Button */}
+                <button 
+                  className="ec-clear-cart-btn"
+                  onClick={handleOpenClearModal}
+                  disabled={loading}
+                >
+                  <FiTrash2 />
+                  Clear Cart
+                </button>
               </div>
 
               <div className="ec-table">
@@ -361,6 +349,14 @@ function Cart() {
           </div>
         </div>
       )}
+
+      {/* Clear Cart Modal */}
+      <ClearCartModal
+        isOpen={showClearModal}
+        onClose={handleCloseClearModal}
+        onConfirm={handleConfirmClearCart}
+        isClearing={isClearing}
+      />
 
       <Footer />
     </>

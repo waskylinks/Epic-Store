@@ -4,13 +4,11 @@ import { Link } from 'react-router-dom';
 import { 
   removeCartItem,
   updateCartItemQuantity,
-  getCartDetails,
-  updateLastActivity
+  getCartDetails
 } from '../features/cart/cartSlice';
 import { 
   addToWishlist, 
   removeFromWishlist,
-  getWishlist,
   optimisticAdd,
   optimisticRemove
 } from '../features/products/wishlistSlice';
@@ -44,20 +42,6 @@ function CartItem({ item }) {
   
   const isWishlistLoading = itemLoading[item.product] || false;
 
-  // Track activity when quantity changes
-  const trackQuantityChange = (newQty, oldQty) => {
-    dispatch(updateLastActivity());
-    
-    // Log analytics event
-    console.log('[Cart Analytics] Quantity changed:', {
-      productId: item.product,
-      productName: item.name,
-      oldQuantity: oldQty,
-      newQuantity: newQty,
-      timestamp: new Date().toISOString()
-    });
-  };
-
   // Handle quantity input change
   const handleQuantityChange = (e) => {
     const value = e.target.value;
@@ -75,10 +59,6 @@ function CartItem({ item }) {
     if (numValue >= 1 && numValue <= item.stock) {
       setQuantity(numValue);
       setHasChanges(numValue !== item.quantity);
-      
-      if (numValue !== item.quantity) {
-        trackQuantityChange(numValue, item.quantity);
-      }
     }
   };
 
@@ -98,7 +78,6 @@ function CartItem({ item }) {
       const newQty = parseInt(quantity) + 1;
       setQuantity(newQty);
       setHasChanges(true);
-      trackQuantityChange(newQty, quantity);
     } else {
       toast.warning(`Only ${item.stock} items available in stock`, {
         position: 'top-center',
@@ -113,7 +92,6 @@ function CartItem({ item }) {
       const newQty = parseInt(quantity) - 1;
       setQuantity(newQty);
       setHasChanges(true);
-      trackQuantityChange(newQty, quantity);
     }
   };
 
@@ -134,13 +112,6 @@ function CartItem({ item }) {
         setTimeout(() => {
           dispatch(getCartDetails());
         }, 100);
-        
-        // Log analytics
-        console.log('[Cart Analytics] Item updated:', {
-          productId: item.product,
-          newQuantity: quantity,
-          timestamp: new Date().toISOString()
-        });
       } catch (error) {
         toast.error(error.message || 'Failed to update cart', {
           position: 'top-center',
@@ -160,15 +131,6 @@ function CartItem({ item }) {
     try {
       await dispatch(removeCartItem(item.product)).unwrap();
       
-      // Log analytics
-      console.log('[Cart Analytics] Item removed:', {
-        productId: item.product,
-        productName: item.name,
-        quantity: item.quantity,
-        price: item.price,
-        timestamp: new Date().toISOString()
-      });
-      
       // Refresh cart after removal
       setTimeout(() => {
         dispatch(getCartDetails());
@@ -183,8 +145,6 @@ function CartItem({ item }) {
 
   // Handle wishlist toggle - OPTIMISTIC UPDATE for instant feedback
   const handleWishlistToggle = async () => {
-    dispatch(updateLastActivity());
-    
     if (isInWishlist) {
       // OPTIMISTIC: Remove immediately from UI
       dispatch(optimisticRemove(item.product));
@@ -192,13 +152,6 @@ function CartItem({ item }) {
       // Then sync with server in background
       try {
         await dispatch(removeFromWishlist(item.product)).unwrap();
-        
-        // Log analytics
-        console.log('[Wishlist Analytics] Removed from wishlist (from cart):', {
-          productId: item.product,
-          productName: item.name,
-          timestamp: new Date().toISOString()
-        });
       } catch (error) {
         // If server fails, add it back (rollback)
         dispatch(optimisticAdd({ 
@@ -224,13 +177,6 @@ function CartItem({ item }) {
       // Then sync with server in background
       try {
         await dispatch(addToWishlist(item.product)).unwrap();
-        
-        // Log analytics
-        console.log('[Wishlist Analytics] Added to wishlist (from cart):', {
-          productId: item.product,
-          productName: item.name,
-          timestamp: new Date().toISOString()
-        });
       } catch (error) {
         // If server fails, remove it (rollback)
         dispatch(optimisticRemove(item.product));

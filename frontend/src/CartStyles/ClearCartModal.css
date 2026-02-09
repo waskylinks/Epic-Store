@@ -1,0 +1,462 @@
+/* ===========================
+   CLEAR CART MODAL
+   =========================== */
+
+/* Overlay */
+.clear-cart-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 1rem;
+  animation: fadeIn 0.2s ease-out;
+  backdrop-filter: blur(2px);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Modal Container */
+.clear-cart-modal {
+  background-color: #fff;
+  border-radius: 12px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+              0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  width: 100%;
+  max-width: 440px;
+  animation: slideUp 0.3s ease-out;
+  position: relative;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Header */
+.clear-cart-modal-header {
+  position: relative;
+  padding: 1.5rem 1.5rem 0 1.5rem;
+  display: flex;
+  justify-content: center;
+}
+
+.clear-cart-modal-icon-wrapper {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background-color: #fef2f2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+}
+
+.clear-cart-modal-icon {
+  font-size: 2rem;
+  color: #dc2626;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.clear-cart-modal-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background-color: transparent;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: #6b7280;
+  transition: all 0.2s ease;
+}
+
+.clear-cart-modal-close:hover:not(:disabled) {
+  background-color: #f3f4f6;
+  color: #1f2937;
+}
+
+.clear-cart-modal-close:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.clear-cart-modal-close svg {
+  font-size: 1.25rem;
+}
+
+/* Content */
+.clear-cart-modal-content {
+  padding: 1rem 1.5rem 1.5rem 1.5rem;
+  text-align: center;
+}
+
+.clear-cart-modal-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1c1d1f;
+  margin: 0 0 0.75rem 0;
+}
+
+.clear-cart-modal-message {
+  font-size: 0.95rem;
+  color: #262729;
+  line-height: 1.6;
+  margin: 0;
+  max-width: 360px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Actions */
+.clear-cart-modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0 1.5rem 1.5rem 1.5rem;
+}
+
+.clear-cart-modal-btn {
+  flex: 1;
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.clear-cart-modal-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Cancel Button */
+.clear-cart-modal-btn-cancel {
+  background-color: #fff;
+  color: #374151;
+  border: 1px solid #d1d5db;
+}
+
+.clear-cart-modal-btn-cancel:hover:not(:disabled) {
+  background-color: #f9fafb;
+  border-color: #9ca3af;
+}
+
+/* Confirm Button */
+.clear-cart-modal-btn-confirm {
+  background-color: #dc2626;
+  color: #fff;
+}
+
+.clear-cart-modal-btn-confirm:hover:not(:disabled) {
+  background-color: #b91c1c;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+}
+
+.clear-cart-modal-btn svg {
+  font-size: 1.125rem;
+}
+
+.clear-cart-modal-btn-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===========================
+   RESPONSIVE DESIGN
+   =========================== */
+
+/* Tablets (768px and below) */
+@media (max-width: 768px) {
+  .clear-cart-modal {
+    max-width: 400px;
+  }
+
+  .clear-cart-modal-header {
+    padding: 1.25rem 1.25rem 0 1.25rem;
+  }
+
+  .clear-cart-modal-icon-wrapper {
+    width: 56px;
+    height: 56px;
+  }
+
+  .clear-cart-modal-icon {
+    font-size: 1.75rem;
+  }
+
+  .clear-cart-modal-content {
+    padding: 0.875rem 1.25rem 1.25rem 1.25rem;
+  }
+
+  .clear-cart-modal-title {
+    font-size: 1.375rem;
+  }
+
+  .clear-cart-modal-message {
+    font-size: 0.9rem;
+  }
+
+  .clear-cart-modal-actions {
+    padding: 0 1.25rem 1.25rem 1.25rem;
+  }
+}
+
+/* Mobile (480px and below) */
+@media (max-width: 480px) {
+  .clear-cart-modal-overlay {
+    padding: 0.75rem;
+  }
+
+  .clear-cart-modal {
+    max-width: 100%;
+  }
+
+  .clear-cart-modal-header {
+    padding: 1rem 1rem 0 1rem;
+  }
+
+  .clear-cart-modal-icon-wrapper {
+    width: 52px;
+    height: 52px;
+  }
+
+  .clear-cart-modal-icon {
+    font-size: 1.5rem;
+  }
+
+  .clear-cart-modal-close {
+    width: 28px;
+    height: 28px;
+    top: 0.875rem;
+    right: 0.875rem;
+  }
+
+  .clear-cart-modal-close svg {
+    font-size: 1.125rem;
+  }
+
+  .clear-cart-modal-content {
+    padding: 0.75rem 1rem 1rem 1rem;
+  }
+
+  .clear-cart-modal-title {
+    font-size: 1.25rem;
+    margin-bottom: 0.625rem;
+  }
+
+  .clear-cart-modal-message {
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .clear-cart-modal-actions {
+    padding: 0 1rem 1rem 1rem;
+    gap: 0.625rem;
+  }
+
+  .clear-cart-modal-btn {
+    padding: 0.625rem 1rem;
+    font-size: 0.875rem;
+  }
+
+  .clear-cart-modal-btn svg {
+    font-size: 1rem;
+  }
+}
+
+/* Small Mobile (360px and below) */
+@media (max-width: 360px) {
+  .clear-cart-modal-actions {
+    flex-direction: column;
+  }
+
+  .clear-cart-modal-btn {
+    width: 100%;
+  }
+
+  /* Reverse button order on mobile for better UX */
+  .clear-cart-modal-btn-confirm {
+    order: 2;
+  }
+
+  .clear-cart-modal-btn-cancel {
+    order: 1;
+  }
+}
+
+/* Landscape Mobile */
+@media (max-height: 500px) and (orientation: landscape) {
+  .clear-cart-modal-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+  }
+
+  .clear-cart-modal-icon-wrapper {
+    width: 48px;
+    height: 48px;
+  }
+
+  .clear-cart-modal-icon {
+    font-size: 1.375rem;
+  }
+
+  .clear-cart-modal-header {
+    padding: 0.875rem 1rem 0 1rem;
+  }
+
+  .clear-cart-modal-content {
+    padding: 0.625rem 1rem 0.875rem 1rem;
+  }
+
+  .clear-cart-modal-title {
+    font-size: 1.125rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .clear-cart-modal-message {
+    font-size: 0.85rem;
+  }
+
+  .clear-cart-modal-actions {
+    padding: 0 1rem 0.875rem 1rem;
+  }
+
+  .clear-cart-modal-btn {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.85rem;
+  }
+}
+
+/* High DPI Displays */
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+  .clear-cart-modal {
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  }
+}
+
+/* Dark Mode Support (Optional) */
+@media (prefers-color-scheme: dark) {
+  .clear-cart-modal-overlay {
+    background-color: rgba(0, 0, 0, 0.7);
+  }
+
+  .clear-cart-modal {
+    background-color: #f8f9fa;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3),
+                0 10px 10px -5px rgba(0, 0, 0, 0.2);
+  }
+
+  .clear-cart-modal-icon-wrapper {
+    background-color: #eceee8;
+    border: 1px solid #e60c0c;
+  }
+
+  .clear-cart-modal-title {
+    color: #18191a;
+  }
+
+  .clear-cart-modal-message {
+    color: #232527;
+  }
+
+  .clear-cart-modal-close {
+    color: #9ca3af;
+  }
+
+  .clear-cart-modal-close:hover:not(:disabled) {
+    background-color: #374151;
+    color: #f3f4f6;
+  }
+
+  .clear-cart-modal-btn-cancel {
+    background-color: #374151;
+    color: #f3f4f6;
+    border-color: #4b5563;
+  }
+
+  .clear-cart-modal-btn-cancel:hover:not(:disabled) {
+    background-color: #4b5563;
+    border-color: #6b7280;
+  }
+}
+
+/* Accessibility - Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  .clear-cart-modal-overlay,
+  .clear-cart-modal {
+    animation: none;
+  }
+
+  .clear-cart-modal-icon {
+    animation: none;
+  }
+
+  .clear-cart-modal-btn-spinner {
+    animation: none;
+  }
+
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Focus Styles for Accessibility */
+.clear-cart-modal-close:focus-visible,
+.clear-cart-modal-btn:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Ensure proper stacking */
+.clear-cart-modal-overlay {
+  isolation: isolate;
+}
