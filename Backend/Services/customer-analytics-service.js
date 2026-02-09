@@ -1,7 +1,7 @@
 import CustomerAnalytics from "../models/customer-analytics-model.js";
 import Order from "../models/order-model.js";
 import User from "../models/userModel.js";
-import Cart from "../models/cart-model.js";
+import Checkout from "../models/checkout-model.js";
 
 /**
  * Customer Analytics Service
@@ -58,7 +58,7 @@ export const syncCustomerAnalytics = async (userId) => {
     // Calculate purchase behavior
     await calculatePurchaseBehavior(customerAnalytics, orders);
 
-    // Calculate engagement metrics
+    // Calculate engagement metrics (using Checkout instead of Cart)
     await calculateEngagementMetrics(customerAnalytics, userId);
 
     // Set returns/refunds data
@@ -282,19 +282,60 @@ const calculatePurchaseBehavior = async (customerAnalytics, orders) => {
 };
 
 // ============================================
-// HELPER: Calculate Engagement Metrics
+// HELPER: Calculate Engagement Metrics (Using Checkout)
 // ============================================
 const calculateEngagementMetrics = async (customerAnalytics, userId) => {
   // Get user's wishlist count
   const user = await User.findById(userId).select('wishlist');
   customerAnalytics.engagement.wishlistItemsCount = user?.wishlist?.length || 0;
 
-  // Get cart abandonment count
-  const abandonedCarts = await Cart.countDocuments({
+  // Get checkout abandonment stats
+  const [abandonedCheckouts, totalCheckouts] = await Promise.all([
+    Checkout.countDocuments({
+      user: userId,
+      'abandonment.isAbandoned': true
+    }),
+    Checkout.countDocuments({
+      user: userId
+    })
+  ]);
+
+  customerAnalytics.engagement.checkoutAbandonments = abandonedCheckouts;
+  
+  // Calculate checkout abandonment rate
+  if (totalCheckouts > 0) {
+    customerAnalytics.engagement.checkoutAbandonmentRate = 
+      Math.round((abandonedCheckouts / totalCheckouts) * 100 * 100) / 100;
+  } else {
+    customerAnalytics.engagement.checkoutAbandonmentRate = 0;
+  }
+
+  // Get total potential value lost from abandoned checkouts
+  const abandonedCheckoutsData = await Checkout.find({
     user: userId,
-    'abandonment.isAbandoned': true
-  });
-  customerAnalytics.engagement.cartAbandonments = abandonedCarts;
+    'abandonment.isAbandoned': true,
+    'conversion.isConverted': false
+  }).select('pricing.totalPrice');
+
+  const totalAbandonedValue = abandonedCheckoutsData.reduce(
+    (sum, checkout) => sum + (checkout.pricing?.totalPrice || 0), 
+    0
+  );
+
+  customerAnalytics.engagement.abandonedCheckoutValue = 
+    Math.round(totalAbandonedValue * 100) / 100;
+
+  // Get last checkout activity
+  const lastCheckout = await Checkout.findOne({ user: userId })
+    .sort({ lastActivityAt: -1 })
+    .select('lastActivityAt');
+
+  if (lastCheckout) {
+    const daysSinceLastCheckout = Math.floor(
+      (Date.now() - lastCheckout.lastActivityAt.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    customerAnalytics.engagement.daysSinceLastCheckout = daysSinceLastCheckout;
+  }
 
   // Note: For product views and site visits, you'd need to track these
   // in a separate sessions/events collection. For now, we'll use placeholders

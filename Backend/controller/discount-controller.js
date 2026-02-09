@@ -1,7 +1,7 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import Discount from "../models/discount-model.js";
-import User from "../models/user-model.js";
+import User from "../models/userModel.js";
 import Product from "../models/product-model.js";
 
 // ============================================

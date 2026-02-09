@@ -60,7 +60,7 @@ const checkoutSchema = new mongoose.Schema(
       address: String,
       city: String,
       state: String,
-      zipCode: String,
+      pinCode: String,
       country: String,
       phoneNo: String
     },
@@ -194,7 +194,7 @@ const checkoutSchema = new mongoose.Schema(
 
     expiresAt: {
       type: Date,
-      index: true
+
     }
   },
   {

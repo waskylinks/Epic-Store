@@ -3,7 +3,7 @@ import HandleError from "../utils/handleError.js";
 import Address from '../models/address-model.js';
 
 // ============================================
-// ADDRESS VALIDATION
+// ADDRESS VALIDATION (Simplified & Flexible)
 // ============================================
 
 /**
@@ -12,7 +12,7 @@ import Address from '../models/address-model.js';
  * @access Public
  */
 export const validateAddress = handleAsyncError(async (req, res, next) => {
-    const { address, city, state, country, pinCode, phoneNo } = req.body;
+    const { address, city, state, country, zipCode, pinCode, phoneNo } = req.body;
 
     const errors = [];
 
@@ -33,28 +33,21 @@ export const validateAddress = handleAsyncError(async (req, res, next) => {
         errors.push('Country is required');
     }
 
-    // Postal code validation (Nigeria)
-    if (!pinCode) {
-        errors.push('Postal code is required');
-    } else if (country === 'Nigeria' && !/^\d{6}$/.test(pinCode)) {
-        errors.push('Invalid Nigerian postal code (must be 6 digits)');
+    // Accept either zipCode or pinCode
+    const postalCode = zipCode || pinCode;
+    if (!postalCode) {
+        errors.push('Postal/ZIP code is required');
     }
 
-    // Phone number validation (Nigeria)
+    // Phone number validation
     if (!phoneNo) {
         errors.push('Phone number is required');
     } else {
         const cleanPhone = phoneNo.replace(/[\s\-\(\)]/g, '');
         
-        // Nigerian phone number patterns
-        const nigerianPatterns = [
-            /^(\+234|234|0)[7-9][0-1]\d{8}$/,  // Format: +234XXXXXXXXXX or 0XXXXXXXXXX
-        ];
-
-        const isValidNigerian = nigerianPatterns.some(pattern => pattern.test(cleanPhone));
-
-        if (country === 'Nigeria' && !isValidNigerian) {
-            errors.push('Invalid Nigerian phone number format');
+        // Basic phone validation - at least 10 digits
+        if (cleanPhone.length < 10) {
+            errors.push('Phone number must be at least 10 digits');
         }
     }
 
@@ -66,6 +59,7 @@ export const validateAddress = handleAsyncError(async (req, res, next) => {
         });
     }
 
+    // Return normalized address in BOTH formats for compatibility
     return res.status(200).json({
         success: true,
         isValid: true,
@@ -75,7 +69,7 @@ export const validateAddress = handleAsyncError(async (req, res, next) => {
             city: city.trim(),
             state: state.trim(),
             country: country.trim(),
-            pinCode: pinCode.trim(),
+            pinCode: postalCode.trim(), // For Order model
             phoneNo: phoneNo.trim()
         }
     });
@@ -93,7 +87,8 @@ export const validateAddress = handleAsyncError(async (req, res, next) => {
 export const getSavedAddresses = handleAsyncError(async (req, res, next) => {
     const userId = req.user._id;
 
-    const addresses = await Address.find({ user: userId }).sort({ isDefault: -1, createdAt: -1 });
+    const addresses = await Address.find({ user: userId })
+        .sort({ isDefault: -1, createdAt: -1 });
 
     return res.status(200).json({
         success: true,
@@ -109,11 +104,17 @@ export const getSavedAddresses = handleAsyncError(async (req, res, next) => {
  */
 export const saveAddress = handleAsyncError(async (req, res, next) => {
     const userId = req.user._id;
-    const { name, phoneNo, address, city, state, country, pinCode, isDefault } = req.body;
+    const { name, phoneNo, address, city, state, country, zipCode, pinCode, isDefault } = req.body;
 
     // Validate required fields
-    if (!name || !phoneNo || !address || !city || !state || !country || !pinCode) {
+    if (!name || !phoneNo || !address || !city || !state || !country) {
         return next(new HandleError('All address fields are required', 400));
+    }
+
+    // Accept either zipCode or pinCode
+    const postalCode = zipCode || pinCode;
+    if (!postalCode) {
+        return next(new HandleError('Postal/ZIP code is required', 400));
     }
 
     // If setting as default, unset other defaults first
@@ -132,7 +133,7 @@ export const saveAddress = handleAsyncError(async (req, res, next) => {
         city,
         state,
         country,
-        pinCode,
+        pinCode: postalCode,
         isDefault: isDefault || false
     });
 
@@ -151,7 +152,7 @@ export const saveAddress = handleAsyncError(async (req, res, next) => {
 export const updateAddress = handleAsyncError(async (req, res, next) => {
     const userId = req.user._id;
     const { id } = req.params;
-    const { name, phoneNo, address, city, state, country, pinCode, isDefault } = req.body;
+    const { name, phoneNo, address, city, state, country, zipCode, pinCode, isDefault } = req.body;
 
     const existingAddress = await Address.findById(id);
 
@@ -172,6 +173,9 @@ export const updateAddress = handleAsyncError(async (req, res, next) => {
         );
     }
 
+    // Accept either zipCode or pinCode for update
+    const postalCode = zipCode || pinCode;
+
     const updatedAddress = await Address.findByIdAndUpdate(
         id,
         {
@@ -181,7 +185,7 @@ export const updateAddress = handleAsyncError(async (req, res, next) => {
             city: city || existingAddress.city,
             state: state || existingAddress.state,
             country: country || existingAddress.country,
-            pinCode: pinCode || existingAddress.pinCode,
+            pinCode: postalCode || existingAddress.pinCode,
             isDefault: isDefault !== undefined ? isDefault : existingAddress.isDefault
         },
         { new: true, runValidators: true }
@@ -218,7 +222,9 @@ export const deleteAddress = handleAsyncError(async (req, res, next) => {
 
     // If deleted address was default, set another as default
     if (address.isDefault) {
-        const nextAddress = await Address.findOne({ user: userId }).sort({ createdAt: -1 });
+        const nextAddress = await Address.findOne({ user: userId })
+            .sort({ createdAt: -1 });
+        
         if (nextAddress) {
             nextAddress.isDefault = true;
             await nextAddress.save();
@@ -264,6 +270,33 @@ export const setDefaultAddress = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
         success: true,
         message: 'Default address updated',
+        address
+    });
+});
+
+/**
+ * Get default address
+ * @route GET /api/v1/shipping/address/default
+ * @access Private
+ */
+export const getDefaultAddress = handleAsyncError(async (req, res, next) => {
+    const userId = req.user._id;
+
+    const address = await Address.findOne({
+        user: userId,
+        isDefault: true
+    });
+
+    if (!address) {
+        return res.status(200).json({
+            success: true,
+            address: null,
+            message: 'No default address set'
+        });
+    }
+
+    return res.status(200).json({
+        success: true,
         address
     });
 });
