@@ -36,6 +36,8 @@ import returnRefundAnalyticsRoutes from './routes/return-refund-analytics-routes
 import operationalAnalyticsRoutes from './routes/operational-analytics-routes.js';
 import productAnalyticsRoutes from './routes/product-analytics-routes.js';
 import attributionAnalyticsRoutes from './routes/attribution-analytics-routes.js';
+import checkoutRoutes from './routes/checkout-routes.js';
+import checkoutAnalyticsRoutes from './routes/checkout-analytics-routes.js';
 
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
 
@@ -260,6 +262,10 @@ app.use('/api/v1/analytics', returnRefundAnalyticsRoutes);
 app.use('/api/v1/analytics/operations', operationalAnalyticsRoutes);
 app.use('/api/v1/analytics/products', productAnalyticsRoutes);
 app.use('/api/v1/analytics/attribution', attributionAnalyticsRoutes);
+
+app.use('/api/v1/checkout', checkoutRoutes);
+app.use('/api/v1/analytics/checkout', checkoutAnalyticsRoutes);
+
 
 
 /* ================= ERROR HANDLER ================= */
