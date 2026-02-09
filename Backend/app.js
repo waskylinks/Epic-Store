@@ -28,6 +28,7 @@ import receiptRoutes from './routes/receipts-routes.js';
 import wishlistRoutes from './routes/wishlist-routes.js';
 import cartRoutes from './routes/cart-routes.js';
 import shippingRoutes from './routes/shipping-routes.js';
+import discountRoutes from './routes/discount-routes.js';
 
 
 import customerAnalyticsRoutes from './routes/customer-analytics-routes.js';
@@ -250,6 +251,7 @@ app.use('/api/v1/wishlist', wishlistRoutes);
 app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1', cartRoutes); // For /products/:id/availability endpoint
 app.use('/api/v1/shipping', shippingRoutes);
+app.use('/api/v1/discounts', discountRoutes);
 
 
 
