@@ -10,6 +10,8 @@ import User from '../models/userModel.js';
 import Product from '../models/product-model.js';
 import Discount from '../models/discount-model.js';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
+import Checkout from '../models/checkout-model.js';
+import mongoose from 'mongoose';
 
 // Helper: Invalidate payment-related caches
 const invalidatePaymentCaches = async () => {
@@ -37,6 +39,11 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
     const { gateway, currency, shippingInfo, cartItems, discountCode } = req.body;
 
+    // Validate required fields
+    if (!gateway || !currency || !shippingInfo || !cartItems || cartItems.length === 0) {
+        return next(new HandleError("Missing required fields", 400));
+    }
+
     // 1. Get user info for payment gateway
     const user = await User.findById(userId).select('email name');
     if (!user) {
@@ -51,7 +58,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(err);
     }
 
-    // 3. ✅ APPLY DISCOUNT IF PROVIDED
+    // 3. APPLY DISCOUNT IF PROVIDED
     let discountInfo = null;
     let finalTotalPrice = validatedOrder.totalPrice;
 
@@ -137,9 +144,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             userEmail: user.email,
             userName: user.name,
             validation: validatedOrder.validation,
-            // ✅ Store discount info in session
             discount: discountInfo,
-            // Store attribution data in session
             analytics: {
                 source: attributionData.source,
                 medium: attributionData.medium,
@@ -148,7 +153,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
                 landingPage: attributionData.landingPage,
                 device: deviceInfo.device,
                 browser: deviceInfo.browser
-            }
+            },
+            createdAt: Date.now() // Add timestamp for expiry checking
         });
 
         console.log(`✅ Payment session created: ${reference}`);
@@ -212,7 +218,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             taxPrice: validatedOrder.taxPrice,
             shippingPrice: validatedOrder.shippingPrice,
             totalPrice: validatedOrder.totalPrice,
-            // Include discount info if applied
             ...(discountInfo && {
                 discount: {
                     code: discountInfo.code,
@@ -252,6 +257,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     const { gateway, reference } = req.body;
 
+    if (!gateway || !reference) {
+        return next(new HandleError("Gateway and reference are required", 400));
+    }
+
     console.log(`🔍 Verifying ${gateway} payment with reference: ${reference}`);
 
     // 1. Get payment session from Redis
@@ -262,6 +271,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             "Payment session not found or expired. Please restart the payment process.",
             404
         ));
+    }
+
+    // Validate session structure
+    if (!session.orderItems || !session.shippingInfo || !session.totalPrice) {
+        await deletePaymentSession(reference);
+        return next(new HandleError("Invalid payment session data", 400));
+    }
+
+    // Check session expiry (30 minutes)
+    if (session.createdAt && Date.now() - session.createdAt > 30 * 60 * 1000) {
+        await deletePaymentSession(reference);
+        return next(new HandleError("Payment session expired. Please restart the payment process.", 400));
     }
 
     const orderReference = session.reference;
@@ -279,7 +300,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 4. Check if order already exists (idempotency)
+    // 4. Check if order already exists (idempotency) - BEFORE payment verification
     const existingOrder = await Order.findOne({
         $or: [
             { "paymentInfo.reference": orderReference },
@@ -361,7 +382,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    if (Math.abs(session.totalPrice - gatewayAmount) > 0.01) {
+    // Use slightly higher tolerance for amount comparison
+    const tolerance = session.currency === 'USD' ? 0.02 : 0.05;
+    if (Math.abs(session.totalPrice - gatewayAmount) > tolerance) {
         return next(new HandleError(
             `Amount mismatch: expected ${session.totalPrice}, gateway charged ${gatewayAmount}`,
             400
@@ -377,23 +400,31 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     const isFirstPurchase = userOrderCount === 0;
     const purchaseNumber = userOrderCount + 1;
 
-    // 9. ✅ RECORD DISCOUNT USAGE (if discount was used)
-    if (session.discount?.discountId) {
-        try {
-            const discount = await Discount.findById(session.discount.discountId);
-            if (discount) {
-                // We'll record usage after order creation with orderId
-                console.log(`✅ Discount ready to record: ${session.discount.code}`);
-            }
-        } catch (err) {
-            console.error('Failed to fetch discount for recording:', err);
-        }
-    }
-
-    // 10. Create the order with complete analytics
+    // ═══════════════════════════════════════════════════════════════
+    // ATOMIC TRANSACTION SECTION - All critical operations together
+    // ═══════════════════════════════════════════════════════════════
+    
     let order;
+    const mongoSession = await mongoose.startSession();
+    
     try {
-        order = await Order.create({
+        await mongoSession.startTransaction();
+
+        // 9. Validate stock availability BEFORE creating order
+        for (const item of session.orderItems) {
+            const product = await Product.findById(item.product).session(mongoSession);
+            if (!product) {
+                throw new Error(`Product ${item.product} not found`);
+            }
+
+            const currentStock = product.inventory?.stock ?? product.stock ?? 0;
+            if (currentStock < item.quantity) {
+                throw new Error(`Insufficient stock for ${product.name}. Available: ${currentStock}, Requested: ${item.quantity}`);
+            }
+        }
+
+        // 10. Create the order with complete analytics
+        const orderData = {
             user: userId,
             shippingInfo: session.shippingInfo,
             orderItems: session.orderItems,
@@ -402,14 +433,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             shippingPrice: session.shippingPrice,
             totalPrice: session.totalPrice,
             amountPaid: gatewayAmount,
-            // ✅ Store discount info if used
             ...(session.discount && {
-                discount: {
-                    code: session.discount.code,
-                    discountId: session.discount.discountId,
-                    type: session.discount.type,
-                    value: session.discount.value,
-                    discountAmount: session.discount.discountAmount
+                discounts: {
+                    codes: [{
+                        code: session.discount.code,
+                        amount: session.discount.discountAmount,
+                        type: session.discount.type
+                    }],
+                    totalDiscount: session.discount.discountAmount
                 }
             }),
             paymentInfo: {
@@ -423,7 +454,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 paidAt: new Date()
             },
             orderStatus: "Processing",
-            // COMPLETE ANALYTICS DATA
             analytics: {
                 source: session.analytics?.source || 'direct',
                 medium: session.analytics?.medium || null,
@@ -436,12 +466,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 isFirstPurchase,
                 purchaseNumber
             }
-        });
+        };
 
         // Store payment metadata
         if (gateway === 'stripe') {
             const paymentMethod = gatewayResponse.charges?.data[0]?.payment_method_details;
-            order.paymentMeta = {
+            orderData.paymentMeta = {
                 channel: paymentMethod?.type || "card",
                 customer: { email: gatewayResponse.receipt_email },
                 cardDetails: paymentMethod?.card ? {
@@ -454,7 +484,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 raw: gatewayResponse
             };
         } else if (gateway === 'paystack') {
-            order.paymentMeta = {
+            orderData.paymentMeta = {
                 channel: gatewayResponse.channel,
                 ipAddress: gatewayResponse.ip_address,
                 customer: gatewayResponse.customer,
@@ -469,7 +499,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 raw: gatewayResponse
             };
         } else if (gateway === 'flutterwave') {
-            order.paymentMeta = {
+            orderData.paymentMeta = {
                 channel: gatewayResponse.payment_type,
                 ipAddress: gatewayResponse.ip,
                 customer: gatewayResponse.customer,
@@ -484,86 +514,123 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             };
         }
 
-        await order.save();
-        await order.populate('orderItems.product', 'name images price');
+        // Create order within transaction
+        const [createdOrder] = await Order.create([orderData], { session: mongoSession });
+        order = createdOrder;
 
         console.log(`✅ Order created: ${order._id}`);
 
-        // 11. ✅ RECORD DISCOUNT USAGE IN DISCOUNT MODEL
-        if (session.discount?.discountId) {
-            try {
-                const discount = await Discount.findById(session.discount.discountId);
-                if (discount) {
-                    await discount.recordUsage(userId, order._id, session.discount.discountAmount);
-                    console.log(`✅ Discount usage recorded: ${session.discount.code}`);
-                }
-            } catch (err) {
-                console.error('Failed to record discount usage:', err);
-            }
-        }
-
-        // 12. Update product stock
+        // 11. Update product stock atomically
         for (const item of session.orderItems) {
-            try {
-                const product = await Product.findById(item.product);
-                if (product) {
-                    if (product.inventory?.stock !== undefined) {
-                        product.inventory.stock -= item.quantity;
-                    } else if (product.stock !== undefined) {
-                        product.stock -= item.quantity;
-                    }
-                    await product.save({ validateBeforeSave: false });
-                }
-            } catch (err) {
-                console.error(`Failed to update stock for product ${item.product}:`, err);
+            const product = await Product.findById(item.product).session(mongoSession);
+            if (product) {
+                // Use atomic decrement
+                const stockField = product.inventory?.stock !== undefined ? 'inventory.stock' : 'stock';
+                await Product.findByIdAndUpdate(
+                    item.product,
+                    { $inc: { [stockField]: -item.quantity } },
+                    { session: mongoSession, new: true }
+                );
+                console.log(`✅ Stock updated for ${product.name}: -${item.quantity}`);
             }
         }
 
-        // 13. Sync customer analytics
+        // 12. Mark checkout as converted (if exists)
         try {
-            await syncCustomerAfterOrder(order._id);
-            console.log(`✅ Customer analytics synced for order ${order._id}`);
-        } catch (analyticsErr) {
-            console.error('Failed to sync customer analytics:', analyticsErr);
+            const checkout = await Checkout.findOne({
+                user: userId,
+                status: 'pending'
+            })
+            .sort({ lastActivityAt: -1 })
+            .session(mongoSession);
+
+            if (checkout) {
+                checkout.markAsConverted(order._id, orderReference);
+                await checkout.save({ session: mongoSession });
+                console.log(`✅ Checkout converted: ${checkout._id}`);
+            }
+        } catch (checkoutErr) {
+            console.error('Failed to mark checkout as converted:', checkoutErr);
+            // Don't throw - this is not critical
         }
+
+        // Commit transaction - all operations succeeded
+        await mongoSession.commitTransaction();
+        console.log(`✅ Transaction committed successfully`);
 
     } catch (err) {
-        console.error("❌ Order creation failed:", err);
+        // Rollback on any error
+        await mongoSession.abortTransaction();
+        console.error("❌ Transaction failed, rolling back:", err);
+        
         return next(new HandleError(
-            "Payment verified but order creation failed. Please contact support with reference: " + orderReference,
+            `Payment verified but order creation failed: ${err.message}. Please contact support with reference: ${orderReference}`,
             500
         ));
+    } finally {
+        mongoSession.endSession();
     }
 
-    // 14. Create receipt
+    // ═══════════════════════════════════════════════════════════════
+    // POST-TRANSACTION OPERATIONS (non-critical, can fail gracefully)
+    // ═══════════════════════════════════════════════════════════════
+
+    // 13. Record discount usage (AFTER transaction commits)
+    // This happens after order creation because discount was already validated in cart
+    if (session.discount?.discountId) {
+        try {
+            const discount = await Discount.findById(session.discount.discountId);
+            if (discount) {
+                await discount.recordUsage(userId, order._id, session.discount.discountAmount);
+                console.log(`✅ Discount usage recorded: ${session.discount.code} for order ${order._id}`);
+            }
+        } catch (err) {
+            console.error('❌ Failed to record discount usage:', err);
+            // Non-critical - order is already created successfully
+        }
+    }
+
+    // 14. Populate order items for response
     try {
-        const receipt = await createReceiptIfNotExists({
-            orderId: order._id,
-            userId,
-            reference: orderReference,
-            orderItems: order.orderItems,
-            itemPrice: order.itemPrice,
-            taxPrice: order.taxPrice,
-            shippingPrice: order.shippingPrice,
-            totalPrice: order.totalPrice,
-            shippingInfo: order.shippingInfo,
-            currency: order.paymentInfo.currency,
-            paymentGateway: gateway
-        });
-        console.log(`✅ Receipt created: ${receipt._id}`);
-    } catch (receiptErr) {
-        console.error("❌ Receipt creation failed:", receiptErr);
+        await order.populate('orderItems.product', 'name images pricing');
+    } catch (err) {
+        console.error('Failed to populate order items:', err);
     }
 
-    // 15. Clean up Redis sessions
-    await deletePaymentSession(reference);
-    if (reference !== orderReference) {
-        await deletePaymentSession(orderReference);
-    }
-    console.log(`✅ Sessions cleaned up`);
+    // 15. Sync customer analytics (async, non-blocking)
+    syncCustomerAfterOrder(order._id)
+        .then(() => console.log(`✅ Customer analytics synced for order ${order._id}`))
+        .catch(err => console.error('Failed to sync customer analytics:', err));
 
-    // 16. Invalidate caches
-    await invalidatePaymentCaches();
+    // 16. Create receipt (async, non-blocking)
+    createReceiptIfNotExists({
+        orderId: order._id,
+        userId,
+        reference: orderReference,
+        orderItems: order.orderItems,
+        itemPrice: order.itemPrice,
+        taxPrice: order.taxPrice,
+        shippingPrice: order.shippingPrice,
+        totalPrice: order.totalPrice,
+        shippingInfo: order.shippingInfo,
+        currency: order.paymentInfo.currency,
+        paymentGateway: gateway
+    })
+        .then(receipt => console.log(`✅ Receipt created: ${receipt._id}`))
+        .catch(err => console.error("❌ Receipt creation failed:", err));
+
+    // 17. Clean up Redis sessions
+    Promise.all([
+        deletePaymentSession(reference),
+        reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve()
+    ])
+        .then(() => console.log(`✅ Sessions cleaned up`))
+        .catch(err => console.error('Failed to clean up sessions:', err));
+
+    // 18. Invalidate caches (async, non-blocking)
+    invalidatePaymentCaches()
+        .then(() => console.log(`✅ Caches invalidated`))
+        .catch(err => console.error('Failed to invalidate caches:', err));
 
     return res.status(200).json({
         success: true,
