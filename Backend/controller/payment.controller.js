@@ -8,9 +8,8 @@ import { createPaymentSession, getPaymentSession, deletePaymentSession, createSe
 import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
 import Product from '../models/product-model.js';
-import crypto from 'crypto';
+import Discount from '../models/discount-model.js';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
-import Cart from '../models/cart-model.js';
 
 // Helper: Invalidate payment-related caches
 const invalidatePaymentCaches = async () => {
@@ -36,7 +35,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(new HandleError("User not authenticated", 401));
     }
 
-    const { gateway, currency, shippingInfo, cartItems } = req.body;
+    const { gateway, currency, shippingInfo, cartItems, discountCode } = req.body;
 
     // 1. Get user info for payment gateway
     const user = await User.findById(userId).select('email name');
@@ -52,7 +51,63 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         return next(err);
     }
 
-    // 3. ✅ NEW: Capture attribution data from request
+    // 3. ✅ APPLY DISCOUNT IF PROVIDED
+    let discountInfo = null;
+    let finalTotalPrice = validatedOrder.totalPrice;
+
+    if (discountCode) {
+        try {
+            const discount = await Discount.findActiveByCode(discountCode);
+
+            if (!discount) {
+                return next(new HandleError('Invalid or expired discount code', 400));
+            }
+
+            // Check if user can use this discount
+            const canUse = await discount.canUserUse(userId);
+            if (!canUse.canUse) {
+                return next(new HandleError(canUse.reason, 400));
+            }
+
+            // Validate cart against discount conditions
+            const validation = discount.validateCart(validatedOrder.itemPrice, cartItems, userId);
+            if (!validation.valid) {
+                return next(new HandleError(validation.reason, 400));
+            }
+
+            // Calculate discount amount
+            const discountAmount = discount.calculateDiscount(validatedOrder.itemPrice, cartItems);
+
+            // Recalculate totals with discount
+            const discountedItemPrice = Math.max(0, validatedOrder.itemPrice - discountAmount);
+            const taxPrice = Math.round(discountedItemPrice * 0.18 * 100) / 100;
+            const shippingPrice = discountedItemPrice >= 500 ? 0 : 50;
+            finalTotalPrice = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
+
+            // Store discount info for session
+            discountInfo = {
+                code: discount.code,
+                discountId: discount._id,
+                type: discount.type,
+                value: discount.value,
+                discountAmount: Math.round(discountAmount * 100) / 100,
+                description: discount.description
+            };
+
+            // Update validated order with discounted values
+            validatedOrder.itemPrice = Math.round(discountedItemPrice * 100) / 100;
+            validatedOrder.taxPrice = taxPrice;
+            validatedOrder.shippingPrice = shippingPrice;
+            validatedOrder.totalPrice = finalTotalPrice;
+
+            console.log(`✅ Discount applied: ${discount.code} - $${discountAmount}`);
+        } catch (err) {
+            console.error('Discount application error:', err);
+            return next(new HandleError('Failed to apply discount code', 500));
+        }
+    }
+
+    // 4. Capture attribution data from request
     const attributionData = req.attributionData || {
         source: 'direct',
         medium: null,
@@ -66,7 +121,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         browser: 'unknown'
     };
 
-    // 4. Create payment session in Redis with attribution data
+    // 5. Create payment session in Redis with attribution and discount data
     let reference;
     try {
         reference = await createPaymentSession({
@@ -82,7 +137,9 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             userEmail: user.email,
             userName: user.name,
             validation: validatedOrder.validation,
-            // ✅ NEW: Store attribution data in session
+            // ✅ Store discount info in session
+            discount: discountInfo,
+            // Store attribution data in session
             analytics: {
                 source: attributionData.source,
                 medium: attributionData.medium,
@@ -94,13 +151,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             }
         });
 
-        console.log(`✅ Payment session created with attribution: ${reference}`);
+        console.log(`✅ Payment session created: ${reference}`);
     } catch (err) {
         console.error("Payment session creation failed:", err);
         return next(new HandleError("Failed to initialize payment session", 500));
     }
 
-    // 5. Initialize payment with the gateway
+    // 6. Initialize payment with the gateway
     let gatewayResponse = null;
     
     try {
@@ -129,7 +186,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         ));
     }
 
-    // 6. For Stripe, create alias session with payment_intent_id
+    // 7. For Stripe, create alias session with payment_intent_id
     if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
         try {
             await createSessionAlias(gatewayResponse.payment_intent_id, reference);
@@ -139,7 +196,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         }
     }
 
-    // 7. Return payment initialization data
+    // 8. Return payment initialization data
     const responseData = {
         reference,
         amount: validatedOrder.totalPrice,
@@ -154,7 +211,14 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
             itemPrice: validatedOrder.itemPrice,
             taxPrice: validatedOrder.taxPrice,
             shippingPrice: validatedOrder.shippingPrice,
-            totalPrice: validatedOrder.totalPrice
+            totalPrice: validatedOrder.totalPrice,
+            // Include discount info if applied
+            ...(discountInfo && {
+                discount: {
+                    code: discountInfo.code,
+                    amount: discountInfo.discountAmount
+                }
+            })
         }
     };
 
@@ -304,7 +368,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 8. ✅ Calculate isFirstPurchase and purchaseNumber
+    // 8. Calculate isFirstPurchase and purchaseNumber
     const userOrderCount = await Order.countDocuments({
         user: userId,
         'paymentInfo.status': 'success'
@@ -313,7 +377,20 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     const isFirstPurchase = userOrderCount === 0;
     const purchaseNumber = userOrderCount + 1;
 
-    // 9. Create the order with complete analytics
+    // 9. ✅ RECORD DISCOUNT USAGE (if discount was used)
+    if (session.discount?.discountId) {
+        try {
+            const discount = await Discount.findById(session.discount.discountId);
+            if (discount) {
+                // We'll record usage after order creation with orderId
+                console.log(`✅ Discount ready to record: ${session.discount.code}`);
+            }
+        } catch (err) {
+            console.error('Failed to fetch discount for recording:', err);
+        }
+    }
+
+    // 10. Create the order with complete analytics
     let order;
     try {
         order = await Order.create({
@@ -325,6 +402,16 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             shippingPrice: session.shippingPrice,
             totalPrice: session.totalPrice,
             amountPaid: gatewayAmount,
+            // ✅ Store discount info if used
+            ...(session.discount && {
+                discount: {
+                    code: session.discount.code,
+                    discountId: session.discount.discountId,
+                    type: session.discount.type,
+                    value: session.discount.value,
+                    discountAmount: session.discount.discountAmount
+                }
+            }),
             paymentInfo: {
                 reference: orderReference,
                 providerTxId: gatewayResponse.id || gatewayResponse.tx_id,
@@ -336,7 +423,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 paidAt: new Date()
             },
             orderStatus: "Processing",
-            // ✅ COMPLETE ANALYTICS DATA
+            // COMPLETE ANALYTICS DATA
             analytics: {
                 source: session.analytics?.source || 'direct',
                 medium: session.analytics?.medium || null,
@@ -345,7 +432,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 landingPage: session.analytics?.landingPage || null,
                 device: session.analytics?.device || 'desktop',
                 browser: session.analytics?.browser || 'unknown',
-                customerSegment: null, // Will be calculated by customer analytics
+                customerSegment: null,
                 isFirstPurchase,
                 purchaseNumber
             }
@@ -400,9 +487,22 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         await order.save();
         await order.populate('orderItems.product', 'name images price');
 
-        console.log(`✅ Order created with analytics: ${order._id}`);
+        console.log(`✅ Order created: ${order._id}`);
 
-        // 10. Update product stock
+        // 11. ✅ RECORD DISCOUNT USAGE IN DISCOUNT MODEL
+        if (session.discount?.discountId) {
+            try {
+                const discount = await Discount.findById(session.discount.discountId);
+                if (discount) {
+                    await discount.recordUsage(userId, order._id, session.discount.discountAmount);
+                    console.log(`✅ Discount usage recorded: ${session.discount.code}`);
+                }
+            } catch (err) {
+                console.error('Failed to record discount usage:', err);
+            }
+        }
+
+        // 12. Update product stock
         for (const item of session.orderItems) {
             try {
                 const product = await Product.findById(item.product);
@@ -419,23 +519,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             }
         }
 
-        // 11. Mark cart as converted
-        try {
-            const cartSession = await Cart.findOne({
-                user: userId,
-                status: 'active'
-            }).sort({ lastActivityAt: -1 }).limit(1);
-
-            if (cartSession) {
-                cartSession.markAsConverted(order._id);
-                await cartSession.save();
-                console.log(`✅ Cart converted: ${cartSession._id}`);
-            }
-        } catch (cartErr) {
-            console.error('Failed to mark cart as converted:', cartErr);
-        }
-
-        // 12. Sync customer analytics
+        // 13. Sync customer analytics
         try {
             await syncCustomerAfterOrder(order._id);
             console.log(`✅ Customer analytics synced for order ${order._id}`);
@@ -451,7 +535,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 13. Create receipt
+    // 14. Create receipt
     try {
         const receipt = await createReceiptIfNotExists({
             orderId: order._id,
@@ -471,14 +555,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.error("❌ Receipt creation failed:", receiptErr);
     }
 
-    // 14. Clean up Redis sessions
+    // 15. Clean up Redis sessions
     await deletePaymentSession(reference);
     if (reference !== orderReference) {
         await deletePaymentSession(orderReference);
     }
     console.log(`✅ Sessions cleaned up`);
 
-    // 15. Invalidate caches
+    // 16. Invalidate caches
     await invalidatePaymentCaches();
 
     return res.status(200).json({
