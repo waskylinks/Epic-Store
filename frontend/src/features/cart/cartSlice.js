@@ -2,50 +2,11 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
 // ============================================
-// HELPER FUNCTIONS
+// ASYNC THUNKS - SERVER-SIDE CART OPERATIONS
 // ============================================
 
 /**
- * Get or create session ID for cart tracking
- */
-const getSessionId = () => {
-  let sessionId = sessionStorage.getItem('cartSessionId');
-  if (!sessionId) {
-    sessionId = `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    sessionStorage.setItem('cartSessionId', sessionId);
-  }
-  return sessionId;
-};
-
-/**
- * Get device type
- */
-const getDeviceType = () => {
-  const width = window.innerWidth;
-  if (width < 768) return 'mobile';
-  if (width < 1024) return 'tablet';
-  return 'desktop';
-};
-
-/**
- * Get browser info
- */
-const getBrowserInfo = () => {
-  const ua = navigator.userAgent;
-  if (ua.includes('Chrome')) return 'Chrome';
-  if (ua.includes('Firefox')) return 'Firefox';
-  if (ua.includes('Safari')) return 'Safari';
-  if (ua.includes('Edge')) return 'Edge';
-  return 'Other';
-};
-
-// ============================================
-// ASYNC THUNKS
-// ============================================
-
-/**
- * Get cart details with fresh product data
- * Tracks cart view analytics
+ * Get cart details with fresh product data from server
  */
 export const getCartDetails = createAsyncThunk(
   "cart/getCartDetails",
@@ -58,25 +19,20 @@ export const getCartDetails = createAsyncThunk(
       }
 
       const { data } = await axios.post("/api/v1/cart/details", {
-        items: cartItems,
-        sessionId: getSessionId(),
-        analytics: {
-          device: getDeviceType(),
-          browser: getBrowserInfo()
-        }
+        items: cartItems
       });
       
       return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || { message: "Failed to load cart" }
+        error.response?.data?.message || "Failed to load cart"
       );
     }
   }
 );
 
 /**
- * Add item to cart with analytics tracking
+ * Add item to cart (server validates stock and price)
  */
 export const addItemsToCart = createAsyncThunk(
   "cart/addItemsToCart",
@@ -84,14 +40,7 @@ export const addItemsToCart = createAsyncThunk(
     try {
       const { data } = await axios.post("/api/v1/cart/add", {
         product: id,
-        quantity,
-        sessionId: getSessionId(),
-        analytics: {
-          device: getDeviceType(),
-          browser: getBrowserInfo(),
-          source: sessionStorage.getItem('trafficSource') || 'direct',
-          referrer: document.referrer
-        }
+        quantity
       });
       
       return {
@@ -101,56 +50,71 @@ export const addItemsToCart = createAsyncThunk(
       };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || { message: "Failed to add to cart" }
+        error.response?.data?.message || "Failed to add to cart"
       );
     }
   }
 );
 
 /**
- * Update cart item quantity with analytics
+ * Update cart item quantity (server validates)
  */
 export const updateCartItemQuantity = createAsyncThunk(
   "cart/updateCartItemQuantity",
   async ({ productId, quantity }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put("/api/v1/cart/update", {
+      await axios.put("/api/v1/cart/update", {
         product: productId,
-        quantity,
-        sessionId: getSessionId()
+        quantity
       });
       
       return { productId, quantity };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || { message: "Failed to update cart" }
+        error.response?.data?.message || "Failed to update cart"
       );
     }
   }
 );
 
 /**
- * Remove item from cart with analytics
+ * Remove item from cart
  */
 export const removeCartItem = createAsyncThunk(
   "cart/removeCartItem",
   async (productId, { rejectWithValue }) => {
     try {
-      await axios.delete(`/api/v1/cart/remove/${productId}`, {
-        data: { sessionId: getSessionId() }
-      });
+      await axios.delete(`/api/v1/cart/remove/${productId}`);
       
       return productId;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || { message: "Failed to remove item" }
+        error.response?.data?.message || "Failed to remove item"
       );
     }
   }
 );
 
 /**
- * Validate cart before checkout with funnel tracking
+ * Clear entire cart
+ */
+export const clearEntireCart = createAsyncThunk(
+  "cart/clearEntireCart",
+  async (_, { rejectWithValue }) => {
+    try {
+      await axios.delete("/api/v1/cart/clear");
+      
+      return {};
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to clear cart"
+      );
+    }
+  }
+);
+
+/**
+ * Validate cart before checkout
  */
 export const validateCheckout = createAsyncThunk(
   "cart/validateCheckout",
@@ -159,8 +123,7 @@ export const validateCheckout = createAsyncThunk(
       const { cartItems } = getState().cart;
       
       const { data } = await axios.post("/api/v1/cart/checkout/validate", {
-        items: cartItems,
-        sessionId: getSessionId()
+        items: cartItems
       });
       
       return data;
@@ -183,14 +146,13 @@ export const applyDiscountCode = createAsyncThunk(
       
       const { data } = await axios.post("/api/v1/cart/apply-discount", {
         code,
-        items: cartItems,
-        sessionId: getSessionId()
+        items: cartItems
       });
       
       return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data || { message: "Invalid discount code" }
+        error.response?.data?.message || "Invalid discount code"
       );
     }
   }
@@ -201,55 +163,8 @@ export const applyDiscountCode = createAsyncThunk(
  */
 export const removeDiscountCode = createAsyncThunk(
   "cart/removeDiscountCode",
-  async (_, { rejectWithValue }) => {
-    try {
-      // Just recalculate without discount
-      return { success: true };
-    } catch (error) {
-      return rejectWithValue({ message: "Failed to remove discount" });
-    }
-  }
-);
-
-/**
- * Track funnel step (shipping, payment, review)
- */
-export const trackFunnelStep = createAsyncThunk(
-  "cart/trackFunnelStep",
-  async ({ step, metadata = {} }, { rejectWithValue }) => {
-    try {
-      const endpoint = `/api/v1/cart/${step}`;
-      await axios.post(endpoint, {
-        sessionId: getSessionId(),
-        metadata
-      });
-      
-      return { step, timestamp: new Date().toISOString() };
-    } catch (error) {
-      // Don't fail the user flow if tracking fails
-      console.error('Failed to track funnel step:', error);
-      return rejectWithValue(error.response?.data || { message: "Tracking failed" });
-    }
-  }
-);
-
-/**
- * Mark order as complete (final funnel step)
- */
-export const trackOrderComplete = createAsyncThunk(
-  "cart/trackOrderComplete",
-  async ({ orderId }, { rejectWithValue }) => {
-    try {
-      await axios.post("/api/v1/cart/order-complete", {
-        sessionId: getSessionId(),
-        orderId
-      });
-      
-      return { orderId };
-    } catch (error) {
-      console.error('Failed to track order completion:', error);
-      return rejectWithValue(error.response?.data || { message: "Tracking failed" });
-    }
+  async () => {
+    return { success: true };
   }
 );
 
@@ -257,34 +172,29 @@ export const trackOrderComplete = createAsyncThunk(
 // INITIAL STATE
 // ============================================
 const initialState = {
-  // Minimal cart data: [{product: "id", quantity: 2}]
+  // Minimal cart data stored in localStorage: [{product: "id", quantity: 2}]
   cartItems: JSON.parse(localStorage.getItem("cartItems")) || [],
   
-  // Full product details (fetched from server)
+  // Full product details fetched from server
   cartDetails: [],
   
-  // Pricing from server
+  // Pricing from server validation
   pricing: {
     itemPrice: 0,
     taxPrice: 0,
     shippingPrice: 0,
-    totalPrice: 0
+    totalPrice: 0,
+    currency: 'USD'
   },
   
-  // Discount
+  // Discount info
   discount: {
     code: null,
     discountAmount: 0,
     type: null,
+    description: null,
     applied: false
   },
-  
-  // Funnel tracking
-  funnelSteps: [],
-  currentStep: null,
-  
-  // Session tracking
-  sessionId: getSessionId(),
   
   // UI state
   loading: false,
@@ -293,11 +203,7 @@ const initialState = {
   message: null,
   
   // Shipping info
-  shippingInfo: JSON.parse(localStorage.getItem("shippingInfo")) || {},
-  
-  // Tracking flags
-  isTrackingEnabled: true,
-  lastActivityAt: new Date().toISOString()
+  shippingInfo: JSON.parse(localStorage.getItem("shippingInfo")) || {}
 };
 
 // ============================================
@@ -316,35 +222,9 @@ const cartSlice = createSlice({
       state.success = false;
     },
 
-    removeItemFromCart: (state, action) => {
-      const id = action.payload;
-      state.cartItems = state.cartItems.filter((item) => item.product !== id);
-      state.cartDetails = state.cartDetails.filter((item) => item.product !== id);
-      
-      localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
-      
-      state.message = "Item removed from cart";
-      state.success = true;
-      state.lastActivityAt = new Date().toISOString();
-    },
-
-    updateItemQuantity: (state, action) => {
-      const { productId, quantity } = action.payload;
-      const item = state.cartItems.find((i) => i.product === productId);
-      
-      if (item) {
-        item.quantity = quantity;
-        localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
-        state.message = "Quantity updated";
-        state.success = true;
-        state.lastActivityAt = new Date().toISOString();
-      }
-    },
-
     saveShippingInfo: (state, action) => {
       state.shippingInfo = action.payload;
       localStorage.setItem("shippingInfo", JSON.stringify(state.shippingInfo));
-      state.lastActivityAt = new Date().toISOString();
     },
 
     clearCart: (state) => {
@@ -353,13 +233,9 @@ const cartSlice = createSlice({
       state.shippingInfo = {};
       state.pricing = initialState.pricing;
       state.discount = initialState.discount;
-      state.funnelSteps = [];
-      state.currentStep = null;
       
       localStorage.removeItem("cartItems");
       localStorage.removeItem("shippingInfo");
-      sessionStorage.removeItem("orderItem");
-      sessionStorage.removeItem("cartSessionId");
       
       state.message = "Cart cleared";
       state.success = true;
@@ -369,33 +245,34 @@ const cartSlice = createSlice({
       state.discount = initialState.discount;
       state.message = "Discount removed";
       state.success = true;
-    },
-
-    updateLastActivity: (state) => {
-      state.lastActivityAt = new Date().toISOString();
     }
   },
 
   extraReducers: (builder) => {
+    // ============================================
     // GET CART DETAILS
+    // ============================================
     builder
       .addCase(getCartDetails.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(getCartDetails.fulfilled, (state, action) => {
         state.cartDetails = action.payload.cartItems || [];
         state.loading = false;
-        state.lastActivityAt = new Date().toISOString();
       })
       .addCase(getCartDetails.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message || "Failed to load cart";
+        state.error = action.payload || "Failed to load cart";
       });
 
+    // ============================================
     // ADD ITEM TO CART
+    // ============================================
     builder
       .addCase(addItemsToCart.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(addItemsToCart.fulfilled, (state, action) => {
         const { product, quantity } = action.payload;
@@ -412,17 +289,19 @@ const cartSlice = createSlice({
         localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
         state.success = true;
         state.loading = false;
-        state.lastActivityAt = new Date().toISOString();
       })
       .addCase(addItemsToCart.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message || "Failed to add to cart";
+        state.error = action.payload || "Failed to add to cart";
       });
 
+    // ============================================
     // UPDATE CART ITEM QUANTITY
+    // ============================================
     builder
       .addCase(updateCartItemQuantity.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(updateCartItemQuantity.fulfilled, (state, action) => {
         const { productId, quantity } = action.payload;
@@ -436,15 +315,20 @@ const cartSlice = createSlice({
         state.message = "Quantity updated";
         state.success = true;
         state.loading = false;
-        state.lastActivityAt = new Date().toISOString();
       })
       .addCase(updateCartItemQuantity.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message || "Failed to update quantity";
+        state.error = action.payload || "Failed to update quantity";
       });
 
+    // ============================================
     // REMOVE CART ITEM
+    // ============================================
     builder
+      .addCase(removeCartItem.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
       .addCase(removeCartItem.fulfilled, (state, action) => {
         const productId = action.payload;
         state.cartItems = state.cartItems.filter((item) => item.product !== productId);
@@ -454,22 +338,51 @@ const cartSlice = createSlice({
         
         state.message = "Item removed from cart";
         state.success = true;
-        state.lastActivityAt = new Date().toISOString();
+        state.loading = false;
       })
       .addCase(removeCartItem.rejected, (state, action) => {
-        state.error = action.payload?.message || "Failed to remove item";
+        state.loading = false;
+        state.error = action.payload || "Failed to remove item";
       });
 
+    // ============================================
+    // CLEAR ENTIRE CART
+    // ============================================
+    builder
+      .addCase(clearEntireCart.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(clearEntireCart.fulfilled, (state) => {
+        state.cartItems = [];
+        state.cartDetails = [];
+        state.shippingInfo = {};
+        state.pricing = initialState.pricing;
+        state.discount = initialState.discount;
+        
+        localStorage.removeItem("cartItems");
+        localStorage.removeItem("shippingInfo");
+        
+        state.message = "Cart cleared successfully";
+        state.success = true;
+        state.loading = false;
+      })
+      .addCase(clearEntireCart.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || "Failed to clear cart";
+      });
+
+    // ============================================
     // VALIDATE CHECKOUT
+    // ============================================
     builder
       .addCase(validateCheckout.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(validateCheckout.fulfilled, (state, action) => {
         state.pricing = action.payload.pricing;
         state.loading = false;
-        state.currentStep = 'checkout_start';
-        state.lastActivityAt = new Date().toISOString();
       })
       .addCase(validateCheckout.rejected, (state, action) => {
         state.loading = false;
@@ -485,52 +398,41 @@ const cartSlice = createSlice({
         }
       });
 
+    // ============================================
     // APPLY DISCOUNT
+    // ============================================
     builder
       .addCase(applyDiscountCode.pending, (state) => {
         state.loading = true;
+        state.error = null;
       })
       .addCase(applyDiscountCode.fulfilled, (state, action) => {
         state.discount = {
-          code: action.payload.code,
-          discountAmount: action.payload.discountAmount,
-          type: action.payload.type,
+          code: action.payload.discount.code,
+          discountAmount: action.payload.discount.discountAmount,
+          type: action.payload.discount.type,
+          description: action.payload.discount.description,
           applied: true
         };
         state.pricing = action.payload.pricing;
-        state.message = `Discount "${action.payload.code}" applied`;
+        state.message = `Discount "${action.payload.discount.code}" applied`;
         state.loading = false;
         state.success = true;
-        state.lastActivityAt = new Date().toISOString();
       })
       .addCase(applyDiscountCode.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message || "Invalid discount code";
+        state.error = action.payload || "Invalid discount code";
         state.discount.applied = false;
       });
 
+    // ============================================
     // REMOVE DISCOUNT
+    // ============================================
     builder
       .addCase(removeDiscountCode.fulfilled, (state) => {
         state.discount = initialState.discount;
         state.message = "Discount removed";
         state.success = true;
-        state.lastActivityAt = new Date().toISOString();
-      });
-
-    // TRACK FUNNEL STEP
-    builder
-      .addCase(trackFunnelStep.fulfilled, (state, action) => {
-        state.funnelSteps.push(action.payload);
-        state.currentStep = action.payload.step;
-        state.lastActivityAt = new Date().toISOString();
-      });
-
-    // TRACK ORDER COMPLETE
-    builder
-      .addCase(trackOrderComplete.fulfilled, (state, action) => {
-        state.currentStep = 'order_complete';
-        state.lastActivityAt = new Date().toISOString();
       });
   }
 });
@@ -541,12 +443,9 @@ const cartSlice = createSlice({
 export const {
   removeErrors,
   removeMessage,
-  removeItemFromCart,
-  updateItemQuantity,
   saveShippingInfo,
   clearCart,
-  clearDiscount,
-  updateLastActivity
+  clearDiscount
 } = cartSlice.actions;
 
 // ============================================
@@ -554,11 +453,10 @@ export const {
 // ============================================
 export const selectCartItems = (state) => state.cart.cartItems;
 export const selectCartDetails = (state) => state.cart.cartDetails;
-export const selectCartCount = (state) => state.cart.cartItems.reduce((sum, item) => sum + item.quantity, 0);
+export const selectCartCount = (state) => 
+  state.cart.cartItems.reduce((sum, item) => sum + item.quantity, 0);
 export const selectCartPricing = (state) => state.cart.pricing;
 export const selectDiscount = (state) => state.cart.discount;
-export const selectCurrentFunnelStep = (state) => state.cart.currentStep;
-export const selectSessionId = (state) => state.cart.sessionId;
 export const selectShippingInfo = (state) => state.cart.shippingInfo;
 
 // ============================================
