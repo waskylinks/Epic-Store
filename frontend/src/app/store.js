@@ -11,6 +11,9 @@ import publicProductsReducer from '../features/publicProducts/publicProductsSlic
 import wishlistReducer from '../features/products/wishlistSlice';
 import shippingReducer from '../features/shipping/shippingSlice';
 import checkoutReducer from '../features/checkout/checkoutSlice';
+import adminRefundReducer from '../features/admin/adminRefundSlice';
+import adminReturnReducer from '../features/admin/adminReturnSlice';
+
 
 
 export const store = configureStore({
@@ -27,6 +30,9 @@ export const store = configureStore({
         wishlist: wishlistReducer,
         shipping: shippingReducer,
         checkout: checkoutReducer,
+        adminRefund: adminRefundReducer,
+        adminReturn: adminReturnReducer,
+
 
     }
 });

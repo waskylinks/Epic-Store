@@ -45,63 +45,129 @@ export const getRefundStatus = createAsyncThunk(
 );
 
 /**
- * Admin: Get all refund requests
+ * Cancel refund request (before approval)
  */
-export const getAllRefunds = createAsyncThunk(
-  "refund/getAllRefunds",
-  async (filters = {}, { rejectWithValue }) => {
-    try {
-      const params = new URLSearchParams(filters).toString();
-      const { data } = await axios.get(
-        `/api/v1/admin/refunds${params ? `?${params}` : ''}`,
-        { withCredentials: true }
-      );
-      return data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch refunds"
-      );
-    }
-  }
-);
-
-/**
- * Admin: Review refund request (approve/reject)
- */
-export const reviewRefund = createAsyncThunk(
-  "refund/reviewRefund",
-  async ({ orderId, action, adminNote }, { rejectWithValue }) => {
+export const cancelRefund = createAsyncThunk(
+  "refund/cancelRefund",
+  async (orderId, { rejectWithValue }) => {
     try {
       const { data } = await axios.put(
-        `/api/v1/admin/orders/${orderId}/refund/review`,
-        { action, adminNote },
+        `/api/v1/orders/${orderId}/refund/cancel`,
+        {},
         { withCredentials: true }
       );
       return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to review refund"
+        error.response?.data?.message || "Failed to cancel refund"
       );
     }
   }
 );
 
 /**
- * Admin: Process refund (call payment gateway)
+ * Add refund message (customer)
  */
-export const processRefund = createAsyncThunk(
-  "refund/processRefund",
-  async ({ orderId, refundAmount, merchantNote }, { rejectWithValue }) => {
+export const addRefundMessage = createAsyncThunk(
+  "refund/addRefundMessage",
+  async ({ orderId, content, attachments }, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
-        `/api/v1/admin/orders/${orderId}/refund/process`,
-        { refundAmount, merchantNote },
+        `/api/v1/orders/${orderId}/refund/messages`,
+        { content, attachments },
         { withCredentials: true }
       );
       return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to process refund"
+        error.response?.data?.message || "Failed to send message"
+      );
+    }
+  }
+);
+
+/**
+ * Get refund messages
+ */
+export const getRefundMessages = createAsyncThunk(
+  "refund/getRefundMessages",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `/api/v1/orders/${orderId}/refund/messages`,
+        { withCredentials: true }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch refund messages"
+      );
+    }
+  }
+);
+
+/**
+ * Get refund timeline
+ */
+export const getRefundTimeline = createAsyncThunk(
+  "refund/getRefundTimeline",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `/api/v1/orders/${orderId}/refund/timeline`,
+        { withCredentials: true }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch refund timeline"
+      );
+    }
+  }
+);
+
+/**
+ * Get refund documents
+ */
+export const getRefundDocuments = createAsyncThunk(
+  "refund/getRefundDocuments",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `/api/v1/orders/${orderId}/refund/documents`,
+        { withCredentials: true }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch refund documents"
+      );
+    }
+  }
+);
+
+/**
+ * Upload refund files (customer)
+ */
+export const uploadRefundFiles = createAsyncThunk(
+  "refund/uploadRefundFiles",
+  async ({ orderId, files }, { rejectWithValue }) => {
+    try {
+      const formData = new FormData();
+      files.forEach(file => formData.append('attachments', file));
+      
+      const { data } = await axios.post(
+        `/api/v1/orders/${orderId}/refund/upload`,
+        formData,
+        { 
+          withCredentials: true,
+          headers: { 'Content-Type': 'multipart/form-data' }
+        }
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to upload files"
       );
     }
   }
@@ -110,15 +176,17 @@ export const processRefund = createAsyncThunk(
 const refundSlice = createSlice({
   name: "refund",
   initialState: {
-    // ✅ FIX: Default to object with status 'none' instead of null
     refundStatus: { status: 'none', hasRefund: false },
-    refunds: [],
-    stats: null,
+    messages: [],
+    timeline: [],
+    documents: [],
     
-    // ✅ FIX: Separate loading states
-    loading: false,           // For request/review/process
-    statusLoading: false,     // For getRefundStatus
-    refundsLoading: false,    // For getAllRefunds (admin)
+    loading: false,
+    statusLoading: false,
+    messagesLoading: false,
+    timelineLoading: false,
+    documentsLoading: false,
+    uploadLoading: false,
     
     error: null,
     success: false,
@@ -131,7 +199,6 @@ const refundSlice = createSlice({
       state.message = null;
     },
     resetRefundStatus: (state) => {
-      // ✅ FIX: Reset to object, not null
       state.refundStatus = { status: 'none', hasRefund: false };
     }
   },
@@ -147,6 +214,7 @@ const refundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
+        state.refundStatus = action.payload.refundInfo || { status: 'requested', hasRefund: true };
       })
       .addCase(requestRefund.rejected, (state, action) => {
         state.loading = false;
@@ -154,7 +222,7 @@ const refundSlice = createSlice({
         state.success = false;
       });
 
-    // Get Refund Status - ✅ FIX: Use separate loading state
+    // Get Refund Status
     builder
       .addCase(getRefundStatus.pending, (state) => {
         state.statusLoading = true;
@@ -162,64 +230,107 @@ const refundSlice = createSlice({
       })
       .addCase(getRefundStatus.fulfilled, (state, action) => {
         state.statusLoading = false;
-        // ✅ FIX: Always set to object with hasRefund flag
         state.refundStatus = action.payload.refundInfo || { status: 'none', hasRefund: false };
       })
       .addCase(getRefundStatus.rejected, (state, action) => {
         state.statusLoading = false;
-        // ✅ FIX: On error, reset to 'none' instead of keeping null
         state.refundStatus = { status: 'none', hasRefund: false };
-        // Don't show error toast for 404s (order has no refund)
         if (!action.payload?.includes('not found')) {
           state.error = action.payload;
         }
       });
 
-    // Get All Refunds (Admin) - ✅ FIX: Use separate loading state
+    // Cancel Refund
     builder
-      .addCase(getAllRefunds.pending, (state) => {
-        state.refundsLoading = true;
-        state.error = null;
-      })
-      .addCase(getAllRefunds.fulfilled, (state, action) => {
-        state.refundsLoading = false;
-        state.refunds = action.payload.orders;
-        state.stats = action.payload.stats;
-      })
-      .addCase(getAllRefunds.rejected, (state, action) => {
-        state.refundsLoading = false;
-        state.error = action.payload;
-      });
-
-    // Review Refund (Admin)
-    builder
-      .addCase(reviewRefund.pending, (state) => {
+      .addCase(cancelRefund.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(reviewRefund.fulfilled, (state, action) => {
+      .addCase(cancelRefund.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
+        state.refundStatus = { status: 'none', hasRefund: false };
       })
-      .addCase(reviewRefund.rejected, (state, action) => {
+      .addCase(cancelRefund.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Process Refund (Admin)
+    // Add Refund Message
     builder
-      .addCase(processRefund.pending, (state) => {
+      .addCase(addRefundMessage.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(processRefund.fulfilled, (state, action) => {
+      .addCase(addRefundMessage.fulfilled, (state, action) => {
         state.loading = false;
+        state.success = true;
+        state.messages.push(action.payload.data.message);
+      })
+      .addCase(addRefundMessage.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload;
+      });
+
+    // Get Refund Messages
+    builder
+      .addCase(getRefundMessages.pending, (state) => {
+        state.messagesLoading = true;
+        state.error = null;
+      })
+      .addCase(getRefundMessages.fulfilled, (state, action) => {
+        state.messagesLoading = false;
+        state.messages = action.payload.messages;
+      })
+      .addCase(getRefundMessages.rejected, (state, action) => {
+        state.messagesLoading = false;
+        state.error = action.payload;
+      });
+
+    // Get Refund Timeline
+    builder
+      .addCase(getRefundTimeline.pending, (state) => {
+        state.timelineLoading = true;
+        state.error = null;
+      })
+      .addCase(getRefundTimeline.fulfilled, (state, action) => {
+        state.timelineLoading = false;
+        state.timeline = action.payload.timeline;
+      })
+      .addCase(getRefundTimeline.rejected, (state, action) => {
+        state.timelineLoading = false;
+        state.error = action.payload;
+      });
+
+    // Get Refund Documents
+    builder
+      .addCase(getRefundDocuments.pending, (state) => {
+        state.documentsLoading = true;
+        state.error = null;
+      })
+      .addCase(getRefundDocuments.fulfilled, (state, action) => {
+        state.documentsLoading = false;
+        state.documents = action.payload.documents;
+      })
+      .addCase(getRefundDocuments.rejected, (state, action) => {
+        state.documentsLoading = false;
+        state.error = action.payload;
+      });
+
+    // Upload Refund Files
+    builder
+      .addCase(uploadRefundFiles.pending, (state) => {
+        state.uploadLoading = true;
+        state.error = null;
+      })
+      .addCase(uploadRefundFiles.fulfilled, (state, action) => {
+        state.uploadLoading = false;
         state.success = true;
         state.message = action.payload.message;
       })
-      .addCase(processRefund.rejected, (state, action) => {
-        state.loading = false;
+      .addCase(uploadRefundFiles.rejected, (state, action) => {
+        state.uploadLoading = false;
         state.error = action.payload;
       });
   },
