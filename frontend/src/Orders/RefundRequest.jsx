@@ -1,3 +1,4 @@
+// Updated RefundRequest.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -23,6 +24,7 @@ import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
+import RefundReturnMessagesModal from './RefundReturnMessagesModal';
 
 import { getOrderDetails } from '../features/cart/orderSlice';
 import {
@@ -82,12 +84,9 @@ function RefundRequest() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const fileInputRef = useRef(null);
-  const messagesEndRef = useRef(null);
 
-  // Order state
   const { order, loading: orderLoading } = useSelector((state) => state.order);
   
-  // Refund state
   const {
     messages,
     loading,
@@ -107,26 +106,34 @@ function RefundRequest() {
   const [formErrors, setFormErrors] = useState({});
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [filePreviews, setFilePreviews] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
+  const [showMessagesModal, setShowMessagesModal] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const hasActiveRefund = order?.refundInfo?.status && order.refundInfo.status !== 'none';
   const isTracking = hasActiveRefund;
 
-  // Fetch order details
   useEffect(() => {
     if (orderId) {
       dispatch(getOrderDetails(orderId));
     }
   }, [dispatch, orderId]);
 
-  // Fetch messages when tracking existing refund
   useEffect(() => {
     if (isTracking && orderId) {
       dispatch(getRefundMessages(orderId));
     }
   }, [dispatch, isTracking, orderId]);
 
-  // Pre-fill form data when order refund info becomes available
+  // Check for unread messages
+  useEffect(() => {
+    if (messages && messages.length > 0) {
+      const unread = messages.filter(msg => 
+        msg.senderType === 'admin' && !msg.readBy?.includes('customer')
+      ).length;
+      setUnreadCount(unread);
+    }
+  }, [messages]);
+
   useEffect(() => {
     if (isTracking && order?.refundInfo && !formData.reason) {
       setFormData({
@@ -138,12 +145,6 @@ function RefundRequest() {
     }
   }, [isTracking, order?.refundInfo, formData.reason]);
 
-  // Scroll to bottom of messages
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Handle success/error toasts
   useEffect(() => {
     if (success) {
       toast.success('Action completed successfully!', { position: 'top-center' });
@@ -171,13 +172,6 @@ function RefundRequest() {
       ...ALLOWED_FILE_TYPES.documents
     ];
     return allAllowedTypes.includes(file.type);
-  };
-
-  const getFileIcon = (fileType) => {
-    if (ALLOWED_FILE_TYPES.images.includes(fileType)) return <FiImage />;
-    if (ALLOWED_FILE_TYPES.videos.includes(fileType)) return <FiVideo />;
-    if (ALLOWED_FILE_TYPES.documents.includes(fileType)) return <FiFile />;
-    return <FiFile />;
   };
 
   const handleFileSelect = (e) => {
@@ -259,7 +253,6 @@ function RefundRequest() {
     }
 
     try {
-      // First upload files if any
       let uploadedFiles = [];
       if (selectedFiles.length > 0) {
         const uploadResult = await dispatch(uploadRefundFiles({
@@ -269,7 +262,6 @@ function RefundRequest() {
         uploadedFiles = uploadResult.files || [];
       }
 
-      // Then submit refund request
       const refundData = {
         reason: formData.reason,
         description: formData.description,
@@ -297,20 +289,34 @@ function RefundRequest() {
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim()) return;
-
+  const handleSendMessage = async (content, files) => {
     try {
+      let uploadedFiles = [];
+      if (files && files.length > 0) {
+        const uploadResult = await dispatch(uploadRefundFiles({
+          orderId,
+          files
+        })).unwrap();
+        uploadedFiles = uploadResult.files || [];
+      }
+
       await dispatch(addRefundMessage({
         orderId,
-        content: newMessage,
-        attachments: []
+        content,
+        attachments: uploadedFiles
       })).unwrap();
 
-      setNewMessage('');
-      toast.success('Message sent', { position: 'top-center' });
+      dispatch(getRefundMessages(orderId));
+      toast.success('Message sent', { position: 'top-center', autoClose: 2000 });
     } catch (error) {
       toast.error(error || 'Failed to send message', { position: 'top-center' });
+      throw error;
+    }
+  };
+
+  const handleRefreshMessages = () => {
+    if (orderId) {
+      dispatch(getRefundMessages(orderId));
     }
   };
 
@@ -320,26 +326,6 @@ function RefundRequest() {
       currency,
       minimumFractionDigits: 2,
     }).format(amount);
-  };
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-    });
   };
 
   if (orderLoading) return (
@@ -392,6 +378,19 @@ function RefundRequest() {
               <p className="rr-order-reference">Order: #{orderId.slice(-8).toUpperCase()}</p>
             </div>
           </div>
+          
+          {isTracking && (
+            <button 
+              className="rr-btn-messages"
+              onClick={() => setShowMessagesModal(true)}
+            >
+              <FiMessageSquare />
+              <span>Messages</span>
+              {unreadCount > 0 && (
+                <span className="rr-message-badge">{unreadCount}</span>
+              )}
+            </button>
+          )}
         </div>
 
         <div className="rr-refund-content">
@@ -742,81 +741,19 @@ function RefundRequest() {
               </form>
             </div>
           )}
-
-          <div className="rr-messaging-card">
-            <div className="rr-card-header">
-              <FiMessageSquare className="rr-card-icon" />
-              <h2>Messages</h2>
-            </div>
-
-            <div className="rr-messages-container">
-              {messagesLoading ? (
-                <div className="rr-empty-messages">
-                  <FiClock className="rr-spin" />
-                  <p>Loading messages...</p>
-                </div>
-              ) : messages.length === 0 ? (
-                <div className="rr-empty-messages">
-                  <FiMessageSquare className="rr-empty-icon" />
-                  <p>{isTracking ? 'No messages yet. Start the conversation!' : 'Submit your refund request to start messaging'}</p>
-                </div>
-              ) : (
-                <div className="rr-messages-list">
-                  {messages.map((msg, index) => (
-                    <div
-                      key={msg._id || index}
-                      className={`rr-message ${msg.senderType === 'customer' ? 'rr-message-sent' : 'rr-message-received'}`}
-                    >
-                      <div className="rr-message-content">
-                        <p>{msg.content}</p>
-                        {msg.attachments?.map((attachment, i) => (
-                          <div key={i} className="rr-message-attachment">
-                            {getFileIcon(attachment.type)}
-                            <a href={attachment.url} download target="_blank" rel="noopener noreferrer">
-                              {attachment.name}
-                            </a>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="rr-message-footer">
-                        <span className="rr-message-time">{formatTimestamp(msg.createdAt)}</span>
-                        {msg.senderType === 'customer' && (
-                          <span className={`rr-read-receipt ${msg.readBy?.includes('admin') ? 'rr-read' : ''}`}>
-                            {msg.readBy?.includes('admin') ? 'Read' : 'Sent'}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
-              )}
-
-              {isTracking && (
-                <div className="rr-message-input-area">
-                  <input
-                    type="text"
-                    placeholder="Type your message..."
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    className="rr-message-input"
-                    disabled={loading}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSendMessage}
-                    className="rr-btn-send"
-                    disabled={!newMessage.trim() || loading}
-                  >
-                    {loading ? <FiClock className="rr-spin" /> : <FiSend />}
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
         </div>
       </div>
+
+      <RefundReturnMessagesModal
+        isOpen={showMessagesModal}
+        onClose={() => setShowMessagesModal(false)}
+        orderId={orderId}
+        messages={messages}
+        loading={messagesLoading}
+        onSendMessage={handleSendMessage}
+        onRefresh={handleRefreshMessages}
+        type="refund"
+      />
 
       <Footer />
     </>

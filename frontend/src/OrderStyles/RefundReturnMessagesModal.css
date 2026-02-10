@@ -673,3 +673,87 @@
   outline: 2px solid #4f46e5;
   outline-offset: 2px;
 }
+
+/* Add to RefundRequest.css */
+
+/* ===========================
+   MESSAGE BUTTON IN HEADER
+   =========================== */
+.rr-refund-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.rr-btn-messages {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.25rem;
+  background: white;
+  border: 2px solid #495057;
+  border-radius: 10px;
+  color: #495057;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  white-space: nowrap;
+}
+
+.rr-btn-messages:hover {
+  background: #495057;
+  color: white;
+}
+
+.rr-btn-messages svg {
+  font-size: 1.1rem !important;
+}
+
+.rr-message-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #dc2626;
+  color: white;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0 6px;
+  border: 2px solid white;
+}
+
+@media (max-width: 768px) {
+  .rr-refund-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .rr-btn-messages {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .rr-btn-messages span {
+    display: none;
+  }
+
+  .rr-btn-messages {
+    padding: 0.75rem;
+    width: auto;
+  }
+
+  .rr-message-badge {
+    top: -8px;
+    right: -8px;
+  }
+}
