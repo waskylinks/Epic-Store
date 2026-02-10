@@ -6,7 +6,8 @@ import {
   saveAddress,
   updateAddress,
   deleteAddress,
-  setDefaultAddress
+  setDefaultAddress,
+  getDefaultAddress  // ✅ ADDED: Missing import
 } from '../controller/shipping-controller.js';
 
 const router = express.Router();
@@ -32,6 +33,13 @@ router.post('/validate-address', validateAddress);
  * @access Private
  */
 router.get('/addresses', verifyUserAuth, getSavedAddresses);
+
+/**
+ * Get default address
+ * @route GET /api/v1/shipping/address/default
+ * @access Private
+ */
+router.get('/address/default', verifyUserAuth, getDefaultAddress); // ✅ ADDED: Missing route
 
 /**
  * Save new address
