@@ -52,7 +52,7 @@ function Home() {
         {
             icon: <LocalShipping />,
             title: 'Free Shipping',
-            description: 'On orders over $50'
+            description: 'On orders over $500'
         },
         {
             icon: <Security />,
