@@ -7,19 +7,34 @@ import { useSelector, useDispatch } from 'react-redux';
 import CheckoutPath from './CheckoutPath';
 import { useNavigate } from 'react-router-dom';
 import { getCartDetails } from '../features/cart/cartSlice';
+import { 
+  createCheckoutSession,
+  removeErrors,
+  removeMessage
+} from '../features/checkout/checkoutSlice';
+import { selectSelectedAddress } from '../features/shipping/shippingSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { FiAlertCircle, FiCheckCircle, FiLock } from 'react-icons/fi';
 
 function OrderConfirm() {
-  const { shippingInfo, cartItems, cartDetails, loading } = useSelector(state => state.cart);
-  const { user } = useSelector(state => state.user);
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
+  const { cartItems, cartDetails, loading: cartLoading } = useSelector(state => state.cart);
+  const { user } = useSelector(state => state.user);
+  const selectedShippingAddress = useSelector(selectSelectedAddress);
+  const { 
+    session,
+    pricing: checkoutPricing,
+    loading: checkoutLoading,
+    error: checkoutError,
+    success: checkoutSuccess
+  } = useSelector(state => state.checkout);
+
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // Calculate pricing from cart details
+  // Calculate local pricing for display
   const calculatePricing = () => {
     const itemPrice = cartDetails.reduce((acc, item) => {
       return acc + (item.price * item.quantity);
@@ -53,14 +68,36 @@ function OrderConfirm() {
 
   // Redirect if no shipping info
   useEffect(() => {
-    if (!shippingInfo.address) {
-      toast.warning('Please fill in shipping information', {
+    if (!selectedShippingAddress || !selectedShippingAddress.address) {
+      toast.warning('Please select a shipping address', {
         position: 'top-center',
         autoClose: 2000
       });
       navigate('/shipping');
     }
-  }, [shippingInfo, navigate]);
+  }, [selectedShippingAddress, navigate]);
+
+  // Handle checkout errors
+  useEffect(() => {
+    if (checkoutError) {
+      toast.error(checkoutError, {
+        position: 'top-center',
+        autoClose: 3000
+      });
+      dispatch(removeErrors());
+    }
+  }, [checkoutError, dispatch]);
+
+  // Handle checkout success
+  useEffect(() => {
+    if (checkoutSuccess && session) {
+      toast.success('Checkout session created', {
+        position: 'top-center',
+        autoClose: 2000
+      });
+      dispatch(removeMessage());
+    }
+  }, [checkoutSuccess, session, dispatch]);
 
   const formatUSD = (amount) => {
     if (!amount && amount !== 0) return '$0.00';
@@ -71,25 +108,50 @@ function OrderConfirm() {
     }).format(amount);
   };
 
-  const proceedToPayment = () => {
+  const proceedToPayment = async () => {
+    if (!selectedShippingAddress) {
+      toast.error('Please select a shipping address', {
+        position: 'top-center',
+        autoClose: 2000
+      });
+      navigate('/shipping');
+      return;
+    }
+
     setIsProcessing(true);
-    
-    // Store order data for payment page
-    const orderData = {
-      cartItems: cartDetails,
-      shippingInfo,
-      pricing: displayPricing,
-      user: {
-        name: getUserFullName(),
-        email: user.email
-      }
-    };
-    
-    sessionStorage.setItem('orderItem', JSON.stringify(orderData));
-    navigate('/process/payment');
+
+    try {
+      // Create checkout session with cart items and shipping info
+      const items = cartDetails.map(item => ({
+        product: item.product,
+        quantity: item.quantity
+      }));
+
+      const shippingInfo = {
+        firstName: user?.firstName || user?.name?.split(' ')[0] || 'User',
+        lastName: user?.lastName || user?.name?.split(' ').slice(1).join(' ') || '',
+        address: selectedShippingAddress.address,
+        city: selectedShippingAddress.city,
+        state: selectedShippingAddress.state,
+        pinCode: selectedShippingAddress.pinCode,
+        country: selectedShippingAddress.country,
+        phoneNo: selectedShippingAddress.phoneNo
+      };
+
+      await dispatch(createCheckoutSession({ items, shippingInfo })).unwrap();
+
+      // Navigate to payment page
+      navigate('/process/payment');
+    } catch (err) {
+      toast.error(err.message || 'Failed to create checkout session', {
+        position: 'top-center',
+        autoClose: 3000
+      });
+      setIsProcessing(false);
+    }
   };
 
-  if (loading && cartDetails.length === 0) {
+  if ((cartLoading && cartDetails.length === 0) || checkoutLoading) {
     return (
       <>
         <PageTitle title='Order Confirmation' />
@@ -120,7 +182,7 @@ function OrderConfirm() {
         <div className="eoc-info-banner">
           <FiLock />
           <p>
-            Please review your order details carefully. All prices are fetched fresh from our servers.
+            Please review your order details carefully. All prices are verified with our servers.
           </p>
         </div>
 
@@ -140,9 +202,9 @@ function OrderConfirm() {
                 <tbody>
                   <tr>
                     <td>{getUserFullName()}</td>
-                    <td>{shippingInfo.phoneNo || 'N/A'}</td>
+                    <td>{selectedShippingAddress?.phoneNo || 'N/A'}</td>
                     <td>
-                      {shippingInfo.address}, {shippingInfo.city}, {shippingInfo.state}, {shippingInfo.country} - {shippingInfo.pinCode}
+                      {selectedShippingAddress?.address}, {selectedShippingAddress?.city}, {selectedShippingAddress?.state}, {selectedShippingAddress?.country} - {selectedShippingAddress?.pinCode}
                     </td>
                   </tr>
                 </tbody>
@@ -242,7 +304,7 @@ function OrderConfirm() {
             onClick={proceedToPayment}
             disabled={isProcessing || cartItems.length === 0}
           >
-            {isProcessing ? 'Processing...' : 'Proceed to Payment'}
+            {isProcessing ? 'Creating Session...' : 'Proceed to Payment'}
           </button>
         </div>
       </div>
