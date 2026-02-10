@@ -13,6 +13,7 @@ import shippingReducer from '../features/shipping/shippingSlice';
 import checkoutReducer from '../features/checkout/checkoutSlice';
 import adminRefundReducer from '../features/admin/adminRefundSlice';
 import adminReturnReducer from '../features/admin/adminReturnSlice';
+import returnReducer from '../features/returns/returnSlice';
 
 
 
@@ -25,13 +26,14 @@ export const store = configureStore({
         receipt: receiptReducer,
         order: orderReducer,
         admin: adminReducer,
-        refund: refundReducer,
         publicProducts: publicProductsReducer,
         wishlist: wishlistReducer,
         shipping: shippingReducer,
         checkout: checkoutReducer,
         adminRefund: adminRefundReducer,
         adminReturn: adminReturnReducer,
+        refund: refundReducer,
+        return: returnReducer
 
 
     }
