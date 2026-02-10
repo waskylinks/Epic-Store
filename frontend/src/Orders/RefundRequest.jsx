@@ -13,7 +13,6 @@ import {
   FiFile,
   FiImage,
   FiVideo,
-  FiDownload,
   FiMessageSquare,
   FiDollarSign,
   FiInfo,
@@ -25,8 +24,14 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
 
-import { getOrderDetails, requestRefund } from '../features/cart/orderSlice';
-
+import { getOrderDetails } from '../features/cart/orderSlice';
+import {
+  requestRefund,
+  getRefundMessages,
+  addRefundMessage,
+  uploadRefundFiles,
+  clearRefundState,
+} from '../features/refunds/refundSlice';
 
 import '../OrderStyles/RefundRequest.css';
 
@@ -48,7 +53,6 @@ const ALLOWED_FILE_TYPES = {
   documents: ['application/pdf']
 };
 
-// Inline RefundStatusBadge Component
 const RefundStatusBadge = ({ status }) => {
   const getStatusConfig = (status) => {
     const configs = {
@@ -80,7 +84,18 @@ function RefundRequest() {
   const fileInputRef = useRef(null);
   const messagesEndRef = useRef(null);
 
-  const { order, loading: orderLoading, actionLoading } = useSelector((state) => state.order);
+  // Order state
+  const { order, loading: orderLoading } = useSelector((state) => state.order);
+  
+  // Refund state
+  const {
+    messages,
+    loading,
+    messagesLoading,
+    uploadLoading,
+    error,
+    success
+  } = useSelector((state) => state.refund);
 
   const [formData, setFormData] = useState({
     reason: '',
@@ -92,10 +107,8 @@ function RefundRequest() {
   const [formErrors, setFormErrors] = useState({});
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [filePreviews, setFilePreviews] = useState([]);
-  const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
 
-  // Determine if this is a new request or tracking existing refund
   const hasActiveRefund = order?.refundInfo?.status && order.refundInfo.status !== 'none';
   const isTracking = hasActiveRefund;
 
@@ -106,12 +119,12 @@ function RefundRequest() {
     }
   }, [dispatch, orderId]);
 
-  // Load existing messages when order data becomes available
+  // Fetch messages when tracking existing refund
   useEffect(() => {
-    if (isTracking && order?.refundInfo?.messages && messages.length === 0) {
-      setMessages(order.refundInfo.messages);
+    if (isTracking && orderId) {
+      dispatch(getRefundMessages(orderId));
     }
-  }, [isTracking, order?.refundInfo?.messages, messages.length]);
+  }, [dispatch, isTracking, orderId]);
 
   // Pre-fill form data when order refund info becomes available
   useEffect(() => {
@@ -123,12 +136,24 @@ function RefundRequest() {
         requestedAmount: order.refundInfo.requestedAmount || ''
       });
     }
-  }, [isTracking, order?.refundInfo?.reason, order?.refundInfo?.description, order?.refundInfo?.refundType, order?.refundInfo?.requestedAmount, formData.reason, order.refundInfo]);
+  }, [isTracking, order?.refundInfo, formData.reason]);
 
   // Scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Handle success/error toasts
+  useEffect(() => {
+    if (success) {
+      toast.success('Action completed successfully!', { position: 'top-center' });
+      dispatch(clearRefundState());
+    }
+    if (error) {
+      toast.error(error, { position: 'top-center' });
+      dispatch(clearRefundState());
+    }
+  }, [success, error, dispatch]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -234,13 +259,28 @@ function RefundRequest() {
     }
 
     try {
-      await dispatch(requestRefund({
-        orderId,
+      // First upload files if any
+      let uploadedFiles = [];
+      if (selectedFiles.length > 0) {
+        const uploadResult = await dispatch(uploadRefundFiles({
+          orderId,
+          files: selectedFiles
+        })).unwrap();
+        uploadedFiles = uploadResult.files || [];
+      }
+
+      // Then submit refund request
+      const refundData = {
         reason: formData.reason,
         description: formData.description,
         refundType: formData.refundType,
         requestedAmount: formData.refundType === 'partial' ? parseFloat(formData.requestedAmount) : undefined,
-        images: selectedFiles
+        attachments: uploadedFiles
+      };
+
+      await dispatch(requestRefund({
+        orderId,
+        refundData
       })).unwrap();
 
       toast.success('Refund request submitted successfully!', {
@@ -257,21 +297,21 @@ function RefundRequest() {
     }
   };
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!newMessage.trim()) return;
 
-    const message = {
-      id: Date.now(),
-      text: newMessage,
-      sender: 'customer',
-      timestamp: new Date().toISOString(),
-      read: false
-    };
+    try {
+      await dispatch(addRefundMessage({
+        orderId,
+        content: newMessage,
+        attachments: []
+      })).unwrap();
 
-    setMessages(prev => [...prev, message]);
-    setNewMessage('');
-
-    toast.success('Message sent', { position: 'top-center' });
+      setNewMessage('');
+      toast.success('Message sent', { position: 'top-center' });
+    } catch (error) {
+      toast.error(error || 'Failed to send message', { position: 'top-center' });
+    }
   };
 
   const formatCurrency = (amount, currency = 'USD') => {
@@ -281,7 +321,6 @@ function RefundRequest() {
       minimumFractionDigits: 2,
     }).format(amount);
   };
-
 
   const formatTimestamp = (timestamp) => {
     const date = new Date(timestamp);
@@ -305,9 +344,9 @@ function RefundRequest() {
 
   if (orderLoading) return (
     <>
-    <Navbar />
-    <Loader />
-    <Footer />
+      <Navbar />
+      <Loader />
+      <Footer />
     </>
   );
 
@@ -337,7 +376,6 @@ function RefundRequest() {
       <Navbar />
 
       <div className="rr-refund-request-container">
-        {/* Back Button */}
         <button 
           onClick={() => navigate(`/order/${orderId}`)} 
           className="rr-btn-back-nav"
@@ -357,7 +395,6 @@ function RefundRequest() {
         </div>
 
         <div className="rr-refund-content">
-          {/* Refund Status Card - Only show if tracking */}
           {isTracking && (
             <div className="rr-refund-status-card">
               <div className="rr-card-header">
@@ -456,7 +493,6 @@ function RefundRequest() {
             </div>
           )}
 
-          {/* Order Summary Card */}
           <div className="rr-summary-card">
             <div className="rr-card-header">
               <FiPackage className="rr-card-icon" />
@@ -486,7 +522,6 @@ function RefundRequest() {
             </div>
           </div>
 
-          {/* Refund Form - Only show if NOT tracking */}
           {!isTracking && (
             <div className="rr-refund-form-card">
               <div className="rr-card-header">
@@ -495,7 +530,6 @@ function RefundRequest() {
               </div>
 
               <form onSubmit={handleSubmit} className="rr-refund-form">
-                {/* Refund Type */}
                 <div className="rr-form-section">
                   <label className="rr-section-label">Refund Type</label>
                   <div className="rr-radio-group">
@@ -533,7 +567,6 @@ function RefundRequest() {
                   </div>
                 </div>
 
-                {/* Partial Amount */}
                 {formData.refundType === 'partial' && (
                   <div className="rr-form-group">
                     <label htmlFor="requestedAmount" className="rr-form-label">
@@ -565,7 +598,6 @@ function RefundRequest() {
                   </div>
                 )}
 
-                {/* Refund Reason */}
                 <div className="rr-form-group">
                   <label htmlFor="reason" className="rr-form-label">
                     Reason for Refund *
@@ -591,7 +623,6 @@ function RefundRequest() {
                   )}
                 </div>
 
-                {/* Description */}
                 <div className="rr-form-group">
                   <label htmlFor="description" className="rr-form-label">
                     Detailed Description *
@@ -618,7 +649,6 @@ function RefundRequest() {
                   </div>
                 </div>
 
-                {/* File Upload */}
                 <div className="rr-form-group">
                   <label className="rr-form-label">
                     Supporting Documents (Optional)
@@ -682,22 +712,21 @@ function RefundRequest() {
                   </div>
                 </div>
 
-                {/* Form Actions */}
                 <div className="rr-form-actions">
                   <button
                     type="button"
                     onClick={() => navigate(`/order/${orderId}`)}
                     className="rr-btn-secondary"
-                    disabled={actionLoading}
+                    disabled={loading || uploadLoading}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     className="rr-btn-primary"
-                    disabled={actionLoading}
+                    disabled={loading || uploadLoading}
                   >
-                    {actionLoading ? (
+                    {loading || uploadLoading ? (
                       <>
                         <FiClock className="rr-spin" />
                         Submitting...
@@ -714,7 +743,6 @@ function RefundRequest() {
             </div>
           )}
 
-          {/* Messaging Section - Always show for both tracking and new requests */}
           <div className="rr-messaging-card">
             <div className="rr-card-header">
               <FiMessageSquare className="rr-card-icon" />
@@ -722,7 +750,12 @@ function RefundRequest() {
             </div>
 
             <div className="rr-messages-container">
-              {messages.length === 0 ? (
+              {messagesLoading ? (
+                <div className="rr-empty-messages">
+                  <FiClock className="rr-spin" />
+                  <p>Loading messages...</p>
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="rr-empty-messages">
                   <FiMessageSquare className="rr-empty-icon" />
                   <p>{isTracking ? 'No messages yet. Start the conversation!' : 'Submit your refund request to start messaging'}</p>
@@ -731,11 +764,11 @@ function RefundRequest() {
                 <div className="rr-messages-list">
                   {messages.map((msg, index) => (
                     <div
-                      key={msg.id || index}
-                      className={`rr-message ${msg.sender === 'customer' ? 'rr-message-sent' : 'rr-message-received'}`}
+                      key={msg._id || index}
+                      className={`rr-message ${msg.senderType === 'customer' ? 'rr-message-sent' : 'rr-message-received'}`}
                     >
                       <div className="rr-message-content">
-                        <p>{msg.text || msg.content}</p>
+                        <p>{msg.content}</p>
                         {msg.attachments?.map((attachment, i) => (
                           <div key={i} className="rr-message-attachment">
                             {getFileIcon(attachment.type)}
@@ -746,10 +779,10 @@ function RefundRequest() {
                         ))}
                       </div>
                       <div className="rr-message-footer">
-                        <span className="rr-message-time">{formatTimestamp(msg.timestamp || msg.createdAt)}</span>
-                        {msg.sender === 'customer' && (
-                          <span className={`rr-read-receipt ${msg.read ? 'rr-read' : ''}`}>
-                            {msg.read ? 'Read' : 'Sent'}
+                        <span className="rr-message-time">{formatTimestamp(msg.createdAt)}</span>
+                        {msg.senderType === 'customer' && (
+                          <span className={`rr-read-receipt ${msg.readBy?.includes('admin') ? 'rr-read' : ''}`}>
+                            {msg.readBy?.includes('admin') ? 'Read' : 'Sent'}
                           </span>
                         )}
                       </div>
@@ -768,14 +801,15 @@ function RefundRequest() {
                     onChange={(e) => setNewMessage(e.target.value)}
                     onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                     className="rr-message-input"
+                    disabled={loading}
                   />
                   <button
                     type="button"
                     onClick={handleSendMessage}
                     className="rr-btn-send"
-                    disabled={!newMessage.trim()}
+                    disabled={!newMessage.trim() || loading}
                   >
-                    <FiSend />
+                    {loading ? <FiClock className="rr-spin" /> : <FiSend />}
                   </button>
                 </div>
               )}

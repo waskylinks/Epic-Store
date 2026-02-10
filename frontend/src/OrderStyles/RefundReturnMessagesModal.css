@@ -1,0 +1,675 @@
+/* RefundReturnMessagesModal.css */
+
+/* ===========================
+   MODAL OVERLAY
+   =========================== */
+.rrmm-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  padding: 20px;
+  animation: rrmm-fadeIn 0.2s ease;
+}
+
+@keyframes rrmm-fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.rrmm-modal {
+  background: white;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 700px;
+  max-height: 90vh;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: rrmm-slideUp 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+@keyframes rrmm-slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===========================
+   HEADER
+   =========================== */
+.rrmm-modal-header {
+  padding: 24px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.rrmm-modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #111827;
+  font-weight: 700;
+}
+
+.rrmm-modal-subtitle {
+  margin: 4px 0 0 0;
+  font-size: 0.875rem;
+  color: #6b7280;
+  font-weight: 400;
+  font-family: 'Courier New', monospace;
+}
+
+.rrmm-modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.rrmm-modal-close:hover {
+  background: #f3f4f6;
+  color: #111827;
+}
+
+/* ===========================
+   BODY
+   =========================== */
+.rrmm-modal-body {
+  display: flex;
+  flex-direction: column;
+  height: 600px;
+  max-height: calc(90vh - 100px);
+  overflow: hidden;
+}
+
+/* ===========================
+   LOADING STATE
+   =========================== */
+.rrmm-messages-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  gap: 16px;
+  flex: 1;
+}
+
+.rrmm-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f0f0f0;
+  border-top-color: #4f46e5;
+  border-radius: 50%;
+  animation: rrmm-spin 0.8s linear infinite;
+}
+
+@keyframes rrmm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ===========================
+   EMPTY STATE
+   =========================== */
+.rrmm-no-messages {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 64px 24px;
+  text-align: center;
+  color: #6b7280;
+  flex: 1;
+}
+
+.rrmm-no-messages-icon {
+  font-size: 4rem !important;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.rrmm-no-messages p {
+  font-size: 1.125rem;
+  margin: 12px 0;
+  color: #374151;
+  font-weight: 500;
+}
+
+.rrmm-no-messages small {
+  color: #9ca3af;
+  font-size: 0.9rem;
+}
+
+/* ===========================
+   MESSAGES LIST
+   =========================== */
+.rrmm-messages-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: #f9fafb;
+}
+
+.rrmm-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  animation: rrmm-fadeIn 0.2s ease;
+}
+
+.rrmm-message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 70%;
+  min-width: 0;
+}
+
+.rrmm-message-sender {
+  font-size: 0.7rem;
+  color: #6b7280;
+  font-weight: 600;
+  padding: 0 12px 2px;
+  line-height: 1;
+}
+
+.rrmm-message-bubble {
+  padding: 12px 16px;
+  border-radius: 18px;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+
+.rrmm-message-bubble p {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+
+/* ===========================
+   ATTACHMENTS IN MESSAGES
+   =========================== */
+.rrmm-message-attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.rrmm-attachment {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 8px;
+  text-decoration: none;
+  color: inherit;
+  transition: all 0.2s;
+  font-size: 0.85rem;
+}
+
+.rrmm-attachment:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.rrmm-attachment svg {
+  font-size: 1rem !important;
+  flex-shrink: 0;
+}
+
+.rrmm-attachment-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rrmm-download-icon {
+  opacity: 0.6;
+  font-size: 0.9rem !important;
+}
+
+/* ===========================
+   MESSAGE FOOTER
+   =========================== */
+.rrmm-message-footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.7rem;
+  color: #9ca3af;
+  padding: 0 12px;
+}
+
+.rrmm-message-time {
+  font-weight: 500;
+}
+
+.rrmm-message-status {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.7rem;
+  color: #9ca3af;
+}
+
+.rrmm-message-status.rrmm-read {
+  color: #4f46e5;
+}
+
+.rrmm-check {
+  font-size: 12px !important;
+}
+
+.rrmm-check-double {
+  margin-left: -6px;
+}
+
+/* ===========================
+   MESSAGE DIRECTION
+   =========================== */
+.rrmm-message-outgoing {
+  justify-content: flex-end;
+}
+
+.rrmm-message-outgoing .rrmm-message-content {
+  align-items: flex-end;
+}
+
+.rrmm-message-outgoing .rrmm-message-sender {
+  text-align: right;
+}
+
+.rrmm-message-outgoing .rrmm-message-bubble {
+  background: #4f46e5;
+  color: white;
+  border-radius: 18px 18px 4px 18px;
+}
+
+.rrmm-message-outgoing .rrmm-message-footer {
+  justify-content: flex-end;
+}
+
+.rrmm-message-incoming {
+  justify-content: flex-start;
+}
+
+.rrmm-message-incoming .rrmm-message-content {
+  align-items: flex-start;
+}
+
+.rrmm-message-incoming .rrmm-message-sender {
+  text-align: left;
+}
+
+.rrmm-message-incoming .rrmm-message-bubble {
+  background: #e5e7eb;
+  color: #1f2937;
+  border-radius: 18px 18px 18px 4px;
+}
+
+.rrmm-message-incoming .rrmm-message-footer {
+  justify-content: flex-start;
+}
+
+/* ===========================
+   FILE PREVIEWS (Before Sending)
+   =========================== */
+.rrmm-file-previews {
+  display: flex;
+  gap: 12px;
+  padding: 12px 24px;
+  border-top: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+
+.rrmm-file-preview-item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 80px;
+  max-width: 80px;
+}
+
+.rrmm-preview-image {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 2px solid #e5e7eb;
+}
+
+.rrmm-preview-placeholder {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e5e7eb;
+  border-radius: 8px;
+  border: 2px solid #d1d5db;
+}
+
+.rrmm-preview-placeholder svg {
+  font-size: 2rem !important;
+  color: #6b7280;
+}
+
+.rrmm-file-name {
+  font-size: 0.7rem;
+  color: #6b7280;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.rrmm-remove-file {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #ef4444;
+  color: white;
+  border: 2px solid white;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: all 0.2s;
+  padding: 0;
+}
+
+.rrmm-remove-file:hover {
+  background: #dc2626;
+  transform: scale(1.1);
+}
+
+.rrmm-remove-file svg {
+  font-size: 0.7rem !important;
+}
+
+/* ===========================
+   MESSAGE INPUT
+   =========================== */
+.rrmm-message-input-container {
+  display: flex;
+  gap: 12px;
+  padding: 20px 24px;
+  border-top: 1px solid #e5e7eb;
+  background: white;
+  flex-shrink: 0;
+}
+
+.rrmm-attach-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 12px;
+  color: #6b7280;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.rrmm-attach-btn:hover:not(:disabled) {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.rrmm-attach-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rrmm-attach-btn svg {
+  font-size: 1.2rem !important;
+}
+
+.rrmm-message-input {
+  flex: 1;
+  padding: 12px 16px;
+  border: 2px solid #e5e7eb;
+  border-radius: 12px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.rrmm-message-input:focus {
+  border-color: #4f46e5;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+}
+
+.rrmm-message-input:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.rrmm-send-btn {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #4f46e5;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.rrmm-send-btn:hover:not(:disabled) {
+  background: #4338ca;
+  transform: translateY(-1px);
+}
+
+.rrmm-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.rrmm-send-btn svg {
+  font-size: 1.2rem !important;
+}
+
+/* ===========================
+   RESPONSIVE - TABLET
+   =========================== */
+@media (max-width: 1024px) {
+  .rrmm-modal {
+    max-width: 90vw;
+  }
+
+  .rrmm-modal-body {
+    height: 550px;
+  }
+}
+
+/* ===========================
+   RESPONSIVE - MOBILE
+   =========================== */
+@media (max-width: 768px) {
+  .rrmm-modal {
+    max-width: 100%;
+    max-height: 95vh;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .rrmm-modal-header {
+    padding: 20px;
+  }
+
+  .rrmm-modal-header h2 {
+    font-size: 1.25rem;
+  }
+
+  .rrmm-modal-body {
+    height: calc(95vh - 80px);
+  }
+
+  .rrmm-message-content {
+    max-width: 85%;
+  }
+
+  .rrmm-messages-list {
+    padding: 16px;
+  }
+
+  .rrmm-message-input-container {
+    padding: 16px;
+  }
+
+  .rrmm-file-previews {
+    padding: 12px 16px;
+  }
+}
+
+/* ===========================
+   RESPONSIVE - SMALL MOBILE
+   =========================== */
+@media (max-width: 480px) {
+  .rrmm-modal {
+    border-radius: 12px 12px 0 0;
+  }
+
+  .rrmm-modal-header {
+    padding: 16px;
+  }
+
+  .rrmm-modal-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .rrmm-messages-list {
+    padding: 12px;
+  }
+
+  .rrmm-message-input-container {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .rrmm-attach-btn,
+  .rrmm-send-btn {
+    width: 40px;
+    height: 40px;
+  }
+
+  .rrmm-message-bubble {
+    padding: 10px 14px;
+  }
+
+  .rrmm-file-previews {
+    padding: 12px;
+  }
+
+  .rrmm-file-preview-item {
+    min-width: 70px;
+    max-width: 70px;
+  }
+
+  .rrmm-preview-image,
+  .rrmm-preview-placeholder {
+    width: 70px;
+    height: 70px;
+  }
+}
+
+/* ===========================
+   SCROLLBAR STYLING
+   =========================== */
+.rrmm-messages-list::-webkit-scrollbar,
+.rrmm-file-previews::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.rrmm-messages-list::-webkit-scrollbar-track,
+.rrmm-file-previews::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 10px;
+}
+
+.rrmm-messages-list::-webkit-scrollbar-thumb,
+.rrmm-file-previews::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.rrmm-messages-list::-webkit-scrollbar-thumb:hover,
+.rrmm-file-previews::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* ===========================
+   ACCESSIBILITY
+   =========================== */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.rrmm-modal-close:focus-visible,
+.rrmm-message-input:focus-visible,
+.rrmm-send-btn:focus-visible,
+.rrmm-attach-btn:focus-visible {
+  outline: 2px solid #4f46e5;
+  outline-offset: 2px;
+}
