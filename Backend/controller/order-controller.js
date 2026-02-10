@@ -9,6 +9,49 @@ import fs from 'fs';
 import path from 'path';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
 
+// ============================================
+// ANALYTICS HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Extract analytics data from request
+ */
+const extractAnalyticsData = (req) => {
+  const userAgent = req.get('user-agent') || '';
+  const referrer = req.get('referer') || req.get('referrer') || '';
+  
+  // Parse user agent for device/browser
+  const isMobile = /mobile/i.test(userAgent);
+  const isTablet = /tablet|ipad/i.test(userAgent);
+  const device = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
+  
+  // Extract browser
+  let browser = 'unknown';
+  if (/chrome/i.test(userAgent)) browser = 'Chrome';
+  else if (/safari/i.test(userAgent)) browser = 'Safari';
+  else if (/firefox/i.test(userAgent)) browser = 'Firefox';
+  else if (/edge/i.test(userAgent)) browser = 'Edge';
+  
+  return {
+    device,
+    browser,
+    referrer: referrer || null,
+    userAgent: userAgent.substring(0, 200) // Truncate
+  };
+};
+
+/**
+ * Parse UTM parameters from query or body
+ */
+const parseUTMParams = (data) => {
+  return {
+    source: data.utm_source || data.source || 'direct',
+    medium: data.utm_medium || data.medium || null,
+    campaign: data.utm_campaign || data.campaign || null,
+    term: data.utm_term || null,
+    content: data.utm_content || null
+  };
+};
 
 // ============================================
 // BASIC ORDER OPERATIONS
@@ -42,11 +85,7 @@ export const getAllMyOrders = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get single order details
- * @route GET /api/v1/order/:id
- * @access Private (User or Admin)
- */
+
 export const getOrderDetails = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -70,11 +109,6 @@ export const getOrderDetails = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Create new order
- * @route POST /api/v1/order/new
- * @access Private (User)
- */
 export const createOrder = handleAsyncError(async (req, res, next) => {
   const {
     orderItems,
@@ -84,14 +118,49 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     taxPrice,
     shippingPrice,
     totalPrice,
-    analytics // NEW: Accept analytics data from frontend
+    analytics: clientAnalytics // Analytics from frontend
   } = req.body;
 
   if (!orderItems || orderItems.length === 0) {
     return next(new HandleError('No order items provided', 400));
   }
 
-  // Create order with analytics data
+  // Extract server-side analytics
+  const serverAnalytics = extractAnalyticsData(req);
+  
+  // Parse UTM parameters from client or query
+  const utmParams = clientAnalytics 
+    ? parseUTMParams(clientAnalytics)
+    : parseUTMParams(req.query);
+
+  // Merge analytics data
+  const fullAnalytics = {
+    // UTM tracking
+    source: utmParams.source,
+    medium: utmParams.medium,
+    campaign: utmParams.campaign,
+    term: utmParams.term,
+    content: utmParams.content,
+    
+    // Device & browser
+    device: clientAnalytics?.device || serverAnalytics.device,
+    browser: clientAnalytics?.browser || serverAnalytics.browser,
+    
+    // Referrer & landing page
+    referrer: clientAnalytics?.referrer || serverAnalytics.referrer,
+    landingPage: clientAnalytics?.landingPage || null,
+    
+    // Session tracking
+    sessionId: clientAnalytics?.sessionId || null,
+    
+    // First purchase flag (will be calculated in customer analytics)
+    isFirstPurchase: clientAnalytics?.isFirstPurchase || false,
+    
+    // Timestamp
+    capturedAt: new Date()
+  };
+
+  // Create order with complete analytics
   const order = await Order.create({
     orderItems,
     shippingInfo,
@@ -102,22 +171,17 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     totalPrice,
     user: req.user._id,
     paidAt: paymentInfo?.status === 'paid' ? Date.now() : null,
-    // NEW: Include analytics/attribution data
-    analytics: analytics || {
-      source: 'direct',
-      isFirstPurchase: true // Will be calculated properly in customer analytics
-    }
+    analytics: fullAnalytics
   });
 
   await order.populate('orderItems.product', 'name images price');
 
-  // NEW: Sync customer analytics after successful order creation
+  // Sync customer analytics after successful order creation
   if (paymentInfo?.status === 'success' || paymentInfo?.status === 'paid') {
     try {
       await syncCustomerAfterOrder(order._id);
       console.log(`Customer analytics synced for user ${req.user._id} after order ${order._id}`);
     } catch (error) {
-      // Log but don't fail the order creation
       console.error('Failed to sync customer analytics:', error);
     }
   }
@@ -129,15 +193,8 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// STATUS HISTORY & TIMELINE
-// ============================================
 
-/**
- * Get complete status history timeline for an order
- * @route GET /api/v1/orders/:id/timeline
- * @access Private (User or Admin)
- */
+
 export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -162,15 +219,6 @@ export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// NOTES & COMMUNICATION
-// ============================================
-
-/**
- * Add a note to an order
- * @route POST /api/v1/orders/:id/notes
- * @access Private (User for customer notes, Admin for all)
- */
 export const addOrderNote = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { content, type = 'customer' } = req.body;
@@ -215,11 +263,6 @@ export const addOrderNote = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get all notes for an order
- * @route GET /api/v1/orders/:id/notes
- * @access Private (User sees only customer notes, Admin sees all)
- */
 export const getOrderNotes = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -248,11 +291,6 @@ export const getOrderNotes = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Edit a note
- * @route PUT /api/v1/orders/:id/notes/:noteId
- * @access Private (Author or Admin)
- */
 export const editOrderNote = handleAsyncError(async (req, res, next) => {
   const { id, noteId } = req.params;
   const { content } = req.body;
@@ -290,15 +328,6 @@ export const editOrderNote = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// TRACKING & SHIPMENT MANAGEMENT
-// ============================================
-
-/**
- * Get tracking information for an order
- * @route GET /api/v1/orders/:id/tracking
- * @access Private (User or Admin)
- */
 export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -329,11 +358,6 @@ export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Add tracking information to an order
- * @route POST /api/v1/admin/orders/:id/tracking
- * @access Private (Admin only)
- */
 export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { carrier, trackingNumber, estimatedDelivery } = req.body;
@@ -373,11 +397,6 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Create a shipment (for split shipments)
- * @route POST /api/v1/admin/orders/:id/shipments
- * @access Private (Admin only)
- */
 export const createShipment = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { items, warehouse, carrier, weight, dimensions } = req.body;
@@ -418,11 +437,6 @@ export const createShipment = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Update shipment status
- * @route PUT /api/v1/admin/orders/:id/shipments/:shipmentId
- * @access Private (Admin only)
- */
 export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   const { id, shipmentId } = req.params;
   const { status, trackingNumber } = req.body;
@@ -461,15 +475,6 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// RETURN MANAGEMENT (RMA)
-// ============================================
-
-/**
- * Request return for an order (RMA)
- * @route POST /api/v1/orders/:id/return/request
- * @access Private (User who owns the order)
- */
 export const requestReturn = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { reason, itemsToReturn } = req.body;
@@ -514,11 +519,6 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Admin approves/rejects return request
- * @route PUT /api/v1/admin/orders/:id/return/review
- * @access Private (Admin only)
- */
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { action, restockFee = 0, adminNote = '' } = req.body;
@@ -567,11 +567,6 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   }
 });
 
-/**
- * Update return status (in_transit, received, inspected, completed)
- * @route PUT /api/v1/admin/orders/:id/return/status
- * @access Private (Admin only)
- */
 export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { status, inspectionNotes } = req.body;
@@ -625,11 +620,6 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get all active returns (Admin)
- * @route GET /api/v1/admin/returns
- * @access Private (Admin only)
- */
 export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const { status } = req.query;
 
@@ -662,16 +652,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// INVOICE MANAGEMENT
-// ============================================
-
-
-/**
- * Generate/Download invoice for an order
- * @route GET /api/v1/orders/:id/invoice
- * @access Private (User or Admin)
- */
 export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -689,7 +669,6 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  // Check if order is eligible for invoice
   if (order.paymentInfo?.status !== 'success') {
     return res.status(400).json({
       success: false,
@@ -700,13 +679,10 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   try {
     let pdfBuffer;
 
-    // Check if invoice already exists in database
     if (order.invoiceInfo?.pdfData) {
-      // Use existing invoice from database
       pdfBuffer = Buffer.from(order.invoiceInfo.pdfData, 'base64');
       console.log('Serving existing invoice from database');
     } else {
-      // Generate new invoice
       console.log('Generating new invoice');
       
       const companyInfo = {
@@ -717,13 +693,9 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
         taxId: process.env.COMPANY_TAX_ID || 'XX-XXXXXXX'
       };
 
-      // Generate PDF buffer
       pdfBuffer = await generateInvoicePDF(order, companyInfo);
-
-      // Convert buffer to base64 for database storage
       const base64PDF = pdfBuffer.toString('base64');
 
-      // Update order with invoice info
       if (!order.invoiceInfo) {
         order.invoiceInfo = {};
       }
@@ -735,7 +707,6 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
       await order.save({ validateBeforeSave: false });
     }
 
-    // Set response headers for PDF download
     const invoiceNumber = order.invoiceInfo?.invoiceNumber || order._id;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
@@ -744,7 +715,6 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     );
     res.setHeader('Content-Length', pdfBuffer.length);
 
-    // Send PDF buffer
     return res.send(pdfBuffer);
 
   } catch (error) {
@@ -753,18 +723,6 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   }
 });
 
-
-
-
-// ============================================
-// FRAUD PREVENTION & REVIEW
-// ============================================
-
-/**
- * Get orders pending fraud review
- * @route GET /api/v1/admin/orders/fraud-review
- * @access Private (Admin only)
- */
 export const getPendingFraudReviews = handleAsyncError(async (req, res, next) => {
   const orders = await Order.find({
     'fraudCheck.reviewRequired': true
@@ -787,11 +745,6 @@ export const getPendingFraudReviews = handleAsyncError(async (req, res, next) =>
   });
 });
 
-/**
- * Review flagged order (approve/reject)
- * @route PUT /api/v1/admin/orders/:id/fraud-review
- * @access Private (Admin only)
- */
 export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { decision } = req.body;
@@ -830,15 +783,6 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// AUDIT LOG
-// ============================================
-
-/**
- * Get audit log for an order
- * @route GET /api/v1/admin/orders/:id/audit
- * @access Private (Admin only)
- */
 export const getAuditLog = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -857,15 +801,6 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// ANALYTICS HELPERS
-// ============================================
-
-/**
- * Get customer order analytics
- * @route GET /api/v1/analytics/customer/:userId/orders
- * @access Private (Admin only)
- */
 export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next) => {
   const { userId } = req.params;
 
@@ -895,17 +830,6 @@ export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next)
   });
 });
 
-// ADD THESE TO order-controller.js
-
-// ============================================
-// ORDER MESSAGES (Customer ↔ Admin Chat)
-// ============================================
-
-/**
- * Add message to order
- * @route POST /api/v1/orders/:id/messages
- * @access Private (User or Admin)
- */
 export const addOrderMessage = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { content, attachments = [] } = req.body;
@@ -938,11 +862,6 @@ export const addOrderMessage = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get all messages for order
- * @route GET /api/v1/orders/:id/messages
- * @access Private (User or Admin)
- */
 export const getOrderMessages = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -972,11 +891,6 @@ export const getOrderMessages = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Mark messages as read
- * @route PUT /api/v1/orders/:id/messages/read
- * @access Private (User or Admin)
- */
 export const markOrderMessagesRead = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -1001,11 +915,6 @@ export const markOrderMessagesRead = handleAsyncError(async (req, res, next) => 
   });
 });
 
-/**
- * Get orders with unread messages (Admin)
- * @route GET /api/v1/admin/orders/unread-messages
- * @access Private (Admin only)
- */
 export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, next) => {
   const orders = await Order.getOrdersWithUnreadMessages();
 
@@ -1022,28 +931,15 @@ export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, nex
   });
 });
 
-
-
-// ============================================
-// ADMIN ORDER CRUD OPERATIONS
-// ============================================
-
-/**
- * Get all orders (Admin only)
- * @route GET /api/v1/admin/orders
- * @access Private (Admin only)
- */
 export const getAllOrders = handleAsyncError(async (req, res, next) => {
   const { status, page = 1, limit = 20, from, to } = req.query;
 
   const query = {};
 
-  // Filter by status if provided
   if (status && status !== 'all') {
     query.orderStatus = status;
   }
 
-  // Filter by date range
   if (from || to) {
     query.createdAt = {};
     if (from) query.createdAt.$gte = new Date(from);
@@ -1061,7 +957,6 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
 
   const totalOrders = await Order.countDocuments(query);
 
-  // Calculate stats
   const stats = {
     total: totalOrders,
     processing: await Order.countDocuments({ orderStatus: 'Processing' }),
@@ -1081,11 +976,6 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get single order details (Admin)
- * @route GET /api/v1/admin/order/:id
- * @access Private (Admin only)
- */
 export const getSingleOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -1109,12 +999,6 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Update order status (Admin)
- * @route PUT /api/v1/admin/order/:id
- * @access Private (Admin only)
- * with analytics sync on delivery
- */
 export const updateOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { status, note } = req.body;
@@ -1160,7 +1044,6 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
       }
     }
 
-    // NEW: Sync customer analytics when order is delivered
     try {
       await syncCustomerAfterOrder(order._id);
       console.log(`Customer analytics synced after delivery of order ${order._id}`);
@@ -1179,12 +1062,6 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
   });
 });
 
-
-/**
- * Delete order (Admin)
- * @route DELETE /api/v1/admin/order/:id
- * @access Private (Admin only)
- */
 export const deleteOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -1193,7 +1070,6 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Don't allow deletion of delivered orders or orders with completed refunds
   if (order.orderStatus === 'Delivered') {
     return next(new HandleError('Cannot delete delivered orders', 400));
   }
@@ -1211,15 +1087,6 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// ORDER NOTES MANAGEMENT (Admin)
-// ============================================
-
-/**
- * Add note to order (Admin)
- * @route POST /api/v1/admin/orders/:id/notes
- * @access Private (Admin only)
- */
 export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { content, type = 'admin' } = req.body;
@@ -1241,7 +1108,6 @@ export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
     attachments: []
   };
 
-  // Handle file uploads if any
   if (req.files && req.files.length > 0) {
     note.attachments = req.files.map(file => ({
       url: `/uploads/orders/${order._id}/${file.filename}`,
@@ -1266,11 +1132,6 @@ export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get all notes for order (Admin)
- * @route GET /api/v1/admin/orders/:id/notes
- * @access Private (Admin only)
- */
 export const getAdminOrderNotes = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -1289,11 +1150,6 @@ export const getAdminOrderNotes = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Edit note (Admin only - can only edit own notes)
- * @route PUT /api/v1/admin/orders/:id/notes/:noteId
- * @access Private (Admin only)
- */
 export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
   const { id, noteId } = req.params;
   const { content } = req.body;
@@ -1312,7 +1168,6 @@ export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Note not found', 404));
   }
 
-  // Only allow editing own notes
   if (note.createdBy.toString() !== req.user._id.toString()) {
     return next(new HandleError('You can only edit your own notes', 403));
   }
@@ -1333,11 +1188,6 @@ export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Delete note (Admin only - can only delete own notes or if super admin)
- * @route DELETE /api/v1/admin/orders/:id/notes/:noteId
- * @access Private (Admin only)
- */
 export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
   const { id, noteId } = req.params;
 
@@ -1351,7 +1201,6 @@ export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Note not found', 404));
   }
 
-  // Only allow deleting own notes
   if (note.createdBy.toString() !== req.user._id.toString()) {
     return next(new HandleError('You can only delete your own notes', 403));
   }
@@ -1365,27 +1214,15 @@ export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
   });
 });
 
-// ============================================
-// ADMIN STATISTICS & DASHBOARD
-// ============================================
-
-/**
- * Get admin dashboard statistics
- * @route GET /api/v1/admin/stats
- * @access Private (Admin only)
- */
 export const getAdminStats = handleAsyncError(async (req, res, next) => {
-  // Total orders
   const totalOrders = await Order.countDocuments();
   
-  // Total revenue (from delivered orders)
   const revenueResult = await Order.aggregate([
     { $match: { orderStatus: 'Delivered' } },
     { $group: { _id: null, total: { $sum: '$amountPaid' } } }
   ]);
   const totalRevenue = revenueResult[0]?.total || 0;
 
-  // Order status breakdown
   const orderStatusBreakdown = {
     processing: await Order.countDocuments({ orderStatus: 'Processing' }),
     shipped: await Order.countDocuments({ orderStatus: 'Shipped' }),
@@ -1393,29 +1230,21 @@ export const getAdminStats = handleAsyncError(async (req, res, next) => {
     cancelled: await Order.countDocuments({ orderStatus: 'Cancelled' })
   };
 
-  // Product stats
   const totalProducts = await Product.countDocuments();
   const outOfStock = await Product.countDocuments({ stock: 0 });
   const inStock = await Product.countDocuments({ stock: { $gt: 0 } });
 
-  // User stats
   const totalUsers = await User.countDocuments();
   const adminCount = await User.countDocuments({ role: 'admin' });
 
-  // Recent orders (last 5)
   const recentOrders = await Order.find()
     .populate('user', 'name email')
     .sort({ createdAt: -1 })
     .limit(5)
     .select('_id orderStatus totalPrice createdAt user');
 
-  // Pending refunds
   const pendingRefunds = await Order.countDocuments({ 'refundInfo.status': 'requested' });
-
-  // Pending returns
   const pendingReturns = await Order.countDocuments({ 'returnInfo.status': 'requested' });
-
-  // Fraud reviews pending
   const fraudReviews = await Order.countDocuments({ requiresFraudReview: true });
 
   return res.status(200).json({
@@ -1437,15 +1266,9 @@ export const getAdminStats = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get analytics data for dashboard
- * @route GET /api/v1/admin/analytics
- * @access Private (Admin only)
- */
 export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   const { timeframe = 'month' } = req.query;
 
-  // Calculate date ranges
   const now = new Date();
   let currentPeriodStart, previousPeriodStart, previousPeriodEnd;
 
@@ -1467,7 +1290,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
       previousPeriodEnd = currentPeriodStart;
   }
 
-  // Current period stats
   const currentOrders = await Order.countDocuments({
     createdAt: { $gte: currentPeriodStart }
   });
@@ -1483,7 +1305,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   ]);
   const currentRevenue = currentRevenueResult[0]?.total || 0;
 
-  // Previous period stats
   const previousOrders = await Order.countDocuments({
     createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
   });
@@ -1499,7 +1320,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   ]);
   const previousRevenue = previousRevenueResult[0]?.total || 0;
 
-  // Calculate trends
   const ordersTrend = previousOrders > 0 
     ? ((currentOrders - previousOrders) / previousOrders * 100).toFixed(2)
     : 100;
@@ -1508,7 +1328,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
     ? ((currentRevenue - previousRevenue) / previousRevenue * 100).toFixed(2)
     : 100;
 
-  // Top products
   const topProducts = await Order.aggregate([
     { $match: { createdAt: { $gte: currentPeriodStart } } },
     { $unwind: '$orderItems' },
@@ -1523,7 +1342,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
     { $limit: 5 }
   ]);
 
-  // Populate product details
   const populatedTopProducts = await Promise.all(
     topProducts.map(async (item) => {
       const product = await Product.findById(item._id).select('name images');
@@ -1554,16 +1372,6 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   });
 });
 
-
-// ============================================
-// ADMIN ORDER CANCELLATION WITH REFUND
-// ============================================
-
-/**
- * Cancel order and optionally initiate refund (Admin only)
- * @route PUT /api/v1/admin/orders/:id/cancel
- * @access Private (Admin only)
- */
 export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { reason, skipRefund = false } = req.body;
@@ -1577,7 +1385,6 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
     return next(new HandleError('Order not found', 404));
   }
 
-  // Check if order can be cancelled
   if (order.orderStatus === 'Delivered') {
     return next(new HandleError('Cannot cancel delivered orders. Use refund process instead.', 400));
   }
@@ -1586,17 +1393,14 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
     return next(new HandleError('Order is already cancelled', 400));
   }
 
-  // Update order status to cancelled
   order.orderStatus = 'Cancelled';
   order.cancelledAt = new Date();
   order.cancelledBy = req.user._id;
   order.cancellationReason = reason;
 
-  // Add to status history
   order.addStatusHistory('Cancelled', req.user._id, reason);
   order.addAuditEntry('order_cancelled', req.user._id, { reason, skipRefund });
 
-  // If payment was made and skipRefund is false, initiate refund
   if (!skipRefund && order.paymentInfo.status === 'success' && order.amountPaid > 0) {
     order.refundInfo = {
       status: 'requested',
@@ -1618,7 +1422,6 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
       { refundType: 'full', requestedAmount: order.amountPaid }
     );
 
-    // Auto-approve the refund since it's admin-initiated
     order.refundInfo.status = 'approved';
     order.refundInfo.approvedAt = new Date();
     order.refundInfo.approvedBy = req.user._id;
@@ -1645,11 +1448,6 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   });
 });
 
-/**
- * Get order by reference number
- * @route GET /api/v1/orders/reference/:reference
- * @access Private (User)
- */
 export const getOrderByReference = handleAsyncError(async (req, res, next) => {
   const { reference } = req.params;
   const userId = req.user._id;
@@ -1658,12 +1456,10 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Reference number is required', 400));
   }
 
-  // Try to find by payment reference first
   let order = await Order.findOne({
     'paymentInfo.reference': reference
   }).populate('user', 'name email');
 
-  // If not found, try by order ID (if reference looks like ObjectId)
   if (!order && reference.match(/^[0-9a-fA-F]{24}$/)) {
     order = await Order.findById(reference).populate('user', 'name email');
   }
@@ -1672,7 +1468,6 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found with this reference', 404));
   }
 
-  // Verify ownership (unless admin)
   const isAdmin = req.user.role === 'admin';
   if (!isAdmin && order.user._id.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized to view this order', 403));
@@ -1683,4 +1478,3 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
     order
   });
 });
-
