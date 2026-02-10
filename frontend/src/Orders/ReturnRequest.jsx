@@ -1,3 +1,4 @@
+// Updated ReturnRequest.jsx - Part 1
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -18,21 +19,23 @@ import {
   FiInfo,
   FiArrowLeft,
   FiBox,
-  FiTruck,
 } from 'react-icons/fi';
 
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
+import RefundReturnMessagesModal from './RefundReturnMessagesModal';
 
-import { 
-  getOrderDetails, 
+import { getOrderDetails } from '../features/cart/orderSlice';
+import {
   requestReturn,
   getReturnMessages,
   addReturnMessage,
-  cancelReturnRequest
-} from '../features/cart/orderSlice';
+  uploadReturnFiles,
+  cancelReturn,
+  clearReturnState,
+} from '../features/returns/returnSlice';
 
 import '../OrderStyles/ReturnRequest.css';
 
@@ -56,7 +59,6 @@ const ALLOWED_FILE_TYPES = {
   documents: ['application/pdf']
 };
 
-// Inline ReturnStatusBadge Component
 const ReturnStatusBadge = ({ status }) => {
   const getStatusConfig = (status) => {
     const configs = {
@@ -88,9 +90,17 @@ function ReturnRequest() {
   const navigate = useNavigate();
   const dispatch = useDispatch();
   const fileInputRef = useRef(null);
-  const messagesEndRef = useRef(null);
 
-  const { order, loading: orderLoading, actionLoading, uploadProgress } = useSelector((state) => state.order);
+  const { order, loading: orderLoading } = useSelector((state) => state.order);
+  
+  const {
+    messages,
+    loading,
+    messagesLoading,
+    uploadLoading,
+    error,
+    success
+  } = useSelector((state) => state.return);
 
   const [formData, setFormData] = useState({
     reason: '',
@@ -100,34 +110,34 @@ function ReturnRequest() {
   const [formErrors, setFormErrors] = useState({});
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [filePreviews, setFilePreviews] = useState([]);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showMessagesModal, setShowMessagesModal] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  // Determine if this is a new request or tracking existing return
   const hasActiveReturn = order?.returnInfo?.status && order.returnInfo.status !== 'none';
   const isTracking = hasActiveReturn;
 
-  // Fetch order details
   useEffect(() => {
     if (orderId) {
       dispatch(getOrderDetails(orderId));
     }
   }, [dispatch, orderId]);
 
-  // Load messages when tracking
   useEffect(() => {
     if (isTracking && orderId) {
-      dispatch(getReturnMessages(orderId))
-        .unwrap()
-        .then((result) => {
-          setMessages(result.messages || []);
-        })
-        .catch(() => {});
+      dispatch(getReturnMessages(orderId));
     }
-  }, [isTracking, orderId, dispatch]);
+  }, [dispatch, isTracking, orderId]);
 
-  // Initialize items to return
+  useEffect(() => {
+    if (messages && messages.length > 0) {
+      const unread = messages.filter(msg => 
+        msg.senderType === 'admin' && !msg.readBy?.includes('customer')
+      ).length;
+      setUnreadCount(unread);
+    }
+  }, [messages]);
+
   useEffect(() => {
     if (order?.orderItems && !isTracking && formData.itemsToReturn.length === 0) {
       const items = order.orderItems.map(item => ({
@@ -143,7 +153,6 @@ function ReturnRequest() {
     }
   }, [order?.orderItems, isTracking, formData.itemsToReturn.length]);
 
-  // Pre-fill form when tracking
   useEffect(() => {
     if (isTracking && order?.returnInfo && !formData.reason) {
       setFormData({
@@ -153,10 +162,16 @@ function ReturnRequest() {
     }
   }, [isTracking, order?.returnInfo, formData.reason]);
 
-  // Scroll to bottom of messages
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (success) {
+      toast.success('Action completed successfully!', { position: 'top-center' });
+      dispatch(clearReturnState());
+    }
+    if (error) {
+      toast.error(error, { position: 'top-center' });
+      dispatch(clearReturnState());
+    }
+  }, [success, error, dispatch]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -195,13 +210,6 @@ function ReturnRequest() {
       ...ALLOWED_FILE_TYPES.documents
     ];
     return allAllowedTypes.includes(file.type);
-  };
-
-  const getFileIcon = (fileType) => {
-    if (ALLOWED_FILE_TYPES.images.includes(fileType)) return <FiImage />;
-    if (ALLOWED_FILE_TYPES.videos.includes(fileType)) return <FiVideo />;
-    if (ALLOWED_FILE_TYPES.documents.includes(fileType)) return <FiFile />;
-    return <FiFile />;
   };
 
   const handleFileSelect = (e) => {
@@ -275,18 +283,34 @@ function ReturnRequest() {
     }
 
     try {
+      let uploadedFiles = [];
+      if (selectedFiles.length > 0) {
+        const uploadResult = await dispatch(uploadReturnFiles({
+          orderId,
+          files: selectedFiles
+        })).unwrap();
+        uploadedFiles = uploadResult.files || [];
+      }
+
       const selectedItems = formData.itemsToReturn
         .filter(item => item.selected)
         .map(item => ({
           product: item.product,
-          quantity: item.returnQuantity
+          quantity: item.returnQuantity,
+          name: item.name,
+          price: item.price,
+          image: item.image
         }));
+
+      const returnData = {
+        reason: formData.reason,
+        items: selectedItems,
+        attachments: uploadedFiles
+      };
 
       await dispatch(requestReturn({
         orderId,
-        reason: formData.reason,
-        itemsToReturn: selectedItems,
-        images: selectedFiles
+        returnData
       })).unwrap();
 
       toast.success('Return request submitted successfully!', {
@@ -303,31 +327,40 @@ function ReturnRequest() {
     }
   };
 
-  const handleSendMessage = async () => {
-    if (!newMessage.trim()) return;
-
+  const handleSendMessage = async (content, files) => {
     try {
+      let uploadedFiles = [];
+      if (files && files.length > 0) {
+        const uploadResult = await dispatch(uploadReturnFiles({
+          orderId,
+          files
+        })).unwrap();
+        uploadedFiles = uploadResult.files || [];
+      }
+
       await dispatch(addReturnMessage({
         orderId,
-        content: newMessage,
-        attachments: []
+        content,
+        attachments: uploadedFiles
       })).unwrap();
 
-      setNewMessage('');
-      
-      // Refresh messages
-      const result = await dispatch(getReturnMessages(orderId)).unwrap();
-      setMessages(result.messages || []);
-
-      toast.success('Message sent', { position: 'top-center' });
+      dispatch(getReturnMessages(orderId));
+      toast.success('Message sent', { position: 'top-center', autoClose: 2000 });
     } catch (error) {
-      toast.error('Failed to send message', { position: 'top-center' });
+      toast.error(error || 'Failed to send message', { position: 'top-center' });
+      throw error;
+    }
+  };
+
+  const handleRefreshMessages = () => {
+    if (orderId) {
+      dispatch(getReturnMessages(orderId));
     }
   };
 
   const handleCancelReturn = async () => {
     try {
-      await dispatch(cancelReturnRequest(orderId)).unwrap();
+      await dispatch(cancelReturn(orderId)).unwrap();
       
       toast.success('Return request cancelled', {
         position: 'top-center',
@@ -344,33 +377,12 @@ function ReturnRequest() {
     }
   };
 
-    const formatCurrency = (amount, currency = 'USD') => {
+  const formatCurrency = (amount, currency = 'USD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
       minimumFractionDigits: 2,
     }).format(amount);
-  };
-
-
-  const formatTimestamp = (timestamp) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
-
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: date.getFullYear() !== now.getFullYear() ? 'numeric' : undefined
-    });
   };
 
   if (orderLoading) return (
@@ -407,7 +419,6 @@ function ReturnRequest() {
       <Navbar />
 
       <div className="rtr-return-request-container">
-        {/* Back Button */}
         <button 
           onClick={() => navigate(`/order/${orderId}`)} 
           className="rtr-btn-back-nav"
@@ -424,10 +435,22 @@ function ReturnRequest() {
               <p className="rtr-order-reference">Order: #{orderId.slice(-8).toUpperCase()}</p>
             </div>
           </div>
+
+          {isTracking && (
+            <button 
+              className="rtr-btn-messages"
+              onClick={() => setShowMessagesModal(true)}
+            >
+              <FiMessageSquare />
+              <span>Messages</span>
+              {unreadCount > 0 && (
+                <span className="rtr-message-badge">{unreadCount}</span>
+              )}
+            </button>
+          )}
         </div>
 
         <div className="rtr-return-content">
-          {/* Return Status Card - Only show if tracking */}
           {isTracking && (
             <div className="rtr-return-status-card">
               <div className="rtr-card-header">
@@ -550,7 +573,6 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* Return Items List */}
                 {order.returnInfo.items && order.returnInfo.items.length > 0 && (
                   <div className="rtr-return-items">
                     <h3>Items Being Returned</h3>
@@ -570,12 +592,11 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* Cancel Return Button */}
                 {order.returnInfo.status === 'requested' && (
                   <button 
                     onClick={() => setShowCancelModal(true)}
                     className="rtr-btn-cancel-return"
-                    disabled={actionLoading}
+                    disabled={loading}
                   >
                     <FiX />
                     Cancel Return Request
@@ -585,7 +606,6 @@ function ReturnRequest() {
             </div>
           )}
 
-          {/* Order Summary Card */}
           <div className="rtr-summary-card">
             <div className="rtr-card-header">
               <FiPackage className="rtr-card-icon" />
@@ -617,7 +637,6 @@ function ReturnRequest() {
             </div>
           </div>
 
-          {/* Return Form - Only show if NOT tracking */}
           {!isTracking && (
             <div className="rtr-return-form-card">
               <div className="rtr-card-header">
@@ -626,7 +645,6 @@ function ReturnRequest() {
               </div>
 
               <form onSubmit={handleSubmit} className="rtr-return-form">
-                {/* Items Selection */}
                 <div className="rtr-form-section">
                   <label className="rtr-section-label">Items in Your Order</label>
                   <div className="rtr-items-grid">
@@ -687,7 +705,6 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* Return Reason */}
                 <div className="rtr-form-group">
                   <label htmlFor="reason" className="rtr-form-label">
                     Reason for Return *
@@ -713,7 +730,6 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* File Upload */}
                 <div className="rtr-form-group">
                   <label className="rtr-form-label">
                     Supporting Documents (Optional)
@@ -741,18 +757,6 @@ function ReturnRequest() {
                       <FiPaperclip />
                       Choose Files
                     </button>
-
-                    {uploadProgress > 0 && uploadProgress < 100 && (
-                      <div className="rtr-upload-progress">
-                        <div className="rtr-progress-bar">
-                          <div 
-                            className="rtr-progress-fill" 
-                            style={{ width: `${uploadProgress}%` }}
-                          />
-                        </div>
-                        <span className="rtr-progress-text">{uploadProgress}%</span>
-                      </div>
-                    )}
 
                     {selectedFiles.length > 0 && (
                       <div className="rtr-file-previews">
@@ -789,7 +793,6 @@ function ReturnRequest() {
                   </div>
                 </div>
 
-                {/* Important Notice */}
                 <div className="rtr-notice-box">
                   <FiInfo className="rtr-notice-icon" />
                   <div className="rtr-notice-content">
@@ -803,22 +806,21 @@ function ReturnRequest() {
                   </div>
                 </div>
 
-                {/* Form Actions */}
                 <div className="rtr-form-actions">
                   <button
                     type="button"
                     onClick={() => navigate(`/order/${orderId}`)}
                     className="rtr-btn-secondary"
-                    disabled={actionLoading}
+                    disabled={loading || uploadLoading}
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
                     className="rtr-btn-primary"
-                    disabled={actionLoading}
+                    disabled={loading || uploadLoading}
                   >
-                    {actionLoading ? (
+                    {loading || uploadLoading ? (
                       <>
                         <FiClock className="rtr-spin" />
                         Submitting...
@@ -834,78 +836,9 @@ function ReturnRequest() {
               </form>
             </div>
           )}
-
-          {/* Messaging Section */}
-          {isTracking && (
-            <div className="rtr-messaging-card">
-              <div className="rtr-card-header">
-                <FiMessageSquare className="rtr-card-icon" />
-                <h2>Messages</h2>
-              </div>
-
-              <div className="rtr-messages-container">
-                {messages.length === 0 ? (
-                  <div className="rtr-empty-messages">
-                    <FiMessageSquare className="rtr-empty-icon" />
-                    <p>No messages yet. Start the conversation!</p>
-                  </div>
-                ) : (
-                  <div className="rtr-messages-list">
-                    {messages.map((msg, index) => (
-                      <div
-                        key={msg._id || index}
-                        className={`rtr-message ${msg.sender === 'customer' ? 'rtr-message-sent' : 'rtr-message-received'}`}
-                      >
-                        <div className="rtr-message-content">
-                          <p>{msg.content}</p>
-                          {msg.attachments?.map((attachment, i) => (
-                            <div key={i} className="rtr-message-attachment">
-                              {getFileIcon(attachment.type)}
-                              <a href={attachment.url} download target="_blank" rel="noopener noreferrer">
-                                {attachment.name}
-                              </a>
-                            </div>
-                          ))}
-                        </div>
-                        <div className="rtr-message-footer">
-                          <span className="rtr-message-time">{formatTimestamp(msg.createdAt)}</span>
-                          {msg.sender === 'customer' && (
-                            <span className={`rtr-read-receipt ${msg.isRead ? 'rtr-read' : ''}`}>
-                              {msg.isRead ? 'Read' : 'Sent'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                    <div ref={messagesEndRef} />
-                  </div>
-                )}
-
-                <div className="rtr-message-input-area">
-                  <input
-                    type="text"
-                    placeholder="Type your message..."
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                    className="rtr-message-input"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSendMessage}
-                    className="rtr-btn-send"
-                    disabled={!newMessage.trim() || actionLoading}
-                  >
-                    <FiSend />
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Cancel Confirmation Modal */}
       {showCancelModal && (
         <div className="rtr-modal-overlay" onClick={() => setShowCancelModal(false)}>
           <div className="rtr-modal-content" onClick={(e) => e.stopPropagation()}>
@@ -922,21 +855,32 @@ function ReturnRequest() {
               <button 
                 onClick={() => setShowCancelModal(false)} 
                 className="rtr-btn-secondary"
-                disabled={actionLoading}
+                disabled={loading}
               >
                 Keep Request
               </button>
               <button 
                 onClick={handleCancelReturn} 
                 className="rtr-btn-danger"
-                disabled={actionLoading}
+                disabled={loading}
               >
-                {actionLoading ? 'Cancelling...' : 'Yes, Cancel Request'}
+                {loading ? 'Cancelling...' : 'Yes, Cancel Request'}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <RefundReturnMessagesModal
+        isOpen={showMessagesModal}
+        onClose={() => setShowMessagesModal(false)}
+        orderId={orderId}
+        messages={messages}
+        loading={messagesLoading}
+        onSendMessage={handleSendMessage}
+        onRefresh={handleRefreshMessages}
+        type="return"
+      />
 
       <Footer />
     </>
