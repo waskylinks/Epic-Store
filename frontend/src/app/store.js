@@ -9,6 +9,7 @@ import adminReducer from '../features/admin/adminSlice'
 import refundReducer from '../features/refunds/refundSlice'
 import publicProductsReducer from '../features/publicProducts/publicProductsSlice';
 import wishlistReducer from '../features/products/wishlistSlice';
+import shippingReducer from '../features/shipping/shippingSlice';
 
 
 export const store = configureStore({
@@ -23,6 +24,7 @@ export const store = configureStore({
         refund: refundReducer,
         publicProducts: publicProductsReducer,
         wishlist: wishlistReducer,
+        shipping: shippingReducer,
 
     }
 });
