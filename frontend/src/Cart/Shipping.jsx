@@ -6,55 +6,102 @@ import Footer from '../components/footer';
 import CheckoutPath from './CheckoutPath';
 import { useSelector, useDispatch } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { saveShippingInfo } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
-import axios from 'axios';
 import { 
   FiMapPin, 
   FiCheck, 
   FiTrash2, 
-  FiEdit2, 
   FiPlus,
   FiStar
 } from 'react-icons/fi';
 
+// Import shipping slice actions
+import {
+  getSavedAddresses,
+  getDefaultAddress,
+  saveAddress,
+  deleteAddress,
+  setDefaultAddress,
+  validateShippingAddress,
+  selectAddress,
+  removeErrors,
+  removeMessage,
+  resetValidation
+} from '../features/shipping/shippingSlice';
+
 function Shipping() {
-  const { shippingInfo } = useSelector(state => state.cart);
-  const { user } = useSelector(state => state.user);
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  
+  const { user } = useSelector(state => state.user);
+  const { cartItems } = useSelector(state => state.cart);
+  const { 
+    addresses,
+    selectedAddress,
+    validationErrors,
+    loading,
+    actionLoading,
+    error,
+    success,
+    message
+  } = useSelector(state => state.shipping);
 
-  const [savedAddresses, setSavedAddresses] = useState([]);
-  const [loadingAddresses, setLoadingAddresses] = useState(false);
   const [formData, setFormData] = useState({
-    address: shippingInfo.address || '',
-    city: shippingInfo.city || '',
-    state: shippingInfo.state || '',
-    country: shippingInfo.country || 'Nigeria',
-    pinCode: shippingInfo.pinCode || '',
-    phoneNo: shippingInfo.phoneNo || ''
+    address: '',
+    city: '',
+    state: '',
+    country: 'Nigeria',
+    pinCode: '',
+    phoneNo: ''
   });
-  const [errors, setErrors] = useState({});
+  
+  const [saveToAccount, setSaveToAccount] = useState(false);
+  const [setAsDefaultCheck, setSetAsDefaultCheck] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [saveAddress, setSaveAddress] = useState(false);
-  const [setAsDefault, setSetAsDefault] = useState(false);
 
   // Fetch saved addresses on mount
   useEffect(() => {
-    fetchSavedAddresses();
-  }, []);
+    dispatch(getSavedAddresses());
+    dispatch(getDefaultAddress());
+  }, [dispatch]);
 
-  const fetchSavedAddresses = async () => {
-    setLoadingAddresses(true);
-    try {
-      const { data } = await axios.get('/api/v1/shipping/addresses');
-      setSavedAddresses(data.addresses || []);
-    } catch (err) {
-      console.error('Failed to fetch addresses:', err);
-    } finally {
-      setLoadingAddresses(false);
+  // Auto-fill form from selected address
+  useEffect(() => {
+    if (selectedAddress) {
+      setFormData({
+        address: selectedAddress.address || '',
+        city: selectedAddress.city || '',
+        state: selectedAddress.state || '',
+        country: selectedAddress.country || 'Nigeria',
+        pinCode: selectedAddress.pinCode || '',
+        phoneNo: selectedAddress.phoneNo || ''
+      });
     }
-  };
+  }, [selectedAddress]);
+
+  // Handle errors
+  useEffect(() => {
+    if (error) {
+      toast.error(error, { position: 'top-center', autoClose: 3000 });
+      dispatch(removeErrors());
+    }
+  }, [error, dispatch]);
+
+  // Handle success messages
+  useEffect(() => {
+    if (success && message) {
+      toast.success(message, { position: 'top-center', autoClose: 2000 });
+      dispatch(removeMessage());
+    }
+  }, [success, message, dispatch]);
+
+  // Redirect if cart is empty
+  useEffect(() => {
+    if (cartItems.length === 0) {
+      toast.warning('Your cart is empty', { position: 'top-center' });
+      navigate('/cart');
+    }
+  }, [cartItems, navigate]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -62,150 +109,57 @@ function Shipping() {
       ...prev,
       [name]: value
     }));
-    // Clear error for this field
-    if (errors[name]) {
-      setErrors(prev => ({
-        ...prev,
-        [name]: ''
-      }));
-    }
-  };
-
-  const validateForm = () => {
-    const newErrors = {};
-
-    if (!formData.address || formData.address.trim().length < 5) {
-      newErrors.address = 'Address must be at least 5 characters';
-    }
-
-    if (!formData.city || formData.city.trim().length < 2) {
-      newErrors.city = 'City is required';
-    }
-
-    if (!formData.state || formData.state.trim().length < 2) {
-      newErrors.state = 'State is required';
-    }
-
-    if (!formData.pinCode || !/^\d{6}$/.test(formData.pinCode)) {
-      newErrors.pinCode = 'Postal code must be 6 digits';
-    }
-
-    if (!formData.phoneNo) {
-      newErrors.phoneNo = 'Phone number is required';
-    } else {
-      const cleanPhone = formData.phoneNo.replace(/[\s\-\(\)]/g, '');
-      const nigerianPattern = /^(\+234|234|0)[7-9][0-1]\d{8}$/;
-      if (!nigerianPattern.test(cleanPhone)) {
-        newErrors.phoneNo = 'Invalid Nigerian phone number';
-      }
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
+    // Reset validation on change
+    dispatch(resetValidation());
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!validateForm()) {
-      toast.error('Please fix the errors in the form', {
-        position: 'top-center',
-        autoClose: 3000
-      });
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
       // Validate address with backend
-      const { data } = await axios.post('/api/v1/shipping/validate-address', formData);
+      await dispatch(validateShippingAddress(formData)).unwrap();
 
-      if (!data.isValid) {
-        setErrors(data.errors);
-        toast.error('Invalid address', {
-          position: 'top-center',
-          autoClose: 3000
-        });
-        setIsSubmitting(false);
-        return;
-      }
-
-      // Save to Redux
-      dispatch(saveShippingInfo(data.normalizedAddress || formData));
-
-      // Save to database if checkbox is checked
-      if (saveAddress) {
-        await axios.post('/api/v1/shipping/address', {
-          name: user?.name || 'User',
+      // Save to account if checkbox is checked
+      if (saveToAccount) {
+        await dispatch(saveAddress({
+          name: user?.name || `${user?.firstName} ${user?.lastName}` || 'User',
           ...formData,
-          isDefault: setAsDefault
-        });
-        toast.success('Address saved successfully', {
-          position: 'top-center',
-          autoClose: 2000
-        });
-        fetchSavedAddresses();
+          isDefault: setAsDefaultCheck
+        })).unwrap();
       }
 
       // Navigate to order confirmation
       navigate('/order/confirm');
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to save shipping info', {
-        position: 'top-center',
-        autoClose: 3000
-      });
+      // Error already handled by useEffect
+      console.error('Shipping validation failed:', err);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleSelectAddress = (address) => {
-    setFormData({
-      address: address.address,
-      city: address.city,
-      state: address.state,
-      country: address.country,
-      pinCode: address.pinCode,
-      phoneNo: address.phoneNo
-    });
-    toast.success('Address loaded', {
-      position: 'top-center',
-      autoClose: 2000
-    });
+    dispatch(selectAddress(address));
+    toast.success('Address selected', { position: 'top-center', autoClose: 2000 });
   };
 
   const handleDeleteAddress = async (id) => {
     if (!window.confirm('Delete this address?')) return;
 
     try {
-      await axios.delete(`/api/v1/shipping/address/${id}`);
-      toast.success('Address deleted', {
-        position: 'top-center',
-        autoClose: 2000
-      });
-      fetchSavedAddresses();
+      await dispatch(deleteAddress(id)).unwrap();
     } catch (err) {
-      toast.error('Failed to delete address', {
-        position: 'top-center',
-        autoClose: 2000
-      });
+      // Error handled by useEffect
     }
   };
 
   const handleSetDefault = async (id) => {
     try {
-      await axios.put(`/api/v1/shipping/address/${id}/default`);
-      toast.success('Default address updated', {
-        position: 'top-center',
-        autoClose: 2000
-      });
-      fetchSavedAddresses();
+      await dispatch(setDefaultAddress(id)).unwrap();
     } catch (err) {
-      toast.error('Failed to update default', {
-        position: 'top-center',
-        autoClose: 2000
-      });
+      // Error handled by useEffect
     }
   };
 
@@ -223,21 +177,21 @@ function Shipping() {
 
         <div className="es-content">
           {/* Saved Addresses Section */}
-          {savedAddresses.length > 0 && (
+          {addresses.length > 0 && (
             <div className="es-saved-section">
               <h2 className="es-saved-heading">
                 <FiMapPin />
                 Saved Addresses
               </h2>
               
-              {loadingAddresses ? (
+              {loading ? (
                 <div className="es-loading">Loading addresses...</div>
               ) : (
                 <div className="es-saved-list">
-                  {savedAddresses.map(addr => (
+                  {addresses.map(addr => (
                     <div 
                       key={addr._id} 
-                      className={`es-saved-item ${addr.isDefault ? 'es-default' : ''}`}
+                      className={`es-saved-item ${addr.isDefault ? 'es-default' : ''} ${selectedAddress?._id === addr._id ? 'es-selected' : ''}`}
                     >
                       {addr.isDefault && (
                         <div className="es-default-badge">
@@ -259,12 +213,13 @@ function Shipping() {
                           className="es-saved-btn es-select-btn"
                           onClick={() => handleSelectAddress(addr)}
                         >
-                          <FiCheck /> Select
+                          <FiCheck /> {selectedAddress?._id === addr._id ? 'Selected' : 'Select'}
                         </button>
                         {!addr.isDefault && (
                           <button 
                             className="es-saved-btn es-default-btn"
                             onClick={() => handleSetDefault(addr._id)}
+                            disabled={actionLoading}
                           >
                             <FiStar /> Set Default
                           </button>
@@ -272,6 +227,7 @@ function Shipping() {
                         <button 
                           className="es-saved-btn es-delete-btn"
                           onClick={() => handleDeleteAddress(addr._id)}
+                          disabled={actionLoading}
                         >
                           <FiTrash2 />
                         </button>
@@ -287,7 +243,7 @@ function Shipping() {
           <div className="es-form-section">
             <h2 className="es-form-heading">
               <FiPlus />
-              {savedAddresses.length > 0 ? 'New Address' : 'Enter Address'}
+              {addresses.length > 0 ? 'New Address' : 'Enter Address'}
             </h2>
 
             <form onSubmit={handleSubmit} className="es-form">
@@ -302,12 +258,13 @@ function Shipping() {
                     name="address"
                     value={formData.address}
                     onChange={handleChange}
-                    className={`es-input ${errors.address ? 'es-input-error' : ''}`}
+                    className={`es-input ${validationErrors.length > 0 && validationErrors.some(e => e.includes('Address')) ? 'es-input-error' : ''}`}
                     placeholder="123 Main Street"
+                    required
                   />
-                  {errors.address && (
-                    <span className="es-error">{errors.address}</span>
-                  )}
+                  {validationErrors.length > 0 && validationErrors.filter(e => e.includes('Address')).map((err, i) => (
+                    <span key={i} className="es-error">{err}</span>
+                  ))}
                 </div>
               </div>
 
@@ -322,12 +279,13 @@ function Shipping() {
                     name="city"
                     value={formData.city}
                     onChange={handleChange}
-                    className={`es-input ${errors.city ? 'es-input-error' : ''}`}
+                    className={`es-input ${validationErrors.length > 0 && validationErrors.some(e => e.includes('City')) ? 'es-input-error' : ''}`}
                     placeholder="Lagos"
+                    required
                   />
-                  {errors.city && (
-                    <span className="es-error">{errors.city}</span>
-                  )}
+                  {validationErrors.length > 0 && validationErrors.filter(e => e.includes('City')).map((err, i) => (
+                    <span key={i} className="es-error">{err}</span>
+                  ))}
                 </div>
 
                 <div className="es-form-group">
@@ -340,12 +298,13 @@ function Shipping() {
                     name="state"
                     value={formData.state}
                     onChange={handleChange}
-                    className={`es-input ${errors.state ? 'es-input-error' : ''}`}
+                    className={`es-input ${validationErrors.length > 0 && validationErrors.some(e => e.includes('State')) ? 'es-input-error' : ''}`}
                     placeholder="Lagos State"
+                    required
                   />
-                  {errors.state && (
-                    <span className="es-error">{errors.state}</span>
-                  )}
+                  {validationErrors.length > 0 && validationErrors.filter(e => e.includes('State')).map((err, i) => (
+                    <span key={i} className="es-error">{err}</span>
+                  ))}
                 </div>
               </div>
 
@@ -360,13 +319,14 @@ function Shipping() {
                     name="pinCode"
                     value={formData.pinCode}
                     onChange={handleChange}
-                    className={`es-input ${errors.pinCode ? 'es-input-error' : ''}`}
+                    className={`es-input ${validationErrors.length > 0 && validationErrors.some(e => e.includes('code')) ? 'es-input-error' : ''}`}
                     placeholder="100001"
                     maxLength="6"
+                    required
                   />
-                  {errors.pinCode && (
-                    <span className="es-error">{errors.pinCode}</span>
-                  )}
+                  {validationErrors.length > 0 && validationErrors.filter(e => e.includes('code')).map((err, i) => (
+                    <span key={i} className="es-error">{err}</span>
+                  ))}
                 </div>
 
                 <div className="es-form-group">
@@ -396,12 +356,13 @@ function Shipping() {
                     name="phoneNo"
                     value={formData.phoneNo}
                     onChange={handleChange}
-                    className={`es-input ${errors.phoneNo ? 'es-input-error' : ''}`}
+                    className={`es-input ${validationErrors.length > 0 && validationErrors.some(e => e.includes('Phone') || e.includes('phone')) ? 'es-input-error' : ''}`}
                     placeholder="+234 801 234 5678"
+                    required
                   />
-                  {errors.phoneNo && (
-                    <span className="es-error">{errors.phoneNo}</span>
-                  )}
+                  {validationErrors.length > 0 && validationErrors.filter(e => e.includes('Phone') || e.includes('phone')).map((err, i) => (
+                    <span key={i} className="es-error">{err}</span>
+                  ))}
                 </div>
               </div>
 
@@ -409,19 +370,19 @@ function Shipping() {
                 <label className="es-checkbox-label">
                   <input
                     type="checkbox"
-                    checked={saveAddress}
-                    onChange={(e) => setSaveAddress(e.target.checked)}
+                    checked={saveToAccount}
+                    onChange={(e) => setSaveToAccount(e.target.checked)}
                     className="es-checkbox"
                   />
-                  <span>Save this address</span>
+                  <span>Save this address to my account</span>
                 </label>
 
-                {saveAddress && (
+                {saveToAccount && (
                   <label className="es-checkbox-label">
                     <input
                       type="checkbox"
-                      checked={setAsDefault}
-                      onChange={(e) => setSetAsDefault(e.target.checked)}
+                      checked={setAsDefaultCheck}
+                      onChange={(e) => setSetAsDefaultCheck(e.target.checked)}
                       className="es-checkbox"
                     />
                     <span>Set as default address</span>
@@ -432,7 +393,7 @@ function Shipping() {
               <button 
                 type="submit" 
                 className="es-submit-btn"
-                disabled={isSubmitting}
+                disabled={isSubmitting || actionLoading}
               >
                 {isSubmitting ? 'Processing...' : 'Continue to Order Confirmation'}
               </button>
