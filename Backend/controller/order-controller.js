@@ -53,6 +53,108 @@ const parseUTMParams = (data) => {
   };
 };
 
+/**
+ * Update product analytics after order
+ */
+const updateProductAnalytics = async (orderItems, type = 'purchase') => {
+  try {
+    for (const item of orderItems) {
+      const product = await Product.findById(item.product);
+      if (product) {
+        if (type === 'purchase') {
+          product.analytics = product.analytics || {};
+          product.analytics.purchases = (product.analytics.purchases || 0) + item.quantity;
+          await product.save({ validateBeforeSave: false });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to update product analytics:', error);
+  }
+};
+
+/**
+ * Calculate fraud risk score
+ */
+const calculateFraudRisk = (order, user) => {
+  let riskScore = 0;
+  const flags = [];
+
+  // High order value
+  if (order.totalPrice > 1000) {
+    riskScore += 20;
+    flags.push('high_order_value');
+  }
+
+  // New account (less than 7 days)
+  const accountAge = (Date.now() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+  if (accountAge < 7) {
+    riskScore += 30;
+    flags.push('new_account');
+  }
+
+  // Shipping and billing address mismatch
+  if (order.shippingInfo?.address !== order.paymentInfo?.billingAddress) {
+    riskScore += 15;
+    flags.push('address_mismatch');
+  }
+
+  // Multiple orders in short time (would need to check recent orders)
+  // This is a placeholder - implement based on your requirements
+  
+  // Determine risk level
+  let riskLevel = 'low';
+  let reviewRequired = false;
+
+  if (riskScore >= 70) {
+    riskLevel = 'critical';
+    reviewRequired = true;
+  } else if (riskScore >= 50) {
+    riskLevel = 'high';
+    reviewRequired = true;
+  } else if (riskScore >= 30) {
+    riskLevel = 'medium';
+  }
+
+  return {
+    riskScore,
+    riskLevel,
+    flags,
+    reviewRequired,
+    reviewDecision: reviewRequired ? 'Pending' : 'Approved',
+    checkedAt: new Date()
+  };
+};
+
+/**
+ * Calculate fulfillment SLA
+ */
+const calculateFulfillmentSLA = (orderDate, currentStatus) => {
+  const now = new Date();
+  const hoursSinceOrder = (now - orderDate) / (1000 * 60 * 60);
+  
+  // Standard SLA: 24 hours for processing, 72 hours for shipping
+  const processingTarget = 24;
+  const shippingTarget = 72;
+  
+  let targetHours = processingTarget;
+  if (currentStatus === 'Shipped' || currentStatus === 'Delivered') {
+    targetHours = shippingTarget;
+  }
+  
+  const slaBreached = hoursSinceOrder > targetHours;
+  const delayInHours = slaBreached ? hoursSinceOrder - targetHours : 0;
+  
+  return {
+    targetFulfillmentHours: targetHours,
+    actualFulfillmentHours: hoursSinceOrder,
+    slaBreached,
+    delayInHours,
+    delayInDays: delayInHours / 24,
+    calculatedAt: now
+  };
+};
+
 // ============================================
 // BASIC ORDER OPERATIONS
 // ============================================
@@ -160,6 +262,18 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     capturedAt: new Date()
   };
 
+  // Calculate fraud risk
+  const user = await User.findById(req.user._id);
+  const fraudCheck = calculateFraudRisk({ 
+    totalPrice, 
+    shippingInfo, 
+    paymentInfo 
+  }, user);
+
+  // Calculate initial SLA
+  const orderDate = new Date();
+  const fulfillmentSLA = calculateFulfillmentSLA(orderDate, 'Processing');
+
   // Create order with complete analytics
   const order = await Order.create({
     orderItems,
@@ -171,10 +285,15 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     totalPrice,
     user: req.user._id,
     paidAt: paymentInfo?.status === 'paid' ? Date.now() : null,
-    analytics: fullAnalytics
+    analytics: fullAnalytics,
+    fraudCheck,
+    fulfillmentSLA
   });
 
   await order.populate('orderItems.product', 'name images price');
+
+  // Update product analytics
+  await updateProductAnalytics(orderItems, 'purchase');
 
   // Sync customer analytics after successful order creation
   if (paymentInfo?.status === 'success' || paymentInfo?.status === 'paid') {
@@ -185,6 +304,11 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
       console.error('Failed to sync customer analytics:', error);
     }
   }
+
+  // Clear analytics cache
+  await deleteCachePattern('admin_stats*');
+  await deleteCachePattern('product_performance*');
+  await deleteCachePattern('customer_analytics*');
 
   return res.status(201).json({
     success: true,
@@ -387,8 +511,14 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
   };
 
   order.orderStatus = 'Shipped';
+  
+  // Update fulfillment SLA
+  order.fulfillmentSLA = calculateFulfillmentSLA(order.createdAt, 'Shipped');
+  
   await order.save();
   await deleteCachePattern('admin_stats*');
+  await deleteCachePattern('fulfillment_analytics*');
+  await deleteCachePattern('shipping_carriers*');
 
   return res.status(200).json({
     success: true,
@@ -429,6 +559,7 @@ export const createShipment = handleAsyncError(async (req, res, next) => {
   order.shipments.push(shipment);
 
   await order.save();
+  await deleteCachePattern('fulfillment_analytics*');
 
   return res.status(200).json({
     success: true,
@@ -467,6 +598,8 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   }
 
   await order.save();
+  await deleteCachePattern('fulfillment_analytics*');
+  await deleteCachePattern('shipping_carriers*');
 
   return res.status(200).json({
     success: true,
@@ -602,10 +735,15 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
     
+    // Update product inventory
     for (const item of order.returnInfo.itemsToReturn) {
       const product = await Product.findById(item.product);
       if (product && item.condition !== 'damaged') {
-        product.stock += item.quantity;
+        if (product.inventory?.stock !== undefined) {
+          product.inventory.stock += item.quantity;
+        } else {
+          product.stock += item.quantity;
+        }
         await product.save({ validateBeforeSave: false });
       }
     }
@@ -725,7 +863,8 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
 
 export const getPendingFraudReviews = handleAsyncError(async (req, res, next) => {
   const orders = await Order.find({
-    'fraudCheck.reviewRequired': true
+    'fraudCheck.reviewRequired': true,
+    'fraudCheck.reviewDecision': 'Pending'
   })
     .populate('user', 'name email')
     .sort({ createdAt: -1 });
@@ -747,10 +886,10 @@ export const getPendingFraudReviews = handleAsyncError(async (req, res, next) =>
 
 export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  const { decision } = req.body;
+  const { decision, note } = req.body;
 
-  if (!['approved', 'rejected'].includes(decision)) {
-    return next(new HandleError('Decision must be approved or rejected', 400));
+  if (!['Approved', 'Rejected'].includes(decision)) {
+    return next(new HandleError('Decision must be Approved or Rejected', 400));
   }
 
   const order = await Order.findById(id);
@@ -766,8 +905,9 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   order.fraudCheck.reviewedBy = req.user._id;
   order.fraudCheck.reviewedAt = new Date();
   order.fraudCheck.reviewRequired = false;
+  if (note) order.fraudCheck.reviewNote = note;
 
-  if (decision === 'rejected') {
+  if (decision === 'Rejected') {
     order.orderStatus = 'Cancelled';
     order.cancelledAt = new Date();
     order.cancellationReason = 'Fraud risk - order rejected';
@@ -775,6 +915,7 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
 
   await order.save();
   await deleteCachePattern('admin_stats*');
+  await deleteCachePattern('fraud_analytics*');
 
   return res.status(200).json({
     success: true,
@@ -1028,10 +1169,14 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
     order.deliveredAt = new Date();
   }
 
+  // Update fulfillment SLA
+  order.fulfillmentSLA = calculateFulfillmentSLA(order.createdAt, status);
+
   order.addStatusHistory(status, req.user._id, note || `Status updated from ${oldStatus} to ${status}`);
   order.addAuditEntry('status_updated', req.user._id, { oldStatus, newStatus: status, note });
 
   if (status === 'Delivered' && oldStatus !== 'Delivered') {
+    // Update inventory
     for (const item of order.orderItems) {
       const product = await Product.findById(item.product);
       if (product) {
@@ -1044,6 +1189,7 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
       }
     }
 
+    // Sync customer analytics
     try {
       await syncCustomerAfterOrder(order._id);
       console.log(`Customer analytics synced after delivery of order ${order._id}`);
@@ -1053,7 +1199,11 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
   }
 
   await order.save();
+  
+  // Clear relevant caches
   await deleteCachePattern('admin_stats*');
+  await deleteCachePattern('fulfillment_analytics*');
+  await deleteCachePattern('customer_analytics*');
 
   return res.status(200).json({
     success: true,
@@ -1245,7 +1395,10 @@ export const getAdminStats = handleAsyncError(async (req, res, next) => {
 
   const pendingRefunds = await Order.countDocuments({ 'refundInfo.status': 'requested' });
   const pendingReturns = await Order.countDocuments({ 'returnInfo.status': 'requested' });
-  const fraudReviews = await Order.countDocuments({ requiresFraudReview: true });
+  const fraudReviews = await Order.countDocuments({ 
+    'fraudCheck.reviewRequired': true,
+    'fraudCheck.reviewDecision': 'Pending'
+  });
 
   return res.status(200).json({
     success: true,
@@ -1431,7 +1584,10 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   }
 
   await order.save();
+  
+  // Clear relevant caches
   await deleteCachePattern('admin_stats*');
+  await deleteCachePattern('cancellation_analytics*');
 
   return res.status(200).json({
     success: true,
@@ -1478,3 +1634,42 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
     order
   });
 });
+
+export default {
+  getAllMyOrders,
+  getOrderDetails,
+  createOrder,
+  getOrderTimeline,
+  addOrderNote,
+  getOrderNotes,
+  editOrderNote,
+  getTrackingInfo,
+  addTrackingInfo,
+  createShipment,
+  updateShipmentStatus,
+  requestReturn,
+  reviewReturnRequest,
+  updateReturnStatus,
+  getAllReturns,
+  downloadInvoice,
+  getPendingFraudReviews,
+  reviewFraudCheck,
+  getAuditLog,
+  getCustomerOrderAnalytics,
+  addOrderMessage,
+  getOrderMessages,
+  markOrderMessagesRead,
+  getOrdersWithUnreadMessages,
+  getAllOrders,
+  getSingleOrder,
+  updateOrder,
+  deleteOrder,
+  addAdminOrderNote,
+  getAdminOrderNotes,
+  editAdminOrderNote,
+  deleteAdminOrderNote,
+  getAdminStats,
+  getAdminAnalytics,
+  cancelOrderWithRefund,
+  getOrderByReference
+};
