@@ -10,6 +10,7 @@ import refundReducer from '../features/refunds/refundSlice'
 import publicProductsReducer from '../features/publicProducts/publicProductsSlice';
 import wishlistReducer from '../features/products/wishlistSlice';
 import shippingReducer from '../features/shipping/shippingSlice';
+import checkoutReducer from '../features/checkout/checkoutSlice';
 
 
 export const store = configureStore({
@@ -25,6 +26,7 @@ export const store = configureStore({
         publicProducts: publicProductsReducer,
         wishlist: wishlistReducer,
         shipping: shippingReducer,
+        checkout: checkoutReducer,
 
     }
 });
