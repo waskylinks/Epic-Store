@@ -1,23 +1,87 @@
-// features/order/orderSlice.js - CUSTOMER ONLY (Admin moved to adminSlice)
+// features/order/orderSlice.js - CUSTOMER with Analytics Integration
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
-// ============================================
-// API BASE CONFIGURATION
-// ============================================
 const API_BASE = "/api/v1";
+
+// ============================================
+// ANALYTICS HELPERS
+// ============================================
+
+/**
+ * Get UTM parameters from URL
+ */
+const getUTMParams = () => {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    utm_source: params.get('utm_source'),
+    utm_medium: params.get('utm_medium'),
+    utm_campaign: params.get('utm_campaign'),
+    utm_term: params.get('utm_term'),
+    utm_content: params.get('utm_content')
+  };
+};
+
+/**
+ * Detect device and browser
+ */
+const getDeviceInfo = () => {
+  const ua = navigator.userAgent;
+  const isMobile = /mobile/i.test(ua);
+  const isTablet = /tablet|ipad/i.test(ua);
+  
+  let browser = 'unknown';
+  if (/chrome/i.test(ua)) browser = 'Chrome';
+  else if (/safari/i.test(ua)) browser = 'Safari';
+  else if (/firefox/i.test(ua)) browser = 'Firefox';
+  else if (/edge/i.test(ua)) browser = 'Edge';
+  
+  return {
+    device: isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop',
+    browser
+  };
+};
+
+/**
+ * Get analytics data for order
+ */
+const getAnalyticsData = () => {
+  const utmParams = getUTMParams();
+  const deviceInfo = getDeviceInfo();
+  
+  // Get stored session data if available
+  const sessionId = sessionStorage.getItem('sessionId') || 
+    `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  const landingPage = sessionStorage.getItem('landingPage') || window.location.pathname;
+  
+  // Store session ID if new
+  if (!sessionStorage.getItem('sessionId')) {
+    sessionStorage.setItem('sessionId', sessionId);
+    sessionStorage.setItem('landingPage', window.location.pathname);
+  }
+  
+  return {
+    source: utmParams.utm_source || 'direct',
+    medium: utmParams.utm_medium,
+    campaign: utmParams.utm_campaign,
+    term: utmParams.utm_term,
+    content: utmParams.utm_content,
+    device: deviceInfo.device,
+    browser: deviceInfo.browser,
+    referrer: document.referrer || null,
+    landingPage,
+    sessionId
+  };
+};
 
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
 
-/**
- * Create FormData for file uploads
- */
 const createFormDataWithFiles = (data, files = []) => {
   const formData = new FormData();
   
-  // Add regular fields
   Object.keys(data).forEach(key => {
     if (data[key] !== undefined && data[key] !== null) {
       if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
@@ -30,7 +94,6 @@ const createFormDataWithFiles = (data, files = []) => {
     }
   });
   
-  // Add files
   files.forEach((file) => {
     formData.append(`images`, file);
   });
@@ -42,9 +105,6 @@ const createFormDataWithFiles = (data, files = []) => {
 // BASIC ORDER OPERATIONS
 // ============================================
 
-/**
- * Get all orders for logged-in user
- */
 export const getAllMyOrders = createAsyncThunk(
   "order/getAllMyOrders",
   async (_, { rejectWithValue }) => {
@@ -61,9 +121,6 @@ export const getAllMyOrders = createAsyncThunk(
   }
 );
 
-/**
- * Get single order details
- */
 export const getOrderDetails = createAsyncThunk(
   "order/getOrderDetails",
   async (id, { rejectWithValue }) => {
@@ -80,9 +137,6 @@ export const getOrderDetails = createAsyncThunk(
   }
 );
 
-/**
- * Get order by reference number
- */
 export const getOrderByReference = createAsyncThunk(
   "order/getOrderByReference",
   async (reference, { rejectWithValue }) => {
@@ -100,15 +154,27 @@ export const getOrderByReference = createAsyncThunk(
 );
 
 /**
- * Create new order
+ * Create new order WITH ANALYTICS
  */
 export const createOrder = createAsyncThunk(
   "order/createOrder",
   async (orderData, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(`${API_BASE}/order/new`, orderData, {
-        withCredentials: true,
-      });
+      // Capture analytics data
+      const analytics = getAnalyticsData();
+      
+      // Merge order data with analytics
+      const orderWithAnalytics = {
+        ...orderData,
+        analytics
+      };
+      
+      const { data } = await axios.post(
+        `${API_BASE}/order/new`, 
+        orderWithAnalytics, 
+        { withCredentials: true }
+      );
+      
       return data.order;
     } catch (error) {
       return rejectWithValue(
@@ -122,9 +188,6 @@ export const createOrder = createAsyncThunk(
 // STATUS HISTORY & TIMELINE
 // ============================================
 
-/**
- * Get order timeline/status history
- */
 export const getOrderTimeline = createAsyncThunk(
   "order/getOrderTimeline",
   async (orderId, { rejectWithValue }) => {
@@ -145,9 +208,6 @@ export const getOrderTimeline = createAsyncThunk(
 // NOTES & COMMUNICATION
 // ============================================
 
-/**
- * Add note to order (with optional attachments)
- */
 export const addOrderNote = createAsyncThunk(
   "order/addOrderNote",
   async ({ orderId, content, type = "customer", attachments = [] }, { rejectWithValue }) => {
@@ -176,9 +236,6 @@ export const addOrderNote = createAsyncThunk(
   }
 );
 
-/**
- * Get all notes for order
- */
 export const getOrderNotes = createAsyncThunk(
   "order/getOrderNotes",
   async (orderId, { rejectWithValue }) => {
@@ -195,9 +252,6 @@ export const getOrderNotes = createAsyncThunk(
   }
 );
 
-/**
- * Edit a note
- */
 export const editOrderNote = createAsyncThunk(
   "order/editOrderNote",
   async ({ orderId, noteId, content }, { rejectWithValue }) => {
@@ -220,9 +274,6 @@ export const editOrderNote = createAsyncThunk(
 // TRACKING INFORMATION
 // ============================================
 
-/**
- * Get tracking information for order
- */
 export const getTrackingInfo = createAsyncThunk(
   "order/getTrackingInfo",
   async (orderId, { rejectWithValue }) => {
@@ -243,9 +294,6 @@ export const getTrackingInfo = createAsyncThunk(
 // ORDER MESSAGES (Customer)
 // ============================================
 
-/**
- * Add message to order
- */
 export const addOrderMessage = createAsyncThunk(
   "order/addOrderMessage",
   async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
@@ -264,9 +312,6 @@ export const addOrderMessage = createAsyncThunk(
   }
 );
 
-/**
- * Get order messages
- */
 export const getOrderMessages = createAsyncThunk(
   "order/getOrderMessages",
   async (orderId, { rejectWithValue }) => {
@@ -284,9 +329,6 @@ export const getOrderMessages = createAsyncThunk(
   }
 );
 
-/**
- * Mark order messages as read
- */
 export const markOrderMessagesRead = createAsyncThunk(
   "order/markOrderMessagesRead",
   async (orderId, { rejectWithValue }) => {
@@ -309,9 +351,6 @@ export const markOrderMessagesRead = createAsyncThunk(
 // RETURN MANAGEMENT (Customer)
 // ============================================
 
-/**
- * Request return for order
- */
 export const requestReturn = createAsyncThunk(
   "order/requestReturn",
   async ({ orderId, reason, itemsToReturn, images = [] }, { rejectWithValue }) => {
@@ -340,9 +379,6 @@ export const requestReturn = createAsyncThunk(
   }
 );
 
-/**
- * Add message to return
- */
 export const addReturnMessage = createAsyncThunk(
   "order/addReturnMessage",
   async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
@@ -361,9 +397,6 @@ export const addReturnMessage = createAsyncThunk(
   }
 );
 
-/**
- * Get return messages
- */
 export const getReturnMessages = createAsyncThunk(
   "order/getReturnMessages",
   async (orderId, { rejectWithValue }) => {
@@ -381,9 +414,6 @@ export const getReturnMessages = createAsyncThunk(
   }
 );
 
-/**
- * Get return timeline
- */
 export const getReturnTimeline = createAsyncThunk(
   "order/getReturnTimeline",
   async (orderId, { rejectWithValue }) => {
@@ -401,9 +431,6 @@ export const getReturnTimeline = createAsyncThunk(
   }
 );
 
-/**
- * Get return documents
- */
 export const getReturnDocuments = createAsyncThunk(
   "order/getReturnDocuments",
   async (orderId, { rejectWithValue }) => {
@@ -421,9 +448,6 @@ export const getReturnDocuments = createAsyncThunk(
   }
 );
 
-/**
- * Upload files for return
- */
 export const uploadReturnFiles = createAsyncThunk(
   "order/uploadReturnFiles",
   async ({ orderId, files }, { rejectWithValue, dispatch }) => {
@@ -459,9 +483,6 @@ export const uploadReturnFiles = createAsyncThunk(
   }
 );
 
-/**
- * Cancel return request
- */
 export const cancelReturnRequest = createAsyncThunk(
   "order/cancelReturnRequest",
   async (orderId, { rejectWithValue }) => {
@@ -484,9 +505,6 @@ export const cancelReturnRequest = createAsyncThunk(
 // REFUND MANAGEMENT (Customer)
 // ============================================
 
-/**
- * Request refund for order (with images)
- */
 export const requestRefund = createAsyncThunk(
   "order/requestRefund",
   async ({ orderId, reason, description, refundType = 'full', requestedAmount, images = [] }, { rejectWithValue }) => {
@@ -515,9 +533,6 @@ export const requestRefund = createAsyncThunk(
   }
 );
 
-/**
- * Get refund messages (lazy load)
- */
 export const getRefundMessages = createAsyncThunk(
   "order/getRefundMessages",
   async (orderId, { rejectWithValue }) => {
@@ -535,9 +550,6 @@ export const getRefundMessages = createAsyncThunk(
   }
 );
 
-/**
- * Add refund message
- */
 export const addRefundMessage = createAsyncThunk(
   "order/addRefundMessage",
   async ({ orderId, message, attachments = [] }, { rejectWithValue }) => {
@@ -556,9 +568,6 @@ export const addRefundMessage = createAsyncThunk(
   }
 );
 
-/**
- * Upload refund files
- */
 export const uploadRefundFiles = createAsyncThunk(
   "order/uploadRefundFiles",
   async ({ orderId, files }, { rejectWithValue, dispatch }) => {
@@ -594,9 +603,6 @@ export const uploadRefundFiles = createAsyncThunk(
   }
 );
 
-/**
- * Cancel refund request
- */
 export const cancelRefundRequest = createAsyncThunk(
   "order/cancelRefundRequest",
   async (orderId, { rejectWithValue }) => {
@@ -615,9 +621,6 @@ export const cancelRefundRequest = createAsyncThunk(
   }
 );
 
-/**
- * Get refund timeline
- */
 export const getRefundTimeline = createAsyncThunk(
   "order/getRefundTimeline",
   async (orderId, { rejectWithValue }) => {
@@ -635,9 +638,6 @@ export const getRefundTimeline = createAsyncThunk(
   }
 );
 
-/**
- * Get refund documents
- */
 export const getRefundDocuments = createAsyncThunk(
   "order/getRefundDocuments",
   async (orderId, { rejectWithValue }) => {
@@ -659,9 +659,6 @@ export const getRefundDocuments = createAsyncThunk(
 // INVOICE MANAGEMENT
 // ============================================
 
-/**
- * Download invoice for order
- */
 export const downloadInvoice = createAsyncThunk(
   "order/downloadInvoice",
   async (orderId, { rejectWithValue }) => {
@@ -670,22 +667,19 @@ export const downloadInvoice = createAsyncThunk(
         `${API_BASE}/orders/${orderId}/invoice`,
         {
           withCredentials: true,
-          responseType: 'blob', // Important for PDF download
+          responseType: 'blob',
         }
       );
 
-      // Create blob URL for the PDF
       const blob = new Blob([response.data], { type: 'application/pdf' });
       const url = window.URL.createObjectURL(blob);
       
-      // Create download link
       const link = document.createElement('a');
       link.href = url;
       link.download = `Invoice-${orderId}.pdf`;
       document.body.appendChild(link);
       link.click();
       
-      // Cleanup
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
 
@@ -694,7 +688,6 @@ export const downloadInvoice = createAsyncThunk(
         message: 'Invoice downloaded successfully' 
       };
     } catch (error) {
-      // Handle non-PDF responses (error messages)
       if (error.response?.data instanceof Blob) {
         const text = await error.response.data.text();
         try {
@@ -710,7 +703,6 @@ export const downloadInvoice = createAsyncThunk(
     }
   }
 );
-
 
 // ============================================
 // SLICE DEFINITION
@@ -765,9 +757,6 @@ const orderSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    // ============================================
-    // GET ALL MY ORDERS
-    // ============================================
     builder
       .addCase(getAllMyOrders.pending, (state) => {
         state.loading = true;
@@ -782,9 +771,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // GET ORDER DETAILS
-    // ============================================
     builder
       .addCase(getOrderDetails.pending, (state) => {
         state.loading = true;
@@ -800,9 +786,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // GET ORDER BY REFERENCE
-    // ============================================
     builder
       .addCase(getOrderByReference.pending, (state) => {
         state.loading = true;
@@ -818,9 +801,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // CREATE ORDER
-    // ============================================
     builder
       .addCase(createOrder.pending, (state) => {
         state.loading = true;
@@ -837,9 +817,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // GET ORDER TIMELINE
-    // ============================================
     builder
       .addCase(getOrderTimeline.pending, (state) => {
         state.actionLoading = true;
@@ -857,9 +834,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // NOTES MANAGEMENT
-    // ============================================
     builder
       .addCase(addOrderNote.pending, (state) => {
         state.actionLoading = true;
@@ -910,9 +884,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // TRACKING MANAGEMENT
-    // ============================================
     builder
       .addCase(getTrackingInfo.pending, (state) => {
         state.actionLoading = true;
@@ -930,9 +901,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // ORDER MESSAGES
-    // ============================================
     builder
       .addCase(addOrderMessage.pending, (state) => {
         state.actionLoading = true;
@@ -970,9 +938,6 @@ const orderSlice = createSlice({
         }));
       });
 
-    // ============================================
-    // RETURN MANAGEMENT
-    // ============================================
     builder
       .addCase(requestReturn.pending, (state) => {
         state.actionLoading = true;
@@ -1051,9 +1016,6 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    // ============================================
-    // REFUND MANAGEMENT
-    // ============================================
     builder
       .addCase(requestRefund.pending, (state) => {
         state.actionLoading = true;
@@ -1094,23 +1056,20 @@ const orderSlice = createSlice({
         state.refundDocuments = action.payload.documents;
       });
 
-    // ============================================
-    // INVOICE MANAGEMENT
-    // ============================================
-      builder
-        .addCase(downloadInvoice.pending, (state) => {
-          state.actionLoading = true;
-          state.error = null;
-        })
-        .addCase(downloadInvoice.fulfilled, (state, action) => {
-          state.actionLoading = false;
-          state.message = action.payload.message;
-          state.success = true;
-        })
-        .addCase(downloadInvoice.rejected, (state, action) => {
-          state.actionLoading = false;
-          state.error = action.payload;
-        });
+    builder
+      .addCase(downloadInvoice.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(downloadInvoice.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.message = action.payload.message;
+        state.success = true;
+      })
+      .addCase(downloadInvoice.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
 
   },
 });
