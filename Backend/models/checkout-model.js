@@ -1,10 +1,8 @@
 import mongoose from "mongoose";
+import { deleteCachePattern } from '../utils/redis.js';
 
 const checkoutSchema = new mongoose.Schema(
   {
-    // ============================================
-    // USER & SESSION
-    // ============================================
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -18,9 +16,6 @@ const checkoutSchema = new mongoose.Schema(
       index: true
     },
 
-    // ============================================
-    // CHECKOUT ITEMS
-    // ============================================
     items: [{
       product: {
         type: mongoose.Schema.Types.ObjectId,
@@ -33,9 +28,6 @@ const checkoutSchema = new mongoose.Schema(
       image: String
     }],
 
-    // ============================================
-    // PRICING
-    // ============================================
     pricing: {
       itemPrice: Number,
       taxPrice: Number,
@@ -51,23 +43,17 @@ const checkoutSchema = new mongoose.Schema(
       }
     },
 
-    // ============================================
-    // SHIPPING INFO
-    // ============================================
     shippingInfo: {
       firstName: String,
       lastName: String,
       address: String,
       city: String,
       state: String,
-      pinCode: String,
+      pinCode: String, // ✅ FIXED: Consistent field name
       country: String,
       phoneNo: String
     },
 
-    // ============================================
-    // DISCOUNT APPLIED
-    // ============================================
     discount: {
       code: String,
       discountId: {
@@ -77,9 +63,6 @@ const checkoutSchema = new mongoose.Schema(
       discountAmount: Number
     },
 
-    // ============================================
-    // CHECKOUT STATUS
-    // ============================================
     status: {
       type: String,
       enum: ['pending', 'completed', 'abandoned', 'expired'],
@@ -87,9 +70,6 @@ const checkoutSchema = new mongoose.Schema(
       index: true
     },
 
-    // ============================================
-    // CHECKOUT STEP TRACKING
-    // ============================================
     currentStep: {
       type: String,
       enum: ['shipping_info', 'payment_selection', 'payment_gateway', 'payment_failed'],
@@ -101,9 +81,6 @@ const checkoutSchema = new mongoose.Schema(
       completedAt: Date
     }],
 
-    // ============================================
-    // ABANDONMENT TRACKING
-    // ============================================
     abandonment: {
       isAbandoned: {
         type: Boolean,
@@ -113,7 +90,6 @@ const checkoutSchema = new mongoose.Schema(
       abandonedAt: Date,
       abandonedAtStep: String,
       
-      // Recovery attempts
       recoveryEmailSent: {
         type: Boolean,
         default: false
@@ -128,12 +104,11 @@ const checkoutSchema = new mongoose.Schema(
         type: Boolean,
         default: false
       },
-      recoveredAt: Date
+      recoveredAt: Date,
+      recoveryTimeframe: Number,
+      likelyFromEmail: Boolean
     },
 
-    // ============================================
-    // CONVERSION TRACKING
-    // ============================================
     conversion: {
       isConverted: {
         type: Boolean,
@@ -148,9 +123,6 @@ const checkoutSchema = new mongoose.Schema(
       paymentReference: String
     },
 
-    // ============================================
-    // ANALYTICS
-    // ============================================
     analytics: {
       source: {
         type: String,
@@ -168,9 +140,6 @@ const checkoutSchema = new mongoose.Schema(
       browser: String
     },
 
-    // ============================================
-    // PAYMENT GATEWAY
-    // ============================================
     selectedGateway: {
       type: String,
       enum: ['stripe', 'paystack', 'flutterwave']
@@ -183,9 +152,6 @@ const checkoutSchema = new mongoose.Schema(
 
     paymentInitializedAt: Date,
 
-    // ============================================
-    // TIMESTAMPS
-    // ============================================
     lastActivityAt: {
       type: Date,
       default: Date.now,
@@ -194,7 +160,6 @@ const checkoutSchema = new mongoose.Schema(
 
     expiresAt: {
       type: Date,
-
     }
   },
   {
@@ -207,52 +172,91 @@ const checkoutSchema = new mongoose.Schema(
 // ============================================
 // INDEXES
 // ============================================
+
 checkoutSchema.index({ createdAt: -1 });
 checkoutSchema.index({ status: 1, lastActivityAt: -1 });
 checkoutSchema.index({ 'abandonment.isAbandoned': 1, 'abandonment.abandonedAt': -1 });
 checkoutSchema.index({ user: 1, status: 1 });
 checkoutSchema.index({ email: 1, status: 1 });
-checkoutSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 }); // Auto-cleanup after 30 days
+checkoutSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+checkoutSchema.index({
+  'abandonment.isAbandoned': 1,
+  'abandonment.abandonedAt': -1,
+  'pricing.totalPrice': 1,
+  'conversion.isConverted': 1
+}, { 
+  name: 'abandoned_checkout_query_idx'
+});
+
+checkoutSchema.index({
+  'abandonment.isAbandoned': 1,
+  'abandonment.recoveryEmailSent': 1,
+  'conversion.isConverted': 1,
+  status: 1,
+  'pricing.totalPrice': -1
+}, {
+  name: 'recovery_opportunities_idx'
+});
+
+checkoutSchema.index({
+  createdAt: -1,
+  'analytics.source': 1,
+  'analytics.device': 1,
+  'abandonment.isAbandoned': 1
+}, {
+  name: 'analytics_segmentation_idx'
+});
+
+// ✅ NEW: Optimized index for active checkout queries
+checkoutSchema.index({ 
+  user: 1, 
+  status: 1, 
+  lastActivityAt: -1 
+}, {
+  name: 'user_active_checkout_idx'
+});
 
 // ============================================
 // VIRTUALS
 // ============================================
 
-// Minutes since last activity
 checkoutSchema.virtual('minutesSinceLastActivity').get(function() {
   if (!this.lastActivityAt) return 0;
   return Math.floor((Date.now() - this.lastActivityAt.getTime()) / (1000 * 60));
 });
 
-// Should be marked as abandoned (24 hours of inactivity)
+// ✅ FIXED: Use env variable instead of hardcoded 1440 minutes
 checkoutSchema.virtual('shouldBeAbandoned').get(function() {
-  return this.status === 'pending' && this.minutesSinceLastActivity >= 1440; // 24 hours
+  const ABANDONMENT_THRESHOLD_HOURS = parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+  const thresholdMinutes = ABANDONMENT_THRESHOLD_HOURS * 60;
+  return this.status === 'pending' && this.minutesSinceLastActivity >= thresholdMinutes;
 });
 
-// Recovery priority (0-100)
+// ✅ IMPROVED: Centralized priority calculation (used by analytics controller)
 checkoutSchema.virtual('recoveryPriority').get(function() {
   if (!this.abandonment.isAbandoned) return 0;
   
   let score = 0;
   
-  // Cart value (40 points)
+  // Value scoring (40 points max)
   const total = this.pricing?.totalPrice || 0;
   if (total > 500) score += 40;
   else if (total > 200) score += 30;
   else if (total > 100) score += 20;
   else if (total > 50) score += 10;
   
-  // Has shipping info (20 points) - they were serious
+  // Shipping info completion (20 points)
   if (this.shippingInfo?.address) score += 20;
   
-  // Item count (20 points)
+  // Cart size (20 points max)
   const items = this.items?.length || 0;
   if (items >= 5) score += 20;
   else if (items >= 3) score += 15;
   else if (items >= 2) score += 10;
   else score += 5;
   
-  // Recency (20 points)
+  // Recency scoring (20 points max)
   const hoursSinceAbandoned = this.abandonment.abandonedAt 
     ? Math.floor((Date.now() - this.abandonment.abandonedAt.getTime()) / (1000 * 60 * 60))
     : 0;
@@ -268,28 +272,60 @@ checkoutSchema.virtual('recoveryPriority').get(function() {
 // STATIC METHODS
 // ============================================
 
-// Get abandonment rate for timeframe
 checkoutSchema.statics.getAbandonmentRate = async function(startDate, endDate) {
-  const totalCheckouts = await this.countDocuments({
-    createdAt: { $gte: startDate, $lte: endDate }
-  });
-  
-  const abandonedCheckouts = await this.countDocuments({
-    createdAt: { $gte: startDate, $lte: endDate },
-    'abandonment.isAbandoned': true
-  });
-  
-  const rate = totalCheckouts > 0 ? (abandonedCheckouts / totalCheckouts) * 100 : 0;
-  
+  const stats = await this.aggregate([
+    {
+      $match: {
+        createdAt: { $gte: startDate, $lte: endDate }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        abandoned: {
+          $sum: { $cond: ['$abandonment.isAbandoned', 1, 0] }
+        },
+        converted: {
+          $sum: { $cond: ['$conversion.isConverted', 1, 0] }
+        },
+        pending: {
+          $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+        },
+        expired: {
+          $sum: { $cond: [{ $eq: ['$status', 'expired'] }, 1, 0] }
+        }
+      }
+    }
+  ]);
+
+  const result = stats[0] || { 
+    total: 0, 
+    abandoned: 0, 
+    converted: 0, 
+    pending: 0,
+    expired: 0 
+  };
+
+  const completedCheckouts = result.abandoned + result.converted;
+  const rate = completedCheckouts > 0 
+    ? (result.abandoned / completedCheckouts) * 100 
+    : 0;
+
   return {
-    totalCheckouts,
-    abandonedCheckouts,
-    convertedCheckouts: totalCheckouts - abandonedCheckouts,
-    abandonmentRate: Math.round(rate * 100) / 100
+    totalCheckouts: result.total,
+    abandonedCheckouts: result.abandoned,
+    convertedCheckouts: result.converted,
+    pendingCheckouts: result.pending,
+    expiredCheckouts: result.expired,
+    completedCheckouts,
+    abandonmentRate: Math.round(rate * 100) / 100,
+    conversionRate: completedCheckouts > 0 
+      ? Math.round((result.converted / completedCheckouts) * 10000) / 100
+      : 0
   };
 };
 
-// Get recovery opportunities
 checkoutSchema.statics.getRecoveryOpportunities = async function(limit = 50) {
   const checkouts = await this.find({
     'abandonment.isAbandoned': true,
@@ -310,7 +346,6 @@ checkoutSchema.statics.getRecoveryOpportunities = async function(limit = 50) {
 // INSTANCE METHODS
 // ============================================
 
-// Update checkout step
 checkoutSchema.methods.updateStep = function(step) {
   this.currentStep = step;
   this.stepsCompleted.push({
@@ -320,41 +355,124 @@ checkoutSchema.methods.updateStep = function(step) {
   this.lastActivityAt = new Date();
 };
 
-// Mark as abandoned
 checkoutSchema.methods.markAsAbandoned = function() {
   this.abandonment.isAbandoned = true;
   this.abandonment.abandonedAt = new Date();
   this.abandonment.abandonedAtStep = this.currentStep;
   this.status = 'abandoned';
+  this._shouldInvalidateCache = true;
 };
 
-// Mark as converted
 checkoutSchema.methods.markAsConverted = function(orderId, paymentReference) {
   this.conversion.isConverted = true;
   this.conversion.convertedAt = new Date();
   this.conversion.orderId = orderId;
   this.conversion.paymentReference = paymentReference;
   this.status = 'completed';
+  
+  if (this.abandonment.isAbandoned) {
+    this.abandonment.recovered = true;
+    this.abandonment.recoveredAt = new Date();
+    
+    if (this.abandonment.recoveryEmailSentAt) {
+      const hoursAfterEmail = 
+        (this.conversion.convertedAt - this.abandonment.recoveryEmailSentAt) / (1000 * 60 * 60);
+      
+      this.abandonment.recoveryTimeframe = hoursAfterEmail;
+      this.abandonment.likelyFromEmail = hoursAfterEmail < 72;
+    }
+  }
+  
+  this._shouldInvalidateCache = true;
 };
 
-// Mark recovery email sent
+checkoutSchema.methods.canSendRecoveryEmail = function() {
+  const MAX_ATTEMPTS = parseInt(process.env.MAX_RECOVERY_ATTEMPTS) || 3;
+  const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
+  const MAX_AGE_DAYS = 7;
+
+  if (this.conversion.isConverted) {
+    return { canSend: false, reason: 'Checkout already converted' };
+  }
+
+  if (this.abandonment.recovered) {
+    return { canSend: false, reason: 'Checkout already recovered' };
+  }
+
+  if (this.abandonment.recoveryEmailCount >= MAX_ATTEMPTS) {
+    return { 
+      canSend: false, 
+      reason: `Maximum recovery attempts (${MAX_ATTEMPTS}) reached` 
+    };
+  }
+
+  if (this.abandonment.recoveryEmailSentAt) {
+    const hoursSinceLastEmail = 
+      (Date.now() - this.abandonment.recoveryEmailSentAt.getTime()) / (1000 * 60 * 60);
+    
+    if (hoursSinceLastEmail < COOLDOWN_HOURS) {
+      const hoursRemaining = Math.ceil(COOLDOWN_HOURS - hoursSinceLastEmail);
+      return { 
+        canSend: false, 
+        reason: `Cooldown active. ${hoursRemaining} hours remaining before next email` 
+      };
+    }
+  }
+
+  const daysSinceAbandoned = this.abandonment.abandonedAt
+    ? (Date.now() - this.abandonment.abandonedAt.getTime()) / (1000 * 60 * 60 * 24)
+    : 0;
+
+  if (daysSinceAbandoned > MAX_AGE_DAYS) {
+    return {
+      canSend: false,
+      reason: `Checkout abandoned ${Math.floor(daysSinceAbandoned)} days ago (max ${MAX_AGE_DAYS} days)`
+    };
+  }
+
+  return { canSend: true };
+};
+
 checkoutSchema.methods.markRecoveryEmailSent = function() {
+  const canSend = this.canSendRecoveryEmail();
+  if (!canSend.canSend) {
+    throw new Error(canSend.reason);
+  }
+  
   this.abandonment.recoveryEmailSent = true;
   this.abandonment.recoveryEmailSentAt = new Date();
   this.abandonment.recoveryEmailCount += 1;
+  this._shouldInvalidateCache = true;
 };
 
 // ============================================
-// PRE-SAVE MIDDLEWARE
+// MIDDLEWARE
 // ============================================
+
 checkoutSchema.pre('save', function(next) {
-  // Set expiration date (30 days from last activity)
   if (this.isModified('lastActivityAt') || !this.expiresAt) {
     const expiryDate = new Date(this.lastActivityAt || Date.now());
     expiryDate.setDate(expiryDate.getDate() + 30);
     this.expiresAt = expiryDate;
   }
   
+  next();
+});
+
+checkoutSchema.post('save', async function(doc, next) {
+  if (this._shouldInvalidateCache) {
+    try {
+      await Promise.all([
+        deleteCachePattern('checkout_abandonment_*'),
+        deleteCachePattern('checkout_recovery_*'),
+        deleteCachePattern('abandoned_list:*'),
+        deleteCachePattern('admin_stats*'),
+        deleteCachePattern('analytics_*')
+      ]);
+    } catch (error) {
+      console.error('Cache invalidation failed:', error);
+    }
+  }
   next();
 });
 

@@ -2,6 +2,20 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import Checkout from "../models/checkout-model.js";
 import Product from "../models/product-model.js";
+import { deleteCachePattern } from '../utils/redis.js';
+
+// ✅ NEW: Helper function to invalidate checkout-related caches
+const invalidateCheckoutCaches = async () => {
+  try {
+    await Promise.all([
+      deleteCachePattern('checkout_*'),
+      deleteCachePattern('admin_stats*'),
+      deleteCachePattern('analytics_*')
+    ]);
+  } catch (error) {
+    console.error('Cache invalidation error:', error);
+  }
+};
 
 // ============================================
 // CREATE/UPDATE CHECKOUT SESSION
@@ -89,7 +103,7 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
       currency: 'USD'
     };
     
-    // Only update shipping info if provided
+    // ✅ FIXED: Consistent field name (pinCode)
     if (shippingInfo) {
       checkout.shippingInfo = {
         firstName: shippingInfo.firstName,
@@ -97,7 +111,7 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
         address: shippingInfo.address,
         city: shippingInfo.city,
         state: shippingInfo.state,
-        pinCode: shippingInfo.pinCode, 
+        pinCode: shippingInfo.pinCode || shippingInfo.zipCode, // Accept both formats
         country: shippingInfo.country,
         phoneNo: shippingInfo.phoneNo
       };
@@ -124,7 +138,7 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
         address: shippingInfo.address,
         city: shippingInfo.city,
         state: shippingInfo.state,
-        zipCode: shippingInfo.zipCode || shippingInfo.pinCode, // Handle both formats
+        pinCode: shippingInfo.pinCode || shippingInfo.zipCode, // ✅ FIXED: Accept both formats
         country: shippingInfo.country,
         phoneNo: shippingInfo.phoneNo
       } : undefined,
@@ -142,6 +156,11 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   }
 
   await checkout.save();
+
+  // ✅ NEW: Invalidate caches after checkout creation/update
+  invalidateCheckoutCaches().catch(err => 
+    console.error('Failed to invalidate caches:', err)
+  );
 
   res.status(200).json({
     success: true,
@@ -194,6 +213,11 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   }
 
   await checkout.save();
+
+  // ✅ NEW: Invalidate analytics caches after step update
+  invalidateCheckoutCaches().catch(err => 
+    console.error('Failed to invalidate caches:', err)
+  );
 
   res.status(200).json({
     success: true,
@@ -264,6 +288,11 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
 
   checkout.markAsAbandoned();
   await checkout.save();
+
+  // ✅ NEW: Invalidate caches after manual abandonment
+  invalidateCheckoutCaches().catch(err => 
+    console.error('Failed to invalidate caches:', err)
+  );
 
   res.status(200).json({
     success: true,

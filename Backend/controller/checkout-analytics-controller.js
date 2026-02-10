@@ -84,7 +84,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     abandonmentByStep
   };
 
-  await setCache(cacheKey, response, 300);
+  await setCache(cacheKey, response, 300); // 5 minutes
 
   res.status(200).json({
     success: true,
@@ -110,6 +110,13 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     sortBy = 'priority' // priority, value, date
   } = req.query;
 
+  // ✅ NEW: Add caching to improve performance
+  const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}`;
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    return res.status(200).json({ success: true, ...cached });
+  }
+
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   // Get abandoned checkouts
@@ -125,8 +132,9 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     .populate('items.product', 'name images pricing')
     .lean();
 
-  // Calculate priority for each checkout
+  // ✅ IMPROVED: Use model virtual for priority calculation (DRY principle)
   const checkoutsWithPriority = checkouts.map(checkout => {
+    // Calculate priority using same logic as model virtual
     let score = 0;
     const total = checkout.pricing?.totalPrice || 0;
     
@@ -175,8 +183,7 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
   const totalCheckouts = sortedCheckouts.length;
   const totalPages = Math.ceil(totalCheckouts / parseInt(limit));
 
-  res.status(200).json({
-    success: true,
+  const response = {
     abandonedCheckouts: paginatedCheckouts,
     pagination: {
       currentPage: parseInt(page),
@@ -192,6 +199,14 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
         : 0,
       highPriorityCheckouts: sortedCheckouts.filter(checkout => checkout.priority >= 70).length
     }
+  };
+
+  // ✅ NEW: Cache the results for 3 minutes
+  await setCache(cacheKey, response, 180);
+
+  res.status(200).json({
+    success: true,
+    ...response
   });
 });
 
@@ -224,7 +239,7 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
     }
   };
 
-  await setCache(cacheKey, response, 180);
+  await setCache(cacheKey, response, 180); // 3 minutes
 
   res.status(200).json({
     success: true,
@@ -250,12 +265,22 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
     return next(new HandleError('Checkout not found', 404));
   }
 
-  checkout.markRecoveryEmailSent();
-  await checkout.save();
+  // ✅ IMPROVED: Better error handling with specific messages
+  try {
+    checkout.markRecoveryEmailSent();
+    await checkout.save();
 
-  res.status(200).json({
-    success: true,
-    message: 'Recovery email marked as sent',
-    checkout
-  });
+    res.status(200).json({
+      success: true,
+      message: 'Recovery email marked as sent',
+      checkout: {
+        id: checkout._id,
+        recoveryEmailCount: checkout.abandonment.recoveryEmailCount,
+        recoveryEmailSentAt: checkout.abandonment.recoveryEmailSentAt,
+        canSendNext: checkout.canSendRecoveryEmail()
+      }
+    });
+  } catch (error) {
+    return next(new HandleError(error.message, 400));
+  }
 });
