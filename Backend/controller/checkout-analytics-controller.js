@@ -1,6 +1,6 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
-import Checkout from "../models/checkout-model.js";
+import Checkout, { calculatePriorityScore } from "../models/checkout-model.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getCache, setCache } from "../utils/redis.js";
@@ -84,7 +84,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     abandonmentByStep
   };
 
-  await setCache(cacheKey, response, 300); // 5 minutes
+  await setCache(cacheKey, response, 300);
 
   res.status(200).json({
     success: true,
@@ -107,10 +107,9 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     minValue = 0,
     limit = 50,
     page = 1,
-    sortBy = 'priority' // priority, value, date
+    sortBy = 'priority'
   } = req.query;
 
-  // ✅ NEW: Add caching to improve performance
   const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}`;
   const cached = await getCache(cacheKey);
   if (cached) {
@@ -132,36 +131,15 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     .populate('items.product', 'name images pricing')
     .lean();
 
-  // ✅ IMPROVED: Use model virtual for priority calculation (DRY principle)
+  // Use shared priority calculation function
   const checkoutsWithPriority = checkouts.map(checkout => {
-    // Calculate priority using same logic as model virtual
-    let score = 0;
-    const total = checkout.pricing?.totalPrice || 0;
-    
-    if (total > 500) score += 40;
-    else if (total > 200) score += 30;
-    else if (total > 100) score += 20;
-    else if (total > 50) score += 10;
-    
-    if (checkout.shippingInfo?.address) score += 20;
-    
-    const items = checkout.items?.length || 0;
-    if (items >= 5) score += 20;
-    else if (items >= 3) score += 15;
-    else if (items >= 2) score += 10;
-    else score += 5;
-    
     const hoursSinceAbandoned = checkout.abandonment?.abandonedAt 
       ? Math.floor((Date.now() - new Date(checkout.abandonment.abandonedAt).getTime()) / (1000 * 60 * 60))
       : 0;
-    if (hoursSinceAbandoned < 6) score += 20;
-    else if (hoursSinceAbandoned < 24) score += 15;
-    else if (hoursSinceAbandoned < 48) score += 10;
-    else if (hoursSinceAbandoned < 72) score += 5;
 
     return {
       ...checkout,
-      priority: Math.min(100, score),
+      priority: calculatePriorityScore(checkout),
       hoursSinceAbandoned
     };
   });
@@ -201,7 +179,6 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     }
   };
 
-  // ✅ NEW: Cache the results for 3 minutes
   await setCache(cacheKey, response, 180);
 
   res.status(200).json({
@@ -239,7 +216,7 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
     }
   };
 
-  await setCache(cacheKey, response, 180); // 3 minutes
+  await setCache(cacheKey, response, 180);
 
   res.status(200).json({
     success: true,
@@ -265,7 +242,6 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
     return next(new HandleError('Checkout not found', 404));
   }
 
-  // ✅ IMPROVED: Better error handling with specific messages
   try {
     checkout.markRecoveryEmailSent();
     await checkout.save();

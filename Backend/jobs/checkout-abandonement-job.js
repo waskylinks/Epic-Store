@@ -1,27 +1,21 @@
-// ============================================
-// PRODUCTION-READY ABANDONMENT DETECTION CRON
-// Replace your existing markAbandonedCheckouts function with this
-// ============================================
-
 import Checkout from '../models/checkout-model.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
 /**
  * Mark abandoned checkouts (run every hour)
  * 
- * CRITICAL FIXES:
- * 1. ✅ Captures abandonedAtStep (was missing - broke funnel analytics)
- * 2. ✅ Uses lastActivityAt for abandonedAt (was using current time)
- * 3. ✅ Invalidates caches after updates
- * 4. ✅ Batch processing for scalability
- * 5. ✅ Comprehensive logging and error handling
+ * Features:
+ * - Captures abandonedAtStep for funnel analytics
+ * - Uses lastActivityAt for abandonedAt timestamp
+ * - Invalidates caches after updates
+ * - Batch processing for scalability
+ * - Comprehensive logging and error handling
  */
 export const markAbandonedCheckouts = async () => {
   const startTime = Date.now();
   
   try {
-    // Configuration
-    const BATCH_SIZE = 500; // Process 500 checkouts at a time
+    const BATCH_SIZE = 500;
     const ABANDONMENT_THRESHOLD_HOURS = parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
     const cutoffDate = new Date(Date.now() - ABANDONMENT_THRESHOLD_HOURS * 60 * 60 * 1000);
     
@@ -35,15 +29,14 @@ export const markAbandonedCheckouts = async () => {
     while (hasMore) {
       batchCount++;
       
-      // Find batch of pending checkouts that passed the threshold
       const checkouts = await Checkout.find({
         status: 'pending',
         lastActivityAt: { $lt: cutoffDate },
-        'abandonment.isAbandoned': false // Don't re-process already abandoned
+        'abandonment.isAbandoned': false
       })
-      .select('_id lastActivityAt currentStep') // Only fetch fields we need
+      .select('_id lastActivityAt currentStep')
       .limit(BATCH_SIZE)
-      .lean(); // Faster read-only queries
+      .lean();
 
       totalProcessed += checkouts.length;
 
@@ -52,7 +45,6 @@ export const markAbandonedCheckouts = async () => {
         break;
       }
 
-      // Prepare bulk update operations
       const bulkOps = checkouts.map(checkout => ({
         updateOne: {
           filter: { _id: checkout._id },
@@ -60,43 +52,36 @@ export const markAbandonedCheckouts = async () => {
             $set: {
               status: 'abandoned',
               'abandonment.isAbandoned': true,
-              
-              // CRITICAL FIX #1: Use actual abandonment time, not current time
               'abandonment.abandonedAt': checkout.lastActivityAt,
-              
-              // CRITICAL FIX #2: Capture which step they abandoned at
               'abandonment.abandonedAtStep': checkout.currentStep || 'shipping_info'
             }
           }
         }
       }));
 
-      // Execute bulk update
       const result = await Checkout.bulkWrite(bulkOps, { 
-        ordered: false // Continue even if some updates fail
+        ordered: false
       });
       
       totalModified += result.modifiedCount;
 
       console.log(`  Batch ${batchCount}: ${result.modifiedCount}/${checkouts.length} updated`);
 
-      // If we got fewer than BATCH_SIZE, we've processed all pending
       if (checkouts.length < BATCH_SIZE) {
         hasMore = false;
       }
 
-      // Safety valve: Prevent infinite loops
       if (batchCount >= 100) {
         console.warn(`⚠️ Abandonment job exceeded 100 batches (${totalProcessed} processed), stopping`);
         break;
       }
     }
 
-    // CRITICAL FIX #3: Invalidate analytics caches
     if (totalModified > 0) {
       await Promise.all([
         deleteCachePattern('checkout_abandonment_*'),
         deleteCachePattern('checkout_recovery_*'),
+        deleteCachePattern('abandoned_list:*'),
         deleteCachePattern('admin_stats*'),
         deleteCachePattern('analytics_*')
       ]).catch(err => {
@@ -130,11 +115,6 @@ export const markAbandonedCheckouts = async () => {
   }
 };
 
-// ============================================
-// OPTIONAL: Manual trigger endpoint for testing
-// Add this to your routes if you want to test manually
-// ============================================
-
 /**
  * Manually trigger abandonment detection
  * @route POST /api/v1/admin/trigger-abandonment-check
@@ -158,12 +138,9 @@ export const triggerAbandonmentCheck = async (req, res, next) => {
   }
 };
 
-// ============================================
-// SCHEDULER SETUP
-// Add this to your main app/server file
-// ============================================
-
 /*
+SCHEDULER SETUP - Add to your main app/server file:
+
 import cron from 'node-cron';
 import { markAbandonedCheckouts } from './jobs/abandonment.job.js';
 
@@ -178,51 +155,4 @@ setTimeout(async () => {
   console.log('🚀 Running initial abandonment check...');
   await markAbandonedCheckouts();
 }, 5 * 60 * 1000);
-*/
-
-// ============================================
-// TESTING GUIDE
-// ============================================
-
-/*
-HOW TO TEST:
-
-1. Create test checkout in database:
-   db.checkouts.insertOne({
-     user: ObjectId("..."),
-     email: "test@example.com",
-     items: [{ product: ObjectId("..."), quantity: 1, price: 100 }],
-     pricing: { totalPrice: 100 },
-     status: "pending",
-     currentStep: "payment_selection",
-     lastActivityAt: new Date(Date.now() - 25 * 60 * 60 * 1000), // 25 hours ago
-     createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
-     abandonment: {
-       isAbandoned: false
-     }
-   })
-
-2. Run function manually:
-   const result = await markAbandonedCheckouts();
-   console.log(result);
-
-3. Verify in database:
-   db.checkouts.findOne({ email: "test@example.com" })
-   
-   Should have:
-   - status: "abandoned"
-   - abandonment.isAbandoned: true
-   - abandonment.abandonedAt: <25 hours ago timestamp>
-   - abandonment.abandonedAtStep: "payment_selection"
-
-4. Check analytics endpoint:
-   GET /api/v1/analytics/checkout/abandonment?timeframe=month
-   
-   Should show:
-   - Increased abandoned count
-   - "payment_selection" in abandonmentByStep array
-
-5. Verify cache was invalidated:
-   - Should not return cached data
-   - Check logs for "Analytics caches invalidated" message
 */

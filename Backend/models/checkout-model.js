@@ -1,6 +1,49 @@
 import mongoose from "mongoose";
 import { deleteCachePattern } from '../utils/redis.js';
 
+// ============================================
+// SHARED PRIORITY CALCULATION
+// ============================================
+
+/**
+ * Calculate recovery priority score for a checkout
+ * Used by both virtual and analytics queries to avoid duplication
+ */
+export const calculatePriorityScore = (checkout) => {
+  if (!checkout.abandonment?.isAbandoned) return 0;
+  
+  let score = 0;
+  
+  // Value scoring (40 points max)
+  const total = checkout.pricing?.totalPrice || 0;
+  if (total > 500) score += 40;
+  else if (total > 200) score += 30;
+  else if (total > 100) score += 20;
+  else if (total > 50) score += 10;
+  
+  // Shipping info completion (20 points)
+  if (checkout.shippingInfo?.address) score += 20;
+  
+  // Cart size (20 points max)
+  const items = checkout.items?.length || 0;
+  if (items >= 5) score += 20;
+  else if (items >= 3) score += 15;
+  else if (items >= 2) score += 10;
+  else score += 5;
+  
+  // Recency scoring (20 points max)
+  const abandonedAt = checkout.abandonment?.abandonedAt;
+  if (abandonedAt) {
+    const hoursSince = Math.floor((Date.now() - new Date(abandonedAt).getTime()) / (1000 * 60 * 60));
+    if (hoursSince < 6) score += 20;
+    else if (hoursSince < 24) score += 15;
+    else if (hoursSince < 48) score += 10;
+    else if (hoursSince < 72) score += 5;
+  }
+  
+  return Math.min(100, score);
+};
+
 const checkoutSchema = new mongoose.Schema(
   {
     user: {
@@ -49,7 +92,7 @@ const checkoutSchema = new mongoose.Schema(
       address: String,
       city: String,
       state: String,
-      pinCode: String, // ✅ FIXED: Consistent field name
+      pinCode: String,
       country: String,
       phoneNo: String
     },
@@ -170,51 +213,32 @@ const checkoutSchema = new mongoose.Schema(
 );
 
 // ============================================
-// INDEXES
+// INDEXES - Optimized for actual query patterns
 // ============================================
 
 checkoutSchema.index({ createdAt: -1 });
+checkoutSchema.index({ user: 1, status: 1, lastActivityAt: -1 }, { name: 'user_active_checkout_idx' });
 checkoutSchema.index({ status: 1, lastActivityAt: -1 });
-checkoutSchema.index({ 'abandonment.isAbandoned': 1, 'abandonment.abandonedAt': -1 });
-checkoutSchema.index({ user: 1, status: 1 });
-checkoutSchema.index({ email: 1, status: 1 });
 checkoutSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
+// Compound index for abandonment analytics queries
 checkoutSchema.index({
   'abandonment.isAbandoned': 1,
   'abandonment.abandonedAt': -1,
-  'pricing.totalPrice': 1,
-  'conversion.isConverted': 1
+  'conversion.isConverted': 1,
+  'pricing.totalPrice': -1
 }, { 
-  name: 'abandoned_checkout_query_idx'
+  name: 'abandonment_analytics_idx'
 });
 
+// Index for recovery email queries
 checkoutSchema.index({
   'abandonment.isAbandoned': 1,
   'abandonment.recoveryEmailSent': 1,
   'conversion.isConverted': 1,
-  status: 1,
-  'pricing.totalPrice': -1
+  status: 1
 }, {
-  name: 'recovery_opportunities_idx'
-});
-
-checkoutSchema.index({
-  createdAt: -1,
-  'analytics.source': 1,
-  'analytics.device': 1,
-  'abandonment.isAbandoned': 1
-}, {
-  name: 'analytics_segmentation_idx'
-});
-
-// ✅ NEW: Optimized index for active checkout queries
-checkoutSchema.index({ 
-  user: 1, 
-  status: 1, 
-  lastActivityAt: -1 
-}, {
-  name: 'user_active_checkout_idx'
+  name: 'recovery_email_idx'
 });
 
 // ============================================
@@ -226,46 +250,15 @@ checkoutSchema.virtual('minutesSinceLastActivity').get(function() {
   return Math.floor((Date.now() - this.lastActivityAt.getTime()) / (1000 * 60));
 });
 
-// ✅ FIXED: Use env variable instead of hardcoded 1440 minutes
 checkoutSchema.virtual('shouldBeAbandoned').get(function() {
   const ABANDONMENT_THRESHOLD_HOURS = parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
   const thresholdMinutes = ABANDONMENT_THRESHOLD_HOURS * 60;
   return this.status === 'pending' && this.minutesSinceLastActivity >= thresholdMinutes;
 });
 
-// ✅ IMPROVED: Centralized priority calculation (used by analytics controller)
+// Uses shared calculation function
 checkoutSchema.virtual('recoveryPriority').get(function() {
-  if (!this.abandonment.isAbandoned) return 0;
-  
-  let score = 0;
-  
-  // Value scoring (40 points max)
-  const total = this.pricing?.totalPrice || 0;
-  if (total > 500) score += 40;
-  else if (total > 200) score += 30;
-  else if (total > 100) score += 20;
-  else if (total > 50) score += 10;
-  
-  // Shipping info completion (20 points)
-  if (this.shippingInfo?.address) score += 20;
-  
-  // Cart size (20 points max)
-  const items = this.items?.length || 0;
-  if (items >= 5) score += 20;
-  else if (items >= 3) score += 15;
-  else if (items >= 2) score += 10;
-  else score += 5;
-  
-  // Recency scoring (20 points max)
-  const hoursSinceAbandoned = this.abandonment.abandonedAt 
-    ? Math.floor((Date.now() - this.abandonment.abandonedAt.getTime()) / (1000 * 60 * 60))
-    : 0;
-  if (hoursSinceAbandoned < 6) score += 20;
-  else if (hoursSinceAbandoned < 24) score += 15;
-  else if (hoursSinceAbandoned < 48) score += 10;
-  else if (hoursSinceAbandoned < 72) score += 5;
-  
-  return Math.min(100, score);
+  return calculatePriorityScore(this);
 });
 
 // ============================================
