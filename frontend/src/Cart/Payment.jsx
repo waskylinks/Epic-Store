@@ -18,6 +18,15 @@ import {
   clearPaymentData
 } from "../features/cart/paymentSlice";
 import { clearCart } from "../features/cart/cartSlice";
+import {
+  updateCheckoutStep,
+  setSelectedGateway,
+  clearCheckout,
+  selectCheckoutSession,
+  selectCheckoutPricing,
+  selectSelectedGateway,
+  selectCheckoutId
+} from "../features/checkout/checkoutSlice";
 
 import { 
   FiCreditCard, 
@@ -26,18 +35,10 @@ import {
   FiAlertCircle 
 } from 'react-icons/fi';
 
-/* ===============================
-   FLUTTERWAVE
-================================ */
 import { useFlutterwave, closePaymentModal } from "flutterwave-react-v3";
-
-/* ===============================
-   STRIPE
-================================ */
 import { loadStripe } from "@stripe/stripe-js";
 import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-stripe-js";
 
-// Only initialize Stripe if key exists
 const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
 const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
 
@@ -96,57 +97,41 @@ function StripeCheckout({ clientSecret, onSuccess }) {
    MAIN PAYMENT PAGE
 ================================ */
 function Payment() {
-  const orderItem = JSON.parse(sessionStorage.getItem("orderItem"));
-  const { shippingInfo, cartItems } = useSelector((state) => state.cart);
-  const { user } = useSelector((state) => state.user);
-  const { loading, initLoading, error, message, paymentData } = useSelector((state) => state.payment);
-
   const dispatch = useDispatch();
   const navigate = useNavigate();
+  
+  const { user } = useSelector((state) => state.user);
+  const { cartItems } = useSelector((state) => state.cart);
+  const checkoutSession = useSelector(selectCheckoutSession);
+  const checkoutPricing = useSelector(selectCheckoutPricing);
+  const selectedGatewayFromCheckout = useSelector(selectSelectedGateway);
+  const checkoutId = useSelector(selectCheckoutId);
+  const { loading, initLoading, error, message, paymentData } = useSelector((state) => state.payment);
 
-  const [selectedGateway, setSelectedGateway] = useState("paystack");
+  const [selectedGateway, setSelectedGatewayLocal] = useState(selectedGatewayFromCheckout || "paystack");
   const [selectedCurrency, setSelectedCurrency] = useState("USD");
   
-  // Refs to prevent double-triggering
   const paystackTriggered = useRef(false);
   const flutterwaveTriggered = useRef(false);
   const stripeFormRef = useRef(null);
 
-  // Calculate order summary with fallback
-  const calculateOrderSummary = () => {
-    if (orderItem?.pricing) {
-      return {
-        subtotal: orderItem.pricing.itemPrice || 0,
-        tax: orderItem.pricing.taxPrice || 0,
-        shipping: orderItem.pricing.shippingPrice || 0,
-        total: orderItem.pricing.totalPrice || 0
-      };
+  // Redirect if no checkout session
+  useEffect(() => {
+    if (!checkoutSession && !checkoutId) {
+      toast.warning('Please complete checkout first', { position: 'top-center' });
+      navigate('/order/confirm');
     }
-    
-    // Fallback: calculate from cart items
-    const itemPrice = cartItems.reduce((acc, item) => {
-      const itemQty = item.qty || item.quantity || 1;
-      const itemPrice = item.price || 0;
-      return acc + (itemPrice * itemQty);
-    }, 0);
-    
-    const taxPrice = itemPrice * 0.18;
-    const shippingPrice = itemPrice >= 500 ? 0 : 50;
-    const totalPrice = itemPrice + taxPrice + shippingPrice;
-    
-    return {
-      subtotal: itemPrice,
-      tax: taxPrice,
-      shipping: shippingPrice,
-      total: totalPrice
-    };
-  };
+  }, [checkoutSession, checkoutId, navigate]);
 
-  const orderSummary = calculateOrderSummary();
+  // Redirect if cart is empty
+  useEffect(() => {
+    if (cartItems.length === 0) {
+      toast.warning('Your cart is empty', { position: 'top-center' });
+      navigate('/cart');
+    }
+  }, [cartItems, navigate]);
 
-  /* ===============================
-     LOAD PAYSTACK SCRIPT
-  ================================ */
+  // Load Paystack script
   useEffect(() => {
     if (selectedGateway === "paystack" && !window.PaystackPop) {
       const script = document.createElement("script");
@@ -158,9 +143,7 @@ function Payment() {
     }
   }, [selectedGateway]);
 
-  /* ===============================
-     TOAST HANDLING
-  ================================ */
+  // Handle errors and messages
   useEffect(() => {
     if (error) {
       toast.error(error, { position: "top-center" });
@@ -172,9 +155,7 @@ function Payment() {
     }
   }, [error, message, dispatch]);
 
-  /* ===============================
-     SCROLL TO STRIPE FORM WHEN READY
-  ================================ */
+  // Scroll to Stripe form when ready
   useEffect(() => {
     if (selectedGateway === "stripe" && paymentData?.client_secret && stripeFormRef.current) {
       setTimeout(() => {
@@ -222,7 +203,7 @@ function Payment() {
           .then(() => {
             dispatch(clearCart());
             dispatch(clearPaymentData());
-            sessionStorage.removeItem("orderItem");
+            dispatch(clearCheckout());
             navigate(`/order/success?reference=${response.reference}`);
           })
           .catch(() => toast.error("Payment verification failed"));
@@ -254,7 +235,7 @@ function Payment() {
       customer: {
         email: user.email,
         name: user.name || "Customer",
-        phonenumber: shippingInfo.phoneNo || ""
+        phonenumber: checkoutSession?.shippingInfo?.phoneNo || ""
       },
       customizations: {
         title: "EpicStore Payment",
@@ -262,7 +243,7 @@ function Payment() {
         logo: `${window.location.origin}/logo.png`
       }
     };
-  }, [paymentData, selectedGateway, user.email, user.name, shippingInfo.phoneNo]);
+  }, [paymentData, selectedGateway, user.email, user.name, checkoutSession]);
 
   /* ===============================
      FLUTTERWAVE HANDLER
@@ -290,8 +271,6 @@ function Payment() {
         if (response.status === "successful" || response.status === "completed") {
           const transactionId = String(response.transaction_id);
           
-          console.log("Verifying Flutterwave with transaction ID:", transactionId);
-          
           dispatch(
             verifyPayment({
               gateway: "flutterwave",
@@ -302,7 +281,7 @@ function Payment() {
             .then(() => {
               dispatch(clearCart());
               dispatch(clearPaymentData());
-              sessionStorage.removeItem("orderItem");
+              dispatch(clearCheckout());
               setTimeout(() => {
                 navigate(`/order/success?reference=${response.tx_ref}`);
               }, 500);
@@ -317,7 +296,6 @@ function Payment() {
         }
       },
       onClose: () => {
-        console.log("Flutterwave modal closed");
         toast.info("Payment cancelled");
         dispatch(clearPaymentData());
         flutterwaveTriggered.current = false;
@@ -349,9 +327,9 @@ function Payment() {
   /* ===============================
      INITIALIZE PAYMENT
   ================================ */
-  const handleInitializePayment = () => {
-    if (!orderItem) {
-      toast.error("No order found");
+  const handleInitializePayment = async () => {
+    if (!checkoutSession) {
+      toast.error("No checkout session found");
       return;
     }
     
@@ -362,22 +340,39 @@ function Payment() {
 
     // Validate API keys
     if (selectedGateway === "stripe" && !STRIPE_KEY) {
-      toast.error("Stripe is not configured. Please contact support.");
+      toast.error("Stripe is not configured");
       return;
     }
     if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY) {
-      toast.error("Flutterwave is not configured. Please contact support.");
+      toast.error("Flutterwave is not configured");
       return;
     }
     if (selectedGateway === "paystack" && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY) {
-      toast.error("Paystack is not configured. Please contact support.");
+      toast.error("Paystack is not configured");
       return;
     }
 
+    // Update checkout step to payment_selection
+    if (checkoutId) {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step: 'payment_selection',
+          gateway: selectedGateway
+        })).unwrap();
+      } catch (err) {
+        console.error('Failed to update checkout step:', err);
+      }
+    }
+
+    // Prepare cart items
     const cartPayload = cartItems.map((item) => ({
       product: item.product,
       quantity: item.qty || item.quantity || 1
     }));
+
+    // Prepare shipping info from checkout session
+    const shippingInfo = checkoutSession.shippingInfo || {};
 
     paystackTriggered.current = false;
     flutterwaveTriggered.current = false;
@@ -393,8 +388,18 @@ function Payment() {
       .unwrap()
       .then((data) => {
         console.log("Payment initialized:", data);
+        
+        // Update checkout step to payment_gateway
+        if (checkoutId) {
+          dispatch(updateCheckoutStep({
+            checkoutId,
+            step: 'payment_gateway',
+            gateway: selectedGateway
+          })).catch(err => console.error('Failed to update step:', err));
+        }
+        
         if (selectedGateway === "stripe" && !data.client_secret) {
-          toast.error("Failed to initialize Stripe payment. Missing client secret.");
+          toast.error("Failed to initialize Stripe payment");
         }
       })
       .catch((err) => {
@@ -419,7 +424,7 @@ function Payment() {
         console.log("Verification successful, clearing cart...");
         dispatch(clearCart());
         dispatch(clearPaymentData());
-        sessionStorage.removeItem("orderItem");
+        dispatch(clearCheckout());
         navigate(`/order/success?reference=${paymentData.reference}`);
       })
       .catch((err) => {
@@ -436,9 +441,7 @@ function Payment() {
       NGN: "en-NG",
       USD: "en-US",
       GBP: "en-GB",
-      EUR: "en-DE",
-      GHS: "en-GH",
-      KES: "en-KE"
+      EUR: "en-DE"
     };
 
     return new Intl.NumberFormat(localeMap[currency] || "en-US", {
@@ -474,10 +477,24 @@ function Payment() {
 
   const selectedGatewayConfig = gateways.find((g) => g.value === selectedGateway);
 
+  // Use checkout session pricing if available, otherwise calculate from cart
+  const orderSummary = checkoutPricing?.totalPrice ? {
+    subtotal: checkoutPricing.itemPrice || 0,
+    tax: checkoutPricing.taxPrice || 0,
+    shipping: checkoutPricing.shippingPrice || 0,
+    total: checkoutPricing.totalPrice || 0
+  } : {
+    subtotal: 0,
+    tax: 0,
+    shipping: 0,
+    total: 0
+  };
+
   return (
     <>
       <PageTitle title="Payment" />
       <Navbar />
+      <CheckoutPath activePath={2} />
 
       <div className="ep-container">
         <div className="ep-header">
@@ -507,7 +524,8 @@ function Payment() {
                       value={gateway.value}
                       checked={selectedGateway === gateway.value}
                       onChange={(e) => {
-                        setSelectedGateway(e.target.value);
+                        setSelectedGatewayLocal(e.target.value);
+                        dispatch(setSelectedGateway(e.target.value));
                         setSelectedCurrency(gateway.currencies[0]);
                         dispatch(clearPaymentData());
                         paystackTriggered.current = false;
@@ -521,7 +539,6 @@ function Payment() {
                         className="ep-gateway-logo-img"
                         onError={(e) => {
                           e.target.style.display = 'none';
-                          e.target.nextSibling.style.display = 'block';
                         }}
                       />
                       <span className="ep-gateway-name">{gateway.label}</span>
@@ -565,7 +582,7 @@ function Payment() {
                 <button
                   className="ep-pay-btn"
                   onClick={handleInitializePayment}
-                  disabled={loading || initLoading || !orderItem}
+                  disabled={loading || initLoading}
                 >
                   {initLoading
                     ? "Initializing Stripe..."
@@ -603,7 +620,7 @@ function Payment() {
                 ) : (
                   <div className="ep-error-message">
                     <FiAlertCircle />
-                    <p>Stripe is not configured properly. Please contact support.</p>
+                    <p>Stripe is not configured. Please contact support.</p>
                   </div>
                 )}
               </div>
@@ -662,7 +679,7 @@ function Payment() {
                 <button
                   className="ep-pay-btn"
                   onClick={handleInitializePayment}
-                  disabled={loading || initLoading || !orderItem}
+                  disabled={loading || initLoading}
                 >
                   {initLoading
                     ? "Initializing..."
