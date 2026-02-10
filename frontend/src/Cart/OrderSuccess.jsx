@@ -10,6 +10,7 @@ import Footer from "../components/footer";
 import "../CartStyles/PaymentSuccess.css";
 
 import { downloadReceiptPdf, fetchReceiptByReference } from "../features/cart/receiptSlice";
+import { clearCheckout } from "../features/checkout/checkoutSlice";
 import axios from "axios";
 
 function OrderSuccess() {
@@ -18,7 +19,6 @@ function OrderSuccess() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  // Select from the correct state slice
   const { selectedReceipt, loading: receiptLoading } = useSelector((state) => state.receipt || {});
   
   const [orderDetails, setOrderDetails] = useState(null);
@@ -28,7 +28,12 @@ function OrderSuccess() {
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
 
-  // Fetch order by payment reference using the new backend route
+  // Clear checkout session on mount
+  useEffect(() => {
+    dispatch(clearCheckout());
+  }, [dispatch]);
+
+  // Fetch order by payment reference
   const fetchOrderByReference = useCallback(async () => {
     if (!reference) return;
     
@@ -42,10 +47,9 @@ function OrderSuccess() {
     } catch (err) {
       console.error("Failed to fetch order:", err);
       
-      // Only show error if it's not a 404 (order might still be processing)
       if (err.response?.status !== 404) {
         toast.error(
-          err.response?.data?.message || "Unable to load order details. Your order may still be processing.", 
+          err.response?.data?.message || "Unable to load order details", 
           { position: "top-center" }
         );
       }
@@ -62,7 +66,6 @@ function OrderSuccess() {
       return;
     }
 
-    // Fetch order details by reference
     fetchOrderByReference();
   }, [reference, navigate, fetchOrderByReference]);
 
@@ -79,15 +82,12 @@ function OrderSuccess() {
         
         if (response.data.exists) {
           setReceiptReady(true);
-          // Fetch full receipt details
           dispatch(fetchReceiptByReference(reference));
           
-          // If order details not loaded yet, try again
           if (!orderDetails) {
             fetchOrderByReference();
           }
         } else {
-          // Retry after delay
           setPollingAttempts(prev => prev + 1);
         }
       } catch (err) {
@@ -96,7 +96,6 @@ function OrderSuccess() {
       }
     };
 
-    // Poll every 2 seconds, max 10 attempts (20 seconds)
     const timerId = setTimeout(() => {
       pollReceipt();
     }, 2000);
@@ -106,16 +105,12 @@ function OrderSuccess() {
 
   const handleDownloadReceipt = async () => {
     if (!reference) {
-      toast.error("Receipt not found for this order", {
-        position: "top-center",
-      });
+      toast.error("Receipt not found", { position: "top-center" });
       return;
     }
 
     if (!receiptReady) {
-      toast.info("Receipt is being prepared, please wait...", {
-        position: "top-center",
-      });
+      toast.info("Receipt is being prepared", { position: "top-center" });
       return;
     }
 
@@ -123,13 +118,9 @@ function OrderSuccess() {
 
     try {
       await dispatch(downloadReceiptPdf({ reference })).unwrap();
-      toast.success("Receipt downloaded successfully", {
-        position: "top-center",
-      });
+      toast.success("Receipt downloaded", { position: "top-center" });
     } catch (err) {
-      toast.error(err || "Failed to download receipt", {
-        position: "top-center",
-      });
+      toast.error(err || "Failed to download receipt", { position: "top-center" });
     } finally {
       setDownloadLoading(false);
     }
@@ -137,16 +128,12 @@ function OrderSuccess() {
 
   const handleEmailReceipt = async () => {
     if (!reference) {
-      toast.error("Invalid receipt reference", {
-        position: "top-center",
-      });
+      toast.error("Invalid receipt reference", { position: "top-center" });
       return;
     }
 
     if (!receiptReady) {
-      toast.info("Receipt is being prepared, please wait...", {
-        position: "top-center",
-      });
+      toast.info("Receipt is being prepared", { position: "top-center" });
       return;
     }
 
@@ -159,15 +146,13 @@ function OrderSuccess() {
         { withCredentials: true }
       );
       
-      toast.success(response.data.message || "Receipt sent to your email successfully", {
-        position: "top-center",
+      toast.success(response.data.message || "Receipt sent to your email", {
+        position: "top-center"
       });
     } catch (err) {
-      const errorMessage = err.response?.data?.message || "Failed to send receipt email";
-      toast.error(errorMessage, {
-        position: "top-center",
+      toast.error(err.response?.data?.message || "Failed to send receipt", {
+        position: "top-center"
       });
-      console.error("Email receipt error:", err);
     } finally {
       setEmailLoading(false);
     }
@@ -198,7 +183,6 @@ function OrderSuccess() {
     return methods[method] || method;
   };
 
-  // Show loading state
   if (orderLoading) {
     return (
       <>
