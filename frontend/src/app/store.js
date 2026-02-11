@@ -14,6 +14,7 @@ import checkoutReducer from '../features/checkout/checkoutSlice';
 import adminRefundReducer from '../features/admin/adminRefundSlice';
 import adminReturnReducer from '../features/admin/adminReturnSlice';
 import returnReducer from '../features/returns/returnSlice';
+import analyticsReducer from '../features/analytics/analyticsSlice';
 
 
 
@@ -33,8 +34,8 @@ export const store = configureStore({
         adminRefund: adminRefundReducer,
         adminReturn: adminReturnReducer,
         refund: refundReducer,
-        return: returnReducer
-
+        return: returnReducer,
+        analytics: analyticsReducer,
 
     }
 });
