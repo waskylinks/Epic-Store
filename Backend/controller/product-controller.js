@@ -14,7 +14,12 @@ const invalidateProductCaches = async () => {
             deleteCachePattern('trending_products*'),
             deleteCachePattern('new_products*'),
             deleteCachePattern('featured_products*'),
-            deleteCachePattern('bestsellers*')
+            deleteCachePattern('bestsellers*'),
+            deleteCachePattern('product_performance*'),
+            deleteCachePattern('product_conversion*'),
+            deleteCachePattern('inventory_turnover*'),
+            deleteCachePattern('product_margins*'),
+            deleteCachePattern('category_performance*')
         ]);
     } catch (error) {
         console.error('Cache invalidation error:', error);
@@ -121,7 +126,15 @@ export const createProducts = async (req, res, next) => {
       isNewArrival: req.body.isNewArrival === 'true',
       isBestseller: req.body.isBestseller === 'true',
       status: req.body.status || 'published',
-      user: req.user._id
+      user: req.user._id,
+      // Initialize analytics object
+      analytics: {
+        views: 0,
+        purchases: 0,
+        addedToCart: 0,
+        addedToWishlist: 0,
+        conversions: 0
+      }
     };
 
     console.log('📦 Final product data:', {
@@ -425,6 +438,7 @@ export const getProductDetails = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Product not found", 404))
     }
 
+    // Track view asynchronously
     product.incrementView().catch(err => 
         console.warn('Failed to track view:', err)
     );
