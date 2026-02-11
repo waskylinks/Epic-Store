@@ -1,10 +1,27 @@
-// return-controller.js - NEW FILE
+// return-controller.js
 
 import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
+
+// ============================================
+// SHARED CACHE INVALIDATION
+// ============================================
+
+const invalidateReturnCaches = async () => {
+    try {
+        await Promise.all([
+            deleteCachePattern('admin_stats*'),
+            deleteCachePattern('return_overview*'),
+            deleteCachePattern('returns_by_product*'),
+            deleteCachePattern('returns_by_category*')
+        ]);
+    } catch (error) {
+        console.error('Return cache invalidation error:', error);
+    }
+};
 
 // ============================================
 // RETURN MANAGEMENT - COMPLETE CONTROLLERS
@@ -97,7 +114,6 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found for this order', 404));
   }
 
-  // Mark admin messages as read
   order.markReturnMessagesAsRead('admin');
   await order.save({ validateBeforeSave: false });
 
@@ -164,7 +180,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('return_requested', userId, { reason, itemsCount: itemsToReturn.length });
 
   await order.save();
-  await deleteCachePattern('admin_stats*');
+  await invalidateReturnCaches();
 
   return res.status(200).json({
     success: true,
@@ -207,7 +223,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('return_approved', req.user._id, { rmaNumber: order.returnInfo.rmaNumber });
 
     await order.save();
-    await deleteCachePattern('admin_stats*');
+    await invalidateReturnCaches();
 
     return res.status(200).json({
       success: true,
@@ -224,7 +240,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('return_rejected', req.user._id, { adminNote });
 
     await order.save();
-    await deleteCachePattern('admin_stats*');
+    await invalidateReturnCaches();
 
     return res.status(200).json({
       success: true,
@@ -289,7 +305,7 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
 
   order.addAuditEntry('return_status_updated', req.user._id, { status });
   await order.save();
-  await deleteCachePattern('admin_stats*');
+  await invalidateReturnCaches();
 
   return res.status(200).json({
     success: true,
@@ -658,7 +674,7 @@ export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('return_cancelled', userId);
 
   await order.save();
-  await deleteCachePattern('admin_stats*');
+  await invalidateReturnCaches();
 
   return res.status(200).json({
     success: true,

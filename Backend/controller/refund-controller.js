@@ -4,6 +4,23 @@ import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
 // ============================================
+// SHARED CACHE INVALIDATION
+// ============================================
+
+const invalidateRefundCaches = async () => {
+    try {
+        await Promise.all([
+            deleteCachePattern('admin_stats*'),
+            deleteCachePattern('refund_overview*'),
+            deleteCachePattern('refunds_by_payment_method*'),
+            deleteCachePattern('refund_timeline*')
+        ]);
+    } catch (error) {
+        console.error('Refund cache invalidation error:', error);
+    }
+};
+
+// ============================================
 // REFUND MANAGEMENT - COMPLETE CONTROLLERS
 // ============================================
 
@@ -21,7 +38,6 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
     }
   };
 
-  // Filter by specific status if provided
   if (status) {
     query['refundInfo.status'] = status;
   }
@@ -40,7 +56,6 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
 
   const totalRefunds = await Order.countDocuments(query);
 
-  // Calculate stats
   const stats = {
     total: totalRefunds,
     requested: await Order.countDocuments({ 'refundInfo.status': 'requested' }),
@@ -102,7 +117,6 @@ export const getSingleRefund = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found for this order', 404));
   }
 
-  // Mark admin messages as read
   order.markRefundMessagesAsRead('admin');
   await order.save({ validateBeforeSave: false });
 
@@ -144,27 +158,22 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify ownership
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  // Check if payment was successful
   if (order.paymentInfo.status !== 'success') {
     return next(new HandleError('Cannot refund unpaid order', 400));
   }
 
-  // Check if already refunded or refund pending
   if (order.refundInfo && order.refundInfo.status !== 'none') {
     return next(new HandleError(`Refund already ${order.refundInfo.status}`, 400));
   }
 
-  // Check refund deadline (30 days)
   if (order.daysUntilRefundDeadline <= 0) {
     return next(new HandleError('Refund period has expired (30 days from delivery/payment)', 400));
   }
 
-  // Validate requested amount for partial refunds
   let refundAmount = order.amountPaid;
   if (refundType === 'partial') {
     if (!requestedAmount || requestedAmount <= 0 || requestedAmount > order.amountPaid) {
@@ -173,7 +182,6 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
     refundAmount = requestedAmount;
   }
 
-  // Initialize refund info
   order.refundInfo = {
     status: 'requested',
     reason,
@@ -187,7 +195,6 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
     timeline: []
   };
 
-  // Add initial timeline event
   order.addRefundTimeline(
     'refund_requested',
     `Refund requested: ${reason}`,
@@ -203,7 +210,7 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
   });
 
   await order.save();
-  await deleteCachePattern('admin_stats*');
+  await invalidateRefundCaches();
 
   return res.status(200).json({
     success: true,
@@ -244,7 +251,7 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('refund_approved', req.user._id, { adminNote });
 
     await order.save();
-    await deleteCachePattern('admin_stats*');
+    await invalidateRefundCaches();
 
     return res.status(200).json({
       success: true,
@@ -261,7 +268,7 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('refund_rejected', req.user._id, { adminNote });
 
     await order.save();
-    await deleteCachePattern('admin_stats*');
+    await invalidateRefundCaches();
 
     return res.status(200).json({
       success: true,
@@ -289,13 +296,11 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Refund must be approved before processing', 400));
   }
 
-  // Validate refund amount
   const maxRefund = order.amountPaid - (order.refundInfo.refundAmount || 0);
   if (!refundAmount || refundAmount <= 0 || refundAmount > maxRefund) {
     return next(new HandleError(`Invalid refund amount. Maximum refundable: ${maxRefund}`, 400));
   }
 
-  // Update status to processing
   order.refundInfo.status = 'processing';
   order.refundInfo.refundAmount = refundAmount;
   order.refundInfo.refundCurrency = order.paymentInfo.currency;
@@ -303,18 +308,12 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
   order.refundInfo.processedBy = req.user._id;
   if (merchantNote) order.refundInfo.adminNote = merchantNote;
 
-  // Generate refund reference
   order.refundInfo.refundReference = `REF-${Date.now()}-${order._id.toString().slice(-6)}`;
 
   order.addRefundTimeline('refund_processing', 'Refund payment initiated', req.user._id, { refundAmount });
 
-  // Here you would integrate with payment gateway to process actual refund
-  // For now, we'll simulate it
   try {
     // PAYMENT GATEWAY INTEGRATION WOULD GO HERE
-    // const gatewayResponse = await processPaymentGatewayRefund(order, refundAmount);
-    
-    // Simulate successful refund
     const gatewayResponse = {
       success: true,
       refundId: `rfnd_${Date.now()}`,
@@ -343,12 +342,13 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
     });
 
     await order.save();
+    await invalidateRefundCaches();
 
     return next(new HandleError(`Refund processing failed: ${error.message}`, 500));
   }
 
   await order.save();
-  await deleteCachePattern('admin_stats*');
+  await invalidateRefundCaches();
 
   return res.status(200).json({
     success: true,
@@ -358,7 +358,7 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
 });
 
 /**
- * Add message to refund conversation
+ * Add message to refund conversation (Admin)
  * @route POST /api/v1/admin/refunds/:id/messages
  * @access Private (Admin only)
  */
@@ -379,7 +379,6 @@ export const addRefundMessage = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found', 404));
   }
 
-  // Add message using instance method
   order.addRefundMessage(req.user._id, 'admin', message, attachments);
 
   await order.save();
@@ -415,7 +414,6 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify ownership
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -424,7 +422,6 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
     return next(new HandleError('No refund request found', 404));
   }
 
-  // Add message using instance method
   order.addRefundMessage(userId, 'customer', message, attachments);
 
   await order.save();
@@ -459,7 +456,6 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify access
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -472,7 +468,6 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // Mark messages as read
   const senderType = isAdmin ? 'admin' : 'customer';
   order.markRefundMessagesAsRead(senderType);
   await order.save({ validateBeforeSave: false });
@@ -485,7 +480,7 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
 });
 
 /**
- * Upload files/documents for refund
+ * Upload files/documents for refund (Admin)
  * @route POST /api/v1/admin/refunds/:id/upload
  * @access Private (Admin only)
  */
@@ -505,12 +500,9 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found', 404));
   }
 
-  // Process uploaded files
   const uploadedFiles = [];
   
   for (const file of req.files) {
-    // Here you would upload to cloud storage (S3, Cloudinary, etc.)
-    // For now, we'll simulate it
     const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
     
     order.addRefundDocument(
@@ -556,7 +548,6 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify ownership
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -565,11 +556,9 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
     return next(new HandleError('No refund request found', 404));
   }
 
-  // Process uploaded files
   const uploadedFiles = [];
   
   for (const file of req.files) {
-    // Here you would upload to cloud storage (S3, Cloudinary, etc.)
     const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
     
     order.addRefundDocument(
@@ -615,7 +604,6 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify access
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -653,7 +641,6 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify access
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -712,7 +699,6 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Order not found', 404));
   }
 
-  // Verify ownership
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
@@ -721,7 +707,6 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found', 404));
   }
 
-  // Can only cancel if still in requested status
   if (order.refundInfo.status !== 'requested') {
     return next(new HandleError('Cannot cancel refund at this stage', 400));
   }
@@ -731,7 +716,7 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('refund_cancelled', userId);
 
   await order.save();
-  await deleteCachePattern('admin_stats*');
+  await invalidateRefundCaches();
 
   return res.status(200).json({
     success: true,
