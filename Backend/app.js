@@ -22,7 +22,6 @@ import userRoutes from './routes/user-route.js';
 import productRoutes from './routes/products-route.js';
 import orderRoutes from './routes/order-routes.js';
 import oauthRoutes from './routes/oauth-routes.js';
-import analyticsRoutes from './routes/analytics-routes.js';
 import paymentRoutes from './routes/payment-routes.js';
 import receiptRoutes from './routes/receipts-routes.js';
 import wishlistRoutes from './routes/wishlist-routes.js';
@@ -38,6 +37,7 @@ import productAnalyticsRoutes from './routes/product-analytics-routes.js';
 import attributionAnalyticsRoutes from './routes/attribution-analytics-routes.js';
 import checkoutRoutes from './routes/checkout-routes.js';
 import checkoutAnalyticsRoutes from './routes/checkout-analytics-routes.js';
+import analyticsRoutes from './routes/analytics-routes-index.js';
 
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
 
@@ -246,7 +246,6 @@ app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
 app.use('/api/v1', orderRoutes);
 app.use('/api/v1/oauth', oauthRoutes);
-app.use('/api/v1', analyticsRoutes);
 app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/receipts', receiptRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
@@ -265,6 +264,8 @@ app.use('/api/v1/analytics/attribution', attributionAnalyticsRoutes);
 
 app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1/analytics/checkout', checkoutAnalyticsRoutes);
+
+app.use("/api/v1/analytics", analyticsRoutes);
 
 
 
