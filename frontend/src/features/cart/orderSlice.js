@@ -1,4 +1,4 @@
-// features/order/orderSlice.js - CUSTOMER with Analytics Integration
+// features/order/orderSlice.js - CUSTOMER with Complete Analytics Integration
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -43,9 +43,17 @@ const getDeviceInfo = () => {
 };
 
 /**
+ * Check if this is user's first purchase
+ * This should be called from the component/page after fetching order history
+ */
+const checkIsFirstPurchase = (existingOrders) => {
+  return !existingOrders || existingOrders.length === 0;
+};
+
+/**
  * Get analytics data for order
  */
-const getAnalyticsData = () => {
+const getAnalyticsData = (isFirstPurchase = false) => {
   const utmParams = getUTMParams();
   const deviceInfo = getDeviceInfo();
   
@@ -62,16 +70,29 @@ const getAnalyticsData = () => {
   }
   
   return {
+    // UTM tracking
     source: utmParams.utm_source || 'direct',
     medium: utmParams.utm_medium,
     campaign: utmParams.utm_campaign,
     term: utmParams.utm_term,
     content: utmParams.utm_content,
+    
+    // Device & browser
     device: deviceInfo.device,
     browser: deviceInfo.browser,
+    
+    // Referrer & landing page
     referrer: document.referrer || null,
     landingPage,
-    sessionId
+    
+    // Session tracking
+    sessionId,
+    
+    // First purchase flag
+    isFirstPurchase,
+    
+    // Timestamp
+    capturedAt: new Date().toISOString()
   };
 };
 
@@ -154,14 +175,19 @@ export const getOrderByReference = createAsyncThunk(
 );
 
 /**
- * Create new order WITH ANALYTICS
+ * Create new order WITH COMPLETE ANALYTICS
+ * Captures: UTM params, device/browser, referrer, landing page, session ID, first purchase flag
  */
 export const createOrder = createAsyncThunk(
   "order/createOrder",
-  async (orderData, { rejectWithValue }) => {
+  async (orderData, { rejectWithValue, getState }) => {
     try {
-      // Capture analytics data
-      const analytics = getAnalyticsData();
+      // Get existing orders to determine if this is first purchase
+      const existingOrders = getState().order.orders || [];
+      const isFirstPurchase = checkIsFirstPurchase(existingOrders);
+      
+      // Capture complete analytics data
+      const analytics = getAnalyticsData(isFirstPurchase);
       
       // Merge order data with analytics
       const orderWithAnalytics = {
@@ -705,6 +731,27 @@ export const downloadInvoice = createAsyncThunk(
 );
 
 // ============================================
+// ANALYTICS & CUSTOMER DATA
+// ============================================
+
+export const getCustomerOrderAnalytics = createAsyncThunk(
+  "order/getCustomerOrderAnalytics",
+  async (userId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(
+        `${API_BASE}/orders/customer/${userId}/analytics`,
+        { withCredentials: true }
+      );
+      return data.analytics;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to fetch customer analytics"
+      );
+    }
+  }
+);
+
+// ============================================
 // SLICE DEFINITION
 // ============================================
 
@@ -727,6 +774,7 @@ const orderSlice = createSlice({
     returnMessages: [],
     returnTimeline: [],
     returnDocuments: [],
+    customerAnalytics: null,
     
     loading: false,
     actionLoading: false,
@@ -1067,6 +1115,20 @@ const orderSlice = createSlice({
         state.success = true;
       })
       .addCase(downloadInvoice.rejected, (state, action) => {
+        state.actionLoading = false;
+        state.error = action.payload;
+      });
+
+    builder
+      .addCase(getCustomerOrderAnalytics.pending, (state) => {
+        state.actionLoading = true;
+        state.error = null;
+      })
+      .addCase(getCustomerOrderAnalytics.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.customerAnalytics = action.payload;
+      })
+      .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
         state.actionLoading = false;
         state.error = action.payload;
       });

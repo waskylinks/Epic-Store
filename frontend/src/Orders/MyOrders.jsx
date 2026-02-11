@@ -19,6 +19,9 @@ import {
   FiChevronRight,
   FiCalendar,
   FiBox,
+  FiBarChart2,
+  FiChevronDown,
+  FiChevronUp,
 } from "react-icons/fi";
 
 import PageTitle from "../components/PageTitle";
@@ -26,7 +29,7 @@ import Navbar from "../components/Navbar";
 import Footer from "../components/footer";
 import MessagesModal from "../components/MessagesModal";
 
-import { getAllMyOrders } from "../features/cart/orderSlice";
+import { getAllMyOrders, getCustomerOrderAnalytics } from "../features/cart/orderSlice";
 import { downloadReceiptPdf } from "../features/cart/receiptSlice";
 
 import "../OrderStyles/MyOrders.css";
@@ -34,7 +37,7 @@ import "../OrderStyles/MyOrders.css";
 function MyOrders() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { orders, loading, error } = useSelector((state) => state.order);
+  const { orders, loading, error, customerAnalytics } = useSelector((state) => state.order);
   const { downloadLoading } = useSelector((state) => state.receipt);
   const authState = useSelector((state) => state.auth);
   const user = authState?.user || null;
@@ -51,10 +54,16 @@ function MyOrders() {
     loading: false 
   });
   const [refreshing, setRefreshing] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   useEffect(() => {
     dispatch(getAllMyOrders());
-  }, [dispatch]);
+    
+    // Fetch customer analytics if user is available
+    if (user?._id) {
+      dispatch(getCustomerOrderAnalytics(user._id));
+    }
+  }, [dispatch, user?._id]);
 
   useEffect(() => {
     if (error) {
@@ -95,6 +104,9 @@ function MyOrders() {
     setRefreshing(true);
     try {
       await dispatch(getAllMyOrders()).unwrap();
+      if (user?._id) {
+        await dispatch(getCustomerOrderAnalytics(user._id)).unwrap();
+      }
       toast.success("Orders refreshed", { position: "top-center" });
     } catch (err) {
       toast.error("Failed to refresh orders", { position: "top-center" });
@@ -354,6 +366,83 @@ function MyOrders() {
                   <span className="mo-stat-label">Delivered</span>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Customer Analytics - Collapsible */}
+          {customerAnalytics && (
+            <div className="mo-analytics-section">
+              <button 
+                className="mo-analytics-toggle"
+                onClick={() => setShowAnalytics(!showAnalytics)}
+              >
+                <FiBarChart2 />
+                <span>Your Order Analytics</span>
+                {showAnalytics ? <FiChevronUp /> : <FiChevronDown />}
+              </button>
+              
+              {showAnalytics && (
+                <div className="mo-analytics-content">
+                  <div className="mo-analytics-grid">
+                    <div className="mo-analytics-card">
+                      <span className="mo-analytics-label">Total Spent</span>
+                      <span className="mo-analytics-value">
+                        {formatCurrency(customerAnalytics.totalSpent || 0)}
+                      </span>
+                    </div>
+                    <div className="mo-analytics-card">
+                      <span className="mo-analytics-label">Average Order</span>
+                      <span className="mo-analytics-value">
+                        {formatCurrency(customerAnalytics.averageOrderValue || 0)}
+                      </span>
+                    </div>
+                    <div className="mo-analytics-card">
+                      <span className="mo-analytics-label">First Order</span>
+                      <span className="mo-analytics-value">
+                        {customerAnalytics.firstOrderDate 
+                          ? formatDate(customerAnalytics.firstOrderDate)
+                          : 'N/A'}
+                      </span>
+                    </div>
+                    <div className="mo-analytics-card">
+                      <span className="mo-analytics-label">Last Order</span>
+                      <span className="mo-analytics-value">
+                        {customerAnalytics.lastOrderDate 
+                          ? formatDate(customerAnalytics.lastOrderDate)
+                          : 'N/A'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {(customerAnalytics.returnedOrders > 0 || 
+                    customerAnalytics.refundedOrders > 0 || 
+                    customerAnalytics.cancelledOrders > 0) && (
+                    <div className="mo-analytics-additional">
+                      <h4>Additional Stats</h4>
+                      <div className="mo-analytics-stats">
+                        {customerAnalytics.refundedOrders > 0 && (
+                          <div className="mo-analytics-stat-item">
+                            <span>Refunded Orders:</span>
+                            <span>{customerAnalytics.refundedOrders}</span>
+                          </div>
+                        )}
+                        {customerAnalytics.returnedOrders > 0 && (
+                          <div className="mo-analytics-stat-item">
+                            <span>Returned Orders:</span>
+                            <span>{customerAnalytics.returnedOrders}</span>
+                          </div>
+                        )}
+                        {customerAnalytics.cancelledOrders > 0 && (
+                          <div className="mo-analytics-stat-item">
+                            <span>Cancelled Orders:</span>
+                            <span>{customerAnalytics.cancelledOrders}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -46,6 +46,19 @@ function App() {
   const { initializing } = useSelector(state => state.user);
   const dispatch = useDispatch();
 
+  // Initialize session tracking for analytics
+  useEffect(() => {
+    // Generate session ID if not exists
+    if (!sessionStorage.getItem('sessionId')) {
+      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      sessionStorage.setItem('sessionId', sessionId);
+      sessionStorage.setItem('landingPage', window.location.pathname);
+      
+      // Store session start time for analytics
+      sessionStorage.setItem('sessionStartTime', new Date().toISOString());
+    }
+  }, []);
+
   // Always load user on app start
   useEffect(() => {
     dispatch(loadUser());

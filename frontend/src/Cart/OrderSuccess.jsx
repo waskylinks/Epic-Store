@@ -27,6 +27,7 @@ function OrderSuccess() {
   const [pollingAttempts, setPollingAttempts] = useState(0);
   const [downloadLoading, setDownloadLoading] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   // Clear checkout session on mount
   useEffect(() => {
@@ -183,6 +184,11 @@ function OrderSuccess() {
     return methods[method] || method;
   };
 
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleString();
+  };
+
   if (orderLoading) {
     return (
       <>
@@ -274,6 +280,71 @@ function OrderSuccess() {
                   </span>
                 </div>
               </div>
+
+              {/* Analytics Section - Collapsible */}
+              {orderDetails.analytics && (
+                <div className="analytics-section">
+                  <button 
+                    className="analytics-toggle"
+                    onClick={() => setShowAnalytics(!showAnalytics)}
+                  >
+                    {showAnalytics ? '▼' : '▶'} Order Analytics
+                  </button>
+                  
+                  {showAnalytics && (
+                    <div className="analytics-details">
+                      <div className="analytics-grid">
+                        {orderDetails.analytics.source && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">Source:</span>
+                            <span className="analytics-value">{orderDetails.analytics.source}</span>
+                          </div>
+                        )}
+                        {orderDetails.analytics.medium && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">Medium:</span>
+                            <span className="analytics-value">{orderDetails.analytics.medium}</span>
+                          </div>
+                        )}
+                        {orderDetails.analytics.campaign && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">Campaign:</span>
+                            <span className="analytics-value">{orderDetails.analytics.campaign}</span>
+                          </div>
+                        )}
+                        {orderDetails.analytics.device && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">Device:</span>
+                            <span className="analytics-value">{orderDetails.analytics.device}</span>
+                          </div>
+                        )}
+                        {orderDetails.analytics.browser && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">Browser:</span>
+                            <span className="analytics-value">{orderDetails.analytics.browser}</span>
+                          </div>
+                        )}
+                        {orderDetails.analytics.isFirstPurchase !== undefined && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">First Purchase:</span>
+                            <span className="analytics-value">
+                              {orderDetails.analytics.isFirstPurchase ? 'Yes' : 'No'}
+                            </span>
+                          </div>
+                        )}
+                        {orderDetails.analytics.capturedAt && (
+                          <div className="analytics-item">
+                            <span className="analytics-label">Captured At:</span>
+                            <span className="analytics-value">
+                              {formatDate(orderDetails.analytics.capturedAt)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Order Items Preview */}
               {orderDetails.orderItems && orderDetails.orderItems.length > 0 && (
