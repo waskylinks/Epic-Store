@@ -2,7 +2,7 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import User from "../models/userModel.js";
 import Product from "../models/product-model.js";
 import HandleError from "../utils/handleError.js";
-import { getCache, setCache, deleteCache } from "../utils/redis.js";
+import { getCache, setCache, deleteCache, deleteCachePattern } from "../utils/redis.js";
 
 /* ================= GET USER WISHLIST ================= */
 export const getWishlist = handleAsyncError(async (req, res, next) => {
@@ -93,12 +93,17 @@ export const addToWishlist = handleAsyncError(async (req, res, next) => {
   // Update product analytics
   try {
     await product.incrementWishlist(true);
+    console.log(`✅ Product ${productId} wishlist analytics updated (+1)`);
   } catch (error) {
     console.warn('Failed to update product wishlist analytics:', error);
   }
 
-  // Invalidate cache
-  await deleteCache(`wishlist_${userId}`);
+  // Invalidate caches
+  await Promise.all([
+    deleteCache(`wishlist_${userId}`),
+    deleteCachePattern('product_conversion*'),
+    deleteCachePattern('product_performance*')
+  ]);
 
   res.status(200).json({
     success: true,
@@ -140,13 +145,18 @@ export const removeFromWishlist = handleAsyncError(async (req, res, next) => {
     const product = await Product.findById(productId);
     if (product) {
       await product.incrementWishlist(false);
+      console.log(`✅ Product ${productId} wishlist analytics updated (-1)`);
     }
   } catch (error) {
     console.warn('Failed to update product wishlist analytics:', error);
   }
 
-  // Invalidate cache
-  await deleteCache(`wishlist_${userId}`);
+  // Invalidate caches
+  await Promise.all([
+    deleteCache(`wishlist_${userId}`),
+    deleteCachePattern('product_conversion*'),
+    deleteCachePattern('product_performance*')
+  ]);
 
   res.status(200).json({
     success: true,
@@ -172,6 +182,7 @@ export const clearWishlist = handleAsyncError(async (req, res, next) => {
       { _id: { $in: productIds } },
       { $inc: { 'analytics.addedToWishlist': -1 } }
     );
+    console.log(`✅ Bulk wishlist analytics updated for ${productIds.length} products`);
   } catch (error) {
     console.warn('Failed to update product analytics during clear:', error);
   }
@@ -180,8 +191,12 @@ export const clearWishlist = handleAsyncError(async (req, res, next) => {
   user.wishlist = [];
   await user.save({ validateBeforeSave: false });
 
-  // Invalidate cache
-  await deleteCache(`wishlist_${userId}`);
+  // Invalidate caches
+  await Promise.all([
+    deleteCache(`wishlist_${userId}`),
+    deleteCachePattern('product_conversion*'),
+    deleteCachePattern('product_performance*')
+  ]);
 
   res.status(200).json({
     success: true,
@@ -257,12 +272,17 @@ export const moveToCart = handleAsyncError(async (req, res, next) => {
   // Update product analytics
   try {
     await product.incrementWishlist(false);
+    console.log(`✅ Product ${productId} wishlist analytics updated on move to cart`);
   } catch (error) {
     console.warn('Failed to update product analytics:', error);
   }
 
-  // Invalidate cache
-  await deleteCache(`wishlist_${userId}`);
+  // Invalidate caches
+  await Promise.all([
+    deleteCache(`wishlist_${userId}`),
+    deleteCachePattern('product_conversion*'),
+    deleteCachePattern('product_performance*')
+  ]);
 
   // NOTE: Actual cart addition should be handled by your cart controller
   // This endpoint just removes from wishlist and returns product info
