@@ -1,4 +1,4 @@
-// adminSlice.js - COMPLETE UPDATED VERSION WITH ALL ADMIN FUNCTIONALITY
+// adminSlice.js - CLEAN VERSION WITHOUT ANALYTICS (analytics moved to analyticsSlice.js)
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -108,34 +108,6 @@ export const deleteUser = createAsyncThunk(
 );
 
 // ============================================
-// DASHBOARD STATS & ANALYTICS
-// ============================================
-
-export const fetchAdminStats = createAsyncThunk(
-    'admin/fetchAdminStats',
-    async (_, { rejectWithValue }) => {
-        try {
-            const { data } = await axios.get('/api/v1/admin/stats');
-            return data;
-        } catch (error) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to fetch dashboard stats');
-        }
-    }
-);
-
-export const fetchAnalytics = createAsyncThunk(
-    'admin/fetchAnalytics',
-    async (timeframe = 'month', { rejectWithValue }) => {
-        try {
-            const { data } = await axios.get(`/api/v1/admin/analytics?timeframe=${timeframe}`);
-            return data;
-        } catch (error) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to fetch analytics');
-        }
-    }
-);
-
-// ============================================
 // ORDER MANAGEMENT (ADMIN)
 // ============================================
 
@@ -199,9 +171,6 @@ export const cancelOrder = createAsyncThunk(
     }
 );
 
-/**
- * Cancel order with optional automatic refund initiation
- */
 export const cancelOrderWithRefund = createAsyncThunk(
     'admin/cancelOrderWithRefund',
     async ({ orderId, reason, skipRefund = false }, { rejectWithValue }) => {
@@ -221,9 +190,6 @@ export const cancelOrderWithRefund = createAsyncThunk(
 // ORDER MESSAGES (ADMIN)
 // ============================================
 
-/**
- * Get orders with unread messages
- */
 export const getOrdersWithUnreadMessages = createAsyncThunk(
     'admin/getOrdersWithUnreadMessages',
     async (_, { rejectWithValue }) => {
@@ -236,9 +202,6 @@ export const getOrdersWithUnreadMessages = createAsyncThunk(
     }
 );
 
-/**
- * Add message to order (Admin)
- */
 export const addOrderMessage = createAsyncThunk(
     'admin/addOrderMessage',
     async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
@@ -254,9 +217,6 @@ export const addOrderMessage = createAsyncThunk(
     }
 );
 
-/**
- * Get order messages (Admin)
- */
 export const getOrderMessages = createAsyncThunk(
     'admin/getOrderMessages',
     async (orderId, { rejectWithValue }) => {
@@ -273,9 +233,6 @@ export const getOrderMessages = createAsyncThunk(
 // TRACKING & SHIPMENT MANAGEMENT
 // ============================================
 
-/**
- * Add tracking info to order
- */
 export const addTrackingInfo = createAsyncThunk(
     'admin/addTrackingInfo',
     async ({ orderId, carrier, trackingNumber, estimatedDelivery }, { rejectWithValue }) => {
@@ -291,9 +248,6 @@ export const addTrackingInfo = createAsyncThunk(
     }
 );
 
-/**
- * Create shipment
- */
 export const createShipment = createAsyncThunk(
     'admin/createShipment',
     async ({ orderId, items, warehouse, carrier, weight, dimensions }, { rejectWithValue }) => {
@@ -309,9 +263,6 @@ export const createShipment = createAsyncThunk(
     }
 );
 
-/**
- * Update shipment status
- */
 export const updateShipmentStatus = createAsyncThunk(
     'admin/updateShipmentStatus',
     async ({ orderId, shipmentId, status, trackingNumber }, { rejectWithValue }) => {
@@ -490,7 +441,7 @@ export const getRefundsWithUnreadMessages = createAsyncThunk(
 );
 
 // ============================================
-// RETURN MANAGEMENT (NEW)
+// RETURN MANAGEMENT
 // ============================================
 
 export const fetchAllReturns = createAsyncThunk(
@@ -603,7 +554,7 @@ export const getReturnsWithUnreadMessages = createAsyncThunk(
 );
 
 // ============================================
-// FRAUD & ANALYTICS
+// FRAUD MANAGEMENT
 // ============================================
 
 export const getPendingFraudReviews = createAsyncThunk(
@@ -633,21 +584,6 @@ export const reviewFraudCheck = createAsyncThunk(
     }
 );
 
-export const getCustomerOrderAnalytics = createAsyncThunk(
-    'admin/getCustomerOrderAnalytics',
-    async (userId, { rejectWithValue }) => {
-        try {
-            const { data } = await axios.get(`/api/v1/analytics/customer/${userId}/orders`);
-            return data.analytics;
-        } catch (error) {
-            return rejectWithValue(error.response?.data?.message || 'Failed to fetch customer analytics');
-        }
-    }
-);
-
-/**
- * Get audit log for specific order (Admin)
- */
 export const getOrderAuditLog = createAsyncThunk(
     'admin/getOrderAuditLog',
     async (orderId, { rejectWithValue }) => {
@@ -667,85 +603,27 @@ export const getOrderAuditLog = createAsyncThunk(
 const adminSlice = createSlice({
     name: 'admin',
     initialState: {
-        // Products
         products: [],
-        
-        // Users
         users: [],
         currentUser: null,
-        
-        // Dashboard & Analytics
-        stats: {
-            products: 0,
-            orders: 0,
-            revenue: 0,
-            users: 0,
-            outOfStock: 0,
-            inStock: 0,
-            adminCount: 0
-        },
-        analytics: {
-            trends: {
-                revenue: 0,
-                orders: 0,
-                users: 0,
-                products: 0
-            },
-            orderStatusBreakdown: {
-                processing: 0,
-                shipped: 0,
-                delivered: 0,
-                cancelled: 0
-            },
-            topProducts: [],
-            recentOrders: [],
-            currentPeriod: {
-                orders: 0,
-                revenue: 0,
-                users: 0,
-                products: 0
-            },
-            previousPeriod: {
-                orders: 0,
-                revenue: 0,
-                users: 0,
-                products: 0
-            }
-        },
-        
-        // Orders
         orders: [],
         currentOrder: null,
         orderMessages: [],
         unreadOrders: [],
         auditLog: [],
-        
-        // Reviews
         reviews: [],
-        
-        // Refunds
         refunds: [],
         refundStats: null,
         currentRefund: null,
         unreadRefunds: [],
-        
-        // Returns (NEW)
         returns: [],
         returnStats: null,
         currentReturn: null,
         unreadReturns: [],
         returnMessages: [],
-        
-        // Fraud
         fraudReviews: [],
-        
-        // Customer Analytics
-        customerAnalytics: null,
-        
-        // UI States
         success: false,
         loading: false,
-        analyticsLoading: false,
         error: null,
         messageLoading: false,
         uploadLoading: false,
@@ -771,9 +649,6 @@ const adminSlice = createSlice({
         }
     },
     extraReducers: (builder) => {
-        // ============================================
-        // PRODUCTS
-        // ============================================
         builder
             .addCase(fetchAdminProducts.pending, (state) => {
                 state.loading = true;
@@ -829,12 +704,8 @@ const adminSlice = createSlice({
             .addCase(deleteProduct.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload || 'Failed to Delete Product';
-            });
+            })
 
-        // ============================================
-        // USERS
-        // ============================================
-        builder
             .addCase(fetchAllUsers.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -891,42 +762,8 @@ const adminSlice = createSlice({
             .addCase(deleteUser.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
-
-        // ============================================
-        // STATS & ANALYTICS
-        // ============================================
-        builder
-            .addCase(fetchAdminStats.pending, (state) => {
-                state.loading = true;
-                state.error = null;
-            })
-            .addCase(fetchAdminStats.fulfilled, (state, action) => {
-                state.loading = false;
-                state.stats = action.payload;
-            })
-            .addCase(fetchAdminStats.rejected, (state, action) => {
-                state.loading = false;
-                state.error = action.payload;
             })
 
-            .addCase(fetchAnalytics.pending, (state) => {
-                state.analyticsLoading = true;
-                state.error = null;
-            })
-            .addCase(fetchAnalytics.fulfilled, (state, action) => {
-                state.analyticsLoading = false;
-                state.analytics = action.payload;
-            })
-            .addCase(fetchAnalytics.rejected, (state, action) => {
-                state.analyticsLoading = false;
-                state.error = action.payload;
-            });
-
-        // ============================================
-        // ORDERS
-        // ============================================
-        builder
             .addCase(fetchAllOrders.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1001,12 +838,8 @@ const adminSlice = createSlice({
             .addCase(cancelOrder.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // CANCEL ORDER WITH REFUND
-        // ============================================
-        builder
             .addCase(cancelOrderWithRefund.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1027,12 +860,8 @@ const adminSlice = createSlice({
             .addCase(cancelOrderWithRefund.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // ORDER MESSAGES (NEW)
-        // ============================================
-        builder
             .addCase(getOrdersWithUnreadMessages.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1071,12 +900,8 @@ const adminSlice = createSlice({
             .addCase(getOrderMessages.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // TRACKING & SHIPMENTS (NEW)
-        // ============================================
-        builder
             .addCase(addTrackingInfo.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1117,12 +942,8 @@ const adminSlice = createSlice({
             .addCase(updateShipmentStatus.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // REVIEWS
-        // ============================================
-        builder
             .addCase(fetchAllReviews.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1150,12 +971,8 @@ const adminSlice = createSlice({
             .addCase(deleteReview.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // REFUNDS
-        // ============================================
-        builder
             .addCase(fetchAllRefunds.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1256,12 +1073,8 @@ const adminSlice = createSlice({
             .addCase(getRefundsWithUnreadMessages.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // RETURNS (NEW)
-        // ============================================
-        builder
             .addCase(fetchAllReturns.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1360,12 +1173,8 @@ const adminSlice = createSlice({
             .addCase(getReturnsWithUnreadMessages.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
 
-        // ============================================
-        // FRAUD & ANALYTICS (NEW)
-        // ============================================
-        builder
             .addCase(getPendingFraudReviews.pending, (state) => {
                 state.loading = true;
                 state.error = null;
@@ -1391,19 +1200,6 @@ const adminSlice = createSlice({
                 );
             })
             .addCase(reviewFraudCheck.rejected, (state, action) => {
-                state.loading = false;
-                state.error = action.payload;
-            })
-
-            .addCase(getCustomerOrderAnalytics.pending, (state) => {
-                state.loading = true;
-                state.error = null;
-            })
-            .addCase(getCustomerOrderAnalytics.fulfilled, (state, action) => {
-                state.loading = false;
-                state.customerAnalytics = action.payload;
-            })
-            .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
             })

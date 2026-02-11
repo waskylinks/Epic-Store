@@ -74,6 +74,7 @@ export const logout = createAsyncThunk(
 );
 
 // VERIFY EMAIL
+// NOTE: Server syncs customer analytics on successful verification (new user onboarding)
 export const verifyEmail = createAsyncThunk(
   "user/verifyEmail",
   async ({ email, code }, { rejectWithValue }) => {
@@ -112,13 +113,13 @@ export const resendVerificationCode = createAsyncThunk(
 );
 
 // UPDATE PROFILE
+// NOTE: Server syncs customer analytics after every profile update
 export const updateProfile = createAsyncThunk(
   "user/updateProfile",
   async (userData, { rejectWithValue }) => {
     try {
       console.log('📤 userSlice - Updating profile');
       
-      // Convert FormData to regular object for JSON
       let profileData = {};
       
       if (userData instanceof FormData) {
@@ -126,20 +127,14 @@ export const updateProfile = createAsyncThunk(
         const email = userData.get('email');
         const avatar = userData.get('avatar');
         
-        // Split full name into firstName and lastName
         if (name) {
           const nameParts = name.trim().split(' ');
           profileData.firstName = nameParts[0] || '';
           profileData.lastName = nameParts.slice(1).join(' ') || nameParts[0] || '';
         }
         
-        if (email) {
-          profileData.email = email;
-        }
-        
-        if (avatar && avatar !== '') {
-          profileData.avatar = avatar;
-        }
+        if (email) profileData.email = email;
+        if (avatar && avatar !== '') profileData.avatar = avatar;
       } else {
         profileData = userData;
       }
@@ -192,7 +187,7 @@ export const forgotPassword = createAsyncThunk(
   }
 );
 
-// VERIFY RESET CODE (NEW - Step 2 of password reset)
+// VERIFY RESET CODE (Step 2 of password reset)
 export const verifyResetCode = createAsyncThunk(
   "user/verifyResetCode",
   async ({ email, code }, { rejectWithValue }) => {
@@ -245,7 +240,11 @@ const userSlice = createSlice({
     needsVerification: false,
     verificationEmail: null,
     initializing: true,
-    codeVerified: false  // NEW - Track if reset code is verified
+    codeVerified: false,
+    // analyticsReady is intentionally NOT tracked here.
+    // syncCustomerAnalytics runs server-side inside verifyEmail and updateProfile.
+    // No client-side state is needed — consumers can rely on the user object being
+    // up-to-date after those actions fulfill.
   },
   reducers: {
     removeErrors: (state) => {
@@ -344,6 +343,7 @@ const userSlice = createSlice({
       });
 
     // VERIFY EMAIL
+    // Analytics: server calls syncCustomerAnalytics here — no client action needed
     builder
       .addCase(verifyEmail.pending, (state) => { 
         state.loading = true; 
@@ -379,6 +379,7 @@ const userSlice = createSlice({
       });
 
     // UPDATE PROFILE
+    // Analytics: server calls syncCustomerAnalytics here — no client action needed
     builder
       .addCase(updateProfile.pending, (state) => { 
         state.loading = true; 
@@ -426,7 +427,7 @@ const userSlice = createSlice({
         state.error = action.payload?.message;
       });
 
-    // VERIFY RESET CODE (NEW)
+    // VERIFY RESET CODE
     builder
       .addCase(verifyResetCode.pending, (state) => { 
         state.loading = true; 
@@ -456,7 +457,7 @@ const userSlice = createSlice({
         state.success = true;
         state.user = action.payload.user || null;
         state.isAuthenticated = Boolean(action.payload.user);
-        state.codeVerified = false; // Reset after successful password reset
+        state.codeVerified = false;
       })
       .addCase(resetPassword.rejected, (state, action) => {
         state.loading = false;
