@@ -2,6 +2,7 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import Product from '../models/product-model.js';
 import Discount from '../models/discount-model.js';
+import { deleteCachePattern } from '../utils/redis.js';
 
 // ============================================
 // GET CART DETAILS - Fetch fresh product data
@@ -107,6 +108,22 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
         return next(new HandleError('Product has no valid price', 500));
     }
 
+    // Track add to cart analytics
+    try {
+        await product.incrementCart(true);
+        console.log(`✅ Product ${productId} cart analytics updated (+${quantity})`);
+    } catch (error) {
+        console.warn('Failed to update product cart analytics:', error);
+    }
+
+    // Invalidate product analytics caches
+    deleteCachePattern('product_conversion*').catch(err => 
+        console.warn('Failed to invalidate cache:', err)
+    );
+    deleteCachePattern('product_performance*').catch(err => 
+        console.warn('Failed to invalidate cache:', err)
+    );
+
     // Return item details
     return res.status(200).json({
         success: true,
@@ -184,6 +201,22 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
         return next(new HandleError('Product ID is required', 400));
     }
 
+    // Track cart removal analytics
+    try {
+        const product = await Product.findById(productId);
+        if (product) {
+            await product.incrementCart(false);
+            console.log(`✅ Product ${productId} cart analytics updated on removal`);
+        }
+    } catch (error) {
+        console.warn('Failed to update product cart analytics:', error);
+    }
+
+    // Invalidate product analytics caches
+    deleteCachePattern('product_conversion*').catch(err => 
+        console.warn('Failed to invalidate cache:', err)
+    );
+
     return res.status(200).json({
         success: true,
         message: 'Item removed from cart',
@@ -201,6 +234,27 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
  * @access Public
  */
 export const clearCart = handleAsyncError(async (req, res, next) => {
+    const { items } = req.body;
+
+    // Update analytics for all products being removed
+    if (items && items.length > 0) {
+        try {
+            const productIds = items.map(item => item.product);
+            await Product.updateMany(
+                { _id: { $in: productIds } },
+                { $inc: { 'analytics.addedToCart': -1 } }
+            );
+            console.log(`✅ Bulk cart analytics updated for ${productIds.length} products on clear`);
+        } catch (error) {
+            console.warn('Failed to update product analytics during cart clear:', error);
+        }
+
+        // Invalidate caches
+        deleteCachePattern('product_conversion*').catch(err => 
+            console.warn('Failed to invalidate cache:', err)
+        );
+    }
+
     return res.status(200).json({
         success: true,
         message: 'Cart cleared'
