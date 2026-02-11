@@ -9,12 +9,14 @@ import Order from '../models/order-model.js';
 import crypto from "crypto";
 import {v2 as cloudinary} from 'cloudinary';
 import { deleteCachePattern } from '../utils/redis.js';
+import { syncCustomerAnalytics } from '../Services/customer-analytics-service.js';
 
 const invalidateCaches = async () => {
     try {
         await Promise.all([
             deleteCachePattern('admin_stats*'),
-            deleteCachePattern('analytics_*')
+            deleteCachePattern('analytics_*'),
+            deleteCachePattern('customer_analytics*')
         ]);
     } catch (error) {
         console.error('Cache invalidation error:', error);
@@ -117,6 +119,15 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
         });
     } catch (error) {
         console.error("Welcome email failed:", error);
+    }
+
+    // Initialize customer analytics for new verified user
+    try {
+        await syncCustomerAnalytics(user._id);
+        console.log(`Customer analytics initialized for new user ${user._id}`);
+    } catch (error) {
+        console.error('Failed to initialize customer analytics:', error);
+        // Don't fail the registration if analytics initialization fails
     }
 
     await invalidateCaches();
@@ -473,6 +484,15 @@ export const updateProfile = handleAsyncError(async(req, res, next) => {
         new: true,
         runValidators: true
     });
+
+    // Sync customer analytics after profile update
+    try {
+        await syncCustomerAnalytics(user._id);
+        console.log(`Customer analytics synced after profile update for user ${user._id}`);
+    } catch (error) {
+        console.error('Failed to sync customer analytics:', error);
+        // Don't fail the profile update if analytics sync fails
+    }
 
     console.log('✅ Backend - Updated user:', {
         firstName: user.firstName,
