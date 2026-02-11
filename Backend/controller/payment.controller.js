@@ -19,11 +19,119 @@ const invalidatePaymentCaches = async () => {
         await Promise.all([
             deleteCachePattern('admin_stats*'),
             deleteCachePattern('analytics_*'),
-            deleteCachePattern('customer_*')
+            deleteCachePattern('customer_*'),
+            deleteCachePattern('fraud_analytics*'),
+            deleteCachePattern('payment_*')
         ]);
     } catch (error) {
         console.error('Cache invalidation error:', error);
     }
+};
+
+/**
+ * Calculate fraud risk score
+ */
+const calculateFraudRisk = (order, user) => {
+    let riskScore = 0;
+    const flags = [];
+
+    // High order value
+    if (order.totalPrice > 1000) {
+        riskScore += 20;
+        flags.push('high_order_value');
+    }
+
+    // New account (less than 7 days)
+    const accountAge = (Date.now() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+    if (accountAge < 7) {
+        riskScore += 30;
+        flags.push('new_account');
+    }
+
+    // Very new account (less than 24 hours)
+    if (accountAge < 1) {
+        riskScore += 20;
+        flags.push('very_new_account');
+    }
+
+    // First purchase with high value
+    if (!user.orderHistory || user.orderHistory.length === 0) {
+        if (order.totalPrice > 500) {
+            riskScore += 15;
+            flags.push('first_purchase_high_value');
+        }
+    }
+
+    // Shipping and billing address mismatch (if available)
+    if (order.shippingInfo?.address !== order.billingAddress) {
+        riskScore += 15;
+        flags.push('address_mismatch');
+    }
+
+    // Multiple high-value items
+    if (order.orderItems && order.orderItems.length > 5) {
+        riskScore += 10;
+        flags.push('many_items');
+    }
+
+    // International shipping (if country differs from user's country)
+    if (order.shippingInfo?.country && user.country && 
+        order.shippingInfo.country !== user.country) {
+        riskScore += 10;
+        flags.push('international_shipping');
+    }
+
+    // Determine risk level
+    let riskLevel = 'low';
+    let reviewRequired = false;
+
+    if (riskScore >= 70) {
+        riskLevel = 'critical';
+        reviewRequired = true;
+    } else if (riskScore >= 50) {
+        riskLevel = 'high';
+        reviewRequired = true;
+    } else if (riskScore >= 30) {
+        riskLevel = 'medium';
+    }
+
+    return {
+        riskScore,
+        riskLevel,
+        flags,
+        reviewRequired,
+        reviewDecision: reviewRequired ? 'Pending' : 'Approved',
+        checkedAt: new Date()
+    };
+};
+
+/**
+ * Calculate fulfillment SLA
+ */
+const calculateFulfillmentSLA = (orderDate, currentStatus) => {
+    const now = new Date();
+    const hoursSinceOrder = (now - orderDate) / (1000 * 60 * 60);
+    
+    // Standard SLA: 24 hours for processing, 72 hours for shipping
+    const processingTarget = 24;
+    const shippingTarget = 72;
+    
+    let targetHours = processingTarget;
+    if (currentStatus === 'Shipped' || currentStatus === 'Delivered') {
+        targetHours = shippingTarget;
+    }
+    
+    const slaBreached = hoursSinceOrder > targetHours;
+    const delayInHours = slaBreached ? hoursSinceOrder - targetHours : 0;
+    
+    return {
+        targetFulfillmentHours: targetHours,
+        actualFulfillmentHours: hoursSinceOrder,
+        slaBreached,
+        delayInHours,
+        delayInDays: delayInHours / 24,
+        calculatedAt: now
+    };
 };
 
 /**
@@ -45,7 +153,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     }
 
     // 1. Get user info for payment gateway
-    const user = await User.findById(userId).select('email name');
+    const user = await User.findById(userId).select('email name country createdAt');
     if (!user) {
         return next(new HandleError("User not found", 404));
     }
@@ -391,7 +499,13 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         ));
     }
 
-    // 8. Calculate isFirstPurchase and purchaseNumber
+    // 8. Get user for fraud check
+    const user = await User.findById(userId).select('email name country createdAt');
+    if (!user) {
+        return next(new HandleError("User not found", 404));
+    }
+
+    // 9. Calculate isFirstPurchase and purchaseNumber
     const userOrderCount = await Order.countDocuments({
         user: userId,
         'paymentInfo.status': 'success'
@@ -410,7 +524,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     try {
         await mongoSession.startTransaction();
 
-        // 9. Validate stock availability BEFORE creating order
+        // 10. Validate stock availability BEFORE creating order
         for (const item of session.orderItems) {
             const product = await Product.findById(item.product).session(mongoSession);
             if (!product) {
@@ -423,7 +537,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             }
         }
 
-        // 10. Create the order with complete analytics
+        // 11. Calculate fraud risk score
+        const fraudCheck = calculateFraudRisk({
+            totalPrice: session.totalPrice,
+            shippingInfo: session.shippingInfo,
+            orderItems: session.orderItems,
+            billingAddress: gatewayResponse.customer?.billing_address || null
+        }, user);
+
+        // 12. Calculate initial SLA
+        const orderDate = new Date();
+        const fulfillmentSLA = calculateFulfillmentSLA(orderDate, 'Processing');
+
+        // 13. Create the order with complete analytics and operational data
         const orderData = {
             user: userId,
             shippingInfo: session.shippingInfo,
@@ -465,7 +591,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
                 customerSegment: null,
                 isFirstPurchase,
                 purchaseNumber
-            }
+            },
+            fraudCheck,
+            fulfillmentSLA
         };
 
         // Store payment metadata
@@ -520,7 +648,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
         console.log(`✅ Order created: ${order._id}`);
 
-        // 11. Update product stock atomically
+        // 14. Update product stock atomically
         for (const item of session.orderItems) {
             const product = await Product.findById(item.product).session(mongoSession);
             if (product) {
@@ -535,7 +663,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
             }
         }
 
-        // 12. Mark checkout as converted (if exists)
+        // 15. Mark checkout as converted (if exists)
         try {
             const checkout = await Checkout.findOne({
                 user: userId,
@@ -575,8 +703,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     // POST-TRANSACTION OPERATIONS (non-critical, can fail gracefully)
     // ═══════════════════════════════════════════════════════════════
 
-    // 13. Record discount usage (AFTER transaction commits)
-    // This happens after order creation because discount was already validated in cart
+    // 16. Record discount usage (AFTER transaction commits)
     if (session.discount?.discountId) {
         try {
             const discount = await Discount.findById(session.discount.discountId);
@@ -590,19 +717,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         }
     }
 
-    // 14. Populate order items for response
+    // 17. Populate order items for response
     try {
         await order.populate('orderItems.product', 'name images pricing');
     } catch (err) {
         console.error('Failed to populate order items:', err);
     }
 
-    // 15. Sync customer analytics (async, non-blocking)
+    // 18. Sync customer analytics (async, non-blocking)
     syncCustomerAfterOrder(order._id)
         .then(() => console.log(`✅ Customer analytics synced for order ${order._id}`))
         .catch(err => console.error('Failed to sync customer analytics:', err));
 
-    // 16. Create receipt (async, non-blocking)
+    // 19. Create receipt (async, non-blocking)
     createReceiptIfNotExists({
         orderId: order._id,
         userId,
@@ -619,7 +746,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         .then(receipt => console.log(`✅ Receipt created: ${receipt._id}`))
         .catch(err => console.error("❌ Receipt creation failed:", err));
 
-    // 17. Clean up Redis sessions
+    // 20. Clean up Redis sessions
     Promise.all([
         deletePaymentSession(reference),
         reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve()
@@ -627,7 +754,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         .then(() => console.log(`✅ Sessions cleaned up`))
         .catch(err => console.error('Failed to clean up sessions:', err));
 
-    // 18. Invalidate caches (async, non-blocking)
+    // 21. Invalidate caches (async, non-blocking)
     invalidatePaymentCaches()
         .then(() => console.log(`✅ Caches invalidated`))
         .catch(err => console.error('Failed to invalidate caches:', err));
