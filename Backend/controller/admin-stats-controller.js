@@ -2,6 +2,7 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { calculateTrend } from "../utils/calculateTrend.js";
 import { getDateRanges } from "../utils/dateRanges.js";
+import { getAdminStatsService } from "../Services/analytics-service.js";
 import { ORDER_STATUSES } from "../constants/analytics.constants.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
@@ -10,80 +11,73 @@ import { getCache, setCache } from "../utils/redis.js";
 
 /**
  * Admin Stats Controller
- * Provides comprehensive admin statistics with trend analysis
+ * Handles basic admin statistics and top products endpoints
+ * For comprehensive analytics, use the analytics-dashboard-controller
  */
 
 // ============================================
-// ADMIN STATS WITH TRENDS
+// BASIC ADMIN STATS
 // ============================================
 
 /**
- * Get comprehensive admin statistics with trends
+ * Get basic admin statistics (simplified)
  * @route GET /api/v1/admin/stats
- * @query {string} timeframe - 'day' | 'week' | 'month' | 'year' (default: 'month')
  * @access Admin
  */
-export const getAdminStats = handleAsyncError(async (req, res, next) => {
+export const getAdminStats = handleAsyncError(async (req, res) => {
+  const cacheKey = "admin_stats";
+
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
+  const stats = await getAdminStatsService();
+
+  const response = {
+    products: stats.products.products || 0,
+    orders: stats.orders.orders || 0,
+    revenue: Number((stats.orders.revenue || 0).toFixed(2)),
+    users: stats.users.users || 0,
+    outOfStock: stats.products.outOfStock || 0,
+    inStock: stats.products.inStock || 0,
+    adminCount: stats.users.adminCount || 0
+  };
+
+  await setCache(cacheKey, response, 300);
+
+  res.status(200).json({ success: true, ...response });
+});
+
+// ============================================
+// ADVANCED ANALYTICS (LEGACY)
+// ============================================
+
+/**
+ * Get analytics with trends (legacy endpoint)
+ * @route GET /api/v1/admin/analytics
+ * @access Admin
+ * @deprecated Use /api/v1/analytics/dashboard instead for comprehensive analytics
+ */
+export const getAnalytics = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
 
-  const cacheKey = `admin_stats_${timeframe}`;
+  const cacheKey = `analytics_${timeframe}`;
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } =
     getDateRanges(timeframe);
 
-  // ============================================
-  // PRODUCTS STATS WITH TRENDS
-  // ============================================
-  const [
-    currentTotalProducts,
-    previousTotalProducts,
-    currentInStock,
-    previousInStock,
-    currentOutOfStock,
-    previousOutOfStock
-  ] = await Promise.all([
-    Product.countDocuments({ createdAt: { $gte: currentPeriodStart } }),
-    Product.countDocuments({ 
-      createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd } 
-    }),
-    Product.countDocuments({ 
-      stock: { $gt: 0 },
-      createdAt: { $gte: currentPeriodStart }
-    }),
-    Product.countDocuments({ 
-      stock: { $gt: 0 },
-      createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-    }),
-    Product.countDocuments({ 
-      stock: { $lte: 0 },
-      createdAt: { $gte: currentPeriodStart }
-    }),
-    Product.countDocuments({ 
-      stock: { $lte: 0 },
-      createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-    })
-  ]);
-
-  // ============================================
-  // ORDERS & REVENUE WITH TRENDS
-  // ============================================
   const [currentOrders, previousOrders] = await Promise.all([
     Order.aggregate([
       { $match: { createdAt: { $gte: currentPeriodStart } } },
       {
         $group: {
           _id: null,
-          totalOrders: { $sum: 1 },
+          orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [
-                { $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] },
-                "$totalPrice",
-                0
-              ]
+              $cond: [{ $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] }, "$totalPrice", 0]
             }
           }
         }
@@ -98,14 +92,10 @@ export const getAdminStats = handleAsyncError(async (req, res, next) => {
       {
         $group: {
           _id: null,
-          totalOrders: { $sum: 1 },
+          orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [
-                { $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] },
-                "$totalPrice",
-                0
-              ]
+              $cond: [{ $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] }, "$totalPrice", 0]
             }
           }
         }
@@ -113,174 +103,71 @@ export const getAdminStats = handleAsyncError(async (req, res, next) => {
     ])
   ]);
 
-  // ============================================
-  // ORDER STATUS BREAKDOWN WITH TRENDS
-  // ============================================
-  const [currentOrderStatus, previousOrderStatus] = await Promise.all([
-    Order.aggregate([
-      { $match: { createdAt: { $gte: currentPeriodStart } } },
-      {
-        $group: {
-          _id: "$orderStatus",
-          count: { $sum: 1 }
-        }
-      }
-    ]),
-    Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-        }
-      },
-      {
-        $group: {
-          _id: "$orderStatus",
-          count: { $sum: 1 }
-        }
-      }
-    ])
-  ]);
+  const currentUsers = await User.countDocuments({ createdAt: { $gte: currentPeriodStart } });
+  const previousUsers = await User.countDocuments({ createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd } });
 
-  // Extract order status counts
-  const getCurrentStatusCount = (status) =>
-    currentOrderStatus.find(o => o._id === status)?.count || 0;
-  const getPreviousStatusCount = (status) =>
-    previousOrderStatus.find(o => o._id === status)?.count || 0;
+  const currentProducts = await Product.countDocuments({ createdAt: { $gte: currentPeriodStart } });
+  const previousProducts = await Product.countDocuments({ createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd } });
 
-  const currentShipped = getCurrentStatusCount(ORDER_STATUSES.SHIPPED);
-  const previousShipped = getPreviousStatusCount(ORDER_STATUSES.SHIPPED);
-
-  const currentProcessing = getCurrentStatusCount(ORDER_STATUSES.PROCESSING);
-  const previousProcessing = getPreviousStatusCount(ORDER_STATUSES.PROCESSING);
-
-  const currentCancelled = getCurrentStatusCount(ORDER_STATUSES.CANCELLED);
-  const previousCancelled = getPreviousStatusCount(ORDER_STATUSES.CANCELLED);
-
-  const currentDelivered = getCurrentStatusCount(ORDER_STATUSES.DELIVERED);
-  const previousDelivered = getPreviousStatusCount(ORDER_STATUSES.DELIVERED);
-
-  // ============================================
-  // USERS/CUSTOMERS WITH TRENDS
-  // ============================================
-  const [currentUsers, previousUsers, currentAdmins, previousAdmins] = await Promise.all([
-    User.countDocuments({ 
-      createdAt: { $gte: currentPeriodStart }
-    }),
-    User.countDocuments({ 
-      createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-    }),
-    User.countDocuments({ 
-      role: "admin",
-      createdAt: { $gte: currentPeriodStart }
-    }),
-    User.countDocuments({ 
-      role: "admin",
-      createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-    })
-  ]);
-
-  // ============================================
-  // CALCULATE ALL TRENDS
-  // ============================================
   const currentRevenue = currentOrders[0]?.revenue || 0;
   const previousRevenue = previousOrders[0]?.revenue || 0;
-  const currentTotalOrders = currentOrders[0]?.totalOrders || 0;
-  const previousTotalOrders = previousOrders[0]?.totalOrders || 0;
 
-  // ============================================
-  // BUILD RESPONSE WITH TRENDS
-  // ============================================
-  const response = {
-    // Revenue
-    revenue: {
-      current: Number(currentRevenue.toFixed(2)),
-      previous: Number(previousRevenue.toFixed(2)),
-      change: calculateTrend(currentRevenue, previousRevenue)
-    },
-
-    // Total Orders
-    orders: {
-      current: currentTotalOrders,
-      previous: previousTotalOrders,
-      change: calculateTrend(currentTotalOrders, previousTotalOrders)
-    },
-
-    // Order Status - Shipped
-    shipped: {
-      current: currentShipped,
-      previous: previousShipped,
-      change: calculateTrend(currentShipped, previousShipped)
-    },
-
-    // Order Status - Processing
-    processing: {
-      current: currentProcessing,
-      previous: previousProcessing,
-      change: calculateTrend(currentProcessing, previousProcessing)
-    },
-
-    // Order Status - Cancelled
-    cancelled: {
-      current: currentCancelled,
-      previous: previousCancelled,
-      change: calculateTrend(currentCancelled, previousCancelled)
-    },
-
-    // Order Status - Delivered
-    delivered: {
-      current: currentDelivered,
-      previous: previousDelivered,
-      change: calculateTrend(currentDelivered, previousDelivered)
-    },
-
-    // Customers/Users
-    customers: {
-      current: currentUsers,
-      previous: previousUsers,
-      change: calculateTrend(currentUsers, previousUsers)
-    },
-
-    // Products
-    products: {
-      current: currentTotalProducts,
-      previous: previousTotalProducts,
-      change: calculateTrend(currentTotalProducts, previousTotalProducts)
-    },
-
-    // In Stock
-    inStock: {
-      current: currentInStock,
-      previous: previousInStock,
-      change: calculateTrend(currentInStock, previousInStock)
-    },
-
-    // Out of Stock
-    outOfStock: {
-      current: currentOutOfStock,
-      previous: previousOutOfStock,
-      change: calculateTrend(currentOutOfStock, previousOutOfStock)
-    },
-
-    // Admin Count
-    adminCount: {
-      current: currentAdmins,
-      previous: previousAdmins,
-      change: calculateTrend(currentAdmins, previousAdmins)
-    },
-
-    // Metadata
-    timeframe,
-    periodStart: currentPeriodStart.toISOString(),
-    periodEnd: new Date().toISOString()
+  const trends = {
+    revenue: calculateTrend(currentRevenue, previousRevenue),
+    orders: calculateTrend(currentOrders[0]?.orders || 0, previousOrders[0]?.orders || 0),
+    users: calculateTrend(currentUsers, previousUsers),
+    products: calculateTrend(currentProducts, previousProducts)
   };
 
-  await setCache(cacheKey, response, 300); // Cache for 5 minutes
+  const orderStatusAgg = await Order.aggregate([
+    {
+      $group: {
+        _id: "$orderStatus",
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const orderStatusBreakdown = {
+    processing: orderStatusAgg.find(o => o._id === ORDER_STATUSES.PROCESSING)?.count || 0,
+    shipped: orderStatusAgg.find(o => o._id === ORDER_STATUSES.SHIPPED)?.count || 0,
+    delivered: orderStatusAgg.find(o => o._id === ORDER_STATUSES.DELIVERED)?.count || 0,
+    cancelled: orderStatusAgg.find(o => o._id === ORDER_STATUSES.CANCELLED)?.count || 0
+  };
+
+  const topProducts = await getTopProducts(5, 0);
+
+  const recentOrders = await Order.find()
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .populate("user", "name email");
+
+  const response = {
+    trends,
+    orderStatusBreakdown,
+    topProducts,
+    recentOrders,
+    currentPeriod: {
+      orders: currentOrders[0]?.orders || 0,
+      revenue: Number(currentRevenue.toFixed(2)),
+      users: currentUsers,
+      products: currentProducts
+    },
+    previousPeriod: {
+      orders: previousOrders[0]?.orders || 0,
+      revenue: Number(previousRevenue.toFixed(2)),
+      users: previousUsers,
+      products: previousProducts
+    }
+  };
+
+  await setCache(cacheKey, response, 300);
 
   res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
-// TOP PRODUCTS WITH PAGINATION
+// TOP PRODUCTS (REUSABLE WITH PAGINATION)
 // ============================================
 
 /**
@@ -298,35 +185,27 @@ export const getTopProducts = async (limit = 5, skip = 0) => {
       $group: {
         _id: "$orderItems.product",
         name: { $first: "$orderItems.name" },
-        revenue: { 
-          $sum: { $multiply: ["$orderItems.price", "$orderItems.quantity"] } 
-        },
+        revenue: { $sum: { $multiply: ["$orderItems.price", "$orderItems.quantity"] } },
         quantity: { $sum: "$orderItems.quantity" }
       }
     },
     { $sort: { revenue: -1 } },
     { $skip: skip },
     { $limit: limit },
-    { 
-      $project: { 
-        _id: 0, 
-        productId: "$_id",
-        name: 1, 
-        revenue: 1, 
-        quantity: 1 
-      } 
-    }
+    { $project: { _id: 0, name: 1, revenue: 1, quantity: 1 } }
   ]);
 };
+
+// ============================================
+// STANDALONE TOP PRODUCTS ENDPOINT
+// ============================================
 
 /**
  * Get top products endpoint with pagination
  * @route GET /api/v1/admin/top-products
- * @query {number} limit - Products per page (default: 10)
- * @query {number} page - Page number (default: 1)
  * @access Admin
  */
-export const getTopProductsEndpoint = handleAsyncError(async (req, res) => {
+export const getTopProductsEndpoint = handleAsyncError(async (req, res, next) => {
   const limit = parseInt(req.query.limit) || 10;
   const page = parseInt(req.query.page) || 1;
   const skip = (page - 1) * limit;
@@ -337,7 +216,6 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res) => {
 
   const topProducts = await getTopProducts(limit, skip);
 
-  // Get total count for pagination
   const totalCount = await Order.aggregate([
     { $match: { orderStatus: { $ne: ORDER_STATUSES.CANCELLED } } },
     { $unwind: "$orderItems" },
@@ -366,6 +244,7 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res) => {
 
 export default {
   getAdminStats,
+  getAnalytics,
   getTopProducts,
   getTopProductsEndpoint
 };
