@@ -3,7 +3,6 @@ import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { calculateTrend } from "../utils/calculateTrend.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { getAdminStatsService } from "../Services/analytics-service.js";
-import { ORDER_STATUSES } from "../constants/analytics.constants.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
 import User from "../models/userModel.js";
@@ -32,14 +31,57 @@ export const getAdminStats = handleAsyncError(async (req, res) => {
 
   const stats = await getAdminStatsService();
 
+  // Get order status counts
+  const orderStatusAgg = await Order.aggregate([
+    {
+      $group: {
+        _id: "$orderStatus",
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const ordersByStatus = {
+    processing: orderStatusAgg.find(o => o._id === "Processing")?.count || 0,
+    shipped: orderStatusAgg.find(o => o._id === "Shipped")?.count || 0,
+    delivered: orderStatusAgg.find(o => o._id === "Delivered")?.count || 0,
+    cancelled: orderStatusAgg.find(o => o._id === "Cancelled")?.count || 0
+  };
+
+  // Get inventory status counts using the calculated inventory.status field
+  const inventoryStatusAgg = await Product.aggregate([
+    {
+      $match: { status: 'published' }
+    },
+    {
+      $group: {
+        _id: "$inventory.status",
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const inventoryByStatus = {
+    inStock: inventoryStatusAgg.find(i => i._id === "InStock")?.count || 0,
+    lowStock: inventoryStatusAgg.find(i => i._id === "LowStock")?.count || 0,
+    outOfStock: inventoryStatusAgg.find(i => i._id === "OutOfStock")?.count || 0,
+    discontinued: inventoryStatusAgg.find(i => i._id === "Discontinued")?.count || 0
+  };
+
   const response = {
     products: stats.products.products || 0,
     orders: stats.orders.orders || 0,
     revenue: Number((stats.orders.revenue || 0).toFixed(2)),
     users: stats.users.users || 0,
-    outOfStock: stats.products.outOfStock || 0,
-    inStock: stats.products.inStock || 0,
-    adminCount: stats.users.adminCount || 0
+    adminCount: stats.users.adminCount || 0,
+    ordersByStatus,
+    inventory: {
+      inStock: inventoryByStatus.inStock,
+      lowStock: inventoryByStatus.lowStock,
+      outOfStock: inventoryByStatus.outOfStock,
+      discontinued: inventoryByStatus.discontinued,
+      total: inventoryByStatus.inStock + inventoryByStatus.lowStock + inventoryByStatus.outOfStock + inventoryByStatus.discontinued
+    }
   };
 
   await setCache(cacheKey, response, 300);
@@ -77,7 +119,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
           orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [{ $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] }, "$totalPrice", 0]
+              $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0]
             }
           }
         }
@@ -95,7 +137,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
           orders: { $sum: 1 },
           revenue: {
             $sum: {
-              $cond: [{ $ne: ["$orderStatus", ORDER_STATUSES.CANCELLED] }, "$totalPrice", 0]
+              $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0]
             }
           }
         }
@@ -129,10 +171,10 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
   ]);
 
   const orderStatusBreakdown = {
-    processing: orderStatusAgg.find(o => o._id === ORDER_STATUSES.PROCESSING)?.count || 0,
-    shipped: orderStatusAgg.find(o => o._id === ORDER_STATUSES.SHIPPED)?.count || 0,
-    delivered: orderStatusAgg.find(o => o._id === ORDER_STATUSES.DELIVERED)?.count || 0,
-    cancelled: orderStatusAgg.find(o => o._id === ORDER_STATUSES.CANCELLED)?.count || 0
+    processing: orderStatusAgg.find(o => o._id === "Processing")?.count || 0,
+    shipped: orderStatusAgg.find(o => o._id === "Shipped")?.count || 0,
+    delivered: orderStatusAgg.find(o => o._id === "Delivered")?.count || 0,
+    cancelled: orderStatusAgg.find(o => o._id === "Cancelled")?.count || 0
   };
 
   const topProducts = await getTopProducts(5, 0);
@@ -178,7 +220,7 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
  */
 export const getTopProducts = async (limit = 5, skip = 0) => {
   return await Order.aggregate([
-    { $match: { orderStatus: { $ne: ORDER_STATUSES.CANCELLED } } },
+    { $match: { orderStatus: { $ne: "Cancelled" } } },
     { $unwind: "$orderItems" },
     { $match: { "orderItems.product": { $exists: true } } },
     {
@@ -217,7 +259,7 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res, next) =>
   const topProducts = await getTopProducts(limit, skip);
 
   const totalCount = await Order.aggregate([
-    { $match: { orderStatus: { $ne: ORDER_STATUSES.CANCELLED } } },
+    { $match: { orderStatus: { $ne: "Cancelled" } } },
     { $unwind: "$orderItems" },
     { $group: { _id: "$orderItems.product" } },
     { $count: "total" }
@@ -242,9 +284,101 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res, next) =>
   res.status(200).json({ success: true, ...response });
 });
 
+// ============================================
+// DETAILED INVENTORY STATISTICS
+// ============================================
+
+/**
+ * Get detailed inventory statistics
+ * @route GET /api/v1/admin/inventory-stats
+ * @access Admin
+ */
+export const getInventoryStats = handleAsyncError(async (req, res) => {
+  const cacheKey = "inventory_stats";
+
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
+  // Aggregate inventory status counts using the calculated status field
+  const inventoryStatusAgg = await Product.aggregate([
+    {
+      $match: { status: 'published' }
+    },
+    {
+      $group: {
+        _id: "$inventory.status",
+        count: { $sum: 1 }
+      }
+    }
+  ]);
+
+  const inventoryByStatus = {
+    inStock: inventoryStatusAgg.find(i => i._id === "InStock")?.count || 0,
+    lowStock: inventoryStatusAgg.find(i => i._id === "LowStock")?.count || 0,
+    outOfStock: inventoryStatusAgg.find(i => i._id === "OutOfStock")?.count || 0,
+    discontinued: inventoryStatusAgg.find(i => i._id === "Discontinued")?.count || 0
+  };
+
+  // Get total inventory value
+  const inventoryValue = await Product.aggregate([
+    {
+      $match: { 
+        status: 'published',
+        'inventory.stock': { $gt: 0 }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        totalValue: {
+          $sum: {
+            $multiply: [
+              "$inventory.stock",
+              { $ifNull: ["$pricing.cost", "$pricing.regular"] }
+            ]
+          }
+        },
+        totalUnits: { $sum: "$inventory.stock" }
+      }
+    }
+  ]);
+
+  // Get low stock products
+  const lowStockProducts = await Product.find({
+    status: 'published',
+    'inventory.status': 'LowStock'
+  })
+    .select('name inventory.stock inventory.lowStockThreshold pricing.regular')
+    .sort({ 'inventory.stock': 1 })
+    .limit(10);
+
+  const response = {
+    inventoryByStatus,
+    totalInventoryValue: inventoryValue[0]?.totalValue || 0,
+    totalUnits: inventoryValue[0]?.totalUnits || 0,
+    lowStockProducts: lowStockProducts.map(p => ({
+      id: p._id,
+      name: p.name,
+      stock: p.inventory?.stock || 0,
+      threshold: p.inventory?.lowStockThreshold || 5,
+      price: p.pricing?.regular || 0
+    })),
+    alerts: {
+      needsRestock: inventoryByStatus.lowStock + inventoryByStatus.outOfStock,
+      outOfStockCount: inventoryByStatus.outOfStock,
+      criticalCount: inventoryByStatus.outOfStock // Items completely out
+    }
+  };
+
+  await setCache(cacheKey, response, 300);
+
+  res.status(200).json({ success: true, ...response });
+});
+
 export default {
   getAdminStats,
   getAnalytics,
   getTopProducts,
-  getTopProductsEndpoint
+  getTopProductsEndpoint,
+  getInventoryStats
 };

@@ -4,7 +4,8 @@ import { adminAnalyticsLimiter } from "../middleware/rateLimiter.js";
 import { 
     getAdminStats, 
     getAnalytics,
-    getTopProductsEndpoint
+    getTopProductsEndpoint,
+    getInventoryStats
 } from "../controller/admin-stats-controller.js";
 
 const router = express.Router();
@@ -26,6 +27,13 @@ router.get("/stats", getAdminStats);
  * @deprecated Use /api/v1/analytics/dashboard instead
  */
 router.get("/analytics", getAnalytics);
+
+/**
+ * Get detailed inventory statistics
+ * @route GET /api/v1/admin/inventory-stats
+ * @access Admin
+ */
+router.get("/inventory-stats", getInventoryStats);
 
 /**
  * Get top products with pagination
