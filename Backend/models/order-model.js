@@ -7,7 +7,7 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: 'User',
       required: true
     },
 
@@ -27,15 +27,13 @@ const orderSchema = new mongoose.Schema(
       {
         product: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "Product",
+          ref: 'Product',
           required: true
         },
         name: String,
         price: Number,
         quantity: Number,
         image: String,
-        
-        // ✨ NEW: Partial fulfillment tracking
         quantityOrdered: Number,
         quantityShipped: { type: Number, default: 0 },
         quantityBackordered: { type: Number, default: 0 },
@@ -56,7 +54,6 @@ const orderSchema = new mongoose.Schema(
     totalPrice: Number,
     amountPaid: Number,
 
-    // ✨ NEW: Discount tracking
     discounts: {
       codes: [{
         code: String,
@@ -66,7 +63,6 @@ const orderSchema = new mongoose.Schema(
       totalDiscount: { type: Number, default: 0 }
     },
 
-    // ✨ NEW: Detailed tax breakdown for compliance
     taxDetails: {
       breakdown: [{
         type: { type: String, enum: ['VAT', 'Sales Tax', 'GST', 'Custom Duty'] },
@@ -82,7 +78,6 @@ const orderSchema = new mongoose.Schema(
       calculatedAt: Date
     },
 
-    // ✨ NEW: Profit analysis for reporting
     profitAnalysis: {
       cogs: Number,
       shippingCost: Number,
@@ -100,19 +95,15 @@ const orderSchema = new mongoose.Schema(
       stripePaymentIntentId: String,
       status: {
         type: String,
-        enum: ["pending", "success", "failed"],
-        default: "pending"
+        enum: ['pending', 'success', 'failed'],
+        default: 'pending'
       },
       method: {
         type: String,
-        enum: ["paystack", "flutterwave", "stripe", "manual"],
+        enum: ['paystack', 'flutterwave', 'stripe', 'manual'],
         required: true
       },
-      currency: { 
-        type: String, 
-        default: "USD",
-        uppercase: true
-      },
+      currency: { type: String, default: 'USD', uppercase: true },
       amount: Number,
       paidAt: Date
     },
@@ -120,21 +111,15 @@ const orderSchema = new mongoose.Schema(
     paymentMeta: {
       channel: String,
       ipAddress: String,
-      customer: {
-        type: mongoose.Schema.Types.Mixed
-      },
-      authorization: {
-        type: mongoose.Schema.Types.Mixed
-      },
+      customer: { type: mongoose.Schema.Types.Mixed },
+      authorization: { type: mongoose.Schema.Types.Mixed },
       cardDetails: {
         last4: String,
         brand: String,
         expMonth: Number,
         expYear: Number
       },
-      raw: {
-        type: mongoose.Schema.Types.Mixed
-      }
+      raw: { type: mongoose.Schema.Types.Mixed }
     },
 
     // ============================================
@@ -143,7 +128,7 @@ const orderSchema = new mongoose.Schema(
     orderMessages: [{
       sender: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "User",
+        ref: 'User',
         required: true
       },
       senderType: {
@@ -151,10 +136,7 @@ const orderSchema = new mongoose.Schema(
         enum: ['customer', 'admin', 'system'],
         required: true
       },
-      content: {
-        type: String,
-        required: true
-      },
+      content: { type: String, required: true },
       attachments: [{
         url: String,
         filename: String,
@@ -162,16 +144,10 @@ const orderSchema = new mongoose.Schema(
         fileSize: Number,
         uploadedAt: { type: Date, default: Date.now }
       }],
-      isRead: {
-        type: Boolean,
-        default: false
-      },
+      isRead: { type: Boolean, default: false },
       readAt: Date,
       deliveredAt: Date,
-      createdAt: {
-        type: Date,
-        default: Date.now
-      },
+      createdAt: { type: Date, default: Date.now },
       isEdited: Boolean,
       editedAt: Date,
       metadata: mongoose.Schema.Types.Mixed
@@ -183,57 +159,38 @@ const orderSchema = new mongoose.Schema(
     refundInfo: {
       status: {
         type: String,
-        enum: ["none", "requested", "approved", "rejected", "processing", "completed", "failed"],
-        default: "none"
+        enum: ['none', 'requested', 'approved', 'rejected', 'processing', 'completed', 'failed'],
+        default: 'none'
       },
-      
       reason: String,
       description: String,
       refundType: {
         type: String,
-        enum: ["full", "partial"],
-        default: "full"
+        enum: ['full', 'partial'],
+        default: 'full'
       },
       requestedAmount: Number,
       requestedAt: Date,
-      requestedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User"
-      },
-      
+      requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       approvedAt: Date,
-      approvedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User"
-      },
+      approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       rejectedAt: Date,
-      rejectedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User"
-      },
+      rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       adminNote: String,
-      
       refundId: String,
       refundAmount: Number,
       refundCurrency: String,
       processedAt: Date,
-      processedBy: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "User"
-      },
+      processedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       refundedAt: Date,
-      
-      gatewayResponse: {
-        type: mongoose.Schema.Types.Mixed
-      },
-      
+      gatewayResponse: { type: mongoose.Schema.Types.Mixed },
       failureReason: String,
-      
-      // ✨ NEW: Messages/Communication Thread
+      // NOTE: This subdocument uses field name `message` (not `content`)
+      // for historical reasons. See addRefundMessage instance method.
       messages: [{
         sender: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
+          ref: 'User',
           required: true
         },
         senderType: {
@@ -241,10 +198,7 @@ const orderSchema = new mongoose.Schema(
           enum: ['customer', 'admin', 'system'],
           required: true
         },
-        message: {
-          type: String,
-          required: true
-        },
+        message: { type: String, required: true },
         attachments: [{
           url: String,
           filename: String,
@@ -252,61 +206,32 @@ const orderSchema = new mongoose.Schema(
           fileSize: Number,
           uploadedAt: { type: Date, default: Date.now }
         }],
-        isRead: {
-          type: Boolean,
-          default: false
-        },
+        isRead: { type: Boolean, default: false },
         readAt: Date,
-        createdAt: {
-          type: Date,
-          default: Date.now
-        },
+        createdAt: { type: Date, default: Date.now },
         metadata: mongoose.Schema.Types.Mixed
       }],
-      
-      // ✨ NEW: Supporting Documents/Evidence
       documents: [{
         type: {
           type: String,
           enum: ['receipt', 'photo', 'video', 'screenshot', 'other'],
           required: true
         },
-        url: {
-          type: String,
-          required: true
-        },
+        url: { type: String, required: true },
         filename: String,
         description: String,
-        uploadedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User"
-        },
-        uploadedAt: {
-          type: Date,
-          default: Date.now
-        },
+        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        uploadedAt: { type: Date, default: Date.now },
         fileSize: Number,
         mimeType: String
       }],
-      
-      // ✨ NEW: Timeline/Activity Log
       timeline: [{
-        event: {
-          type: String,
-          required: true
-        },
+        event: { type: String, required: true },
         description: String,
-        performedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User"
-        },
-        timestamp: {
-          type: Date,
-          default: Date.now
-        },
+        performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        timestamp: { type: Date, default: Date.now },
         metadata: mongoose.Schema.Types.Mixed
       }],
-      
       // Legacy fields
       amount: { type: Number, default: 0 },
       refundReference: String,
@@ -346,12 +271,10 @@ const orderSchema = new mongoose.Schema(
       receivedAt: Date,
       completedAt: Date,
       adminNote: String,
-      
-      // ✨ NEW: Return Messages
       messages: [{
         sender: {
           type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
+          ref: 'User',
           required: true
         },
         senderType: {
@@ -359,10 +282,7 @@ const orderSchema = new mongoose.Schema(
           enum: ['customer', 'admin', 'system'],
           required: true
         },
-        content: {
-          type: String,
-          required: true
-        },
+        content: { type: String, required: true },
         attachments: [{
           url: String,
           filename: String,
@@ -370,59 +290,31 @@ const orderSchema = new mongoose.Schema(
           fileSize: Number,
           uploadedAt: { type: Date, default: Date.now }
         }],
-        isRead: {
-          type: Boolean,
-          default: false
-        },
+        isRead: { type: Boolean, default: false },
         readAt: Date,
         deliveredAt: Date,
-        createdAt: {
-          type: Date,
-          default: Date.now
-        },
+        createdAt: { type: Date, default: Date.now },
         isEdited: Boolean,
         editedAt: Date
       }],
-      
-      // ✨ NEW: Return Timeline
       timeline: [{
-        event: {
-          type: String,
-          required: true
-        },
+        event: { type: String, required: true },
         description: String,
-        performedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User"
-        },
-        timestamp: {
-          type: Date,
-          default: Date.now
-        },
+        performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        timestamp: { type: Date, default: Date.now },
         metadata: mongoose.Schema.Types.Mixed
       }],
-      
-      // ✨ NEW: Return Documents
       documents: [{
         type: {
           type: String,
           enum: ['photo', 'video', 'receipt', 'other'],
           required: true
         },
-        url: {
-          type: String,
-          required: true
-        },
+        url: { type: String, required: true },
         filename: String,
         description: String,
-        uploadedBy: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User"
-        },
-        uploadedAt: {
-          type: Date,
-          default: Date.now
-        },
+        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        uploadedAt: { type: Date, default: Date.now },
         fileSize: Number,
         mimeType: String
       }]
@@ -433,11 +325,10 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     orderStatus: {
       type: String,
-      enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
-      default: "Processing"
+      enum: ['Processing', 'Shipped', 'Delivered', 'Cancelled'],
+      default: 'Processing'
     },
 
-    // ✨ NEW: Complete status history for audit trail
     statusHistory: [{
       status: String,
       timestamp: { type: Date, default: Date.now },
@@ -454,7 +345,6 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // SHIPMENT & TRACKING
     // ============================================
-    // ✨ NEW: Multi-warehouse & split shipments
     shipments: [{
       shipmentId: String,
       warehouse: { type: mongoose.Schema.Types.ObjectId, ref: 'Warehouse' },
@@ -467,7 +357,7 @@ const orderSchema = new mongoose.Schema(
       trackingNumber: String,
       status: {
         type: String,
-        enum: ["Processing", "Shipped", "Delivered", "Cancelled"],
+        enum: ['Processing', 'Shipped', 'Delivered', 'Cancelled'],
         default: 'Processing'
       },
       shippedAt: Date,
@@ -481,7 +371,6 @@ const orderSchema = new mongoose.Schema(
       }
     }],
 
-    // ✨ NEW: Unified tracking information
     tracking: {
       carrier: { type: String, enum: ['DHL', 'FedEx', 'UPS', 'USPS', 'Other'] },
       trackingNumber: String,
@@ -500,17 +389,16 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // INVOICE MANAGEMENT
     // ============================================
-    // ✨ NEW: Invoice generation and tracking
     invoiceInfo: {
       invoiceNumber: { type: String, unique: true, sparse: true },
       invoiceDate: Date,
       dueDate: Date,
-      pdfData: String,  
-      generatedAt: Date, 
+      pdfData: String,
+      generatedAt: Date,
       version: { type: Number, default: 1 },
       history: [{
         version: Number,
-        pdfData: String,  
+        pdfData: String,
         generatedAt: Date,
         reason: String
       }],
@@ -525,7 +413,6 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // NOTES & COMMUNICATION
     // ============================================
-    // ✨ NEW: Internal and customer-facing notes
     notes: [{
       content: { type: String, required: true },
       type: { type: String, enum: ['internal', 'customer'], default: 'internal' },
@@ -539,7 +426,6 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // ANALYTICS & ATTRIBUTION
     // ============================================
-    // ✨ NEW: Marketing attribution and customer insights
     analytics: {
       source: { type: String, enum: ['organic', 'paid', 'referral', 'email', 'social', 'direct'] },
       medium: String,
@@ -553,7 +439,6 @@ const orderSchema = new mongoose.Schema(
       purchaseNumber: Number
     },
 
-    // ✨ NEW: Fulfillment SLA tracking
     fulfillmentSLA: {
       promisedDelivery: Date,
       actualDelivery: Date,
@@ -564,7 +449,6 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // SECURITY & FRAUD PREVENTION
     // ============================================
-    // ✨ NEW: Fraud detection and review
     fraudCheck: {
       riskScore: { type: Number, min: 0, max: 100 },
       riskLevel: { type: String, enum: ['low', 'medium', 'high', 'critical'] },
@@ -572,6 +456,7 @@ const orderSchema = new mongoose.Schema(
       reviewRequired: Boolean,
       reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       reviewedAt: Date,
+      // Enum is Pascal case: 'Approved' | 'Rejected' | 'Pending'
       reviewDecision: { type: String, enum: ['Approved', 'Rejected', 'Pending'] },
       ipAddress: String,
       deviceFingerprint: String,
@@ -583,7 +468,6 @@ const orderSchema = new mongoose.Schema(
       }
     },
 
-    // ✨ NEW: Comprehensive audit log
     auditLog: [{
       action: { type: String, required: true },
       performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
@@ -598,8 +482,8 @@ const orderSchema = new mongoose.Schema(
       metadata: mongoose.Schema.Types.Mixed
     }]
   },
-  { 
-    timestamps: true, 
+  {
+    timestamps: true,
     strict: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
@@ -611,39 +495,43 @@ const orderSchema = new mongoose.Schema(
 // ============================================
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
-orderSchema.index({ "paymentInfo.status": 1 });
-orderSchema.index({ "paymentInfo.method": 1 });
-orderSchema.index({ "refundInfo.status": 1 });
-orderSchema.index({ "returnInfo.status": 1 });
-orderSchema.index({ "fraudCheck.riskLevel": 1 });
-orderSchema.index({ "fraudCheck.reviewRequired": 1 });
-orderSchema.index({ "analytics.source": 1 });
-orderSchema.index({ "analytics.isFirstPurchase": 1 });
-orderSchema.index({ "refundInfo.messages.isRead": 1 });
-orderSchema.index({ "refundInfo.messages.createdAt": -1 });
-orderSchema.index({ "orderMessages.isRead": 1 });
-orderSchema.index({ "orderMessages.createdAt": -1 });
-orderSchema.index({ "returnInfo.messages.isRead": 1 });
-orderSchema.index({ "returnInfo.messages.createdAt": -1 });
+orderSchema.index({ 'paymentInfo.status': 1 });
+orderSchema.index({ 'paymentInfo.method': 1 });
+orderSchema.index({ 'refundInfo.status': 1 });
+orderSchema.index({ 'returnInfo.status': 1 });
+orderSchema.index({ 'fraudCheck.riskLevel': 1 });
+orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
+orderSchema.index({ 'analytics.source': 1 });
+orderSchema.index({ 'analytics.isFirstPurchase': 1 });
+orderSchema.index({ 'refundInfo.messages.isRead': 1 });
+orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
+orderSchema.index({ 'orderMessages.isRead': 1 });
+orderSchema.index({ 'orderMessages.createdAt': -1 });
+orderSchema.index({ 'returnInfo.messages.isRead': 1 });
+orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 
 // ============================================
 // VIRTUALS
 // ============================================
-orderSchema.virtual("isRefundable").get(function() {
+
+// FIX O1: Use optional chaining so malformed documents that lack paymentInfo
+// or refundInfo don't throw TypeError when this virtual is accessed.
+orderSchema.virtual('isRefundable').get(function () {
   return (
-    this.paymentInfo.status === "success" &&
-    this.refundInfo.status === "none" &&
-    this.orderStatus !== "Cancelled"
+    this.paymentInfo?.status === 'success' &&
+    this.refundInfo?.status === 'none' &&
+    this.orderStatus !== 'Cancelled'
   );
 });
 
-orderSchema.virtual("refundableAmount").get(function() {
-  return this.amountPaid - (this.refundInfo.refundAmount || 0);
+// FIX O4: Optional chaining on refundInfo to prevent TypeError on malformed docs.
+orderSchema.virtual('refundableAmount').get(function () {
+  return this.amountPaid - (this.refundInfo?.refundAmount || 0);
 });
 
-orderSchema.virtual("daysUntilRefundDeadline").get(function() {
+orderSchema.virtual('daysUntilRefundDeadline').get(function () {
   const REFUND_WINDOW_DAYS = 30;
-  const baseDate = this.deliveredAt || this.paymentInfo.paidAt;
+  const baseDate = this.deliveredAt || this.paymentInfo?.paidAt;
   if (!baseDate) return null;
   const deadline = new Date(baseDate);
   deadline.setDate(deadline.getDate() + REFUND_WINDOW_DAYS);
@@ -651,101 +539,134 @@ orderSchema.virtual("daysUntilRefundDeadline").get(function() {
   return Math.max(0, daysRemaining);
 });
 
-// ✨ NEW: Check if order has active return
-orderSchema.virtual("hasActiveReturn").get(function() {
-  return this.returnInfo && 
-         this.returnInfo.status !== 'none' && 
-         this.returnInfo.status !== 'completed';
-});
-
-// ✨ NEW: Check if order needs fraud review
-orderSchema.virtual("needsFraudReview").get(function() {
-  return this.fraudCheck && 
-         this.fraudCheck.reviewRequired && 
-         this.fraudCheck.reviewDecision === 'pending';
-});
-
-// ✨ NEW: Calculate total shipments
-orderSchema.virtual("totalShipments").get(function() {
-  return this.shipments ? this.shipments.length : 0;
-});
-
-// ✨ NEW: Check if fully fulfilled
-orderSchema.virtual("isFullyFulfilled").get(function() {
-  if (!this.orderItems || this.orderItems.length === 0) return false;
-  return this.orderItems.every(item => 
-    item.fulfillmentStatus === 'complete' || 
-    item.quantityShipped === item.quantityOrdered
+orderSchema.virtual('hasActiveReturn').get(function () {
+  return (
+    this.returnInfo &&
+    this.returnInfo.status !== 'none' &&
+    this.returnInfo.status !== 'completed'
   );
 });
 
-// ✨ NEW: Count unread refund messages
-orderSchema.virtual("unreadRefundMessages").get(function() {
-  if (!this.refundInfo || !this.refundInfo.messages) return 0;
-  const userType = this.user?.role === 'admin' ? 'customer' : 'admin';
-  return this.refundInfo.messages.filter(msg => !msg.isRead && msg.senderType === userType).length;
+// FIX O2: reviewDecision enum values are Pascal case ('Pending', not 'pending').
+// The original compared against 'pending' which never matched, making this
+// virtual always return false — silently hiding all fraud alerts.
+orderSchema.virtual('needsFraudReview').get(function () {
+  return (
+    this.fraudCheck &&
+    this.fraudCheck.reviewRequired &&
+    this.fraudCheck.reviewDecision === 'Pending'
+  );
 });
 
-// ✨ NEW: Get latest refund message
-orderSchema.virtual("latestRefundMessage").get(function() {
-  if (!this.refundInfo || !this.refundInfo.messages || this.refundInfo.messages.length === 0) return null;
+orderSchema.virtual('totalShipments').get(function () {
+  return this.shipments ? this.shipments.length : 0;
+});
+
+orderSchema.virtual('isFullyFulfilled').get(function () {
+  if (!this.orderItems || this.orderItems.length === 0) return false;
+  return this.orderItems.every(
+    item =>
+      item.fulfillmentStatus === 'complete' ||
+      item.quantityShipped === item.quantityOrdered
+  );
+});
+
+// FIX O3: `this.user` is an unpopulated ObjectId reference — it has no `.role`
+// property. `this.user?.role` is ALWAYS undefined, so `userType` was always
+// 'admin', making the virtuals return wrong counts for non-admin consumers.
+//
+// Solution: expose separate counts for both sides so callers can pick the
+// relevant count based on the viewing context (admin sees customer unread,
+// customer sees admin unread). Naming: *FromCustomer / *FromAdmin.
+orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
+  if (!this.refundInfo?.messages) return 0;
+  return this.refundInfo.messages.filter(
+    msg => !msg.isRead && msg.senderType === 'customer'
+  ).length;
+});
+
+orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
+  if (!this.refundInfo?.messages) return 0;
+  return this.refundInfo.messages.filter(
+    msg => !msg.isRead && msg.senderType === 'admin'
+  ).length;
+});
+
+orderSchema.virtual('unreadOrderMessagesFromCustomer').get(function () {
+  if (!this.orderMessages) return 0;
+  return this.orderMessages.filter(
+    msg => !msg.isRead && msg.senderType === 'customer'
+  ).length;
+});
+
+orderSchema.virtual('unreadOrderMessagesFromAdmin').get(function () {
+  if (!this.orderMessages) return 0;
+  return this.orderMessages.filter(
+    msg => !msg.isRead && msg.senderType === 'admin'
+  ).length;
+});
+
+orderSchema.virtual('unreadReturnMessagesFromCustomer').get(function () {
+  if (!this.returnInfo?.messages) return 0;
+  return this.returnInfo.messages.filter(
+    msg => !msg.isRead && msg.senderType === 'customer'
+  ).length;
+});
+
+orderSchema.virtual('unreadReturnMessagesFromAdmin').get(function () {
+  if (!this.returnInfo?.messages) return 0;
+  return this.returnInfo.messages.filter(
+    msg => !msg.isRead && msg.senderType === 'admin'
+  ).length;
+});
+
+orderSchema.virtual('latestRefundMessage').get(function () {
+  if (!this.refundInfo?.messages?.length) return null;
   return this.refundInfo.messages[this.refundInfo.messages.length - 1];
 });
 
-// ✨ NEW: Count unread order messages
-orderSchema.virtual("unreadOrderMessages").get(function() {
-  if (!this.orderMessages) return 0;
-  const userType = this.user?.role === 'admin' ? 'customer' : 'admin';
-  return this.orderMessages.filter(msg => !msg.isRead && msg.senderType === userType).length;
-});
-
-// ✨ NEW: Count unread return messages
-orderSchema.virtual("unreadReturnMessages").get(function() {
-  if (!this.returnInfo || !this.returnInfo.messages) return 0;
-  const userType = this.user?.role === 'admin' ? 'customer' : 'admin';
-  return this.returnInfo.messages.filter(msg => !msg.isRead && msg.senderType === userType).length;
-});
-
-// ✨ NEW: Get latest order message
-orderSchema.virtual("latestOrderMessage").get(function() {
-  if (!this.orderMessages || this.orderMessages.length === 0) return null;
+orderSchema.virtual('latestOrderMessage').get(function () {
+  if (!this.orderMessages?.length) return null;
   return this.orderMessages[this.orderMessages.length - 1];
 });
 
-// ✨ NEW: Get latest return message
-orderSchema.virtual("latestReturnMessage").get(function() {
-  if (!this.returnInfo || !this.returnInfo.messages || this.returnInfo.messages.length === 0) return null;
+orderSchema.virtual('latestReturnMessage').get(function () {
+  if (!this.returnInfo?.messages?.length) return null;
   return this.returnInfo.messages[this.returnInfo.messages.length - 1];
 });
 
-orderSchema.set("toJSON", { virtuals: true });
-orderSchema.set("toObject", { virtuals: true });
-orderSchema.set("strictQuery", true);
+orderSchema.set('toJSON', { virtuals: true });
+orderSchema.set('toObject', { virtuals: true });
+orderSchema.set('strictQuery', true);
 
 // ============================================
 // PRE-SAVE MIDDLEWARE
 // ============================================
-orderSchema.pre('save', function(next) {
-  // Auto-generate invoice number
+orderSchema.pre('save', function (next) {
+  // FIX O5: Math.random() with 4-digit padding gives only 10,000 combinations
+  // per month — high-volume stores will hit collisions and get a MongoError
+  // due to the unique:true constraint on invoiceNumber. Use timestamp-based
+  // entropy (base-36 milliseconds) for much lower collision probability.
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
     const year = new Date().getFullYear();
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    const entropy = Date.now().toString(36).toUpperCase();
     this.invoiceInfo = this.invoiceInfo || {};
-    this.invoiceInfo.invoiceNumber = `INV-${year}${month}-${random}`;
+    this.invoiceInfo.invoiceNumber = `INV-${year}${month}-${entropy}`;
     this.invoiceInfo.invoiceDate = new Date();
   }
 
-  // Auto-generate RMA number for returns
+  // FIX O6: Same collision risk for RMA numbers — use timestamp entropy.
   if (this.returnInfo?.status === 'approved' && !this.returnInfo.rmaNumber) {
-    const random = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
-    this.returnInfo.rmaNumber = `RMA-${random}`;
+    const entropy = Date.now().toString(36).toUpperCase();
+    this.returnInfo.rmaNumber = `RMA-${entropy}`;
   }
 
-  // Set quantityOrdered if not set
+  // FIX O7: `!item.quantityOrdered` is falsy for 0, which is a valid value.
+  // Use explicit null check to avoid overwriting intentional 0 quantities.
   if (this.orderItems) {
     this.orderItems.forEach(item => {
-      if (!item.quantityOrdered) {
+      if (item.quantityOrdered == null) {
         item.quantityOrdered = item.quantity;
       }
     });
@@ -757,125 +678,100 @@ orderSchema.pre('save', function(next) {
 // ============================================
 // STATIC METHODS
 // ============================================
-orderSchema.statics.getOrdersByStatus = async function(status) {
+
+// FIX O8 (all statics): User model has no `name` field.
+// It stores `firstName` and `lastName` separately; `name` is a virtual (fullName).
+// Populate projections only work on stored fields, not virtuals.
+orderSchema.statics.getOrdersByStatus = async function (status) {
   return this.find({ orderStatus: status })
-    .populate('user', 'name email')
+    .populate('user', 'firstName lastName email')
     .sort({ createdAt: -1 });
 };
 
-orderSchema.statics.getPendingFraudReviews = async function() {
-  return this.find({ 
-    'fraudCheck.reviewRequired': true,
-    'fraudCheck.reviewDecision': 'pending'
-  })
-    .populate('user', 'name email')
-    .sort({ createdAt: -1 });
-};
-
-orderSchema.statics.getActiveReturns = async function() {
+// FIX O9: reviewDecision enum is Pascal case — 'pending' never matched anything.
+orderSchema.statics.getPendingFraudReviews = async function () {
   return this.find({
-    'returnInfo.status': { 
-      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected'] 
+    'fraudCheck.reviewRequired': true,
+    'fraudCheck.reviewDecision': 'Pending'
+  })
+    .populate('user', 'firstName lastName email')
+    .sort({ createdAt: -1 });
+};
+
+orderSchema.statics.getActiveReturns = async function () {
+  return this.find({
+    'returnInfo.status': {
+      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected']
     }
   })
-    .populate('user', 'name email')
-    .populate('returnInfo.requestedBy', 'name email')
+    .populate('user', 'firstName lastName email')
+    .populate('returnInfo.requestedBy', 'firstName lastName email')
     .sort({ 'returnInfo.requestedAt': -1 });
 };
 
-orderSchema.statics.getRefundsWithUnreadMessages = async function() {
+orderSchema.statics.getRefundsWithUnreadMessages = async function () {
   return this.find({
-    'refundInfo.status': { 
-      $nin: ['none', 'completed', 'rejected'] 
-    },
+    'refundInfo.status': { $nin: ['none', 'completed', 'rejected'] },
     'refundInfo.messages': {
       $elemMatch: { isRead: false, senderType: 'customer' }
     }
   })
-    .populate('user', 'name email')
-    .populate('refundInfo.messages.sender', 'name email')
+    .populate('user', 'firstName lastName email')
+    .populate('refundInfo.messages.sender', 'firstName lastName email')
     .sort({ 'refundInfo.messages.createdAt': -1 });
 };
 
-orderSchema.statics.getOrdersWithUnreadMessages = async function() {
+orderSchema.statics.getOrdersWithUnreadMessages = async function () {
   return this.find({
-    'orderMessages': {
+    orderMessages: {
       $elemMatch: { isRead: false, senderType: 'customer' }
     }
   })
-    .populate('user', 'name email')
-    .populate('orderMessages.sender', 'name email')
+    .populate('user', 'firstName lastName email')
+    .populate('orderMessages.sender', 'firstName lastName email')
     .sort({ 'orderMessages.createdAt': -1 });
 };
 
-orderSchema.statics.getReturnsWithUnreadMessages = async function() {
+orderSchema.statics.getReturnsWithUnreadMessages = async function () {
   return this.find({
-    'returnInfo.status': { 
-      $nin: ['none', 'completed', 'rejected'] 
-    },
+    'returnInfo.status': { $nin: ['none', 'completed', 'rejected'] },
     'returnInfo.messages': {
       $elemMatch: { isRead: false, senderType: 'customer' }
     }
   })
-    .populate('user', 'name email')
-    .populate('returnInfo.messages.sender', 'name email')
+    .populate('user', 'firstName lastName email')
+    .populate('returnInfo.messages.sender', 'firstName lastName email')
     .sort({ 'returnInfo.messages.createdAt': -1 });
 };
 
 // ============================================
 // INSTANCE METHODS
 // ============================================
-orderSchema.methods.addStatusHistory = function(status, updatedBy, note = '', metadata = {}) {
-  this.statusHistory.push({
-    status,
-    timestamp: new Date(),
-    updatedBy,
-    note,
-    metadata
-  });
+orderSchema.methods.addStatusHistory = function (status, updatedBy, note = '', metadata = {}) {
+  this.statusHistory.push({ status, timestamp: new Date(), updatedBy, note, metadata });
 };
 
-orderSchema.methods.addAuditEntry = function(action, performedBy, changes = {}, metadata = {}) {
-  this.auditLog.push({
-    action,
-    performedBy,
-    timestamp: new Date(),
-    changes,
-    metadata
-  });
+orderSchema.methods.addAuditEntry = function (action, performedBy, changes = {}, metadata = {}) {
+  this.auditLog.push({ action, performedBy, timestamp: new Date(), changes, metadata });
 };
 
-orderSchema.methods.addNote = function(content, type, author) {
-  this.notes.push({
-    content,
-    type,
-    author,
-    createdAt: new Date()
-  });
+orderSchema.methods.addNote = function (content, type, author) {
+  this.notes.push({ content, type, author, createdAt: new Date() });
 };
 
 // ============================================
 // ORDER MESSAGES METHODS
 // ============================================
-orderSchema.methods.addOrderMessage = function(sender, senderType, content, attachments = []) {
-  if (!this.orderMessages) {
-    this.orderMessages = [];
-  }
-  
+orderSchema.methods.addOrderMessage = function (sender, senderType, content, attachments = []) {
+  if (!this.orderMessages) this.orderMessages = [];
   this.orderMessages.push({
-    sender,
-    senderType,
-    content,
-    attachments,
-    isRead: false,
-    deliveredAt: null,
-    createdAt: new Date()
+    sender, senderType, content, attachments,
+    isRead: false, deliveredAt: null, createdAt: new Date()
   });
 };
 
-orderSchema.methods.markOrderMessagesDelivered = function(senderType) {
+orderSchema.methods.markOrderMessagesDelivered = function (senderType) {
   if (!this.orderMessages) return;
-  
   this.orderMessages.forEach(msg => {
     if (msg.senderType !== senderType && !msg.deliveredAt) {
       msg.deliveredAt = new Date();
@@ -883,9 +779,8 @@ orderSchema.methods.markOrderMessagesDelivered = function(senderType) {
   });
 };
 
-orderSchema.methods.markOrderMessagesAsRead = function(senderType) {
+orderSchema.methods.markOrderMessagesAsRead = function (senderType) {
   if (!this.orderMessages) return;
-  
   this.orderMessages.forEach(msg => {
     if (msg.senderType !== senderType && !msg.isRead) {
       msg.isRead = true;
@@ -897,30 +792,18 @@ orderSchema.methods.markOrderMessagesAsRead = function(senderType) {
 // ============================================
 // REFUND MESSAGES METHODS
 // ============================================
-orderSchema.methods.addRefundMessage = function(sender, senderType, message, attachments = []) {
-  if (!this.refundInfo) {
-    this.refundInfo = { status: 'none' };
-  }
-  if (!this.refundInfo.messages) {
-    this.refundInfo.messages = [];
-  }
-  
+orderSchema.methods.addRefundMessage = function (sender, senderType, message, attachments = []) {
+  if (!this.refundInfo) this.refundInfo = { status: 'none' };
+  if (!this.refundInfo.messages) this.refundInfo.messages = [];
   this.refundInfo.messages.push({
-    sender,
-    senderType,
-    message,
-    attachments,
-    isRead: false,
-    createdAt: new Date()
+    sender, senderType, message, attachments,
+    isRead: false, createdAt: new Date()
   });
-  
-  // Add to timeline
   this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
 };
 
-orderSchema.methods.markRefundMessagesAsRead = function(senderType) {
-  if (!this.refundInfo || !this.refundInfo.messages) return;
-  
+orderSchema.methods.markRefundMessagesAsRead = function (senderType) {
+  if (!this.refundInfo?.messages) return;
   this.refundInfo.messages.forEach(msg => {
     if (msg.senderType !== senderType && !msg.isRead) {
       msg.isRead = true;
@@ -929,69 +812,37 @@ orderSchema.methods.markRefundMessagesAsRead = function(senderType) {
   });
 };
 
-orderSchema.methods.addRefundDocument = function(type, url, filename, uploadedBy, description = '') {
-  if (!this.refundInfo) {
-    this.refundInfo = { status: 'none' };
-  }
-  if (!this.refundInfo.documents) {
-    this.refundInfo.documents = [];
-  }
-  
+orderSchema.methods.addRefundDocument = function (type, url, filename, uploadedBy, description = '') {
+  if (!this.refundInfo) this.refundInfo = { status: 'none' };
+  if (!this.refundInfo.documents) this.refundInfo.documents = [];
   this.refundInfo.documents.push({
-    type,
-    url,
-    filename,
-    description,
-    uploadedBy,
-    uploadedAt: new Date()
+    type, url, filename, description, uploadedBy, uploadedAt: new Date()
   });
-  
-  // Add to timeline
   this.addRefundTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
 
-orderSchema.methods.addRefundTimeline = function(event, description, performedBy, metadata = {}) {
-  if (!this.refundInfo) {
-    this.refundInfo = { status: 'none' };
-  }
-  if (!this.refundInfo.timeline) {
-    this.refundInfo.timeline = [];
-  }
-  
+orderSchema.methods.addRefundTimeline = function (event, description, performedBy, metadata = {}) {
+  if (!this.refundInfo) this.refundInfo = { status: 'none' };
+  if (!this.refundInfo.timeline) this.refundInfo.timeline = [];
   this.refundInfo.timeline.push({
-    event,
-    description,
-    performedBy,
-    timestamp: new Date(),
-    metadata
+    event, description, performedBy, timestamp: new Date(), metadata
   });
 };
 
 // ============================================
 // RETURN MESSAGES METHODS
 // ============================================
-orderSchema.methods.addReturnMessage = function(sender, senderType, content, attachments = []) {
-  if (!this.returnInfo) {
-    this.returnInfo = { status: 'none' };
-  }
-  if (!this.returnInfo.messages) {
-    this.returnInfo.messages = [];
-  }
-  
+orderSchema.methods.addReturnMessage = function (sender, senderType, content, attachments = []) {
+  if (!this.returnInfo) this.returnInfo = { status: 'none' };
+  if (!this.returnInfo.messages) this.returnInfo.messages = [];
   this.returnInfo.messages.push({
-    sender,
-    senderType,
-    content,
-    attachments,
-    isRead: false,
-    deliveredAt: null,
-    createdAt: new Date()
+    sender, senderType, content, attachments,
+    isRead: false, deliveredAt: null, createdAt: new Date()
   });
 };
 
-orderSchema.methods.markReturnMessagesDelivered = function(senderType) {
-  if (!this.returnInfo || !this.returnInfo.messages) return;
-  
+orderSchema.methods.markReturnMessagesDelivered = function (senderType) {
+  if (!this.returnInfo?.messages) return;
   this.returnInfo.messages.forEach(msg => {
     if (msg.senderType !== senderType && !msg.deliveredAt) {
       msg.deliveredAt = new Date();
@@ -999,9 +850,8 @@ orderSchema.methods.markReturnMessagesDelivered = function(senderType) {
   });
 };
 
-orderSchema.methods.markReturnMessagesAsRead = function(senderType) {
-  if (!this.returnInfo || !this.returnInfo.messages) return;
-  
+orderSchema.methods.markReturnMessagesAsRead = function (senderType) {
+  if (!this.returnInfo?.messages) return;
   this.returnInfo.messages.forEach(msg => {
     if (msg.senderType !== senderType && !msg.isRead) {
       msg.isRead = true;
@@ -1010,42 +860,21 @@ orderSchema.methods.markReturnMessagesAsRead = function(senderType) {
   });
 };
 
-orderSchema.methods.addReturnTimeline = function(event, description, performedBy, metadata = {}) {
-  if (!this.returnInfo) {
-    this.returnInfo = { status: 'none' };
-  }
-  if (!this.returnInfo.timeline) {
-    this.returnInfo.timeline = [];
-  }
-  
+orderSchema.methods.addReturnTimeline = function (event, description, performedBy, metadata = {}) {
+  if (!this.returnInfo) this.returnInfo = { status: 'none' };
+  if (!this.returnInfo.timeline) this.returnInfo.timeline = [];
   this.returnInfo.timeline.push({
-    event,
-    description,
-    performedBy,
-    timestamp: new Date(),
-    metadata
+    event, description, performedBy, timestamp: new Date(), metadata
   });
 };
 
-orderSchema.methods.addReturnDocument = function(type, url, filename, uploadedBy, description = '') {
-  if (!this.returnInfo) {
-    this.returnInfo = { status: 'none' };
-  }
-  if (!this.returnInfo.documents) {
-    this.returnInfo.documents = [];
-  }
-  
+orderSchema.methods.addReturnDocument = function (type, url, filename, uploadedBy, description = '') {
+  if (!this.returnInfo) this.returnInfo = { status: 'none' };
+  if (!this.returnInfo.documents) this.returnInfo.documents = [];
   this.returnInfo.documents.push({
-    type,
-    url,
-    filename,
-    description,
-    uploadedBy,
-    uploadedAt: new Date()
+    type, url, filename, description, uploadedBy, uploadedAt: new Date()
   });
-  
-  // Add to timeline
   this.addReturnTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
 
-export default mongoose.model("Order", orderSchema);
+export default mongoose.model('Order', orderSchema);

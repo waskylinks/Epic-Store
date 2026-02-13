@@ -3,21 +3,21 @@ import mongoose from "mongoose";
 const productSchema = new mongoose.Schema(
   {
     // Basic Information
-    name: { 
-      type: String, 
-      required: [true, 'Product name is required'], 
+    name: {
+      type: String,
+      required: [true, 'Product name is required'],
       trim: true,
       maxlength: [200, 'Product name cannot exceed 200 characters']
     },
-    slug: { 
-      type: String, 
+    slug: {
+      type: String,
       unique: true,
       lowercase: true,
       trim: true
     },
-    description: { 
-      type: String, 
-      required: [true, 'Product description is required'], 
+    description: {
+      type: String,
+      required: [true, 'Product description is required'],
       trim: true,
       maxlength: [5000, 'Description cannot exceed 5000 characters']
     },
@@ -28,19 +28,19 @@ const productSchema = new mongoose.Schema(
     },
 
     // ============================================
-    // Pricing (enterprise-safe)
+    // Pricing
     // ============================================
     pricing: {
-      regular: { 
-        type: Number, 
+      regular: {
+        type: Number,
         required: [true, 'Regular price is required'],
         min: [0, 'Price cannot be negative']
       },
-      sale: { 
+      sale: {
         type: Number,
         min: [0, 'Sale price cannot be negative']
       },
-      cost: { 
+      cost: {
         type: Number,
         min: [0, 'Cost cannot be negative']
       },
@@ -51,14 +51,14 @@ const productSchema = new mongoose.Schema(
       }
     },
 
-    // Categories (Multi-category support)
-    category: { 
-      type: String, 
+    // Categories
+    category: {
+      type: String,
       required: [true, 'Primary category is required'],
       enum: {
         values: [
           'Electronics',
-          'Clothing & Apparel', 
+          'Clothing & Apparel',
           'Home & Living',
           'Sports & Outdoors',
           'Beauty & Personal Care',
@@ -68,21 +68,11 @@ const productSchema = new mongoose.Schema(
         message: '{VALUE} is not a valid category'
       }
     },
-    subcategories: [{
-      type: String,
-      trim: true
-    }],
-    tags: [{
-      type: String,
-      trim: true,
-      lowercase: true
-    }],
+    subcategories: [{ type: String, trim: true }],
+    tags: [{ type: String, trim: true, lowercase: true }],
 
     // Brand
-    brand: {
-      type: String,
-      trim: true
-    },
+    brand: { type: String, trim: true },
 
     // Images
     images: [
@@ -96,11 +86,11 @@ const productSchema = new mongoose.Schema(
     ],
 
     // ============================================
-    // Inventory Management (SIMPLIFIED - No duplicate stock field)
+    // Inventory Management
     // ============================================
     inventory: {
-      stock: { 
-        type: Number, 
+      stock: {
+        type: Number,
         default: 0,
         min: [0, 'Stock cannot be negative']
       },
@@ -111,30 +101,21 @@ const productSchema = new mongoose.Schema(
         trim: true,
         uppercase: true
       },
-      barcode: {
-        type: String,
-        trim: true
-      },
-      trackInventory: {
-        type: Boolean,
-        default: true
-      },
-      lowStockThreshold: {
-        type: Number,
-        default: 5
-      },
+      barcode: { type: String, trim: true },
+      trackInventory: { type: Boolean, default: true },
+      lowStockThreshold: { type: Number, default: 5 },
       status: {
         type: String,
-        enum: ["InStock", "LowStock", "OutOfStock", "Discontinued"],
+        enum: ['InStock', 'LowStock', 'OutOfStock', 'Discontinued'],
         default: 'InStock'
       }
     },
 
     // Product Variants
     variants: [{
-      name: { type: String, required: true }, // e.g., "Size", "Color"
+      name: { type: String, required: true },
       options: [{
-        value: { type: String, required: true }, // e.g., "Large", "Red"
+        value: { type: String, required: true },
         priceModifier: { type: Number, default: 0 },
         stock: { type: Number, default: 0 },
         sku: { type: String }
@@ -167,53 +148,24 @@ const productSchema = new mongoose.Schema(
     },
 
     // Reviews & Ratings
-    ratings: { 
-      type: Number, 
-      default: 0,
-      min: 0,
-      max: 5
-    },
-    numOfReviews: { 
-      type: Number, 
-      default: 0 
-    },
+    ratings: { type: Number, default: 0, min: 0, max: 5 },
+    numOfReviews: { type: Number, default: 0 },
     reviews: [
       {
-        user: { 
-          type: mongoose.Schema.Types.ObjectId, 
-          ref: "User",
-          required: true
-        },
+        user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
         name: { type: String, required: true },
-        rating: { 
-          type: Number, 
-          required: true,
-          min: 1,
-          max: 5
-        },
-        comment: { 
-          type: String,
-          maxlength: 1000
-        },
-        verified: { type: Boolean, default: false }, // Verified purchase
-        helpful: { type: Number, default: 0 }, // Helpful votes
+        rating: { type: Number, required: true, min: 1, max: 5 },
+        comment: { type: String, maxlength: 1000 },
+        verified: { type: Boolean, default: false },
+        helpful: { type: Number, default: 0 },
         createdAt: { type: Date, default: Date.now }
       }
     ],
 
     // Product Relationships
-    relatedProducts: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product'
-    }],
-    crossSells: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product'
-    }],
-    upsells: [{
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Product'
-    }],
+    relatedProducts: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+    crossSells: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+    upsells: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
 
     // Analytics & Tracking
     analytics: {
@@ -238,21 +190,11 @@ const productSchema = new mongoose.Schema(
     },
     publishedAt: { type: Date },
 
-    // User who created/manages the product
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true
-    },
-
-    // Audit Trail
-    lastModifiedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
-    }
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    lastModifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
   },
-  { 
-    timestamps: true, 
+  {
+    timestamps: true,
     strict: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
@@ -260,7 +202,9 @@ const productSchema = new mongoose.Schema(
 );
 
 // ============================================
-// ENTERPRISE PRICING VALIDATION (PRE-VALIDATE)
+// PRICING VALIDATION (PRE-VALIDATE)
+// NOTE: This only runs on .save()/.validate(). findOneAndUpdate bypasses it.
+// Apply the same constraints in your update service layer as well.
 // ============================================
 productSchema.pre('validate', function (next) {
   const { pricing } = this;
@@ -269,16 +213,14 @@ productSchema.pre('validate', function (next) {
     return next(new Error('Pricing.regular is required'));
   }
 
-  if (pricing.sale != null && pricing.sale >= pricing.regular) {
-    return next(
-      new Error('Sale price must be less than regular price')
-    );
+  // FIX P3: sale=0 with regular=0 is a valid free product — only reject
+  // when sale is explicitly set AND is >= regular on a non-zero price.
+  if (pricing.sale != null && pricing.regular > 0 && pricing.sale >= pricing.regular) {
+    return next(new Error('Sale price must be less than regular price'));
   }
 
   if (pricing.cost != null && pricing.cost > pricing.regular) {
-    return next(
-      new Error('Cost price cannot exceed regular price')
-    );
+    return next(new Error('Cost price cannot exceed regular price'));
   }
 
   next();
@@ -287,30 +229,38 @@ productSchema.pre('validate', function (next) {
 // ============================================
 // VIRTUALS
 // ============================================
-productSchema.virtual('finalPrice').get(function() {
+productSchema.virtual('finalPrice').get(function () {
   return this.pricing?.sale ?? this.pricing?.regular;
 });
 
-productSchema.virtual('discountPercentage').get(function() {
-  if (this.pricing?.sale && this.pricing?.regular) {
-    return Math.round(((this.pricing.regular - this.pricing.sale) / this.pricing.regular) * 100);
+// FIX P2: `this.pricing?.sale` is falsy when sale=0 (valid free item),
+// causing 100% discount to show as 0%. Use `!= null` check instead.
+productSchema.virtual('discountPercentage').get(function () {
+  if (this.pricing?.sale != null && this.pricing?.regular) {
+    return Math.round(
+      ((this.pricing.regular - this.pricing.sale) / this.pricing.regular) * 100
+    );
   }
   return 0;
 });
 
-productSchema.virtual('isLowStock').get(function() {
+// FIX P9: A Discontinued product should not be reported as LowStock or
+// OutOfStock — those are stock-driven states. Discontinued is admin-set.
+productSchema.virtual('isLowStock').get(function () {
+  if (this.inventory?.status === 'Discontinued') return false;
   const stock = this.inventory?.stock ?? 0;
   const threshold = this.inventory?.lowStockThreshold ?? 5;
   return stock > 0 && stock <= threshold;
 });
 
-productSchema.virtual('isOutOfStock').get(function() {
+productSchema.virtual('isOutOfStock').get(function () {
+  if (this.inventory?.status === 'Discontinued') return false;
   const stock = this.inventory?.stock ?? 0;
   return stock === 0;
 });
 
-// For backward compatibility - virtual for legacy 'stock' field
-productSchema.virtual('stock').get(function() {
+// Backward-compatibility alias for legacy `stock` field access
+productSchema.virtual('stock').get(function () {
   return this.inventory?.stock ?? 0;
 });
 
@@ -327,11 +277,14 @@ productSchema.index({ isNewArrival: 1, status: 1 });
 productSchema.index({ isBestseller: 1, status: 1 });
 productSchema.index({ 'analytics.views': -1 });
 productSchema.index({ 'analytics.purchases': -1 });
+// FIX P10: Add index for inventory.status — used in find queries throughout
+// the codebase (lowStockProducts, getInventoryStats, etc.)
+productSchema.index({ 'inventory.status': 1, status: 1 });
 
 // Text search index
-productSchema.index({ 
-  name: 'text', 
-  description: 'text', 
+productSchema.index({
+  name: 'text',
+  description: 'text',
   'seo.keywords': 'text',
   tags: 'text'
 });
@@ -343,8 +296,10 @@ productSchema.index({ status: 1, isFeatured: 1, ratings: -1 });
 // ============================================
 // PRE-SAVE MIDDLEWARE
 // ============================================
-productSchema.pre('save', function(next) {
-  // Auto-generate slug
+productSchema.pre('save', function (next) {
+  // Auto-generate slug on first save only.
+  // Slugs are intentionally stable after creation for SEO — renaming a product
+  // does not auto-update the slug to avoid breaking existing URLs.
   if (this.isModified('name') && !this.slug) {
     this.slug = this.name
       .toLowerCase()
@@ -354,11 +309,15 @@ productSchema.pre('save', function(next) {
       .trim();
   }
 
-  // Update inventory status based on stock
-  if (this.inventory) {
+  // FIX P4: Guard Discontinued status — it is an admin-set flag, not
+  // a stock-derived state. Stock-based logic must not overwrite it.
+  // FIX P6: Use nullish coalescing for lowStockThreshold so an explicitly
+  // null threshold doesn't coerce to 0 and misclassify stock levels.
+  if (this.inventory && this.inventory.status !== 'Discontinued') {
+    const threshold = this.inventory.lowStockThreshold ?? 5;
     if (this.inventory.stock === 0) {
       this.inventory.status = 'OutOfStock';
-    } else if (this.inventory.stock <= this.inventory.lowStockThreshold) {
+    } else if (this.inventory.stock <= threshold) {
       this.inventory.status = 'LowStock';
     } else {
       this.inventory.status = 'InStock';
@@ -366,7 +325,7 @@ productSchema.pre('save', function(next) {
   }
 
   // Check if on sale
-  this.isOnSale = !!(this.pricing?.sale && this.pricing.sale < this.pricing.regular);
+  this.isOnSale = !!(this.pricing?.sale != null && this.pricing.sale < this.pricing.regular);
 
   // Set publishedAt date
   if (this.isModified('status') && this.status === 'published' && !this.publishedAt) {
@@ -387,35 +346,26 @@ productSchema.pre('save', function(next) {
 // ============================================
 // STATIC METHODS
 // ============================================
-productSchema.statics.getTrendingProducts = async function(limit = 10) {
+productSchema.statics.getTrendingProducts = async function (limit = 10) {
   return this.find({ status: 'published' })
     .sort({ 'analytics.purchases': -1, 'analytics.views': -1 })
     .limit(limit);
 };
 
-productSchema.statics.getNewArrivals = async function(limit = 10) {
-  return this.find({ 
-    status: 'published',
-    isNewArrival: true 
-  })
+productSchema.statics.getNewArrivals = async function (limit = 10) {
+  return this.find({ status: 'published', isNewArrival: true })
     .sort({ createdAt: -1 })
     .limit(limit);
 };
 
-productSchema.statics.getFeaturedProducts = async function(limit = 10) {
-  return this.find({ 
-    status: 'published',
-    isFeatured: true 
-  })
+productSchema.statics.getFeaturedProducts = async function (limit = 10) {
+  return this.find({ status: 'published', isFeatured: true })
     .sort({ ratings: -1 })
     .limit(limit);
 };
 
-productSchema.statics.getBestsellers = async function(limit = 10) {
-  return this.find({ 
-    status: 'published',
-    isBestseller: true 
-  })
+productSchema.statics.getBestsellers = async function (limit = 10) {
+  return this.find({ status: 'published', isBestseller: true })
     .sort({ 'analytics.purchases': -1 })
     .limit(limit);
 };
@@ -423,21 +373,24 @@ productSchema.statics.getBestsellers = async function(limit = 10) {
 // ============================================
 // INSTANCE METHODS
 // ============================================
-productSchema.methods.incrementView = async function() {
+productSchema.methods.incrementView = async function () {
   this.analytics.views += 1;
   this.analytics.lastViewed = new Date();
   return this.save({ validateBeforeSave: false });
 };
 
-productSchema.methods.incrementPurchase = async function(quantity = 1) {
+// FIX P4-confirmed + FIX P5: Floor stock at 0 to prevent negative inventory.
+// The pre-save hook (which runs even with validateBeforeSave:false) will then
+// correctly set inventory.status based on the new stock value.
+productSchema.methods.incrementPurchase = async function (quantity = 1) {
   this.analytics.purchases += quantity;
   if (this.inventory?.trackInventory) {
-    this.inventory.stock -= quantity;
+    this.inventory.stock = Math.max(0, this.inventory.stock - quantity);
   }
   return this.save({ validateBeforeSave: false });
 };
 
-productSchema.methods.incrementWishlist = async function(increment = true) {
+productSchema.methods.incrementWishlist = async function (increment = true) {
   if (increment) {
     this.analytics.addedToWishlist += 1;
   } else {
@@ -446,6 +399,6 @@ productSchema.methods.incrementWishlist = async function(increment = true) {
   return this.save({ validateBeforeSave: false });
 };
 
-productSchema.set("strictQuery", true);
+productSchema.set('strictQuery', true);
 
-export default mongoose.model("Product", productSchema);
+export default mongoose.model('Product', productSchema);
