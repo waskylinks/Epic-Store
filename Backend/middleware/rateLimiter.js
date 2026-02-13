@@ -205,7 +205,7 @@ const paymentVerifyLimiterBase = rateLimit({
 });
 export const paymentVerifyLimiter = upgradeToRedisStore(paymentVerifyLimiterBase, "ratelimit:payment-verify:");
 
-/* ================= PUBLIC PRODUCT API RATE LIMITERS (NEW) ================= */
+/* ================= PUBLIC PRODUCT API RATE LIMITERS ================= */
 
 /**
  * Public product browsing limiter
@@ -213,7 +213,7 @@ export const paymentVerifyLimiter = upgradeToRedisStore(paymentVerifyLimiterBase
  * 150 requests / 15 min (more lenient for browsing)
  */
 const publicProductLimiterBase = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 150,
   store: getRedisStore("ratelimit:public-products:"),
   message: formatRateLimitMessage(
@@ -232,14 +232,25 @@ const publicProductLimiterBase = rateLimit({
 });
 export const publicProductLimiter = upgradeToRedisStore(publicProductLimiterBase, "ratelimit:public-products:");
 
+/* ================= ADMIN ANALYTICS RATE LIMITER (FIXED) ================= */
+
 /**
  * Admin analytics rate limiter
- * Stricter limits for admin analytics endpoints
- * 50 requests / 15 min per admin user
+ * 
+ * PROBLEM SOLVED:
+ * - Dashboard loads 16 API calls per timeframe
+ * - Switching day→month = 32 calls in 2 seconds
+ * - Old limit (50/15min) hit after 3 timeframe changes
+ * 
+ * FIX:
+ * - Increased to 200 requests / 15 min per admin
+ * - Allows ~12 timeframe changes per 15 minutes
+ * - Redis cache (300s) prevents duplicate DB hits
+ * - Rate limit protects against true abuse, not normal dashboard use
  */
 const adminAnalyticsLimiterBase = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 50,
+  max: 200, // FIXED: Increased from 50 to accommodate dashboard's 16 calls per load
   store: getRedisStore("ratelimit:admin-analytics:"),
   keyGenerator: (req) => {
     const userId = req.user?._id?.toString();
@@ -250,6 +261,17 @@ const adminAnalyticsLimiterBase = rateLimit({
   ),
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false
+  skipSuccessfulRequests: false,
+  // IMPROVEMENT: Better error response with retry info
+  handler: (req, res) => {
+    const retryAfter = Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000);
+    res.status(429).json({
+      success: false,
+      message: 'Too many analytics requests. Please wait a moment before switching timeframes again.',
+      retryAfter,
+      limit: req.rateLimit.limit,
+      current: req.rateLimit.current
+    });
+  }
 });
 export const adminAnalyticsLimiter = upgradeToRedisStore(adminAnalyticsLimiterBase, "ratelimit:admin-analytics:");
