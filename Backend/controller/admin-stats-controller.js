@@ -6,30 +6,22 @@ import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
 import User from "../models/userModel.js";
 import { getCache, setCache } from "../utils/redis.js";
-
-/**
- * Admin Stats Controller - ULTRA SIMPLIFIED
- * Ignores the service, builds everything from scratch
- */
+import {
+  buildOrderStatusBreakdown,
+  buildInventoryStatusBreakdown,
+  getTopProductsPaginated
+} from "../utils/analyticsHelpers.js";
 
 // ============================================
-// BASIC ADMIN STATS - ULTRA SIMPLIFIED
+// BASIC ADMIN STATS
 // ============================================
 
 export const getAdminStats = handleAsyncError(async (req, res) => {
   const cacheKey = "admin_stats_v5";
 
   const cached = await getCache(cacheKey);
-  if (cached) {
-    console.log("📦 Returning cached data");
-    return res.status(200).json({ success: true, ...cached });
-  }
+  if (cached) return res.status(200).json({ success: true, ...cached });
 
-  console.log("🔄 Building stats from scratch...");
-
-  // ============================================
-  // 1. GET BASIC COUNTS
-  // ============================================
   const [productCount, orderCount, userCount, adminCount] = await Promise.all([
     Product.countDocuments({ status: "published" }),
     Order.countDocuments(),
@@ -37,117 +29,49 @@ export const getAdminStats = handleAsyncError(async (req, res) => {
     User.countDocuments({ role: "admin" })
   ]);
 
-  // Get total revenue
+  // FIX A1: Added paymentInfo.status: 'success' to revenue filter.
+  // Without it, failed/pending payments were counted as revenue.
   const revenueAgg = await Order.aggregate([
-    { $match: { orderStatus: { $ne: "Cancelled" } } },
+    {
+      $match: {
+        orderStatus: { $ne: "Cancelled" },
+        "paymentInfo.status": "success"
+      }
+    },
     { $group: { _id: null, total: { $sum: "$totalPrice" } } }
   ]);
   const totalRevenue = revenueAgg[0]?.total || 0;
 
-  console.log("📊 Basic counts:", { productCount, orderCount, totalRevenue, userCount, adminCount });
-
-  // ============================================
-  // 2. GET ORDER STATUS BREAKDOWN
-  // ============================================
+  // FIX A2: Replaced copy-pasted switch/case with shared helper.
   const orderStatusAgg = await Order.aggregate([
     { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
   ]);
+  const ordersByStatus = buildOrderStatusBreakdown(orderStatusAgg);
 
-  console.log("📊 Order status aggregation:", orderStatusAgg);
-
-  const ordersByStatus = {
-    processing: 0,
-    shipped: 0,
-    delivered: 0,
-    cancelled: 0
-  };
-
-  orderStatusAgg.forEach(item => {
-    switch (item._id) {
-      case 'Processing':
-        ordersByStatus.processing = item.count;
-        break;
-      case 'Shipped':
-        ordersByStatus.shipped = item.count;
-        break;
-      case 'Delivered':
-        ordersByStatus.delivered = item.count;
-        break;
-      case 'Cancelled':
-        ordersByStatus.cancelled = item.count;
-        break;
-    }
-  });
-
-  console.log("📊 ordersByStatus:", ordersByStatus);
-
-  // ============================================
-  // 3. GET INVENTORY BREAKDOWN
-  // ============================================
+  // FIX A3: Replaced copy-pasted switch/case with shared helper.
   const inventoryAgg = await Product.aggregate([
     { $match: { status: "published" } },
     { $group: { _id: "$inventory.status", count: { $sum: 1 } } }
   ]);
+  const inventoryByStatus = buildInventoryStatusBreakdown(inventoryAgg);
 
-  console.log("📊 Inventory aggregation:", inventoryAgg);
-
-  const inventoryByStatus = {
-    inStock: 0,
-    lowStock: 0,
-    outOfStock: 0,
-    discontinued: 0
-  };
-
-  inventoryAgg.forEach(item => {
-    switch (item._id) {
-      case 'InStock':
-        inventoryByStatus.inStock = item.count;
-        break;
-      case 'LowStock':
-        inventoryByStatus.lowStock = item.count;
-        break;
-      case 'OutOfStock':
-        inventoryByStatus.outOfStock = item.count;
-        break;
-      case 'Discontinued':
-        inventoryByStatus.discontinued = item.count;
-        break;
-    }
-  });
-
-  console.log("📊 inventoryByStatus:", inventoryByStatus);
-
-  const totalInventory = 
+  const totalInventory =
     inventoryByStatus.inStock +
     inventoryByStatus.lowStock +
     inventoryByStatus.outOfStock +
     inventoryByStatus.discontinued;
 
-  // ============================================
-  // 4. BUILD FINAL RESPONSE
-  // ============================================
   const response = {
     products: productCount,
     orders: orderCount,
     revenue: Number(totalRevenue.toFixed(2)),
     users: userCount,
-    adminCount: adminCount,
-    ordersByStatus: ordersByStatus,
-    inventory: {
-      inStock: inventoryByStatus.inStock,
-      lowStock: inventoryByStatus.lowStock,
-      outOfStock: inventoryByStatus.outOfStock,
-      discontinued: inventoryByStatus.discontinued,
-      total: totalInventory
-    }
+    adminCount,
+    ordersByStatus,
+    inventory: { ...inventoryByStatus, total: totalInventory }
   };
 
-  console.log("✅ FINAL RESPONSE:");
-  console.log(JSON.stringify(response, null, 2));
-
-  // Cache for 5 minutes
   await setCache(cacheKey, response, 300);
-
   res.status(200).json({ success: true, ...response });
 });
 
@@ -166,24 +90,39 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } = getDateRanges(timeframe);
 
+  // FIX A1 (repeated): Both periods now filter for payment success.
   const [currentOrders, previousOrders] = await Promise.all([
     Order.aggregate([
-      { $match: { createdAt: { $gte: currentPeriodStart } } },
+      {
+        $match: {
+          createdAt: { $gte: currentPeriodStart },
+          "paymentInfo.status": "success"
+        }
+      },
       {
         $group: {
           _id: null,
           orders: { $sum: 1 },
-          revenue: { $sum: { $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0] } }
+          revenue: {
+            $sum: { $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0] }
+          }
         }
       }
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd } } },
+      {
+        $match: {
+          createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd },
+          "paymentInfo.status": "success"
+        }
+      },
       {
         $group: {
           _id: null,
           orders: { $sum: 1 },
-          revenue: { $sum: { $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0] } }
+          revenue: {
+            $sum: { $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$totalPrice", 0] }
+          }
         }
       }
     ])
@@ -206,37 +145,19 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
     products: calculateTrend(currentProducts, previousProducts)
   };
 
+  // FIX A2: Replaced inline switch/case with shared helper.
   const orderStatusAgg = await Order.aggregate([
     { $match: { createdAt: { $gte: currentPeriodStart } } },
     { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
   ]);
+  const orderStatusBreakdown = buildOrderStatusBreakdown(orderStatusAgg);
 
-  const orderStatusBreakdown = {
-    processing: 0,
-    shipped: 0,
-    delivered: 0,
-    cancelled: 0
-  };
-
-  orderStatusAgg.forEach(item => {
-    switch (item._id) {
-      case 'Processing':
-        orderStatusBreakdown.processing = item.count;
-        break;
-      case 'Shipped':
-        orderStatusBreakdown.shipped = item.count;
-        break;
-      case 'Delivered':
-        orderStatusBreakdown.delivered = item.count;
-        break;
-      case 'Cancelled':
-        orderStatusBreakdown.cancelled = item.count;
-        break;
-    }
-  });
-
-  const topProducts = await getTopProducts(5, 0);
-  const recentOrders = await Order.find().sort({ createdAt: -1 }).limit(5).populate("user", "firstName lastName email");
+  // FIX A4: Replaced local getTopProducts with shared paginated helper.
+  const topProducts = await getTopProductsPaginated(5, 0);
+  const recentOrders = await Order.find()
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .populate("user", "firstName lastName email");
 
   const response = {
     trends,
@@ -262,28 +183,12 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// TOP PRODUCTS
+// TOP PRODUCTS (endpoint wrapper)
 // ============================================
 
-export const getTopProducts = async (limit = 5, skip = 0) => {
-  return await Order.aggregate([
-    { $match: { orderStatus: { $ne: "Cancelled" } } },
-    { $unwind: "$orderItems" },
-    { $match: { "orderItems.product": { $ne: null } } },
-    {
-      $group: {
-        _id: "$orderItems.product",
-        name: { $first: "$orderItems.name" },
-        revenue: { $sum: { $multiply: ["$orderItems.price", "$orderItems.quantity"] } },
-        quantity: { $sum: "$orderItems.quantity" }
-      }
-    },
-    { $sort: { revenue: -1 } },
-    { $skip: skip },
-    { $limit: limit },
-    { $project: { _id: 0, productId: "$_id", name: 1, revenue: 1, quantity: 1 } }
-  ]);
-};
+// FIX A4: Removed local getTopProducts definition — now imported from analyticsHelpers.
+// Export kept for any direct callers of the function (non-HTTP usage).
+export { getTopProductsPaginated as getTopProducts } from "../utils/analyticsHelpers.js";
 
 export const getTopProductsEndpoint = handleAsyncError(async (req, res) => {
   const rawLimit = parseInt(req.query.limit);
@@ -297,7 +202,7 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res) => {
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
-  const topProducts = await getTopProducts(limit, skip);
+  const topProducts = await getTopProductsPaginated(limit, skip);
 
   const totalCount = await Order.aggregate([
     { $match: { orderStatus: { $ne: "Cancelled" } } },
@@ -335,34 +240,12 @@ export const getInventoryStats = handleAsyncError(async (req, res) => {
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
+  // FIX A3: Replaced copy-pasted switch/case with shared helper.
   const inventoryStatusAgg = await Product.aggregate([
     { $match: { status: "published" } },
     { $group: { _id: "$inventory.status", count: { $sum: 1 } } }
   ]);
-
-  const inventoryByStatus = {
-    inStock: 0,
-    lowStock: 0,
-    outOfStock: 0,
-    discontinued: 0
-  };
-
-  inventoryStatusAgg.forEach(item => {
-    switch (item._id) {
-      case 'InStock':
-        inventoryByStatus.inStock = item.count;
-        break;
-      case 'LowStock':
-        inventoryByStatus.lowStock = item.count;
-        break;
-      case 'OutOfStock':
-        inventoryByStatus.outOfStock = item.count;
-        break;
-      case 'Discontinued':
-        inventoryByStatus.discontinued = item.count;
-        break;
-    }
-  });
+  const inventoryByStatus = buildInventoryStatusBreakdown(inventoryStatusAgg);
 
   const inventoryValue = await Product.aggregate([
     {
@@ -375,7 +258,14 @@ export const getInventoryStats = handleAsyncError(async (req, res) => {
     {
       $group: {
         _id: null,
-        totalValue: { $sum: { $multiply: ["$inventory.stock", { $ifNull: ["$pricing.cost", "$pricing.regular"] }] } },
+        totalValue: {
+          $sum: {
+            $multiply: [
+              "$inventory.stock",
+              { $ifNull: ["$pricing.cost", "$pricing.regular"] }
+            ]
+          }
+        },
         totalUnits: { $sum: "$inventory.stock" }
       }
     }
@@ -393,7 +283,7 @@ export const getInventoryStats = handleAsyncError(async (req, res) => {
     inventoryByStatus,
     totalInventoryValue: inventoryValue[0]?.totalValue || 0,
     totalUnits: inventoryValue[0]?.totalUnits || 0,
-    lowStockProducts: lowStockProducts.map(p => ({
+    lowStockProducts: lowStockProducts.map((p) => ({
       id: p._id,
       name: p.name,
       stock: p.inventory?.stock || 0,
@@ -414,7 +304,6 @@ export const getInventoryStats = handleAsyncError(async (req, res) => {
 export default {
   getAdminStats,
   getAnalytics,
-  getTopProducts,
   getTopProductsEndpoint,
   getInventoryStats
 };
