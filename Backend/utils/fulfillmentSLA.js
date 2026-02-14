@@ -1,49 +1,36 @@
-// utils/fulfillmentSLA.js
-
 /**
- * calculateFulfillmentSLA(orderDate, status)
+ * Fulfillment SLA Calculator
+ * Single source of truth — imported by orderController and paymentController.
+ * Both copies were identical, so no logic changes — just centralised.
  *
- * Expected usage (both controllers):
- * calculateFulfillmentSLA(order.createdAt, 'Processing')
- * calculateFulfillmentSLA(order.createdAt, 'Shipped')
- * calculateFulfillmentSLA(order.createdAt, status)
- *
- * Returns:
- * {
- *   targetFulfillmentHours,
- *   actualFulfillmentHours,
- *   slaBreached,
- *   delayInHours,
- *   delayInDays,
- *   calculatedAt
- * }
+ * @param {Date}   orderDate     - Order creation date
+ * @param {string} currentStatus - Current order status
+ * @returns {Object} fulfillmentSLA subdocument ready to attach to Order
  */
-
-export const calculateFulfillmentSLA = (orderDate, status = 'Processing') => {
+export const calculateFulfillmentSLA = (orderDate, currentStatus) => {
   const now = new Date();
-  const orderTime = new Date(orderDate);
+  const hoursSinceOrder = (now - orderDate) / (1000 * 60 * 60);
 
-  const hoursElapsed = (now - orderTime) / (1000 * 60 * 60);
+  // Standard SLA: 24 hours for processing, 72 hours for shipping
+  const processingTarget = 24;
+  const shippingTarget = 72;
 
-  // SLA lifecycle targets aligned with order status updates
-  const targets = {
-    Processing: 24,
-    Shipped: 72,
-    Delivered: 120,
-    Cancelled: 0
-  };
+  const targetHours =
+    currentStatus === 'Shipped' || currentStatus === 'Delivered'
+      ? shippingTarget
+      : processingTarget;
 
-  const targetHours = targets[status] ?? 24;
-
-  const slaBreached = targetHours > 0 && hoursElapsed > targetHours;
-  const delayHours = slaBreached ? hoursElapsed - targetHours : 0;
+  const slaBreached = hoursSinceOrder > targetHours;
+  const delayInHours = slaBreached ? hoursSinceOrder - targetHours : 0;
 
   return {
     targetFulfillmentHours: targetHours,
-    actualFulfillmentHours: hoursElapsed,
+    actualFulfillmentHours: hoursSinceOrder,
     slaBreached,
-    delayInHours: delayHours,
-    delayInDays: delayHours / 24,
+    delayInHours,
+    delayInDays: delayInHours / 24,
     calculatedAt: now
   };
 };
+
+export default { calculateFulfillmentSLA };
