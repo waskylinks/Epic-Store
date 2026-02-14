@@ -1,5 +1,5 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
-import HandleError from "../utils/handleError.js";
+// FIX ATTR1: Removed unused HandleError import — was imported but never called in this file.
 import Order from "../models/order-model.js";
 import CustomerAnalytics from "../models/customer-analytics-model.js";
 import { getCache, setCache } from "../utils/redis.js";
@@ -10,11 +10,6 @@ import { getDateRanges } from "../utils/dateRanges.js";
 // CHANNEL PERFORMANCE
 // ============================================
 
-/**
- * Get marketing channel performance overview
- * @route GET /api/v1/analytics/attribution/channels
- * @access Admin
- */
 export const getChannelPerformance = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -25,63 +20,55 @@ export const getChannelPerformance = handleAsyncError(async (req, res, next) => 
 
   const { currentPeriodStart } = getDateRanges(timeframe);
 
-  // Get orders by channel/source
   const channelPerformance = await Order.aggregate([
     {
       $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
+        "paymentInfo.status": "success",
+        orderStatus: { $ne: "Cancelled" },
         createdAt: { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
-        _id: '$analytics.source',
+        _id: "$analytics.source",
         orders: { $sum: 1 },
-        revenue: { $sum: '$totalPrice' },
-        customers: { $addToSet: '$user' }
+        revenue: { $sum: "$totalPrice" },
+        customers: { $addToSet: "$user" }
       }
     },
     {
       $project: {
-        source: '$_id',
+        source: "$_id",
         orders: 1,
         revenue: 1,
-        uniqueCustomers: { $size: '$customers' },
-        avgOrderValue: { $divide: ['$revenue', '$orders'] }
+        uniqueCustomers: { $size: "$customers" },
+        avgOrderValue: { $divide: ["$revenue", "$orders"] }
       }
     },
-    {
-      $sort: { revenue: -1 }
-    }
+    { $sort: { revenue: -1 } }
   ]);
 
-  // Calculate conversion rates (need to track sessions/visits separately)
-  // For now, we'll use order counts as proxy
-
-  // Get customer acquisition by source
   const customerAcquisition = await CustomerAnalytics.aggregate([
     {
       $match: {
-        'purchaseBehavior.firstPurchaseDate': { $gte: currentPeriodStart }
+        "purchaseBehavior.firstPurchaseDate": { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
-        _id: '$acquisition.source',
+        _id: "$acquisition.source",
         newCustomers: { $sum: 1 },
-        totalCLV: { $sum: '$clv.totalRevenue' },
-        avgCLV: { $avg: '$clv.totalRevenue' }
+        totalCLV: { $sum: "$clv.totalRevenue" },
+        avgCLV: { $avg: "$clv.totalRevenue" }
       }
     }
   ]);
 
   const acquisitionMap = new Map(
-    customerAcquisition.map(item => [item._id, item])
+    customerAcquisition.map((item) => [item._id, item])
   );
 
-  // Enrich channel performance with acquisition data
-  const enrichedChannels = channelPerformance.map(channel => {
+  const enrichedChannels = channelPerformance.map((channel) => {
     const acquisition = acquisitionMap.get(channel.source) || {
       newCustomers: 0,
       totalCLV: 0,
@@ -89,7 +76,7 @@ export const getChannelPerformance = handleAsyncError(async (req, res, next) => 
     };
 
     return {
-      source: channel.source || 'direct',
+      source: channel.source || "direct",
       orders: channel.orders,
       revenue: Math.round(channel.revenue * 100) / 100,
       uniqueCustomers: channel.uniqueCustomers,
@@ -110,22 +97,13 @@ export const getChannelPerformance = handleAsyncError(async (req, res, next) => 
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
 // CAMPAIGN PERFORMANCE
 // ============================================
 
-/**
- * Get campaign performance analytics
- * @route GET /api/v1/analytics/attribution/campaigns
- * @access Admin
- */
 export const getCampaignPerformance = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -139,50 +117,46 @@ export const getCampaignPerformance = handleAsyncError(async (req, res, next) =>
   const campaignPerformance = await Order.aggregate([
     {
       $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
-        'analytics.campaign': { $exists: true, $ne: null },
+        "paymentInfo.status": "success",
+        orderStatus: { $ne: "Cancelled" },
+        "analytics.campaign": { $exists: true, $ne: null },
         createdAt: { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
         _id: {
-          campaign: '$analytics.campaign',
-          source: '$analytics.source',
-          medium: '$analytics.medium'
+          campaign: "$analytics.campaign",
+          source: "$analytics.source",
+          medium: "$analytics.medium"
         },
         orders: { $sum: 1 },
-        revenue: { $sum: '$totalPrice' },
-        customers: { $addToSet: '$user' }
+        revenue: { $sum: "$totalPrice" },
+        customers: { $addToSet: "$user" }
       }
     },
     {
       $project: {
-        campaign: '$_id.campaign',
-        source: '$_id.source',
-        medium: '$_id.medium',
+        campaign: "$_id.campaign",
+        source: "$_id.source",
+        medium: "$_id.medium",
         orders: 1,
         revenue: 1,
-        uniqueCustomers: { $size: '$customers' },
-        avgOrderValue: { $divide: ['$revenue', '$orders'] }
+        uniqueCustomers: { $size: "$customers" },
+        avgOrderValue: { $divide: ["$revenue", "$orders"] }
       }
     },
-    {
-      $sort: { revenue: -1 }
-    }
+    { $sort: { revenue: -1 } }
   ]);
 
-  const formattedCampaigns = campaignPerformance.map(camp => ({
+  const formattedCampaigns = campaignPerformance.map((camp) => ({
     campaign: camp.campaign,
     source: camp.source,
     medium: camp.medium,
     orders: camp.orders,
     revenue: Math.round(camp.revenue * 100) / 100,
     uniqueCustomers: camp.uniqueCustomers,
-    avgOrderValue: Math.round(camp.avgOrderValue * 100) / 100,
-    // Calculate ROI if we have cost data
-    // roi: (revenue - cost) / cost * 100
+    avgOrderValue: Math.round(camp.avgOrderValue * 100) / 100
   }));
 
   const response = {
@@ -195,22 +169,13 @@ export const getCampaignPerformance = handleAsyncError(async (req, res, next) =>
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
 // DEVICE & BROWSER ANALYTICS
 // ============================================
 
-/**
- * Get device performance analytics
- * @route GET /api/v1/analytics/attribution/devices
- * @access Admin
- */
 export const getDevicePerformance = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -224,38 +189,36 @@ export const getDevicePerformance = handleAsyncError(async (req, res, next) => {
   const devicePerformance = await Order.aggregate([
     {
       $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
+        "paymentInfo.status": "success",
+        orderStatus: { $ne: "Cancelled" },
         createdAt: { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
-        _id: '$analytics.device',
+        _id: "$analytics.device",
         orders: { $sum: 1 },
-        revenue: { $sum: '$totalPrice' },
-        avgOrderValue: { $avg: '$totalPrice' }
+        revenue: { $sum: "$totalPrice" },
+        avgOrderValue: { $avg: "$totalPrice" }
       }
     },
-    {
-      $sort: { orders: -1 }
-    }
+    { $sort: { orders: -1 } }
   ]);
 
-  const formattedDevices = devicePerformance.map(device => ({
-    device: device._id || 'unknown',
+  const formattedDevices = devicePerformance.map((device) => ({
+    device: device._id || "unknown",
     orders: device.orders,
     revenue: Math.round(device.revenue * 100) / 100,
     avgOrderValue: Math.round(device.avgOrderValue * 100) / 100
   }));
 
-  // Calculate percentages
   const totalOrders = formattedDevices.reduce((sum, d) => sum + d.orders, 0);
-  const devicesWithPercentage = formattedDevices.map(device => ({
+  const devicesWithPercentage = formattedDevices.map((device) => ({
     ...device,
-    orderPercentage: totalOrders > 0
-      ? Math.round((device.orders / totalOrders) * 100 * 100) / 100
-      : 0
+    orderPercentage:
+      totalOrders > 0
+        ? Math.round((device.orders / totalOrders) * 100 * 100) / 100
+        : 0
   }));
 
   const response = {
@@ -267,18 +230,9 @@ export const getDevicePerformance = handleAsyncError(async (req, res, next) => {
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
-/**
- * Get browser performance analytics
- * @route GET /api/v1/analytics/attribution/browsers
- * @access Admin
- */
 export const getBrowserPerformance = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -292,54 +246,39 @@ export const getBrowserPerformance = handleAsyncError(async (req, res, next) => 
   const browserPerformance = await Order.aggregate([
     {
       $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
-        'analytics.browser': { $exists: true },
+        "paymentInfo.status": "success",
+        orderStatus: { $ne: "Cancelled" },
+        "analytics.browser": { $exists: true },
         createdAt: { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
-        _id: '$analytics.browser',
+        _id: "$analytics.browser",
         orders: { $sum: 1 },
-        revenue: { $sum: '$totalPrice' }
+        revenue: { $sum: "$totalPrice" }
       }
     },
-    {
-      $sort: { orders: -1 }
-    },
-    {
-      $limit: 10
-    }
+    { $sort: { orders: -1 } },
+    { $limit: 10 }
   ]);
 
-  const formattedBrowsers = browserPerformance.map(browser => ({
+  const formattedBrowsers = browserPerformance.map((browser) => ({
     browser: browser._id,
     orders: browser.orders,
     revenue: Math.round(browser.revenue * 100) / 100
   }));
 
-  const response = {
-    browsers: formattedBrowsers
-  };
+  const response = { browsers: formattedBrowsers };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
 // REFERRER ANALYTICS
 // ============================================
 
-/**
- * Get referrer performance analytics
- * @route GET /api/v1/analytics/attribution/referrers
- * @access Admin
- */
 export const getReferrerPerformance = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month", limit = 20 } = req.query;
   validateTimeframe(timeframe, next);
@@ -353,37 +292,33 @@ export const getReferrerPerformance = handleAsyncError(async (req, res, next) =>
   const referrerPerformance = await Order.aggregate([
     {
       $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
-        'analytics.referrer': { $exists: true, $ne: null },
+        "paymentInfo.status": "success",
+        orderStatus: { $ne: "Cancelled" },
+        "analytics.referrer": { $exists: true, $ne: null },
         createdAt: { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
-        _id: '$analytics.referrer',
+        _id: "$analytics.referrer",
         orders: { $sum: 1 },
-        revenue: { $sum: '$totalPrice' },
-        customers: { $addToSet: '$user' }
+        revenue: { $sum: "$totalPrice" },
+        customers: { $addToSet: "$user" }
       }
     },
     {
       $project: {
-        referrer: '$_id',
+        referrer: "$_id",
         orders: 1,
         revenue: 1,
-        uniqueCustomers: { $size: '$customers' }
+        uniqueCustomers: { $size: "$customers" }
       }
     },
-    {
-      $sort: { orders: -1 }
-    },
-    {
-      $limit: parseInt(limit)
-    }
+    { $sort: { orders: -1 } },
+    { $limit: parseInt(limit) }
   ]);
 
-  const formattedReferrers = referrerPerformance.map(ref => ({
+  const formattedReferrers = referrerPerformance.map((ref) => ({
     referrer: ref.referrer,
     orders: ref.orders,
     revenue: Math.round(ref.revenue * 100) / 100,
@@ -399,22 +334,13 @@ export const getReferrerPerformance = handleAsyncError(async (req, res, next) =>
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
-// FIRST vs LAST TOUCH ATTRIBUTION
+// ATTRIBUTION MODELS
 // ============================================
 
-/**
- * Get attribution model comparison
- * @route GET /api/v1/analytics/attribution/models
- * @access Admin
- */
 export const getAttributionModels = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -425,66 +351,56 @@ export const getAttributionModels = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart } = getDateRanges(timeframe);
 
-  // First-touch attribution (customer acquisition source)
-  const firstTouch = await CustomerAnalytics.aggregate([
-    {
-      $match: {
-        'purchaseBehavior.firstPurchaseDate': { $gte: currentPeriodStart }
-      }
-    },
-    {
-      $group: {
-        _id: '$acquisition.source',
-        customers: { $sum: 1 },
-        totalRevenue: { $sum: '$clv.totalRevenue' }
-      }
-    },
-    {
-      $sort: { totalRevenue: -1 }
-    }
-  ]);
-
-  // Last-touch attribution (most recent order source)
-  const lastTouch = await Order.aggregate([
-    {
-      $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
-        createdAt: { $gte: currentPeriodStart }
-      }
-    },
-    {
-      $sort: { createdAt: -1 }
-    },
-    {
-      $group: {
-        _id: {
-          user: '$user',
-          source: '$analytics.source'
-        },
-        lastOrder: { $first: '$$ROOT' }
-      }
-    },
-    {
-      $group: {
-        _id: '$_id.source',
-        orders: { $sum: 1 },
-        revenue: { $sum: '$lastOrder.totalPrice' }
-      }
-    },
-    {
-      $sort: { revenue: -1 }
-    }
+  const [firstTouch, lastTouch] = await Promise.all([
+    CustomerAnalytics.aggregate([
+      {
+        $match: {
+          "purchaseBehavior.firstPurchaseDate": { $gte: currentPeriodStart }
+        }
+      },
+      {
+        $group: {
+          _id: "$acquisition.source",
+          customers: { $sum: 1 },
+          totalRevenue: { $sum: "$clv.totalRevenue" }
+        }
+      },
+      { $sort: { totalRevenue: -1 } }
+    ]),
+    Order.aggregate([
+      {
+        $match: {
+          "paymentInfo.status": "success",
+          orderStatus: { $ne: "Cancelled" },
+          createdAt: { $gte: currentPeriodStart }
+        }
+      },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: { user: "$user", source: "$analytics.source" },
+          lastOrder: { $first: "$$ROOT" }
+        }
+      },
+      {
+        $group: {
+          _id: "$_id.source",
+          orders: { $sum: 1 },
+          revenue: { $sum: "$lastOrder.totalPrice" }
+        }
+      },
+      { $sort: { revenue: -1 } }
+    ])
   ]);
 
   const response = {
-    firstTouch: firstTouch.map(item => ({
-      source: item._id || 'direct',
+    firstTouch: firstTouch.map((item) => ({
+      source: item._id || "direct",
       customers: item.customers,
       totalRevenue: Math.round(item.totalRevenue * 100) / 100
     })),
-    lastTouch: lastTouch.map(item => ({
-      source: item._id || 'direct',
+    lastTouch: lastTouch.map((item) => ({
+      source: item._id || "direct",
       orders: item.orders,
       revenue: Math.round(item.revenue * 100) / 100
     })),
@@ -492,22 +408,13 @@ export const getAttributionModels = handleAsyncError(async (req, res, next) => {
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
 // LANDING PAGE PERFORMANCE
 // ============================================
 
-/**
- * Get landing page performance
- * @route GET /api/v1/analytics/attribution/landing-pages
- * @access Admin
- */
 export const getLandingPagePerformance = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month", limit = 20 } = req.query;
   validateTimeframe(timeframe, next);
@@ -521,37 +428,33 @@ export const getLandingPagePerformance = handleAsyncError(async (req, res, next)
   const landingPagePerformance = await Order.aggregate([
     {
       $match: {
-        'paymentInfo.status': 'success',
-        orderStatus: { $ne: 'Cancelled' },
-        'analytics.landingPage': { $exists: true, $ne: null },
+        "paymentInfo.status": "success",
+        orderStatus: { $ne: "Cancelled" },
+        "analytics.landingPage": { $exists: true, $ne: null },
         createdAt: { $gte: currentPeriodStart }
       }
     },
     {
       $group: {
-        _id: '$analytics.landingPage',
+        _id: "$analytics.landingPage",
         orders: { $sum: 1 },
-        revenue: { $sum: '$totalPrice' },
-        customers: { $addToSet: '$user' }
+        revenue: { $sum: "$totalPrice" },
+        customers: { $addToSet: "$user" }
       }
     },
     {
       $project: {
-        landingPage: '$_id',
+        landingPage: "$_id",
         orders: 1,
         revenue: 1,
-        uniqueCustomers: { $size: '$customers' }
+        uniqueCustomers: { $size: "$customers" }
       }
     },
-    {
-      $sort: { orders: -1 }
-    },
-    {
-      $limit: parseInt(limit)
-    }
+    { $sort: { orders: -1 } },
+    { $limit: parseInt(limit) }
   ]);
 
-  const formattedPages = landingPagePerformance.map(page => ({
+  const formattedPages = landingPagePerformance.map((page) => ({
     landingPage: page.landingPage,
     orders: page.orders,
     revenue: Math.round(page.revenue * 100) / 100,
@@ -568,11 +471,7 @@ export const getLandingPagePerformance = handleAsyncError(async (req, res, next)
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 export default {
