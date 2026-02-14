@@ -145,8 +145,8 @@ export const getProductConversionMetrics = handleAsyncError(async (req, res, nex
       name: product.name,
       image: product.images?.[0]?.url,
       category: product.category,
-      // FIX P1: `product.price` does not exist on Product model — the field is
-      // nested at `pricing.regular`. Fallback was always `undefined`, now `0`.
+      // FIX P1: Product model has no top-level `price` field.
+      // The field is nested at `pricing.regular`.
       price: product.pricing?.regular || 0,
       analytics: { views, purchases, cartAdds, wishlistAdds },
       conversionMetrics: { viewToPurchaseRate, viewToCartRate, cartToPurchaseRate },
@@ -261,7 +261,7 @@ export const getInventoryTurnover = handleAsyncError(async (req, res, next) => {
         name: product.name,
         image: product.images?.[0]?.url,
         category: product.category,
-        // FIX P1 (same as conversion): product.price doesn't exist; use pricing.regular.
+        // FIX P1: Same issue - use correct nested field
         price: product.pricing?.regular || 0,
         currentStock,
         unitsSold,
@@ -465,7 +465,7 @@ export const getProductsBoughtTogether = handleAsyncError(async (req, res, next)
               name: product.name,
               image: product.images?.[0]?.url,
               category: product.category,
-              // FIX P1 (same issue): product.price doesn't exist.
+              // FIX P1: Third occurrence - use correct nested field
               price: product.pricing?.regular || 0
             }
           : null,

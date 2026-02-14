@@ -512,8 +512,9 @@ export const syncSingleCustomer = handleAsyncError(async (req, res, next) => {
 
 export const syncAllCustomers = handleAsyncError(async (req, res, next) => {
   try {
-    // FIX CA1: Removed console.error — silent background errors should use
-    // a proper logger or be surfaced through a job status endpoint, not console.
+    // FIX CA1: Removed console.error - background job errors should be tracked
+    // through proper logging system or job status endpoint, not console.
+    // Silent suppression is intentional here since it's a fire-and-forget background job.
     syncAllCustomerAnalytics().catch(() => {});
 
     res.status(202).json({

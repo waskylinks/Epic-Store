@@ -77,7 +77,7 @@ export const generateSalesReport = handleAsyncError(async (req, res, next) => {
     periodEnd = new Date();
   }
 
-  // FIX R1: Replaced local getDateFormat with shared getDateGroupFormat.
+  // FIX R1: Use shared getDateGroupFormat helper instead of inline switch/case
   const dateFormat = getDateGroupFormat(groupBy);
 
   const salesData = await Order.aggregate([
@@ -95,7 +95,6 @@ export const generateSalesReport = handleAsyncError(async (req, res, next) => {
         orders: { $sum: 1 },
         avgOrderValue: { $avg: "$totalPrice" },
         totalItems: { $sum: { $size: "$orderItems" } },
-        // FIX R2: Keep customers as an array here; summarise below.
         customers: { $addToSet: "$user" }
       }
     },
@@ -107,7 +106,6 @@ export const generateSalesReport = handleAsyncError(async (req, res, next) => {
         avgOrderValue: { $round: ["$avgOrderValue", 2] },
         totalItems: 1,
         uniqueCustomers: { $size: "$customers" }
-        // customers array intentionally dropped — use uniqueCustomers count
       }
     },
     { $sort: { date: 1 } }
@@ -147,10 +145,10 @@ export const generateSalesReport = handleAsyncError(async (req, res, next) => {
     }
   ]);
 
-  // FIX R2: uniqueCustomers in each salesData item is a NUMBER (from $size),
-  // not an array. The original `new Set(salesData.flatMap(item => item.uniqueCustomers)).size`
-  // put each number into a Set (getting distinct counts, not distinct IDs) — always wrong.
-  // Correct approach: run a separate aggregation that deduplicates on user across the whole period.
+  // FIX R2: Correct calculation of unique customers across the entire period
+  // The previous approach used new Set(salesData.flatMap(item => item.uniqueCustomers))
+  // which was wrong because uniqueCustomers is a NUMBER (from $size), not an array of IDs.
+  // This resulted in putting distinct counts into a Set, not distinct user IDs.
   const uniqueCustomersAgg = await Order.aggregate([
     {
       $match: {
@@ -435,6 +433,8 @@ export const generateFinancialReport = handleAsyncError(async (req, res, next) =
           totalProfit: { $sum: "$profitAnalysis.netProfit" },
           shippingRevenue: { $sum: "$shippingPrice" },
           taxCollected: { $sum: "$taxPrice" },
+          // FIX R3: Order model field is `itemPrice` (not `itemsPrice`)
+          productRevenue: { $sum: "$itemPrice" },
           totalOrders: { $sum: 1 }
         }
       }
@@ -461,6 +461,7 @@ export const generateFinancialReport = handleAsyncError(async (req, res, next) =
     totalProfit: 0,
     shippingRevenue: 0,
     taxCollected: 0,
+    productRevenue: 0,
     totalOrders: 0
   };
 
@@ -600,7 +601,7 @@ const getRevenueAnalysis = async (startDate, endDate) => {
         totalRevenue: { $sum: "$totalPrice" },
         shippingRevenue: { $sum: "$shippingPrice" },
         taxRevenue: { $sum: "$taxPrice" },
-        // FIX R3: Order model field is `itemPrice`, not `itemsPrice`.
+        // FIX R3: Correct field name
         productRevenue: { $sum: "$itemPrice" }
       }
     }

@@ -1,11 +1,8 @@
-// FIX: File was truncated — missing the opening declaration for productStatsPipeline
-// and all import statements. ORDER_STATUSES was referenced but never imported.
-// FIX: $stock is wrong — Product model stores stock at inventory.stock, not a top-level field.
-import { ORDER_STATUSES } from "../constants/analytics.constants.js";
+import { ORDER_STATUSES } from "./analytics.constants.js";
 
 // ============================================
 // PRODUCT STATS PIPELINE
-// FIX: $eq: ["$stock", 0] → $eq: ["$inventory.stock", 0]
+// FIX AP2: Use `inventory.stock` instead of non-existent top-level `stock`
 // ============================================
 export const productStatsPipeline = [
   {
@@ -29,7 +26,7 @@ export const productStatsPipeline = [
 
 // ============================================
 // ORDER STATS PIPELINE
-// FIX: Now uses imported ORDER_STATUSES constant instead of bare string.
+// Uses imported ORDER_STATUSES constant for consistency
 // ============================================
 export const orderStatsPipeline = [
   {
@@ -50,6 +47,32 @@ export const orderStatsPipeline = [
           ]
         }
       }
+    }
+  }
+];
+
+// ============================================
+// USER STATS PIPELINE
+// ============================================
+export const userStatsPipeline = [
+  {
+    $group: {
+      _id: null,
+      totalUsers: { $sum: 1 },
+      admins: {
+        $sum: { $cond: [{ $eq: ["$role", "admin"] }, 1, 0] }
+      },
+      regularUsers: {
+        $sum: { $cond: [{ $eq: ["$role", "user"] }, 1, 0] }
+      }
+    }
+  },
+  {
+    $project: {
+      _id: 0,
+      totalUsers: 1,
+      admins: 1,
+      regularUsers: 1
     }
   }
 ];

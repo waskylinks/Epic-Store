@@ -1,17 +1,14 @@
 import Product from "../models/product-model.js";
 
-// FIX: All findByIdAndUpdate calls were passing `{ validateBeforeSave: false }`.
-// That option only applies to `.save()`. It is SILENTLY IGNORED by findByIdAndUpdate.
-// The correct option to skip validators on a findByIdAndUpdate is `runValidators: false`
-// (or simply omit it, since validators don't run on updates by default anyway).
+// All trackProductView calls handle analytics.views increment via direct $inc.
+// This middleware approach (direct $inc on hot path) is preferred over
+// Product.incrementView() instance method because it avoids loading the full
+// document + full validation cycle on every page view.
 //
-// FIX: trackProductView duplicated Product.incrementView() instance method.
-// Middleware approach (direct $inc) is preferred over the instance method on hot paths
-// because it avoids loading the full document + full validation cycle on every page view.
-// DO NOT call both trackProductView middleware AND product.incrementView() on the same
-// request — that will double-count views.
+// DO NOT call both trackProductView middleware AND product.incrementView() on
+// the same request — that will double-count views.
 //
-// FIX: trackProductPurchase only updates analytics.purchases. Stock deduction is
+// trackProductPurchase only updates analytics.purchases. Stock deduction is
 // intentionally separate (handled in order creation via Product.incrementPurchase()).
 // Do not call both on the same order or purchases AND stock will double-deduct.
 
@@ -55,8 +52,8 @@ export const trackAddToCart = async (req, res, next) => {
 
 export const trackAddToWishlist = async (req, res, next) => {
   try {
-    // FIX: `req.body || req.params` is always req.body (truthy object even when empty).
-    // Destructure each individually.
+    // FIX PTM2: Destructure each source individually instead of using falsy check
+    // `req.body || req.params` is always truthy (always returns req.body object)
     const productId = req.body?.productId || req.params?.productId;
     if (!productId) return next();
 
