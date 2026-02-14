@@ -7,252 +7,226 @@ import { emailTemplates } from "../utils/emailTemplates.js";
 import Product from '../models/product-model.js';
 import Order from '../models/order-model.js';
 import crypto from "crypto";
-import {v2 as cloudinary} from 'cloudinary';
+import { v2 as cloudinary } from 'cloudinary';
 import { deleteCachePattern } from '../utils/redis.js';
 import { syncCustomerAnalytics } from '../Services/customer-analytics-service.js';
 
 const invalidateCaches = async () => {
-    try {
-        await Promise.all([
-            deleteCachePattern('admin_stats*'),
-            deleteCachePattern('analytics_*'),
-            deleteCachePattern('customer_analytics*')
-        ]);
-    } catch (error) {
-        console.error('Cache invalidation error:', error);
-    }
+  try {
+    await Promise.all([
+      deleteCachePattern('admin_stats*'),
+      deleteCachePattern('analytics_*'),
+      deleteCachePattern('customer_analytics*')
+    ]);
+  } catch {
+    // Cache invalidation failure must not affect the primary response
+  }
 };
 
-
-// REGISTER NEW USER (WITH EMAIL VERIFICATION) 
+// ============================================
+// REGISTER NEW USER (WITH EMAIL VERIFICATION)
+// ============================================
 
 export const registerUser = handleAsyncError(async (req, res, next) => {
-    const { firstName, lastName, email, password } = req.body;
+  const { firstName, lastName, email, password } = req.body;
 
-    // ✅ Check if user already exists
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
-    if (existingUser) {
-        if (existingUser.emailVerified) {
-            return next(new HandleError("Email already registered. Please login instead.", 400));
-        } else {
-            // User exists but not verified - allow re-registration
-            await User.findByIdAndDelete(existingUser._id);
-        }
+  const existingUser = await User.findOne({ email: email.toLowerCase() });
+  if (existingUser) {
+    if (existingUser.emailVerified) {
+      return next(new HandleError("Email already registered. Please login instead.", 400));
+    } else {
+      await User.findByIdAndDelete(existingUser._id);
     }
+  }
 
-    // ✅ Create user (no avatar at registration)
-    const user = await User.create({
-        firstName,
-        lastName,
-        email: email.toLowerCase(),
-        password,
-        authProvider: 'local',
-        emailVerified: false
-        // Avatar will use default with initials automatically
+  const user = await User.create({
+    firstName,
+    lastName,
+    email: email.toLowerCase(),
+    password,
+    authProvider: 'local',
+    emailVerified: false
+  });
+
+  const verificationCode = user.generateVerificationCode();
+  await user.save({ validateBeforeSave: false });
+
+  try {
+    const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
+    await sendEmail({
+      email: user.email,
+      subject: emailTemplate.subject,
+      message: emailTemplate.text,
+      html: emailTemplate.html
     });
 
-    // Generate verification code
-    const verificationCode = user.generateVerificationCode();
-    await user.save({ validateBeforeSave: false });
-
-    // Send verification email
-    try {
-        const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
-        await sendEmail({
-            email: user.email,
-            subject: emailTemplate.subject,
-            message: emailTemplate.text,
-            html: emailTemplate.html
-        });
-
-        res.status(201).json({
-            success: true,
-            message: `Verification code sent to ${user.email}. Please verify your email to complete registration.`,
-            email: user.email,
-            needsVerification: true
-        });
-
-    } catch (error) {
-        // If email fails, delete the user
-        await User.findByIdAndDelete(user._id);
-        return next(new HandleError("Could not send verification email. Please try again later.", 500));
-    }
+    res.status(201).json({
+      success: true,
+      message: `Verification code sent to ${user.email}. Please verify your email to complete registration.`,
+      email: user.email,
+      needsVerification: true
+    });
+  } catch {
+    await User.findByIdAndDelete(user._id);
+    return next(new HandleError("Could not send verification email. Please try again later.", 500));
+  }
 });
 
-
+// ============================================
 // VERIFY EMAIL WITH CODE
+// ============================================
 
 export const verifyEmail = handleAsyncError(async (req, res, next) => {
-    const { email, code } = req.body;
+  const { email, code } = req.body;
 
-    if (!email || !code) {
-        return next(new HandleError("Email and verification code are required", 400));
-    }
+  if (!email || !code) {
+    return next(new HandleError("Email and verification code are required", 400));
+  }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+  const user = await User.findOne({ email: email.toLowerCase() });
 
-    if (!user) {
-        return next(new HandleError("User not found", 404));
-    }
+  if (!user) return next(new HandleError("User not found", 404));
 
-    if (user.emailVerified) {
-        return next(new HandleError("Email already verified. Please login.", 400));
-    }
+  if (user.emailVerified) {
+    return next(new HandleError("Email already verified. Please login.", 400));
+  }
 
-    const isCodeValid = user.verifyEmailCode(code);
-    if (!isCodeValid) {
-        return next(new HandleError("Invalid or expired verification code", 400));
-    }
+  const isCodeValid = user.verifyEmailCode(code);
+  if (!isCodeValid) {
+    return next(new HandleError("Invalid or expired verification code", 400));
+  }
 
-    user.emailVerified = true;
-    user.verificationCode = undefined;
-    user.verificationCodeExpire = undefined;
-    await user.save();
+  user.emailVerified = true;
+  user.verificationCode = undefined;
+  user.verificationCodeExpire = undefined;
+  await user.save();
 
-    try {
-        const welcomeTemplate = emailTemplates.welcomeEmail(user.fullName);
-        await sendEmail({
-            email: user.email,
-            subject: welcomeTemplate.subject,
-            message: welcomeTemplate.text,
-            html: welcomeTemplate.html
-        });
-    } catch (error) {
-        console.error("Welcome email failed:", error);
-    }
+  try {
+    const welcomeTemplate = emailTemplates.welcomeEmail(user.fullName);
+    await sendEmail({
+      email: user.email,
+      subject: welcomeTemplate.subject,
+      message: welcomeTemplate.text,
+      html: welcomeTemplate.html
+    });
+  } catch {
+    // Welcome email failure must not block verification success
+  }
 
-    // Initialize customer analytics for new verified user
-    try {
-        await syncCustomerAnalytics(user._id);
-        console.log(`Customer analytics initialized for new user ${user._id}`);
-    } catch (error) {
-        console.error('Failed to initialize customer analytics:', error);
-        // Don't fail the registration if analytics initialization fails
-    }
+  // FIX UC1: Changed from blocking await to fire-and-forget.
+  // Analytics init for a brand-new user (zero orders) is non-critical.
+  // Blocking here delays email verification — a UX-critical path — by the
+  // full duration of a DB aggregation that will return empty results anyway.
+  syncCustomerAnalytics(user._id).catch(() => {});
 
-    await invalidateCaches();
+  await invalidateCaches();
 
-    sendToken(user, 200, res);
+  sendToken(user, 200, res);
 });
 
-
+// ============================================
 // RESEND VERIFICATION CODE
+// ============================================
 
 export const resendVerificationCode = handleAsyncError(async (req, res, next) => {
-    const { email } = req.body;
+  const { email } = req.body;
 
-    if (!email) {
-        return next(new HandleError("Email is required", 400));
-    }
+  if (!email) return next(new HandleError("Email is required", 400));
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+  const user = await User.findOne({ email: email.toLowerCase() });
 
-    if (!user) {
-        return next(new HandleError("User not found", 404));
-    }
+  if (!user) return next(new HandleError("User not found", 404));
 
-    if (user.emailVerified) {
-        return next(new HandleError("Email already verified. Please login.", 400));
-    }
+  if (user.emailVerified) {
+    return next(new HandleError("Email already verified. Please login.", 400));
+  }
 
+  const verificationCode = user.generateVerificationCode();
+  await user.save({ validateBeforeSave: false });
+
+  try {
+    const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
+    await sendEmail({
+      email: user.email,
+      subject: emailTemplate.subject,
+      message: emailTemplate.text,
+      html: emailTemplate.html
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `New verification code sent to ${user.email}`
+    });
+  } catch {
+    user.verificationCode = undefined;
+    user.verificationCodeExpire = undefined;
+    await user.save({ validateBeforeSave: false });
+
+    return next(new HandleError("Could not send verification email. Please try again later.", 500));
+  }
+});
+
+// ============================================
+// LOGIN USER
+// ============================================
+
+export const loginUser = handleAsyncError(async (req, res, next) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return next(new HandleError("Please enter email and password", 400));
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+
+  if (!user) return next(new HandleError("Invalid email or password", 401));
+
+  if (user.lockUntil && user.lockUntil > Date.now()) {
+    const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
+    return next(new HandleError(`Account locked. Try again in ${mins} minutes.`, 403));
+  }
+
+  if (user.authProvider === "local" && !user.emailVerified) {
     const verificationCode = user.generateVerificationCode();
     await user.save({ validateBeforeSave: false });
 
     try {
-        const emailTemplate = emailTemplates.verificationEmail(
-            user.fullName,
-            verificationCode
-        );
+      const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
+      await sendEmail({
+        email: user.email,
+        subject: emailTemplate.subject,
+        message: emailTemplate.text,
+        html: emailTemplate.html
+      });
 
-        await sendEmail({
-            email: user.email,
-            subject: emailTemplate.subject,
-            message: emailTemplate.text,
-            html: emailTemplate.html
-        });
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email before logging in.",
+        needsVerification: true,
+        email: user.email
+      });
+    } catch {
+      user.verificationCode = undefined;
+      user.verificationCodeExpire = undefined;
+      await user.save({ validateBeforeSave: false });
 
-        res.status(200).json({
-            success: true,
-            message: `New verification code sent to ${user.email}`
-        });
-    } catch (error) {
-        user.verificationCode = undefined;
-        user.verificationCodeExpire = undefined;
-        await user.save({ validateBeforeSave: false });
-
-        return next(
-            new HandleError("Could not send verification email. Please try again later.", 500)
-        );
+      return next(new HandleError("Could not send verification email. Please try again later.", 500));
     }
+  }
+
+  const isMatch = await user.comparePassword(password);
+  if (!isMatch) {
+    await user.incrementLoginAttempts();
+    return next(new HandleError("Invalid email or password", 401));
+  }
+
+  await user.resetLoginAttempts();
+  sendToken(user, 200, res);
 });
 
-
-// LOGIN USER (CHECK EMAIL VERIFICATION + RESEND CODE IF NEEDED)
-
-export const loginUser = handleAsyncError(async (req, res, next) => {
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-        return next(new HandleError("Please enter email and password", 400));
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-
-    if (!user) {
-        return next(new HandleError("Invalid email or password", 401));
-    }
-
-    if (user.lockUntil && user.lockUntil > Date.now()) {
-        const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
-        return next(new HandleError(`Account locked. Try again in ${mins} minutes.`, 403));
-    }
-
-    if (user.authProvider === "local" && !user.emailVerified) {
-        const verificationCode = user.generateVerificationCode();
-        await user.save({ validateBeforeSave: false });
-
-        try {
-            const emailTemplate = emailTemplates.verificationEmail(
-                user.fullName,
-                verificationCode
-            );
-
-            await sendEmail({
-                email: user.email,
-                subject: emailTemplate.subject,
-                message: emailTemplate.text,
-                html: emailTemplate.html
-            });
-
-            return res.status(403).json({
-                success: false,
-                message: "Please verify your email before logging in.",
-                needsVerification: true,
-                email: user.email
-            });
-        } catch (error) {
-            user.verificationCode = undefined;
-            user.verificationCodeExpire = undefined;
-            await user.save({ validateBeforeSave: false });
-
-            return next(
-                new HandleError("Could not send verification email. Please try again later.", 500)
-            );
-        }
-    }
-
-    const isMatch = await user.comparePassword(password);
-    if (!isMatch) {
-        await user.incrementLoginAttempts();
-        return next(new HandleError("Invalid email or password", 401));
-    }
-
-    await user.resetLoginAttempts();
-    sendToken(user, 200, res);
-});
-
-
-// LOGOUT FUNCTION
+// ============================================
+// LOGOUT
+// ============================================
 
 export const logout = handleAsyncError(async (req, res) => {
   res.cookie("token", null, {
@@ -263,361 +237,335 @@ export const logout = handleAsyncError(async (req, res) => {
     path: "/"
   });
 
+  res.status(200).json({ success: true, message: "Successfully logged out" });
+});
+
+// ============================================
+// FORGOT PASSWORD
+// ============================================
+
+export const requestPasswordReset = handleAsyncError(async (req, res, next) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email: email.toLowerCase() });
+
+  if (!user) return next(new HandleError("No account found with this email", 404));
+
+  if (!user.emailVerified && user.authProvider === "local") {
+    return next(new HandleError("Please verify your email first", 403));
+  }
+
+  const resetCode = user.generatePasswordResetCode();
+  await user.save({ validateBeforeSave: false });
+
+  try {
+    const template = emailTemplates.passwordResetEmail(user.fullName, resetCode);
+    await sendEmail({
+      email: user.email,
+      subject: template.subject,
+      message: template.text,
+      html: template.html
+    });
+
+    res.status(200).json({
+      success: true,
+      message: `Password reset code sent to ${user.email}`
+    });
+  } catch {
+    user.resetPasswordCode = undefined;
+    user.resetPasswordCodeExpire = undefined;
+    await user.save({ validateBeforeSave: false });
+    return next(new HandleError("Could not send password reset email. Please try again later.", 500));
+  }
+});
+
+// ============================================
+// RESET PASSWORD WITH CODE
+// ============================================
+
+export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => {
+  const { email, code, password, confirmPassword } = req.body;
+
+  if (!email || !code) {
+    return next(new HandleError("Email and reset code are required", 400));
+  }
+
+  if (password !== confirmPassword) {
+    return next(new HandleError("Passwords do not match", 400));
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
+
+  if (!user) return next(new HandleError("User not found", 404));
+
+  const isCodeValid = user.verifyResetCode(code);
+  if (!isCodeValid) {
+    return next(new HandleError("Invalid or expired reset code", 400));
+  }
+
+  if (await user.isPasswordReused(password)) {
+    return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
+  }
+
+  user.password = password;
+  user.resetPasswordCode = undefined;
+  user.resetPasswordCodeExpire = undefined;
+  await user.save();
+
+  try {
+    const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
+    await sendEmail({
+      email: user.email,
+      subject: emailTemplate.subject,
+      message: emailTemplate.text,
+      html: emailTemplate.html
+    });
+  } catch {
+    // Email confirmation failure must not block the password reset
+  }
+
+  sendToken(user, 200, res);
+});
+
+// ============================================
+// VERIFY RESET CODE
+// ============================================
+
+export const verifyResetCode = handleAsyncError(async (req, res, next) => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    return next(new HandleError("Email and reset code are required", 400));
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() });
+
+  if (!user) return next(new HandleError("User not found", 404));
+
+  const isCodeValid = user.verifyResetCode(code);
+  if (!isCodeValid) {
+    return next(new HandleError("Invalid or expired reset code", 400));
+  }
+
+  res.status(200).json({ success: true, message: "Code verified successfully" });
+});
+
+// ============================================
+// UPDATE PASSWORD
+// ============================================
+
+export const UpdatePassword = handleAsyncError(async (req, res, next) => {
+  const { oldPassword, newPassword, confirmPassword } = req.body;
+
+  const user = await User.findById(req.user.id).select("+password");
+
+  if (!(await user.comparePassword(oldPassword))) {
+    return next(new HandleError("Old password is incorrect", 400));
+  }
+
+  if (newPassword !== confirmPassword) {
+    return next(new HandleError("Passwords do not match", 400));
+  }
+
+  if (await user.isPasswordReused(newPassword)) {
+    return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  try {
+    const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
+    await sendEmail({
+      email: user.email,
+      subject: emailTemplate.subject,
+      message: emailTemplate.text,
+      html: emailTemplate.html
+    });
+  } catch {
+    // Email confirmation failure must not block the password update
+  }
+
+  sendToken(user, 200, res);
+});
+
+// ============================================
+// GET USER DETAILS (PROFILE)
+// ============================================
+
+export const getUserDetails = handleAsyncError(async (req, res, next) => {
+  const user = await User.findById(req.user.id);
+  res.status(200).json({ success: true, user });
+});
+
+// ============================================
+// UPDATE USER PROFILE
+// ============================================
+
+export const updateProfile = handleAsyncError(async (req, res, next) => {
+  const { firstName, lastName, email, avatar } = req.body;
+
+  const updateUserDetails = {};
+
+  if (firstName !== undefined) updateUserDetails.firstName = firstName;
+  if (lastName !== undefined) updateUserDetails.lastName = lastName;
+  if (email !== undefined) updateUserDetails.email = email?.toLowerCase();
+
+  if (avatar && avatar !== '') {
+    const user = await User.findById(req.user.id);
+    const imageId = user.avatar.public_id;
+
+    if (imageId !== 'default_avatar') {
+      await cloudinary.uploader.destroy(imageId);
+    }
+
+    const myCloud = await cloudinary.uploader.upload(avatar, {
+      folder: 'EpicStore/avatars',
+      width: 200,
+      crop: 'scale'
+    });
+
+    updateUserDetails.avatar = {
+      public_id: myCloud.public_id,
+      url: myCloud.secure_url
+    };
+  }
+
+  if (firstName && lastName && email) {
+    updateUserDetails.profileCompleted = true;
+  }
+
+  const user = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
+    new: true,
+    runValidators: true
+  });
+
+  // FIX UC1 (same fix as verifyEmail): fire-and-forget.
+  // Profile updates happen frequently; blocking every save on an analytics
+  // sync makes the update feel slow and provides no user-visible benefit.
+  syncCustomerAnalytics(user._id).catch(() => {});
+
   res.status(200).json({
     success: true,
-    message: "Successfully logged out"
+    message: 'Profile updated successfully',
+    user
   });
 });
 
+// ============================================
+// ADMIN — GET ALL USERS
+// ============================================
 
-
-// FORGOT PASSWORD (SEND CODE) - ✅ FIXED
-
-export const requestPasswordReset = handleAsyncError(async (req, res, next) => {
-    const { email } = req.body;
-
-    const user = await User.findOne({ email: email.toLowerCase() });
-
-    if (!user) {
-        return next(new HandleError("No account found with this email", 404));
-    }
-
-    if (!user.emailVerified && user.authProvider === "local") {
-        return next(new HandleError("Please verify your email first", 403));
-    }
-
-    const resetCode = user.generatePasswordResetCode();
-    await user.save({ validateBeforeSave: false });
-
-    // ✅ FIXED: Wrapped in try-catch
-    try {
-        const template = emailTemplates.passwordResetEmail(
-            user.fullName,
-            resetCode
-        );
-
-        await sendEmail({
-            email: user.email,
-            subject: template.subject,
-            message: template.text,
-            html: template.html
-        });
-
-        res.status(200).json({
-            success: true,
-            message: `Password reset code sent to ${user.email}`
-        });
-    } catch (error) {
-        user.resetPasswordCode = undefined;
-        user.resetPasswordCodeExpire = undefined;
-        await user.save({ validateBeforeSave: false });
-        return next(new HandleError("Could not send password reset email. Please try again later.", 500));
-    }
+export const getUsersList = handleAsyncError(async (req, res, next) => {
+  const users = await User.find();
+  res.status(200).json({ success: true, users });
 });
 
+// ============================================
+// ADMIN — GET SINGLE USER
+// ============================================
 
-// RESET PASSWORD WITH CODE
+export const getSingleUser = handleAsyncError(async (req, res, next) => {
+  const user = await User.findById(req.params.id);
 
-export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => {
-    const { email, code, password, confirmPassword } = req.body;
+  if (!user) return next(new HandleError(`Invalid user ID: ${req.params.id}`, 400));
 
-    if (!email || !code) {
-        return next(new HandleError("Email and reset code are required", 400));
-    }
-
-    if (password !== confirmPassword) {
-        return next(new HandleError("Passwords do not match", 400));
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
-
-    if (!user) {
-        return next(new HandleError("User not found", 404));
-    }
-
-    const isCodeValid = user.verifyResetCode(code);
-    if (!isCodeValid) {
-        return next(new HandleError("Invalid or expired reset code", 400));
-    }
-
-    if (await user.isPasswordReused(password)) {
-        return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
-    }
-
-    user.password = password;
-    user.resetPasswordCode = undefined;
-    user.resetPasswordCodeExpire = undefined;
-    await user.save();
-
-    try {
-        const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
-        await sendEmail({
-            email: user.email,
-            subject: emailTemplate.subject,
-            message: emailTemplate.text,
-            html: emailTemplate.html
-        });
-    } catch (error) {
-        console.error("Password change email failed:", error);
-    }
-
-    sendToken(user, 200, res);
+  res.status(200).json({ success: true, user });
 });
 
-
-// VERIFY RESET CODE (WITHOUT RESETTING PASSWORD)
-export const verifyResetCode = handleAsyncError(async (req, res, next) => {
-    const { email, code } = req.body;
-
-    if (!email || !code) {
-        return next(new HandleError("Email and reset code are required", 400));
-    }
-
-    const user = await User.findOne({ email: email.toLowerCase() });
-
-    if (!user) {
-        return next(new HandleError("User not found", 404));
-    }
-
-    const isCodeValid = user.verifyResetCode(code);
-    if (!isCodeValid) {
-        return next(new HandleError("Invalid or expired reset code", 400));
-    }
-
-    // Code is valid - don't reset password yet
-    res.status(200).json({
-        success: true,
-        message: "Code verified successfully"
-    });
-});
-
-// UPDATE PASSWORD
-
-export const UpdatePassword = handleAsyncError(async (req, res, next) => {
-    const { oldPassword, newPassword, confirmPassword } = req.body;
-
-    const user = await User.findById(req.user.id).select("+password");
-
-    if (!(await user.comparePassword(oldPassword))) {
-        return next(new HandleError("Old password is incorrect", 400));
-    }
-
-    if (newPassword !== confirmPassword) {
-        return next(new HandleError("Passwords do not match", 400));
-    }
-
-    if (await user.isPasswordReused(newPassword)) {
-        return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
-    }
-
-    user.password = newPassword;
-    await user.save();
-
-    try {
-        const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
-        await sendEmail({
-            email: user.email,
-            subject: emailTemplate.subject,
-            message: emailTemplate.text,
-            html: emailTemplate.html
-        });
-    } catch (error) {
-        console.error("Password change email failed:", error);
-    }
-
-    sendToken(user, 200, res);
-});
-
-
-// GET USER DETAILS (PROFILE)
-
-export const getUserDetails = handleAsyncError(async(req, res, next) => {
-    const user = await User.findById(req.user.id);
-    res.status(200).json({
-        success: true,
-        user
-    });
-});
-
-
-// UPDATE USER PROFILE - FIXED VERSION
-export const updateProfile = handleAsyncError(async(req, res, next) => {
-    const { firstName, lastName, email, avatar } = req.body;
-    
-    console.log('📥 Backend - Received update request:', { firstName, lastName, email, hasAvatar: !!avatar });
-    
-    const updateUserDetails = {};
-
-    // Only update fields that are provided
-    if (firstName !== undefined) updateUserDetails.firstName = firstName;
-    if (lastName !== undefined) updateUserDetails.lastName = lastName;
-    if (email !== undefined) updateUserDetails.email = email?.toLowerCase();
-
-    // Handle avatar upload
-    if(avatar && avatar !== '') {
-        const user = await User.findById(req.user.id);
-        const imageId = user.avatar.public_id;
-        
-        // Delete old avatar if not default
-        if (imageId !== 'default_avatar') {
-            await cloudinary.uploader.destroy(imageId);
-        }
-        
-        const myCloud = await cloudinary.uploader.upload(avatar, {
-            folder: `EpicStore/avatars`,
-            width: 200,
-            crop: 'scale'
-        });
-
-        updateUserDetails.avatar = {
-            public_id: myCloud.public_id,
-            url: myCloud.secure_url
-        };
-    }
-
-    // Mark profile as completed if all fields are present
-    if (firstName && lastName && email) {
-        updateUserDetails.profileCompleted = true;
-    }
-
-    const user = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
-        new: true,
-        runValidators: true
-    });
-
-    // Sync customer analytics after profile update
-    try {
-        await syncCustomerAnalytics(user._id);
-        console.log(`Customer analytics synced after profile update for user ${user._id}`);
-    } catch (error) {
-        console.error('Failed to sync customer analytics:', error);
-        // Don't fail the profile update if analytics sync fails
-    }
-
-    console.log('✅ Backend - Updated user:', {
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        fullName: user.fullName, // This is the virtual field
-        avatar: user.avatar
-    });
-
-    res.status(200).json({
-        success: true,
-        message: `Profile updated successfully`,
-        user
-    });
-});
-
-
-// ADMIN - GET ALL USERS
-
-export const getUsersList = handleAsyncError(async(req, res, next) => {
-    const users = await User.find();
-    res.status(200).json({
-        success: true,
-        users
-    });
-});
-
-
-// ADMIN - GET SINGLE USER
-
-export const getSingleUser = handleAsyncError(async(req, res, next) => {
-    const user = await User.findById(req.params.id);
-
-    if(!user) {
-        return next(new HandleError(`Invalid user ID: ${req.params.id}`, 400));
-    }
-
-    res.status(200).json({
-        success: true,
-        user
-    });
-});
-
-
-// ADMIN - UPDATE USER ROLE
+// ============================================
+// ADMIN — UPDATE USER ROLE
+// ============================================
 
 export const updateUserRole = handleAsyncError(async (req, res, next) => {
-    const { role } = req.body;
-    const targetUserId = req.params.id;
+  const { role } = req.body;
+  const targetUserId = req.params.id;
 
-    if (role === 'user') {
-        const adminCount = await User.countDocuments({ role: 'admin' });
-        const targetUser = await User.findById(targetUserId);
+  if (role === 'user') {
+    const adminCount = await User.countDocuments({ role: 'admin' });
+    const targetUser = await User.findById(targetUserId);
 
-        if (!targetUser) {
-            return next(new HandleError("User not found", 404));
-        }
+    if (!targetUser) return next(new HandleError("User not found", 404));
 
-        if (targetUser.role === 'admin' && adminCount === 1) {
-            return next(new HandleError("Cannot downgrade the last admin", 403));
-        }
+    if (targetUser.role === 'admin' && adminCount === 1) {
+      return next(new HandleError("Cannot downgrade the last admin", 403));
     }
+  }
 
-    const updatedUser = await User.findByIdAndUpdate(
-        targetUserId,
-        { role },
-        { new: true, runValidators: true }
-    );
+  const updatedUser = await User.findByIdAndUpdate(
+    targetUserId,
+    { role },
+    { new: true, runValidators: true }
+  );
 
-    if (!updatedUser) {
-        return next(new HandleError("User not found", 404));
-    }
+  if (!updatedUser) return next(new HandleError("User not found", 404));
 
-    await invalidateCaches();
+  await invalidateCaches();
 
-    res.status(200).json({
-        success: true,
-        user: updatedUser
-    });
+  res.status(200).json({ success: true, user: updatedUser });
 });
 
+// ============================================
+// ADMIN — DELETE USER
+// ============================================
 
-// ADMIN - DELETE USER
+export const deleteUser = handleAsyncError(async (req, res, next) => {
+  const user = await User.findById(req.params.id);
+  if (!user) return next(new HandleError('Invalid user', 400));
 
-export const deleteUser = handleAsyncError(async(req, res, next) => {
-    const user = await User.findById(req.params.id);
-    if(!user) {
-        return next(new HandleError(`Invalid user`, 400));
-    }
+  await User.findByIdAndDelete(req.params.id);
+  await invalidateCaches();
 
-    await User.findByIdAndDelete(req.params.id);
-    await invalidateCaches();
-    
-    return res.status(200).json({
-        success: true,
-        message: `User with ID: ${req.params.id} was deleted successfully`
-    });
+  return res.status(200).json({
+    success: true,
+    message: `User with ID: ${req.params.id} was deleted successfully`
+  });
 });
 
+// ============================================
+// ADMIN — DASHBOARD STATS
+// ============================================
 
-// ADMIN - GET DASHBOARD STATS
-
+// FIX UC2: Replaced Order.find().reduce() (full collection loaded into memory
+// with no filters at all) with a proper aggregate. Added:
+//   - paymentInfo.status: 'success' filter so failed payments aren't revenue
+//   - orderStatus: { $ne: 'Cancelled' } to match the canonical convention
+//   - Parallel execution via Promise.all instead of sequential awaits
 export const getAdminStats = handleAsyncError(async (req, res, next) => {
-    try {
-        const products = await Product.countDocuments();
-        const users = await User.countDocuments();
-        const orders = await Order.countDocuments();
-        const orderList = await Order.find().populate('orderItems.product');
-        const revenue = orderList.reduce((acc, order) => acc + order.totalPrice, 0);
-        const outOfStock = await Product.countDocuments({ stock: { $lte: 0 } });
-        const lowStock = await Product.countDocuments({ stock: { $gt: 0, $lte: 10 } });
-        const inStock = await Product.countDocuments({ stock: { $gt: 0 } });
+  const [
+    products,
+    users,
+    orders,
+    revenueResult,
+    outOfStock,
+    lowStock,
+    inStock
+  ] = await Promise.all([
+    Product.countDocuments(),
+    User.countDocuments(),
+    Order.countDocuments(),
+    Order.aggregate([
+      {
+        $match: {
+          'paymentInfo.status': 'success',
+          orderStatus: { $ne: 'Cancelled' }
+        }
+      },
+      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+    ]),
+    Product.countDocuments({ stock: { $lte: 0 } }),
+    Product.countDocuments({ stock: { $gt: 0, $lte: 10 } }),
+    Product.countDocuments({ stock: { $gt: 0 } })
+  ]);
 
-        res.status(200).json({
-            success: true,
-            products,
-            orders: orders || 0,
-            revenue: revenue || 0,
-            users,
-            outOfStock,
-            lowStock: lowStock || 0,
-            inStock
-        });
-    } catch (error) {
-        console.error("Stats error:", error);
-        return next(new HandleError("Failed to load dashboard stats", 500));
-    }
+  res.status(200).json({
+    success: true,
+    products,
+    orders: orders || 0,
+    revenue: revenueResult[0]?.total || 0,
+    users,
+    outOfStock,
+    lowStock: lowStock || 0,
+    inStock
+  });
 });
