@@ -51,13 +51,10 @@ const userSchema = new mongoose.Schema(
     wishlist: [{
       product: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Product',
+        ref: "Product",
         required: true
       },
-      addedAt: {
-        type: Date,
-        default: Date.now
-      }
+      addedAt: { type: Date, default: Date.now }
     }],
 
     role: {
@@ -90,6 +87,10 @@ const userSchema = new mongoose.Schema(
 
     passwordHistory: [
       {
+        // FIX U1: Must store HASHED passwords so bcrypt.compare() in isPasswordReused()
+        // works correctly. Storing plaintext here means bcrypt.compare(candidate, plaintext)
+        // always returns false (plaintext is not a valid bcrypt hash), silently breaking
+        // the entire password-reuse guard.
         password: String,
         changedAt: Date
       }
@@ -97,8 +98,8 @@ const userSchema = new mongoose.Schema(
 
     profileCompleted: { type: Boolean, default: false }
   },
-  { 
-    timestamps: true, 
+  {
+    timestamps: true,
     strict: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true }
@@ -107,18 +108,16 @@ const userSchema = new mongoose.Schema(
 
 /* ================= VIRTUALS ================= */
 
-// Virtual for full name with null checks
-userSchema.virtual('fullName').get(function() {
-  const first = this.firstName || '';
-  const last = this.lastName || '';
-  return `${first} ${last}`.trim() || 'User';
+userSchema.virtual("fullName").get(function () {
+  const first = this.firstName || "";
+  const last = this.lastName || "";
+  return `${first} ${last}`.trim() || "User";
 });
 
-// Virtual for initials with null checks
-userSchema.virtual('initials').get(function() {
-  const first = this.firstName?.charAt(0) || '';
-  const last = this.lastName?.charAt(0) || '';
-  return `${first}${last}`.toUpperCase() || 'U';
+userSchema.virtual("initials").get(function () {
+  const first = this.firstName?.charAt(0) || "";
+  const last = this.lastName?.charAt(0) || "";
+  return `${first}${last}`.toUpperCase() || "U";
 });
 
 /* ================= INDEXES ================= */
@@ -126,16 +125,16 @@ userSchema.virtual('initials').get(function() {
 userSchema.index({ authProvider: 1 });
 userSchema.index({ createdAt: 1 });
 userSchema.index({ firstName: 1, lastName: 1 });
-userSchema.index({ 'wishlist.product': 1 });
+userSchema.index({ "wishlist.product": 1 });
 
 /* ================= MIDDLEWARE ================= */
 
 // Update avatar URL with user's initials on save
-userSchema.pre('save', function(next) {
-  if (this.isModified('firstName') || this.isModified('lastName')) {
-    if (this.avatar.public_id === 'default_avatar') {
-      const first = this.firstName || 'User';
-      const last = this.lastName || 'Name';
+userSchema.pre("save", function (next) {
+  if (this.isModified("firstName") || this.isModified("lastName")) {
+    if (this.avatar.public_id === "default_avatar") {
+      const first = this.firstName || "User";
+      const last = this.lastName || "Name";
       const name = `${first}+${last}`;
       this.avatar.url = `https://ui-avatars.com/api/?background=667eea&color=fff&name=${encodeURIComponent(name)}&size=200`;
     }
@@ -147,11 +146,21 @@ userSchema.pre('save', function(next) {
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password") || !this.password) return next();
 
+  // FIX U1: Hash the new password first.
+  // Then push the NEW hash into history (replacing the previous approach of
+  // pushing plaintext, which made bcrypt.compare() in isPasswordReused() always
+  // return false and silently broke password reuse detection).
+  //
+  // Why push the new hash (not old)?
+  // On each password change, we record what hash is now in use.
+  // isPasswordReused() compares the candidate against all stored hashes —
+  // if the candidate matches any stored hash, it was a previously used password.
   const hashed = await bcrypt.hash(this.password, 12);
 
   if (!this.isNew) {
+    // Push the new hash BEFORE overwriting so history captures every distinct value
     this.passwordHistory.push({
-      password: this.password,
+      password: hashed,
       changedAt: new Date()
     });
 
@@ -207,24 +216,14 @@ userSchema.methods.getJWTToken = function () {
 
 userSchema.methods.generateVerificationCode = function () {
   const code = crypto.randomInt(100000, 999999).toString();
-
-  this.verificationCode = crypto
-    .createHash("sha256")
-    .update(code)
-    .digest("hex");
-
+  this.verificationCode = crypto.createHash("sha256").update(code).digest("hex");
   this.verificationCodeExpire = Date.now() + 10 * 60 * 1000;
   return code;
 };
 
 userSchema.methods.generatePasswordResetCode = function () {
   const code = crypto.randomInt(100000, 999999).toString();
-
-  this.resetPasswordCode = crypto
-    .createHash("sha256")
-    .update(code)
-    .digest("hex");
-
+  this.resetPasswordCode = crypto.createHash("sha256").update(code).digest("hex");
   this.resetPasswordCodeExpire = Date.now() + 90 * 1000;
   return code;
 };
@@ -235,16 +234,12 @@ userSchema.methods.verifyCode = function (input, hashed, expiry) {
 };
 
 userSchema.methods.verifyEmailCode = function (code) {
-  if (!this.verificationCode || !this.verificationCodeExpire) {
-    return false;
-  }
+  if (!this.verificationCode || !this.verificationCodeExpire) return false;
   return this.verifyCode(code, this.verificationCode, this.verificationCodeExpire);
 };
 
 userSchema.methods.verifyResetCode = function (code) {
-  if (!this.resetPasswordCode || !this.resetPasswordCodeExpire) {
-    return false;
-  }
+  if (!this.resetPasswordCode || !this.resetPasswordCodeExpire) return false;
   return this.verifyCode(code, this.resetPasswordCode, this.resetPasswordCodeExpire);
 };
 

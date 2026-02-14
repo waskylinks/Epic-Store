@@ -28,19 +28,11 @@ import wishlistRoutes from './routes/wishlist-routes.js';
 import cartRoutes from './routes/cart-routes.js';
 import shippingRoutes from './routes/shipping-routes.js';
 import discountRoutes from './routes/discount-routes.js';
-
-
-import customerAnalyticsRoutes from './routes/customer-analytics-routes.js';
-import returnRefundAnalyticsRoutes from './routes/return-refund-analytics-routes.js';
-import operationalAnalyticsRoutes from './routes/operational-analytics-routes.js';
-import productAnalyticsRoutes from './routes/product-analytics-routes.js';
-import attributionAnalyticsRoutes from './routes/attribution-analytics-routes.js';
 import checkoutRoutes from './routes/checkout-routes.js';
-import checkoutAnalyticsRoutes from './routes/checkout-analytics-routes.js';
 import analyticsRoutes from './routes/analytics-routes-index.js';
+import adminStatsRoutes from './routes/admin-stats-routes.js';
 
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
-
 
 // Import passport configuration
 import './config/passport.js';
@@ -242,6 +234,8 @@ app.use(additionalSecurityHeaders);
 app.use(trackAttribution);
 
 /* ================= ROUTES ================= */
+
+// Core Application Routes
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
 app.use('/api/v1', orderRoutes);
@@ -253,21 +247,13 @@ app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1', cartRoutes); // For /products/:id/availability endpoint
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/discounts', discountRoutes);
-
-
-
-app.use('/api/v1/analytics/customers', customerAnalyticsRoutes);
-app.use('/api/v1/analytics', returnRefundAnalyticsRoutes);
-app.use('/api/v1/analytics/operations', operationalAnalyticsRoutes);
-app.use('/api/v1/analytics/products', productAnalyticsRoutes);
-app.use('/api/v1/analytics/attribution', attributionAnalyticsRoutes);
-
 app.use('/api/v1/checkout', checkoutRoutes);
-app.use('/api/v1/analytics/checkout', checkoutAnalyticsRoutes);
 
-app.use("/api/v1/analytics", analyticsRoutes);
+// Analytics Routes (Unified through index router)
+app.use('/api/v1/analytics', analyticsRoutes);
 
-
+// Admin Routes
+app.use('/api/v1/admin', adminStatsRoutes);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
