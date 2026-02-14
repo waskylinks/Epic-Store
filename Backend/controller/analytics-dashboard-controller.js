@@ -1,7 +1,7 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import { getCache, setCache } from "../utils/redis.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
-import { getDateRanges } from "../utils/dateRanges.js";
+import { getDateRanges, getDateGroupFormat } from "../utils/dateRanges.js";
 import { calculateTrend } from "../utils/calculateTrend.js";
 import Order from "../models/order-model.js";
 import Product from "../models/product-model.js";
@@ -9,21 +9,18 @@ import User from "../models/userModel.js";
 import CustomerAnalytics from "../models/customer-analytics-model.js";
 import Checkout from "../models/checkout-model.js";
 import { ORDER_STATUSES } from "../constants/analytics.constants.js";
-
-/**
- * Analytics Dashboard Controller
- * CORRECTED to match actual Order and Product models
- */
+import {
+  getTopProductsByRevenue,
+  getTopCustomers,
+  getTopCategories,
+  getRevenueMetrics,
+  getEstimatedVisitors
+} from "../utils/analyticsHelpers.js";
 
 // ============================================
 // REVENUE TRENDS
 // ============================================
 
-/**
- * Get revenue trends over time
- * @route GET /api/v1/analytics/dashboard/revenue-trends
- * @access Admin
- */
 export const getRevenueTrends = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month", groupBy = "day" } = req.query;
   validateTimeframe(timeframe, next);
@@ -34,85 +31,66 @@ export const getRevenueTrends = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart } = getDateRanges(timeframe);
 
-  // Determine date grouping format
-  const dateFormat = groupBy === "hour"
-    ? { $dateToString: { format: "%Y-%m-%d %H:00", date: "$createdAt" } }
-    : groupBy === "week"
-    ? { $dateToString: { format: "%Y-W%V", date: "$createdAt" } }
-    : groupBy === "month"
-    ? { $dateToString: { format: "%Y-%m", date: "$createdAt" } }
-    : { $dateToString: { format: "%Y-%m-%d", date: "$createdAt" } };
+  // FIX D1: Replaced inline date format switch/case with shared getDateGroupFormat.
+  const dateFormat = getDateGroupFormat(groupBy);
 
-  // ✅ FIX 3: Only exclude cancelled orders, don't require payment success
+  // FIX D2: Added paymentInfo.status: 'success' — only count revenue that was
+  // actually collected. "Relaxing" this filter inflates revenue with failed payments.
   const trends = await Order.aggregate([
     {
       $match: {
         createdAt: { $gte: currentPeriodStart },
-        orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
+        orderStatus: { $ne: ORDER_STATUSES.CANCELLED },
+        "paymentInfo.status": "success"
       }
     },
     {
       $group: {
         _id: dateFormat,
-        revenue: { $sum: '$totalPrice' },
+        revenue: { $sum: "$totalPrice" },
         orders: { $sum: 1 },
-        avgOrderValue: { $avg: '$totalPrice' },
-        customers: { $addToSet: '$user' }
+        avgOrderValue: { $avg: "$totalPrice" },
+        customers: { $addToSet: "$user" }
       }
     },
     {
       $project: {
-        date: '$_id',
-        revenue: { $round: ['$revenue', 2] },
+        date: "$_id",
+        revenue: { $round: ["$revenue", 2] },
         orders: 1,
-        avgOrderValue: { $round: ['$avgOrderValue', 2] },
-        uniqueCustomers: { $size: '$customers' }
+        avgOrderValue: { $round: ["$avgOrderValue", 2] },
+        uniqueCustomers: { $size: "$customers" }
       }
     },
-    {
-      $sort: { date: 1 }
-    }
+    { $sort: { date: 1 } }
   ]);
 
-  // Calculate cumulative revenue
   let cumulativeRevenue = 0;
-  const trendsWithCumulative = trends.map(item => {
+  const trendsWithCumulative = trends.map((item) => {
     cumulativeRevenue += item.revenue;
-    return {
-      ...item,
-      cumulativeRevenue: Math.round(cumulativeRevenue * 100) / 100
-    };
+    return { ...item, cumulativeRevenue: Math.round(cumulativeRevenue * 100) / 100 };
   });
 
-  // ✅ FIX 1: Changed 'trends' to 'data' to match frontend expectations
   const response = {
     data: trendsWithCumulative,
     summary: {
       totalRevenue: Math.round(cumulativeRevenue * 100) / 100,
       totalOrders: trends.reduce((sum, t) => sum + t.orders, 0),
-      avgDailyRevenue: trends.length > 0 
-        ? Math.round((cumulativeRevenue / trends.length) * 100) / 100 
-        : 0
+      avgDailyRevenue:
+        trends.length > 0
+          ? Math.round((cumulativeRevenue / trends.length) * 100) / 100
+          : 0
     }
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
 // TOP PERFORMERS
 // ============================================
 
-/**
- * Get top performing entities (products, customers, categories)
- * @route GET /api/v1/analytics/dashboard/top-performers
- * @access Admin
- */
 export const getTopPerformers = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -123,36 +101,23 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart } = getDateRanges(timeframe);
 
-  const [topProducts, topCustomers, topCategories] = await Promise.all([
-    getTopProducts(currentPeriodStart, 10),
+  // FIX D3: Replaced three local duplicate functions with shared helpers.
+  const [products, customers, categories] = await Promise.all([
+    getTopProductsByRevenue(currentPeriodStart, 10),
     getTopCustomers(currentPeriodStart, 10),
-    getTopCategories(currentPeriodStart)
+    getTopCategories(currentPeriodStart, 10)
   ]);
 
-  // ✅ FIX 2: Changed 'topCategories' to 'categories' to match frontend
-  const response = {
-    products: topProducts,
-    customers: topCustomers,
-    categories: topCategories
-  };
+  const response = { products, customers, categories };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
-// KEY METRICS SUMMARY
+// KEY METRICS SUMMARY (KPIs)
 // ============================================
 
-/**
- * Get key performance indicators (KPIs)
- * @route GET /api/v1/analytics/dashboard/kpis
- * @access Admin
- */
 export const getDashboardKPIs = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -163,42 +128,36 @@ export const getDashboardKPIs = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } = getDateRanges(timeframe);
 
-  // ✅ FIX 3: Relaxed payment filter - only exclude cancelled orders
+  // FIX D2: Consistent payment success filter.
   const [currentOrders, previousOrders] = await Promise.all([
     Order.find({
       createdAt: { $gte: currentPeriodStart },
-      orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-    }).select('totalPrice orderItems user createdAt'),
+      orderStatus: { $ne: ORDER_STATUSES.CANCELLED },
+      "paymentInfo.status": "success"
+    }).select("totalPrice orderItems user createdAt"),
     Order.find({
       createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd },
-      orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-    }).select('totalPrice orderItems user')
+      orderStatus: { $ne: ORDER_STATUSES.CANCELLED },
+      "paymentInfo.status": "success"
+    }).select("totalPrice orderItems user")
   ]);
 
-  // Calculate current period metrics
-  const currentRevenue = currentOrders.reduce((sum, order) => sum + order.totalPrice, 0);
+  const currentRevenue = currentOrders.reduce((sum, o) => sum + o.totalPrice, 0);
   const currentOrderCount = currentOrders.length;
   const currentAOV = currentOrderCount > 0 ? currentRevenue / currentOrderCount : 0;
-  const currentCustomers = new Set(currentOrders.map(o => o.user?.toString())).size;
+  const currentCustomers = new Set(currentOrders.map((o) => o.user?.toString())).size;
 
-  // Calculate previous period metrics
-  const previousRevenue = previousOrders.reduce((sum, order) => sum + order.totalPrice, 0);
+  const previousRevenue = previousOrders.reduce((sum, o) => sum + o.totalPrice, 0);
   const previousOrderCount = previousOrders.length;
   const previousAOV = previousOrderCount > 0 ? previousRevenue / previousOrderCount : 0;
-  const previousCustomers = new Set(previousOrders.map(o => o.user?.toString())).size;
+  const previousCustomers = new Set(previousOrders.map((o) => o.user?.toString())).size;
 
-  // Get conversion rate (orders / total sessions or visitors)
-  const totalVisitors = await getEstimatedVisitors(currentPeriodStart);
+  // FIX D4: Replaced local getEstimatedVisitors with shared helper.
+  const totalVisitors = await getEstimatedVisitors();
   const conversionRate = totalVisitors > 0 ? (currentOrderCount / totalVisitors) * 100 : 0;
 
-  // Get customer lifetime value
   const avgCLV = await CustomerAnalytics.aggregate([
-    {
-      $group: {
-        _id: null,
-        avgCLV: { $avg: '$clv.totalRevenue' }
-      }
-    }
+    { $group: { _id: null, avgCLV: { $avg: "$clv.totalRevenue" } } }
   ]);
 
   const kpis = {
@@ -206,7 +165,7 @@ export const getDashboardKPIs = handleAsyncError(async (req, res, next) => {
       current: Math.round(currentRevenue * 100) / 100,
       previous: Math.round(previousRevenue * 100) / 100,
       change: calculateTrend(currentRevenue, previousRevenue),
-      target: Math.round(currentRevenue * 1.15 * 100) / 100 // 15% growth target
+      target: Math.round(currentRevenue * 1.15 * 100) / 100
     },
     orders: {
       current: currentOrderCount,
@@ -226,200 +185,174 @@ export const getDashboardKPIs = handleAsyncError(async (req, res, next) => {
     },
     conversionRate: {
       current: Math.round(conversionRate * 100) / 100,
-      description: 'Orders / Estimated Visitors'
+      description: "Orders / Estimated Visitors"
     },
     customerLifetimeValue: {
       average: Math.round((avgCLV[0]?.avgCLV || 0) * 100) / 100
     },
     revenuePerCustomer: {
-      current: currentCustomers > 0 ? Math.round((currentRevenue / currentCustomers) * 100) / 100 : 0
+      current:
+        currentCustomers > 0
+          ? Math.round((currentRevenue / currentCustomers) * 100) / 100
+          : 0
     }
   };
 
   await setCache(cacheKey, kpis, 300);
-
-  res.status(200).json({
-    success: true,
-    kpis,
-    timeframe
-  });
+  res.status(200).json({ success: true, kpis, timeframe });
 });
 
 // ============================================
 // DASHBOARD ALERTS
 // ============================================
 
-/**
- * Get dashboard alerts and notifications
- * @route GET /api/v1/analytics/dashboard/alerts
- * @access Admin
- */
 export const getDashboardAlerts = handleAsyncError(async (req, res, next) => {
-  const cacheKey = 'dashboard_alerts';
+  const cacheKey = "dashboard_alerts";
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
   const alerts = [];
 
-  // Check for low stock products (using inventory.stock)
-  const lowStockCount = await Product.countDocuments({
-    status: 'published',
-    'inventory.trackInventory': true,
-    $expr: {
-      $and: [
-        { $gt: ['$inventory.stock', 0] },
-        { $lte: ['$inventory.stock', '$inventory.lowStockThreshold'] }
-      ]
-    }
-  });
+  const [
+    lowStockCount,
+    outOfStockCount,
+    atRiskCustomers,
+    abandonedCheckouts,
+    pendingFraudReviews,
+    slaBreaches,
+    recentReturns
+  ] = await Promise.all([
+    Product.countDocuments({
+      status: "published",
+      "inventory.trackInventory": true,
+      $expr: {
+        $and: [
+          { $gt: ["$inventory.stock", 0] },
+          { $lte: ["$inventory.stock", "$inventory.lowStockThreshold"] }
+        ]
+      }
+    }),
+    Product.countDocuments({
+      status: "published",
+      "inventory.stock": 0,
+      "inventory.trackInventory": true
+    }),
+    CustomerAnalytics.countDocuments({
+      "risk.isAtRisk": true,
+      "risk.churnPrediction": { $in: ["critical", "high"] }
+    }),
+    Checkout.countDocuments({
+      "abandonment.isAbandoned": true,
+      "conversion.isConverted": false,
+      "abandonment.abandonedAt": {
+        $gte: new Date(Date.now() - 24 * 60 * 60 * 1000)
+      }
+    }),
+    Order.countDocuments({
+      "fraudCheck.reviewRequired": true,
+      "fraudCheck.reviewDecision": "Pending"
+    }),
+    Order.countDocuments({
+      "fulfillmentSLA.slaBreached": true,
+      orderStatus: { $in: ["Processing", "Shipped"] }
+    }),
+    Order.countDocuments({
+      "returnInfo.status": { $nin: ["none", "rejected"] },
+      "returnInfo.requestedAt": {
+        $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      }
+    })
+  ]);
 
   if (lowStockCount > 0) {
     alerts.push({
-      type: 'warning',
-      category: 'inventory',
+      type: "warning",
+      category: "inventory",
       message: `${lowStockCount} product(s) are low in stock`,
-      priority: 'medium',
-      actionUrl: '/admin/inventory/low-stock',
-      timeAgo: 'Just now'
+      priority: "medium",
+      actionUrl: "/admin/inventory/low-stock",
+      timeAgo: "Just now"
     });
   }
-
-  // Check for out of stock products
-  const outOfStockCount = await Product.countDocuments({
-    status: 'published',
-    'inventory.stock': 0,
-    'inventory.trackInventory': true
-  });
-
   if (outOfStockCount > 0) {
     alerts.push({
-      type: 'error',
-      category: 'inventory',
+      type: "error",
+      category: "inventory",
       message: `${outOfStockCount} product(s) are out of stock`,
-      priority: 'high',
-      actionUrl: '/admin/inventory/out-of-stock',
-      timeAgo: 'Just now'
+      priority: "high",
+      actionUrl: "/admin/inventory/out-of-stock",
+      timeAgo: "Just now"
     });
   }
-
-  // Check for high-risk customers
-  const atRiskCustomers = await CustomerAnalytics.countDocuments({
-    'risk.isAtRisk': true,
-    'risk.churnPrediction': { $in: ['critical', 'high'] }
-  });
-
   if (atRiskCustomers > 0) {
     alerts.push({
-      type: 'warning',
-      category: 'customers',
+      type: "warning",
+      category: "customers",
       message: `${atRiskCustomers} high-value customer(s) at risk of churning`,
-      priority: 'high',
-      actionUrl: '/admin/customers/at-risk',
-      timeAgo: '2 hours ago'
+      priority: "high",
+      actionUrl: "/admin/customers/at-risk",
+      timeAgo: "2 hours ago"
     });
   }
-
-  // Check for abandoned checkouts
-  const abandonedCheckouts = await Checkout.countDocuments({
-    'abandonment.isAbandoned': true,
-    'conversion.isConverted': false,
-    'abandonment.abandonedAt': {
-      $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) // Last 24 hours
-    }
-  });
-
   if (abandonedCheckouts > 5) {
     alerts.push({
-      type: 'info',
-      category: 'checkout',
+      type: "info",
+      category: "checkout",
       message: `${abandonedCheckouts} checkout(s) abandoned in the last 24 hours`,
-      priority: 'medium',
-      actionUrl: '/admin/checkout/abandoned',
-      timeAgo: '3 hours ago'
+      priority: "medium",
+      actionUrl: "/admin/checkout/abandoned",
+      timeAgo: "3 hours ago"
     });
   }
-
-  // Check for pending fraud reviews
-  const pendingFraudReviews = await Order.countDocuments({
-    'fraudCheck.reviewRequired': true,
-    'fraudCheck.reviewDecision': 'Pending'
-  });
-
   if (pendingFraudReviews > 0) {
     alerts.push({
-      type: 'warning',
-      category: 'fraud',
+      type: "warning",
+      category: "fraud",
       message: `${pendingFraudReviews} order(s) pending fraud review`,
-      priority: 'high',
-      actionUrl: '/admin/orders/fraud-review',
-      timeAgo: '1 hour ago'
+      priority: "high",
+      actionUrl: "/admin/orders/fraud-review",
+      timeAgo: "1 hour ago"
     });
   }
-
-  // Check for SLA breaches
-  const slaBreaches = await Order.countDocuments({
-    'fulfillmentSLA.slaBreached': true,
-    orderStatus: { $in: ['Processing', 'Shipped'] }
-  });
-
   if (slaBreaches > 0) {
     alerts.push({
-      type: 'error',
-      category: 'fulfillment',
+      type: "error",
+      category: "fulfillment",
       message: `${slaBreaches} order(s) have breached SLA`,
-      priority: 'critical',
-      actionUrl: '/admin/fulfillment/sla-breaches',
-      timeAgo: '30 minutes ago'
+      priority: "critical",
+      actionUrl: "/admin/fulfillment/sla-breaches",
+      timeAgo: "30 minutes ago"
     });
   }
-
-  // Check for high return rate
-  const recentReturns = await Order.countDocuments({
-    'returnInfo.status': { $nin: ['none', 'rejected'] },
-    'returnInfo.requestedAt': {
-      $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
-    }
-  });
-
   if (recentReturns > 10) {
     alerts.push({
-      type: 'info',
-      category: 'returns',
+      type: "info",
+      category: "returns",
       message: `${recentReturns} return(s) in the last 7 days`,
-      priority: 'medium',
-      actionUrl: '/admin/returns/overview',
-      timeAgo: '5 hours ago'
+      priority: "medium",
+      actionUrl: "/admin/returns/overview",
+      timeAgo: "5 hours ago"
     });
   }
 
-  // Sort by priority
   const priorityOrder = { critical: 0, high: 1, medium: 2, low: 3 };
   alerts.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]);
 
   const response = {
     alerts,
     totalAlerts: alerts.length,
-    criticalCount: alerts.filter(a => a.priority === 'critical').length,
-    highPriorityCount: alerts.filter(a => a.priority === 'high').length
+    criticalCount: alerts.filter((a) => a.priority === "critical").length,
+    highPriorityCount: alerts.filter((a) => a.priority === "high").length
   };
 
-  await setCache(cacheKey, response, 180); // Cache for 3 minutes
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  await setCache(cacheKey, response, 180);
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
 // DASHBOARD OVERVIEW
 // ============================================
 
-/**
- * Get comprehensive dashboard overview
- * @route GET /api/v1/analytics/dashboard
- * @access Admin
- */
 export const getDashboardOverview = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
@@ -430,112 +363,42 @@ export const getDashboardOverview = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } = getDateRanges(timeframe);
 
-  // Run all metrics in parallel for performance
-  const [
-    revenueMetrics,
-    orderMetrics,
-    customerMetrics,
-    productMetrics,
-    checkoutMetrics,
-    returnMetrics
-  ] = await Promise.all([
+  const [revenue, orders, customers, products, checkouts, returns] = await Promise.all([
+    // FIX D3: Replaced duplicate local getRevenueMetrics with shared helper.
     getRevenueMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
     getOrderMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
     getCustomerMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
-    getProductMetrics(currentPeriodStart),
+    getProductMetrics(),
     getCheckoutMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
     getReturnMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd)
   ]);
 
   const response = {
-    revenue: revenueMetrics,
-    orders: orderMetrics,
-    customers: customerMetrics,
-    products: productMetrics,
-    checkouts: checkoutMetrics,
-    returns: returnMetrics,
+    revenue,
+    orders,
+    customers,
+    products,
+    checkouts,
+    returns,
     timeframe,
     generatedAt: new Date()
   };
 
   await setCache(cacheKey, response, 300);
-
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
 // ============================================
-// HELPER FUNCTIONS
+// PRIVATE HELPERS (dashboard-specific, not shared)
 // ============================================
-
-const getRevenueMetrics = async (currentStart, previousStart, previousEnd) => {
-  const [current, previous] = await Promise.all([
-    Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: currentStart },
-          orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: '$totalPrice' },
-          totalProfit: { $sum: '$profitAnalysis.netProfit' },
-          orders: { $sum: 1 }
-        }
-      }
-    ]),
-    Order.aggregate([
-      {
-        $match: {
-          createdAt: { $gte: previousStart, $lt: previousEnd },
-          orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-        }
-      },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: '$totalPrice' },
-          orders: { $sum: 1 }
-        }
-      }
-    ])
-  ]);
-
-  const currentRevenue = current[0]?.totalRevenue || 0;
-  const previousRevenue = previous[0]?.totalRevenue || 0;
-  const currentProfit = current[0]?.totalProfit || 0;
-
-  return {
-    current: Math.round(currentRevenue * 100) / 100,
-    previous: Math.round(previousRevenue * 100) / 100,
-    change: calculateTrend(currentRevenue, previousRevenue),
-    profit: Math.round(currentProfit * 100) / 100,
-    profitMargin: currentRevenue > 0 ? Math.round((currentProfit / currentRevenue) * 100 * 100) / 100 : 0
-  };
-};
 
 const getOrderMetrics = async (currentStart, previousStart, previousEnd) => {
   const [current, previous, statusBreakdown] = await Promise.all([
-    Order.countDocuments({
-      createdAt: { $gte: currentStart }
-    }),
-    Order.countDocuments({
-      createdAt: { $gte: previousStart, $lt: previousEnd }
-    }),
+    Order.countDocuments({ createdAt: { $gte: currentStart } }),
+    Order.countDocuments({ createdAt: { $gte: previousStart, $lt: previousEnd } }),
     Order.aggregate([
-      {
-        $match: { createdAt: { $gte: currentStart } }
-      },
-      {
-        $group: {
-          _id: '$orderStatus',
-          count: { $sum: 1 }
-        }
-      }
+      { $match: { createdAt: { $gte: currentStart } } },
+      { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
     ])
   ]);
 
@@ -544,82 +407,57 @@ const getOrderMetrics = async (currentStart, previousStart, previousEnd) => {
     return acc;
   }, {});
 
-  return {
-    current,
-    previous,
-    change: calculateTrend(current, previous),
-    statusBreakdown: breakdown
-  };
+  return { current, previous, change: calculateTrend(current, previous), statusBreakdown: breakdown };
 };
 
 const getCustomerMetrics = async (currentStart, previousStart, previousEnd) => {
   const [current, previous, vipCount, atRiskCount] = await Promise.all([
-    User.countDocuments({
-      createdAt: { $gte: currentStart }
-    }),
-    User.countDocuments({
-      createdAt: { $gte: previousStart, $lt: previousEnd }
-    }),
+    User.countDocuments({ createdAt: { $gte: currentStart } }),
+    User.countDocuments({ createdAt: { $gte: previousStart, $lt: previousEnd } }),
     CustomerAnalytics.countDocuments({ isVIP: true }),
-    CustomerAnalytics.countDocuments({ 'risk.isAtRisk': true })
+    CustomerAnalytics.countDocuments({ "risk.isAtRisk": true })
   ]);
 
   return {
-    newCustomers: {
-      current,
-      previous,
-      change: calculateTrend(current, previous)
-    },
+    newCustomers: { current, previous, change: calculateTrend(current, previous) },
     vipCustomers: vipCount,
     atRiskCustomers: atRiskCount
   };
 };
 
-const getProductMetrics = async (currentStart) => {
+const getProductMetrics = async () => {
   const [total, published, lowStock, outOfStock] = await Promise.all([
     Product.countDocuments(),
-    Product.countDocuments({ status: 'published' }),
+    Product.countDocuments({ status: "published" }),
     Product.countDocuments({
-      status: 'published',
-      'inventory.trackInventory': true,
+      status: "published",
+      "inventory.trackInventory": true,
       $expr: {
         $and: [
-          { $gt: ['$inventory.stock', 0] },
-          { $lte: ['$inventory.stock', '$inventory.lowStockThreshold'] }
+          { $gt: ["$inventory.stock", 0] },
+          { $lte: ["$inventory.stock", "$inventory.lowStockThreshold"] }
         ]
       }
     }),
     Product.countDocuments({
-      status: 'published',
-      'inventory.stock': 0,
-      'inventory.trackInventory': true
+      status: "published",
+      "inventory.stock": 0,
+      "inventory.trackInventory": true
     })
   ]);
 
-  return {
-    total,
-    published,
-    lowStock,
-    outOfStock
-  };
+  return { total, published, lowStock, outOfStock };
 };
 
 const getCheckoutMetrics = async (currentStart, previousStart, previousEnd) => {
   const [currentAbandoned, totalCurrent, previousAbandoned, totalPrevious] = await Promise.all([
-    Checkout.countDocuments({
-      createdAt: { $gte: currentStart },
-      'abandonment.isAbandoned': true
-    }),
-    Checkout.countDocuments({
-      createdAt: { $gte: currentStart }
-    }),
+    Checkout.countDocuments({ createdAt: { $gte: currentStart }, "abandonment.isAbandoned": true }),
+    Checkout.countDocuments({ createdAt: { $gte: currentStart } }),
     Checkout.countDocuments({
       createdAt: { $gte: previousStart, $lt: previousEnd },
-      'abandonment.isAbandoned': true
+      "abandonment.isAbandoned": true
     }),
-    Checkout.countDocuments({
-      createdAt: { $gte: previousStart, $lt: previousEnd }
-    })
+    Checkout.countDocuments({ createdAt: { $gte: previousStart, $lt: previousEnd } })
   ]);
 
   const currentRate = totalCurrent > 0 ? (currentAbandoned / totalCurrent) * 100 : 0;
@@ -638,17 +476,14 @@ const getCheckoutMetrics = async (currentStart, previousStart, previousEnd) => {
 const getReturnMetrics = async (currentStart, previousStart, previousEnd) => {
   const [current, previous, delivered] = await Promise.all([
     Order.countDocuments({
-      'returnInfo.requestedAt': { $gte: currentStart },
-      'returnInfo.status': { $ne: 'none' }
+      "returnInfo.requestedAt": { $gte: currentStart },
+      "returnInfo.status": { $ne: "none" }
     }),
     Order.countDocuments({
-      'returnInfo.requestedAt': { $gte: previousStart, $lt: previousEnd },
-      'returnInfo.status': { $ne: 'none' }
+      "returnInfo.requestedAt": { $gte: previousStart, $lt: previousEnd },
+      "returnInfo.status": { $ne: "none" }
     }),
-    Order.countDocuments({
-      orderStatus: 'Delivered',
-      deliveredAt: { $gte: currentStart }
-    })
+    Order.countDocuments({ orderStatus: "Delivered", deliveredAt: { $gte: currentStart } })
   ]);
 
   const returnRate = delivered > 0 ? (current / delivered) * 100 : 0;
@@ -659,131 +494,6 @@ const getReturnMetrics = async (currentStart, previousStart, previousEnd) => {
     change: calculateTrend(current, previous),
     returnRate: Math.round(returnRate * 100) / 100
   };
-};
-
-const getTopProducts = async (startDate, limit) => {
-  const products = await Order.aggregate([
-    {
-      $match: {
-        createdAt: { $gte: startDate },
-        orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-      }
-    },
-    { $unwind: '$orderItems' },
-    {
-      $group: {
-        _id: '$orderItems.product',
-        revenue: { $sum: { $multiply: ['$orderItems.price', '$orderItems.quantity'] } },
-        salesCount: { $sum: '$orderItems.quantity' },
-        orders: { $sum: 1 }
-      }
-    },
-    { $sort: { revenue: -1 } },
-    { $limit: limit }
-  ]);
-
-  return Promise.all(
-    products.map(async (item) => {
-      const product = await Product.findById(item._id).select('name images pricing');
-      return {
-        name: product?.name || 'Unknown Product',
-        image: product?.images?.[0]?.url,
-        price: product?.pricing?.regular || 0,
-        revenue: Math.round(item.revenue * 100) / 100,
-        salesCount: item.salesCount,
-        orders: item.orders,
-        growth: 0 // Placeholder - would need previous period data
-      };
-    })
-  ).then(results => results.filter(r => r.name !== 'Unknown Product'));
-};
-
-const getTopCustomers = async (startDate, limit) => {
-  const customers = await Order.aggregate([
-    {
-      $match: {
-        createdAt: { $gte: startDate },
-        orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-      }
-    },
-    {
-      $group: {
-        _id: '$user',
-        totalSpent: { $sum: '$totalPrice' },
-        orderCount: { $sum: 1 }
-      }
-    },
-    { $sort: { totalSpent: -1 } },
-    { $limit: limit }
-  ]);
-
-  return Promise.all(
-    customers.map(async (item) => {
-      const user = await User.findById(item._id).select('firstName lastName email');
-      return {
-        name: user ? `${user.firstName} ${user.lastName}` : 'Unknown Customer',
-        email: user?.email || '',
-        totalSpent: Math.round(item.totalSpent * 100) / 100,
-        orderCount: item.orderCount
-      };
-    })
-  ).then(results => results.filter(r => r.name !== 'Unknown Customer'));
-};
-
-const getTopCategories = async (startDate) => {
-  const categories = await Order.aggregate([
-    {
-      $match: {
-        createdAt: { $gte: startDate },
-        orderStatus: { $ne: ORDER_STATUSES.CANCELLED }
-      }
-    },
-    { $unwind: '$orderItems' },
-    {
-      $lookup: {
-        from: 'products',
-        localField: 'orderItems.product',
-        foreignField: '_id',
-        as: 'productDetails'
-      }
-    },
-    { $unwind: { path: '$productDetails', preserveNullAndEmptyArrays: true } },
-    {
-      $group: {
-        _id: '$productDetails.category',
-        revenue: { $sum: { $multiply: ['$orderItems.price', '$orderItems.quantity'] } },
-        unitsSold: { $sum: '$orderItems.quantity' }
-      }
-    },
-    { $match: { _id: { $ne: null } } }, // Exclude null categories
-    { $sort: { revenue: -1 } },
-    { $limit: 10 },
-    {
-      $project: {
-        _id: 0,
-        name: '$_id', // ✅ FIX 4: Use 'name' instead of 'category'
-        revenue: { $round: ['$revenue', 2] },
-        unitsSold: 1
-      }
-    }
-  ]);
-
-  return categories;
-};
-
-const getEstimatedVisitors = async (startDate) => {
-  // This is a placeholder - implement with actual session tracking
-  const totalViews = await Product.aggregate([
-    {
-      $group: {
-        _id: null,
-        totalViews: { $sum: '$analytics.views' }
-      }
-    }
-  ]);
-  
-  // Rough estimate: assume 10 page views per visitor
-  return Math.floor((totalViews[0]?.totalViews || 0) / 10);
 };
 
 export default {
