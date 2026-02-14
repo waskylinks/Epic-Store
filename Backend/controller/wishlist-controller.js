@@ -4,76 +4,66 @@ import Product from "../models/product-model.js";
 import HandleError from "../utils/handleError.js";
 import { getCache, setCache, deleteCache, deleteCachePattern } from "../utils/redis.js";
 
-/* ================= GET USER WISHLIST ================= */
+// FIX WC1: Centralised price resolver — removes the product.price dead field
+// that appeared in the original moveToCart response. The product schema has
+// pricing.sale and pricing.regular; there is no top-level product.price field.
+const resolveProductPrice = (product) => {
+  if (product.pricing?.sale > 0) return product.pricing.sale;
+  if (product.pricing?.regular > 0) return product.pricing.regular;
+  return 0;
+};
+
+// ============================================
+// GET USER WISHLIST
+// ============================================
+
 export const getWishlist = handleAsyncError(async (req, res, next) => {
   const userId = req.user.id;
-  
-  // Try cache first
   const cacheKey = `wishlist_${userId}`;
+
   const cached = await getCache(cacheKey);
   if (cached) {
-    return res.status(200).json({
-      success: true,
-      ...cached
-    });
+    return res.status(200).json({ success: true, ...cached });
   }
 
-  // Fetch from database
   const user = await User.findById(userId)
     .populate({
       path: 'wishlist.product',
       select: 'name slug price pricing images category brand ratings numOfReviews stock inventory isFeatured isNewArrival isBestseller isOnSale status',
-      match: { status: 'published' } // Only return published products
+      match: { status: 'published' }
     })
     .lean();
 
-  if (!user) {
-    return next(new HandleError("User not found", 404));
-  }
+  if (!user) return next(new HandleError("User not found", 404));
 
-  // Filter out null products (deleted or unpublished)
   const validWishlist = user.wishlist.filter(item => item.product !== null);
+  const response = { wishlist: validWishlist, count: validWishlist.length };
 
-  const response = {
-    wishlist: validWishlist,
-    count: validWishlist.length
-  };
-
-  // Cache for 5 minutes
   await setCache(cacheKey, response, 300);
 
-  res.status(200).json({
-    success: true,
-    ...response
-  });
+  res.status(200).json({ success: true, ...response });
 });
 
-/* ================= ADD PRODUCT TO WISHLIST ================= */
+// ============================================
+// ADD PRODUCT TO WISHLIST
+// ============================================
+
 export const addToWishlist = handleAsyncError(async (req, res, next) => {
   const { productId } = req.body;
   const userId = req.user.id;
 
-  if (!productId) {
-    return next(new HandleError("Product ID is required", 400));
-  }
+  if (!productId) return next(new HandleError("Product ID is required", 400));
 
-  // Verify product exists and is published
   const product = await Product.findById(productId);
-  if (!product) {
-    return next(new HandleError("Product not found", 404));
-  }
+  if (!product) return next(new HandleError("Product not found", 404));
 
   if (product.status !== 'published') {
     return next(new HandleError("This product is not available", 400));
   }
 
-  // Get user
   const user = await User.findById(userId);
-  if (!user) {
-    return next(new HandleError("User not found", 404));
-  }
+  if (!user) return next(new HandleError("User not found", 404));
 
-  // Check if product already in wishlist
   const alreadyInWishlist = user.wishlist.some(
     item => item.product.toString() === productId
   );
@@ -82,28 +72,20 @@ export const addToWishlist = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Product already in wishlist", 400));
   }
 
-  // Add to wishlist
-  user.wishlist.push({
-    product: productId,
-    addedAt: new Date()
-  });
-
+  user.wishlist.push({ product: productId, addedAt: new Date() });
   await user.save({ validateBeforeSave: false });
 
-  // Update product analytics
   try {
     await product.incrementWishlist(true);
-    console.log(`✅ Product ${productId} wishlist analytics updated (+1)`);
-  } catch (error) {
-    console.warn('Failed to update product wishlist analytics:', error);
+  } catch {
+    // Analytics failure must not abort the wishlist operation
   }
 
-  // Invalidate caches
   await Promise.all([
     deleteCache(`wishlist_${userId}`),
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
-  ]);
+  ]).catch(() => {});
 
   res.status(200).json({
     success: true,
@@ -112,22 +94,19 @@ export const addToWishlist = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/* ================= REMOVE PRODUCT FROM WISHLIST ================= */
+// ============================================
+// REMOVE PRODUCT FROM WISHLIST
+// ============================================
+
 export const removeFromWishlist = handleAsyncError(async (req, res, next) => {
   const { productId } = req.params;
   const userId = req.user.id;
 
-  if (!productId) {
-    return next(new HandleError("Product ID is required", 400));
-  }
+  if (!productId) return next(new HandleError("Product ID is required", 400));
 
-  // Get user
   const user = await User.findById(userId);
-  if (!user) {
-    return next(new HandleError("User not found", 404));
-  }
+  if (!user) return next(new HandleError("User not found", 404));
 
-  // Check if product is in wishlist
   const itemIndex = user.wishlist.findIndex(
     item => item.product.toString() === productId
   );
@@ -136,27 +115,21 @@ export const removeFromWishlist = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Product not in wishlist", 404));
   }
 
-  // Remove from wishlist
   user.wishlist.splice(itemIndex, 1);
   await user.save({ validateBeforeSave: false });
 
-  // Update product analytics
   try {
     const product = await Product.findById(productId);
-    if (product) {
-      await product.incrementWishlist(false);
-      console.log(`✅ Product ${productId} wishlist analytics updated (-1)`);
-    }
-  } catch (error) {
-    console.warn('Failed to update product wishlist analytics:', error);
+    if (product) await product.incrementWishlist(false);
+  } catch {
+    // Analytics failure must not abort the wishlist operation
   }
 
-  // Invalidate caches
   await Promise.all([
     deleteCache(`wishlist_${userId}`),
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
-  ]);
+  ]).catch(() => {});
 
   res.status(200).json({
     success: true,
@@ -165,38 +138,43 @@ export const removeFromWishlist = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/* ================= CLEAR ENTIRE WISHLIST ================= */
+// ============================================
+// CLEAR ENTIRE WISHLIST
+// ============================================
+
 export const clearWishlist = handleAsyncError(async (req, res, next) => {
   const userId = req.user.id;
 
   const user = await User.findById(userId);
-  if (!user) {
-    return next(new HandleError("User not found", 404));
-  }
+  if (!user) return next(new HandleError("User not found", 404));
 
-  // Update analytics for all products
   const productIds = user.wishlist.map(item => item.product);
-  
+
   try {
     await Product.updateMany(
       { _id: { $in: productIds } },
-      { $inc: { 'analytics.addedToWishlist': -1 } }
+      [
+        {
+          $set: {
+            'analytics.addedToWishlist': {
+              $max: [{ $subtract: ['$analytics.addedToWishlist', 1] }, 0]
+            }
+          }
+        }
+      ]
     );
-    console.log(`✅ Bulk wishlist analytics updated for ${productIds.length} products`);
-  } catch (error) {
-    console.warn('Failed to update product analytics during clear:', error);
+  } catch {
+    // Analytics failure must not abort the clear operation
   }
 
-  // Clear wishlist
   user.wishlist = [];
   await user.save({ validateBeforeSave: false });
 
-  // Invalidate caches
   await Promise.all([
     deleteCache(`wishlist_${userId}`),
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
-  ]);
+  ]).catch(() => {});
 
   res.status(200).json({
     success: true,
@@ -205,58 +183,45 @@ export const clearWishlist = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/* ================= CHECK IF PRODUCT IS IN WISHLIST ================= */
+// ============================================
+// CHECK IF PRODUCT IS IN WISHLIST
+// ============================================
+
 export const checkWishlistStatus = handleAsyncError(async (req, res, next) => {
   const { productId } = req.params;
   const userId = req.user.id;
 
-  if (!productId) {
-    return next(new HandleError("Product ID is required", 400));
-  }
+  if (!productId) return next(new HandleError("Product ID is required", 400));
 
   const user = await User.findById(userId).select('wishlist').lean();
-  if (!user) {
-    return next(new HandleError("User not found", 404));
-  }
+  if (!user) return next(new HandleError("User not found", 404));
 
   const isInWishlist = user.wishlist.some(
     item => item.product.toString() === productId
   );
 
-  res.status(200).json({
-    success: true,
-    isInWishlist,
-    productId
-  });
+  res.status(200).json({ success: true, isInWishlist, productId });
 });
 
-/* ================= MOVE PRODUCT TO CART (BONUS) ================= */
+// ============================================
+// MOVE PRODUCT TO CART
+// ============================================
+
 export const moveToCart = handleAsyncError(async (req, res, next) => {
   const { productId } = req.params;
   const userId = req.user.id;
 
-  if (!productId) {
-    return next(new HandleError("Product ID is required", 400));
-  }
+  if (!productId) return next(new HandleError("Product ID is required", 400));
 
-  // Verify product exists and has stock
   const product = await Product.findById(productId);
-  if (!product) {
-    return next(new HandleError("Product not found", 404));
-  }
+  if (!product) return next(new HandleError("Product not found", 404));
 
   const stock = product.inventory?.stock ?? product.stock ?? 0;
-  if (stock === 0) {
-    return next(new HandleError("Product is out of stock", 400));
-  }
+  if (stock === 0) return next(new HandleError("Product is out of stock", 400));
 
-  // Get user
   const user = await User.findById(userId);
-  if (!user) {
-    return next(new HandleError("User not found", 404));
-  }
+  if (!user) return next(new HandleError("User not found", 404));
 
-  // Check if product is in wishlist
   const itemIndex = user.wishlist.findIndex(
     item => item.product.toString() === productId
   );
@@ -265,34 +230,30 @@ export const moveToCart = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Product not in wishlist", 404));
   }
 
-  // Remove from wishlist
   user.wishlist.splice(itemIndex, 1);
   await user.save({ validateBeforeSave: false });
 
-  // Update product analytics
   try {
     await product.incrementWishlist(false);
-    console.log(`✅ Product ${productId} wishlist analytics updated on move to cart`);
-  } catch (error) {
-    console.warn('Failed to update product analytics:', error);
+  } catch {
+    // Analytics failure must not abort the move operation
   }
 
-  // Invalidate caches
   await Promise.all([
     deleteCache(`wishlist_${userId}`),
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
-  ]);
+  ]).catch(() => {});
 
-  // NOTE: Actual cart addition should be handled by your cart controller
-  // This endpoint just removes from wishlist and returns product info
+  // FIX WC1: product.price is always undefined (no such schema field).
+  // resolveProductPrice() reads pricing.sale / pricing.regular correctly.
   res.status(200).json({
     success: true,
     message: "Product removed from wishlist. Add to cart using cart endpoint.",
     product: {
       id: product._id,
       name: product.name,
-      price: product.price,
+      price: resolveProductPrice(product),
       stock
     },
     wishlistCount: user.wishlist.length
