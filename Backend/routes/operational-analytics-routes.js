@@ -9,7 +9,7 @@ import {
   getFraudAnalytics,
   getHighRiskOrders,
   getCancellationAnalytics
-} from "../controller/operational-analytics-controller.js";
+} from "../controller/operations-analytics-controller.js"; // FIX: Corrected import path
 
 const router = express.Router();
 

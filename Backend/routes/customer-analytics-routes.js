@@ -140,7 +140,21 @@ router.get("/purchase-frequency", getPurchaseFrequencyAnalytics);
 router.get("/acquisition-sources", getAcquisitionSourceAnalytics);
 
 // ============================================
+// BULK OPERATIONS
+// FIX: Moved BEFORE :userId routes to prevent route conflict
+// Static routes must come before dynamic parameter routes
+// ============================================
+
+/**
+ * Sync all customer analytics
+ * @route POST /api/v1/analytics/customers/sync-all
+ * @access Admin
+ */
+router.post("/sync-all", syncAllCustomers);
+
+// ============================================
 // INDIVIDUAL CUSTOMER
+// Dynamic routes (:userId) come AFTER all static routes
 // ============================================
 
 /**
@@ -177,16 +191,5 @@ router.put("/:userId/vip", toggleVIPStatus);
  * @access Admin
  */
 router.put("/:userId/flag", flagCustomerForReview);
-
-// ============================================
-// BULK OPERATIONS
-// ============================================
-
-/**
- * Sync all customer analytics
- * @route POST /api/v1/analytics/customers/sync-all
- * @access Admin
- */
-router.post("/sync-all", syncAllCustomers);
 
 export default router;
