@@ -1,11 +1,11 @@
-// analyticsSlice.js - FIXED - Proper state structure for dashboard stats
+// analyticsSlice.js - COMPLETE WITH ALL MISSING THUNKS
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
 const API_BASE = "/api/v1";
 
 // ============================================
-// BASIC ADMIN STATS (LEGACY)
+// EXISTING THUNKS (Keeping all original)
 // ============================================
 
 export const fetchAdminStats = createAsyncThunk(
@@ -13,13 +13,46 @@ export const fetchAdminStats = createAsyncThunk(
     async (_, { rejectWithValue }) => {
         try {
             const { data } = await axios.get(`${API_BASE}/admin/stats`);
-            console.log(data, 'admin stats')
             return data;
         } catch (error) {
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch dashboard stats');
         }
     }
 );
+
+
+// ============================================
+// NEW: ORDER STATUS BREAKDOWN THUNK
+// ============================================
+
+export const fetchOrderStatusBreakdown = createAsyncThunk(
+  'analytics/fetchOrderStatusBreakdown',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${API_BASE}/admin/order-status-breakdown`);
+      return data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || 'Failed to fetch order status breakdown');
+    }
+  }
+);
+
+// ============================================
+// NEW: INVENTORY BREAKDOWN THUNK
+// ============================================
+
+export const fetchInventoryBreakdown = createAsyncThunk(
+  'analytics/fetchInventoryBreakdown',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${API_BASE}/admin/inventory-breakdown`);
+      return data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || 'Failed to fetch inventory breakdown');
+    }
+  }
+);
+
 
 export const fetchBasicAnalytics = createAsyncThunk(
     'analytics/fetchBasicAnalytics',
@@ -32,10 +65,6 @@ export const fetchBasicAnalytics = createAsyncThunk(
         }
     }
 );
-
-// ============================================
-// DASHBOARD ANALYTICS
-// ============================================
 
 export const fetchDashboardOverview = createAsyncThunk(
     'analytics/fetchDashboardOverview',
@@ -105,9 +134,7 @@ export const fetchDashboardAlerts = createAsyncThunk(
     }
 );
 
-// ============================================
-// REPORTS GENERATION
-// ============================================
+// ... (keep all existing report generation thunks)
 
 export const generateBusinessReport = createAsyncThunk(
     'analytics/generateBusinessReport',
@@ -231,9 +258,7 @@ export const exportReportCSV = createAsyncThunk(
     }
 );
 
-// ============================================
-// CUSTOMER ANALYTICS
-// ============================================
+// ... (keep all existing customer, attribution, checkout, product, operations, returns thunks)
 
 export const fetchCustomerOverview = createAsyncThunk(
     'analytics/fetchCustomerOverview',
@@ -319,7 +344,83 @@ export const fetchVIPCustomers = createAsyncThunk(
 );
 
 // ============================================
-// ATTRIBUTION ANALYTICS
+// 🆕 NEW: MISSING CUSTOMER ANALYTICS THUNKS
+// ============================================
+
+export const fetchCLVDistribution = createAsyncThunk(
+    'analytics/fetchCLVDistribution',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/clv-distribution`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch CLV distribution');
+        }
+    }
+);
+
+export const fetchCustomersNeedingAttention = createAsyncThunk(
+    'analytics/fetchCustomersNeedingAttention',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/needs-attention`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch customers needing attention');
+        }
+    }
+);
+
+export const fetchCustomerCohorts = createAsyncThunk(
+    'analytics/fetchCustomerCohorts',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/cohorts?timeframe=${timeframe}`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch customer cohorts');
+        }
+    }
+);
+
+export const fetchRepeatPurchaseAnalytics = createAsyncThunk(
+    'analytics/fetchRepeatPurchaseAnalytics',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/repeat-purchase`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch repeat purchase analytics');
+        }
+    }
+);
+
+export const fetchPurchaseFrequencyAnalytics = createAsyncThunk(
+    'analytics/fetchPurchaseFrequencyAnalytics',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/purchase-frequency`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch purchase frequency');
+        }
+    }
+);
+
+export const fetchAcquisitionSourceAnalytics = createAsyncThunk(
+    'analytics/fetchAcquisitionSourceAnalytics',
+    async (_, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/acquisition-sources`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch acquisition sources');
+        }
+    }
+);
+
+// ============================================
+// ATTRIBUTION ANALYTICS (Existing + New)
 // ============================================
 
 export const fetchChannelPerformance = createAsyncThunk(
@@ -364,8 +465,58 @@ export const fetchDevicePerformance = createAsyncThunk(
     }
 );
 
+// 🆕 NEW: MISSING ATTRIBUTION THUNKS
+
+export const fetchBrowserPerformance = createAsyncThunk(
+    'analytics/fetchBrowserPerformance',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/attribution/browsers?timeframe=${timeframe}`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch browser performance');
+        }
+    }
+);
+
+export const fetchReferrerPerformance = createAsyncThunk(
+    'analytics/fetchReferrerPerformance',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/attribution/referrers?timeframe=${timeframe}`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch referrer performance');
+        }
+    }
+);
+
+export const fetchLandingPagePerformance = createAsyncThunk(
+    'analytics/fetchLandingPagePerformance',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/attribution/landing-pages?timeframe=${timeframe}`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch landing page performance');
+        }
+    }
+);
+
+export const fetchAttributionModels = createAsyncThunk(
+    'analytics/fetchAttributionModels',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(`${API_BASE}/analytics/attribution/models?timeframe=${timeframe}`);
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch attribution models');
+        }
+    }
+);
+
 // ============================================
-// CHECKOUT ANALYTICS
+// CHECKOUT ANALYTICS (Keep existing)
 // ============================================
 
 export const fetchCheckoutAbandonmentStats = createAsyncThunk(
@@ -419,7 +570,7 @@ export const fetchRecoveryOpportunities = createAsyncThunk(
 );
 
 // ============================================
-// PRODUCT ANALYTICS
+// PRODUCT ANALYTICS (Existing + New)
 // ============================================
 
 export const fetchProductPerformanceOverview = createAsyncThunk(
@@ -490,8 +641,38 @@ export const fetchCategoryPerformance = createAsyncThunk(
     }
 );
 
+// 🆕 NEW: MISSING PRODUCT THUNKS
+
+export const fetchProductProfitMargins = createAsyncThunk(
+    'analytics/fetchProductProfitMargins',
+    async ({ limit = 20, sortBy = 'margin' }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/products/profit-margins?limit=${limit}&sortBy=${sortBy}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch profit margins');
+        }
+    }
+);
+
+export const fetchProductsBoughtTogether = createAsyncThunk(
+    'analytics/fetchProductsBoughtTogether',
+    async ({ productId, limit = 10 }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/products/bought-together?productId=${productId}&limit=${limit}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch products bought together');
+        }
+    }
+);
+
 // ============================================
-// OPERATIONAL ANALYTICS
+// OPERATIONAL ANALYTICS (Existing + New)
 // ============================================
 
 export const fetchFulfillmentAnalytics = createAsyncThunk(
@@ -536,8 +717,66 @@ export const fetchFraudAnalytics = createAsyncThunk(
     }
 );
 
+// 🆕 NEW: MISSING OPERATIONS THUNKS
+
+export const fetchShippingCarrierPerformance = createAsyncThunk(
+    'analytics/fetchShippingCarrierPerformance',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/operations/shipping-carriers?timeframe=${timeframe}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch shipping carriers');
+        }
+    }
+);
+
+export const fetchShipmentTrackingAnalytics = createAsyncThunk(
+    'analytics/fetchShipmentTrackingAnalytics',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/operations/shipment-tracking?timeframe=${timeframe}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch shipment tracking');
+        }
+    }
+);
+
+export const fetchCancellationAnalytics = createAsyncThunk(
+    'analytics/fetchCancellationAnalytics',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/operations/cancellations?timeframe=${timeframe}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch cancellations');
+        }
+    }
+);
+
+export const fetchHighRiskOrders = createAsyncThunk(
+    'analytics/fetchHighRiskOrders',
+    async (limit = 50, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/operations/high-risk-orders?limit=${limit}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch high risk orders');
+        }
+    }
+);
+
 // ============================================
-// RETURNS & REFUNDS ANALYTICS
+// RETURNS & REFUNDS ANALYTICS (Existing + New)
 // ============================================
 
 export const fetchReturnOverview = createAsyncThunk(
@@ -582,36 +821,67 @@ export const fetchReturnsByProduct = createAsyncThunk(
     }
 );
 
+// 🆕 NEW: MISSING RETURNS/REFUNDS THUNKS
+
+export const fetchReturnsByCategory = createAsyncThunk(
+    'analytics/fetchReturnsByCategory',
+    async ({ limit = 20, sortBy = 'returnRate' }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/returns/by-category?limit=${limit}&sortBy=${sortBy}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch returns by category');
+        }
+    }
+);
+
+export const fetchRefundsByPaymentMethod = createAsyncThunk(
+    'analytics/fetchRefundsByPaymentMethod',
+    async (timeframe = 'month', { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/refunds/by-payment-method?timeframe=${timeframe}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch refunds by payment method');
+        }
+    }
+);
+
+export const fetchRefundTimeline = createAsyncThunk(
+    'analytics/fetchRefundTimeline',
+    async ({ timeframe = 'month', groupBy = 'day' }, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/refunds/timeline?timeframe=${timeframe}&groupBy=${groupBy}`
+            );
+            return data;
+        } catch (error) {
+            return rejectWithValue(error.response?.data?.message || 'Failed to fetch refund timeline');
+        }
+    }
+);
+
 // ============================================
-// SLICE DEFINITION - FIXED STRUCTURE
+// SLICE DEFINITION - COMPLETE STATE
 // ============================================
 
 const analyticsSlice = createSlice({
     name: 'analytics',
     initialState: {
-        // FIXED: Basic Stats with proper nested structure
+        // Basic Stats
         basicStats: {
             products: 0,
             orders: 0,
             revenue: 0,
             users: 0,
             adminCount: 0,
-            // CRITICAL FIX: Add ordersByStatus structure
-            ordersByStatus: {
-                processing: 0,
-                shipped: 0,
-                delivered: 0,
-                cancelled: 0
-            },
-            // CRITICAL FIX: Add inventory structure
-            inventory: {
-                inStock: 0,
-                lowStock: 0,
-                outOfStock: 0,
-                discontinued: 0,
-                total: 0
-            }
         },
+          ordersByStatus: null,    
+          inventoryStatus: null,
         basicAnalytics: {
             trends: {
                 revenue: 0,
@@ -637,40 +907,59 @@ const analyticsSlice = createSlice({
         currentReport: null,
         reportType: null,
 
-        // Customer Analytics
+        // Customer Analytics (Existing + New)
         customerOverview: null,
         segmentDistribution: null,
         customersBySegment: [],
         highValueCustomers: [],
         atRiskCustomers: [],
         vipCustomers: [],
+        clvDistribution: null, // 🆕 NEW
+        customersNeedingAttention: null, // 🆕 NEW
+        customerCohorts: null, // 🆕 NEW
+        repeatPurchaseAnalytics: null, // 🆕 NEW
+        purchaseFrequencyAnalytics: null, // 🆕 NEW
+        acquisitionSources: null, // 🆕 NEW
 
-        // Attribution
+        // Attribution (Existing + New)
         channelPerformance: null,
         campaignPerformance: null,
         devicePerformance: null,
+        browserPerformance: null, // 🆕 NEW
+        referrerPerformance: null, // 🆕 NEW
+        landingPagePerformance: null, // 🆕 NEW
+        attributionModels: null, // 🆕 NEW
 
         // Checkout
         checkoutAbandonment: null,
         abandonedCheckouts: [],
         recoveryOpportunities: [],
 
-        // Products
+        // Products (Existing + New)
         productPerformance: null,
         productConversion: null,
         inventoryTurnover: null,
         lowStockAlerts: null,
         categoryPerformance: null,
+        productProfitMargins: null, // 🆕 NEW
+        productsBoughtTogether: null, // 🆕 NEW
 
-        // Operations
+        // Operations (Existing + New)
         fulfillmentAnalytics: null,
         slaBreaches: null,
         fraudAnalytics: null,
+        shippingCarriers: null, // 🆕 NEW
+        shipmentTracking: null, // 🆕 NEW
+        cancellationAnalytics: null, // 🆕 NEW
+        highRiskOrders: null, // 🆕 NEW
 
-        // Returns & Refunds
+        // Returns & Refunds (Existing + New)
         returnOverview: null,
         refundOverview: null,
         returnsByProduct: [],
+        returnsByCategory: [], // 🆕 NEW
+        refundsByPaymentMethod: null, // 🆕 NEW
+        refundTimeline: null, // 🆕 NEW
 
         // UI States
         loading: false,
@@ -697,7 +986,9 @@ const analyticsSlice = createSlice({
         }
     },
     extraReducers: (builder) => {
-        
+        // ============================================
+        // BASIC STATS
+        // ============================================
         builder
             .addCase(fetchAdminStats.pending, (state) => {
                 state.loading = true;
@@ -705,14 +996,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchAdminStats.fulfilled, (state, action) => {
                 state.loading = false;
-                
-                console.log('📥 What Redux received:', action.payload);
-                
                 const { success, ...data } = action.payload;
-                
-                console.log('📦 After removing success:', data);
-                console.log('📦 ordersByStatus:', data.ordersByStatus);
-                console.log('📦 inventory:', data.inventory);
                 
                 state.basicStats = {
                     products: data.products || 0,
@@ -720,22 +1004,7 @@ const analyticsSlice = createSlice({
                     revenue: data.revenue || 0,
                     users: data.users || 0,
                     adminCount: data.adminCount || 0,
-                    ordersByStatus: data.ordersByStatus || {
-                        processing: 0,
-                        shipped: 0,
-                        delivered: 0,
-                        cancelled: 0
-                    },
-                    inventory: data.inventory || {
-                        inStock: 0,
-                        lowStock: 0,
-                        outOfStock: 0,
-                        discontinued: 0,
-                        total: 0
-                    }
                 };
-                
-                console.log('✅ Final state:', state.basicStats);
             })
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;
@@ -753,7 +1022,46 @@ const analyticsSlice = createSlice({
             .addCase(fetchBasicAnalytics.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            });
+            })
+
+            .addCase(fetchOrderStatusBreakdown.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+
+            .addCase(fetchOrderStatusBreakdown.fulfilled, (state, action) => {
+                state.ordersByStatus = action.payload.ordersByStatus || {
+                processing: 0,
+                shipped: 0,
+                delivered: 0,
+                cancelled: 0
+                };
+            })
+
+            .addCase(fetchOrderStatusBreakdown.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
+
+            .addCase(fetchInventoryBreakdown.pending, (state) => {
+                state.loading = true;
+                state.error = null;
+            })
+
+            .addCase(fetchInventoryBreakdown.fulfilled, (state, action) => {
+                state.inventoryStatus = action.payload.inventory || {
+                inStock: 0,
+                lowStock: 0,
+                outOfStock: 0,
+                discontinued: 0,
+                total: 0
+                };
+            })
+
+            .addCase(fetchInventoryBreakdown.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+            })
 
         // ============================================
         // DASHBOARD
@@ -772,60 +1080,21 @@ const analyticsSlice = createSlice({
                 state.error = action.payload;
             })
 
-            .addCase(fetchDashboardKPIs.pending, (state) => {
-                state.loading = true;
-                state.error = null;
-            })
             .addCase(fetchDashboardKPIs.fulfilled, (state, action) => {
-                state.loading = false;
                 state.kpis = action.payload.kpis;
             })
-            .addCase(fetchDashboardKPIs.rejected, (state, action) => {
-                state.loading = false;
-                state.error = action.payload;
-            })
-
-            .addCase(fetchRevenueTrends.pending, (state) => {
-                state.loading = true;
-                state.error = null;
-            })
             .addCase(fetchRevenueTrends.fulfilled, (state, action) => {
-                state.loading = false;
                 state.revenueTrends = action.payload;
             })
-            .addCase(fetchRevenueTrends.rejected, (state, action) => {
-                state.loading = false;
-                state.error = action.payload;
-            })
-
-            .addCase(fetchTopPerformers.pending, (state) => {
-                state.loading = true;
-                state.error = null;
-            })
             .addCase(fetchTopPerformers.fulfilled, (state, action) => {
-                state.loading = false;
                 state.topPerformers = action.payload;
             })
-            .addCase(fetchTopPerformers.rejected, (state, action) => {
-                state.loading = false;
-                state.error = action.payload;
-            })
-
-            .addCase(fetchDashboardAlerts.pending, (state) => {
-                state.loading = true;
-                state.error = null;
-            })
             .addCase(fetchDashboardAlerts.fulfilled, (state, action) => {
-                state.loading = false;
                 state.alerts = action.payload.alerts;
-            })
-            .addCase(fetchDashboardAlerts.rejected, (state, action) => {
-                state.loading = false;
-                state.error = action.payload;
             });
 
         // ============================================
-        // REPORTS
+        // REPORTS (Keep all existing)
         // ============================================
         builder
             .addCase(generateBusinessReport.pending, (state) => {
@@ -913,7 +1182,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // CUSTOMER ANALYTICS
+        // CUSTOMER ANALYTICS (Existing + 🆕 NEW)
         // ============================================
         builder
             .addCase(fetchCustomerOverview.fulfilled, (state, action) => {
@@ -933,10 +1202,30 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchVIPCustomers.fulfilled, (state, action) => {
                 state.vipCustomers = action.payload;
+            })
+            
+            // 🆕 NEW REDUCERS
+            .addCase(fetchCLVDistribution.fulfilled, (state, action) => {
+                state.clvDistribution = action.payload;
+            })
+            .addCase(fetchCustomersNeedingAttention.fulfilled, (state, action) => {
+                state.customersNeedingAttention = action.payload;
+            })
+            .addCase(fetchCustomerCohorts.fulfilled, (state, action) => {
+                state.customerCohorts = action.payload;
+            })
+            .addCase(fetchRepeatPurchaseAnalytics.fulfilled, (state, action) => {
+                state.repeatPurchaseAnalytics = action.payload;
+            })
+            .addCase(fetchPurchaseFrequencyAnalytics.fulfilled, (state, action) => {
+                state.purchaseFrequencyAnalytics = action.payload;
+            })
+            .addCase(fetchAcquisitionSourceAnalytics.fulfilled, (state, action) => {
+                state.acquisitionSources = action.payload;
             });
 
         // ============================================
-        // ATTRIBUTION
+        // ATTRIBUTION (Existing + 🆕 NEW)
         // ============================================
         builder
             .addCase(fetchChannelPerformance.fulfilled, (state, action) => {
@@ -947,10 +1236,24 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchDevicePerformance.fulfilled, (state, action) => {
                 state.devicePerformance = action.payload;
+            })
+            
+            // 🆕 NEW REDUCERS
+            .addCase(fetchBrowserPerformance.fulfilled, (state, action) => {
+                state.browserPerformance = action.payload;
+            })
+            .addCase(fetchReferrerPerformance.fulfilled, (state, action) => {
+                state.referrerPerformance = action.payload;
+            })
+            .addCase(fetchLandingPagePerformance.fulfilled, (state, action) => {
+                state.landingPagePerformance = action.payload;
+            })
+            .addCase(fetchAttributionModels.fulfilled, (state, action) => {
+                state.attributionModels = action.payload;
             });
 
         // ============================================
-        // CHECKOUT
+        // CHECKOUT (Keep existing)
         // ============================================
         builder
             .addCase(fetchCheckoutAbandonmentStats.fulfilled, (state, action) => {
@@ -964,7 +1267,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // PRODUCTS
+        // PRODUCTS (Existing + 🆕 NEW)
         // ============================================
         builder
             .addCase(fetchProductPerformanceOverview.fulfilled, (state, action) => {
@@ -981,10 +1284,18 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchCategoryPerformance.fulfilled, (state, action) => {
                 state.categoryPerformance = action.payload;
+            })
+            
+            // 🆕 NEW REDUCERS
+            .addCase(fetchProductProfitMargins.fulfilled, (state, action) => {
+                state.productProfitMargins = action.payload;
+            })
+            .addCase(fetchProductsBoughtTogether.fulfilled, (state, action) => {
+                state.productsBoughtTogether = action.payload;
             });
 
         // ============================================
-        // OPERATIONS
+        // OPERATIONS (Existing + 🆕 NEW)
         // ============================================
         builder
             .addCase(fetchFulfillmentAnalytics.fulfilled, (state, action) => {
@@ -995,10 +1306,24 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchFraudAnalytics.fulfilled, (state, action) => {
                 state.fraudAnalytics = action.payload;
+            })
+            
+            // 🆕 NEW REDUCERS
+            .addCase(fetchShippingCarrierPerformance.fulfilled, (state, action) => {
+                state.shippingCarriers = action.payload;
+            })
+            .addCase(fetchShipmentTrackingAnalytics.fulfilled, (state, action) => {
+                state.shipmentTracking = action.payload;
+            })
+            .addCase(fetchCancellationAnalytics.fulfilled, (state, action) => {
+                state.cancellationAnalytics = action.payload;
+            })
+            .addCase(fetchHighRiskOrders.fulfilled, (state, action) => {
+                state.highRiskOrders = action.payload;
             });
 
         // ============================================
-        // RETURNS & REFUNDS
+        // RETURNS & REFUNDS (Existing + 🆕 NEW)
         // ============================================
         builder
             .addCase(fetchReturnOverview.fulfilled, (state, action) => {
@@ -1009,6 +1334,17 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchReturnsByProduct.fulfilled, (state, action) => {
                 state.returnsByProduct = action.payload;
+            })
+            
+            // 🆕 NEW REDUCERS
+            .addCase(fetchReturnsByCategory.fulfilled, (state, action) => {
+                state.returnsByCategory = action.payload;
+            })
+            .addCase(fetchRefundsByPaymentMethod.fulfilled, (state, action) => {
+                state.refundsByPaymentMethod = action.payload;
+            })
+            .addCase(fetchRefundTimeline.fulfilled, (state, action) => {
+                state.refundTimeline = action.payload;
             });
     }
 });

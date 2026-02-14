@@ -32,6 +32,8 @@ import {
 } from 'recharts';
 import {
   fetchAdminStats,
+  fetchOrderStatusBreakdown,
+  fetchInventoryBreakdown,
   fetchDashboardKPIs,
   fetchRevenueTrends,
   fetchTopPerformers,
@@ -40,7 +42,6 @@ import {
   fetchChannelPerformance,
   fetchDevicePerformance,
   fetchCheckoutAbandonmentStats,
-  fetchProductPerformanceOverview,
   fetchCategoryPerformance,
   fetchLowStockAlerts,
   fetchFulfillmentAnalytics,
@@ -93,8 +94,8 @@ const NAV_GROUPS = [
 
 // ─── AUTO-REFRESH & DEDUPLICATION CONFIG ────────────────────────────────────
 const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
-const STALE_DATA_THRESHOLD = 3 * 60 * 1000; // 3 minutes (reduced from 10)
-const DEBOUNCE_DELAY = 500; // Increased from 300ms for better stability
+const STALE_DATA_THRESHOLD = 3 * 60 * 1000; // 3 minutes
+const DEBOUNCE_DELAY = 500;
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const fmt = {
@@ -224,12 +225,10 @@ function useDebounce(callback, delay) {
   const callbackRef = useRef(callback);
   const timeoutRef = useRef(null);
 
-  // Update callback ref when it changes
   useEffect(() => {
     callbackRef.current = callback;
   }, [callback]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (timeoutRef.current) {
@@ -264,6 +263,8 @@ export default function AdminDashboard() {
 
   const {
     basicStats,
+    ordersByStatus,
+    inventoryStatus,
     kpis,
     revenueTrends,
     topPerformers,
@@ -299,7 +300,6 @@ export default function AdminDashboard() {
   const loadDashboardData = useCallback((currentTimeframe) => {
     // Prevent concurrent loads
     if (isLoadingRef.current) {
-      console.log('📊 Load already in progress, skipping...');
       return;
     }
 
@@ -308,9 +308,10 @@ export default function AdminDashboard() {
       abortControllerRef.current.abort();
     }
 
-    // Create new abort controller
-    abortControllerRef.current = new AbortController();
-    const signal = abortControllerRef.current.signal;
+    // Create new abort controller with safety check
+    if (typeof AbortController !== 'undefined') {
+      abortControllerRef.current = new AbortController();
+    }
 
     const now = Date.now();
     const lastFetch = lastFetchedRef.current[currentTimeframe] || 0;
@@ -318,19 +319,18 @@ export default function AdminDashboard() {
 
     // Skip if data is fresh (less than 30 seconds old)
     if (timeSinceLastFetch < 30000) {
-      console.log('📊 Data is fresh, skipping load...');
       return;
     }
 
     lastFetchedRef.current[currentTimeframe] = now;
-    setLastFetchTime(now); // UPDATE: Set timestamp immediately when starting
+    setLastFetchTime(now);
     isLoadingRef.current = true;
 
-    console.log('📊 Loading dashboard data for timeframe:', currentTimeframe);
-
-    // Dispatch all analytics fetches with abort signal if supported
+    // Dispatch all analytics fetches
     Promise.allSettled([
       dispatch(fetchAdminStats()),
+      dispatch(fetchOrderStatusBreakdown()),
+      dispatch(fetchInventoryBreakdown()),
       dispatch(fetchDashboardKPIs(currentTimeframe)),
       dispatch(fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' })),
       dispatch(fetchTopPerformers(currentTimeframe)),
@@ -339,7 +339,6 @@ export default function AdminDashboard() {
       dispatch(fetchChannelPerformance(currentTimeframe)),
       dispatch(fetchDevicePerformance(currentTimeframe)),
       dispatch(fetchCheckoutAbandonmentStats(currentTimeframe)),
-      dispatch(fetchProductPerformanceOverview(currentTimeframe)),
       dispatch(fetchCategoryPerformance(currentTimeframe)),
       dispatch(fetchLowStockAlerts()),
       dispatch(fetchFulfillmentAnalytics(currentTimeframe)),
@@ -348,34 +347,6 @@ export default function AdminDashboard() {
       dispatch(fetchReturnOverview(currentTimeframe)),
       dispatch(fetchRefundOverview(currentTimeframe))
     ])
-      .then((results) => {
-        // Check if request was aborted
-        if (signal.aborted) {
-          console.log('📊 Request was aborted');
-          return;
-        }
-
-        // Check if component is still mounted
-        if (!isMountedRef.current) {
-          console.log('📊 Component unmounted, skipping state update');
-          return;
-        }
-
-        // Log any failed requests
-        const failed = results.filter(r => r.status === 'rejected');
-        if (failed.length > 0) {
-          console.warn('📊 Some requests failed:', failed.length);
-        }
-
-        console.log('✅ Dashboard data loaded successfully');
-      })
-      .catch((err) => {
-        if (err.name === 'AbortError') {
-          console.log('📊 Fetch aborted');
-        } else {
-          console.error('❌ Error loading dashboard:', err);
-        }
-      })
       .finally(() => {
         isLoadingRef.current = false;
         abortControllerRef.current = null;
@@ -389,47 +360,34 @@ export default function AdminDashboard() {
 
   // Handle timeframe change
   const handleTimeframeChange = useCallback((newTimeframe) => {
-    console.log('📊 Timeframe changed to:', newTimeframe);
     setTimeframe(newTimeframe);
-    
-    // Cancel any pending debounced calls
     cancelDebounce();
-    
-    // Trigger debounced load with new timeframe
     debouncedLoad(newTimeframe);
   }, [debouncedLoad, cancelDebounce]);
 
   // Initial load on mount
   useEffect(() => {
-    console.log('📊 Component mounted, loading initial data');
     isMountedRef.current = true;
-    
-    // Load data immediately on mount
     loadDashboardData(timeframe);
 
-    // Cleanup on unmount
     return () => {
-      console.log('📊 Component unmounting, cleaning up...');
       isMountedRef.current = false;
       
-      // Cancel any pending requests
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
       
-      // Cancel debounced calls
       cancelDebounce();
       
-      // Clear auto-refresh timer
       if (autoRefreshTimerRef.current) {
         clearInterval(autoRefreshTimerRef.current);
       }
     };
-  }, []); // Empty dependency array - only run on mount/unmount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Auto-refresh for current data (separate effect)
+  // Auto-refresh for current data
   useEffect(() => {
-    // Clear existing timer
     if (autoRefreshTimerRef.current) {
       clearInterval(autoRefreshTimerRef.current);
       autoRefreshTimerRef.current = null;
@@ -438,21 +396,16 @@ export default function AdminDashboard() {
     const shouldAutoRefresh = ['day', 'week', 'month'].includes(timeframe);
     
     if (shouldAutoRefresh) {
-      console.log('📊 Setting up auto-refresh for:', timeframe);
-      
       autoRefreshTimerRef.current = setInterval(() => {
         const lastFetch = lastFetchedRef.current[timeframe] || 0;
         const timeSinceLastFetch = Date.now() - lastFetch;
         
-        // Only refresh if data is stale and not currently loading
         if (timeSinceLastFetch >= STALE_DATA_THRESHOLD && !isLoadingRef.current) {
-          console.log('📊 Auto-refresh triggered for stale data');
           loadDashboardData(timeframe);
         }
       }, AUTO_REFRESH_INTERVAL);
     }
 
-    // Cleanup timer on timeframe change or unmount
     return () => {
       if (autoRefreshTimerRef.current) {
         clearInterval(autoRefreshTimerRef.current);
@@ -464,8 +417,20 @@ export default function AdminDashboard() {
   const isActive = (p) => location.pathname === p || location.pathname.startsWith(p + '/');
 
   // ── Derived data ─────────────────────────────────────────────────────────
-  const inv = basicStats?.inventory || {};
-  const orders = basicStats?.ordersByStatus || {};
+  const inv = inventoryStatus || {
+    inStock: 0,
+    lowStock: 0,
+    outOfStock: 0,
+    discontinued: 0,
+    total: 0
+  };
+
+  const orders = ordersByStatus || {
+    processing: 0,
+    shipped: 0,
+    delivered: 0,
+    cancelled: 0
+  };
 
   const kpiCards = [
     {
@@ -666,7 +631,7 @@ export default function AdminDashboard() {
 
             <div className="adm-charts-row">
               <SectionCard title="Order Status Breakdown" icon={ShoppingCart} iconColor="#F97316" link="/admin/orders">
-                {loading && !basicStats?.orders ? (
+                {loading && !ordersByStatus ? (
                   <SectionSkeleton rows={4} />
                 ) : (
                   <div className="adm-metric-list">
@@ -680,7 +645,7 @@ export default function AdminDashboard() {
               </SectionCard>
 
               <SectionCard title="Inventory Breakdown" icon={Inventory} iconColor="#3B82F6" link="/admin/products">
-                {loading && !basicStats?.products ? (
+                {loading && !inventoryStatus ? (
                   <SectionSkeleton rows={5} />
                 ) : (
                   <div className="adm-metric-list">

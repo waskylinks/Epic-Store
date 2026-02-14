@@ -274,26 +274,6 @@
   gap: 10px;
 }
 
-.adm-refresh-btn {
-  width: 36px;
-  height: 36px;
-  border: 1px solid var(--adm-border);
-  background: var(--adm-card);
-  color: var(--adm-text-sec);
-  border-radius: var(--adm-radius-sm);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--adm-transition);
-}
-
-.adm-refresh-btn:hover {
-  background: var(--adm-border);
-  color: var(--adm-text);
-  transform: rotate(45deg);
-}
-
 .adm-timeframe {
   display: flex;
   gap: 3px;
@@ -880,7 +860,7 @@
 }
 
 /* ═══════════════════════════════════════════════════════════
-   LAST UPDATED INDICATOR (replaces refresh button)
+   LAST UPDATED INDICATOR
    ═══════════════════════════════════════════════════════════ */
 
 .adm-last-updated {
