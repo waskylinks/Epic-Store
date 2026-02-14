@@ -1,5 +1,3 @@
-// return-controller.js
-
 import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
@@ -11,64 +9,53 @@ import { deleteCachePattern } from '../utils/redis.js';
 // ============================================
 
 const invalidateReturnCaches = async () => {
-    try {
-        await Promise.all([
-            deleteCachePattern('admin_stats*'),
-            deleteCachePattern('return_overview*'),
-            deleteCachePattern('returns_by_product*'),
-            deleteCachePattern('returns_by_category*')
-        ]);
-    } catch (error) {
-        console.error('Return cache invalidation error:', error);
-    }
+  try {
+    await Promise.all([
+      deleteCachePattern('admin_stats*'),
+      deleteCachePattern('return_overview*'),
+      deleteCachePattern('returns_by_product*'),
+      deleteCachePattern('returns_by_category*')
+    ]);
+  } catch {
+    // Cache invalidation failure must not affect the primary response
+  }
 };
 
 // ============================================
-// RETURN MANAGEMENT - COMPLETE CONTROLLERS
+// GET ALL RETURN REQUESTS (Admin)
 // ============================================
 
-/**
- * Get all return requests (Admin)
- * @route GET /api/v1/admin/returns
- * @access Private (Admin only)
- */
 export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const { status, page = 1, limit = 20 } = req.query;
 
-  const query = {
-    'returnInfo.status': { 
-      $nin: ['none'] 
-    }
-  };
-
-  if (status) {
-    query['returnInfo.status'] = status;
-  }
+  const query = { 'returnInfo.status': { $nin: ['none'] } };
+  if (status) query['returnInfo.status'] = status;
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const orders = await Order.find(query)
-    .populate('user', 'name email')
-    .populate('returnInfo.requestedBy', 'name email')
-    .populate('returnInfo.approvedBy', 'name email')
-    .populate('returnInfo.inspectedBy', 'name email')
-    .populate('returnInfo.messages.sender', 'name email')
-    .sort({ 'returnInfo.requestedAt': -1 })
-    .skip(skip)
-    .limit(parseInt(limit));
+  const [orders, totalReturns, stats] = await Promise.all([
+    Order.find(query)
+      .populate('user', 'name email')
+      .populate('returnInfo.requestedBy', 'name email')
+      .populate('returnInfo.approvedBy', 'name email')
+      .populate('returnInfo.inspectedBy', 'name email')
+      .populate('returnInfo.messages.sender', 'name email')
+      .sort({ 'returnInfo.requestedAt': -1 })
+      .skip(skip)
+      .limit(parseInt(limit)),
+    Order.countDocuments(query),
+    Promise.all([
+      Order.countDocuments({ 'returnInfo.status': 'requested' }),
+      Order.countDocuments({ 'returnInfo.status': 'approved' }),
+      Order.countDocuments({ 'returnInfo.status': 'in_transit' }),
+      Order.countDocuments({ 'returnInfo.status': 'received' }),
+      Order.countDocuments({ 'returnInfo.status': 'inspected' }),
+      Order.countDocuments({ 'returnInfo.status': 'completed' }),
+      Order.countDocuments({ 'returnInfo.status': 'rejected' })
+    ])
+  ]);
 
-  const totalReturns = await Order.countDocuments(query);
-
-  const stats = {
-    total: totalReturns,
-    requested: await Order.countDocuments({ 'returnInfo.status': 'requested' }),
-    approved: await Order.countDocuments({ 'returnInfo.status': 'approved' }),
-    in_transit: await Order.countDocuments({ 'returnInfo.status': 'in_transit' }),
-    received: await Order.countDocuments({ 'returnInfo.status': 'received' }),
-    inspected: await Order.countDocuments({ 'returnInfo.status': 'inspected' }),
-    completed: await Order.countDocuments({ 'returnInfo.status': 'completed' }),
-    rejected: await Order.countDocuments({ 'returnInfo.status': 'rejected' }),
-  };
+  const [requested, approved, in_transit, received, inspected, completed, rejected] = stats;
 
   return res.status(200).json({
     success: true,
@@ -76,7 +63,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     totalReturns,
     currentPage: parseInt(page),
     totalPages: Math.ceil(totalReturns / parseInt(limit)),
-    stats,
+    stats: { total: totalReturns, requested, approved, in_transit, received, inspected, completed, rejected },
     returns: orders.map(order => ({
       orderId: order._id,
       user: order.user,
@@ -89,11 +76,10 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get single return details
- * @route GET /api/v1/admin/returns/:id
- * @access Private (Admin only)
- */
+// ============================================
+// GET SINGLE RETURN (Admin)
+// ============================================
+
 export const getSingleReturn = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -106,9 +92,7 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     .populate('returnInfo.documents.uploadedBy', 'name email')
     .populate('orderItems.product', 'name images price');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status === 'none') {
     return next(new HandleError('No return request found for this order', 404));
@@ -133,11 +117,10 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Customer requests return
- * @route POST /api/v1/orders/:id/return/request
- * @access Private (User who owns the order)
- */
+// ============================================
+// CUSTOMER REQUESTS RETURN
+// ============================================
+
 export const requestReturn = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { reason, itemsToReturn } = req.body;
@@ -148,9 +131,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -189,11 +170,10 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Admin approves/rejects return request
- * @route PUT /api/v1/admin/orders/:id/return/review
- * @access Private (Admin only)
- */
+// ============================================
+// ADMIN APPROVES / REJECTS RETURN
+// ============================================
+
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { action, restockFee = 0, adminNote = '' } = req.body;
@@ -203,9 +183,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status !== 'requested') {
     return next(new HandleError('No pending return request found', 400));
@@ -250,11 +228,10 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   }
 });
 
-/**
- * Update return status
- * @route PUT /api/v1/admin/orders/:id/return/status
- * @access Private (Admin only)
- */
+// ============================================
+// UPDATE RETURN STATUS
+// ============================================
+
 export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { status, inspectionNotes } = req.body;
@@ -265,9 +242,7 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status === 'none') {
     return next(new HandleError('No return request found', 400));
@@ -283,23 +258,30 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   if (status === 'inspected') {
     order.returnInfo.inspectedAt = new Date();
     order.returnInfo.inspectedBy = req.user._id;
-    if (inspectionNotes) {
-      order.returnInfo.inspectionNotes = inspectionNotes;
-    }
+    if (inspectionNotes) order.returnInfo.inspectionNotes = inspectionNotes;
     order.addReturnTimeline('return_inspected', 'Return inspected', req.user._id, { inspectionNotes });
   }
 
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
-    
+
     for (const item of order.returnInfo.itemsToReturn) {
       const product = await Product.findById(item.product);
       if (product && item.condition !== 'damaged') {
-        product.stock += item.quantity;
+        // FIX RC1: Original code always did `product.stock += item.quantity` which
+        // silently restores 0 units for any product using the inventory.stock path.
+        // The correct field depends on how the product was originally created:
+        // older products use the top-level stock field, newer ones use
+        // inventory.stock. Check which path holds the actual value and update that.
+        if (product.inventory?.stock !== undefined) {
+          product.inventory.stock += item.quantity;
+        } else {
+          product.stock += item.quantity;
+        }
         await product.save({ validateBeforeSave: false });
       }
     }
-    
+
     order.addReturnTimeline('return_completed', 'Return process completed', req.user._id);
   }
 
@@ -314,11 +296,10 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Add message to return conversation (Admin)
- * @route POST /api/v1/admin/returns/:id/messages
- * @access Private (Admin only)
- */
+// ============================================
+// ADD MESSAGE TO RETURN (Admin)
+// ============================================
+
 export const addReturnMessage = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { content, attachments = [] } = req.body;
@@ -328,16 +309,13 @@ export const addReturnMessage = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status === 'none') {
     return next(new HandleError('No return request found', 404));
   }
 
   order.addReturnMessage(req.user._id, 'admin', content, attachments);
-
   await order.save();
 
   const newMessage = order.returnInfo.messages[order.returnInfo.messages.length - 1];
@@ -345,18 +323,14 @@ export const addReturnMessage = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Message sent successfully',
-    data: {
-      orderId: order._id,
-      message: newMessage
-    }
+    data: { orderId: order._id, message: newMessage }
   });
 });
 
-/**
- * Customer adds message to return conversation
- * @route POST /api/v1/orders/:id/return/messages
- * @access Private (User who owns the order)
- */
+// ============================================
+// ADD MESSAGE TO RETURN (Customer)
+// ============================================
+
 export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { content, attachments = [] } = req.body;
@@ -367,9 +341,7 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -380,7 +352,6 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
   }
 
   order.addReturnMessage(userId, 'customer', content, attachments);
-
   await order.save();
 
   const newMessage = order.returnInfo.messages[order.returnInfo.messages.length - 1];
@@ -388,18 +359,14 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
   return res.status(200).json({
     success: true,
     message: 'Message sent successfully',
-    data: {
-      orderId: order._id,
-      message: newMessage
-    }
+    data: { orderId: order._id, message: newMessage }
   });
 });
 
-/**
- * Get return messages/conversation
- * @route GET /api/v1/orders/:id/return/messages
- * @access Private (User or Admin)
- */
+// ============================================
+// GET RETURN MESSAGES
+// ============================================
+
 export const getReturnMessages = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -409,20 +376,14 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
     .populate('returnInfo.messages.sender', 'name email role')
     .select('returnInfo.messages user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  if (!order.returnInfo || !order.returnInfo.messages) {
-    return res.status(200).json({
-      success: true,
-      count: 0,
-      messages: []
-    });
+  if (!order.returnInfo?.messages) {
+    return res.status(200).json({ success: true, count: 0, messages: [] });
   }
 
   const senderType = isAdmin ? 'admin' : 'customer';
@@ -437,11 +398,10 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get return timeline
- * @route GET /api/v1/orders/:id/return/timeline
- * @access Private (User or Admin)
- */
+// ============================================
+// GET RETURN TIMELINE
+// ============================================
+
 export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -451,20 +411,14 @@ export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
     .populate('returnInfo.timeline.performedBy', 'name email role')
     .select('returnInfo.timeline user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  if (!order.returnInfo || !order.returnInfo.timeline) {
-    return res.status(200).json({
-      success: true,
-      count: 0,
-      timeline: []
-    });
+  if (!order.returnInfo?.timeline) {
+    return res.status(200).json({ success: true, count: 0, timeline: [] });
   }
 
   return res.status(200).json({
@@ -474,11 +428,10 @@ export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Get return documents
- * @route GET /api/v1/orders/:id/return/documents
- * @access Private (User or Admin)
- */
+// ============================================
+// GET RETURN DOCUMENTS
+// ============================================
+
 export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -488,20 +441,14 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
     .populate('returnInfo.documents.uploadedBy', 'name email role')
     .select('returnInfo.documents user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  if (!order.returnInfo || !order.returnInfo.documents) {
-    return res.status(200).json({
-      success: true,
-      count: 0,
-      documents: []
-    });
+  if (!order.returnInfo?.documents) {
+    return res.status(200).json({ success: true, count: 0, documents: [] });
   }
 
   return res.status(200).json({
@@ -511,11 +458,10 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Upload files for return (Admin)
- * @route POST /api/v1/admin/returns/:id/upload
- * @access Private (Admin only)
- */
+// ============================================
+// UPLOAD FILES FOR RETURN (Admin)
+// ============================================
+
 export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -524,27 +470,17 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status === 'none') {
     return next(new HandleError('No return request found', 404));
   }
 
   const uploadedFiles = [];
-  
+
   for (const file of req.files) {
     const fileUrl = `/uploads/returns/${order._id}/${file.filename}`;
-    
-    order.addReturnDocument(
-      'other',
-      fileUrl,
-      file.originalname,
-      req.user._id,
-      ''
-    );
-
+    order.addReturnDocument('other', fileUrl, file.originalname, req.user._id, '');
     uploadedFiles.push({
       url: fileUrl,
       filename: file.originalname,
@@ -562,11 +498,10 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
   });
 });
 
-/**
- * Customer uploads files for return
- * @route POST /api/v1/orders/:id/return/upload
- * @access Private (User who owns the order)
- */
+// ============================================
+// UPLOAD FILES FOR RETURN (Customer)
+// ============================================
+
 export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -576,9 +511,7 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -589,18 +522,10 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
   }
 
   const uploadedFiles = [];
-  
+
   for (const file of req.files) {
     const fileUrl = `/uploads/returns/${order._id}/${file.filename}`;
-    
-    order.addReturnDocument(
-      'photo',
-      fileUrl,
-      file.originalname,
-      userId,
-      ''
-    );
-
+    order.addReturnDocument('photo', fileUrl, file.originalname, userId, '');
     uploadedFiles.push({
       url: fileUrl,
       filename: file.originalname,
@@ -618,11 +543,10 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
   });
 });
 
-/**
- * Get returns with unread messages (Admin)
- * @route GET /api/v1/admin/returns/unread
- * @access Private (Admin only)
- */
+// ============================================
+// GET RETURNS WITH UNREAD MESSAGES (Admin)
+// ============================================
+
 export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, next) => {
   const orders = await Order.getReturnsWithUnreadMessages();
 
@@ -643,19 +567,16 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
   });
 });
 
-/**
- * Cancel return request (Customer only, before approval)
- * @route PUT /api/v1/orders/:id/return/cancel
- * @access Private (User who owns the order)
- */
+// ============================================
+// CANCEL RETURN REQUEST (Customer)
+// ============================================
+
 export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
