@@ -87,10 +87,8 @@ const userSchema = new mongoose.Schema(
 
     passwordHistory: [
       {
-        // FIX U1: Must store HASHED passwords so bcrypt.compare() in isPasswordReused()
-        // works correctly. Storing plaintext here means bcrypt.compare(candidate, plaintext)
-        // always returns false (plaintext is not a valid bcrypt hash), silently breaking
-        // the entire password-reuse guard.
+        // FIX U1: Store HASHED passwords (not plaintext) so bcrypt.compare()
+        // in isPasswordReused() works correctly
         password: String,
         changedAt: Date
       }
@@ -142,34 +140,30 @@ userSchema.pre("save", function (next) {
   next();
 });
 
-// Password hashing
+// FIX U1: Password hashing with proper history tracking
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password") || !this.password) return next();
 
-  // FIX U1: Hash the new password first.
-  // Then push the NEW hash into history (replacing the previous approach of
-  // pushing plaintext, which made bcrypt.compare() in isPasswordReused() always
-  // return false and silently broke password reuse detection).
-  //
-  // Why push the new hash (not old)?
-  // On each password change, we record what hash is now in use.
-  // isPasswordReused() compares the candidate against all stored hashes —
-  // if the candidate matches any stored hash, it was a previously used password.
-  const hashed = await bcrypt.hash(this.password, 12);
-
+  // On password change (not initial registration), store the OLD hash BEFORE replacing it
+  // This allows isPasswordReused() to compare candidates against all previous passwords
   if (!this.isNew) {
-    // Push the new hash BEFORE overwriting so history captures every distinct value
-    this.passwordHistory.push({
-      password: hashed,
-      changedAt: new Date()
-    });
+    // Get the old password hash from the database (this.password is the new plaintext)
+    const oldDoc = await this.constructor.findById(this._id).select('+password');
+    if (oldDoc && oldDoc.password) {
+      this.passwordHistory.push({
+        password: oldDoc.password,  // Store the OLD hash
+        changedAt: new Date()
+      });
 
-    if (this.passwordHistory.length > 5) {
-      this.passwordHistory = this.passwordHistory.slice(-5);
+      // Keep only the last 5 password hashes
+      if (this.passwordHistory.length > 5) {
+        this.passwordHistory = this.passwordHistory.slice(-5);
+      }
     }
   }
 
-  this.password = hashed;
+  // Hash the new password
+  this.password = await bcrypt.hash(this.password, 12);
   next();
 });
 
@@ -179,6 +173,7 @@ userSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
+// Now works correctly because passwordHistory stores hashed passwords
 userSchema.methods.isPasswordReused = async function (candidate) {
   for (const item of this.passwordHistory) {
     if (await bcrypt.compare(candidate, item.password)) return true;

@@ -203,8 +203,6 @@ const productSchema = new mongoose.Schema(
 
 // ============================================
 // PRICING VALIDATION (PRE-VALIDATE)
-// NOTE: This only runs on .save()/.validate(). findOneAndUpdate bypasses it.
-// Apply the same constraints in your update service layer as well.
 // ============================================
 productSchema.pre('validate', function (next) {
   const { pricing } = this;
@@ -213,8 +211,8 @@ productSchema.pre('validate', function (next) {
     return next(new Error('Pricing.regular is required'));
   }
 
-  // FIX P3: sale=0 with regular=0 is a valid free product — only reject
-  // when sale is explicitly set AND is >= regular on a non-zero price.
+  // FIX P3: Allow sale=0 with regular=0 (valid free product)
+  // Only reject when sale >= regular on non-zero prices
   if (pricing.sale != null && pricing.regular > 0 && pricing.sale >= pricing.regular) {
     return next(new Error('Sale price must be less than regular price'));
   }
@@ -233,8 +231,8 @@ productSchema.virtual('finalPrice').get(function () {
   return this.pricing?.sale ?? this.pricing?.regular;
 });
 
-// FIX P2: `this.pricing?.sale` is falsy when sale=0 (valid free item),
-// causing 100% discount to show as 0%. Use `!= null` check instead.
+// FIX P2: Use explicit null check instead of falsy check
+// (sale=0 is valid for 100% discount, but is falsy)
 productSchema.virtual('discountPercentage').get(function () {
   if (this.pricing?.sale != null && this.pricing?.regular) {
     return Math.round(
@@ -244,8 +242,8 @@ productSchema.virtual('discountPercentage').get(function () {
   return 0;
 });
 
-// FIX P9: A Discontinued product should not be reported as LowStock or
-// OutOfStock — those are stock-driven states. Discontinued is admin-set.
+// FIX P9: Discontinued products should not be classified as LowStock/OutOfStock
+// Discontinued is an admin-set flag, not a stock-driven state
 productSchema.virtual('isLowStock').get(function () {
   if (this.inventory?.status === 'Discontinued') return false;
   const stock = this.inventory?.stock ?? 0;
@@ -277,8 +275,8 @@ productSchema.index({ isNewArrival: 1, status: 1 });
 productSchema.index({ isBestseller: 1, status: 1 });
 productSchema.index({ 'analytics.views': -1 });
 productSchema.index({ 'analytics.purchases': -1 });
-// FIX P10: Add index for inventory.status — used in find queries throughout
-// the codebase (lowStockProducts, getInventoryStats, etc.)
+
+// FIX P10: Add missing index for inventory.status (used in many queries)
 productSchema.index({ 'inventory.status': 1, status: 1 });
 
 // Text search index
@@ -297,9 +295,7 @@ productSchema.index({ status: 1, isFeatured: 1, ratings: -1 });
 // PRE-SAVE MIDDLEWARE
 // ============================================
 productSchema.pre('save', function (next) {
-  // Auto-generate slug on first save only.
-  // Slugs are intentionally stable after creation for SEO — renaming a product
-  // does not auto-update the slug to avoid breaking existing URLs.
+  // Auto-generate slug on first save only
   if (this.isModified('name') && !this.slug) {
     this.slug = this.name
       .toLowerCase()
@@ -309,10 +305,8 @@ productSchema.pre('save', function (next) {
       .trim();
   }
 
-  // FIX P4: Guard Discontinued status — it is an admin-set flag, not
-  // a stock-derived state. Stock-based logic must not overwrite it.
-  // FIX P6: Use nullish coalescing for lowStockThreshold so an explicitly
-  // null threshold doesn't coerce to 0 and misclassify stock levels.
+  // FIX P4: Guard Discontinued status - it's admin-set, not stock-derived
+  // FIX P6: Use nullish coalescing for threshold (null shouldn't become 0)
   if (this.inventory && this.inventory.status !== 'Discontinued') {
     const threshold = this.inventory.lowStockThreshold ?? 5;
     if (this.inventory.stock === 0) {
@@ -324,7 +318,7 @@ productSchema.pre('save', function (next) {
     }
   }
 
-  // Check if on sale
+  // Check if on sale (using explicit null check)
   this.isOnSale = !!(this.pricing?.sale != null && this.pricing.sale < this.pricing.regular);
 
   // Set publishedAt date
@@ -379,9 +373,8 @@ productSchema.methods.incrementView = async function () {
   return this.save({ validateBeforeSave: false });
 };
 
-// FIX P4-confirmed + FIX P5: Floor stock at 0 to prevent negative inventory.
-// The pre-save hook (which runs even with validateBeforeSave:false) will then
-// correctly set inventory.status based on the new stock value.
+// FIX P5: Floor stock at 0 to prevent negative inventory
+// Pre-save hook will then correctly update inventory.status based on new stock
 productSchema.methods.incrementPurchase = async function (quantity = 1) {
   this.analytics.purchases += quantity;
   if (this.inventory?.trackInventory) {

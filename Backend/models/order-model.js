@@ -185,8 +185,6 @@ const orderSchema = new mongoose.Schema(
       refundedAt: Date,
       gatewayResponse: { type: mongoose.Schema.Types.Mixed },
       failureReason: String,
-      // NOTE: This subdocument uses field name `message` (not `content`)
-      // for historical reasons. See addRefundMessage instance method.
       messages: [{
         sender: {
           type: mongoose.Schema.Types.ObjectId,
@@ -232,7 +230,6 @@ const orderSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
         metadata: mongoose.Schema.Types.Mixed
       }],
-      // Legacy fields
       amount: { type: Number, default: 0 },
       refundReference: String,
       notes: String
@@ -456,7 +453,6 @@ const orderSchema = new mongoose.Schema(
       reviewRequired: Boolean,
       reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       reviewedAt: Date,
-      // Enum is Pascal case: 'Approved' | 'Rejected' | 'Pending'
       reviewDecision: { type: String, enum: ['Approved', 'Rejected', 'Pending'] },
       ipAddress: String,
       deviceFingerprint: String,
@@ -514,8 +510,7 @@ orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 // VIRTUALS
 // ============================================
 
-// FIX O1: Use optional chaining so malformed documents that lack paymentInfo
-// or refundInfo don't throw TypeError when this virtual is accessed.
+// FIX O1: Use optional chaining to prevent TypeError on malformed documents
 orderSchema.virtual('isRefundable').get(function () {
   return (
     this.paymentInfo?.status === 'success' &&
@@ -524,7 +519,6 @@ orderSchema.virtual('isRefundable').get(function () {
   );
 });
 
-// FIX O4: Optional chaining on refundInfo to prevent TypeError on malformed docs.
 orderSchema.virtual('refundableAmount').get(function () {
   return this.amountPaid - (this.refundInfo?.refundAmount || 0);
 });
@@ -547,9 +541,7 @@ orderSchema.virtual('hasActiveReturn').get(function () {
   );
 });
 
-// FIX O2: reviewDecision enum values are Pascal case ('Pending', not 'pending').
-// The original compared against 'pending' which never matched, making this
-// virtual always return false — silently hiding all fraud alerts.
+// FIX O2: Use correct Pascal case enum value 'Pending' (not 'pending')
 orderSchema.virtual('needsFraudReview').get(function () {
   return (
     this.fraudCheck &&
@@ -571,13 +563,8 @@ orderSchema.virtual('isFullyFulfilled').get(function () {
   );
 });
 
-// FIX O3: `this.user` is an unpopulated ObjectId reference — it has no `.role`
-// property. `this.user?.role` is ALWAYS undefined, so `userType` was always
-// 'admin', making the virtuals return wrong counts for non-admin consumers.
-//
-// Solution: expose separate counts for both sides so callers can pick the
-// relevant count based on the viewing context (admin sees customer unread,
-// customer sees admin unread). Naming: *FromCustomer / *FromAdmin.
+// FIX O3: Split unread message counts by sender type instead of trying to check
+// unpopulated user.role (which is always undefined on an ObjectId reference)
 orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
@@ -643,27 +630,24 @@ orderSchema.set('strictQuery', true);
 // PRE-SAVE MIDDLEWARE
 // ============================================
 orderSchema.pre('save', function (next) {
-  // FIX O5: Math.random() with 4-digit padding gives only 10,000 combinations
-  // per month — high-volume stores will hit collisions and get a MongoError
-  // due to the unique:true constraint on invoiceNumber. Use timestamp-based
-  // entropy (base-36 milliseconds) for much lower collision probability.
+  // FIX O5: Use timestamp + process ID for better entropy in high-concurrency scenarios
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
     const year = new Date().getFullYear();
     const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const entropy = Date.now().toString(36).toUpperCase();
+    // Combine timestamp with process ID for better uniqueness under load
+    const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
     this.invoiceInfo = this.invoiceInfo || {};
     this.invoiceInfo.invoiceNumber = `INV-${year}${month}-${entropy}`;
     this.invoiceInfo.invoiceDate = new Date();
   }
 
-  // FIX O6: Same collision risk for RMA numbers — use timestamp entropy.
+  // FIX O6: Use timestamp + process ID for RMA numbers
   if (this.returnInfo?.status === 'approved' && !this.returnInfo.rmaNumber) {
-    const entropy = Date.now().toString(36).toUpperCase();
+    const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
     this.returnInfo.rmaNumber = `RMA-${entropy}`;
   }
 
-  // FIX O7: `!item.quantityOrdered` is falsy for 0, which is a valid value.
-  // Use explicit null check to avoid overwriting intentional 0 quantities.
+  // FIX O7: Use explicit null check instead of falsy check (0 is valid quantity)
   if (this.orderItems) {
     this.orderItems.forEach(item => {
       if (item.quantityOrdered == null) {
@@ -679,16 +663,14 @@ orderSchema.pre('save', function (next) {
 // STATIC METHODS
 // ============================================
 
-// FIX O8 (all statics): User model has no `name` field.
-// It stores `firstName` and `lastName` separately; `name` is a virtual (fullName).
-// Populate projections only work on stored fields, not virtuals.
+// FIX O8: Use 'firstName lastName' instead of 'name' (User model has no 'name' field)
 orderSchema.statics.getOrdersByStatus = async function (status) {
   return this.find({ orderStatus: status })
     .populate('user', 'firstName lastName email')
     .sort({ createdAt: -1 });
 };
 
-// FIX O9: reviewDecision enum is Pascal case — 'pending' never matched anything.
+// FIX O9: Use 'Pending' (Pascal case) to match enum definition
 orderSchema.statics.getPendingFraudReviews = async function () {
   return this.find({
     'fraudCheck.reviewRequired': true,
