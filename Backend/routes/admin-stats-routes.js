@@ -5,7 +5,9 @@ import {
     getAdminStats, 
     getAnalytics,
     getTopProductsEndpoint,
-    getInventoryStats
+    getInventoryStats,
+    getInventoryStatusBreakdown,
+    getOrderStatusBreakdown
 } from "../controller/admin-stats-controller.js";
 
 const router = express.Router();
@@ -41,5 +43,9 @@ router.get("/inventory-stats", getInventoryStats);
  * @access Admin
  */
 router.get("/top-products", getTopProductsEndpoint);
+
+router.get("/order-status-breakdown", getOrderStatusBreakdown);
+
+router.get('/inventory-breakdown', getInventoryStatusBreakdown);
 
 export default router;

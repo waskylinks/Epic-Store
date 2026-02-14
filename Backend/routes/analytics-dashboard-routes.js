@@ -7,7 +7,7 @@ import {
   getRevenueTrends,
   getTopPerformers,
   getDashboardAlerts
-} from "../controller/dashboard-controller.js"; // FIX: Corrected import path
+} from "../controller/analytics-dashboard-controller.js"; 
 
 const router = express.Router();
 

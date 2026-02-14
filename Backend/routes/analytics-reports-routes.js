@@ -8,7 +8,7 @@ import {
   generateProductReport,
   generateFinancialReport,
   exportReportCSV
-} from "../controller/reports-controller.js"; // FIX: Corrected import path
+} from "../controller/analytics-reports-controller.js"; 
 
 const router = express.Router();
 
