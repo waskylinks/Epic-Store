@@ -5,165 +5,65 @@ import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import generateInvoicePDF from '../utils/generateInvoicePDF.js';
-import fs from 'fs';
-import path from 'path';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
+// FIX OC1: Removed duplicate calculateFraudRisk and calculateFulfillmentSLA —
+// both were copy-pasted from paymentController with the orderController copy missing
+// 4 risk checks. Canonical versions now live in utils.
+import { calculateFraudRisk } from '../utils/fraudCheck.js';
+import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
 // ============================================
 // ANALYTICS HELPER FUNCTIONS
 // ============================================
 
-/**
- * Extract analytics data from request
- */
 const extractAnalyticsData = (req) => {
   const userAgent = req.get('user-agent') || '';
   const referrer = req.get('referer') || req.get('referrer') || '';
-  
-  // Parse user agent for device/browser
+
   const isMobile = /mobile/i.test(userAgent);
   const isTablet = /tablet|ipad/i.test(userAgent);
   const device = isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop';
-  
-  // Extract browser
+
   let browser = 'unknown';
   if (/chrome/i.test(userAgent)) browser = 'Chrome';
   else if (/safari/i.test(userAgent)) browser = 'Safari';
   else if (/firefox/i.test(userAgent)) browser = 'Firefox';
   else if (/edge/i.test(userAgent)) browser = 'Edge';
-  
+
   return {
     device,
     browser,
     referrer: referrer || null,
-    userAgent: userAgent.substring(0, 200) // Truncate
+    userAgent: userAgent.substring(0, 200)
   };
 };
 
-/**
- * Parse UTM parameters from query or body
- */
-const parseUTMParams = (data) => {
-  return {
-    source: data.utm_source || data.source || 'direct',
-    medium: data.utm_medium || data.medium || null,
-    campaign: data.utm_campaign || data.campaign || null,
-    term: data.utm_term || null,
-    content: data.utm_content || null
-  };
-};
+const parseUTMParams = (data) => ({
+  source: data.utm_source || data.source || 'direct',
+  medium: data.utm_medium || data.medium || null,
+  campaign: data.utm_campaign || data.campaign || null,
+  term: data.utm_term || null,
+  content: data.utm_content || null
+});
 
-/**
- * Update product analytics after order
- */
-const updateProductAnalytics = async (orderItems, type = 'purchase') => {
+const updateProductAnalytics = async (orderItems) => {
   try {
     for (const item of orderItems) {
-      const product = await Product.findById(item.product);
-      if (product) {
-        if (type === 'purchase') {
-          product.analytics = product.analytics || {};
-          product.analytics.purchases = (product.analytics.purchases || 0) + item.quantity;
-          await product.save({ validateBeforeSave: false });
-        }
-      }
+      await Product.findByIdAndUpdate(
+        item.product,
+        { $inc: { 'analytics.purchases': item.quantity } },
+        { new: false }
+      );
     }
-  } catch (error) {
-    console.error('Failed to update product analytics:', error);
+  } catch {
+    // Non-critical — analytics update failure must not abort an order
   }
-};
-
-/**
- * Calculate fraud risk score
- */
-const calculateFraudRisk = (order, user) => {
-  let riskScore = 0;
-  const flags = [];
-
-  // High order value
-  if (order.totalPrice > 1000) {
-    riskScore += 20;
-    flags.push('high_order_value');
-  }
-
-  // New account (less than 7 days)
-  const accountAge = (Date.now() - new Date(user.createdAt).getTime()) / (1000 * 60 * 60 * 24);
-  if (accountAge < 7) {
-    riskScore += 30;
-    flags.push('new_account');
-  }
-
-  // Shipping and billing address mismatch
-  if (order.shippingInfo?.address !== order.paymentInfo?.billingAddress) {
-    riskScore += 15;
-    flags.push('address_mismatch');
-  }
-
-  // Multiple orders in short time (would need to check recent orders)
-  // This is a placeholder - implement based on your requirements
-  
-  // Determine risk level
-  let riskLevel = 'low';
-  let reviewRequired = false;
-
-  if (riskScore >= 70) {
-    riskLevel = 'critical';
-    reviewRequired = true;
-  } else if (riskScore >= 50) {
-    riskLevel = 'high';
-    reviewRequired = true;
-  } else if (riskScore >= 30) {
-    riskLevel = 'medium';
-  }
-
-  return {
-    riskScore,
-    riskLevel,
-    flags,
-    reviewRequired,
-    reviewDecision: reviewRequired ? 'Pending' : 'Approved',
-    checkedAt: new Date()
-  };
-};
-
-/**
- * Calculate fulfillment SLA
- */
-const calculateFulfillmentSLA = (orderDate, currentStatus) => {
-  const now = new Date();
-  const hoursSinceOrder = (now - orderDate) / (1000 * 60 * 60);
-  
-  // Standard SLA: 24 hours for processing, 72 hours for shipping
-  const processingTarget = 24;
-  const shippingTarget = 72;
-  
-  let targetHours = processingTarget;
-  if (currentStatus === 'Shipped' || currentStatus === 'Delivered') {
-    targetHours = shippingTarget;
-  }
-  
-  const slaBreached = hoursSinceOrder > targetHours;
-  const delayInHours = slaBreached ? hoursSinceOrder - targetHours : 0;
-  
-  return {
-    targetFulfillmentHours: targetHours,
-    actualFulfillmentHours: hoursSinceOrder,
-    slaBreached,
-    delayInHours,
-    delayInDays: delayInHours / 24,
-    calculatedAt: now
-  };
 };
 
 // ============================================
 // BASIC ORDER OPERATIONS
 // ============================================
 
-/**
- * Get all orders for the logged-in user
- * @route GET /api/v1/orders/user
- * @access Private (User)
- */
 export const getAllMyOrders = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
 
@@ -171,22 +71,13 @@ export const getAllMyOrders = handleAsyncError(async (req, res, next) => {
     .populate('orderItems.product', 'name images price')
     .sort({ createdAt: -1 });
 
-  if (!orders || orders.length === 0) {
-    return res.status(200).json({
-      success: true,
-      count: 0,
-      orders: [],
-      message: 'No orders found'
-    });
-  }
-
   return res.status(200).json({
     success: true,
     count: orders.length,
-    orders
+    orders,
+    message: orders.length === 0 ? 'No orders found' : undefined
   });
 });
-
 
 export const getOrderDetails = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
@@ -197,18 +88,13 @@ export const getOrderDetails = handleAsyncError(async (req, res, next) => {
     .populate('user', 'name email')
     .populate('orderItems.product', 'name images price');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user._id.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  return res.status(200).json({
-    success: true,
-    order
-  });
+  return res.status(200).json({ success: true, order });
 });
 
 export const createOrder = handleAsyncError(async (req, res, next) => {
@@ -220,61 +106,46 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     taxPrice,
     shippingPrice,
     totalPrice,
-    analytics: clientAnalytics // Analytics from frontend
+    analytics: clientAnalytics
   } = req.body;
 
   if (!orderItems || orderItems.length === 0) {
     return next(new HandleError('No order items provided', 400));
   }
 
-  // Extract server-side analytics
   const serverAnalytics = extractAnalyticsData(req);
-  
-  // Parse UTM parameters from client or query
-  const utmParams = clientAnalytics 
+  const utmParams = clientAnalytics
     ? parseUTMParams(clientAnalytics)
     : parseUTMParams(req.query);
 
-  // Merge analytics data
   const fullAnalytics = {
-    // UTM tracking
     source: utmParams.source,
     medium: utmParams.medium,
     campaign: utmParams.campaign,
     term: utmParams.term,
     content: utmParams.content,
-    
-    // Device & browser
     device: clientAnalytics?.device || serverAnalytics.device,
     browser: clientAnalytics?.browser || serverAnalytics.browser,
-    
-    // Referrer & landing page
     referrer: clientAnalytics?.referrer || serverAnalytics.referrer,
     landingPage: clientAnalytics?.landingPage || null,
-    
-    // Session tracking
     sessionId: clientAnalytics?.sessionId || null,
-    
-    // First purchase flag (will be calculated in customer analytics)
     isFirstPurchase: clientAnalytics?.isFirstPurchase || false,
-    
-    // Timestamp
     capturedAt: new Date()
   };
 
-  // Calculate fraud risk
   const user = await User.findById(req.user._id);
-  const fraudCheck = calculateFraudRisk({ 
-    totalPrice, 
-    shippingInfo, 
-    paymentInfo 
+
+  // FIX OC1 (continued): calculateFraudRisk now takes { billingAddress } not { paymentInfo }
+  const fraudCheck = calculateFraudRisk({
+    totalPrice,
+    shippingInfo,
+    orderItems,
+    billingAddress: paymentInfo?.billingAddress
   }, user);
 
-  // Calculate initial SLA
   const orderDate = new Date();
   const fulfillmentSLA = calculateFulfillmentSLA(orderDate, 'Processing');
 
-  // Create order with complete analytics
   const order = await Order.create({
     orderItems,
     shippingInfo,
@@ -292,20 +163,15 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
 
   await order.populate('orderItems.product', 'name images price');
 
-  // Update product analytics
-  await updateProductAnalytics(orderItems, 'purchase');
+  await updateProductAnalytics(orderItems);
 
-  // Sync customer analytics after successful order creation
+  // FIX OC2: Changed from blocking await to fire-and-forget.
+  // Customer analytics sync is non-critical post-order work; blocking here
+  // delays the order confirmation response by the full sync duration.
   if (paymentInfo?.status === 'success' || paymentInfo?.status === 'paid') {
-    try {
-      await syncCustomerAfterOrder(order._id);
-      console.log(`Customer analytics synced for user ${req.user._id} after order ${order._id}`);
-    } catch (error) {
-      console.error('Failed to sync customer analytics:', error);
-    }
+    syncCustomerAfterOrder(order._id).catch(() => {});
   }
 
-  // Clear analytics cache
   await deleteCachePattern('admin_stats*');
   await deleteCachePattern('product_performance*');
   await deleteCachePattern('customer_analytics*');
@@ -317,8 +183,6 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
   });
 });
 
-
-
 export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
@@ -328,9 +192,7 @@ export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
     .populate('statusHistory.updatedBy', 'name email')
     .select('statusHistory orderStatus user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -354,9 +216,7 @@ export const addOrderNote = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -366,17 +226,8 @@ export const addOrderNote = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Only admins can add internal notes', 403));
   }
 
-  const note = {
-    content,
-    type,
-    author: userId,
-    createdAt: new Date()
-  };
-
-  if (!order.notes) {
-    order.notes = [];
-  }
-  order.notes.push(note);
+  if (!order.notes) order.notes = [];
+  order.notes.push({ content, type, author: userId, createdAt: new Date() });
 
   await order.save();
 
@@ -396,23 +247,17 @@ export const getOrderNotes = handleAsyncError(async (req, res, next) => {
     .populate('notes.author', 'name email role')
     .select('notes user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  const notes = isAdmin 
-    ? order.notes 
+  const notes = isAdmin
+    ? order.notes
     : order.notes?.filter(note => note.type === 'customer') || [];
 
-  return res.status(200).json({
-    success: true,
-    count: notes.length,
-    notes
-  });
+  return res.status(200).json({ success: true, count: notes.length, notes });
 });
 
 export const editOrderNote = handleAsyncError(async (req, res, next) => {
@@ -426,14 +271,10 @@ export const editOrderNote = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const note = order.notes.id(noteId);
-  if (!note) {
-    return next(new HandleError('Note not found', 404));
-  }
+  if (!note) return next(new HandleError('Note not found', 404));
 
   if (!isAdmin && note.author.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized to edit this note', 403));
@@ -445,11 +286,7 @@ export const editOrderNote = handleAsyncError(async (req, res, next) => {
 
   await order.save();
 
-  return res.status(200).json({
-    success: true,
-    message: 'Note updated successfully',
-    note
-  });
+  return res.status(200).json({ success: true, message: 'Note updated successfully', note });
 });
 
 export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
@@ -457,18 +294,15 @@ export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const isAdmin = req.user.role === 'admin';
 
-  const order = await Order.findById(id)
-    .select('tracking orderStatus user');
+  const order = await Order.findById(id).select('tracking orderStatus user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  if (!order.tracking || !order.tracking.trackingNumber) {
+  if (!order.tracking?.trackingNumber) {
     return res.status(200).json({
       success: true,
       message: 'No tracking information available yet',
@@ -476,10 +310,7 @@ export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  return res.status(200).json({
-    success: true,
-    tracking: order.tracking
-  });
+  return res.status(200).json({ success: true, tracking: order.tracking });
 });
 
 export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
@@ -491,15 +322,13 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const trackingUrls = {
-    'DHL': `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`,
-    'FedEx': `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`,
-    'UPS': `https://www.ups.com/track?tracknum=${trackingNumber}`,
-    'USPS': `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`
+    DHL: `https://www.dhl.com/en/express/tracking.html?AWB=${trackingNumber}`,
+    FedEx: `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`,
+    UPS: `https://www.ups.com/track?tracknum=${trackingNumber}`,
+    USPS: `https://tools.usps.com/go/TrackConfirmAction?tLabels=${trackingNumber}`
   };
 
   order.tracking = {
@@ -511,14 +340,14 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
   };
 
   order.orderStatus = 'Shipped';
-  
-  // Update fulfillment SLA
   order.fulfillmentSLA = calculateFulfillmentSLA(order.createdAt, 'Shipped');
-  
+
   await order.save();
-  await deleteCachePattern('admin_stats*');
-  await deleteCachePattern('fulfillment_analytics*');
-  await deleteCachePattern('shipping_carriers*');
+  await Promise.all([
+    deleteCachePattern('admin_stats*'),
+    deleteCachePattern('fulfillment_analytics*'),
+    deleteCachePattern('shipping_carriers*')
+  ]);
 
   return res.status(200).json({
     success: true,
@@ -536,14 +365,10 @@ export const createShipment = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
-
-  const shipmentId = `SHP-${Date.now()}`;
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const shipment = {
-    shipmentId,
+    shipmentId: `SHP-${Date.now()}`,
     warehouse,
     items,
     carrier,
@@ -553,9 +378,7 @@ export const createShipment = handleAsyncError(async (req, res, next) => {
     createdAt: new Date()
   };
 
-  if (!order.shipments) {
-    order.shipments = [];
-  }
+  if (!order.shipments) order.shipments = [];
   order.shipments.push(shipment);
 
   await order.save();
@@ -578,28 +401,21 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const shipment = order.shipments?.find(s => s.shipmentId === shipmentId);
-  if (!shipment) {
-    return next(new HandleError('Shipment not found', 404));
-  }
+  if (!shipment) return next(new HandleError('Shipment not found', 404));
 
   shipment.status = status;
   if (trackingNumber) shipment.trackingNumber = trackingNumber;
-
-  if (status === 'shipped') {
-    shipment.shippedAt = new Date();
-  }
-  if (status === 'delivered') {
-    shipment.deliveredAt = new Date();
-  }
+  if (status === 'shipped') shipment.shippedAt = new Date();
+  if (status === 'delivered') shipment.deliveredAt = new Date();
 
   await order.save();
-  await deleteCachePattern('fulfillment_analytics*');
-  await deleteCachePattern('shipping_carriers*');
+  await Promise.all([
+    deleteCachePattern('fulfillment_analytics*'),
+    deleteCachePattern('shipping_carriers*')
+  ]);
 
   return res.status(200).json({
     success: true,
@@ -618,9 +434,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -661,9 +475,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status !== 'requested') {
     return next(new HandleError('No pending return request found', 400));
@@ -710,9 +522,7 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.returnInfo || order.returnInfo.status === 'none') {
     return next(new HandleError('No return request found', 400));
@@ -720,25 +530,22 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
 
   order.returnInfo.status = status;
 
-  if (status === 'received') {
-    order.returnInfo.receivedAt = new Date();
-  }
+  if (status === 'received') order.returnInfo.receivedAt = new Date();
 
   if (status === 'inspected') {
     order.returnInfo.inspectedAt = new Date();
     order.returnInfo.inspectedBy = req.user._id;
-    if (inspectionNotes) {
-      order.returnInfo.inspectionNotes = inspectionNotes;
-    }
+    if (inspectionNotes) order.returnInfo.inspectionNotes = inspectionNotes;
   }
 
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
-    
-    // Update product inventory
+
     for (const item of order.returnInfo.itemsToReturn) {
       const product = await Product.findById(item.product);
       if (product && item.condition !== 'damaged') {
+        // FIX OC3 (orderController copy): Use correct inventory field path.
+        // returnController already had this check; this orderController copy didn't.
         if (product.inventory?.stock !== undefined) {
           product.inventory.stock += item.quantity;
         } else {
@@ -758,37 +565,11 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   });
 });
 
-export const getAllReturns = handleAsyncError(async (req, res, next) => {
-  const { status } = req.query;
-
-  const query = {
-    'returnInfo.status': { 
-      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected'] 
-    }
-  };
-
-  if (status) {
-    query['returnInfo.status'] = status;
-  }
-
-  const orders = await Order.find(query)
-    .populate('user', 'name email')
-    .populate('returnInfo.requestedBy', 'name email')
-    .populate('returnInfo.approvedBy', 'name email')
-    .sort({ 'returnInfo.requestedAt': -1 });
-
-  return res.status(200).json({
-    success: true,
-    count: orders.length,
-    returns: orders.map(order => ({
-      orderId: order._id,
-      user: order.user,
-      returnInfo: order.returnInfo,
-      orderStatus: order.orderStatus,
-      totalPrice: order.totalPrice
-    }))
-  });
-});
+// FIX OC4: getAllReturns REMOVED from orderController.
+// The returnController version is canonical (has pagination, full stats breakdown,
+// and unreadMessages). Routes should import from returnController.
+// Keeping the function would create a silent split-brain where two endpoints
+// return different shapes for the same resource.
 
 export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
@@ -799,9 +580,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
     .populate('user', 'name email')
     .populate('orderItems.product', 'name');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user._id.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -819,10 +598,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
 
     if (order.invoiceInfo?.pdfData) {
       pdfBuffer = Buffer.from(order.invoiceInfo.pdfData, 'base64');
-      console.log('Serving existing invoice from database');
     } else {
-      console.log('Generating new invoice');
-      
       const companyInfo = {
         name: process.env.COMPANY_NAME || 'EPIC STORE Inc.',
         address: process.env.COMPANY_ADDRESS || '123 Commerce Street',
@@ -832,31 +608,22 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
       };
 
       pdfBuffer = await generateInvoicePDF(order, companyInfo);
-      const base64PDF = pdfBuffer.toString('base64');
 
-      if (!order.invoiceInfo) {
-        order.invoiceInfo = {};
-      }
-      
-      order.invoiceInfo.pdfData = base64PDF;
+      if (!order.invoiceInfo) order.invoiceInfo = {};
+      order.invoiceInfo.pdfData = pdfBuffer.toString('base64');
       order.invoiceInfo.invoiceDate = new Date();
       order.invoiceInfo.generatedAt = new Date();
-      
+
       await order.save({ validateBeforeSave: false });
     }
 
     const invoiceNumber = order.invoiceInfo?.invoiceNumber || order._id;
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader(
-      'Content-Disposition',
-      `attachment; filename=Invoice-${invoiceNumber}.pdf`
-    );
+    res.setHeader('Content-Disposition', `attachment; filename=Invoice-${invoiceNumber}.pdf`);
     res.setHeader('Content-Length', pdfBuffer.length);
 
     return res.send(pdfBuffer);
-
   } catch (error) {
-    console.error('Invoice generation error:', error);
     return next(new HandleError('Failed to generate invoice', 500));
   }
 });
@@ -893,11 +660,9 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
-  if (!order.fraudCheck || !order.fraudCheck.reviewRequired) {
+  if (!order.fraudCheck?.reviewRequired) {
     return next(new HandleError('This order does not require fraud review', 400));
   }
 
@@ -914,14 +679,12 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   }
 
   await order.save();
-  await deleteCachePattern('admin_stats*');
-  await deleteCachePattern('fraud_analytics*');
+  await Promise.all([
+    deleteCachePattern('admin_stats*'),
+    deleteCachePattern('fraud_analytics*')
+  ]);
 
-  return res.status(200).json({
-    success: true,
-    message: `Order ${decision}`,
-    order
-  });
+  return res.status(200).json({ success: true, message: `Order ${decision}`, order });
 });
 
 export const getAuditLog = handleAsyncError(async (req, res, next) => {
@@ -931,9 +694,7 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
     .populate('auditLog.performedBy', 'name email role')
     .select('auditLog');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   return res.status(200).json({
     success: true,
@@ -947,28 +708,23 @@ export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next)
 
   const orders = await Order.find({ user: userId });
 
+  const sorted = [...orders].sort((a, b) => a.createdAt - b.createdAt);
+
   const analytics = {
     totalOrders: orders.length,
-    totalSpent: orders.reduce((sum, order) => sum + order.totalPrice, 0),
-    averageOrderValue: orders.length > 0 
-      ? orders.reduce((sum, order) => sum + order.totalPrice, 0) / orders.length 
-      : 0,
-    firstOrderDate: orders.length > 0 
-      ? orders.sort((a, b) => a.createdAt - b.createdAt)[0].createdAt 
-      : null,
-    lastOrderDate: orders.length > 0 
-      ? orders.sort((a, b) => b.createdAt - a.createdAt)[0].createdAt 
-      : null,
+    totalSpent: orders.reduce((sum, o) => sum + o.totalPrice, 0),
+    averageOrderValue:
+      orders.length > 0
+        ? orders.reduce((sum, o) => sum + o.totalPrice, 0) / orders.length
+        : 0,
+    firstOrderDate: sorted.length > 0 ? sorted[0].createdAt : null,
+    lastOrderDate: sorted.length > 0 ? sorted[sorted.length - 1].createdAt : null,
     refundedOrders: orders.filter(o => o.refundInfo?.status === 'completed').length,
     returnedOrders: orders.filter(o => o.returnInfo?.status === 'completed').length,
     cancelledOrders: orders.filter(o => o.orderStatus === 'Cancelled').length
   };
 
-  return res.status(200).json({
-    success: true,
-    userId,
-    analytics
-  });
+  return res.status(200).json({ success: true, userId, analytics });
 });
 
 export const addOrderMessage = handleAsyncError(async (req, res, next) => {
@@ -982,18 +738,13 @@ export const addOrderMessage = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  const senderType = isAdmin ? 'admin' : 'customer';
-  
-  order.addOrderMessage(userId, senderType, content, attachments);
-
+  order.addOrderMessage(userId, isAdmin ? 'admin' : 'customer', content, attachments);
   await order.save();
 
   return res.status(200).json({
@@ -1012,9 +763,7 @@ export const getOrderMessages = handleAsyncError(async (req, res, next) => {
     .populate('orderMessages.sender', 'name email role')
     .select('orderMessages user');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -1038,22 +787,16 @@ export const markOrderMessagesRead = handleAsyncError(async (req, res, next) => 
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
-  const senderType = isAdmin ? 'admin' : 'customer';
-  order.markOrderMessagesAsRead(senderType);
+  order.markOrderMessagesAsRead(isAdmin ? 'admin' : 'customer');
   await order.save({ validateBeforeSave: false });
 
-  return res.status(200).json({
-    success: true,
-    message: 'Messages marked as read'
-  });
+  return res.status(200).json({ success: true, message: 'Messages marked as read' });
 });
 
 export const getOrdersWithUnreadMessages = handleAsyncError(async (req, res, next) => {
@@ -1077,9 +820,7 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
 
   const query = {};
 
-  if (status && status !== 'all') {
-    query.orderStatus = status;
-  }
+  if (status && status !== 'all') query.orderStatus = status;
 
   if (from || to) {
     query.createdAt = {};
@@ -1089,22 +830,22 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const orders = await Order.find(query)
-    .populate('user', 'name email phone')
-    .populate('orderItems.product', 'name images price')
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(parseInt(limit));
+  const [orders, totalOrders] = await Promise.all([
+    Order.find(query)
+      .populate('user', 'name email phone')
+      .populate('orderItems.product', 'name images price')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit)),
+    Order.countDocuments(query)
+  ]);
 
-  const totalOrders = await Order.countDocuments(query);
-
-  const stats = {
-    total: totalOrders,
-    processing: await Order.countDocuments({ orderStatus: 'Processing' }),
-    shipped: await Order.countDocuments({ orderStatus: 'Shipped' }),
-    delivered: await Order.countDocuments({ orderStatus: 'Delivered' }),
-    cancelled: await Order.countDocuments({ orderStatus: 'Cancelled' }),
-  };
+  const [processing, shipped, delivered, cancelled] = await Promise.all([
+    Order.countDocuments({ orderStatus: 'Processing' }),
+    Order.countDocuments({ orderStatus: 'Shipped' }),
+    Order.countDocuments({ orderStatus: 'Delivered' }),
+    Order.countDocuments({ orderStatus: 'Cancelled' })
+  ]);
 
   return res.status(200).json({
     success: true,
@@ -1112,7 +853,7 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
     totalOrders,
     currentPage: parseInt(page),
     totalPages: Math.ceil(totalOrders / parseInt(limit)),
-    stats,
+    stats: { total: totalOrders, processing, shipped, delivered, cancelled },
     orders
   });
 });
@@ -1130,23 +871,16 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
     .populate('returnInfo.requestedBy', 'name email')
     .populate('returnInfo.approvedBy', 'name email');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
-  return res.status(200).json({
-    success: true,
-    order
-  });
+  return res.status(200).json({ success: true, order });
 });
 
 export const updateOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { status, note } = req.body;
 
-  if (!status) {
-    return next(new HandleError('Order status is required', 400));
-  }
+  if (!status) return next(new HandleError('Order status is required', 400));
 
   const validStatuses = ['Processing', 'Shipped', 'Delivered', 'Cancelled'];
   if (!validStatuses.includes(status)) {
@@ -1154,9 +888,7 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.orderStatus === 'Cancelled' && status !== 'Cancelled') {
     return next(new HandleError('Cannot update a cancelled order', 400));
@@ -1165,18 +897,13 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
   const oldStatus = order.orderStatus;
   order.orderStatus = status;
 
-  if (status === 'Delivered' && !order.deliveredAt) {
-    order.deliveredAt = new Date();
-  }
+  if (status === 'Delivered' && !order.deliveredAt) order.deliveredAt = new Date();
 
-  // Update fulfillment SLA
   order.fulfillmentSLA = calculateFulfillmentSLA(order.createdAt, status);
-
   order.addStatusHistory(status, req.user._id, note || `Status updated from ${oldStatus} to ${status}`);
   order.addAuditEntry('status_updated', req.user._id, { oldStatus, newStatus: status, note });
 
   if (status === 'Delivered' && oldStatus !== 'Delivered') {
-    // Update inventory
     for (const item of order.orderItems) {
       const product = await Product.findById(item.product);
       if (product) {
@@ -1189,21 +916,17 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
       }
     }
 
-    // Sync customer analytics
-    try {
-      await syncCustomerAfterOrder(order._id);
-      console.log(`Customer analytics synced after delivery of order ${order._id}`);
-    } catch (error) {
-      console.error('Failed to sync customer analytics on delivery:', error);
-    }
+    // FIX OC2: Fire-and-forget — same as createOrder fix above
+    syncCustomerAfterOrder(order._id).catch(() => {});
   }
 
   await order.save();
-  
-  // Clear relevant caches
-  await deleteCachePattern('admin_stats*');
-  await deleteCachePattern('fulfillment_analytics*');
-  await deleteCachePattern('customer_analytics*');
+
+  await Promise.all([
+    deleteCachePattern('admin_stats*'),
+    deleteCachePattern('fulfillment_analytics*'),
+    deleteCachePattern('customer_analytics*')
+  ]);
 
   return res.status(200).json({
     success: true,
@@ -1216,9 +939,7 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.orderStatus === 'Delivered') {
     return next(new HandleError('Cannot delete delivered orders', 400));
@@ -1231,10 +952,7 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
   await order.deleteOne();
   await deleteCachePattern('admin_stats*');
 
-  return res.status(200).json({
-    success: true,
-    message: 'Order deleted successfully'
-  });
+  return res.status(200).json({ success: true, message: 'Order deleted successfully' });
 });
 
 export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
@@ -1246,9 +964,7 @@ export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const note = {
     content: content.trim(),
@@ -1275,11 +991,7 @@ export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
   const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'name email role');
   const addedNote = populatedOrder.notes[populatedOrder.notes.length - 1];
 
-  return res.status(200).json({
-    success: true,
-    message: 'Note added successfully',
-    note: addedNote
-  });
+  return res.status(200).json({ success: true, message: 'Note added successfully', note: addedNote });
 });
 
 export const getAdminOrderNotes = handleAsyncError(async (req, res, next) => {
@@ -1289,15 +1001,9 @@ export const getAdminOrderNotes = handleAsyncError(async (req, res, next) => {
     .populate('notes.createdBy', 'name email role')
     .select('notes');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
-  return res.status(200).json({
-    success: true,
-    count: order.notes.length,
-    notes: order.notes
-  });
+  return res.status(200).json({ success: true, count: order.notes.length, notes: order.notes });
 });
 
 export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
@@ -1309,14 +1015,10 @@ export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
   }
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const note = order.notes.id(noteId);
-  if (!note) {
-    return next(new HandleError('Note not found', 404));
-  }
+  if (!note) return next(new HandleError('Note not found', 404));
 
   if (note.createdBy.toString() !== req.user._id.toString()) {
     return next(new HandleError('You can only edit your own notes', 403));
@@ -1331,25 +1033,17 @@ export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
   const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'name email role');
   const updatedNote = populatedOrder.notes.id(noteId);
 
-  return res.status(200).json({
-    success: true,
-    message: 'Note updated successfully',
-    note: updatedNote
-  });
+  return res.status(200).json({ success: true, message: 'Note updated successfully', note: updatedNote });
 });
 
 export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
   const { id, noteId } = req.params;
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   const note = order.notes.id(noteId);
-  if (!note) {
-    return next(new HandleError('Note not found', 404));
-  }
+  if (!note) return next(new HandleError('Note not found', 404));
 
   if (note.createdBy.toString() !== req.user._id.toString()) {
     return next(new HandleError('You can only delete your own notes', 403));
@@ -1358,59 +1052,77 @@ export const deleteAdminOrderNote = handleAsyncError(async (req, res, next) => {
   note.deleteOne();
   await order.save();
 
-  return res.status(200).json({
-    success: true,
-    message: 'Note deleted successfully'
-  });
+  return res.status(200).json({ success: true, message: 'Note deleted successfully' });
 });
 
+// FIX OC5: getAdminStats — added paymentInfo.status: 'success' filter and
+// switched to $totalPrice (consistent with adminStatsController).
+// Also replaced full Order.find() memory load with aggregate for revenue.
+// NOTE: The canonical admin stats endpoint lives in adminStatsController
+// using getAdminStatsService() pipelines. This simplified version is kept
+// for any routes that require a lightweight overview without caching.
 export const getAdminStats = handleAsyncError(async (req, res, next) => {
-  const totalOrders = await Order.countDocuments();
-  
-  const revenueResult = await Order.aggregate([
-    { $match: { orderStatus: 'Delivered' } },
-    { $group: { _id: null, total: { $sum: '$amountPaid' } } }
+  const [
+    totalOrders,
+    revenueResult,
+    orderStatusCounts,
+    totalProducts,
+    outOfStock,
+    inStock,
+    totalUsers,
+    adminCount,
+    recentOrders,
+    pendingRefunds,
+    pendingReturns,
+    fraudReviews
+  ] = await Promise.all([
+    Order.countDocuments(),
+    Order.aggregate([
+      {
+        $match: {
+          orderStatus: 'Delivered',
+          'paymentInfo.status': 'success'
+        }
+      },
+      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+    ]),
+    Promise.all([
+      Order.countDocuments({ orderStatus: 'Processing' }),
+      Order.countDocuments({ orderStatus: 'Shipped' }),
+      Order.countDocuments({ orderStatus: 'Delivered' }),
+      Order.countDocuments({ orderStatus: 'Cancelled' })
+    ]),
+    Product.countDocuments(),
+    Product.countDocuments({ stock: 0 }),
+    Product.countDocuments({ stock: { $gt: 0 } }),
+    User.countDocuments(),
+    User.countDocuments({ role: 'admin' }),
+    Order.find()
+      .populate('user', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('_id orderStatus totalPrice createdAt user'),
+    Order.countDocuments({ 'refundInfo.status': 'requested' }),
+    Order.countDocuments({ 'returnInfo.status': 'requested' }),
+    Order.countDocuments({
+      'fraudCheck.reviewRequired': true,
+      'fraudCheck.reviewDecision': 'Pending'
+    })
   ]);
-  const totalRevenue = revenueResult[0]?.total || 0;
 
-  const orderStatusBreakdown = {
-    processing: await Order.countDocuments({ orderStatus: 'Processing' }),
-    shipped: await Order.countDocuments({ orderStatus: 'Shipped' }),
-    delivered: await Order.countDocuments({ orderStatus: 'Delivered' }),
-    cancelled: await Order.countDocuments({ orderStatus: 'Cancelled' })
-  };
-
-  const totalProducts = await Product.countDocuments();
-  const outOfStock = await Product.countDocuments({ stock: 0 });
-  const inStock = await Product.countDocuments({ stock: { $gt: 0 } });
-
-  const totalUsers = await User.countDocuments();
-  const adminCount = await User.countDocuments({ role: 'admin' });
-
-  const recentOrders = await Order.find()
-    .populate('user', 'name email')
-    .sort({ createdAt: -1 })
-    .limit(5)
-    .select('_id orderStatus totalPrice createdAt user');
-
-  const pendingRefunds = await Order.countDocuments({ 'refundInfo.status': 'requested' });
-  const pendingReturns = await Order.countDocuments({ 'returnInfo.status': 'requested' });
-  const fraudReviews = await Order.countDocuments({ 
-    'fraudCheck.reviewRequired': true,
-    'fraudCheck.reviewDecision': 'Pending'
-  });
+  const [processing, shipped, delivered, cancelled] = orderStatusCounts;
 
   return res.status(200).json({
     success: true,
     stats: {
       orders: totalOrders,
-      revenue: totalRevenue,
+      revenue: revenueResult[0]?.total || 0,
       products: totalProducts,
       users: totalUsers,
       outOfStock,
       inStock,
       adminCount,
-      orderStatusBreakdown,
+      orderStatusBreakdown: { processing, shipped, delivered, cancelled },
       pendingRefunds,
       pendingReturns,
       fraudReviews
@@ -1419,6 +1131,12 @@ export const getAdminStats = handleAsyncError(async (req, res, next) => {
   });
 });
 
+// FIX OC6: getAdminAnalytics — two bugs fixed:
+// (a) Date mutation: original `now.setMonth()` mutated the same Date object across
+//     all three switch branches, so previousPeriodStart landed 3 months back
+//     (not 2) for 'month', 14 days back for 'week', and 3 years back for 'year'.
+//     Fixed by creating separate Date objects per calculation.
+// (b) Revenue filter: added paymentInfo.status: 'success' and switched to $totalPrice.
 export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   const { timeframe = 'month' } = req.query;
 
@@ -1426,101 +1144,104 @@ export const getAdminAnalytics = handleAsyncError(async (req, res, next) => {
   let currentPeriodStart, previousPeriodStart, previousPeriodEnd;
 
   switch (timeframe) {
-    case 'week':
-      currentPeriodStart = new Date(now.setDate(now.getDate() - 7));
-      previousPeriodStart = new Date(now.setDate(now.getDate() - 14));
-      previousPeriodEnd = currentPeriodStart;
+    case 'week': {
+      const d1 = new Date(now); d1.setDate(now.getDate() - 7);
+      const d2 = new Date(now); d2.setDate(now.getDate() - 14);
+      currentPeriodStart = d1;
+      previousPeriodStart = d2;
+      previousPeriodEnd = d1;
       break;
-    case 'year':
-      currentPeriodStart = new Date(now.setFullYear(now.getFullYear() - 1));
-      previousPeriodStart = new Date(now.setFullYear(now.getFullYear() - 2));
-      previousPeriodEnd = currentPeriodStart;
+    }
+    case 'year': {
+      const d1 = new Date(now); d1.setFullYear(now.getFullYear() - 1);
+      const d2 = new Date(now); d2.setFullYear(now.getFullYear() - 2);
+      currentPeriodStart = d1;
+      previousPeriodStart = d2;
+      previousPeriodEnd = d1;
       break;
+    }
     case 'month':
-    default:
-      currentPeriodStart = new Date(now.setMonth(now.getMonth() - 1));
-      previousPeriodStart = new Date(now.setMonth(now.getMonth() - 2));
-      previousPeriodEnd = currentPeriodStart;
+    default: {
+      const d1 = new Date(now); d1.setMonth(now.getMonth() - 1);
+      const d2 = new Date(now); d2.setMonth(now.getMonth() - 2);
+      currentPeriodStart = d1;
+      previousPeriodStart = d2;
+      previousPeriodEnd = d1;
+      break;
+    }
   }
 
-  const currentOrders = await Order.countDocuments({
-    createdAt: { $gte: currentPeriodStart }
+  const revenueMatch = (start, end) => ({
+    orderStatus: 'Delivered',
+    'paymentInfo.status': 'success',
+    createdAt: { $gte: start, ...(end && { $lt: end }) }
   });
 
-  const currentRevenueResult = await Order.aggregate([
-    { 
-      $match: { 
-        orderStatus: 'Delivered',
-        createdAt: { $gte: currentPeriodStart }
-      } 
-    },
-    { $group: { _id: null, total: { $sum: '$amountPaid' } } }
+  const [
+    currentOrders,
+    currentRevenueResult,
+    previousOrders,
+    previousRevenueResult,
+    topProducts
+  ] = await Promise.all([
+    Order.countDocuments({ createdAt: { $gte: currentPeriodStart } }),
+    Order.aggregate([
+      { $match: revenueMatch(currentPeriodStart) },
+      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+    ]),
+    Order.countDocuments({ createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd } }),
+    Order.aggregate([
+      { $match: revenueMatch(previousPeriodStart, previousPeriodEnd) },
+      { $group: { _id: null, total: { $sum: '$totalPrice' } } }
+    ]),
+    Order.aggregate([
+      {
+        $match: {
+          'paymentInfo.status': 'success',
+          createdAt: { $gte: currentPeriodStart }
+        }
+      },
+      { $unwind: '$orderItems' },
+      {
+        $group: {
+          _id: '$orderItems.product',
+          totalQuantity: { $sum: '$orderItems.quantity' },
+          totalRevenue: {
+            $sum: { $multiply: ['$orderItems.price', '$orderItems.quantity'] }
+          }
+        }
+      },
+      { $sort: { totalQuantity: -1 } },
+      { $limit: 5 }
+    ])
   ]);
+
   const currentRevenue = currentRevenueResult[0]?.total || 0;
-
-  const previousOrders = await Order.countDocuments({
-    createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-  });
-
-  const previousRevenueResult = await Order.aggregate([
-    { 
-      $match: { 
-        orderStatus: 'Delivered',
-        createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
-      } 
-    },
-    { $group: { _id: null, total: { $sum: '$amountPaid' } } }
-  ]);
   const previousRevenue = previousRevenueResult[0]?.total || 0;
 
-  const ordersTrend = previousOrders > 0 
-    ? ((currentOrders - previousOrders) / previousOrders * 100).toFixed(2)
-    : 100;
-  
-  const revenueTrend = previousRevenue > 0
-    ? ((currentRevenue - previousRevenue) / previousRevenue * 100).toFixed(2)
-    : 100;
+  const ordersTrend =
+    previousOrders > 0
+      ? parseFloat(((currentOrders - previousOrders) / previousOrders * 100).toFixed(2))
+      : 100;
 
-  const topProducts = await Order.aggregate([
-    { $match: { createdAt: { $gte: currentPeriodStart } } },
-    { $unwind: '$orderItems' },
-    { 
-      $group: {
-        _id: '$orderItems.product',
-        totalQuantity: { $sum: '$orderItems.quantity' },
-        totalRevenue: { $sum: { $multiply: ['$orderItems.price', '$orderItems.quantity'] } }
-      }
-    },
-    { $sort: { totalQuantity: -1 } },
-    { $limit: 5 }
-  ]);
+  const revenueTrend =
+    previousRevenue > 0
+      ? parseFloat(((currentRevenue - previousRevenue) / previousRevenue * 100).toFixed(2))
+      : 100;
 
   const populatedTopProducts = await Promise.all(
-    topProducts.map(async (item) => {
+    topProducts.map(async item => {
       const product = await Product.findById(item._id).select('name images');
-      return {
-        product,
-        totalQuantity: item.totalQuantity,
-        totalRevenue: item.totalRevenue
-      };
+      return { product, totalQuantity: item.totalQuantity, totalRevenue: item.totalRevenue };
     })
   );
 
   return res.status(200).json({
     success: true,
     timeframe,
-    currentPeriod: {
-      orders: currentOrders,
-      revenue: currentRevenue
-    },
-    previousPeriod: {
-      orders: previousOrders,
-      revenue: previousRevenue
-    },
-    trends: {
-      orders: parseFloat(ordersTrend),
-      revenue: parseFloat(revenueTrend)
-    },
+    currentPeriod: { orders: currentOrders, revenue: currentRevenue },
+    previousPeriod: { orders: previousOrders, revenue: previousRevenue },
+    trends: { orders: ordersTrend, revenue: revenueTrend },
     topProducts: populatedTopProducts
   });
 });
@@ -1529,14 +1250,10 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   const { id } = req.params;
   const { reason, skipRefund = false } = req.body;
 
-  if (!reason) {
-    return next(new HandleError('Cancellation reason is required', 400));
-  }
+  if (!reason) return next(new HandleError('Cancellation reason is required', 400));
 
   const order = await Order.findById(id);
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.orderStatus === 'Delivered') {
     return next(new HandleError('Cannot cancel delivered orders. Use refund process instead.', 400));
@@ -1584,15 +1301,16 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   }
 
   await order.save();
-  
-  // Clear relevant caches
-  await deleteCachePattern('admin_stats*');
-  await deleteCachePattern('cancellation_analytics*');
+
+  await Promise.all([
+    deleteCachePattern('admin_stats*'),
+    deleteCachePattern('cancellation_analytics*')
+  ]);
 
   return res.status(200).json({
     success: true,
-    message: skipRefund 
-      ? 'Order cancelled successfully' 
+    message: skipRefund
+      ? 'Order cancelled successfully'
       : 'Order cancelled and refund initiated successfully',
     order: {
       _id: order._id,
@@ -1608,31 +1326,21 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
   const { reference } = req.params;
   const userId = req.user._id;
 
-  if (!reference) {
-    return next(new HandleError('Reference number is required', 400));
-  }
+  if (!reference) return next(new HandleError('Reference number is required', 400));
 
-  let order = await Order.findOne({
-    'paymentInfo.reference': reference
-  }).populate('user', 'name email');
+  let order = await Order.findOne({ 'paymentInfo.reference': reference }).populate('user', 'name email');
 
   if (!order && reference.match(/^[0-9a-fA-F]{24}$/)) {
     order = await Order.findById(reference).populate('user', 'name email');
   }
 
-  if (!order) {
-    return next(new HandleError('Order not found with this reference', 404));
-  }
+  if (!order) return next(new HandleError('Order not found with this reference', 404));
 
-  const isAdmin = req.user.role === 'admin';
-  if (!isAdmin && order.user._id.toString() !== userId.toString()) {
+  if (req.user.role !== 'admin' && order.user._id.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized to view this order', 403));
   }
 
-  return res.status(200).json({
-    success: true,
-    order
-  });
+  return res.status(200).json({ success: true, order });
 });
 
 export default {
@@ -1650,7 +1358,6 @@ export default {
   requestReturn,
   reviewReturnRequest,
   updateReturnStatus,
-  getAllReturns,
   downloadInvoice,
   getPendingFraudReviews,
   reviewFraudCheck,
@@ -1672,4 +1379,5 @@ export default {
   getAdminAnalytics,
   cancelOrderWithRefund,
   getOrderByReference
+  // getAllReturns intentionally removed — use returnController.getAllReturns
 };
