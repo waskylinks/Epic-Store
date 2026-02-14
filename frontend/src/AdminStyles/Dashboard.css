@@ -878,3 +878,45 @@
   .adm-table-hd,
   .adm-table-row { grid-template-columns: 1fr 60px 70px; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   LAST UPDATED INDICATOR (replaces refresh button)
+   ═══════════════════════════════════════════════════════════ */
+
+.adm-last-updated {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--adm-bg);
+  border: 1px solid var(--adm-border);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--adm-text-muted);
+  transition: all 0.2s ease;
+}
+
+.adm-last-updated:hover {
+  border-color: var(--adm-text-muted);
+}
+
+.adm-last-updated-label {
+  font-weight: 500;
+}
+
+.adm-last-updated-time {
+  color: var(--adm-text);
+  font-weight: 600;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .adm-last-updated {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+  
+  .adm-last-updated-label {
+    display: none;
+  }
+}

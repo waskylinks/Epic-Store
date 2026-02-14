@@ -1,4 +1,4 @@
-// analyticsSlice.js - COMPLETE ANALYTICS MANAGEMENT FOR ADMIN
+// analyticsSlice.js - FIXED - Proper state structure for dashboard stats
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -13,6 +13,7 @@ export const fetchAdminStats = createAsyncThunk(
     async (_, { rejectWithValue }) => {
         try {
             const { data } = await axios.get(`${API_BASE}/admin/stats`);
+            console.log(data, 'admin stats')
             return data;
         } catch (error) {
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch dashboard stats');
@@ -36,10 +37,6 @@ export const fetchBasicAnalytics = createAsyncThunk(
 // DASHBOARD ANALYTICS
 // ============================================
 
-/**
- * Get comprehensive dashboard overview
- * Aggregates all analytics in one endpoint
- */
 export const fetchDashboardOverview = createAsyncThunk(
     'analytics/fetchDashboardOverview',
     async (timeframe = 'month', { rejectWithValue }) => {
@@ -54,9 +51,6 @@ export const fetchDashboardOverview = createAsyncThunk(
     }
 );
 
-/**
- * Get key performance indicators
- */
 export const fetchDashboardKPIs = createAsyncThunk(
     'analytics/fetchDashboardKPIs',
     async (timeframe = 'month', { rejectWithValue }) => {
@@ -71,9 +65,6 @@ export const fetchDashboardKPIs = createAsyncThunk(
     }
 );
 
-/**
- * Get revenue trends over time
- */
 export const fetchRevenueTrends = createAsyncThunk(
     'analytics/fetchRevenueTrends',
     async ({ timeframe = 'month', groupBy = 'day' }, { rejectWithValue }) => {
@@ -88,9 +79,6 @@ export const fetchRevenueTrends = createAsyncThunk(
     }
 );
 
-/**
- * Get top performers (products, customers, categories)
- */
 export const fetchTopPerformers = createAsyncThunk(
     'analytics/fetchTopPerformers',
     async (timeframe = 'month', { rejectWithValue }) => {
@@ -105,9 +93,6 @@ export const fetchTopPerformers = createAsyncThunk(
     }
 );
 
-/**
- * Get dashboard alerts and notifications
- */
 export const fetchDashboardAlerts = createAsyncThunk(
     'analytics/fetchDashboardAlerts',
     async (_, { rejectWithValue }) => {
@@ -124,9 +109,6 @@ export const fetchDashboardAlerts = createAsyncThunk(
 // REPORTS GENERATION
 // ============================================
 
-/**
- * Generate business performance report
- */
 export const generateBusinessReport = createAsyncThunk(
     'analytics/generateBusinessReport',
     async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
@@ -146,9 +128,6 @@ export const generateBusinessReport = createAsyncThunk(
     }
 );
 
-/**
- * Generate sales report
- */
 export const generateSalesReport = createAsyncThunk(
     'analytics/generateSalesReport',
     async ({ timeframe, startDate, endDate, groupBy = 'day' }, { rejectWithValue }) => {
@@ -169,9 +148,6 @@ export const generateSalesReport = createAsyncThunk(
     }
 );
 
-/**
- * Generate customer analytics report
- */
 export const generateCustomerReport = createAsyncThunk(
     'analytics/generateCustomerReport',
     async (includeDetails = false, { rejectWithValue }) => {
@@ -186,9 +162,6 @@ export const generateCustomerReport = createAsyncThunk(
     }
 );
 
-/**
- * Generate product performance report
- */
 export const generateProductReport = createAsyncThunk(
     'analytics/generateProductReport',
     async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
@@ -208,9 +181,6 @@ export const generateProductReport = createAsyncThunk(
     }
 );
 
-/**
- * Generate financial report
- */
 export const generateFinancialReport = createAsyncThunk(
     'analytics/generateFinancialReport',
     async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
@@ -230,9 +200,6 @@ export const generateFinancialReport = createAsyncThunk(
     }
 );
 
-/**
- * Export report as CSV
- */
 export const exportReportCSV = createAsyncThunk(
     'analytics/exportReportCSV',
     async ({ reportType, timeframe, startDate, endDate }, { rejectWithValue }) => {
@@ -247,7 +214,6 @@ export const exportReportCSV = createAsyncThunk(
                 { responseType: 'blob' }
             );
 
-            // Create download link
             const blob = new Blob([response.data], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
@@ -617,21 +583,34 @@ export const fetchReturnsByProduct = createAsyncThunk(
 );
 
 // ============================================
-// SLICE DEFINITION
+// SLICE DEFINITION - FIXED STRUCTURE
 // ============================================
 
 const analyticsSlice = createSlice({
     name: 'analytics',
     initialState: {
-        // Basic Stats (Legacy)
+        // FIXED: Basic Stats with proper nested structure
         basicStats: {
             products: 0,
             orders: 0,
             revenue: 0,
             users: 0,
-            outOfStock: 0,
-            inStock: 0,
-            adminCount: 0
+            adminCount: 0,
+            // CRITICAL FIX: Add ordersByStatus structure
+            ordersByStatus: {
+                processing: 0,
+                shipped: 0,
+                delivered: 0,
+                cancelled: 0
+            },
+            // CRITICAL FIX: Add inventory structure
+            inventory: {
+                inStock: 0,
+                lowStock: 0,
+                outOfStock: 0,
+                discontinued: 0,
+                total: 0
+            }
         },
         basicAnalytics: {
             trends: {
@@ -718,9 +697,7 @@ const analyticsSlice = createSlice({
         }
     },
     extraReducers: (builder) => {
-        // ============================================
-        // BASIC STATS (LEGACY)
-        // ============================================
+        
         builder
             .addCase(fetchAdminStats.pending, (state) => {
                 state.loading = true;
@@ -728,7 +705,37 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchAdminStats.fulfilled, (state, action) => {
                 state.loading = false;
-                state.basicStats = action.payload;
+                
+                console.log('📥 What Redux received:', action.payload);
+                
+                const { success, ...data } = action.payload;
+                
+                console.log('📦 After removing success:', data);
+                console.log('📦 ordersByStatus:', data.ordersByStatus);
+                console.log('📦 inventory:', data.inventory);
+                
+                state.basicStats = {
+                    products: data.products || 0,
+                    orders: data.orders || 0,
+                    revenue: data.revenue || 0,
+                    users: data.users || 0,
+                    adminCount: data.adminCount || 0,
+                    ordersByStatus: data.ordersByStatus || {
+                        processing: 0,
+                        shipped: 0,
+                        delivered: 0,
+                        cancelled: 0
+                    },
+                    inventory: data.inventory || {
+                        inStock: 0,
+                        lowStock: 0,
+                        outOfStock: 0,
+                        discontinued: 0,
+                        total: 0
+                    }
+                };
+                
+                console.log('✅ Final state:', state.basicStats);
             })
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;

@@ -1,36 +1,31 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link, useLocation } from 'react-router-dom';
 import {
   Dashboard as DashboardIcon,
   TrendingUp, TrendingDown,
   ShoppingCart, People, Inventory,
-  Assessment, Analytics,
-  MoneyOff, Percent,
+  Assessment,
   AttachMoney, Menu, Close,
-  LocalOffer, ShoppingBag,
   Warning, CheckCircle,
-  Refresh, Category,
+  Category,
   ManageAccounts,
   KeyboardArrowRight,
   ReplayCircleFilled,
-  Payment as Payments,
+  CurrencyExchange,
   LocalShipping,
   Security,
   FactCheck,
   BarChart,
   Storefront,
-  CurrencyExchange,
   PersonSearch,
   DevicesOther,
   CampaignOutlined,
   ShoppingCartCheckout,
   ErrorOutline,
-  ExpandLess,
-  ExpandMore,
 } from '@mui/icons-material';
 import {
-  LineChart, Line, BarChart as ReChart, Bar,
+  BarChart as ReChart, Bar,
   PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
@@ -67,11 +62,11 @@ const NAV_GROUPS = [
   {
     group: 'Analytics',
     items: [
-      { path: '/admin/analytics',    icon: Analytics,         label: 'Overview',     color: '#8B5CF6' },
-      { path: '/admin/reports',      icon: Assessment,         label: 'Reports',      color: '#EC4899' },
-      { path: '/admin/customers',    icon: PersonSearch,       label: 'Customers',    color: '#06B6D4' },
-      { path: '/admin/attribution',  icon: CampaignOutlined,   label: 'Attribution',  color: '#F59E0B' },
-      { path: '/admin/checkout',     icon: ShoppingCartCheckout, label: 'Checkout',  color: '#10B981' },
+      { path: '/admin/analytics',   icon: BarChart,           label: 'Overview',    color: '#8B5CF6' },
+      { path: '/admin/reports',     icon: Assessment,         label: 'Reports',     color: '#EC4899' },
+      { path: '/admin/customers',   icon: PersonSearch,       label: 'Customers',   color: '#06B6D4' },
+      { path: '/admin/attribution', icon: CampaignOutlined,   label: 'Attribution', color: '#F59E0B' },
+      { path: '/admin/checkout',    icon: ShoppingCartCheckout, label: 'Checkout',  color: '#10B981' },
     ],
   },
   {
@@ -92,10 +87,14 @@ const NAV_GROUPS = [
     items: [
       { path: '/admin/returns',   icon: ReplayCircleFilled, label: 'Returns',   color: '#EF4444' },
       { path: '/admin/refunds',   icon: CurrencyExchange,   label: 'Refunds',   color: '#14B8A6' },
-      { path: '/admin/discounts', icon: Percent,            label: 'Discounts', color: '#84CC16' },
     ],
   },
 ];
+
+// ─── AUTO-REFRESH & DEDUPLICATION CONFIG ────────────────────────────────────
+const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
+const STALE_DATA_THRESHOLD = 3 * 60 * 1000; // 3 minutes (reduced from 10)
+const DEBOUNCE_DELAY = 500; // Increased from 300ms for better stability
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const fmt = {
@@ -186,6 +185,78 @@ function SectionCard({ title, subtitle, link, linkLabel = 'View All', children, 
   );
 }
 
+function LastUpdated({ timestamp }) {
+  const [timeAgo, setTimeAgo] = useState('');
+
+  useEffect(() => {
+    const updateTimeAgo = () => {
+      if (!timestamp) {
+        setTimeAgo('Never');
+        return;
+      }
+      const now = Date.now();
+      const diff = now - timestamp;
+      const minutes = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      
+      if (minutes < 1) setTimeAgo('Just now');
+      else if (minutes === 1) setTimeAgo('1 min ago');
+      else if (minutes < 60) setTimeAgo(`${minutes} mins ago`);
+      else if (hours === 1) setTimeAgo('1 hour ago');
+      else setTimeAgo(`${hours} hours ago`);
+    };
+
+    updateTimeAgo();
+    const interval = setInterval(updateTimeAgo, 30000);
+    return () => clearInterval(interval);
+  }, [timestamp]);
+
+  return (
+    <div className="adm-last-updated">
+      <span className="adm-last-updated-label">Last updated:</span>
+      <span className="adm-last-updated-time">{timeAgo}</span>
+    </div>
+  );
+}
+
+// ─── Custom Debounce Hook ───────────────────────────────────────────────────
+function useDebounce(callback, delay) {
+  const callbackRef = useRef(callback);
+  const timeoutRef = useRef(null);
+
+  // Update callback ref when it changes
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, []);
+
+  const debouncedCallback = useCallback((...args) => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      callbackRef.current(...args);
+    }, delay);
+  }, [delay]);
+
+  const cancel = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+  }, []);
+
+  return [debouncedCallback, cancel];
+}
+
 // ─── Main Component ─────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const dispatch = useDispatch();
@@ -201,7 +272,6 @@ export default function AdminDashboard() {
     channelPerformance,
     devicePerformance,
     checkoutAbandonment,
-    productPerformance,
     categoryPerformance,
     lowStockAlerts,
     fulfillmentAnalytics,
@@ -216,45 +286,192 @@ export default function AdminDashboard() {
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timeframe, setTimeframe] = useState('month');
+  const [lastFetchTime, setLastFetchTime] = useState(null);
 
-  const loadAll = useCallback(() => {
-    // Legacy stats endpoint
-    dispatch(fetchAdminStats());
-    // Dashboard
-    dispatch(fetchDashboardKPIs(timeframe));
-    dispatch(fetchRevenueTrends({ timeframe, groupBy: 'day' }));
-    dispatch(fetchTopPerformers(timeframe));
-    dispatch(fetchDashboardAlerts());
-    // Customer
-    dispatch(fetchCustomerOverview());
-    // Attribution
-    dispatch(fetchChannelPerformance(timeframe));
-    dispatch(fetchDevicePerformance(timeframe));
-    // Checkout
-    dispatch(fetchCheckoutAbandonmentStats(timeframe));
-    // Products
-    dispatch(fetchProductPerformanceOverview(timeframe));
-    dispatch(fetchCategoryPerformance(timeframe));
-    dispatch(fetchLowStockAlerts());
-    // Operations
-    dispatch(fetchFulfillmentAnalytics(timeframe));
-    dispatch(fetchFraudAnalytics(timeframe));
-    dispatch(fetchSLABreaches(timeframe));
-    // Returns & Refunds
-    dispatch(fetchReturnOverview(timeframe));
-    dispatch(fetchRefundOverview(timeframe));
-  }, [dispatch, timeframe]);
+  // Use refs instead of state for loading flags to prevent re-renders
+  const isLoadingRef = useRef(false);
+  const abortControllerRef = useRef(null);
+  const lastFetchedRef = useRef({});
+  const autoRefreshTimerRef = useRef(null);
+  const isMountedRef = useRef(true);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  // Data loading function with abort controller
+  const loadDashboardData = useCallback((currentTimeframe) => {
+    // Prevent concurrent loads
+    if (isLoadingRef.current) {
+      console.log('📊 Load already in progress, skipping...');
+      return;
+    }
+
+    // Cancel any pending request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    const now = Date.now();
+    const lastFetch = lastFetchedRef.current[currentTimeframe] || 0;
+    const timeSinceLastFetch = now - lastFetch;
+
+    // Skip if data is fresh (less than 30 seconds old)
+    if (timeSinceLastFetch < 30000) {
+      console.log('📊 Data is fresh, skipping load...');
+      return;
+    }
+
+    lastFetchedRef.current[currentTimeframe] = now;
+    setLastFetchTime(now); // UPDATE: Set timestamp immediately when starting
+    isLoadingRef.current = true;
+
+    console.log('📊 Loading dashboard data for timeframe:', currentTimeframe);
+
+    // Dispatch all analytics fetches with abort signal if supported
+    Promise.allSettled([
+      dispatch(fetchAdminStats()),
+      dispatch(fetchDashboardKPIs(currentTimeframe)),
+      dispatch(fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' })),
+      dispatch(fetchTopPerformers(currentTimeframe)),
+      dispatch(fetchDashboardAlerts()),
+      dispatch(fetchCustomerOverview()),
+      dispatch(fetchChannelPerformance(currentTimeframe)),
+      dispatch(fetchDevicePerformance(currentTimeframe)),
+      dispatch(fetchCheckoutAbandonmentStats(currentTimeframe)),
+      dispatch(fetchProductPerformanceOverview(currentTimeframe)),
+      dispatch(fetchCategoryPerformance(currentTimeframe)),
+      dispatch(fetchLowStockAlerts()),
+      dispatch(fetchFulfillmentAnalytics(currentTimeframe)),
+      dispatch(fetchFraudAnalytics(currentTimeframe)),
+      dispatch(fetchSLABreaches(currentTimeframe)),
+      dispatch(fetchReturnOverview(currentTimeframe)),
+      dispatch(fetchRefundOverview(currentTimeframe))
+    ])
+      .then((results) => {
+        // Check if request was aborted
+        if (signal.aborted) {
+          console.log('📊 Request was aborted');
+          return;
+        }
+
+        // Check if component is still mounted
+        if (!isMountedRef.current) {
+          console.log('📊 Component unmounted, skipping state update');
+          return;
+        }
+
+        // Log any failed requests
+        const failed = results.filter(r => r.status === 'rejected');
+        if (failed.length > 0) {
+          console.warn('📊 Some requests failed:', failed.length);
+        }
+
+        console.log('✅ Dashboard data loaded successfully');
+      })
+      .catch((err) => {
+        if (err.name === 'AbortError') {
+          console.log('📊 Fetch aborted');
+        } else {
+          console.error('❌ Error loading dashboard:', err);
+        }
+      })
+      .finally(() => {
+        isLoadingRef.current = false;
+        abortControllerRef.current = null;
+      });
+  }, [dispatch]);
+
+  // Debounced load wrapper
+  const [debouncedLoad, cancelDebounce] = useDebounce((currentTimeframe) => {
+    loadDashboardData(currentTimeframe);
+  }, DEBOUNCE_DELAY);
+
+  // Handle timeframe change
+  const handleTimeframeChange = useCallback((newTimeframe) => {
+    console.log('📊 Timeframe changed to:', newTimeframe);
+    setTimeframe(newTimeframe);
+    
+    // Cancel any pending debounced calls
+    cancelDebounce();
+    
+    // Trigger debounced load with new timeframe
+    debouncedLoad(newTimeframe);
+  }, [debouncedLoad, cancelDebounce]);
+
+  // Initial load on mount
+  useEffect(() => {
+    console.log('📊 Component mounted, loading initial data');
+    isMountedRef.current = true;
+    
+    // Load data immediately on mount
+    loadDashboardData(timeframe);
+
+    // Cleanup on unmount
+    return () => {
+      console.log('📊 Component unmounting, cleaning up...');
+      isMountedRef.current = false;
+      
+      // Cancel any pending requests
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      
+      // Cancel debounced calls
+      cancelDebounce();
+      
+      // Clear auto-refresh timer
+      if (autoRefreshTimerRef.current) {
+        clearInterval(autoRefreshTimerRef.current);
+      }
+    };
+  }, []); // Empty dependency array - only run on mount/unmount
+
+  // Auto-refresh for current data (separate effect)
+  useEffect(() => {
+    // Clear existing timer
+    if (autoRefreshTimerRef.current) {
+      clearInterval(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+
+    const shouldAutoRefresh = ['day', 'week', 'month'].includes(timeframe);
+    
+    if (shouldAutoRefresh) {
+      console.log('📊 Setting up auto-refresh for:', timeframe);
+      
+      autoRefreshTimerRef.current = setInterval(() => {
+        const lastFetch = lastFetchedRef.current[timeframe] || 0;
+        const timeSinceLastFetch = Date.now() - lastFetch;
+        
+        // Only refresh if data is stale and not currently loading
+        if (timeSinceLastFetch >= STALE_DATA_THRESHOLD && !isLoadingRef.current) {
+          console.log('📊 Auto-refresh triggered for stale data');
+          loadDashboardData(timeframe);
+        }
+      }, AUTO_REFRESH_INTERVAL);
+    }
+
+    // Cleanup timer on timeframe change or unmount
+    return () => {
+      if (autoRefreshTimerRef.current) {
+        clearInterval(autoRefreshTimerRef.current);
+        autoRefreshTimerRef.current = null;
+      }
+    };
+  }, [timeframe, loadDashboardData]);
 
   const isActive = (p) => location.pathname === p || location.pathname.startsWith(p + '/');
 
-  // ── KPI Card Data ──────────────────────────────────────────────────────────
+  // ── Derived data ─────────────────────────────────────────────────────────
+  const inv = basicStats?.inventory || {};
+  const orders = basicStats?.ordersByStatus || {};
+
   const kpiCards = [
     {
       key: 'revenue',
       label: 'Total Revenue',
-      value: kpis?.revenue ? fmt.compact(kpis.revenue.current) : fmt.currency(basicStats?.revenue),
+      value: kpis?.revenue ? fmt.currency(kpis.revenue.current) : fmt.currency(basicStats?.revenue),
       change: kpis?.revenue?.change,
       icon: AttachMoney,
       accent: '#10B981',
@@ -287,37 +504,38 @@ export default function AdminDashboard() {
       bg: '#F9731615',
     },
     {
-      key: 'inStock',
-      label: 'In Stock',
-      value: fmt.number(basicStats?.inStock),
-      icon: CheckCircle,
-      accent: '#14B8A6',
-      bg: '#14B8A615',
+      key: 'lowStock',
+      label: 'Low Stock',
+      value: fmt.number(inv.lowStock),
+      icon: Warning,
+      accent: '#F59E0B',
+      bg: '#F59E0B15',
     },
     {
       key: 'outOfStock',
       label: 'Out of Stock',
-      value: fmt.number(basicStats?.outOfStock),
+      value: fmt.number(inv.outOfStock),
       icon: ErrorOutline,
       accent: '#EF4444',
       bg: '#EF444415',
     },
   ];
 
-  // ── Chart data ──────────────────────────────────────────────────────────────
   const revenueData = revenueTrends?.data || [];
-  const catData = (topPerformers?.categories || categoryPerformance?.categories || []).slice(0, 5).map((c, i) => ({
-    name: c.name,
-    value: c.revenue,
-    fill: ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i],
-  }));
+  const catData = (topPerformers?.categories || categoryPerformance?.categories || [])
+    .slice(0, 5)
+    .map((c, i) => ({
+      name: c.name,
+      value: c.revenue,
+      fill: ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i],
+    }));
 
   const channelData = channelPerformance?.channels || [];
   const deviceData = devicePerformance?.devices || [];
 
   return (
     <div className="adm-wrap">
-      {/* ── Sidebar ─────────────────────────────────────────────────────────── */}
+      {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside className={`adm-sidebar ${sidebarOpen ? 'adm-sidebar--open' : ''}`}>
         <div className="adm-sidebar-logo">
           <span className="adm-logo-mark">
@@ -360,14 +578,12 @@ export default function AdminDashboard() {
         </nav>
       </aside>
 
-      {/* Mobile overlay */}
       {sidebarOpen && (
         <div className="adm-overlay" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* ── Main ────────────────────────────────────────────────────────────── */}
+      {/* ── Main ────────────────────────────────────────────────────────── */}
       <div className="adm-main">
-        {/* Page header */}
         <div className="adm-page-hd">
           <div className="adm-page-hd-left">
             <button className="adm-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -380,15 +596,14 @@ export default function AdminDashboard() {
           </div>
 
           <div className="adm-page-hd-right">
-            <button className="adm-refresh-btn" onClick={loadAll} title="Refresh all data">
-              <Refresh style={{ fontSize: 18 }} />
-            </button>
+            <LastUpdated timestamp={lastFetchTime} />
             <div className="adm-timeframe">
               {['day', 'week', 'month', 'year'].map((t) => (
                 <button
                   key={t}
                   className={`adm-tf-btn ${timeframe === t ? 'adm-tf-btn--active' : ''}`}
-                  onClick={() => setTimeframe(t)}
+                  onClick={() => handleTimeframeChange(t)}
+                  disabled={loading}
                 >
                   {t.charAt(0).toUpperCase() + t.slice(1)}
                 </button>
@@ -398,18 +613,14 @@ export default function AdminDashboard() {
         </div>
 
         <div className="adm-content">
-          {/* ── Error Banner ─────────────────────────────────────────────── */}
           {error && (
             <div className="adm-error-banner">
               <Warning style={{ fontSize: 18 }} />
               <span>{error}</span>
-              <button onClick={loadAll}>Retry</button>
             </div>
           )}
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 1: KEY PERFORMANCE INDICATORS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 1: KPIs */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -439,9 +650,52 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 2: REVENUE ANALYTICS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 1b: Orders & Inventory */}
+          <div className="adm-section">
+            <div className="adm-section-hd">
+              <h2 className="adm-section-title">
+                <span className="adm-section-icon-wrap" style={{ background: '#F9731615', color: '#F97316' }}>
+                  <ShoppingCart style={{ fontSize: 16 }} />
+                </span>
+                Orders &amp; Inventory Status
+              </h2>
+              <Link to="/admin/orders" className="adm-section-link">
+                View Orders <KeyboardArrowRight style={{ fontSize: 16 }} />
+              </Link>
+            </div>
+
+            <div className="adm-charts-row">
+              <SectionCard title="Order Status Breakdown" icon={ShoppingCart} iconColor="#F97316" link="/admin/orders">
+                {loading && !basicStats?.orders ? (
+                  <SectionSkeleton rows={4} />
+                ) : (
+                  <div className="adm-metric-list">
+                    <MetricRow label="Processing" value={fmt.number(orders.processing)} accent="#F59E0B" />
+                    <MetricRow label="Shipped" value={fmt.number(orders.shipped)} accent="#3B82F6" />
+                    <MetricRow label="Delivered" value={fmt.number(orders.delivered)} accent="#10B981" />
+                    <MetricRow label="Cancelled" value={fmt.number(orders.cancelled)} accent="#EF4444" />
+                    <MetricRow label="Total" value={fmt.number(basicStats?.orders)} />
+                  </div>
+                )}
+              </SectionCard>
+
+              <SectionCard title="Inventory Breakdown" icon={Inventory} iconColor="#3B82F6" link="/admin/products">
+                {loading && !basicStats?.products ? (
+                  <SectionSkeleton rows={5} />
+                ) : (
+                  <div className="adm-metric-list">
+                    <MetricRow label="In Stock" value={fmt.number(inv.inStock)} accent="#10B981" />
+                    <MetricRow label="Low Stock" value={fmt.number(inv.lowStock)} accent="#F59E0B" />
+                    <MetricRow label="Out of Stock" value={fmt.number(inv.outOfStock)} accent="#EF4444" />
+                    <MetricRow label="Discontinued" value={fmt.number(inv.discontinued)} accent="#64748B" />
+                    <MetricRow label="Total SKUs" value={fmt.number(inv.total)} />
+                  </div>
+                )}
+              </SectionCard>
+            </div>
+          </div>
+
+          {/* SECTION 2: Revenue Analytics */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -477,7 +731,10 @@ export default function AdminDashboard() {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--adm-border)" />
                       <XAxis dataKey="date" tick={{ fontSize: 11, fill: 'var(--adm-text-muted)' }} />
-                      <YAxis tick={{ fontSize: 11, fill: 'var(--adm-text-muted)' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                      <YAxis
+                        tick={{ fontSize: 11, fill: 'var(--adm-text-muted)' }}
+                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      />
                       <Tooltip
                         contentStyle={{ background: 'var(--adm-card)', border: '1px solid var(--adm-border)', borderRadius: 8, fontSize: 13 }}
                         formatter={(v) => [fmt.currency(v), 'Revenue']}
@@ -501,7 +758,11 @@ export default function AdminDashboard() {
                   <ResponsiveContainer width="100%" height={260}>
                     <ReChart data={catData} layout="vertical">
                       <CartesianGrid strokeDasharray="3 3" stroke="var(--adm-border)" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11, fill: 'var(--adm-text-muted)' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                      <XAxis
+                        type="number"
+                        tick={{ fontSize: 11, fill: 'var(--adm-text-muted)' }}
+                        tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                      />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: 'var(--adm-text-muted)' }} width={90} />
                       <Tooltip
                         contentStyle={{ background: 'var(--adm-card)', border: '1px solid var(--adm-border)', borderRadius: 8, fontSize: 13 }}
@@ -517,9 +778,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 3: CUSTOMER ANALYTICS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 3: Customer Analytics */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -592,9 +851,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 4: MARKETING ATTRIBUTION
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 4: Marketing Attribution */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -635,7 +892,15 @@ export default function AdminDashboard() {
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
                     <PieChart>
-                      <Pie data={deviceData} dataKey="sessions" nameKey="device" cx="50%" cy="50%" outerRadius={80} label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}>
+                      <Pie
+                        data={deviceData}
+                        dataKey="sessions"
+                        nameKey="device"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}
+                      >
                         {deviceData.map((_, i) => (
                           <Cell key={i} fill={['#6366F1', '#10B981', '#F59E0B'][i % 3]} />
                         ))}
@@ -650,9 +915,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 5: CHECKOUT ANALYTICS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 5: Checkout Analytics */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -714,9 +977,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 6: PRODUCT PERFORMANCE
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 6: Product Performance */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -773,9 +1034,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 7: OPERATIONAL ANALYTICS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 7: Operational Metrics */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -830,9 +1089,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 8: RETURNS ANALYTICS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 8: Returns Analytics */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -882,9 +1139,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 9: REFUNDS ANALYTICS
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 9: Refunds Analytics */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -923,10 +1178,13 @@ export default function AdminDashboard() {
                       <div key={i} className="adm-segment-row">
                         <div className="adm-segment-label">{s.status}</div>
                         <div className="adm-segment-bar-wrap">
-                          <div className="adm-segment-bar" style={{
-                            width: `${s.percentage || 0}%`,
-                            background: ['#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#8B5CF6'][i % 5]
-                          }} />
+                          <div
+                            className="adm-segment-bar"
+                            style={{
+                              width: `${s.percentage || 0}%`,
+                              background: ['#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#8B5CF6'][i % 5],
+                            }}
+                          />
                         </div>
                         <div className="adm-segment-pct">{fmt.number(s.count)}</div>
                       </div>
@@ -937,9 +1195,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* ═══════════════════════════════════════════════════════════════
-              SECTION 10: ALERTS & RECENT ACTIVITY
-          ═══════════════════════════════════════════════════════════════ */}
+          {/* SECTION 10: Alerts & Quick Stats */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -952,7 +1208,7 @@ export default function AdminDashboard() {
 
             <div className="adm-charts-row">
               <SectionCard title="Dashboard Alerts" icon={Warning} iconColor="#F59E0B">
-                {!alerts ? (
+                {dashboardLoading && !alerts.length ? (
                   <SectionSkeleton rows={4} />
                 ) : alerts.length === 0 ? (
                   <div className="adm-empty">
@@ -987,8 +1243,8 @@ export default function AdminDashboard() {
                   {[
                     { label: 'Products', value: fmt.number(basicStats?.products), color: '#3B82F6', icon: Inventory },
                     { label: 'Users', value: fmt.number(basicStats?.users), color: '#8B5CF6', icon: People },
-                    { label: 'In Stock', value: fmt.number(basicStats?.inStock), color: '#10B981', icon: CheckCircle },
-                    { label: 'Out of Stock', value: fmt.number(basicStats?.outOfStock), color: '#EF4444', icon: ErrorOutline },
+                    { label: 'In Stock', value: fmt.number(inv.inStock), color: '#10B981', icon: CheckCircle },
+                    { label: 'Out of Stock', value: fmt.number(inv.outOfStock), color: '#EF4444', icon: ErrorOutline },
                     { label: 'Orders', value: fmt.number(basicStats?.orders), color: '#F97316', icon: ShoppingCart },
                     { label: 'Admins', value: fmt.number(basicStats?.adminCount), color: '#A855F7', icon: ManageAccounts },
                   ].map((s, i) => (
@@ -996,7 +1252,9 @@ export default function AdminDashboard() {
                       <span className="adm-quick-icon" style={{ background: s.color + '15', color: s.color }}>
                         <s.icon style={{ fontSize: 16 }} />
                       </span>
-                      <span className="adm-quick-value">{loading && !basicStats?.products ? '—' : s.value}</span>
+                      <span className="adm-quick-value">
+                        {loading && !basicStats?.products ? '—' : s.value}
+                      </span>
                       <span className="adm-quick-label">{s.label}</span>
                     </div>
                   ))}
@@ -1004,9 +1262,9 @@ export default function AdminDashboard() {
               </SectionCard>
             </div>
           </div>
-
-        </div>{/* end adm-content */}
-      </div>{/* end adm-main */}
+          
+        </div>
+      </div>
     </div>
   );
 }
