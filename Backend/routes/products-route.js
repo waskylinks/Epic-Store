@@ -8,7 +8,8 @@ import {
     getAdminProducts, 
     createProductReview, 
     getProductReviews, 
-    deleteReview
+    deleteReview,
+    getProductBySlug
 } from '../controller/product-controller.js';
 import {
     getTrendingProducts,
@@ -35,6 +36,7 @@ router.route('/products/bestsellers').get(publicProductLimiter, getBestsellers);
 
 // Single product details
 router.route('/product/:id').get(publicProductLimiter, trackProductView, getProductDetails);
+router.get('/products/:slug', getProductBySlug);
 
 // Reviews routes
 router.route('/review').put(verifyUserAuth, createProductReview);
