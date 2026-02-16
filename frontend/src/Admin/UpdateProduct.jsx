@@ -839,44 +839,6 @@ function UpdateProduct() {
                                         ))}
                                     </div>
 
-                                    {/* Breadcrumbs */}
-                                    <div className="eup-form-group">
-                                        <div className="eup-label-with-btn">
-                                            <label className="eup-label">Breadcrumbs (SEO)</label>
-                                            <button
-                                                type="button"
-                                                className="eup-btn-small"
-                                                onClick={addBreadcrumb}
-                                                disabled={!newBreadcrumb.name || !newBreadcrumb.url}
-                                            >
-                                                <FiPlus /> Add
-                                            </button>
-                                        </div>
-                                        <div className="eup-spec-row">
-                                            <input
-                                                type="text"
-                                                className="eup-input"
-                                                placeholder="Name (e.g., Home)"
-                                                value={newBreadcrumb.name}
-                                                onChange={e => setNewBreadcrumb(prev => ({ ...prev, name: e.target.value }))}
-                                            />
-                                            <input
-                                                type="text"
-                                                className="eup-input"
-                                                placeholder="URL (e.g., /)"
-                                                value={newBreadcrumb.url}
-                                                onChange={e => setNewBreadcrumb(prev => ({ ...prev, url: e.target.value }))}
-                                            />
-                                        </div>
-                                        <div className="eup-tags">
-                                            {breadcrumbs.map((breadcrumb, idx) => (
-                                                <span key={idx} className="eup-tag">
-                                                    {breadcrumb.position}. {breadcrumb.name}
-                                                    <button type="button" onClick={() => removeBreadcrumb(idx)}><FiX /></button>
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
                                 </div>
                             </div>
                         )}
@@ -1423,6 +1385,46 @@ function UpdateProduct() {
                                             value={formData.seo.focusKeyphrase}
                                             onChange={handleInputChange}
                                         />
+                                    </div>
+
+                                    {/* Breadcrumbs */}
+                                    
+                                    <div className="eup-form-group">
+                                        <div className="eup-label-with-btn">
+                                            <label className="eup-label">Breadcrumbs (SEO)</label>
+                                            <button
+                                                type="button"
+                                                className="eup-btn-small"
+                                                onClick={addBreadcrumb}
+                                                disabled={!newBreadcrumb.name || !newBreadcrumb.url}
+                                            >
+                                                <FiPlus /> Add
+                                            </button>
+                                        </div>
+                                        <div className="eup-spec-row">
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="Name (e.g., Home)"
+                                                value={newBreadcrumb.name}
+                                                onChange={e => setNewBreadcrumb(prev => ({ ...prev, name: e.target.value }))}
+                                            />
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="URL (e.g., /)"
+                                                value={newBreadcrumb.url}
+                                                onChange={e => setNewBreadcrumb(prev => ({ ...prev, url: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div className="eup-tags">
+                                            {breadcrumbs.map((breadcrumb, idx) => (
+                                                <span key={idx} className="eup-tag">
+                                                    {breadcrumb.position}. {breadcrumb.name}
+                                                    <button type="button" onClick={() => removeBreadcrumb(idx)}><FiX /></button>
+                                                </span>
+                                            ))}
+                                        </div>
                                     </div>
 
                                     <div className="eup-form-row">

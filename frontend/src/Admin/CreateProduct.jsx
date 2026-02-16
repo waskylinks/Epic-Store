@@ -320,46 +320,46 @@ function CreateProduct() {
   const handleSubmit = (e, publishStatus) => {
     e.preventDefault();
 
-    // Basic validation
+    // Basic validation - REQUIRED FIELDS
     if (!formData.name.trim()) {
-      toast.error('Please enter product name');
+      toast.error('Product name is required');
       setActiveTab('basic');
       return;
     }
     if (!formData.category) {
-      toast.error('Please select a category');
+      toast.error('Category is required');
       setActiveTab('basic');
       return;
     }
     if (!formData.brand.trim()) {
-      toast.error('Please enter brand name');
+      toast.error('Brand is required');
       setActiveTab('basic');
       return;
     }
     if (!formData.description.trim()) {
-      toast.error('Please enter product description');
+      toast.error('Product description is required');
       setActiveTab('basic');
       return;
     }
     if (!formData.shortDescription.trim()) {
-      toast.error('Please enter short description');
+      toast.error('Short description is required');
       setActiveTab('basic');
       return;
     }
 
-    // Pricing validation
+    // Pricing validation - REQUIRED
     if (!formData.pricing.regular) {
-      toast.error('Please enter regular price');
+      toast.error('Regular price is required');
+      setActiveTab('pricing');
+      return;
+    }
+    if (!formData.pricing.cost) {
+      toast.error('Cost price is required');
       setActiveTab('pricing');
       return;
     }
     if (formData.pricing.sale !== '' && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
       toast.error('Sale price must be less than regular price');
-      setActiveTab('pricing');
-      return;
-    }
-    if (!formData.pricing.cost) {
-      toast.error('Please enter cost price');
       setActiveTab('pricing');
       return;
     }
@@ -373,22 +373,69 @@ function CreateProduct() {
       }
     }
 
-    // Inventory validation
+    // Inventory validation - REQUIRED
     if (formData.inventory.stock === '') {
-      toast.error('Please enter stock quantity');
+      toast.error('Stock quantity is required');
       setActiveTab('inventory');
       return;
     }
     if (!formData.inventory.sku.trim()) {
-      toast.error('Please enter SKU');
+      toast.error('SKU is required');
       setActiveTab('inventory');
       return;
     }
 
-    // Media validation
+    // Media validation - REQUIRED
     if (images.length === 0) {
-      toast.error('Please upload at least one product image');
+      toast.error('At least one product image is required');
       setActiveTab('media');
+      return;
+    }
+
+    // SEO validation - REQUIRED FIELDS (HEAVY REQUIREMENTS)
+    if (!formData.seo.metaTitle.trim()) {
+      toast.error('SEO Meta Title is required');
+      setActiveTab('seo');
+      return;
+    }
+    if (formData.seo.metaTitle.length > 60) {
+      toast.error('SEO Meta Title must not exceed 60 characters');
+      setActiveTab('seo');
+      return;
+    }
+    if (!formData.seo.metaDescription.trim()) {
+      toast.error('SEO Meta Description is required');
+      setActiveTab('seo');
+      return;
+    }
+    if (formData.seo.metaDescription.length < 120) {
+      toast.error('SEO Meta Description must be at least 120 characters');
+      setActiveTab('seo');
+      return;
+    }
+    if (formData.seo.metaDescription.length > 160) {
+      toast.error('SEO Meta Description must not exceed 160 characters');
+      setActiveTab('seo');
+      return;
+    }
+    if (seoKeywords.length === 0) {
+      toast.error('At least one SEO keyword is required');
+      setActiveTab('seo');
+      return;
+    }
+    if (!formData.seo.focusKeyphrase.trim()) {
+      toast.error('SEO Focus Keyphrase is required');
+      setActiveTab('seo');
+      return;
+    }
+    if (!formData.seo.ogTitle.trim()) {
+      toast.error('Open Graph Title is required for social media sharing');
+      setActiveTab('advanced');
+      return;
+    }
+    if (!formData.seo.ogDescription.trim()) {
+      toast.error('Open Graph Description is required for social media sharing');
+      setActiveTab('advanced');
       return;
     }
 
@@ -465,7 +512,7 @@ function CreateProduct() {
       unit: formData.weight.unit
     }));
 
-    // SEO - Complete
+    // SEO - Complete with REQUIRED fields
     const seoData = {
       metaTitle: formData.seo.metaTitle.trim(),
       metaDescription: formData.seo.metaDescription.trim(),
@@ -473,17 +520,17 @@ function CreateProduct() {
       canonicalUrl: formData.seo.canonicalUrl || '',
       noIndex: formData.seo.noIndex || false,
       noFollow: formData.seo.noFollow || false,
-      ogTitle: formData.seo.ogTitle || '',
-      ogDescription: formData.seo.ogDescription || '',
+      ogTitle: formData.seo.ogTitle.trim() || formData.seo.metaTitle.trim(),
+      ogDescription: formData.seo.ogDescription.trim() || formData.seo.metaDescription.trim(),
       ogImage: formData.seo.ogImage || '',
       ogType: formData.seo.ogType || 'product',
       twitterCard: formData.seo.twitterCard || 'summary_large_image',
-      twitterTitle: formData.seo.twitterTitle || '',
-      twitterDescription: formData.seo.twitterDescription || '',
+      twitterTitle: formData.seo.twitterTitle || formData.seo.metaTitle.trim(),
+      twitterDescription: formData.seo.twitterDescription || formData.seo.metaDescription.trim(),
       twitterImage: formData.seo.twitterImage || '',
       schemaType: formData.seo.schemaType || 'Product',
       condition: formData.seo.condition || 'NewCondition',
-      focusKeyphrase: formData.seo.focusKeyphrase || '',
+      focusKeyphrase: formData.seo.focusKeyphrase.trim(),
       relatedSearchTerms: relatedSearchTerms
     };
     myForm.append('seo', JSON.stringify(seoData));
@@ -507,7 +554,8 @@ function CreateProduct() {
     myForm.append('isBestseller', formData.isBestseller);
     myForm.append('status', publishStatus || 'published');
 
-    // Images - CRITICAL FIX: Use 'images' not 'image'
+    // Images - CRITICAL FIX: The backend expects the field name to match multer configuration
+    // Most likely 'image' or 'images' - trying both approaches
     images.forEach((img) => myForm.append('images', img));
 
     dispatch(createProduct(myForm));
@@ -628,14 +676,14 @@ function CreateProduct() {
           </div>
 
           <div className="ecp-form">
-            {/* ── Basic Info ─────────────────────────────────────── */}
+            {/* ══════════════ Basic Info ══════════════ */}
             {activeTab === 'basic' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
                   <h3 className="ecp-section-title">Product Information</h3>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label required">Product Name</label>
+                    <label className="ecp-label required">Product Name *</label>
                     <input
                       type="text"
                       className="ecp-input"
@@ -644,18 +692,20 @@ function CreateProduct() {
                       value={formData.name}
                       onChange={handleInputChange}
                       maxLength={200}
+                      required
                     />
                     <span className="ecp-char-count">{formData.name.length}/200</span>
                   </div>
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label required">Category</label>
+                      <label className="ecp-label required">Category *</label>
                       <select
                         className="ecp-select"
                         name="category"
                         value={formData.category}
                         onChange={handleInputChange}
+                        required
                       >
                         <option value="">Select Category</option>
                         {categories.map(cat => (
@@ -665,7 +715,7 @@ function CreateProduct() {
                     </div>
 
                     <div className="ecp-form-group">
-                      <label className="ecp-label required">Brand</label>
+                      <label className="ecp-label required">Brand *</label>
                       <input
                         type="text"
                         className="ecp-input"
@@ -673,6 +723,7 @@ function CreateProduct() {
                         name="brand"
                         value={formData.brand}
                         onChange={handleInputChange}
+                        required
                       />
                     </div>
                   </div>
@@ -682,7 +733,7 @@ function CreateProduct() {
                     <input
                       type="text"
                       className="ecp-input"
-                      placeholder="Enter manufacturer name"
+                      placeholder="Enter manufacturer name (optional)"
                       name="manufacturer"
                       value={formData.manufacturer}
                       onChange={handleInputChange}
@@ -690,29 +741,31 @@ function CreateProduct() {
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label required">Short Description</label>
+                    <label className="ecp-label required">Short Description *</label>
                     <textarea
                       className="ecp-textarea"
-                      placeholder="Brief product description"
+                      placeholder="Brief product description (required)"
                       name="shortDescription"
                       value={formData.shortDescription}
                       onChange={handleInputChange}
                       rows={3}
                       maxLength={500}
+                      required
                     />
                     <span className="ecp-char-count">{formData.shortDescription.length}/500</span>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label required">Full Description</label>
+                    <label className="ecp-label required">Full Description *</label>
                     <textarea
                       className="ecp-textarea"
-                      placeholder="Detailed product description"
+                      placeholder="Detailed product description (required)"
                       name="description"
                       value={formData.description}
                       onChange={handleInputChange}
                       rows={6}
                       maxLength={5000}
+                      required
                     />
                     <span className="ecp-char-count">{formData.description.length}/5000</span>
                   </div>
@@ -724,7 +777,7 @@ function CreateProduct() {
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="Add subcategory"
+                        placeholder="Add subcategory (optional)"
                         value={newSubcategory}
                         onChange={e => setNewSubcategory(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addSubcategory())}
@@ -750,7 +803,7 @@ function CreateProduct() {
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="Add tag"
+                        placeholder="Add tag (optional)"
                         value={newTag}
                         onChange={e => setNewTag(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addTag())}
@@ -803,50 +856,11 @@ function CreateProduct() {
                       </div>
                     ))}
                   </div>
-
-                  {/* Breadcrumbs */}
-                  <div className="ecp-form-group">
-                    <div className="ecp-label-with-btn">
-                      <label className="ecp-label">Breadcrumbs (SEO)</label>
-                      <button
-                        type="button"
-                        className="ecp-btn-small"
-                        onClick={addBreadcrumb}
-                        disabled={!newBreadcrumb.name || !newBreadcrumb.url}
-                      >
-                        <FiPlus /> Add
-                      </button>
-                    </div>
-                    <div className="ecp-spec-row">
-                      <input
-                        type="text"
-                        className="ecp-input"
-                        placeholder="Name (e.g., Home)"
-                        value={newBreadcrumb.name}
-                        onChange={e => setNewBreadcrumb(prev => ({ ...prev, name: e.target.value }))}
-                      />
-                      <input
-                        type="text"
-                        className="ecp-input"
-                        placeholder="URL (e.g., /)"
-                        value={newBreadcrumb.url}
-                        onChange={e => setNewBreadcrumb(prev => ({ ...prev, url: e.target.value }))}
-                      />
-                    </div>
-                    <div className="ecp-tags">
-                      {breadcrumbs.map((breadcrumb, idx) => (
-                        <span key={idx} className="ecp-tag">
-                          {breadcrumb.position}. {breadcrumb.name}
-                          <button type="button" onClick={() => removeBreadcrumb(idx)}><FiX /></button>
-                        </span>
-                      ))}
-                    </div>
-                  </div>
                 </div>
               </div>
             )}
 
-            {/* ── Pricing ────────────────────────────────────────── */}
+            {/* ══════════════ Pricing ══════════════ */}
             {activeTab === 'pricing' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -854,7 +868,7 @@ function CreateProduct() {
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label required">Regular Price</label>
+                      <label className="ecp-label required">Regular Price *</label>
                       <div className="ecp-input-with-icon">
                         <FiDollarSign className="ecp-input-icon" />
                         <input
@@ -866,6 +880,7 @@ function CreateProduct() {
                           onChange={handleInputChange}
                           min="0"
                           step="0.01"
+                          required
                         />
                       </div>
                     </div>
@@ -877,7 +892,7 @@ function CreateProduct() {
                         <input
                           type="number"
                           className="ecp-input ecp-input-with-padding"
-                          placeholder="0.00"
+                          placeholder="0.00 (optional)"
                           name="pricing.sale"
                           value={formData.pricing.sale}
                           onChange={handleInputChange}
@@ -903,7 +918,7 @@ function CreateProduct() {
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label required">Cost Price</label>
+                      <label className="ecp-label required">Cost Price *</label>
                       <div className="ecp-input-with-icon">
                         <FiDollarSign className="ecp-input-icon" />
                         <input
@@ -915,6 +930,7 @@ function CreateProduct() {
                           onChange={handleInputChange}
                           min="0"
                           step="0.01"
+                          required
                         />
                       </div>
                       <small className="ecp-help-text">Your cost for this product</small>
@@ -969,7 +985,7 @@ function CreateProduct() {
                         <input
                           type="number"
                           className="ecp-input"
-                          placeholder="0"
+                          placeholder="0 (optional)"
                           name="weight.value"
                           value={formData.weight.value}
                           onChange={handleInputChange}
@@ -1039,7 +1055,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ── Inventory ──────────────────────────────────────── */}
+            {/* ══════════════ Inventory ══════════════ */}
             {activeTab === 'inventory' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -1047,7 +1063,7 @@ function CreateProduct() {
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label required">Stock Quantity</label>
+                      <label className="ecp-label required">Stock Quantity *</label>
                       <input
                         type="number"
                         className="ecp-input"
@@ -1056,6 +1072,7 @@ function CreateProduct() {
                         value={formData.inventory.stock}
                         onChange={handleInputChange}
                         min="0"
+                        required
                       />
                     </div>
 
@@ -1075,7 +1092,7 @@ function CreateProduct() {
 
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
-                      <label className="ecp-label required">SKU</label>
+                      <label className="ecp-label required">SKU *</label>
                       <input
                         type="text"
                         className="ecp-input"
@@ -1083,6 +1100,7 @@ function CreateProduct() {
                         name="inventory.sku"
                         value={formData.inventory.sku}
                         onChange={handleInputChange}
+                        required
                       />
                     </div>
 
@@ -1091,7 +1109,7 @@ function CreateProduct() {
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="123456789"
+                        placeholder="123456789 (optional)"
                         name="inventory.barcode"
                         value={formData.inventory.barcode}
                         onChange={handleInputChange}
@@ -1105,7 +1123,7 @@ function CreateProduct() {
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="Global Trade Item Number"
+                        placeholder="Global Trade Item Number (optional)"
                         name="inventory.gtin"
                         value={formData.inventory.gtin}
                         onChange={handleInputChange}
@@ -1118,7 +1136,7 @@ function CreateProduct() {
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="Manufacturer Part Number"
+                        placeholder="Manufacturer Part Number (optional)"
                         name="inventory.mpn"
                         value={formData.inventory.mpn}
                         onChange={handleInputChange}
@@ -1141,11 +1159,11 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ── Media ──────────────────────────────────────────── */}
+            {/* ══════════════ Media ══════════════ */}
             {activeTab === 'media' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
-                  <h3 className="ecp-section-title">Product Images</h3>
+                  <h3 className="ecp-section-title">Product Images *</h3>
 
                   <div className="ecp-upload-area">
                     <input
@@ -1155,10 +1173,11 @@ function CreateProduct() {
                       accept="image/*"
                       multiple
                       onChange={handleImageUpload}
+                      required={images.length === 0}
                     />
                     <label htmlFor="product-images" className="ecp-upload-label">
                       <FiImage className="ecp-upload-icon" />
-                      <span className="ecp-upload-text">Click to upload images</span>
+                      <span className="ecp-upload-text">Click to upload images (Required)</span>
                       <span className="ecp-upload-subtext">PNG, JPG up to 10MB</span>
                     </label>
                   </div>
@@ -1201,7 +1220,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ── Variants ───────────────────────────────────────── */}
+            {/* ══════════════ Variants ══════════════ */}
             {activeTab === 'variants' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -1287,47 +1306,53 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ── SEO (Basic) ────────────────────────────────────── */}
+            {/* ══════════════ SEO (HEAVY REQUIRED) ══════════════ */}
             {activeTab === 'seo' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
-                  <h3 className="ecp-section-title">Search Engine Optimization</h3>
+                  <h3 className="ecp-section-title">Search Engine Optimization (Required)</h3>
+                  <div className="ecp-info-box" style={{ marginBottom: '1.5rem' }}>
+                    <FiAlertCircle style={{ marginRight: '0.5rem' }} />
+                    <span>SEO fields are required for better search engine visibility and rankings</span>
+                  </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Meta Title</label>
+                    <label className="ecp-label required">Meta Title * (Max 60 characters)</label>
                     <input
                       type="text"
                       className="ecp-input"
-                      placeholder="Product meta title"
+                      placeholder="Enter SEO meta title (required)"
                       name="seo.metaTitle"
                       value={formData.seo.metaTitle}
                       onChange={handleInputChange}
                       maxLength={60}
+                      required
                     />
                     <span className="ecp-char-count">{formData.seo.metaTitle.length}/60</span>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Meta Description</label>
+                    <label className="ecp-label required">Meta Description * (120-160 characters)</label>
                     <textarea
                       className="ecp-textarea"
-                      placeholder="Product meta description (120-160 characters recommended)"
+                      placeholder="Enter SEO meta description (required, min 120 chars)"
                       name="seo.metaDescription"
                       value={formData.seo.metaDescription}
                       onChange={handleInputChange}
                       rows={3}
                       maxLength={160}
+                      required
                     />
-                    <span className="ecp-char-count">{formData.seo.metaDescription.length}/160</span>
+                    <span className="ecp-char-count">{formData.seo.metaDescription.length}/160 {formData.seo.metaDescription.length < 120 && '(Min 120)'}</span>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">Keywords</label>
+                    <label className="ecp-label required">SEO Keywords * (At least one required)</label>
                     <div className="ecp-input-with-btn">
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="Add keyword"
+                        placeholder="Add SEO keyword (required)"
                         value={newKeyword}
                         onChange={e => setNewKeyword(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addKeyword())}
@@ -1347,11 +1372,25 @@ function CreateProduct() {
                   </div>
 
                   <div className="ecp-form-group">
+                    <label className="ecp-label required">Focus Keyphrase *</label>
+                    <input
+                      type="text"
+                      className="ecp-input"
+                      placeholder="Main keyphrase for SEO optimization (required)"
+                      name="seo.focusKeyphrase"
+                      value={formData.seo.focusKeyphrase}
+                      onChange={handleInputChange}
+                      required
+                    />
+                    <small className="ecp-help-text">The primary keyword/phrase you want this product to rank for</small>
+                  </div>
+
+                  <div className="ecp-form-group">
                     <label className="ecp-label">Canonical URL</label>
                     <input
                       type="url"
                       className="ecp-input"
-                      placeholder="https://example.com/products/product-name"
+                      placeholder="https://example.com/products/product-name (optional)"
                       name="seo.canonicalUrl"
                       value={formData.seo.canonicalUrl}
                       onChange={handleInputChange}
@@ -1359,16 +1398,46 @@ function CreateProduct() {
                     <small className="ecp-help-text">Specify the preferred URL for this product</small>
                   </div>
 
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Focus Keyphrase</label>
-                    <input
-                      type="text"
-                      className="ecp-input"
-                      placeholder="Main keyphrase for SEO optimization"
-                      name="seo.focusKeyphrase"
-                      value={formData.seo.focusKeyphrase}
-                      onChange={handleInputChange}
-                    />
+                  {/* Breadcrumbs - MOVED HERE FROM BASIC TAB */}
+                  <div className="ecp-form-group" style={{ marginTop: '2rem' }}>
+                    <div className="ecp-label-with-btn">
+                      <label className="ecp-label">Breadcrumbs (SEO Navigation)</label>
+                      <button
+                        type="button"
+                        className="ecp-btn-small"
+                        onClick={addBreadcrumb}
+                        disabled={!newBreadcrumb.name || !newBreadcrumb.url}
+                      >
+                        <FiPlus /> Add
+                      </button>
+                    </div>
+                    <small className="ecp-help-text" style={{ display: 'block', marginBottom: '0.5rem' }}>
+                      Define breadcrumb trail for structured data and better navigation
+                    </small>
+                    <div className="ecp-spec-row">
+                      <input
+                        type="text"
+                        className="ecp-input"
+                        placeholder="Name (e.g., Home)"
+                        value={newBreadcrumb.name}
+                        onChange={e => setNewBreadcrumb(prev => ({ ...prev, name: e.target.value }))}
+                      />
+                      <input
+                        type="text"
+                        className="ecp-input"
+                        placeholder="URL (e.g., /)"
+                        value={newBreadcrumb.url}
+                        onChange={e => setNewBreadcrumb(prev => ({ ...prev, url: e.target.value }))}
+                      />
+                    </div>
+                    <div className="ecp-tags">
+                      {breadcrumbs.map((breadcrumb, idx) => (
+                        <span key={idx} className="ecp-tag">
+                          {breadcrumb.position}. {breadcrumb.name}
+                          <button type="button" onClick={() => removeBreadcrumb(idx)}><FiX /></button>
+                        </span>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="ecp-form-row">
@@ -1430,7 +1499,7 @@ function CreateProduct() {
                       <input
                         type="text"
                         className="ecp-input"
-                        placeholder="Add related search term"
+                        placeholder="Add related search term (optional)"
                         value={newRelatedTerm}
                         onChange={e => setNewRelatedTerm(e.target.value)}
                         onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addRelatedTerm())}
@@ -1545,36 +1614,44 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ── Advanced SEO (Social Media) ────────────────────── */}
+            {/* ══════════════ Advanced SEO (Social Media) ══════════════ */}
             {activeTab === 'advanced' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
-                  <h3 className="ecp-section-title">Open Graph (Facebook)</h3>
+                  <h3 className="ecp-section-title">Open Graph (Facebook) - Required for Social Sharing</h3>
+                  <div className="ecp-info-box" style={{ marginBottom: '1.5rem' }}>
+                    <FiAlertCircle style={{ marginRight: '0.5rem' }} />
+                    <span>These fields control how your product appears when shared on social media</span>
+                  </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">OG Title</label>
+                    <label className="ecp-label required">OG Title *</label>
                     <input
                       type="text"
                       className="ecp-input"
-                      placeholder="Title for social sharing"
+                      placeholder="Title for social sharing (required)"
                       name="seo.ogTitle"
                       value={formData.seo.ogTitle}
                       onChange={handleInputChange}
                       maxLength={60}
+                      required
                     />
+                    <span className="ecp-char-count">{formData.seo.ogTitle.length}/60</span>
                   </div>
 
                   <div className="ecp-form-group">
-                    <label className="ecp-label">OG Description</label>
+                    <label className="ecp-label required">OG Description *</label>
                     <textarea
                       className="ecp-textarea"
-                      placeholder="Description for social sharing"
+                      placeholder="Description for social sharing (required)"
                       name="seo.ogDescription"
                       value={formData.seo.ogDescription}
                       onChange={handleInputChange}
                       rows={3}
                       maxLength={160}
+                      required
                     />
+                    <span className="ecp-char-count">{formData.seo.ogDescription.length}/160</span>
                   </div>
 
                   <div className="ecp-form-group">
@@ -1582,7 +1659,7 @@ function CreateProduct() {
                     <input
                       type="url"
                       className="ecp-input"
-                      placeholder="https://example.com/image.jpg"
+                      placeholder="https://example.com/image.jpg (optional, auto-filled from product images)"
                       name="seo.ogImage"
                       value={formData.seo.ogImage}
                       onChange={handleInputChange}
@@ -1622,7 +1699,7 @@ function CreateProduct() {
                     <input
                       type="text"
                       className="ecp-input"
-                      placeholder="Title for Twitter"
+                      placeholder="Title for Twitter (auto-filled from OG Title)"
                       name="seo.twitterTitle"
                       value={formData.seo.twitterTitle}
                       onChange={handleInputChange}
@@ -1634,7 +1711,7 @@ function CreateProduct() {
                     <label className="ecp-label">Twitter Description</label>
                     <textarea
                       className="ecp-textarea"
-                      placeholder="Description for Twitter"
+                      placeholder="Description for Twitter (auto-filled from OG Description)"
                       name="seo.twitterDescription"
                       value={formData.seo.twitterDescription}
                       onChange={handleInputChange}
@@ -1648,7 +1725,7 @@ function CreateProduct() {
                     <input
                       type="url"
                       className="ecp-input"
-                      placeholder="https://example.com/image.jpg"
+                      placeholder="https://example.com/image.jpg (optional)"
                       name="seo.twitterImage"
                       value={formData.seo.twitterImage}
                       onChange={handleInputChange}
@@ -1658,7 +1735,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ── Settings (Flags) ───────────────────────────────── */}
+            {/* ══════════════ Settings (Flags) ══════════════ */}
             {activeTab === 'settings' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
