@@ -402,6 +402,160 @@ export const getCacheStats = async () => {
   }
 };
 
+
+/**
+ * Set raw string value in cache (no JSON serialization)
+ * Use this for XML, HTML, CSS, or other text formats that should be stored as-is
+ * 
+ * @param {string} key - Cache key
+ * @param {string} value - Raw string value (NOT an object)
+ * @param {number} ttl - Time to live in seconds (default: 300)
+ * @returns {Promise<void>}
+ * 
+ * @example
+ * await setCacheRaw('sitemap_products', '<xml>...</xml>', 3600);
+ * await setCacheRaw('homepage_html', '<html>...</html>', 1800);
+ */
+export const setCacheRaw = async (key, value, ttl = 300) => {
+  try {
+    if (!redis.isOpen) {
+      console.warn('Redis not connected, skipping raw cache set');
+      return;
+    }
+
+    // Don't JSON.stringify - store as plain string
+    await redis.set(PREFIX + key, value, { EX: ttl });
+  } catch (error) {
+    console.error('Redis SET (raw) error:', error);
+  }
+};
+
+/**
+ * Get raw string value from cache (no JSON parsing)
+ * Use this to retrieve XML, HTML, CSS, or other text formats
+ * 
+ * @param {string} key - Cache key
+ * @returns {Promise<string|null>} Raw string value or null
+ * 
+ * @example
+ * const xml = await getCacheRaw('sitemap_products');
+ * const html = await getCacheRaw('homepage_html');
+ */
+export const getCacheRaw = async key => {
+  try {
+    if (!redis.isOpen) {
+      return null;
+    }
+
+    // Don't JSON.parse - return as plain string
+    const data = await redis.get(PREFIX + key);
+    return data;
+  } catch (error) {
+    console.error('Redis GET (raw) error:', error);
+    return null;
+  }
+};
+
+/**
+ * Cache raw string with fallback function
+ * Combines getCacheRaw with automatic fetch and caching on miss
+ * 
+ * @param {string} key - Cache key
+ * @param {Function} fetchFn - Async function that returns raw string
+ * @param {number} ttl - Time to live in seconds
+ * @returns {Promise<string>} Cached or fresh raw string
+ * 
+ * @example
+ * const sitemap = await getCacheRawWithFallback(
+ *   'sitemap_products',
+ *   async () => generateSitemapXML(),
+ *   3600
+ * );
+ */
+export const getCacheRawWithFallback = async (key, fetchFn, ttl = 300) => {
+  try {
+    // Try cache first
+    const cached = await getCacheRaw(key);
+    if (cached !== null) {
+      return cached;
+    }
+
+    // Cache miss - fetch data
+    const data = await fetchFn();
+    
+    // Cache the result
+    await setCacheRaw(key, data, ttl);
+    
+    return data;
+  } catch (error) {
+    console.error('Cache with fallback (raw) error:', error);
+    // On error, try to fetch data anyway
+    return fetchFn();
+  }
+};
+
+/**
+ * Stale-While-Revalidate for raw strings
+ * Returns cached XML/HTML immediately, refreshes in background if stale
+ * 
+ * @param {string} key - Cache key
+ * @param {Function} fetchFn - Async function that returns raw string
+ * @param {Object} options - { ttl: 300, staleAfter: 240 }
+ * @returns {Promise<string>} Cached or fresh raw string
+ * 
+ * @example
+ * const sitemap = await getCacheRawWithSWR(
+ *   'sitemap_products',
+ *   async () => generateSitemapXML(),
+ *   { ttl: 3600, staleAfter: 3000 }
+ * );
+ */
+export const getCacheRawWithSWR = async (key, fetchFn, options = {}) => {
+  const { ttl = 300, staleAfter = 240 } = options;
+
+  try {
+    if (!redis.isOpen) {
+      return fetchFn();
+    }
+
+    const cached = await redis.get(PREFIX + key);
+
+    if (cached) {
+      // For raw strings, we can't embed _cachedAt in the data
+      // So we use a separate key to track age
+      const ageKey = `${PREFIX + key}:age`;
+      const cachedAt = await redis.get(ageKey);
+      const age = cachedAt ? Date.now() - parseInt(cachedAt) : Infinity;
+
+      // If cache is getting stale, refresh in background
+      if (age > staleAfter * 1000) {
+        // Don't await - refresh asynchronously
+        fetchFn()
+          .then(fresh => {
+            setCacheRaw(key, fresh, ttl);
+            // Update age marker
+            redis.set(ageKey, String(Date.now()), { EX: ttl });
+          })
+          .catch(err => console.error('SWR raw refresh error:', err));
+      }
+
+      return cached;
+    }
+
+    // No cache - fetch synchronously
+    const data = await fetchFn();
+    await setCacheRaw(key, data, ttl);
+    
+    // Set age marker
+    await redis.set(`${PREFIX + key}:age`, String(Date.now()), { EX: ttl });
+    
+    return data;
+  } catch (error) {
+    console.error('SWR raw cache error:', error);
+    return fetchFn();
+  }
+};
+
 /* ================= SHUTDOWN ================= */
 
 export const shutdownRedis = async () => {
