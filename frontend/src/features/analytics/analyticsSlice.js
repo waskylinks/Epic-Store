@@ -1,4 +1,5 @@
-// analyticsSlice.js - COMPLETE WITH ALL MISSING THUNKS
+// analyticsSlice.js - FIXED VERSION with proper customerOverview handling
+
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -20,11 +21,6 @@ export const fetchAdminStats = createAsyncThunk(
     }
 );
 
-
-// ============================================
-// NEW: ORDER STATUS BREAKDOWN THUNK
-// ============================================
-
 export const fetchOrderStatusBreakdown = createAsyncThunk(
   'analytics/fetchOrderStatusBreakdown',
   async (_, { rejectWithValue }) => {
@@ -37,10 +33,6 @@ export const fetchOrderStatusBreakdown = createAsyncThunk(
   }
 );
 
-// ============================================
-// NEW: INVENTORY BREAKDOWN THUNK
-// ============================================
-
 export const fetchInventoryBreakdown = createAsyncThunk(
   'analytics/fetchInventoryBreakdown',
   async (_, { rejectWithValue }) => {
@@ -52,7 +44,6 @@ export const fetchInventoryBreakdown = createAsyncThunk(
     }
   }
 );
-
 
 export const fetchBasicAnalytics = createAsyncThunk(
     'analytics/fetchBasicAnalytics',
@@ -134,8 +125,7 @@ export const fetchDashboardAlerts = createAsyncThunk(
     }
 );
 
-// ... (keep all existing report generation thunks)
-
+// Report generation thunks
 export const generateBusinessReport = createAsyncThunk(
     'analytics/generateBusinessReport',
     async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
@@ -258,8 +248,11 @@ export const exportReportCSV = createAsyncThunk(
     }
 );
 
-// ... (keep all existing customer, attribution, checkout, product, operations, returns thunks)
+// ============================================
+// CUSTOMER ANALYTICS THUNKS
+// ============================================
 
+// 🔧 FIXED: fetchCustomerOverview with proper error handling
 export const fetchCustomerOverview = createAsyncThunk(
     'analytics/fetchCustomerOverview',
     async (_, { rejectWithValue }) => {
@@ -343,10 +336,6 @@ export const fetchVIPCustomers = createAsyncThunk(
     }
 );
 
-// ============================================
-// 🆕 NEW: MISSING CUSTOMER ANALYTICS THUNKS
-// ============================================
-
 export const fetchCLVDistribution = createAsyncThunk(
     'analytics/fetchCLVDistribution',
     async (_, { rejectWithValue }) => {
@@ -420,7 +409,7 @@ export const fetchAcquisitionSourceAnalytics = createAsyncThunk(
 );
 
 // ============================================
-// ATTRIBUTION ANALYTICS (Existing + New)
+// ATTRIBUTION ANALYTICS
 // ============================================
 
 export const fetchChannelPerformance = createAsyncThunk(
@@ -464,8 +453,6 @@ export const fetchDevicePerformance = createAsyncThunk(
         }
     }
 );
-
-// 🆕 NEW: MISSING ATTRIBUTION THUNKS
 
 export const fetchBrowserPerformance = createAsyncThunk(
     'analytics/fetchBrowserPerformance',
@@ -516,7 +503,7 @@ export const fetchAttributionModels = createAsyncThunk(
 );
 
 // ============================================
-// CHECKOUT ANALYTICS (Keep existing)
+// CHECKOUT ANALYTICS
 // ============================================
 
 export const fetchCheckoutAbandonmentStats = createAsyncThunk(
@@ -570,7 +557,7 @@ export const fetchRecoveryOpportunities = createAsyncThunk(
 );
 
 // ============================================
-// PRODUCT ANALYTICS (Existing + New)
+// PRODUCT ANALYTICS
 // ============================================
 
 export const fetchProductPerformanceOverview = createAsyncThunk(
@@ -641,8 +628,6 @@ export const fetchCategoryPerformance = createAsyncThunk(
     }
 );
 
-// 🆕 NEW: MISSING PRODUCT THUNKS
-
 export const fetchProductProfitMargins = createAsyncThunk(
     'analytics/fetchProductProfitMargins',
     async ({ limit = 20, sortBy = 'margin' }, { rejectWithValue }) => {
@@ -672,7 +657,7 @@ export const fetchProductsBoughtTogether = createAsyncThunk(
 );
 
 // ============================================
-// OPERATIONAL ANALYTICS (Existing + New)
+// OPERATIONAL ANALYTICS
 // ============================================
 
 export const fetchFulfillmentAnalytics = createAsyncThunk(
@@ -716,8 +701,6 @@ export const fetchFraudAnalytics = createAsyncThunk(
         }
     }
 );
-
-// 🆕 NEW: MISSING OPERATIONS THUNKS
 
 export const fetchShippingCarrierPerformance = createAsyncThunk(
     'analytics/fetchShippingCarrierPerformance',
@@ -776,7 +759,7 @@ export const fetchHighRiskOrders = createAsyncThunk(
 );
 
 // ============================================
-// RETURNS & REFUNDS ANALYTICS (Existing + New)
+// RETURNS & REFUNDS ANALYTICS
 // ============================================
 
 export const fetchReturnOverview = createAsyncThunk(
@@ -820,8 +803,6 @@ export const fetchReturnsByProduct = createAsyncThunk(
         }
     }
 );
-
-// 🆕 NEW: MISSING RETURNS/REFUNDS THUNKS
 
 export const fetchReturnsByCategory = createAsyncThunk(
     'analytics/fetchReturnsByCategory',
@@ -880,8 +861,8 @@ const analyticsSlice = createSlice({
             users: 0,
             adminCount: 0,
         },
-          ordersByStatus: null,    
-          inventoryStatus: null,
+        ordersByStatus: null,    
+        inventoryStatus: null,
         basicAnalytics: {
             trends: {
                 revenue: 0,
@@ -907,59 +888,73 @@ const analyticsSlice = createSlice({
         currentReport: null,
         reportType: null,
 
-        // Customer Analytics (Existing + New)
-        customerOverview: null,
+        // 🔧 FIXED: Customer Analytics - Proper structure
+        customerOverview: {
+            totalCustomers: 0,
+            newCustomers: 0,
+            newCustomersGrowth: 0,
+            activeCustomers: 0,
+            avgOrderValue: 0,
+            avgLifetimeValue: 0,
+            totalRevenue: 0,
+            avgOrders: 0,
+            vipCount: 0,
+            atRiskCount: 0,
+            segments: [],
+            valueTiers: [],
+            churnRisk: []
+        },
         segmentDistribution: null,
         customersBySegment: [],
         highValueCustomers: [],
         atRiskCustomers: [],
         vipCustomers: [],
-        clvDistribution: null, // 🆕 NEW
-        customersNeedingAttention: null, // 🆕 NEW
-        customerCohorts: null, // 🆕 NEW
-        repeatPurchaseAnalytics: null, // 🆕 NEW
-        purchaseFrequencyAnalytics: null, // 🆕 NEW
-        acquisitionSources: null, // 🆕 NEW
+        clvDistribution: null,
+        customersNeedingAttention: null,
+        customerCohorts: null,
+        repeatPurchaseAnalytics: null,
+        purchaseFrequencyAnalytics: null,
+        acquisitionSources: null,
 
-        // Attribution (Existing + New)
+        // Attribution
         channelPerformance: null,
         campaignPerformance: null,
         devicePerformance: null,
-        browserPerformance: null, // 🆕 NEW
-        referrerPerformance: null, // 🆕 NEW
-        landingPagePerformance: null, // 🆕 NEW
-        attributionModels: null, // 🆕 NEW
+        browserPerformance: null,
+        referrerPerformance: null,
+        landingPagePerformance: null,
+        attributionModels: null,
 
         // Checkout
         checkoutAbandonment: null,
         abandonedCheckouts: [],
         recoveryOpportunities: [],
 
-        // Products (Existing + New)
+        // Products
         productPerformance: null,
         productConversion: null,
         inventoryTurnover: null,
         lowStockAlerts: null,
         categoryPerformance: null,
-        productProfitMargins: null, // 🆕 NEW
-        productsBoughtTogether: null, // 🆕 NEW
+        productProfitMargins: null,
+        productsBoughtTogether: null,
 
-        // Operations (Existing + New)
+        // Operations
         fulfillmentAnalytics: null,
         slaBreaches: null,
         fraudAnalytics: null,
-        shippingCarriers: null, // 🆕 NEW
-        shipmentTracking: null, // 🆕 NEW
-        cancellationAnalytics: null, // 🆕 NEW
-        highRiskOrders: null, // 🆕 NEW
+        shippingCarriers: null,
+        shipmentTracking: null,
+        cancellationAnalytics: null,
+        highRiskOrders: null,
 
-        // Returns & Refunds (Existing + New)
+        // Returns & Refunds
         returnOverview: null,
         refundOverview: null,
         returnsByProduct: [],
-        returnsByCategory: [], // 🆕 NEW
-        refundsByPaymentMethod: null, // 🆕 NEW
-        refundTimeline: null, // 🆕 NEW
+        returnsByCategory: [],
+        refundsByPaymentMethod: null,
+        refundTimeline: null,
 
         // UI States
         loading: false,
@@ -1028,16 +1023,15 @@ const analyticsSlice = createSlice({
                 state.loading = true;
                 state.error = null;
             })
-
             .addCase(fetchOrderStatusBreakdown.fulfilled, (state, action) => {
+                state.loading = false;
                 state.ordersByStatus = action.payload.ordersByStatus || {
-                processing: 0,
-                shipped: 0,
-                delivered: 0,
-                cancelled: 0
+                    processing: 0,
+                    shipped: 0,
+                    delivered: 0,
+                    cancelled: 0
                 };
             })
-
             .addCase(fetchOrderStatusBreakdown.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
@@ -1047,21 +1041,20 @@ const analyticsSlice = createSlice({
                 state.loading = true;
                 state.error = null;
             })
-
             .addCase(fetchInventoryBreakdown.fulfilled, (state, action) => {
+                state.loading = false;
                 state.inventoryStatus = action.payload.inventory || {
-                inStock: 0,
-                lowStock: 0,
-                outOfStock: 0,
-                discontinued: 0,
-                total: 0
+                    inStock: 0,
+                    lowStock: 0,
+                    outOfStock: 0,
+                    discontinued: 0,
+                    total: 0
                 };
             })
-
             .addCase(fetchInventoryBreakdown.rejected, (state, action) => {
                 state.loading = false;
                 state.error = action.payload;
-            })
+            });
 
         // ============================================
         // DASHBOARD
@@ -1094,7 +1087,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // REPORTS (Keep all existing)
+        // REPORTS
         // ============================================
         builder
             .addCase(generateBusinessReport.pending, (state) => {
@@ -1182,12 +1175,56 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // CUSTOMER ANALYTICS (Existing + 🆕 NEW)
+        // 🔧 FIXED: CUSTOMER ANALYTICS REDUCERS
         // ============================================
         builder
-            .addCase(fetchCustomerOverview.fulfilled, (state, action) => {
-                state.customerOverview = action.payload;
+            .addCase(fetchCustomerOverview.pending, (state) => {
+                state.loading = true;
+                state.error = null;
             })
+            .addCase(fetchCustomerOverview.fulfilled, (state, action) => {
+                state.loading = false;
+                // Extract data, removing the 'success' field
+                const { success, ...customerData } = action.payload;
+                
+                // Properly merge all fields into customerOverview
+                state.customerOverview = {
+                    totalCustomers: customerData.totalCustomers || 0,
+                    newCustomers: customerData.newCustomers || 0,
+                    newCustomersGrowth: customerData.newCustomersGrowth || 0,
+                    activeCustomers: customerData.activeCustomers || 0,
+                    avgOrderValue: customerData.avgOrderValue || 0,
+                    avgLifetimeValue: customerData.avgLifetimeValue || 0,
+                    totalRevenue: customerData.totalRevenue || 0,
+                    avgOrders: customerData.avgOrders || 0,
+                    vipCount: customerData.vipCount || 0,
+                    atRiskCount: customerData.atRiskCount || 0,
+                    segments: customerData.segments || [],
+                    valueTiers: customerData.valueTiers || [],
+                    churnRisk: customerData.churnRisk || []
+                };
+            })
+            .addCase(fetchCustomerOverview.rejected, (state, action) => {
+                state.loading = false;
+                state.error = action.payload;
+                // Keep the default structure on error
+                state.customerOverview = {
+                    totalCustomers: 0,
+                    newCustomers: 0,
+                    newCustomersGrowth: 0,
+                    activeCustomers: 0,
+                    avgOrderValue: 0,
+                    avgLifetimeValue: 0,
+                    totalRevenue: 0,
+                    avgOrders: 0,
+                    vipCount: 0,
+                    atRiskCount: 0,
+                    segments: [],
+                    valueTiers: [],
+                    churnRisk: []
+                };
+            })
+            
             .addCase(fetchSegmentDistribution.fulfilled, (state, action) => {
                 state.segmentDistribution = action.payload;
             })
@@ -1203,8 +1240,6 @@ const analyticsSlice = createSlice({
             .addCase(fetchVIPCustomers.fulfilled, (state, action) => {
                 state.vipCustomers = action.payload;
             })
-            
-            // 🆕 NEW REDUCERS
             .addCase(fetchCLVDistribution.fulfilled, (state, action) => {
                 state.clvDistribution = action.payload;
             })
@@ -1225,7 +1260,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // ATTRIBUTION (Existing + 🆕 NEW)
+        // ATTRIBUTION
         // ============================================
         builder
             .addCase(fetchChannelPerformance.fulfilled, (state, action) => {
@@ -1237,8 +1272,6 @@ const analyticsSlice = createSlice({
             .addCase(fetchDevicePerformance.fulfilled, (state, action) => {
                 state.devicePerformance = action.payload;
             })
-            
-            // 🆕 NEW REDUCERS
             .addCase(fetchBrowserPerformance.fulfilled, (state, action) => {
                 state.browserPerformance = action.payload;
             })
@@ -1253,7 +1286,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // CHECKOUT (Keep existing)
+        // CHECKOUT
         // ============================================
         builder
             .addCase(fetchCheckoutAbandonmentStats.fulfilled, (state, action) => {
@@ -1267,7 +1300,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // PRODUCTS (Existing + 🆕 NEW)
+        // PRODUCTS
         // ============================================
         builder
             .addCase(fetchProductPerformanceOverview.fulfilled, (state, action) => {
@@ -1285,8 +1318,6 @@ const analyticsSlice = createSlice({
             .addCase(fetchCategoryPerformance.fulfilled, (state, action) => {
                 state.categoryPerformance = action.payload;
             })
-            
-            // 🆕 NEW REDUCERS
             .addCase(fetchProductProfitMargins.fulfilled, (state, action) => {
                 state.productProfitMargins = action.payload;
             })
@@ -1295,7 +1326,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // OPERATIONS (Existing + 🆕 NEW)
+        // OPERATIONS
         // ============================================
         builder
             .addCase(fetchFulfillmentAnalytics.fulfilled, (state, action) => {
@@ -1307,8 +1338,6 @@ const analyticsSlice = createSlice({
             .addCase(fetchFraudAnalytics.fulfilled, (state, action) => {
                 state.fraudAnalytics = action.payload;
             })
-            
-            // 🆕 NEW REDUCERS
             .addCase(fetchShippingCarrierPerformance.fulfilled, (state, action) => {
                 state.shippingCarriers = action.payload;
             })
@@ -1323,7 +1352,7 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // RETURNS & REFUNDS (Existing + 🆕 NEW)
+        // RETURNS & REFUNDS
         // ============================================
         builder
             .addCase(fetchReturnOverview.fulfilled, (state, action) => {
@@ -1335,8 +1364,6 @@ const analyticsSlice = createSlice({
             .addCase(fetchReturnsByProduct.fulfilled, (state, action) => {
                 state.returnsByProduct = action.payload;
             })
-            
-            // 🆕 NEW REDUCERS
             .addCase(fetchReturnsByCategory.fulfilled, (state, action) => {
                 state.returnsByCategory = action.payload;
             })

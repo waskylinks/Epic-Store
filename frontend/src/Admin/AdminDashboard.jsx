@@ -743,7 +743,7 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* SECTION 3: Customer Analytics */}
+          {/* SECTION 3: Customer Analytics - FIXED */}
           <div className="adm-section">
             <div className="adm-section-hd">
               <h2 className="adm-section-title">
@@ -759,12 +759,16 @@ export default function AdminDashboard() {
 
             <div className="adm-cards-3">
               <SectionCard title="Customer Overview" icon={People} iconColor="#06B6D4">
-                {!customerOverview ? (
+                {loading && !customerOverview.totalCustomers ? (
                   <SectionSkeleton rows={4} />
                 ) : (
                   <div className="adm-metric-list">
                     <MetricRow label="Total Customers" value={fmt.number(customerOverview.totalCustomers)} accent="#06B6D4" />
-                    <MetricRow label="New This Period" value={fmt.number(customerOverview.newCustomers)} sub={<TrendChip value={customerOverview.newCustomersGrowth} />} />
+                    <MetricRow 
+                      label="New This Period" 
+                      value={fmt.number(customerOverview.newCustomers)} 
+                      sub={<TrendChip value={customerOverview.newCustomersGrowth || 0} />} 
+                    />
                     <MetricRow label="Active Customers" value={fmt.number(customerOverview.activeCustomers)} />
                     <MetricRow label="Avg. Order Value" value={fmt.currency(customerOverview.avgOrderValue)} accent="#10B981" />
                     <MetricRow label="Customer LTV" value={fmt.currency(customerOverview.avgLifetimeValue)} accent="#8B5CF6" />
@@ -773,11 +777,16 @@ export default function AdminDashboard() {
               </SectionCard>
 
               <SectionCard title="Segment Distribution" icon={BarChart} iconColor="#8B5CF6" link="/admin/customers">
-                {!customerOverview?.segments ? (
+                {loading && customerOverview.segments.length === 0 ? (
                   <SectionSkeleton rows={4} />
+                ) : customerOverview.segments.length === 0 ? (
+                  <div className="adm-empty">
+                    <CheckCircle style={{ fontSize: 36, color: '#64748B' }} />
+                    <span>No segment data available</span>
+                  </div>
                 ) : (
                   <div className="adm-segment-list">
-                    {(customerOverview.segments || []).map((seg, i) => (
+                    {customerOverview.segments.map((seg, i) => (
                       <div key={i} className="adm-segment-row">
                         <div className="adm-segment-label">{seg.name}</div>
                         <div className="adm-segment-bar-wrap">
