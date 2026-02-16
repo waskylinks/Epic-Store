@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import '../componentStyles/Product.css';
 import { Link, useNavigate } from 'react-router-dom';
-import Rating from './Rating';
 import { useDispatch, useSelector } from 'react-redux';
 import { addToWishlist, removeFromWishlist, getWishlist } from '../features/products/wishlistSlice';
 import { addItemsToCart } from '../features/cart/cartSlice';
@@ -33,7 +32,8 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
 
   const getProductImage = () => {
     const imageArray = product.images || product.image || [];
-    return imageArray[0]?.url || '/placeholder-product.png';
+    const primaryImage = imageArray.find(img => img.isPrimary) || imageArray[0];
+    return primaryImage?.url || '/placeholder-product.png';
   };
 
   const getDiscountPercentage = () => {
@@ -51,16 +51,19 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
   };
 
   const formatPrice = (amount) => {
-    return new Intl.NumberFormat('en-NG', {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: 'NGN',
-      minimumFractionDigits: 0
+      currency: 'USD',
+      minimumFractionDigits: 2
     }).format(amount);
   };
 
   // Check if product is in wishlist
   const isInWishlist = wishlistItems.some(
-    item => item.product._id === product._id
+    item => {
+      const wishlistProductId = item.product?._id || item.product;
+      return wishlistProductId === product._id;
+    }
   );
 
   const isWishlistLoading = itemLoading[product._id] || false;
@@ -158,6 +161,9 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
             {product.isFeatured && (
               <span className="ep-badge featured">Featured</span>
             )}
+            {product.isBestseller && (
+              <span className="ep-badge bestseller">Bestseller</span>
+            )}
             {stock === 0 && (
               <span className="ep-badge sold-out">Sold Out</span>
             )}
@@ -191,6 +197,10 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
         {/* Product Info */}
         <div className="ep-product-info">
           <h3 className="ep-product-name">{product.name}</h3>
+          
+          {product.brand && (
+            <p className="ep-product-brand">{product.brand}</p>
+          )}
           
           <p className="ep-product-category">{product.category}</p>
 

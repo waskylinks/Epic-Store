@@ -16,7 +16,7 @@ import {
 import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
 
 function Products() {
-    const { loading, error, products, resultsPerPage, productCount, totalPages } = useSelector(state => state.product);
+    const { loading, error, products, productCount, totalPages } = useSelector(state => state.product);
     const { success: cartSuccess, message: cartMessage } = useSelector(state => state.cart);
     const dispatch = useDispatch();
 
@@ -60,7 +60,7 @@ function Products() {
 
     useEffect(() => {
         if (error) {
-            toast.error(error.message, { position: 'top-center', autoClose: 3000 });
+            toast.error(error.message || error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
         }
     }, [dispatch, error]);
