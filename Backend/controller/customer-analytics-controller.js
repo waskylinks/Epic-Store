@@ -11,7 +11,7 @@ import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 
 // ============================================
-// CUSTOMER ANALYTICS OVERVIEW
+// CUSTOMER ANALYTICS OVERVIEW - FIXED
 // ============================================
 
 export const getCustomerOverview = handleAsyncError(async (req, res, next) => {
@@ -21,22 +21,100 @@ export const getCustomerOverview = handleAsyncError(async (req, res, next) => {
 
   const summary = await getCustomerAnalyticsSummary();
 
-  const response = {
-    segments: summary.segments,
-    valueTiers: summary.valueTiers,
-    churnRisk: summary.churnRisk,
-    overall: summary.overall[0] || {
-      totalCustomers: 0,
-      totalRevenue: 0,
-      avgCLV: 0,
-      avgOrders: 0,
-      avgAOV: 0,
-      vipCount: 0,
-      atRiskCount: 0
+  // Get date range for "new customers" calculation (last 30 days)
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+  // Calculate new customers in the period
+  const newCustomersData = await CustomerAnalytics.aggregate([
+    {
+      $match: {
+        "purchaseBehavior.firstPurchaseDate": { $gte: thirtyDaysAgo }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        count: { $sum: 1 },
+        totalRevenue: { $sum: "$clv.totalRevenue" }
+      }
     }
+  ]);
+
+  const newCustomersCount = newCustomersData[0]?.count || 0;
+
+  // Calculate previous period for growth comparison
+  const sixtyDaysAgo = new Date();
+  sixtyDaysAgo.setDate(sixtyDaysAgo.getDate() - 60);
+
+  const previousPeriodNewCustomers = await CustomerAnalytics.countDocuments({
+    "purchaseBehavior.firstPurchaseDate": {
+      $gte: sixtyDaysAgo,
+      $lt: thirtyDaysAgo
+    }
+  });
+
+  // Calculate growth percentage
+  const newCustomersGrowth = previousPeriodNewCustomers > 0
+    ? ((newCustomersCount - previousPeriodNewCustomers) / previousPeriodNewCustomers) * 100
+    : newCustomersCount > 0 ? 100 : 0;
+
+  // Count active customers (purchased in last 90 days)
+  const ninetyDaysAgo = new Date();
+  ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+  const activeCustomersCount = await CustomerAnalytics.countDocuments({
+    "purchaseBehavior.lastPurchaseDate": { $gte: ninetyDaysAgo }
+  });
+
+  // Get overall stats from summary
+  const overallStats = summary.overall[0] || {
+    totalCustomers: 0,
+    totalRevenue: 0,
+    avgCLV: 0,
+    avgOrders: 0,
+    avgAOV: 0,
+    vipCount: 0,
+    atRiskCount: 0
   };
 
-  await setCache(cacheKey, response, 300);
+  // Transform segments data for frontend
+  const totalCustomersForPercentage = overallStats.totalCustomers || 1; // Avoid division by zero
+  const transformedSegments = (summary.segments || []).map(segment => ({
+    name: segment._id || "Unknown",
+    count: segment.count || 0,
+    percentage: Math.round(((segment.count / totalCustomersForPercentage) * 100) * 10) / 10, // Returns number with 1 decimal
+    totalRevenue: segment.totalRevenue || 0,
+    avgRevenue: segment.avgRevenue || 0
+  }));
+
+  // Sort segments by count descending and limit to top 5
+  const topSegments = transformedSegments
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  // Build the response object matching frontend expectations
+  const response = {
+    totalCustomers: overallStats.totalCustomers,
+    newCustomers: newCustomersCount,
+    newCustomersGrowth: Math.round(newCustomersGrowth * 10) / 10, // Round to 1 decimal
+    activeCustomers: activeCustomersCount,
+    avgOrderValue: Math.round(overallStats.avgAOV * 100) / 100,
+    avgLifetimeValue: Math.round(overallStats.avgCLV * 100) / 100,
+    totalRevenue: Math.round(overallStats.totalRevenue * 100) / 100,
+    avgOrders: Math.round(overallStats.avgOrders * 10) / 10,
+    vipCount: overallStats.vipCount,
+    atRiskCount: overallStats.atRiskCount,
+    
+    // Segments array for the frontend
+    segments: topSegments,
+
+    // Additional data that might be useful
+    valueTiers: summary.valueTiers || [],
+    churnRisk: summary.churnRisk || []
+  };
+
+  await setCache(cacheKey, response, 300); // Cache for 5 minutes
   res.status(200).json({ success: true, ...response });
 });
 
@@ -512,9 +590,6 @@ export const syncSingleCustomer = handleAsyncError(async (req, res, next) => {
 
 export const syncAllCustomers = handleAsyncError(async (req, res, next) => {
   try {
-    // FIX CA1: Removed console.error - background job errors should be tracked
-    // through proper logging system or job status endpoint, not console.
-    // Silent suppression is intentional here since it's a fire-and-forget background job.
     syncAllCustomerAnalytics().catch(() => {});
 
     res.status(202).json({
