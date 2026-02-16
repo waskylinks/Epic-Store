@@ -919,11 +919,16 @@ export default function AdminDashboard() {
               </SectionCard>
 
               <SectionCard title="Abandonment by Step" icon={FactCheck} iconColor="#8B5CF6">
-                {!checkoutAbandonment?.stepBreakdown ? (
+                {loading && (!checkoutAbandonment || !checkoutAbandonment.stepBreakdown) ? (
                   <SectionSkeleton rows={4} />
+                ) : !checkoutAbandonment?.stepBreakdown || checkoutAbandonment.stepBreakdown.length === 0 ? (
+                  <div className="adm-empty">
+                    <CheckCircle style={{ fontSize: 36, color: '#64748B' }} />
+                    <span>No checkout abandonments recorded</span>
+                  </div>
                 ) : (
                   <div className="adm-segment-list">
-                    {(checkoutAbandonment.stepBreakdown || []).map((step, i) => (
+                    {checkoutAbandonment.stepBreakdown.map((step, i) => (
                       <div key={i} className="adm-segment-row">
                         <div className="adm-segment-label">{step.step}</div>
                         <div className="adm-segment-bar-wrap">
@@ -1094,11 +1099,16 @@ export default function AdminDashboard() {
               </SectionCard>
 
               <SectionCard title="Top Return Reasons" icon={Assessment} iconColor="#F97316" link="/admin/returns">
-                {!returnOverview?.topReasons ? (
+                {loading && (!returnOverview || !returnOverview.topReasons) ? (
                   <SectionSkeleton rows={5} />
+                ) : !returnOverview?.topReasons || returnOverview.topReasons.length === 0 ? (
+                  <div className="adm-empty">
+                    <CheckCircle style={{ fontSize: 36, color: '#64748B' }} />
+                    <span>No return reasons data available</span>
+                  </div>
                 ) : (
                   <div className="adm-segment-list">
-                    {(returnOverview.topReasons || []).map((r, i) => (
+                    {returnOverview.topReasons.map((r, i) => (
                       <div key={i} className="adm-segment-row">
                         <div className="adm-segment-label">{r.reason}</div>
                         <div className="adm-segment-bar-wrap">
@@ -1144,11 +1154,16 @@ export default function AdminDashboard() {
               </SectionCard>
 
               <SectionCard title="Refund Status Breakdown" icon={BarChart} iconColor="#8B5CF6" link="/admin/refunds">
-                {!refundOverview?.statusBreakdown ? (
+                {loading && (!refundOverview || !refundOverview.statusBreakdown) ? (
                   <SectionSkeleton rows={4} />
+                ) : !refundOverview?.statusBreakdown || refundOverview.statusBreakdown.length === 0 ? (
+                  <div className="adm-empty">
+                    <CheckCircle style={{ fontSize: 36, color: '#64748B' }} />
+                    <span>No refund status data available</span>
+                  </div>
                 ) : (
                   <div className="adm-segment-list">
-                    {(refundOverview.statusBreakdown || []).map((s, i) => (
+                    {refundOverview.statusBreakdown.map((s, i) => (
                       <div key={i} className="adm-segment-row">
                         <div className="adm-segment-label">{s.status}</div>
                         <div className="adm-segment-bar-wrap">
