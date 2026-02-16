@@ -6,7 +6,7 @@ import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getCache, setCache } from "../utils/redis.js";
 
 // ============================================
-// CHECKOUT ABANDONMENT STATS
+// CHECKOUT ABANDONMENT STATS - FIXED
 // ============================================
 
 export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, next) => {
@@ -31,7 +31,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
         100
       : 0;
 
-  const [abandonedValue, abandonmentByStep] = await Promise.all([
+  const [abandonedValue, abandonmentByStep, recoveryStats] = await Promise.all([
     Checkout.aggregate([
       {
         $match: {
@@ -63,18 +63,119 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
         }
       },
       { $sort: { count: -1 } }
+    ]),
+    // Get recovery statistics
+    Checkout.aggregate([
+      {
+        $match: {
+          "abandonment.isAbandoned": true,
+          createdAt: { $gte: currentPeriodStart }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalAbandoned: { $sum: 1 },
+          emailsSent: { $sum: "$abandonment.recoveryEmailCount" },
+          recovered: {
+            $sum: { $cond: ["$conversion.isConverted", 1, 0] }
+          },
+          recoveredValue: {
+            $sum: {
+              $cond: ["$conversion.isConverted", "$pricing.totalPrice", 0]
+            }
+          },
+          highPriority: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $gte: ["$pricing.totalPrice", 100] },
+                    { $eq: ["$conversion.isConverted", false] }
+                  ]
+                },
+                1,
+                0
+              ]
+            }
+          },
+          recoverableValue: {
+            $sum: {
+              $cond: [
+                { $eq: ["$conversion.isConverted", false] },
+                "$pricing.totalPrice",
+                0
+              ]
+            }
+          }
+        }
+      }
     ])
   ]);
 
+  const recoveryData = recoveryStats[0] || {
+    totalAbandoned: 0,
+    emailsSent: 0,
+    recovered: 0,
+    recoveredValue: 0,
+    highPriority: 0,
+    recoverableValue: 0
+  };
+
+  // Transform abandonmentByStep to match frontend expectations
+  const totalAbandonedCheckouts = currentStats.abandonedCheckouts || 1; // Avoid division by zero
+  
+  // Only create stepBreakdown if there are abandoned checkouts with step data
+  const stepBreakdown = abandonmentByStep.length > 0 ? abandonmentByStep.map(step => {
+    const stepName = step._id || 'unknown';
+    const dropOffRate = (step.count / totalAbandonedCheckouts) * 100;
+    
+    // Convert step names to readable format
+    const stepLabels = {
+      'shipping_info': 'Shipping Information',
+      'payment_selection': 'Payment Selection',
+      'payment_gateway': 'Payment Gateway',
+      'payment_failed': 'Payment Failed',
+      'order_confirmation': 'Order Confirmation'
+    };
+
+    return {
+      step: stepLabels[stepName] || stepName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      count: step.count,
+      dropOffRate: Math.round(dropOffRate * 10) / 10, // Returns number with 1 decimal
+      value: Math.round(step.totalValue * 100) / 100
+    };
+  }) : []; // Return empty array if no steps recorded
+
   const response = {
-    currentPeriod: {
-      ...currentStats,
-      abandonedValue: abandonedValue[0]?.totalValue || 0,
-      avgAbandonedCheckoutValue: abandonedValue[0]?.avgValue || 0
-    },
-    previousPeriod: previousStats,
+    // Main stats for the overview cards
+    abandonmentRate: Math.round(currentStats.abandonmentRate * 10) / 10,
+    completedCheckouts: currentStats.completedCheckouts || 0,
+    abandonedCheckouts: currentStats.abandonedCheckouts || 0,
+    totalCheckouts: currentStats.totalCheckouts || 0,
+    lostRevenue: Math.round((abandonedValue[0]?.totalValue || 0) * 100) / 100,
+    recoveryRate: Math.round(currentStats.recoveryRate * 10) / 10,
+    
+    // Step breakdown for the chart
+    stepBreakdown,
+    
+    // Recovery opportunities data
+    recoverableRevenue: Math.round(recoveryData.recoverableValue * 100) / 100,
+    highPriority: recoveryData.highPriority,
+    emailsSent: recoveryData.emailsSent,
+    recoveredOrders: recoveryData.recovered,
+    recoveredValue: Math.round(recoveryData.recoveredValue * 100) / 100,
+    
+    // Additional metrics
+    avgAbandonedCheckoutValue: Math.round((abandonedValue[0]?.avgValue || 0) * 100) / 100,
+    
+    // Trend data
     trend: Math.round(trend * 100) / 100,
-    abandonmentByStep
+    previousPeriod: {
+      abandonmentRate: Math.round(previousStats.abandonmentRate * 10) / 10,
+      completedCheckouts: previousStats.completedCheckouts || 0,
+      abandonedCheckouts: previousStats.abandonedCheckouts || 0
+    }
   };
 
   await setCache(cacheKey, response, 300);
