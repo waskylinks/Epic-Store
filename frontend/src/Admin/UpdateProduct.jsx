@@ -11,7 +11,7 @@ import Loader from '../components/Loader';
 import { 
   FiImage, FiDollarSign, FiPackage, FiTag, FiSettings, 
   FiTrendingUp, FiX, FiPlus, FiTrash2, FiSave, 
-  FiEye, FiAlertCircle, FiCheck, FiArrowLeft 
+  FiEye, FiAlertCircle, FiCheck, FiArrowLeft, FiFlag
 } from 'react-icons/fi';
 
 function UpdateProduct() {
@@ -28,23 +28,28 @@ function UpdateProduct() {
     const [newImages, setNewImages] = useState([]);
     const [newImagePreviews, setNewImagePreviews] = useState([]);
 
-    // Form state
+    // Form state - complete with all backend fields
     const [formData, setFormData] = useState({
         name: '',
         description: '',
         shortDescription: '',
         category: '',
         brand: '',
+        manufacturer: '',
         pricing: {
             regular: '',
             sale: '',
             cost: '',
-            currency: 'USD'
+            currency: 'USD',
+            validFrom: '',
+            validThrough: ''
         },
         inventory: {
             stock: '',
             sku: '',
             barcode: '',
+            gtin: '',
+            mpn: '',
             trackInventory: true,
             lowStockThreshold: 5
         },
@@ -61,7 +66,22 @@ function UpdateProduct() {
         seo: {
             metaTitle: '',
             metaDescription: '',
-            keywords: []
+            keywords: [],
+            canonicalUrl: '',
+            noIndex: false,
+            noFollow: false,
+            ogTitle: '',
+            ogDescription: '',
+            ogImage: '',
+            ogType: 'product',
+            twitterCard: 'summary_large_image',
+            twitterTitle: '',
+            twitterDescription: '',
+            twitterImage: '',
+            schemaType: 'Product',
+            condition: 'NewCondition',
+            focusKeyphrase: '',
+            relatedSearchTerms: []
         },
         isFeatured: false,
         isNewArrival: false,
@@ -74,11 +94,20 @@ function UpdateProduct() {
     const [specifications, setSpecifications] = useState([]);
     const [variants, setVariants] = useState([]);
     const [seoKeywords, setSeoKeywords] = useState([]);
+    const [relatedSearchTerms, setRelatedSearchTerms] = useState([]);
+    const [breadcrumbs, setBreadcrumbs] = useState([]);
+    const [richSnippets, setRichSnippets] = useState({
+        faqs: [],
+        howTo: { name: '', steps: [] },
+        videos: []
+    });
 
     // Input states
     const [newSubcategory, setNewSubcategory] = useState('');
     const [newTag, setNewTag] = useState('');
     const [newKeyword, setNewKeyword] = useState('');
+    const [newRelatedTerm, setNewRelatedTerm] = useState('');
+    const [newBreadcrumb, setNewBreadcrumb] = useState({ name: '', url: '' });
 
     const categories = [
         'Electronics',
@@ -93,64 +122,87 @@ function UpdateProduct() {
     const currencies = ['USD', 'EUR', 'GBP', 'NGN'];
     const weightUnits = ['kg', 'lb', 'g'];
     const dimensionUnits = ['cm', 'in'];
+    const schemaTypes = ['Product', 'Book', 'Course', 'SoftwareApplication'];
+    const conditions = ['NewCondition', 'UsedCondition', 'RefurbishedCondition', 'DamagedCondition'];
+    const twitterCardTypes = ['summary', 'summary_large_image'];
 
     // Pre-fill form when product is found
     useEffect(() => {
-    if (product) {
-        setFormData({
-            name: product.name || '',
-            description: product.description || '',
-            shortDescription: product.shortDescription || '',
-            category: product.category || '',
-            brand: product.brand || '',
-            pricing: {
-                regular: product.pricing?.regular || product.price || '',
-                sale: product.pricing?.sale || '',
-                // ✅ FIX: Use ?? instead of || to preserve 0 values
-                cost: product.pricing?.cost ?? '',
-                currency: product.pricing?.currency || 'USD'
-            },
-            inventory: {
-                // ✅ FIX: Use ?? instead of || to preserve 0 values
-                stock: product.inventory?.stock ?? product.stock ?? '',
-                sku: product.inventory?.sku || '',
-                barcode: product.inventory?.barcode || '',
-                trackInventory: product.inventory?.trackInventory ?? true,
-                lowStockThreshold: product.inventory?.lowStockThreshold ?? 5
-            },
-            dimensions: product.dimensions || {
-                length: '',
-                width: '',
-                height: '',
-                unit: 'cm'
-            },
-            weight: {
-                // ✅ FIX: Use ?? instead of || to preserve 0 values
-                value: product.weight?.value ?? '',
-                unit: product.weight?.unit || 'kg'
-            },
-            seo: product.seo || {
-                metaTitle: '',
-                metaDescription: '',
-                keywords: []
-            },
-            isFeatured: product.isFeatured || false,
-            isNewArrival: product.isNewArrival || false,
-            isBestseller: product.isBestseller || false,
-            status: product.status || 'published'
-        });
+        if (product) {
+            setFormData({
+                name: product.name || '',
+                description: product.description || '',
+                shortDescription: product.shortDescription || '',
+                category: product.category || '',
+                brand: product.brand || '',
+                manufacturer: product.manufacturer || '',
+                pricing: {
+                    regular: product.pricing?.regular ?? product.price ?? '',
+                    sale: product.pricing?.sale ?? '',
+                    cost: product.pricing?.cost ?? '',
+                    currency: product.pricing?.currency || 'USD',
+                    validFrom: product.pricing?.validFrom || '',
+                    validThrough: product.pricing?.validThrough || ''
+                },
+                inventory: {
+                    stock: product.inventory?.stock ?? product.stock ?? '',
+                    sku: product.inventory?.sku || '',
+                    barcode: product.inventory?.barcode || '',
+                    gtin: product.inventory?.gtin || '',
+                    mpn: product.inventory?.mpn || '',
+                    trackInventory: product.inventory?.trackInventory ?? true,
+                    lowStockThreshold: product.inventory?.lowStockThreshold ?? 5
+                },
+                dimensions: product.dimensions || {
+                    length: '',
+                    width: '',
+                    height: '',
+                    unit: 'cm'
+                },
+                weight: {
+                    value: product.weight?.value ?? '',
+                    unit: product.weight?.unit || 'kg'
+                },
+                seo: {
+                    metaTitle: product.seo?.metaTitle || '',
+                    metaDescription: product.seo?.metaDescription || '',
+                    keywords: product.seo?.keywords || [],
+                    canonicalUrl: product.seo?.canonicalUrl || '',
+                    noIndex: product.seo?.noIndex || false,
+                    noFollow: product.seo?.noFollow || false,
+                    ogTitle: product.seo?.ogTitle || '',
+                    ogDescription: product.seo?.ogDescription || '',
+                    ogImage: product.seo?.ogImage || '',
+                    ogType: product.seo?.ogType || 'product',
+                    twitterCard: product.seo?.twitterCard || 'summary_large_image',
+                    twitterTitle: product.seo?.twitterTitle || '',
+                    twitterDescription: product.seo?.twitterDescription || '',
+                    twitterImage: product.seo?.twitterImage || '',
+                    schemaType: product.seo?.schemaType || 'Product',
+                    condition: product.seo?.condition || 'NewCondition',
+                    focusKeyphrase: product.seo?.focusKeyphrase || '',
+                    relatedSearchTerms: product.seo?.relatedSearchTerms || []
+                },
+                isFeatured: product.isFeatured || false,
+                isNewArrival: product.isNewArrival || false,
+                isBestseller: product.isBestseller || false,
+                status: product.status || 'published'
+            });
 
-        setOldImages(product.images || product.image || []);
-        setSubcategories(product.subcategories || []);
-        setTags(product.tags || []);
-        setSpecifications(product.specifications || []);
-        setVariants(product.variants || []);
-        setSeoKeywords(product.seo?.keywords || []);
-    } else if (products.length > 0) {
-        toast.error('Product not found', { position: 'top-center', autoClose: 3000 });
-        navigate('/admin/products');
-    }
-}, [product, products, navigate]);
+            setOldImages(product.images || product.image || []);
+            setSubcategories(product.subcategories || []);
+            setTags(product.tags || []);
+            setSpecifications(product.specifications || []);
+            setVariants(product.variants || []);
+            setSeoKeywords(product.seo?.keywords || []);
+            setRelatedSearchTerms(product.seo?.relatedSearchTerms || []);
+            setBreadcrumbs(product.breadcrumbs || []);
+            setRichSnippets(product.richSnippets || { faqs: [], howTo: { name: '', steps: [] }, videos: [] });
+        } else if (products.length > 0) {
+            toast.error('Product not found', { position: 'top-center', autoClose: 3000 });
+            navigate('/admin/products');
+        }
+    }, [product, products, navigate]);
 
     const handleInputChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -206,53 +258,77 @@ function UpdateProduct() {
         setOldImages([primary, ...newOldImages]);
     };
 
-    // Add/Remove subcategories
+    // Subcategories
     const addSubcategory = () => {
         if (newSubcategory.trim()) {
             setSubcategories([...subcategories, newSubcategory.trim()]);
             setNewSubcategory('');
         }
     };
-
     const removeSubcategory = (index) => {
         setSubcategories(subcategories.filter((_, i) => i !== index));
     };
 
-    // Add/Remove tags
+    // Tags
     const addTag = () => {
         if (newTag.trim()) {
             setTags([...tags, newTag.trim().toLowerCase()]);
             setNewTag('');
         }
     };
-
     const removeTag = (index) => {
         setTags(tags.filter((_, i) => i !== index));
     };
 
-    // Add/Remove SEO keywords
+    // SEO keywords
     const addKeyword = () => {
         if (newKeyword.trim()) {
             setSeoKeywords([...seoKeywords, newKeyword.trim()]);
             setNewKeyword('');
         }
     };
-
     const removeKeyword = (index) => {
         setSeoKeywords(seoKeywords.filter((_, i) => i !== index));
+    };
+
+    // Related search terms
+    const addRelatedTerm = () => {
+        if (newRelatedTerm.trim()) {
+            setRelatedSearchTerms([...relatedSearchTerms, newRelatedTerm.trim().toLowerCase()]);
+            setNewRelatedTerm('');
+        }
+    };
+    const removeRelatedTerm = (index) => {
+        setRelatedSearchTerms(relatedSearchTerms.filter((_, i) => i !== index));
+    };
+
+    // Breadcrumbs
+    const addBreadcrumb = () => {
+        if (newBreadcrumb.name.trim() && newBreadcrumb.url.trim()) {
+            setBreadcrumbs([...breadcrumbs, {
+                name: newBreadcrumb.name.trim(),
+                url: newBreadcrumb.url.trim(),
+                position: breadcrumbs.length + 1
+            }]);
+            setNewBreadcrumb({ name: '', url: '' });
+        }
+    };
+    const removeBreadcrumb = (index) => {
+        setBreadcrumbs(breadcrumbs.filter((_, i) => i !== index).map((item, idx) => ({
+            ...item,
+            position: idx + 1
+        })));
     };
 
     // Specifications
     const addSpecification = () => {
         setSpecifications([...specifications, { key: '', value: '' }]);
     };
-
     const updateSpecification = (index, field, value) => {
         const newSpecs = [...specifications];
         newSpecs[index][field] = value;
         setSpecifications(newSpecs);
     };
-
     const removeSpecification = (index) => {
         setSpecifications(specifications.filter((_, i) => i !== index));
     };
@@ -261,130 +337,252 @@ function UpdateProduct() {
     const addVariant = () => {
         setVariants([...variants, { name: '', options: [{ value: '', priceModifier: 0, stock: 0 }] }]);
     };
-
     const updateVariantName = (index, name) => {
         const newVariants = [...variants];
         newVariants[index].name = name;
         setVariants(newVariants);
     };
-
     const addVariantOption = (variantIndex) => {
         const newVariants = [...variants];
         newVariants[variantIndex].options.push({ value: '', priceModifier: 0, stock: 0 });
         setVariants(newVariants);
     };
-
     const updateVariantOption = (variantIndex, optionIndex, field, value) => {
         const newVariants = [...variants];
         newVariants[variantIndex].options[optionIndex][field] = value;
         setVariants(newVariants);
     };
-
     const removeVariantOption = (variantIndex, optionIndex) => {
         const newVariants = [...variants];
         newVariants[variantIndex].options = newVariants[variantIndex].options.filter((_, i) => i !== optionIndex);
         setVariants(newVariants);
     };
-
     const removeVariant = (index) => {
         setVariants(variants.filter((_, i) => i !== index));
+    };
+
+    // Rich Snippets - FAQs
+    const addFAQ = () => {
+        setRichSnippets(prev => ({
+            ...prev,
+            faqs: [...prev.faqs, { question: '', answer: '' }]
+        }));
+    };
+    const updateFAQ = (index, field, value) => {
+        setRichSnippets(prev => ({
+            ...prev,
+            faqs: prev.faqs.map((faq, i) => i === index ? { ...faq, [field]: value } : faq)
+        }));
+    };
+    const removeFAQ = (index) => {
+        setRichSnippets(prev => ({
+            ...prev,
+            faqs: prev.faqs.filter((_, i) => i !== index)
+        }));
+    };
+
+    // Rich Snippets - Videos
+    const addVideo = () => {
+        setRichSnippets(prev => ({
+            ...prev,
+            videos: [...prev.videos, { name: '', description: '', thumbnailUrl: '', contentUrl: '' }]
+        }));
+    };
+    const updateVideo = (index, field, value) => {
+        setRichSnippets(prev => ({
+            ...prev,
+            videos: prev.videos.map((video, i) => i === index ? { ...video, [field]: value } : video)
+        }));
+    };
+    const removeVideo = (index) => {
+        setRichSnippets(prev => ({
+            ...prev,
+            videos: prev.videos.filter((_, i) => i !== index)
+        }));
     };
 
     const handleSubmit = (e, publishStatus) => {
         e.preventDefault();
 
-        if (!formData.category) {
-            toast.error('Please select a category', { position: 'top-center', autoClose: 3000 });
+        // Basic validation
+        if (!formData.name.trim()) {
+            toast.error('Please enter product name');
+            setActiveTab('basic');
             return;
         }
+        if (!formData.category) {
+            toast.error('Please select a category');
+            setActiveTab('basic');
+            return;
+        }
+        if (!formData.description.trim()) {
+            toast.error('Please enter product description');
+            setActiveTab('basic');
+            return;
+        }
+
+        // Pricing validation
+        if (!formData.pricing.regular) {
+            toast.error('Please enter regular price');
+            setActiveTab('pricing');
+            return;
+        }
+        if (formData.pricing.sale !== '' && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
+            toast.error('Sale price must be less than regular price');
+            setActiveTab('pricing');
+            return;
+        }
+
+        // Pricing date validation
+        if (formData.pricing.validFrom && formData.pricing.validThrough) {
+            if (new Date(formData.pricing.validFrom) > new Date(formData.pricing.validThrough)) {
+                toast.error('Price valid from date must be before valid through date');
+                setActiveTab('pricing');
+                return;
+            }
+        }
+
+        // Image validation
         if (oldImages.length + newImages.length === 0) {
-            toast.error('Product must have at least one image', { position: 'top-center', autoClose: 3000 });
+            toast.error('Product must have at least one image');
+            setActiveTab('media');
             return;
         }
 
         const myForm = new FormData();
         
         // Basic info
-        myForm.append('name', formData.name);
-        myForm.append('description', formData.description);
-        myForm.append('shortDescription', formData.shortDescription);
+        myForm.append('name', formData.name.trim());
+        myForm.append('description', formData.description.trim());
+        myForm.append('shortDescription', formData.shortDescription.trim());
         myForm.append('category', formData.category);
-        myForm.append('brand', formData.brand);
-        
-        // Pricing (legacy fields)
-        myForm.append('price', formData.pricing.regular);
-        if (formData.pricing.sale) {
-            myForm.append('salePrice', formData.pricing.sale);
+        myForm.append('brand', formData.brand.trim());
+        myForm.append('manufacturer', formData.manufacturer.trim() || '');
+
+        // Pricing
+        const pricingData = {
+            regular: Number(formData.pricing.regular),
+            cost: Number(formData.pricing.cost) || 0,
+            currency: formData.pricing.currency
+        };
+        if (formData.pricing.sale !== '') {
+            pricingData.sale = Number(formData.pricing.sale);
         }
-        myForm.append('currency', formData.pricing.currency);
-        
-        // Inventory (legacy field)
-        myForm.append('stock', formData.inventory.stock || 0);
-        if (formData.inventory.sku) {
-            myForm.append('sku', formData.inventory.sku);
+        if (formData.pricing.validFrom) {
+            pricingData.validFrom = formData.pricing.validFrom;
         }
-        
+        if (formData.pricing.validThrough) {
+            pricingData.validThrough = formData.pricing.validThrough;
+        }
+        myForm.append('pricing', JSON.stringify(pricingData));
+
+        // Inventory
+        const inventoryData = {
+            stock: Number(formData.inventory.stock) || 0,
+            sku: formData.inventory.sku.trim(),
+            barcode: formData.inventory.barcode.trim(),
+            trackInventory: formData.inventory.trackInventory,
+            lowStockThreshold: Number(formData.inventory.lowStockThreshold)
+        };
+        if (formData.inventory.gtin) {
+            inventoryData.gtin = formData.inventory.gtin.trim();
+        }
+        if (formData.inventory.mpn) {
+            inventoryData.mpn = formData.inventory.mpn.trim();
+        }
+        myForm.append('inventory', JSON.stringify(inventoryData));
+
         // Arrays
-        subcategories.forEach(sub => myForm.append('subcategories', sub));
-        tags.forEach(tag => myForm.append('tags', tag));
-        
+        myForm.append('subcategories', JSON.stringify(subcategories));
+        myForm.append('tags', JSON.stringify(tags));
+
         // Specifications
-        if (specifications.length > 0) {
-            myForm.append('specifications', JSON.stringify(specifications.filter(s => s.key && s.value)));
+        const validSpecs = specifications.filter(s => s.key && s.value);
+        if (validSpecs.length > 0) {
+            myForm.append('specifications', JSON.stringify(validSpecs));
         }
-        
+
         // Variants
-        if (variants.length > 0) {
-            myForm.append('variants', JSON.stringify(variants.filter(v => v.name && v.options.length > 0)));
+        const validVariants = variants.filter(v => v.name && v.options.length > 0);
+        if (validVariants.length > 0) {
+            myForm.append('variants', JSON.stringify(validVariants));
         }
-        
+
         // Dimensions & Weight
-        if (formData.dimensions.length || formData.dimensions.width || formData.dimensions.height) {
-            myForm.append('dimensions', JSON.stringify(formData.dimensions));
-        }
-        if (formData.weight.value) {
-            myForm.append('weight', JSON.stringify(formData.weight));
-        }
-        
-        // SEO
+        myForm.append('dimensions', JSON.stringify({
+            length: Number(formData.dimensions.length) || 0,
+            width: Number(formData.dimensions.width) || 0,
+            height: Number(formData.dimensions.height) || 0,
+            unit: formData.dimensions.unit
+        }));
+
+        myForm.append('weight', JSON.stringify({
+            value: Number(formData.weight.value) || 0,
+            unit: formData.weight.unit
+        }));
+
+        // SEO - Complete
         const seoData = {
-            ...formData.seo,
-            keywords: seoKeywords
+            metaTitle: formData.seo.metaTitle.trim(),
+            metaDescription: formData.seo.metaDescription.trim(),
+            keywords: seoKeywords,
+            canonicalUrl: formData.seo.canonicalUrl || '',
+            noIndex: formData.seo.noIndex || false,
+            noFollow: formData.seo.noFollow || false,
+            ogTitle: formData.seo.ogTitle || '',
+            ogDescription: formData.seo.ogDescription || '',
+            ogImage: formData.seo.ogImage || '',
+            ogType: formData.seo.ogType || 'product',
+            twitterCard: formData.seo.twitterCard || 'summary_large_image',
+            twitterTitle: formData.seo.twitterTitle || '',
+            twitterDescription: formData.seo.twitterDescription || '',
+            twitterImage: formData.seo.twitterImage || '',
+            schemaType: formData.seo.schemaType || 'Product',
+            condition: formData.seo.condition || 'NewCondition',
+            focusKeyphrase: formData.seo.focusKeyphrase || '',
+            relatedSearchTerms: relatedSearchTerms
         };
         myForm.append('seo', JSON.stringify(seoData));
-        
+
+        // Breadcrumbs
+        if (breadcrumbs.length > 0) {
+            myForm.append('breadcrumbs', JSON.stringify(breadcrumbs));
+        }
+
+        // Rich Snippets
+        const richSnippetsData = {
+            faqs: richSnippets.faqs.filter(f => f.question && f.answer),
+            howTo: richSnippets.howTo,
+            videos: richSnippets.videos.filter(v => v.name && v.contentUrl)
+        };
+        myForm.append('richSnippets', JSON.stringify(richSnippetsData));
+
         // Flags
         myForm.append('isFeatured', formData.isFeatured);
         myForm.append('isNewArrival', formData.isNewArrival);
         myForm.append('isBestseller', formData.isBestseller);
         myForm.append('status', publishStatus || formData.status);
-        
+
         // Images to delete
         if (imagesToDelete.length > 0) {
             myForm.append('imagesToDelete', JSON.stringify(imagesToDelete));
         }
 
-        if (formData.pricing.cost) {
-            myForm.append('cost', formData.pricing.cost);
-        }
-
-        if (formData.inventory.barcode) {
-            myForm.append('barcode', formData.inventory.barcode);
-        }
-        myForm.append('trackInventory', formData.inventory.trackInventory);
-        myForm.append('lowStockThreshold', formData.inventory.lowStockThreshold);
-        
-        // Send the reordered old images
+        // Existing images with metadata
         const existingImagesData = oldImages.map((img, index) => ({
             public_id: img.public_id,
             url: img.url,
-            isPrimary: index === 0, // First image is primary
-            order: index
+            alt: img.alt || '',
+            isPrimary: index === 0,
+            order: index,
+            width: img.width || null,
+            height: img.height || null,
+            caption: img.caption || ''
         }));
         myForm.append('existingImages', JSON.stringify(existingImagesData));
 
-        // New images
-        newImages.forEach((img) => myForm.append('image', img));
+        // CRITICAL FIX: Use 'images' not 'image'
+        newImages.forEach((img) => myForm.append('images', img));
 
         dispatch(updateProduct({ id, productData: myForm }));
     };
@@ -424,6 +622,8 @@ function UpdateProduct() {
         { id: 'media', label: 'Media', icon: <FiImage /> },
         { id: 'variants', label: 'Variants', icon: <FiSettings /> },
         { id: 'seo', label: 'SEO', icon: <FiTrendingUp /> },
+        { id: 'advanced', label: 'Advanced SEO', icon: <FiTag /> },
+        { id: 'settings', label: 'Settings', icon: <FiFlag /> }
     ];
 
     return (
@@ -448,6 +648,7 @@ function UpdateProduct() {
                         {tabs.map(tab => (
                             <button
                                 key={tab.id}
+                                type="button"
                                 className={`eup-tab ${activeTab === tab.id ? 'active' : ''}`}
                                 onClick={() => setActiveTab(tab.id)}
                             >
@@ -457,8 +658,8 @@ function UpdateProduct() {
                         ))}
                     </div>
 
-                    <form className="eup-form" onSubmit={(e) => handleSubmit(e)}>
-                        {/* Basic Info Tab */}
+                    <div className="eup-form">
+                        {/* ── Basic Info ─────────────────────────────────────── */}
                         {activeTab === 'basic' && (
                             <div className="eup-tab-content">
                                 <div className="eup-section">
@@ -473,7 +674,6 @@ function UpdateProduct() {
                                             name="name"
                                             value={formData.name}
                                             onChange={handleInputChange}
-                                            required
                                             maxLength={200}
                                         />
                                         <span className="eup-char-count">{formData.name.length}/200</span>
@@ -487,7 +687,6 @@ function UpdateProduct() {
                                                 name="category"
                                                 value={formData.category}
                                                 onChange={handleInputChange}
-                                                required
                                             >
                                                 <option value="">Select Category</option>
                                                 {categories.map(cat => (
@@ -507,6 +706,18 @@ function UpdateProduct() {
                                                 onChange={handleInputChange}
                                             />
                                         </div>
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Manufacturer</label>
+                                        <input
+                                            type="text"
+                                            className="eup-input"
+                                            placeholder="Enter manufacturer name"
+                                            name="manufacturer"
+                                            value={formData.manufacturer}
+                                            onChange={handleInputChange}
+                                        />
                                     </div>
 
                                     <div className="eup-form-group">
@@ -532,7 +743,6 @@ function UpdateProduct() {
                                             value={formData.description}
                                             onChange={handleInputChange}
                                             rows={6}
-                                            required
                                             maxLength={5000}
                                         />
                                         <span className="eup-char-count">{formData.description.length}/5000</span>
@@ -628,11 +838,50 @@ function UpdateProduct() {
                                             </div>
                                         ))}
                                     </div>
+
+                                    {/* Breadcrumbs */}
+                                    <div className="eup-form-group">
+                                        <div className="eup-label-with-btn">
+                                            <label className="eup-label">Breadcrumbs (SEO)</label>
+                                            <button
+                                                type="button"
+                                                className="eup-btn-small"
+                                                onClick={addBreadcrumb}
+                                                disabled={!newBreadcrumb.name || !newBreadcrumb.url}
+                                            >
+                                                <FiPlus /> Add
+                                            </button>
+                                        </div>
+                                        <div className="eup-spec-row">
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="Name (e.g., Home)"
+                                                value={newBreadcrumb.name}
+                                                onChange={e => setNewBreadcrumb(prev => ({ ...prev, name: e.target.value }))}
+                                            />
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="URL (e.g., /)"
+                                                value={newBreadcrumb.url}
+                                                onChange={e => setNewBreadcrumb(prev => ({ ...prev, url: e.target.value }))}
+                                            />
+                                        </div>
+                                        <div className="eup-tags">
+                                            {breadcrumbs.map((breadcrumb, idx) => (
+                                                <span key={idx} className="eup-tag">
+                                                    {breadcrumb.position}. {breadcrumb.name}
+                                                    <button type="button" onClick={() => removeBreadcrumb(idx)}><FiX /></button>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         )}
 
-                        {/* Pricing Tab - Same as Create Product */}
+                        {/* ── Pricing ────────────────────────────────────────── */}
                         {activeTab === 'pricing' && (
                             <div className="eup-tab-content">
                                 <div className="eup-section">
@@ -650,7 +899,6 @@ function UpdateProduct() {
                                                     name="pricing.regular"
                                                     value={formData.pricing.regular}
                                                     onChange={handleInputChange}
-                                                    required
                                                     min="0"
                                                     step="0.01"
                                                 />
@@ -675,11 +923,12 @@ function UpdateProduct() {
                                         </div>
                                     </div>
 
-                                    {formData.pricing.regular && formData.pricing.sale && (
+                                    {formData.pricing.regular !== '' && formData.pricing.sale !== '' && 
+                                     Number(formData.pricing.sale) < Number(formData.pricing.regular) && (
                                         <div className="eup-discount-preview">
                                             <FiCheck className="eup-discount-icon" />
                                             <span>
-                                                Discount: {Math.round(((formData.pricing.regular - formData.pricing.sale) / formData.pricing.regular) * 100)}% off
+                                                Discount: {Math.round(((Number(formData.pricing.regular) - Number(formData.pricing.sale)) / Number(formData.pricing.regular)) * 100)}% off
                                             </span>
                                         </div>
                                     )}
@@ -718,7 +967,31 @@ function UpdateProduct() {
                                         </div>
                                     </div>
 
-                                    {/* Shipping */}
+                                    {/* Price Validity Period */}
+                                    <div className="eup-form-row">
+                                        <div className="eup-form-group">
+                                            <label className="eup-label">Price Valid From</label>
+                                            <input
+                                                type="date"
+                                                className="eup-input"
+                                                name="pricing.validFrom"
+                                                value={formData.pricing.validFrom}
+                                                onChange={handleInputChange}
+                                            />
+                                        </div>
+
+                                        <div className="eup-form-group">
+                                            <label className="eup-label">Price Valid Through</label>
+                                            <input
+                                                type="date"
+                                                className="eup-input"
+                                                name="pricing.validThrough"
+                                                value={formData.pricing.validThrough}
+                                                onChange={handleInputChange}
+                                            />
+                                        </div>
+                                    </div>
+
                                     <h3 className="eup-section-title" style={{ marginTop: '2rem' }}>Shipping Information</h3>
                                     
                                     <div className="eup-form-row">
@@ -750,7 +1023,7 @@ function UpdateProduct() {
                                     </div>
 
                                     <div className="eup-form-group">
-                                        <label className="eup-label">Dimensions</label>
+                                        <label className="eup-label">Dimensions (L × W × H)</label>
                                         <div className="eup-dimensions-grid">
                                             <input
                                                 type="number"
@@ -798,7 +1071,7 @@ function UpdateProduct() {
                             </div>
                         )}
 
-                        {/* Inventory Tab */}
+                        {/* ── Inventory ──────────────────────────────────────── */}
                         {activeTab === 'inventory' && (
                             <div className="eup-tab-content">
                                 <div className="eup-section">
@@ -858,6 +1131,33 @@ function UpdateProduct() {
                                         </div>
                                     </div>
 
+                                    <div className="eup-form-row">
+                                        <div className="eup-form-group">
+                                            <label className="eup-label">GTIN (Google Shopping)</label>
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="Global Trade Item Number"
+                                                name="inventory.gtin"
+                                                value={formData.inventory.gtin}
+                                                onChange={handleInputChange}
+                                            />
+                                            <small className="eup-help-text">UPC, EAN, JAN, ISBN, or ITF-14</small>
+                                        </div>
+
+                                        <div className="eup-form-group">
+                                            <label className="eup-label">MPN</label>
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="Manufacturer Part Number"
+                                                name="inventory.mpn"
+                                                value={formData.inventory.mpn}
+                                                onChange={handleInputChange}
+                                            />
+                                        </div>
+                                    </div>
+
                                     <div className="eup-checkbox-group">
                                         <label className="eup-checkbox">
                                             <input
@@ -873,7 +1173,7 @@ function UpdateProduct() {
                             </div>
                         )}
 
-                        {/* Media Tab */}
+                        {/* ── Media ──────────────────────────────────────────── */}
                         {activeTab === 'media' && (
                             <div className="eup-tab-content">
                                 <div className="eup-section">
@@ -953,7 +1253,7 @@ function UpdateProduct() {
                             </div>
                         )}
 
-                        {/* Variants Tab - Similar to Create */}
+                        {/* ── Variants ───────────────────────────────────────── */}
                         {activeTab === 'variants' && (
                             <div className="eup-tab-content">
                                 <div className="eup-section">
@@ -1028,11 +1328,18 @@ function UpdateProduct() {
                                             </div>
                                         </div>
                                     ))}
+
+                                    {variants.length === 0 && (
+                                        <div className="eup-info-box">
+                                            <FiAlertCircle style={{ marginRight: '0.5rem' }} />
+                                            <span>Add variants if your product comes in different sizes, colors, or styles</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
 
-                        {/* SEO Tab */}
+                        {/* ── SEO (Basic) ────────────────────────────────────── */}
                         {activeTab === 'seo' && (
                             <div className="eup-tab-content">
                                 <div className="eup-section">
@@ -1056,7 +1363,7 @@ function UpdateProduct() {
                                         <label className="eup-label">Meta Description</label>
                                         <textarea
                                             className="eup-textarea"
-                                            placeholder="Product meta description"
+                                            placeholder="Product meta description (120-160 characters recommended)"
                                             name="seo.metaDescription"
                                             value={formData.seo.metaDescription}
                                             onChange={handleInputChange}
@@ -1093,8 +1400,327 @@ function UpdateProduct() {
                                         </div>
                                     </div>
 
-                                    <h3 className="eup-section-title" style={{ marginTop: '2rem' }}>Product Flags</h3>
-                                    
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Canonical URL</label>
+                                        <input
+                                            type="url"
+                                            className="eup-input"
+                                            placeholder="https://example.com/products/product-name"
+                                            name="seo.canonicalUrl"
+                                            value={formData.seo.canonicalUrl}
+                                            onChange={handleInputChange}
+                                        />
+                                        <small className="eup-help-text">Specify the preferred URL for this product</small>
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Focus Keyphrase</label>
+                                        <input
+                                            type="text"
+                                            className="eup-input"
+                                            placeholder="Main keyphrase for SEO optimization"
+                                            name="seo.focusKeyphrase"
+                                            value={formData.seo.focusKeyphrase}
+                                            onChange={handleInputChange}
+                                        />
+                                    </div>
+
+                                    <div className="eup-form-row">
+                                        <div className="eup-form-group">
+                                            <label className="eup-label">Schema Type</label>
+                                            <select
+                                                className="eup-select"
+                                                name="seo.schemaType"
+                                                value={formData.seo.schemaType}
+                                                onChange={handleInputChange}
+                                            >
+                                                {schemaTypes.map(type => (
+                                                    <option key={type} value={type}>{type}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+
+                                        <div className="eup-form-group">
+                                            <label className="eup-label">Condition</label>
+                                            <select
+                                                className="eup-select"
+                                                name="seo.condition"
+                                                value={formData.seo.condition}
+                                                onChange={handleInputChange}
+                                            >
+                                                {conditions.map(cond => (
+                                                    <option key={cond} value={cond}>{cond.replace('Condition', '')}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="eup-checkbox-grid">
+                                        <label className="eup-checkbox">
+                                            <input
+                                                type="checkbox"
+                                                name="seo.noIndex"
+                                                checked={formData.seo.noIndex}
+                                                onChange={handleInputChange}
+                                            />
+                                            <span>No Index (Hide from search engines)</span>
+                                        </label>
+
+                                        <label className="eup-checkbox">
+                                            <input
+                                                type="checkbox"
+                                                name="seo.noFollow"
+                                                checked={formData.seo.noFollow}
+                                                onChange={handleInputChange}
+                                            />
+                                            <span>No Follow (Don&apos;t follow links)</span>
+                                        </label>
+                                    </div>
+
+                                    {/* Related Search Terms */}
+                                    <div className="eup-form-group" style={{ marginTop: '2rem' }}>
+                                        <label className="eup-label">Related Search Terms</label>
+                                        <div className="eup-input-with-btn">
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="Add related search term"
+                                                value={newRelatedTerm}
+                                                onChange={e => setNewRelatedTerm(e.target.value)}
+                                                onKeyPress={e => e.key === 'Enter' && (e.preventDefault(), addRelatedTerm())}
+                                            />
+                                            <button type="button" className="eup-btn-icon" onClick={addRelatedTerm}>
+                                                <FiPlus />
+                                            </button>
+                                        </div>
+                                        <div className="eup-tags">
+                                            {relatedSearchTerms.map((term, idx) => (
+                                                <span key={idx} className="eup-tag">
+                                                    {term}
+                                                    <button type="button" onClick={() => removeRelatedTerm(idx)}><FiX /></button>
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* Rich Snippets - FAQs */}
+                                    <h3 className="eup-section-title" style={{ marginTop: '2rem' }}>Rich Snippets - FAQs</h3>
+                                    <div className="eup-label-with-btn">
+                                        <label className="eup-label">Frequently Asked Questions</label>
+                                        <button type="button" className="eup-btn-small" onClick={addFAQ}>
+                                            <FiPlus /> Add FAQ
+                                        </button>
+                                    </div>
+
+                                    {richSnippets.faqs.map((faq, idx) => (
+                                        <div key={idx} className="eup-faq-card">
+                                            <div className="eup-faq-header">
+                                                <input
+                                                    type="text"
+                                                    className="eup-input"
+                                                    placeholder="Question"
+                                                    value={faq.question}
+                                                    onChange={e => updateFAQ(idx, 'question', e.target.value)}
+                                                    maxLength={200}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="eup-btn-icon-danger"
+                                                    onClick={() => removeFAQ(idx)}
+                                                >
+                                                    <FiTrash2 />
+                                                </button>
+                                            </div>
+                                            <textarea
+                                                className="eup-textarea"
+                                                placeholder="Answer"
+                                                value={faq.answer}
+                                                onChange={e => updateFAQ(idx, 'answer', e.target.value)}
+                                                rows={3}
+                                                maxLength={1000}
+                                            />
+                                        </div>
+                                    ))}
+
+                                    {/* Rich Snippets - Videos */}
+                                    <h3 className="eup-section-title" style={{ marginTop: '2rem' }}>Rich Snippets - Videos</h3>
+                                    <div className="eup-label-with-btn">
+                                        <label className="eup-label">Product Videos</label>
+                                        <button type="button" className="eup-btn-small" onClick={addVideo}>
+                                            <FiPlus /> Add Video
+                                        </button>
+                                    </div>
+
+                                    {richSnippets.videos.map((video, idx) => (
+                                        <div key={idx} className="eup-video-card">
+                                            <div className="eup-video-header">
+                                                <input
+                                                    type="text"
+                                                    className="eup-input"
+                                                    placeholder="Video Name"
+                                                    value={video.name}
+                                                    onChange={e => updateVideo(idx, 'name', e.target.value)}
+                                                />
+                                                <button
+                                                    type="button"
+                                                    className="eup-btn-icon-danger"
+                                                    onClick={() => removeVideo(idx)}
+                                                >
+                                                    <FiTrash2 />
+                                                </button>
+                                            </div>
+                                            <input
+                                                type="text"
+                                                className="eup-input"
+                                                placeholder="Description"
+                                                value={video.description}
+                                                onChange={e => updateVideo(idx, 'description', e.target.value)}
+                                                style={{ marginTop: '0.5rem' }}
+                                            />
+                                            <input
+                                                type="url"
+                                                className="eup-input"
+                                                placeholder="Content URL"
+                                                value={video.contentUrl}
+                                                onChange={e => updateVideo(idx, 'contentUrl', e.target.value)}
+                                                style={{ marginTop: '0.5rem' }}
+                                            />
+                                            <input
+                                                type="url"
+                                                className="eup-input"
+                                                placeholder="Thumbnail URL"
+                                                value={video.thumbnailUrl}
+                                                onChange={e => updateVideo(idx, 'thumbnailUrl', e.target.value)}
+                                                style={{ marginTop: '0.5rem' }}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Advanced SEO (Social Media) ────────────────────── */}
+                        {activeTab === 'advanced' && (
+                            <div className="eup-tab-content">
+                                <div className="eup-section">
+                                    <h3 className="eup-section-title">Open Graph (Facebook)</h3>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">OG Title</label>
+                                        <input
+                                            type="text"
+                                            className="eup-input"
+                                            placeholder="Title for social sharing"
+                                            name="seo.ogTitle"
+                                            value={formData.seo.ogTitle}
+                                            onChange={handleInputChange}
+                                            maxLength={60}
+                                        />
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">OG Description</label>
+                                        <textarea
+                                            className="eup-textarea"
+                                            placeholder="Description for social sharing"
+                                            name="seo.ogDescription"
+                                            value={formData.seo.ogDescription}
+                                            onChange={handleInputChange}
+                                            rows={3}
+                                            maxLength={160}
+                                        />
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">OG Image URL</label>
+                                        <input
+                                            type="url"
+                                            className="eup-input"
+                                            placeholder="https://example.com/image.jpg"
+                                            name="seo.ogImage"
+                                            value={formData.seo.ogImage}
+                                            onChange={handleInputChange}
+                                        />
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">OG Type</label>
+                                        <input
+                                            type="text"
+                                            className="eup-input"
+                                            placeholder="product"
+                                            name="seo.ogType"
+                                            value={formData.seo.ogType}
+                                            onChange={handleInputChange}
+                                        />
+                                    </div>
+
+                                    <h3 className="eup-section-title" style={{ marginTop: '2rem' }}>Twitter Card</h3>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Card Type</label>
+                                        <select
+                                            className="eup-select"
+                                            name="seo.twitterCard"
+                                            value={formData.seo.twitterCard}
+                                            onChange={handleInputChange}
+                                        >
+                                            {twitterCardTypes.map(type => (
+                                                <option key={type} value={type}>{type}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Twitter Title</label>
+                                        <input
+                                            type="text"
+                                            className="eup-input"
+                                            placeholder="Title for Twitter"
+                                            name="seo.twitterTitle"
+                                            value={formData.seo.twitterTitle}
+                                            onChange={handleInputChange}
+                                            maxLength={70}
+                                        />
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Twitter Description</label>
+                                        <textarea
+                                            className="eup-textarea"
+                                            placeholder="Description for Twitter"
+                                            name="seo.twitterDescription"
+                                            value={formData.seo.twitterDescription}
+                                            onChange={handleInputChange}
+                                            rows={3}
+                                            maxLength={200}
+                                        />
+                                    </div>
+
+                                    <div className="eup-form-group">
+                                        <label className="eup-label">Twitter Image URL</label>
+                                        <input
+                                            type="url"
+                                            className="eup-input"
+                                            placeholder="https://example.com/image.jpg"
+                                            name="seo.twitterImage"
+                                            value={formData.seo.twitterImage}
+                                            onChange={handleInputChange}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* ── Settings (Flags) ───────────────────────────────── */}
+                        {activeTab === 'settings' && (
+                            <div className="eup-tab-content">
+                                <div className="eup-section">
+                                    <h3 className="eup-section-title">Product Flags</h3>
+                                    <p className="eup-help-text" style={{ marginBottom: '1.5rem' }}>
+                                        These flags control how the product appears in storefront sections and promotions.
+                                    </p>
+
                                     <div className="eup-checkbox-grid">
                                         <label className="eup-checkbox">
                                             <input
@@ -1154,14 +1780,15 @@ function UpdateProduct() {
                                 Cancel
                             </button>
                             <button
-                                type="submit"
+                                type="button"
                                 className="eup-btn eup-btn-primary"
+                                onClick={(e) => handleSubmit(e)}
                                 disabled={loading}
                             >
                                 {loading ? 'Updating...' : <><FiSave /> Update Product</>}
                             </button>
                         </div>
-                    </form>
+                    </div>
                 </div>
             </div>
 
