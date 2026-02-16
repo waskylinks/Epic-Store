@@ -50,6 +50,7 @@ import {
   fetchReturnOverview,
   fetchRefundOverview,
 } from '../features/analytics/analyticsSlice';
+import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
 
 // ─── Navigation Config ──────────────────────────────────────────────────────
@@ -499,6 +500,8 @@ export default function AdminDashboard() {
   const deviceData = devicePerformance?.devices || [];
 
   return (
+    <>
+    <Navbar />
     <div className="adm-wrap">
       {/* ── Sidebar ─────────────────────────────────────────────────────── */}
       <aside className={`adm-sidebar ${sidebarOpen ? 'adm-sidebar--open' : ''}`}>
@@ -1255,5 +1258,6 @@ export default function AdminDashboard() {
         </div>
       </div>
     </div>
+    </>
   );
 }
