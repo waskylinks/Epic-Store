@@ -1,6 +1,6 @@
 import Product from '../models/product-model.js';
 import { getCacheRaw, setCacheRaw } from '../utils/redis.js';
-import { categoryToSlug } from '../utils/categorySlug.js';
+import { categoryToSlug } from '../utils/reserved-slugs.js';
 
 class SEOService {
   constructor() {

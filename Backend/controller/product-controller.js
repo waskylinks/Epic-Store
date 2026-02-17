@@ -8,7 +8,7 @@ import {
 } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import seoService from '../Services/seo.service.js';
-import { RESERVED_SLUGS } from '../routes/products-route.js';
+import { RESERVED_SLUGS } from '../utils/reserved-slugs.js';
 import { slugify } from '../utils/slugify.js';
 
 // ============================================

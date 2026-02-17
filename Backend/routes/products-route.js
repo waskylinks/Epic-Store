@@ -23,18 +23,8 @@ import { roleBaseAccess, verifyUserAuth } from '../middleware/user-auth.js';
 import { publicProductLimiter, adminLimiter } from '../middleware/rateLimiter.js';
 import upload from '../middleware/multer.js';
 import { trackProductView } from '../middleware/product-tracking-middleware.js';
-// BUG: RESERVED_SLUGS was previously defined in this file and imported by
-// product-controller.js, while this file simultaneously imported from
-// product-controller.js — a mutual ESM cycle. During module evaluation,
-// product-controller.js captured RESERVED_SLUGS as a live binding that was
-// undefined at that instant (the Set() initializer had not run yet in this
-// file). ESM live bindings mean it resolves correctly before any HTTP request
-// arrives, but this is a fragile antipattern that breaks static analysis and
-// is one refactor away from a real runtime crash.
-// FIX: RESERVED_SLUGS moved to utils/reserved-slugs.js — a standalone module
-// with no imports from routes or controllers. Both files now import from there,
-// breaking the cycle entirely.
-import { RESERVED_SLUGS } from '../utils/reserved-slugs.js'; // ← CHANGED
+
+import { RESERVED_SLUGS } from '../utils/reserved-slugs.js'; 
 
 const router = express.Router();
 
