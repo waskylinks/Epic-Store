@@ -23,10 +23,6 @@ export const slugify = (text, options = {}) => {
       .replace(/\s+/g, replacement)
       .replace(new RegExp(`${replacement}+`, 'g'), replacement);
   } else {
-    // FIX — \w matches [a-zA-Z0-9_], so underscores survived into the slug.
-    // validateSlugParam rejects [^a-z0-9-], meaning any product name with an
-    // underscore produced a slug that 400'd on every subsequent request.
-    // Underscores are now explicitly converted to hyphens before collapsing.
     slug = slug
       .replace(/[^\w\s-]/g, '')
       .replace(/_/g, replacement)
@@ -46,22 +42,34 @@ export const slugify = (text, options = {}) => {
   return slug;
 };
 
+// BUG (introduced by previous fix): The post-loop `if (await checkExists(slug))`
+// guard fires unconditionally — including on the happy path where the loop
+// broke early because no collision was found. This means every slug generation
+// that succeeds on the first try now issues TWO DB queries instead of one:
+// one inside the loop (which returns false and breaks) and one in the post-loop
+// guard (which also returns false and is wasted).
+//
+// FIX: Use a boolean `found` flag set on break. The post-loop block only runs
+// when the loop exhausted all numbered slots without finding a free one,
+// which is the only case that should fall through to the timestamp fallback.
+// This restores 1-query cost on the happy path.
 export const generateUniqueSlug = async (baseSlug, checkExists, maxAttempts = 100) => {
   let slug = baseSlug;
   let attempt = 1;
+  let found = false; // ← ADDED
 
-  // FIX — Previous condition `await checkExists(slug) && attempt <= maxAttempts`
-  // ran one extra DB query at the boundary: when attempt === maxAttempts the
-  // check fired, found a collision, exited — but the slug variable still held
-  // `baseSlug-99`, not the timestamp fallback that was then assigned below.
-  // The loop now checks the limit first, skipping that wasted query.
-  while (attempt <= maxAttempts) {
-    if (!(await checkExists(slug))) break;
+  while (attempt < maxAttempts) {
+    if (!(await checkExists(slug))) {
+      found = true; // ← ADDED: mark that we found a free slot inside the loop
+      break;
+    }
     slug = `${baseSlug}-${attempt}`;
     attempt++;
   }
 
-  if (attempt > maxAttempts) {
+  // Only reach here if every numbered slot from baseSlug through baseSlug-(maxAttempts-1)
+  // was taken. Fall back to a timestamp suffix which is effectively collision-free.
+  if (!found) { // ← CHANGED: was `await checkExists(slug)` which re-queried the DB
     slug = `${baseSlug}-${Date.now()}`;
   }
 

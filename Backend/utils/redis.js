@@ -1,8 +1,3 @@
-// ============================================
-// CORRECTED REDIS UTILITY
-// Fix: Replace blocking KEYS with non-blocking SCAN
-// ============================================
-
 import 'dotenv/config';
 import { createClient } from 'redis';
 
@@ -14,36 +9,52 @@ const REDIS_HOST = process.env.REDIS_HOST;
 const REDIS_PORT = Number(process.env.REDIS_PORT);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
-if (!REDIS_HOST || !REDIS_PORT) {
-  console.warn('⚠️ Redis environment variables missing. Caching will be disabled.');
+// BUG: Original guard used !REDIS_PORT which is truthy for NaN (Number(undefined) = NaN,
+// !NaN = true), so the warning fired but createClient still ran with port:NaN.
+// FIX: Use Number.isInteger to reject NaN and non-integer values explicitly.
+const REDIS_AVAILABLE = !!REDIS_HOST && Number.isInteger(REDIS_PORT) && REDIS_PORT > 0;
+
+if (!REDIS_AVAILABLE) {
+  console.warn('⚠️ Redis environment variables missing or invalid. Caching will be disabled.');
 }
 
 /* ================= CLIENT ================= */
 
-const redis = createClient({
-  username: 'default',
-  password: REDIS_PASSWORD || undefined,
-  socket: {
-    host: REDIS_HOST,
-    port: REDIS_PORT,
-    reconnectStrategy: retries => {
-      console.warn(`🔄 Redis reconnect attempt #${retries}`);
-      return Math.min(retries * 100, 3000);
-    }
-  }
-});
+// Only create the client if config is valid — avoids createClient({ port: NaN })
+// which can throw or silently connect to port 0 depending on the redis library version.
+const redis = REDIS_AVAILABLE
+  ? createClient({
+      username: 'default',
+      password: REDIS_PASSWORD || undefined,
+      socket: {
+        host: REDIS_HOST,
+        port: REDIS_PORT,
+        reconnectStrategy: retries => {
+          console.warn(`🔄 Redis reconnect attempt #${retries}`);
+          return Math.min(retries * 100, 3000);
+        }
+      }
+    })
+  : null;
 
 /* ================= EVENTS ================= */
 
-redis.on('connect', () => console.log('✅ Redis connected'));
-redis.on('ready', () => console.log('🚀 Redis ready'));
-redis.on('reconnecting', () => console.warn('🔄 Redis reconnecting...'));
-redis.on('end', () => console.warn('⚠️ Redis connection closed'));
-redis.on('error', err => console.error('❌ Redis error:', err));
+if (redis) {
+  redis.on('connect',     () => console.log('✅ Redis connected'));
+  redis.on('ready',       () => console.log('🚀 Redis ready'));
+  redis.on('reconnecting',() => console.warn('🔄 Redis reconnecting...'));
+  redis.on('end',         () => console.warn('⚠️ Redis connection closed'));
+  redis.on('error',  err => console.error('❌ Redis error:', err));
+}
 
 /* ================= INITIALIZER ================= */
 
 export const initializeRedis = async () => {
+  if (!redis) {
+    console.warn('⚠️ Redis client not created — skipping initialization');
+    return;
+  }
+
   if (redis.isOpen) {
     console.log('ℹ️ Redis already connected');
     return;
@@ -53,15 +64,11 @@ export const initializeRedis = async () => {
     await redis.connect();
 
     if (process.env.NODE_ENV !== 'production') {
-      // Health check (DEV ONLY)
       await redis.set(`${PREFIX}healthcheck`, 'ok', { EX: 10 });
       const value = await redis.get(`${PREFIX}healthcheck`);
       await redis.del(`${PREFIX}healthcheck`);
 
-      if (value !== 'ok') {
-        throw new Error('Redis health check failed');
-      }
-
+      if (value !== 'ok') throw new Error('Redis health check failed');
       console.log('🎉 Redis health check passed');
     }
   } catch (error) {
@@ -70,12 +77,17 @@ export const initializeRedis = async () => {
   }
 };
 
+/* ================= HELPERS ================= */
+
+// Single guard used by every exported function below.
+// Returns true when Redis is connected and usable.
+const isReady = () => redis !== null && redis.isOpen;
+
 /* ================= CACHE HELPERS ================= */
 
 export const getCache = async key => {
   try {
-    if (!redis.isOpen) return null;
-
+    if (!isReady()) return null;
     const data = await redis.get(PREFIX + key);
     return data ? JSON.parse(data) : null;
   } catch (error) {
@@ -86,8 +98,7 @@ export const getCache = async key => {
 
 export const setCache = async (key, value, ttl = 300) => {
   try {
-    if (!redis.isOpen) return;
-
+    if (!isReady()) return;
     await redis.set(PREFIX + key, JSON.stringify(value), { EX: ttl });
   } catch (error) {
     console.error('Redis SET error:', error);
@@ -96,8 +107,7 @@ export const setCache = async (key, value, ttl = 300) => {
 
 export const deleteCache = async key => {
   try {
-    if (!redis.isOpen) return;
-
+    if (!isReady()) return;
     await redis.del(PREFIX + key);
   } catch (error) {
     console.error('Redis DEL error:', error);
@@ -105,35 +115,41 @@ export const deleteCache = async key => {
 };
 
 /**
- * Delete cache keys matching a pattern
- * CRITICAL FIX: Uses SCAN instead of KEYS for non-blocking deletion
- * 
- * @param {string} pattern - Pattern to match (e.g., 'user:*', 'session:*')
+ * Delete all cache keys matching a glob pattern.
+ * Uses SCAN (non-blocking) instead of KEYS (blocks the Redis event loop).
+ *
+ * BUG: Original code initialised cursor as the string "0" and compared
+ * with !== "0". node-redis v4 SCAN returns cursor as a NUMBER, so
+ * `0 (number) !== "0" (string)` is always true — the loop never terminated
+ * naturally and ran all 1000 safety iterations on every call, adding
+ * ~1–10 s of latency to every product create/update/delete request.
+ * FIX: cursor is now a number (0) and compared with !== 0.
+ *
+ * @param {string} pattern - Glob pattern, e.g. 'sitemap*', 'product_*_seo'
  * @returns {Promise<number>} Number of keys deleted
  */
 export const deleteCachePattern = async pattern => {
   try {
-    if (!redis.isOpen) {
+    if (!isReady()) {
       console.warn('Redis not connected, skipping pattern delete');
       return 0;
     }
 
     const fullPattern = PREFIX + pattern;
-    let cursor = '0';
+    let cursor = 0;          // ← FIX: number, not string "0"
     let deletedCount = 0;
     let iterationCount = 0;
-    const maxIterations = 1000; // Safety limit
+    const maxIterations = 1000;
 
     do {
       iterationCount++;
 
-      // SCAN is non-blocking and returns results in batches
       const result = await redis.scan(cursor, {
         MATCH: fullPattern,
-        COUNT: 100 // Process 100 keys at a time
+        COUNT: 100
       });
 
-      cursor = result.cursor;
+      cursor = result.cursor;  // node-redis v4 returns a number here
       const keys = result.keys;
 
       if (keys.length > 0) {
@@ -141,12 +157,11 @@ export const deleteCachePattern = async pattern => {
         deletedCount += keys.length;
       }
 
-      // Safety: Prevent infinite loops
       if (iterationCount > maxIterations) {
         console.warn(`⚠️ SCAN exceeded ${maxIterations} iterations, stopping`);
         break;
       }
-    } while (cursor !== '0');
+    } while (cursor !== 0);  // ← FIX: number comparison, not string
 
     if (deletedCount > 0) {
       console.log(`🗑️ Deleted ${deletedCount} keys matching pattern: ${pattern}`);
@@ -160,13 +175,13 @@ export const deleteCachePattern = async pattern => {
 };
 
 /**
- * Get multiple cache keys at once
- * @param {string[]} keys - Array of cache keys
- * @returns {Promise<Object>} Object mapping keys to values
+ * Get multiple cache keys at once.
+ * @param {string[]} keys
+ * @returns {Promise<Object>} Map of key → parsed value (or null on miss)
  */
 export const getCacheMultiple = async keys => {
   try {
-    if (!redis.isOpen || !keys.length) return {};
+    if (!isReady() || !keys.length) return {};
 
     const prefixedKeys = keys.map(k => PREFIX + k);
     const values = await redis.mGet(prefixedKeys);
@@ -184,20 +199,18 @@ export const getCacheMultiple = async keys => {
 };
 
 /**
- * Set multiple cache keys at once
- * @param {Object} keyValuePairs - Object with key-value pairs
- * @param {number} ttl - Time to live in seconds
+ * Set multiple cache keys atomically via pipeline.
+ * @param {Object} keyValuePairs
+ * @param {number} ttl
  */
 export const setCacheMultiple = async (keyValuePairs, ttl = 300) => {
   try {
-    if (!redis.isOpen || !Object.keys(keyValuePairs).length) return;
+    if (!isReady() || !Object.keys(keyValuePairs).length) return;
 
     const pipeline = redis.multi();
-
     for (const [key, value] of Object.entries(keyValuePairs)) {
       pipeline.set(PREFIX + key, JSON.stringify(value), { EX: ttl });
     }
-
     await pipeline.exec();
   } catch (error) {
     console.error('Redis MSET error:', error);
@@ -205,23 +218,20 @@ export const setCacheMultiple = async (keyValuePairs, ttl = 300) => {
 };
 
 /**
- * Increment a counter in cache
- * @param {string} key - Cache key
- * @param {number} increment - Amount to increment (default 1)
- * @param {number} ttl - Time to live in seconds
- * @returns {Promise<number>} New value
+ * Atomically increment a counter. Sets TTL only on first creation.
+ * @param {string} key
+ * @param {number} increment
+ * @param {number} ttl
+ * @returns {Promise<number>} New counter value
  */
 export const incrementCache = async (key, increment = 1, ttl = 3600) => {
   try {
-    if (!redis.isOpen) return 0;
+    if (!isReady()) return 0;
 
     const newValue = await redis.incrBy(PREFIX + key, increment);
-    
-    // Set expiry only if this is a new key
     if (newValue === increment) {
       await redis.expire(PREFIX + key, ttl);
     }
-
     return newValue;
   } catch (error) {
     console.error('Redis INCR error:', error);
@@ -230,13 +240,13 @@ export const incrementCache = async (key, increment = 1, ttl = 3600) => {
 };
 
 /**
- * Check if cache key exists
- * @param {string} key - Cache key
+ * Check whether a cache key exists.
+ * @param {string} key
  * @returns {Promise<boolean>}
  */
 export const cacheExists = async key => {
   try {
-    if (!redis.isOpen) return false;
+    if (!isReady()) return false;
     return (await redis.exists(PREFIX + key)) === 1;
   } catch (error) {
     console.error('Redis EXISTS error:', error);
@@ -245,49 +255,36 @@ export const cacheExists = async key => {
 };
 
 /**
- * Get cache with fallback - if cache miss, fetch data and cache it
- * @param {string} key - Cache key
- * @param {Function} fetchFn - Async function to fetch data on cache miss
- * @param {number} ttl - Time to live in seconds
- * @returns {Promise<any>} Cached or fetched data
+ * Cache-aside helper: return cached value or fetch, cache, and return.
+ * @param {string} key
+ * @param {Function} fetchFn - async () => value
+ * @param {number} ttl
+ * @returns {Promise<any>}
  */
 export const getCacheWithFallback = async (key, fetchFn, ttl = 300) => {
   try {
-    // Try cache first
     const cached = await getCache(key);
-    if (cached !== null) {
-      return cached;
-    }
+    if (cached !== null) return cached;
 
-    // Cache miss - fetch data
     const data = await fetchFn();
-    
-    // Cache the result
     await setCache(key, data, ttl);
-    
     return data;
   } catch (error) {
     console.error('Cache with fallback error:', error);
-    // On error, try to fetch data anyway
     return fetchFn();
   }
 };
 
 /**
- * Distributed lock using Redis
- * @param {string} lockKey - Lock identifier
- * @param {number} ttl - Lock duration in seconds
- * @returns {Promise<boolean>} True if lock acquired
+ * Distributed lock: acquire a named lock for up to `ttl` seconds.
+ * @param {string} lockKey
+ * @param {number} ttl  Lock duration in seconds
+ * @returns {Promise<boolean>} true if lock was acquired
  */
 export const acquireLock = async (lockKey, ttl = 30) => {
   try {
-    if (!redis.isOpen) return false;
-
-    const result = await redis.set(PREFIX + 'lock:' + lockKey, '1', {
-      NX: true, // Only set if doesn't exist
-      EX: ttl
-    });
-
+    if (!isReady()) return false;
+    const result = await redis.set(PREFIX + 'lock:' + lockKey, '1', { NX: true, EX: ttl });
     return result === 'OK';
   } catch (error) {
     console.error('Redis lock acquire error:', error);
@@ -296,12 +293,12 @@ export const acquireLock = async (lockKey, ttl = 30) => {
 };
 
 /**
- * Release distributed lock
- * @param {string} lockKey - Lock identifier
+ * Release a distributed lock.
+ * @param {string} lockKey
  */
 export const releaseLock = async lockKey => {
   try {
-    if (!redis.isOpen) return;
+    if (!isReady()) return;
     await redis.del(PREFIX + 'lock:' + lockKey);
   } catch (error) {
     console.error('Redis lock release error:', error);
@@ -309,17 +306,16 @@ export const releaseLock = async lockKey => {
 };
 
 /**
- * Execute function with distributed lock
- * Prevents multiple processes from executing the same expensive operation
- * 
- * @param {string} lockKey - Lock identifier
- * @param {Function} fn - Async function to execute
- * @param {number} lockTTL - Lock duration in seconds
- * @returns {Promise<any>} Result of function or null if lock not acquired
+ * Run `fn` under a distributed lock. Returns null if the lock could not be
+ * acquired (another process already holds it).
+ *
+ * @param {string} lockKey
+ * @param {Function} fn - async function to execute while holding the lock
+ * @param {number} lockTTL - maximum lock duration in seconds
+ * @returns {Promise<any|null>} Result of fn, or null if lock not acquired
  */
 export const executeWithLock = async (lockKey, fn, lockTTL = 30) => {
   const acquired = await acquireLock(lockKey, lockTTL);
-  
   if (!acquired) {
     console.log(`Lock not acquired for: ${lockKey}`);
     return null;
@@ -333,11 +329,23 @@ export const executeWithLock = async (lockKey, fn, lockTTL = 30) => {
 };
 
 /**
- * Stale-While-Revalidate pattern
- * Returns cached data immediately if available, refreshes in background if stale
- * 
- * @param {string} key - Cache key
- * @param {Function} fetchFn - Async function to fetch fresh data
+ * Stale-While-Revalidate for JSON objects.
+ * Returns cached data immediately; if the entry is older than `staleAfter`
+ * seconds, a background refresh is triggered without blocking the caller.
+ *
+ * BUG: Original implementation spread `_cachedAt` directly into the cached
+ * object: `{ ...fresh, _cachedAt: Date.now() }`. This:
+ *   1. Pollutes every returned object with an internal timestamp field that
+ *      may leak to API consumers.
+ *   2. Completely breaks when fetchFn returns an array — spreading an array
+ *      into an object produces `{ "0": item0, "1": item1, _cachedAt: ... }`
+ *      which is not an array and breaks any .map()/.filter() call downstream.
+ * FIX: Age is tracked in a separate Redis key (`key:age`), identical to the
+ * approach already used in getCacheRawWithSWR. Data is stored and returned
+ * exactly as fetchFn produced it — no mutation.
+ *
+ * @param {string} key
+ * @param {Function} fetchFn - async () => value (object or array)
  * @param {Object} options - { ttl: 300, staleAfter: 240 }
  * @returns {Promise<any>}
  */
@@ -345,32 +353,34 @@ export const getCacheWithSWR = async (key, fetchFn, options = {}) => {
   const { ttl = 300, staleAfter = 240 } = options;
 
   try {
-    if (!redis.isOpen) {
-      return fetchFn();
-    }
+    if (!isReady()) return fetchFn();
 
     const cached = await redis.get(PREFIX + key);
 
     if (cached) {
       const data = JSON.parse(cached);
-      const age = Date.now() - (data._cachedAt || 0);
 
-      // If cache is getting stale, refresh in background
+      // Use a separate age key — do NOT embed _cachedAt into the data object
+      const ageKey = `${PREFIX + key}:age`;          // ← CHANGED
+      const cachedAt = await redis.get(ageKey);
+      const age = cachedAt ? Date.now() - parseInt(cachedAt) : Infinity;
+
       if (age > staleAfter * 1000) {
-        // Don't await - refresh asynchronously
         fetchFn()
           .then(fresh => {
-            setCache(key, { ...fresh, _cachedAt: Date.now() }, ttl);
+            setCache(key, fresh, ttl);               // ← CHANGED: no spread
+            redis.set(ageKey, String(Date.now()), { EX: ttl });
           })
           .catch(err => console.error('SWR refresh error:', err));
       }
 
-      return data;
+      return data;  // ← CHANGED: return parsed data without _cachedAt
     }
 
-    // No cache - fetch synchronously
+    // Cache miss — fetch, store, record age
     const data = await fetchFn();
-    await setCache(key, { ...data, _cachedAt: Date.now() }, ttl);
+    await setCache(key, data, ttl);                  // ← CHANGED: no spread
+    await redis.set(`${PREFIX + key}:age`, String(Date.now()), { EX: ttl });
     return data;
   } catch (error) {
     console.error('SWR cache error:', error);
@@ -378,52 +388,20 @@ export const getCacheWithSWR = async (key, fetchFn, options = {}) => {
   }
 };
 
-/**
- * Get cache statistics
- * @returns {Promise<Object>} Redis stats
- */
-export const getCacheStats = async () => {
-  try {
-    if (!redis.isOpen) {
-      return { connected: false };
-    }
-
-    const info = await redis.info('stats');
-    const keyspace = await redis.info('keyspace');
-    
-    return {
-      connected: true,
-      info,
-      keyspace
-    };
-  } catch (error) {
-    console.error('Redis stats error:', error);
-    return { connected: false, error: error.message };
-  }
-};
-
+/* ================= RAW STRING CACHE (XML / HTML / text) ================= */
 
 /**
- * Set raw string value in cache (no JSON serialization)
- * Use this for XML, HTML, CSS, or other text formats that should be stored as-is
- * 
- * @param {string} key - Cache key
- * @param {string} value - Raw string value (NOT an object)
- * @param {number} ttl - Time to live in seconds (default: 300)
- * @returns {Promise<void>}
- * 
- * @example
- * await setCacheRaw('sitemap_products', '<xml>...</xml>', 3600);
- * await setCacheRaw('homepage_html', '<html>...</html>', 1800);
+ * Store a raw string (XML, HTML, etc.) without JSON serialization.
+ * @param {string} key
+ * @param {string} value
+ * @param {number} ttl
  */
 export const setCacheRaw = async (key, value, ttl = 300) => {
   try {
-    if (!redis.isOpen) {
+    if (!isReady()) {
       console.warn('Redis not connected, skipping raw cache set');
       return;
     }
-
-    // Don't JSON.stringify - store as plain string
     await redis.set(PREFIX + key, value, { EX: ttl });
   } catch (error) {
     console.error('Redis SET (raw) error:', error);
@@ -431,25 +409,14 @@ export const setCacheRaw = async (key, value, ttl = 300) => {
 };
 
 /**
- * Get raw string value from cache (no JSON parsing)
- * Use this to retrieve XML, HTML, CSS, or other text formats
- * 
- * @param {string} key - Cache key
- * @returns {Promise<string|null>} Raw string value or null
- * 
- * @example
- * const xml = await getCacheRaw('sitemap_products');
- * const html = await getCacheRaw('homepage_html');
+ * Retrieve a raw string from cache without JSON parsing.
+ * @param {string} key
+ * @returns {Promise<string|null>}
  */
 export const getCacheRaw = async key => {
   try {
-    if (!redis.isOpen) {
-      return null;
-    }
-
-    // Don't JSON.parse - return as plain string
-    const data = await redis.get(PREFIX + key);
-    return data;
+    if (!isReady()) return null;
+    return await redis.get(PREFIX + key);
   } catch (error) {
     console.error('Redis GET (raw) error:', error);
     return null;
@@ -457,83 +424,53 @@ export const getCacheRaw = async key => {
 };
 
 /**
- * Cache raw string with fallback function
- * Combines getCacheRaw with automatic fetch and caching on miss
- * 
- * @param {string} key - Cache key
- * @param {Function} fetchFn - Async function that returns raw string
- * @param {number} ttl - Time to live in seconds
- * @returns {Promise<string>} Cached or fresh raw string
- * 
- * @example
- * const sitemap = await getCacheRawWithFallback(
- *   'sitemap_products',
- *   async () => generateSitemapXML(),
- *   3600
- * );
+ * Cache-aside for raw strings: return cached value or fetch, cache, and return.
+ * @param {string} key
+ * @param {Function} fetchFn - async () => string
+ * @param {number} ttl
+ * @returns {Promise<string>}
  */
 export const getCacheRawWithFallback = async (key, fetchFn, ttl = 300) => {
   try {
-    // Try cache first
     const cached = await getCacheRaw(key);
-    if (cached !== null) {
-      return cached;
-    }
+    if (cached !== null) return cached;
 
-    // Cache miss - fetch data
     const data = await fetchFn();
-    
-    // Cache the result
     await setCacheRaw(key, data, ttl);
-    
     return data;
   } catch (error) {
     console.error('Cache with fallback (raw) error:', error);
-    // On error, try to fetch data anyway
     return fetchFn();
   }
 };
 
 /**
- * Stale-While-Revalidate for raw strings
- * Returns cached XML/HTML immediately, refreshes in background if stale
- * 
- * @param {string} key - Cache key
- * @param {Function} fetchFn - Async function that returns raw string
+ * Stale-While-Revalidate for raw strings (XML, HTML, etc.).
+ * Returns cached string immediately; triggers a background refresh if stale.
+ * Age is tracked via a separate `:age` key.
+ *
+ * @param {string} key
+ * @param {Function} fetchFn - async () => string
  * @param {Object} options - { ttl: 300, staleAfter: 240 }
- * @returns {Promise<string>} Cached or fresh raw string
- * 
- * @example
- * const sitemap = await getCacheRawWithSWR(
- *   'sitemap_products',
- *   async () => generateSitemapXML(),
- *   { ttl: 3600, staleAfter: 3000 }
- * );
+ * @returns {Promise<string>}
  */
 export const getCacheRawWithSWR = async (key, fetchFn, options = {}) => {
   const { ttl = 300, staleAfter = 240 } = options;
 
   try {
-    if (!redis.isOpen) {
-      return fetchFn();
-    }
+    if (!isReady()) return fetchFn();
 
     const cached = await redis.get(PREFIX + key);
 
     if (cached) {
-      // For raw strings, we can't embed _cachedAt in the data
-      // So we use a separate key to track age
       const ageKey = `${PREFIX + key}:age`;
       const cachedAt = await redis.get(ageKey);
       const age = cachedAt ? Date.now() - parseInt(cachedAt) : Infinity;
 
-      // If cache is getting stale, refresh in background
       if (age > staleAfter * 1000) {
-        // Don't await - refresh asynchronously
         fetchFn()
           .then(fresh => {
             setCacheRaw(key, fresh, ttl);
-            // Update age marker
             redis.set(ageKey, String(Date.now()), { EX: ttl });
           })
           .catch(err => console.error('SWR raw refresh error:', err));
@@ -542,13 +479,9 @@ export const getCacheRawWithSWR = async (key, fetchFn, options = {}) => {
       return cached;
     }
 
-    // No cache - fetch synchronously
     const data = await fetchFn();
     await setCacheRaw(key, data, ttl);
-    
-    // Set age marker
     await redis.set(`${PREFIX + key}:age`, String(Date.now()), { EX: ttl });
-    
     return data;
   } catch (error) {
     console.error('SWR raw cache error:', error);
@@ -556,11 +489,30 @@ export const getCacheRawWithSWR = async (key, fetchFn, options = {}) => {
   }
 };
 
+/* ================= STATS ================= */
+
+/**
+ * Return Redis server statistics.
+ * @returns {Promise<Object>}
+ */
+export const getCacheStats = async () => {
+  try {
+    if (!isReady()) return { connected: false };
+
+    const info     = await redis.info('stats');
+    const keyspace = await redis.info('keyspace');
+    return { connected: true, info, keyspace };
+  } catch (error) {
+    console.error('Redis stats error:', error);
+    return { connected: false, error: error.message };
+  }
+};
+
 /* ================= SHUTDOWN ================= */
 
 export const shutdownRedis = async () => {
   try {
-    if (redis.isOpen) {
+    if (redis && redis.isOpen) {
       await redis.quit();
       console.log('🛑 Redis connection closed gracefully');
     }

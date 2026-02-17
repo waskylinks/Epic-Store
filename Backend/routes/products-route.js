@@ -4,7 +4,8 @@ import {
     getAllProducts, 
     updateProduct, 
     createProducts, 
-    deleteProduct, 
+    deleteProduct,
+    deleteMultipleProducts,
     getAdminProducts, 
     createProductReview, 
     getProductReviews, 
@@ -22,24 +23,20 @@ import { roleBaseAccess, verifyUserAuth } from '../middleware/user-auth.js';
 import { publicProductLimiter, adminLimiter } from '../middleware/rateLimiter.js';
 import upload from '../middleware/multer.js';
 import { trackProductView } from '../middleware/product-tracking-middleware.js';
+// BUG: RESERVED_SLUGS was previously defined in this file and imported by
+// product-controller.js, while this file simultaneously imported from
+// product-controller.js — a mutual ESM cycle. During module evaluation,
+// product-controller.js captured RESERVED_SLUGS as a live binding that was
+// undefined at that instant (the Set() initializer had not run yet in this
+// file). ESM live bindings mean it resolves correctly before any HTTP request
+// arrives, but this is a fragile antipattern that breaks static analysis and
+// is one refactor away from a real runtime crash.
+// FIX: RESERVED_SLUGS moved to utils/reserved-slugs.js — a standalone module
+// with no imports from routes or controllers. Both files now import from there,
+// breaking the cycle entirely.
+import { RESERVED_SLUGS } from '../utils/reserved-slugs.js'; // ← CHANGED
 
 const router = express.Router();
-
-// ============================================
-// RESERVED SLUG CONSTANTS
-// ============================================
-export const RESERVED_SLUGS = new Set([
-  'trending',
-  'new-arrivals',
-  'featured',
-  'bestsellers',
-  'search',
-  'category',
-  'brand',
-  'sale',
-  'sitemap',
-  'robots'
-]);
 
 // ============================================
 // SLUG VALIDATION MIDDLEWARE
@@ -118,6 +115,9 @@ router.route('/admin/products')
 
 router.route('/admin/products/create')
   .post(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, upload.array('image', 10), createProducts);
+
+router.route('/admin/products/batch-delete')
+  .delete(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, deleteMultipleProducts);
 
 router.route('/admin/product/:id')
   .put(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, upload.array('image', 10), updateProduct)
