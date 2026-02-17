@@ -274,4 +274,52 @@ const adminAnalyticsLimiterBase = rateLimit({
     });
   }
 });
+
+
 export const adminAnalyticsLimiter = upgradeToRedisStore(adminAnalyticsLimiterBase, "ratelimit:admin-analytics:");
+
+/* ================= ADMIN GENERAL RATE LIMITER ================= */
+
+/**
+ * General admin route limiter
+ * Applies to: product CRUD, ID-based lookups, structured data, admin product list
+ *
+ * Why lower than adminAnalyticsLimiter:
+ * - These routes touch the DB with writes (create, update, delete) or
+ *   expose internal IDs — higher per-request cost and risk than reads.
+ * - A compromised admin token should not be able to bulk-extract or
+ *   bulk-delete unchecked. 200/15min is enough for normal admin work
+ *   while still acting as a circuit breaker for runaway scripts or
+ *   credential misuse.
+ *
+ * Keyed by user ID (not IP) so that:
+ * - Multiple admins behind the same office NAT get independent quotas.
+ * - Falls back to IP only when req.user is unavailable (should not
+ *   happen since verifyUserAuth runs first, but defensive).
+ */
+const adminLimiterBase = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  store: getRedisStore("ratelimit:admin:"),
+  keyGenerator: (req) => {
+    const userId = req.user?._id?.toString();
+    return userId ? `admin:${userId}` : extractIP(req);
+  },
+  message: formatRateLimitMessage(
+    "Too many admin requests, please try again after 15 minutes"
+  ),
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+  handler: (req, res) => {
+    const retryAfter = Math.ceil((req.rateLimit.resetTime - Date.now()) / 1000);
+    res.status(429).json({
+      success: false,
+      message: "Too many admin requests. Please try again shortly.",
+      retryAfter,
+      limit: req.rateLimit.limit,
+      current: req.rateLimit.current,
+    });
+  },
+});
+export const adminLimiter = upgradeToRedisStore(adminLimiterBase, "ratelimit:admin:");
