@@ -32,6 +32,8 @@ import checkoutRoutes from './routes/checkout-routes.js';
 import analyticsRoutes from './routes/analytics-routes-index.js';
 import adminStatsRoutes from './routes/admin-stats-routes.js';
 
+import seoRoutes from './routes/seo-routes.js';
+
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
 
 // Import passport configuration
@@ -248,6 +250,8 @@ app.use('/api/v1', cartRoutes); // For /products/:id/availability endpoint
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/discounts', discountRoutes);
 app.use('/api/v1/checkout', checkoutRoutes);
+app.use('/api/v1', seoRoutes);
+
 
 // Analytics Routes (Unified through index router)
 app.use('/api/v1/analytics', analyticsRoutes);
