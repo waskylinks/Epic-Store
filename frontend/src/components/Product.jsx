@@ -11,115 +11,80 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const [isHovered, setIsHovered] = useState(false);
-  
+
   const { items: wishlistItems, itemLoading } = useSelector(state => state.wishlist);
   const { isAuthenticated } = useSelector(state => state.user);
 
-  // Add safety check for product
-  if (!product) {
-    return null;
-  }
+  if (!product) return null;
 
-  // ==================== HELPER FUNCTIONS ====================
-  
-  const getProductPrice = () => {
-    return product.pricing?.regular || product.price || 0;
+  // ── Helpers ──────────────────────────────────────────────
+  const getProductPrice  = () => product.pricing?.regular || product.price || 0;
+  const getSalePrice     = () => product.pricing?.sale || null;
+  const getProductImage  = () => {
+    const arr = product.images || product.image || [];
+    const primary = arr.find(img => img.isPrimary) || arr[0];
+    return primary?.url || '/placeholder-product.png';
   };
-
-  const getSalePrice = () => {
-    return product.pricing?.sale || null;
-  };
-
-  const getProductImage = () => {
-    const imageArray = product.images || product.image || [];
-    const primaryImage = imageArray.find(img => img.isPrimary) || imageArray[0];
-    return primaryImage?.url || '/placeholder-product.png';
-  };
-
   const getDiscountPercentage = () => {
     const regular = getProductPrice();
     const sale = getSalePrice();
-    if (sale && regular > sale) {
-      return Math.round(((regular - sale) / regular) * 100);
-    }
-    return 0;
+    return sale && regular > sale ? Math.round(((regular - sale) / regular) * 100) : 0;
   };
-
   const getStockStatus = () => {
     const stock = product.inventory?.stock ?? product.stock ?? 0;
     return stock > 0 ? 'In Stock' : 'Out of Stock';
   };
 
   const formatPrice = (amount) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2
-    }).format(amount);
-  };
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',        // ← USD
+    minimumFractionDigits: 2
+  }).format(amount);
+};
 
-  // Check if product is in wishlist
-  const isInWishlist = wishlistItems.some(
-    item => {
-      const wishlistProductId = item.product?._id || item.product;
-      return wishlistProductId === product._id;
-    }
-  );
+  // Prefer slug-based URL, fall back to ID for legacy products
+  const productUrl = product.slug
+    ? `/products/${product.slug}`
+    : `/product/${product._id}`;
 
+  const isInWishlist = wishlistItems.some(item => {
+    const wid = item.product?._id || item.product;
+    return wid === product._id;
+  });
   const isWishlistLoading = itemLoading[product._id] || false;
 
-  // ==================== HANDLERS ====================
-
+  // ── Handlers ─────────────────────────────────────────────
   const handleWishlistToggle = async (e) => {
     e.preventDefault();
     e.stopPropagation();
-
     if (!isAuthenticated) {
-      toast.info('Please login to add items to wishlist', {
-        position: 'top-center',
-        autoClose: 2000
-      });
+      toast.info('Please login to add items to wishlist', { position: 'top-center', autoClose: 2000 });
       navigate('/login');
       return;
     }
-
     try {
       if (isInWishlist) {
         await dispatch(removeFromWishlist(product._id)).unwrap();
-        toast.success('Removed from wishlist', {
-          position: 'top-center',
-          autoClose: 2000
-        });
+        toast.success('Removed from wishlist', { position: 'top-center', autoClose: 2000 });
       } else {
         await dispatch(addToWishlist(product._id)).unwrap();
-        toast.success('Added to wishlist', {
-          position: 'top-center',
-          autoClose: 2000
-        });
+        toast.success('Added to wishlist', { position: 'top-center', autoClose: 2000 });
       }
-      // Refresh wishlist to get updated data
       dispatch(getWishlist());
-    } catch (error) {
-      toast.error(error.message || 'Something went wrong', {
-        position: 'top-center',
-        autoClose: 3000
-      });
+    } catch (err) {
+      toast.error(err.message || 'Something went wrong', { position: 'top-center', autoClose: 3000 });
     }
   };
 
   const handleQuickAdd = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    
     const stock = product.inventory?.stock ?? product.stock ?? 0;
     if (stock === 0) {
-      toast.error('Product is out of stock', {
-        position: 'top-center',
-        autoClose: 2000
-      });
+      toast.error('Product is out of stock', { position: 'top-center', autoClose: 2000 });
       return;
     }
-
     if (onQuickAdd) {
       onQuickAdd(product._id);
     } else {
@@ -127,62 +92,41 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
     }
   };
 
-  // ==================== RENDER ====================
-
-  const price = getProductPrice();
+  // ── Derived values ───────────────────────────────────────
+  const price    = getProductPrice();
   const salePrice = getSalePrice();
   const discount = getDiscountPercentage();
-  const image = getProductImage();
-  const stock = product.inventory?.stock ?? product.stock ?? 0;
+  const image    = getProductImage();
+  const stock    = product.inventory?.stock ?? product.stock ?? 0;
 
   return (
-    <Link to={`/product/${product._id}`} className="product_id">
-      <div 
+    <Link to={productUrl} className="product_id">
+      <div
         className="ep-product-card"
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        {/* Image Wrapper */}
         <div className="ep-product-image-wrapper">
-          <img 
-            src={image} 
-            alt={product.name}
-            className="ep-product-image"
-          />
-          
-          {/* Badges */}
+          <img src={image} alt={product.name} className="ep-product-image" />
+
           <div className="ep-product-badges">
-            {discount > 0 && (
-              <span className="ep-badge discount">-{discount}%</span>
-            )}
-            {product.isNewArrival && !hideNewBadge && (
-              <span className="ep-badge new">New</span>
-            )}
-            {product.isFeatured && (
-              <span className="ep-badge featured">Featured</span>
-            )}
-            {product.isBestseller && (
-              <span className="ep-badge bestseller">Bestseller</span>
-            )}
-            {stock === 0 && (
-              <span className="ep-badge sold-out">Sold Out</span>
-            )}
+            {discount > 0 && <span className="ep-badge discount">-{discount}%</span>}
+            {product.isNewArrival && !hideNewBadge && <span className="ep-badge new">New</span>}
+            {product.isFeatured && <span className="ep-badge featured">Featured</span>}
+            {product.isBestseller && <span className="ep-badge bestseller">Bestseller</span>}
+            {stock === 0 && <span className="ep-badge sold-out">Sold Out</span>}
           </div>
 
-          {/* Quick Actions */}
           {showQuickActions && (
             <div className={`ep-quick-actions ${isHovered ? 'show' : ''}`}>
-              <button 
+              <button
                 className="ep-action-btn"
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate(`/product/${product._id}`);
-                }}
+                onClick={(e) => { e.preventDefault(); navigate(productUrl); }}
                 title="View Details"
               >
                 <FiEye />
               </button>
-              <button 
+              <button
                 className={`ep-action-btn ${isInWishlist ? 'active' : ''}`}
                 onClick={handleWishlistToggle}
                 disabled={isWishlistLoading}
@@ -194,28 +138,18 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
           )}
         </div>
 
-        {/* Product Info */}
         <div className="ep-product-info">
           <h3 className="ep-product-name">{product.name}</h3>
-          
-          {product.brand && (
-            <p className="ep-product-brand">{product.brand}</p>
-          )}
-          
+          {product.brand && <p className="ep-product-brand">{product.brand}</p>}
           <p className="ep-product-category">{product.category}</p>
 
           <div className="ep-product-rating">
             <div className="ep-stars">
               {[...Array(5)].map((_, i) => (
-                <FiStar 
-                  key={i}
-                  className={i < Math.floor(product.ratings || 0) ? 'filled' : ''}
-                />
+                <FiStar key={i} className={i < Math.floor(product.ratings || 0) ? 'filled' : ''} />
               ))}
             </div>
-            <span className="ep-rating-text">
-              ({product.numOfReviews || 0})
-            </span>
+            <span className="ep-rating-text">({product.numOfReviews || 0})</span>
           </div>
 
           <div className="ep-product-price">
@@ -233,12 +167,8 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
             <span className={`ep-stock-status ${stock > 0 ? 'in-stock' : 'out-stock'}`}>
               {getStockStatus()}
             </span>
-            
             {stock > 0 && (
-              <button 
-                className="ep-add-cart-btn"
-                onClick={handleQuickAdd}
-              >
+              <button className="ep-add-cart-btn" onClick={handleQuickAdd}>
                 <FiShoppingCart /> Add
               </button>
             )}

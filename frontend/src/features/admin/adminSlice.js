@@ -1,7 +1,3 @@
-// adminSlice.js
-// Returns and Refunds are in separate slices (adminReturnSlice.js / adminRefundSlice.js).
-// Analytics are in analyticsSlice.js.
-
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -53,6 +49,32 @@ export const deleteProduct = createAsyncThunk(
       return { id, message: data.message };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || 'Failed to Delete Product');
+    }
+  }
+);
+
+export const deleteMultipleProducts = createAsyncThunk(
+  'admin/deleteMultipleProducts',
+  async (productIds, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.delete('/api/v1/admin/products/batch-delete', {
+        data: { productIds },
+      });
+      return { productIds: data.results.successful.map(p => p.id), results: data.results };
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || 'Failed to delete products');
+    }
+  }
+);
+
+export const getProductStructuredData = createAsyncThunk(
+  'admin/getProductStructuredData',
+  async (id, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`/api/v1/admin/product/${id}/structured-data`);
+      return data.structuredData;
+    } catch (error) {
+      return rejectWithValue(error.response?.data?.message || 'Failed to fetch structured data');
     }
   }
 );
@@ -110,7 +132,7 @@ export const deleteUser = createAsyncThunk(
 );
 
 // ============================================
-// ORDER MANAGEMENT (ADMIN)
+// ORDER MANAGEMENT
 // ============================================
 
 export const fetchAllOrders = createAsyncThunk(
@@ -189,7 +211,7 @@ export const cancelOrderWithRefund = createAsyncThunk(
 );
 
 // ============================================
-// ORDER MESSAGES (ADMIN)
+// ORDER MESSAGES
 // ============================================
 
 export const getOrdersWithUnreadMessages = createAsyncThunk(
@@ -359,6 +381,7 @@ const adminSlice = createSlice({
   name: 'admin',
   initialState: {
     products: [],
+    structuredData: null,
     users: [],
     currentUser: null,
     orders: [],
@@ -385,7 +408,7 @@ const adminSlice = createSlice({
     },
     clearCurrentOrder: (state) => {
       state.currentOrder = null;
-    }
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -409,7 +432,7 @@ const adminSlice = createSlice({
       })
       .addCase(createProduct.fulfilled, (state, action) => {
         state.loading = false;
-        state.success = action.payload.success;
+        state.success = true;
         state.products.push(action.payload.product);
       })
       .addCase(createProduct.rejected, (state, action) => {
@@ -423,7 +446,7 @@ const adminSlice = createSlice({
       })
       .addCase(updateProduct.fulfilled, (state, action) => {
         state.loading = false;
-        state.success = action.payload.success;
+        state.success = true;
         const index = state.products.findIndex(p => p._id === action.payload.product._id);
         if (index !== -1) state.products[index] = action.payload.product;
       })
@@ -444,6 +467,34 @@ const adminSlice = createSlice({
       .addCase(deleteProduct.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload || 'Failed to Delete Product';
+      })
+
+      .addCase(deleteMultipleProducts.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(deleteMultipleProducts.fulfilled, (state, action) => {
+        state.loading = false;
+        state.success = true;
+        const deletedIds = new Set(action.payload.productIds);
+        state.products = state.products.filter(p => !deletedIds.has(p._id));
+      })
+      .addCase(deleteMultipleProducts.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || 'Failed to delete products';
+      })
+
+      .addCase(getProductStructuredData.pending, (state) => {
+        state.loading = true;
+        state.error = null;
+      })
+      .addCase(getProductStructuredData.fulfilled, (state, action) => {
+        state.loading = false;
+        state.structuredData = action.payload;
+      })
+      .addCase(getProductStructuredData.rejected, (state, action) => {
+        state.loading = false;
+        state.error = action.payload || 'Failed to fetch structured data';
       })
 
       // ---- Users ----
@@ -590,13 +641,9 @@ const adminSlice = createSlice({
         state.loading = false;
         state.success = true;
         const index = state.orders.findIndex(o => o._id === action.payload.order._id);
-        if (index !== -1) {
-          state.orders[index].orderStatus = 'Cancelled';
-          state.orders[index].refundInfo = action.payload.order.refundInfo;
-        }
+        if (index !== -1) state.orders[index] = action.payload.order;
         if (state.currentOrder?._id === action.payload.order._id) {
-          state.currentOrder.orderStatus = 'Cancelled';
-          state.currentOrder.refundInfo = action.payload.order.refundInfo;
+          state.currentOrder = action.payload.order;
         }
       })
       .addCase(cancelOrderWithRefund.rejected, (state, action) => {
@@ -710,7 +757,7 @@ const adminSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.reviews = state.reviews.filter(
-          review => review._id.toString() !== action.payload.reviewId.toString()
+          r => r._id.toString() !== action.payload.reviewId.toString()
         );
       })
       .addCase(deleteReview.rejected, (state, action) => {
@@ -740,7 +787,7 @@ const adminSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.fraudReviews = state.fraudReviews.filter(
-          f => f._id !== action.payload.orderId
+          f => f._id.toString() !== action.payload.orderId.toString()
         );
       })
       .addCase(reviewFraudCheck.rejected, (state, action) => {
@@ -761,14 +808,14 @@ const adminSlice = createSlice({
         state.loading = false;
         state.error = action.payload;
       });
-  }
+  },
 });
 
 export const {
   removeErrors,
   removeSuccess,
   clearCurrentUser,
-  clearCurrentOrder
+  clearCurrentOrder,
 } = adminSlice.actions;
 
 export default adminSlice.reducer;

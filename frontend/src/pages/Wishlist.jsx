@@ -223,7 +223,7 @@ function Wishlist() {
                   <div className="wishlist-item-info">
                     <h3 
                       className="wishlist-item-name"
-                      onClick={() => navigate(`/product/${product._id}`)}
+                      onClick={() => navigate(product.slug ? `/products/${product.slug}` : `/product/${product._id}`)}
                     >
                       {product.name}
                     </h3>

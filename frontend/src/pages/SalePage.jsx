@@ -272,7 +272,7 @@ function SalePage() {
                                             <div className="sale-product-actions">
                                                 <button
                                                     className="sale-action-btn"
-                                                    onClick={() => navigate(`/product/${product._id}`)}
+                                                    onClick={() => navigate(product.slug ? `/products/${product.slug}` : `/product/${product._id}`)}
                                                     title="View Details"
                                                 >
                                                     <FiPackage />

@@ -5,10 +5,18 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import { useDispatch, useSelector } from 'react-redux';
 import { useParams, useNavigate } from 'react-router-dom';
-import { createReviews, getProductDetails, removeErrors, removeSuccess } from '../features/products/productSlice';
-import { 
-    addToWishlist, 
-    removeFromWishlist, 
+import {
+    createReviews,
+    getProductDetails,
+    getProductBySlug,
+    removeErrors,
+    removeSuccess,
+    clearRedirectInfo,
+    clearProduct,
+} from '../features/products/productSlice';
+import {
+    addToWishlist,
+    removeFromWishlist,
     getWishlist,
     optimisticAdd,
     optimisticRemove
@@ -16,8 +24,8 @@ import {
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
-import { 
-    FiStar, FiShoppingCart, FiHeart, FiShare2, 
+import {
+    FiStar, FiShoppingCart, FiHeart, FiShare2,
     FiCheck, FiX, FiTruck, FiShield, FiRefreshCw,
     FiPackage, FiMinus, FiPlus, FiChevronRight,
     FiClock, FiAward, FiMessageSquare
@@ -31,144 +39,113 @@ function ProductDetails() {
     const [selectedVariants, setSelectedVariants] = useState({});
     const [activeTab, setActiveTab] = useState('description');
 
-    const { loading, error, product, reviewSuccess, reviewLoading } = useSelector((state) => state.product);
+    const { loading, error, product, seo, reviewSuccess, reviewLoading, redirectInfo } = useSelector((state) => state.product);
     const { loading: cartLoading, error: cartError, success, message } = useSelector((state) => state.cart);
     const { items: wishlistItems, itemLoading } = useSelector(state => state.wishlist);
     const { isAuthenticated } = useSelector(state => state.user);
 
     const dispatch = useDispatch();
     const navigate = useNavigate();
-    const { id } = useParams();
 
-    // Fetch wishlist on mount
+    // Support both /product/:id (legacy) and /products/:slug (new)
+    const { id, slug } = useParams();
+    const isSlugRoute = !!slug;
+
+    // ─── Fetch product ────────────────────────────────────────────────────────
+    useEffect(() => {
+        if (slug) {
+            dispatch(getProductBySlug(slug));
+        } else if (id) {
+            dispatch(getProductDetails(id));
+        }
+        return () => {
+            dispatch(removeErrors());
+            dispatch(clearProduct());
+        };
+    }, [dispatch, id, slug]);
+
+    // ─── Handle 301 slug redirects ────────────────────────────────────────────
+    useEffect(() => {
+        if (redirectInfo?.newSlug) {
+            navigate(`/products/${redirectInfo.newSlug}`, { replace: true });
+            dispatch(clearRedirectInfo());
+        }
+    }, [redirectInfo, navigate, dispatch]);
+
+    // ─── Inject SEO meta tags when using slug route ───────────────────────────
+    useEffect(() => {
+        if (!isSlugRoute || !seo) return;
+
+        const setMeta = (name, content, attr = 'name') => {
+            if (!content) return;
+            let el = document.querySelector(`meta[${attr}="${name}"]`);
+            if (!el) {
+                el = document.createElement('meta');
+                el.setAttribute(attr, name);
+                document.head.appendChild(el);
+            }
+            el.setAttribute('content', content);
+        };
+
+        let canonical = document.querySelector('link[rel="canonical"]');
+        if (!canonical) {
+            canonical = document.createElement('link');
+            canonical.setAttribute('rel', 'canonical');
+            document.head.appendChild(canonical);
+        }
+        if (seo.canonical) canonical.setAttribute('href', seo.canonical);
+
+        setMeta('robots', seo.robots?.join(', '));
+        seo.openGraph?.forEach(tag => setMeta(tag.property, tag.content, 'property'));
+        seo.twitter?.forEach(tag => setMeta(tag.name, tag.content));
+
+        return () => {
+            document.querySelector('link[rel="canonical"]')?.remove();
+            document.querySelector('meta[name="robots"]')?.remove();
+        };
+    }, [seo, isSlugRoute]);
+
+    // ─── Wishlist ─────────────────────────────────────────────────────────────
     useEffect(() => {
         if (isAuthenticated) {
             dispatch(getWishlist());
         }
     }, [dispatch, isAuthenticated]);
 
-    // Check if current product is in wishlist
-    const isInWishlist = wishlistItems.some(
-        wishItem => {
-            const wishlistProductId = wishItem.product?._id || wishItem.product;
-            return wishlistProductId === id;
-        }
-    );
+    const productId = product?._id || id;
 
-    const isWishlistLoading = itemLoading[id] || false;
+    const isInWishlist = wishlistItems.some(wishItem => {
+        const wishlistProductId = wishItem.product?._id || wishItem.product;
+        return wishlistProductId === productId;
+    });
 
-    const formatPrice = (amount) => {
-        return new Intl.NumberFormat('en-NG', {
-            style: 'currency',
-            currency: 'NGN',
-            minimumFractionDigits: 0
-        }).format(amount);
-    };
+    const isWishlistLoading = itemLoading[productId] || false;
 
-    const handleReviewSubmit = (e) => {
-        e.preventDefault();
-        if (!userRating) {
-            toast.error('Please select a rating', { position: 'top-center', autoClose: 2000 });
-            return;
-        }
-        dispatch(createReviews({
-            rating: userRating,
-            comment,
-            productID: id
-        }));
-    };
-
-    // Handle wishlist toggle - OPTIMISTIC UPDATE for instant feedback
-    const handleWishlistToggle = async () => {
-        if (!isAuthenticated) {
-            toast.info('Please login to add to wishlist', {
-                position: 'top-center',
-                autoClose: 2000
-            });
-            navigate('/login');
-            return;
-        }
-
-        if (isInWishlist) {
-            // OPTIMISTIC: Remove immediately from UI
-            dispatch(optimisticRemove(id));
-            
-            // Then sync with server in background
-            try {
-                await dispatch(removeFromWishlist(id)).unwrap();
-            } catch (error) {
-                // If server fails, add it back (rollback)
-                dispatch(optimisticAdd({ 
-                    _id: id,
-                    name: product.name,
-                    images: product.images || product.image || [],
-                    price: product.price,
-                    pricing: product.pricing,
-                    category: product.category
-                }));
-                toast.error('Failed to remove from wishlist', {
-                    position: 'top-center',
-                    autoClose: 2000
-                });
-            }
-        } else {
-            // OPTIMISTIC: Add immediately to UI
-            dispatch(optimisticAdd({ 
-                _id: id,
-                name: product.name,
-                images: product.images || product.image || [],
-                price: product.price,
-                pricing: product.pricing,
-                category: product.category,
-                ratings: product.ratings,
-                numOfReviews: product.numOfReviews,
-                inventory: product.inventory,
-                stock: product.stock
-            }));
-            
-            // Then sync with server in background
-            try {
-                await dispatch(addToWishlist(id)).unwrap();
-            } catch (error) {
-                // If server fails, remove it (rollback)
-                dispatch(optimisticRemove(id));
-                toast.error('Failed to add to wishlist', {
-                    position: 'top-center',
-                    autoClose: 2000
-                });
-            }
-        }
-    };
-
+    // ─── Effects ──────────────────────────────────────────────────────────────
     useEffect(() => {
         if (reviewSuccess) {
             toast.success('Review Submitted Successfully', { position: 'top-center', autoClose: 2000 });
             setUserRating(0);
             setComment('');
             dispatch(removeSuccess());
-            dispatch(getProductDetails(id));
+            if (slug) {
+                dispatch(getProductBySlug(slug));
+            } else {
+                dispatch(getProductDetails(id));
+            }
         }
-    }, [reviewSuccess, id, dispatch]);
-
-    useEffect(() => {
-        if (id) {
-            dispatch(getProductDetails(id));
-        }
-        return () => {
-            dispatch(removeErrors());
-        };
-    }, [dispatch, id]);
+    }, [reviewSuccess, id, slug, dispatch]);
 
     useEffect(() => {
         if (error) {
-            toast.error(error.message, { position: 'top-center', autoClose: 3000 });
+            toast.error(error.message || error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
         }
     }, [dispatch, error]);
 
     useEffect(() => {
         if (cartError) {
-            toast.error(cartError.message, { position: 'top-center', autoClose: 3000 });
+            toast.error(cartError.message || cartError, { position: 'top-center', autoClose: 3000 });
         }
     }, [dispatch, cartError]);
 
@@ -188,14 +165,61 @@ function ProductDetails() {
         }
     }, [product]);
 
+    // ─── Helpers ──────────────────────────────────────────────────────────────
+    const formatPrice = (amount) => new Intl.NumberFormat('en-NG', {
+        style: 'currency',
+        currency: 'NGN',
+        minimumFractionDigits: 0
+    }).format(amount);
+
+    const handleReviewSubmit = (e) => {
+        e.preventDefault();
+        if (!userRating) {
+            toast.error('Please select a rating', { position: 'top-center', autoClose: 2000 });
+            return;
+        }
+        dispatch(createReviews({ rating: userRating, comment, productID: productId }));
+    };
+
+    const handleWishlistToggle = async () => {
+        if (!isAuthenticated) {
+            toast.info('Please login to add to wishlist', { position: 'top-center', autoClose: 2000 });
+            navigate('/login');
+            return;
+        }
+
+        if (isInWishlist) {
+            dispatch(optimisticRemove(productId));
+            try {
+                await dispatch(removeFromWishlist(productId)).unwrap();
+            } catch {
+                dispatch(optimisticAdd({
+                    _id: productId, name: product.name,
+                    images: product.images || product.image || [],
+                    price: product.price, pricing: product.pricing, category: product.category
+                }));
+                toast.error('Failed to remove from wishlist', { position: 'top-center', autoClose: 2000 });
+            }
+        } else {
+            dispatch(optimisticAdd({
+                _id: productId, name: product.name,
+                images: product.images || product.image || [],
+                price: product.price, pricing: product.pricing, category: product.category,
+                ratings: product.ratings, numOfReviews: product.numOfReviews,
+                inventory: product.inventory, stock: product.stock
+            }));
+            try {
+                await dispatch(addToWishlist(productId)).unwrap();
+            } catch {
+                dispatch(optimisticRemove(productId));
+                toast.error('Failed to add to wishlist', { position: 'top-center', autoClose: 2000 });
+            }
+        }
+    };
+
+    // ─── Render guards ────────────────────────────────────────────────────────
     if (loading) {
-        return (
-            <>
-                <Navbar />
-                <Loader />
-                <Footer />
-            </>
-        );
+        return (<><Navbar /><Loader /><Footer /></>);
     }
 
     if (error || !product) {
@@ -216,6 +240,7 @@ function ProductDetails() {
         );
     }
 
+    // ─── Derived values ───────────────────────────────────────────────────────
     const decreaseQuantity = () => {
         if (quantity <= 1) {
             toast.error('Quantity cannot be less than 1', { position: 'top-center', autoClose: 2000 });
@@ -233,28 +258,22 @@ function ProductDetails() {
         setQuantity(qty => qty + 1);
     };
 
-    const addToCart = () => {
-        dispatch(addItemsToCart({ id, quantity }));
-    };
+    const addToCart = () => dispatch(addItemsToCart({ id: productId, quantity }));
 
-    const getProductPrice = () => product.pricing?.regular || product.price || 0;
-    const getSalePrice = () => product.pricing?.sale || null;
-    const getStock = () => product.inventory?.stock ?? product.stock ?? 0;
     const images = product.images || product.image || [];
-    const regularPrice = getProductPrice();
-    const salePrice = getSalePrice();
-    const stock = getStock();
-    const discount = salePrice && regularPrice > salePrice 
-        ? Math.round(((regularPrice - salePrice) / regularPrice) * 100)
-        : 0;
+    const regularPrice = product.pricing?.regular || product.price || 0;
+    const salePrice = product.pricing?.sale || null;
+    const stock = product.inventory?.stock ?? product.stock ?? 0;
+    const discount = salePrice && regularPrice > salePrice
+        ? Math.round(((regularPrice - salePrice) / regularPrice) * 100) : 0;
+    const pageTitle = seo?.title || `${product.name} - Product Details`;
 
     return (
         <>
-            <PageTitle title={`${product.name} - Product Details`} />
+            <PageTitle title={pageTitle} />
             <Navbar />
 
             <div className="epd-container">
-                {/* Breadcrumb */}
                 <div className="epd-breadcrumb">
                     <button onClick={() => navigate('/')}>Home</button>
                     <FiChevronRight />
@@ -268,13 +287,10 @@ function ProductDetails() {
                 </div>
 
                 <div className="epd-content">
-                    {/* Image Gallery */}
                     <div className="epd-gallery">
                         <div className="epd-main-image">
                             <img src={selectedImage} alt={product.name} />
-                            {discount > 0 && (
-                                <div className="epd-discount-badge">-{discount}%</div>
-                            )}
+                            {discount > 0 && <div className="epd-discount-badge">-{discount}%</div>}
                         </div>
                         {images.length > 1 && (
                             <div className="epd-thumbnails">
@@ -291,7 +307,6 @@ function ProductDetails() {
                         )}
                     </div>
 
-                    {/* Product Info */}
                     <div className="epd-info">
                         <div className="epd-header">
                             {product.isFeatured && <span className="epd-badge featured">Featured</span>}
@@ -300,18 +315,13 @@ function ProductDetails() {
                         </div>
 
                         <h1 className="epd-title">{product.name}</h1>
-                        
-                        {product.brand && (
-                            <p className="epd-brand">Brand: <span>{product.brand}</span></p>
-                        )}
+
+                        {product.brand && <p className="epd-brand">Brand: <span>{product.brand}</span></p>}
 
                         <div className="epd-rating-section">
                             <div className="epd-stars">
                                 {[...Array(5)].map((_, i) => (
-                                    <FiStar
-                                        key={i}
-                                        className={i < Math.floor(product.ratings || 0) ? 'filled' : ''}
-                                    />
+                                    <FiStar key={i} className={i < Math.floor(product.ratings || 0) ? 'filled' : ''} />
                                 ))}
                             </div>
                             <span className="epd-rating-text">
@@ -337,18 +347,14 @@ function ProductDetails() {
 
                         <div className="epd-stock-section">
                             <span className={`epd-stock-status ${stock > 0 ? 'in-stock' : 'out-stock'}`}>
-                                {stock > 0 ? (
-                                    <><FiCheck /> In Stock ({stock} available)</>
-                                ) : (
-                                    <><FiX /> Out of Stock</>
-                                )}
+                                {stock > 0
+                                    ? <><FiCheck /> In Stock ({stock} available)</>
+                                    : <><FiX /> Out of Stock</>
+                                }
                             </span>
-                            {product.inventory?.sku && (
-                                <span className="epd-sku">SKU: {product.inventory.sku}</span>
-                            )}
+                            {product.inventory?.sku && <span className="epd-sku">SKU: {product.inventory.sku}</span>}
                         </div>
 
-                        {/* Variants */}
                         {product.variants && product.variants.length > 0 && (
                             <div className="epd-variants">
                                 {product.variants.map((variant, vIdx) => (
@@ -376,92 +382,53 @@ function ProductDetails() {
                                 <div className="epd-quantity">
                                     <label className="epd-quantity-label">Quantity</label>
                                     <div className="epd-quantity-controls">
-                                        <button className="epd-qty-btn" onClick={decreaseQuantity}>
-                                            <FiMinus />
-                                        </button>
+                                        <button className="epd-qty-btn" onClick={decreaseQuantity}><FiMinus /></button>
                                         <input type="text" value={quantity} readOnly className="epd-qty-input" />
-                                        <button className="epd-qty-btn" onClick={increaseQuantity}>
-                                            <FiPlus />
-                                        </button>
+                                        <button className="epd-qty-btn" onClick={increaseQuantity}><FiPlus /></button>
                                     </div>
                                 </div>
 
                                 <div className="epd-actions">
-                                    <button
-                                        className="epd-btn epd-btn-primary"
-                                        onClick={addToCart}
-                                        disabled={cartLoading}
-                                    >
+                                    <button className="epd-btn epd-btn-primary" onClick={addToCart} disabled={cartLoading}>
                                         <FiShoppingCart /> {cartLoading ? 'Adding...' : 'Add to Cart'}
                                     </button>
-                                    <button 
-                                        className="epd-btn epd-btn-secondary"
-                                        onClick={handleWishlistToggle}
-                                        disabled={isWishlistLoading}
-                                    >
-                                        <FiHeart 
-                                            style={{ 
-                                                fill: isInWishlist ? '#ff3c3c' : 'none',
-                                                color: isInWishlist ? '#ff3c3c' : 'currentColor'
-                                            }}
-                                        /> 
+                                    <button className="epd-btn epd-btn-secondary" onClick={handleWishlistToggle} disabled={isWishlistLoading}>
+                                        <FiHeart style={{ fill: isInWishlist ? '#ff3c3c' : 'none', color: isInWishlist ? '#ff3c3c' : 'currentColor' }} />
                                         {isInWishlist ? 'Saved' : 'Wishlist'}
                                     </button>
-                                    <button className="epd-btn epd-btn-icon">
-                                        <FiShare2 />
-                                    </button>
+                                    <button className="epd-btn epd-btn-icon"><FiShare2 /></button>
                                 </div>
                             </>
                         )}
 
-                        {/* Features */}
                         <div className="epd-features">
                             <div className="epd-feature">
                                 <FiTruck className="epd-feature-icon" />
-                                <div>
-                                    <h4>Free Delivery</h4>
-                                    <p>On orders over ₦50,000</p>
-                                </div>
+                                <div><h4>Free Delivery</h4><p>On orders over ₦50,000</p></div>
                             </div>
                             <div className="epd-feature">
                                 <FiShield className="epd-feature-icon" />
-                                <div>
-                                    <h4>Secure Payment</h4>
-                                    <p>100% secure transactions</p>
-                                </div>
+                                <div><h4>Secure Payment</h4><p>100% secure transactions</p></div>
                             </div>
                             <div className="epd-feature">
                                 <FiRefreshCw className="epd-feature-icon" />
-                                <div>
-                                    <h4>Easy Returns</h4>
-                                    <p>30-day return policy</p>
-                                </div>
+                                <div><h4>Easy Returns</h4><p>30-day return policy</p></div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Product Details Tabs */}
                 <div className="epd-tabs-section">
                     <div className="epd-tabs">
-                        <button
-                            className={`epd-tab ${activeTab === 'description' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('description')}
-                        >
+                        <button className={`epd-tab ${activeTab === 'description' ? 'active' : ''}`} onClick={() => setActiveTab('description')}>
                             Description
                         </button>
                         {product.specifications && product.specifications.length > 0 && (
-                            <button
-                                className={`epd-tab ${activeTab === 'specifications' ? 'active' : ''}`}
-                                onClick={() => setActiveTab('specifications')}
-                            >
+                            <button className={`epd-tab ${activeTab === 'specifications' ? 'active' : ''}`} onClick={() => setActiveTab('specifications')}>
                                 Specifications
                             </button>
                         )}
-                        <button
-                            className={`epd-tab ${activeTab === 'reviews' ? 'active' : ''}`}
-                            onClick={() => setActiveTab('reviews')}
-                        >
+                        <button className={`epd-tab ${activeTab === 'reviews' ? 'active' : ''}`} onClick={() => setActiveTab('reviews')}>
                             Reviews ({product.numOfReviews || 0})
                         </button>
                     </div>
@@ -497,10 +464,7 @@ function ProductDetails() {
                                         <h2>{product.ratings?.toFixed(1) || '0.0'}</h2>
                                         <div className="epd-stars-large">
                                             {[...Array(5)].map((_, i) => (
-                                                <FiStar
-                                                    key={i}
-                                                    className={i < Math.floor(product.ratings || 0) ? 'filled' : ''}
-                                                />
+                                                <FiStar key={i} className={i < Math.floor(product.ratings || 0) ? 'filled' : ''} />
                                             ))}
                                         </div>
                                         <p>{product.numOfReviews || 0} {product.numOfReviews === 1 ? 'review' : 'reviews'}</p>
@@ -514,11 +478,7 @@ function ProductDetails() {
                                             <label>Your Rating</label>
                                             <div className="epd-stars-input">
                                                 {[1, 2, 3, 4, 5].map((star) => (
-                                                    <FiStar
-                                                        key={star}
-                                                        className={star <= userRating ? 'filled' : ''}
-                                                        onClick={() => setUserRating(star)}
-                                                    />
+                                                    <FiStar key={star} className={star <= userRating ? 'filled' : ''} onClick={() => setUserRating(star)} />
                                                 ))}
                                             </div>
                                         </div>
@@ -532,11 +492,7 @@ function ProductDetails() {
                                                 rows={5}
                                             />
                                         </div>
-                                        <button
-                                            type="submit"
-                                            className="epd-submit-review"
-                                            disabled={reviewLoading}
-                                        >
+                                        <button type="submit" className="epd-submit-review" disabled={reviewLoading}>
                                             {reviewLoading ? 'Submitting...' : 'Submit Review'}
                                         </button>
                                     </form>
@@ -551,9 +507,7 @@ function ProductDetails() {
                                                     <div className="epd-review-author">
                                                         <h4>{review.name}</h4>
                                                         {review.verified && (
-                                                            <span className="epd-verified">
-                                                                <FiAward /> Verified Purchase
-                                                            </span>
+                                                            <span className="epd-verified"><FiAward /> Verified Purchase</span>
                                                         )}
                                                     </div>
                                                     <span className="epd-review-date">
@@ -562,10 +516,7 @@ function ProductDetails() {
                                                 </div>
                                                 <div className="epd-review-rating">
                                                     {[...Array(5)].map((_, i) => (
-                                                        <FiStar
-                                                            key={i}
-                                                            className={i < review.rating ? 'filled' : ''}
-                                                        />
+                                                        <FiStar key={i} className={i < review.rating ? 'filled' : ''} />
                                                     ))}
                                                 </div>
                                                 <p className="epd-review-comment">{review.comment}</p>

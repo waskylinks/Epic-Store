@@ -77,7 +77,8 @@ function App() {
         <Route path='/' element={<Home />} />
         <Route path='/product/:id' element={<ProductDetails />} />
         <Route path='/products' element={<Products />} />
-        <Route path='/products/:keyword' element={<Products />} />
+        <Route path='/products/search/:keyword' element={<Products />} />  {/* static 'search' segment first */}
+        <Route path='/products/:slug' element={<ProductDetails />} />      {/* dynamic slug last */}
         <Route path='/register' element={<Register />} />
         <Route path='/login' element={<Login />} />
         <Route path='/verify-email' element={<VerifyEmail />} />
