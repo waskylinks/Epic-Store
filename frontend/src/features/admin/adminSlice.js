@@ -391,6 +391,12 @@ const adminSlice = createSlice({
     auditLog: [],
     reviews: [],
     fraudReviews: [],
+    // FIX: replaced shared `success` with a dedicated `productCreated` flag.
+    // The old `success: true` was set by 15+ different thunks. Any prior admin
+    // action (deleteProduct, addOrderMessage, etc.) that left `success: true`
+    // would cause CreateProduct's useEffect to fire on mount — showing the
+    // toast and resetting the form before a product was ever submitted.
+    productCreated: false,
     success: false,
     loading: false,
     error: null,
@@ -402,6 +408,11 @@ const adminSlice = createSlice({
     },
     removeSuccess: (state) => {
       state.success = false;
+    },
+    // FIX: dedicated reducer to clear the productCreated flag after
+    // CreateProduct's useEffect has consumed it.
+    removeProductCreated: (state) => {
+      state.productCreated = false;
     },
     clearCurrentUser: (state) => {
       state.currentUser = null;
@@ -432,7 +443,9 @@ const adminSlice = createSlice({
       })
       .addCase(createProduct.fulfilled, (state, action) => {
         state.loading = false;
-        state.success = true;
+        // FIX: set productCreated (not success) so only CreateProduct's
+        // useEffect reacts. Other components watching `success` are unaffected.
+        state.productCreated = true;
         state.products.push(action.payload.product);
       })
       .addCase(createProduct.rejected, (state, action) => {
@@ -814,6 +827,7 @@ const adminSlice = createSlice({
 export const {
   removeErrors,
   removeSuccess,
+  removeProductCreated, // FIX: export the new dedicated action
   clearCurrentUser,
   clearCurrentOrder,
 } = adminSlice.actions;
