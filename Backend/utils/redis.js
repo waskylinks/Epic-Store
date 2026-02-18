@@ -9,9 +9,6 @@ const REDIS_HOST = process.env.REDIS_HOST;
 const REDIS_PORT = Number(process.env.REDIS_PORT);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
-// BUG: Original guard used !REDIS_PORT which is truthy for NaN (Number(undefined) = NaN,
-// !NaN = true), so the warning fired but createClient still ran with port:NaN.
-// FIX: Use Number.isInteger to reject NaN and non-integer values explicitly.
 const REDIS_AVAILABLE = !!REDIS_HOST && Number.isInteger(REDIS_PORT) && REDIS_PORT > 0;
 
 if (!REDIS_AVAILABLE) {
@@ -20,8 +17,6 @@ if (!REDIS_AVAILABLE) {
 
 /* ================= CLIENT ================= */
 
-// Only create the client if config is valid — avoids createClient({ port: NaN })
-// which can throw or silently connect to port 0 depending on the redis library version.
 const redis = REDIS_AVAILABLE
   ? createClient({
       username: 'default',
@@ -40,11 +35,11 @@ const redis = REDIS_AVAILABLE
 /* ================= EVENTS ================= */
 
 if (redis) {
-  redis.on('connect',     () => console.log('✅ Redis connected'));
-  redis.on('ready',       () => console.log('🚀 Redis ready'));
-  redis.on('reconnecting',() => console.warn('🔄 Redis reconnecting...'));
-  redis.on('end',         () => console.warn('⚠️ Redis connection closed'));
-  redis.on('error',  err => console.error('❌ Redis error:', err));
+  redis.on('connect',      () => console.log('✅ Redis connected'));
+  redis.on('ready',        () => console.log('🚀 Redis ready'));
+  redis.on('reconnecting', () => console.warn('🔄 Redis reconnecting...'));
+  redis.on('end',          () => console.warn('⚠️ Redis connection closed'));
+  redis.on('error',   err => console.error('❌ Redis error:', err));
 }
 
 /* ================= INITIALIZER ================= */
@@ -79,8 +74,6 @@ export const initializeRedis = async () => {
 
 /* ================= HELPERS ================= */
 
-// Single guard used by every exported function below.
-// Returns true when Redis is connected and usable.
 const isReady = () => redis !== null && redis.isOpen;
 
 /* ================= CACHE HELPERS ================= */
@@ -118,12 +111,15 @@ export const deleteCache = async key => {
  * Delete all cache keys matching a glob pattern.
  * Uses SCAN (non-blocking) instead of KEYS (blocks the Redis event loop).
  *
- * BUG: Original code initialised cursor as the string "0" and compared
- * with !== "0". node-redis v4 SCAN returns cursor as a NUMBER, so
- * `0 (number) !== "0" (string)` is always true — the loop never terminated
- * naturally and ran all 1000 safety iterations on every call, adding
- * ~1–10 s of latency to every product create/update/delete request.
- * FIX: cursor is now a number (0) and compared with !== 0.
+ * BUG 1 (previous): cursor was initialised as string "0" and compared with !== "0".
+ * node-redis v4 SCAN returns cursor as a NUMBER so the loop never terminated.
+ * FIXED: cursor is a number, comparison is !== 0.
+ *
+ * BUG 2 (actual cause of the TypeError in logs): node-redis v4's RESP encoder
+ * requires every command argument to be a string or Buffer. The cursor was being
+ * passed as a raw number (0) directly to redis.scan(), which the encoder rejected
+ * with: "arguments[1] must be of type string | Buffer, got number instead."
+ * FIXED: cursor is explicitly cast to String before every redis.scan() call.
  *
  * @param {string} pattern - Glob pattern, e.g. 'sitemap*', 'product_*_seo'
  * @returns {Promise<number>} Number of keys deleted
@@ -136,7 +132,7 @@ export const deleteCachePattern = async pattern => {
     }
 
     const fullPattern = PREFIX + pattern;
-    let cursor = 0;          // ← FIX: number, not string "0"
+    let cursor = 0;
     let deletedCount = 0;
     let iterationCount = 0;
     const maxIterations = 1000;
@@ -144,12 +140,16 @@ export const deleteCachePattern = async pattern => {
     do {
       iterationCount++;
 
-      const result = await redis.scan(cursor, {
+      // FIX: Pass cursor as String — node-redis v4 RESP encoder rejects raw numbers.
+      // Without String() the encoder throws:
+      //   TypeError: "arguments[1]" must be of type "string | Buffer", got number
+      const result = await redis.scan(String(cursor), {
         MATCH: fullPattern,
         COUNT: 100
       });
 
-      cursor = result.cursor;  // node-redis v4 returns a number here
+      // result.cursor is returned as a number by node-redis v4
+      cursor = result.cursor;
       const keys = result.keys;
 
       if (keys.length > 0) {
@@ -161,7 +161,7 @@ export const deleteCachePattern = async pattern => {
         console.warn(`⚠️ SCAN exceeded ${maxIterations} iterations, stopping`);
         break;
       }
-    } while (cursor !== 0);  // ← FIX: number comparison, not string
+    } while (cursor !== 0); // number comparison — result.cursor is always a number
 
     if (deletedCount > 0) {
       console.log(`🗑️ Deleted ${deletedCount} keys matching pattern: ${pattern}`);
@@ -332,17 +332,8 @@ export const executeWithLock = async (lockKey, fn, lockTTL = 30) => {
  * Stale-While-Revalidate for JSON objects.
  * Returns cached data immediately; if the entry is older than `staleAfter`
  * seconds, a background refresh is triggered without blocking the caller.
- *
- * BUG: Original implementation spread `_cachedAt` directly into the cached
- * object: `{ ...fresh, _cachedAt: Date.now() }`. This:
- *   1. Pollutes every returned object with an internal timestamp field that
- *      may leak to API consumers.
- *   2. Completely breaks when fetchFn returns an array — spreading an array
- *      into an object produces `{ "0": item0, "1": item1, _cachedAt: ... }`
- *      which is not an array and breaks any .map()/.filter() call downstream.
- * FIX: Age is tracked in a separate Redis key (`key:age`), identical to the
- * approach already used in getCacheRawWithSWR. Data is stored and returned
- * exactly as fetchFn produced it — no mutation.
+ * Age is tracked in a separate Redis key to avoid polluting the data object
+ * and to support arrays (spreading an array into an object breaks .map() etc.)
  *
  * @param {string} key
  * @param {Function} fetchFn - async () => value (object or array)
@@ -360,26 +351,24 @@ export const getCacheWithSWR = async (key, fetchFn, options = {}) => {
     if (cached) {
       const data = JSON.parse(cached);
 
-      // Use a separate age key — do NOT embed _cachedAt into the data object
-      const ageKey = `${PREFIX + key}:age`;          // ← CHANGED
+      const ageKey = `${PREFIX + key}:age`;
       const cachedAt = await redis.get(ageKey);
       const age = cachedAt ? Date.now() - parseInt(cachedAt) : Infinity;
 
       if (age > staleAfter * 1000) {
         fetchFn()
           .then(fresh => {
-            setCache(key, fresh, ttl);               // ← CHANGED: no spread
+            setCache(key, fresh, ttl);
             redis.set(ageKey, String(Date.now()), { EX: ttl });
           })
           .catch(err => console.error('SWR refresh error:', err));
       }
 
-      return data;  // ← CHANGED: return parsed data without _cachedAt
+      return data;
     }
 
-    // Cache miss — fetch, store, record age
     const data = await fetchFn();
-    await setCache(key, data, ttl);                  // ← CHANGED: no spread
+    await setCache(key, data, ttl);
     await redis.set(`${PREFIX + key}:age`, String(Date.now()), { EX: ttl });
     return data;
   } catch (error) {

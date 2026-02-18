@@ -1,5 +1,5 @@
 import express from 'express';
-import seoService, { SEOService } from '../services/seoService.js';
+import seoService, { SEOService } from '../Services/seo.service.js';
 import { getCacheRaw, setCacheRaw, deleteCachePattern } from '../utils/redis.js';
 import Product from '../models/product-model.js';
 import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';

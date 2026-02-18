@@ -104,13 +104,25 @@ router.route('/admin/products')
   .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProducts);
 
 router.route('/admin/products/create')
-  .post(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, upload.array('image', 10), createProducts);
+  .post(
+    verifyUserAuth,
+    roleBaseAccess('admin'),
+    adminLimiter,
+    upload.array('images', 10), 
+    createProducts
+  );
 
 router.route('/admin/products/batch-delete')
   .delete(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, deleteMultipleProducts);
 
 router.route('/admin/product/:id')
-  .put(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, upload.array('image', 10), updateProduct)
+  .put(
+    verifyUserAuth,
+    roleBaseAccess('admin'),
+    adminLimiter,
+    upload.array('images', 10), 
+    updateProduct
+  )
   .delete(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, deleteProduct);
 
 router.route('/admin/product/:id/structured-data')

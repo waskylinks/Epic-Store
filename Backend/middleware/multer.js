@@ -21,6 +21,11 @@ const upload = multer({
   }
 });
 
-export const uploadProductImages = upload.array('image', 10); // Accept up to 10 files with field name 'image'
+// FIX: Field name changed from 'image' to 'images' to match
+// what both CreateProduct.jsx and UpdateProduct.jsx append:
+//   myForm.append('images', img)
+// With the old 'image' field name, req.files was always empty
+// and no images were ever uploaded.
+export const uploadProductImages = upload.array('images', 10);
 
 export default upload;
