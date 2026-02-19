@@ -394,7 +394,6 @@ export const getOrderAuditLog = createAsyncThunk(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const initialState = {
-  // Data
   products:       [],
   structuredData: null,
   users:          [],
@@ -407,26 +406,12 @@ const initialState = {
   reviews:        [],
   fraudReviews:   [],
 
-  // Granular success flags
-  productCreated: false,
-  productUpdated: false,
+  // Product delete flag (used by products list component)
   productDeleted: false,
+  deleting:       false,
+
+  // Generic success/loading for user & order mutations
   success:        false,
-
-  // ── PER-ACTION loading flags ──────────────────────────────────────────────
-  // The root cause of the "stuck in Publishing/Updating/Deleting" bug was that
-  // a single shared `loading` flag is toggled by every thunk in this slice.
-  // Any thunk that fires after the primary action completes (e.g. a background
-  // fetchAdminProducts or getOrderMessages poll) would flip `loading` back to
-  // `true`, leaving the submit button spinner running indefinitely.
-  //
-  // Fix: give each mutating product action its own loading flag so that button
-  // disabled/spinner states are scoped to exactly the action the user triggered.
-  creating: false,   // createProduct
-  updating: false,   // updateProduct
-  deleting: false,   // deleteProduct / deleteMultipleProducts
-
-  // Generic loading for reads (lists, single-item fetches, etc.)
   loading:        false,
   messageLoading: false,
 
@@ -444,8 +429,6 @@ const adminSlice = createSlice({
   reducers: {
     removeErrors:         (state) => { state.error          = null;  },
     removeSuccess:        (state) => { state.success        = false; },
-    removeProductCreated: (state) => { state.productCreated = false; },
-    removeProductUpdated: (state) => { state.productUpdated = false; },
     removeProductDeleted: (state) => { state.productDeleted = false; },
     clearCurrentUser:     (state) => { state.currentUser    = null;  },
     clearCurrentOrder:    (state) => { state.currentOrder   = null;  },
@@ -469,36 +452,27 @@ const adminSlice = createSlice({
       })
 
       // ── createProduct ───────────────────────────────────────────────────
-      .addCase(createProduct.pending, (state) => {
-        state.creating = true;
-        state.error    = null;
-      })
+      // Loading state is managed locally in CreateProduct via dispatch().unwrap().
+      // The slice only keeps the store in sync.
       .addCase(createProduct.fulfilled, (state, action) => {
-        state.creating      = false;
-        state.productCreated = true;
-        state.products.push(action.payload.product);
+        if (action.payload?.product) {
+          state.products.push(action.payload.product);
+        }
       })
-      .addCase(createProduct.rejected, (state, action) => {
-        state.creating = false;
-        state.error    = action.payload || "Failed to create product";
+      .addCase(createProduct.rejected, (_state) => {
+        // Error is surfaced via the unwrap() catch block in the component.
       })
 
       // ── updateProduct ───────────────────────────────────────────────────
-      .addCase(updateProduct.pending, (state) => {
-        state.updating = true;
-        state.error    = null;
-      })
       .addCase(updateProduct.fulfilled, (state, action) => {
-        state.updating       = false;
-        state.productUpdated = true;
+        if (!action.payload?.product) return;
         const index = state.products.findIndex(
           (p) => p._id === action.payload.product._id
         );
         if (index !== -1) state.products[index] = action.payload.product;
       })
-      .addCase(updateProduct.rejected, (state, action) => {
-        state.updating = false;
-        state.error    = action.payload || "Failed to update product";
+      .addCase(updateProduct.rejected, (_state) => {
+        // Error surfaced via unwrap() in UpdateProduct component.
       })
 
       // ── deleteProduct ───────────────────────────────────────────────────
@@ -526,8 +500,8 @@ const adminSlice = createSlice({
       .addCase(deleteMultipleProducts.fulfilled, (state, action) => {
         state.deleting       = false;
         state.productDeleted = true;
-        const deleted = new Set(action.payload.productIds);
-        state.products = state.products.filter((p) => !deleted.has(p._id));
+        const deleted        = new Set(action.payload.productIds);
+        state.products       = state.products.filter((p) => !deleted.has(p._id));
       })
       .addCase(deleteMultipleProducts.rejected, (state, action) => {
         state.deleting = false;
@@ -885,8 +859,6 @@ const adminSlice = createSlice({
 export const {
   removeErrors,
   removeSuccess,
-  removeProductCreated,
-  removeProductUpdated,
   removeProductDeleted,
   clearCurrentUser,
   clearCurrentOrder,

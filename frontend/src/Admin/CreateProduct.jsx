@@ -1,15 +1,15 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import PageTitle from '../components/PageTitle';
 import '../AdminStyles/CreateProduct.css';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
-import { useDispatch, useSelector } from 'react-redux';
-import { createProduct, removeErrors, removeProductCreated } from '../features/admin/adminSlice';
+import { useDispatch } from 'react-redux';
+import { createProduct } from '../features/admin/adminSlice';
 import { toast } from 'react-toastify';
 import {
   FiImage, FiDollarSign, FiPackage, FiTag, FiSettings,
   FiTrendingUp, FiX, FiPlus, FiTrash2, FiSave,
-  FiEye, FiAlertCircle, FiCheck, FiFlag
+  FiEye, FiAlertCircle, FiCheck, FiFlag,
 } from 'react-icons/fi';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -54,13 +54,9 @@ const makeInitialForm = () => ({
 // ─── Component ────────────────────────────────────────────────────────────────
 
 function CreateProduct() {
-  // FIX: use `creating` (per-action flag) instead of the shared `loading`.
-  // The shared flag is also set by fetchAdminProducts, getOrderMessages, etc.
-  // Any background thunk completing would flip loading → false or back → true,
-  // making the spinner disappear early or stick forever.
-  const { productCreated, creating, error } = useSelector((s) => s.admin);
   const dispatch = useDispatch();
 
+  const [isSubmitting,       setIsSubmitting]       = useState(false);
   const [activeTab,          setActiveTab]          = useState('basic');
   const [images,             setImages]             = useState([]);
   const [imagePreviews,      setImagePreviews]      = useState([]);
@@ -91,42 +87,6 @@ function CreateProduct() {
     setActiveTab('basic');
   }, []);
 
-  // ── Effects ───────────────────────────────────────────────────────────────
-  // FIX: split error and success into separate effects, and use a ref guard
-  // so StrictMode's double-invoke of cleanup cannot clear productCreated
-  // before the success branch reads it.
-  //
-  // How the old bug manifested in StrictMode (React 18 dev):
-  //   1. createProduct.fulfilled → productCreated = true
-  //   2. React runs effect cleanup (unmount sim): dispatch(removeProductCreated()) → productCreated = false
-  //   3. React re-runs the effect body: productCreated is now false → toast never fires
-  //   4. Component re-renders with creating=false but no toast, so button
-  //      text reverts to "Publish Product" but nothing else happens.
-  //
-  // The ref guard ensures we handle the flag exactly once regardless of how
-  // many times React re-runs the effect.
-  const handledCreated = useRef(false);
-
-  useEffect(() => {
-    if (!error) return;
-    toast.error(error, { position: 'top-center', autoClose: 3000 });
-    dispatch(removeErrors());
-  }, [error, dispatch]);
-
-  useEffect(() => {
-    if (!productCreated || handledCreated.current) return;
-    handledCreated.current = true;
-    toast.success('Product created successfully!', { position: 'top-center', autoClose: 3000 });
-    dispatch(removeProductCreated());
-    resetForm();
-    handledCreated.current = false; // allow future creates in same session
-  }, [productCreated, dispatch, resetForm]);
-
-  // Clear stale flag on unmount only
-  useEffect(() => {
-    return () => { dispatch(removeProductCreated()); };
-  }, [dispatch]);
-
   // ── Input handler ─────────────────────────────────────────────────────────
   const handleInputChange = useCallback((e) => {
     const { name, value, type, checked } = e.target;
@@ -156,9 +116,9 @@ function CreateProduct() {
     e.target.value = '';
   }, [images]);
 
-  const removeImage      = useCallback((i) => { setImages((o) => o.filter((_, j) => j !== i)); setImagePreviews((o) => o.filter((_, j) => j !== i)); }, []);
-  const setPrimaryImage  = useCallback((i) => { if (i === 0) return; setImages((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); setImagePreviews((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); }, []);
-  const updateImageMeta  = useCallback((i, field, value) => setImagePreviews((o) => o.map((img, j) => j === i ? { ...img, [field]: value } : img)), []);
+  const removeImage     = useCallback((i) => { setImages((o) => o.filter((_, j) => j !== i)); setImagePreviews((o) => o.filter((_, j) => j !== i)); }, []);
+  const setPrimaryImage = useCallback((i) => { if (i === 0) return; setImages((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); setImagePreviews((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); }, []);
+  const updateImageMeta = useCallback((i, field, value) => setImagePreviews((o) => o.map((img, j) => j === i ? { ...img, [field]: value } : img)), []);
 
   // ── List helpers ──────────────────────────────────────────────────────────
   const addItem    = useCallback((value, setter, resetSetter, transform = (v) => v) => { const t = value.trim(); if (!t) return; setter((p) => [...p, transform(t)]); resetSetter(''); }, []);
@@ -186,36 +146,55 @@ function CreateProduct() {
   const updateVideo = useCallback((i, field, val) => setRichSnippets((p) => ({ ...p, videos: p.videos.map((v, j) => j === i ? { ...v, [field]: val } : v) })), []);
   const removeVideo = useCallback((i) => setRichSnippets((p) => ({ ...p, videos: p.videos.filter((_, j) => j !== i) })), []);
 
-  // ── Validation ────────────────────────────────────────────────────────────
-  const validateDraft = () => {
-    if (!formData.name.trim())     { toast.error('Product name is required even for a draft'); setActiveTab('basic');   return false; }
-    if (!formData.category)        { toast.error('Category is required even for a draft');     setActiveTab('basic');   return false; }
-    if (!formData.pricing.regular) { toast.error('Regular price is required even for a draft'); setActiveTab('pricing'); return false; }
-    return true;
-  };
+  // ── Submit ────────────────────────────────────────────────────────────────
+  // Validation and submission are co-located to avoid stale-closure bugs.
+  // isSubmitting is local state — no Redux thunk from any other component
+  // can interfere with it, eliminating the stuck-loading-state bug entirely.
+  const handleSubmit = useCallback(async (e, publishStatus) => {
+    e.preventDefault();
+    if (isSubmitting) return;
 
-  const validatePublish = () => {
-    if (!formData.name.trim())        { toast.error('Product name is required');        setActiveTab('basic');   return false; }
-    if (!formData.category)           { toast.error('Category is required');            setActiveTab('basic');   return false; }
-    if (!formData.description.trim()) { toast.error('Product description is required'); setActiveTab('basic');   return false; }
-    if (!formData.pricing.regular)    { toast.error('Regular price is required');       setActiveTab('pricing'); return false; }
+    // ── Validation ────────────────────────────────────────────────────────
+    if (!formData.name.trim()) {
+      toast.error(publishStatus === 'draft' ? 'Product name is required even for a draft' : 'Product name is required');
+      setActiveTab('basic');
+      return;
+    }
+    if (!formData.category) {
+      toast.error(publishStatus === 'draft' ? 'Category is required even for a draft' : 'Category is required');
+      setActiveTab('basic');
+      return;
+    }
+    if (publishStatus !== 'draft') {
+      if (!formData.description.trim()) {
+        toast.error('Product description is required');
+        setActiveTab('basic');
+        return;
+      }
+      if (images.length === 0) {
+        toast.error('At least one product image is required');
+        setActiveTab('media');
+        return;
+      }
+    }
+    if (!formData.pricing.regular) {
+      toast.error('Regular price is required');
+      setActiveTab('pricing');
+      return;
+    }
     if (formData.pricing.sale !== '' && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
-      toast.error('Sale price must be less than regular price'); setActiveTab('pricing'); return false;
+      toast.error('Sale price must be less than regular price');
+      setActiveTab('pricing');
+      return;
     }
     if (formData.pricing.validFrom && formData.pricing.validThrough &&
         new Date(formData.pricing.validFrom) > new Date(formData.pricing.validThrough)) {
-      toast.error('Price valid-from must be before valid-through'); setActiveTab('pricing'); return false;
+      toast.error('Price valid-from must be before valid-through');
+      setActiveTab('pricing');
+      return;
     }
-    if (images.length === 0) { toast.error('At least one product image is required'); setActiveTab('media'); return false; }
-    return true;
-  };
 
-  // ── Submit ────────────────────────────────────────────────────────────────
-  const handleSubmit = useCallback((e, publishStatus) => {
-    e.preventDefault();
-    const isValid = publishStatus === 'draft' ? validateDraft() : validatePublish();
-    if (!isValid) return;
-
+    // ── Build FormData ─────────────────────────────────────────────────────
     const fd = new FormData();
     fd.append('name',             formData.name.trim());
     fd.append('description',      formData.description.trim());
@@ -224,12 +203,9 @@ function CreateProduct() {
     fd.append('brand',            formData.brand.trim());
     fd.append('manufacturer',     formData.manufacturer.trim());
     fd.append('status',           publishStatus || 'published');
-
-    // Stringify booleans — raw FormData.append(key, false) sends the string
-    // "false" which evaluates as truthy in a backend `if (val)` check.
-    fd.append('isFeatured',   JSON.stringify(formData.isFeatured));
-    fd.append('isNewArrival', JSON.stringify(formData.isNewArrival));
-    fd.append('isBestseller', JSON.stringify(formData.isBestseller));
+    fd.append('isFeatured',       JSON.stringify(formData.isFeatured));
+    fd.append('isNewArrival',     JSON.stringify(formData.isNewArrival));
+    fd.append('isBestseller',     JSON.stringify(formData.isBestseller));
 
     const pricingData = { regular: Number(formData.pricing.regular), currency: formData.pricing.currency };
     if (formData.pricing.sale !== '')  pricingData.sale = Number(formData.pricing.sale);
@@ -245,8 +221,8 @@ function CreateProduct() {
     if (formData.inventory.mpn.trim())     inventoryData.mpn     = formData.inventory.mpn.trim();
     fd.append('inventory', JSON.stringify(inventoryData));
 
-    fd.append('subcategories',  JSON.stringify(subcategories));
-    fd.append('tags',           JSON.stringify(tags));
+    fd.append('subcategories', JSON.stringify(subcategories));
+    fd.append('tags',          JSON.stringify(tags));
 
     const validSpecs    = specifications.filter((s) => s.key && s.value);
     const validVariants = variants.filter((v) => v.name && v.options.length > 0);
@@ -260,7 +236,7 @@ function CreateProduct() {
       metaTitle:          formData.seo.metaTitle.trim(),
       metaDescription:    formData.seo.metaDescription.trim(),
       keywords:           seoKeywords,
-      canonicalUrl:       formData.seo.canonicalUrl || '',
+      canonicalUrl:       formData.seo.canonicalUrl.trim(),
       noIndex:            formData.seo.noIndex  || false,
       noFollow:           formData.seo.noFollow || false,
       ogTitle:            formData.seo.ogTitle.trim()            || formData.seo.metaTitle.trim(),
@@ -288,9 +264,22 @@ function CreateProduct() {
     fd.append('imageMetadata', JSON.stringify(imagePreviews.map((img) => ({ alt: img.alt || '', caption: img.caption || '' }))));
     images.forEach((img) => fd.append('images', img));
 
-    dispatch(createProduct(fd));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData, images, imagePreviews, subcategories, tags, specifications, variants, seoKeywords, relatedSearchTerms, breadcrumbs, richSnippets, dispatch]);
+    // ── Dispatch ───────────────────────────────────────────────────────────
+    setIsSubmitting(true);
+    try {
+      await dispatch(createProduct(fd)).unwrap();
+      toast.success('Product created successfully!', { position: 'top-center', autoClose: 3000 });
+      resetForm();
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : err?.message || 'Failed to create product', { position: 'top-center', autoClose: 3000 });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [
+    isSubmitting, formData, images, imagePreviews, subcategories, tags,
+    specifications, variants, seoKeywords, relatedSearchTerms, breadcrumbs,
+    richSnippets, dispatch, resetForm,
+  ]);
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -305,7 +294,7 @@ function CreateProduct() {
             <p className="ecp-subtitle">Add a new product to your catalog</p>
           </div>
           <div className="ecp-header-actions">
-            <button type="button" className="ecp-btn ecp-btn-secondary" onClick={resetForm}>
+            <button type="button" className="ecp-btn ecp-btn-secondary" onClick={resetForm} disabled={isSubmitting}>
               <FiX /> Cancel
             </button>
           </div>
@@ -859,12 +848,12 @@ function CreateProduct() {
             {/* ══ ACTION BUTTONS ══════════════════════════════════════════ */}
             <div className="ecp-actions">
               <button type="button" className="ecp-btn ecp-btn-secondary"
-                onClick={(e) => handleSubmit(e, 'draft')} disabled={creating}>
-                <FiSave /> {creating ? 'Saving…' : 'Save as Draft'}
+                onClick={(e) => handleSubmit(e, 'draft')} disabled={isSubmitting}>
+                <FiSave /> {isSubmitting ? 'Saving…' : 'Save as Draft'}
               </button>
               <button type="button" className="ecp-btn ecp-btn-primary"
-                onClick={(e) => handleSubmit(e, 'published')} disabled={creating}>
-                {creating ? 'Publishing…' : 'Publish Product'}
+                onClick={(e) => handleSubmit(e, 'published')} disabled={isSubmitting}>
+                {isSubmitting ? 'Publishing…' : 'Publish Product'}
               </button>
             </div>
 
