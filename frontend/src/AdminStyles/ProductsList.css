@@ -22,9 +22,7 @@
   border-bottom: 2px solid #f0f0f0;
 }
 
-.epl-header-content {
-  flex: 1;
-}
+.epl-header-content { flex: 1; }
 
 .epl-title {
   font-size: 2rem;
@@ -95,16 +93,19 @@
   transform: translateY(-50%);
   color: #999;
   font-size: 1.2rem;
+  pointer-events: none;
 }
 
 .epl-search-input {
   width: 100%;
-  padding: 0.75rem 1rem 0.75rem 3rem;
+  /* FIX: added padding-right so text doesn't slide under the clear (×) button */
+  padding: 0.75rem 2.75rem 0.75rem 3rem;
   font-size: 0.95rem;
   border: 2px solid #e0e0e0;
   border-radius: 8px;
   transition: all 0.3s ease;
   background-color: #fafafa;
+  box-sizing: border-box;
 }
 
 .epl-search-input:focus {
@@ -112,6 +113,33 @@
   border-color: #ff3c3c;
   background-color: white;
   box-shadow: 0 0 0 3px rgba(255, 60, 60, 0.1);
+}
+
+/* FIX: .epl-search-clear was missing entirely.
+   Positioned absolutely inside .epl-search-box (which has position:relative).
+   Icon-only button styled to match the search box height. */
+.epl-search-clear {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 50%;
+  color: #999;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.epl-search-clear:hover {
+  background-color: #f0f0f0;
+  color: #333;
 }
 
 .epl-filter-toggle {
@@ -134,7 +162,14 @@
   border-color: #d0d0d0;
 }
 
-.epl-filter-toggle svg.rotated {
+/* FIX: added transition to the svg so the rotation animates smoothly.
+   Also added standalone .rotated so the rule isn't brittle to DOM structure. */
+.epl-filter-toggle svg {
+  transition: transform 0.3s ease;
+}
+
+.epl-filter-toggle svg.rotated,
+.rotated {
   transform: rotate(180deg);
 }
 
@@ -159,9 +194,7 @@
   justify-content: center;
 }
 
-.epl-view-btn svg {
-  font-size: 1.2rem;
-}
+.epl-view-btn svg { font-size: 1.2rem; }
 
 .epl-view-btn:hover {
   background-color: #e8e8e8;
@@ -191,14 +224,8 @@
 }
 
 @keyframes slideDown {
-  from {
-    opacity: 0;
-    transform: translateY(-10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(-10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .epl-filter-group {
@@ -287,9 +314,7 @@
   transition: transform 0.3s ease;
 }
 
-.epl-card:hover .epl-card-image img {
-  transform: scale(1.05);
-}
+.epl-card:hover .epl-card-image img { transform: scale(1.05); }
 
 .epl-card-badges {
   position: absolute;
@@ -301,6 +326,7 @@
   gap: 0.5rem;
 }
 
+/* BASE badge — all variants inherit from here */
 .epl-badge {
   padding: 0.25rem 0.75rem;
   font-size: 0.75rem;
@@ -308,32 +334,20 @@
   border-radius: 12px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  color: white; /* FIX: base fallback so unknown variants are readable */
+  background-color: #999;
 }
 
-.epl-badge.featured {
-  background-color: #ff3c3c;
-  color: white;
-}
-
-.epl-badge.new {
-  background-color: #2196f3;
-  color: white;
-}
-
-.epl-badge.in-stock {
-  background-color: #4caf50;
-  color: white;
-}
-
-.epl-badge.low-stock {
-  background-color: #ff9800;
-  color: white;
-}
-
-.epl-badge.out-of-stock {
-  background-color: #f44336;
-  color: white;
-}
+.epl-badge.featured     { background-color: #ff3c3c; color: white; }
+.epl-badge.new          { background-color: #2196f3; color: white; }
+/* FIX: bestseller and sale badges were missing */
+.epl-badge.bestseller   { background-color: #9c27b0; color: white; }
+.epl-badge.sale         { background-color: #ff9800; color: white; }
+/* FIX: discontinued badge was missing */
+.epl-badge.discontinued { background-color: #607d8b; color: white; }
+.epl-badge.in-stock     { background-color: #4caf50; color: white; }
+.epl-badge.low-stock    { background-color: #ff9800; color: white; }
+.epl-badge.out-of-stock { background-color: #f44336; color: white; }
 
 .epl-card-content {
   padding: 1.25rem;
@@ -346,7 +360,7 @@
   font-size: 1.1rem;
   font-weight: 600;
   color: #1a1a1a;
-  margin: 0 0 0.5rem 0;
+  margin: 0 0 0.25rem 0;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -357,14 +371,45 @@
 .epl-card-category {
   font-size: 0.85rem;
   color: #999;
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.25rem 0;
+}
+
+/* FIX: .epl-card-brand was missing — distinct muted styling below category */
+.epl-card-brand {
+  font-size: 0.82rem;
+  color: #777;
+  font-style: italic;
+  margin: 0 0 0.75rem 0;
+}
+
+/* FIX: .epl-card-price was missing — flex row so sale + original sit side by side */
+.epl-card-price {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* FIX: .epl-price-current was missing */
+.epl-price-current {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ff3c3c;
+}
+
+/* FIX: .epl-price-original was missing — strikethrough for regular price when on sale */
+.epl-price-original {
+  font-size: 0.9rem;
+  color: #aaa;
+  text-decoration: line-through;
 }
 
 .epl-card-meta {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 1rem;
-  padding-bottom: 1rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
   border-bottom: 1px solid #f0f0f0;
 }
 
@@ -376,17 +421,35 @@
   color: #666;
 }
 
-.epl-meta-item svg {
-  color: #ff3c3c;
-  font-size: 1rem;
-}
+.epl-meta-item svg { color: #ff3c3c; font-size: 1rem; }
 
 .epl-card-sku {
   font-size: 0.8rem;
   color: #999;
-  margin: 0 0 1rem 0;
+  margin: 0 0 0.75rem 0;
   font-family: monospace;
 }
+
+/* FIX: .epl-card-status-badge wrapper was missing */
+.epl-card-status-badge {
+  margin-bottom: 1rem;
+}
+
+/* FIX: .epl-status variants for card view were missing entirely.
+   The TABLE uses .epl-status-badge (with -badge) — the CARD uses .epl-status (without).
+   These are two separate selectors that were independently needed. */
+.epl-status {
+  display: inline-block;
+  padding: 0.2rem 0.65rem;
+  border-radius: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.epl-status.published { background-color: #e8f5e9; color: #2e7d32; }
+.epl-status.draft     { background-color: #fff3e0; color: #e65100; }
+.epl-status.archived  { background-color: #f5f5f5; color: #666; }
 
 .epl-card-actions {
   display: grid;
@@ -470,9 +533,7 @@
   transition: background-color 0.2s ease;
 }
 
-.epl-table tbody tr:hover {
-  background-color: #fafafa;
-}
+.epl-table tbody tr:hover { background-color: #fafafa; }
 
 .epl-table td {
   padding: 1rem 1.5rem;
@@ -480,7 +541,10 @@
   color: #333;
 }
 
+/* FIX: added position:relative so .epl-sale-badge can be absolutely positioned
+   inside the image cell without escaping the container. */
 .epl-table-image {
+  position: relative;
   width: 60px;
   height: 60px;
   border-radius: 8px;
@@ -494,10 +558,25 @@
   object-fit: cover;
 }
 
+/* FIX: .epl-sale-badge was missing entirely */
+.epl-sale-badge {
+  position: absolute;
+  bottom: 2px;
+  left: 2px;
+  padding: 1px 5px;
+  background-color: #ff9800;
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 700;
+  border-radius: 4px;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+
 .epl-table-product {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 0.2rem;
 }
 
 .epl-table-name {
@@ -506,10 +585,24 @@
   margin: 0;
 }
 
+/* FIX: .epl-table-brand was missing */
+.epl-table-brand {
+  font-size: 0.8rem;
+  color: #777;
+  font-style: italic;
+}
+
 .epl-table-sku {
   font-size: 0.8rem;
   color: #999;
   font-family: monospace;
+}
+
+/* FIX: .epl-table-price was missing — stack sale price above strikethrough original */
+.epl-table-price {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
 }
 
 .epl-stock-badge {
@@ -520,20 +613,11 @@
   font-weight: 600;
 }
 
-.epl-stock-badge.in-stock {
-  background-color: #e8f5e9;
-  color: #2e7d32;
-}
-
-.epl-stock-badge.low-stock {
-  background-color: #fff3e0;
-  color: #e65100;
-}
-
-.epl-stock-badge.out-of-stock {
-  background-color: #ffebee;
-  color: #c62828;
-}
+.epl-stock-badge.in-stock     { background-color: #e8f5e9; color: #2e7d32; }
+.epl-stock-badge.low-stock    { background-color: #fff3e0; color: #e65100; }
+.epl-stock-badge.out-of-stock { background-color: #ffebee; color: #c62828; }
+/* FIX: .epl-stock-badge.discontinued was missing */
+.epl-stock-badge.discontinued { background-color: #eceff1; color: #455a64; }
 
 .epl-status-badge {
   display: inline-block;
@@ -544,20 +628,9 @@
   text-transform: capitalize;
 }
 
-.epl-status-badge.published {
-  background-color: #e8f5e9;
-  color: #2e7d32;
-}
-
-.epl-status-badge.draft {
-  background-color: #fff3e0;
-  color: #e65100;
-}
-
-.epl-status-badge.archived {
-  background-color: #f5f5f5;
-  color: #666;
-}
+.epl-status-badge.published { background-color: #e8f5e9; color: #2e7d32; }
+.epl-status-badge.draft     { background-color: #fff3e0; color: #e65100; }
+.epl-status-badge.archived  { background-color: #f5f5f5; color: #666; }
 
 .epl-rating {
   display: flex;
@@ -569,6 +642,12 @@
 .epl-star-icon {
   color: #ffc107;
   font-size: 1rem;
+}
+
+/* FIX: .epl-reviews was missing — muted color to distinguish count from rating number */
+.epl-reviews {
+  font-size: 0.85rem;
+  color: #aaa;
 }
 
 .epl-table-actions {
@@ -589,25 +668,10 @@
   text-decoration: none;
 }
 
-.epl-action-btn.epl-edit {
-  background-color: #f5f5f5;
-  color: #333;
-}
-
-.epl-action-btn.epl-edit:hover {
-  background-color: #ff3c3c;
-  color: white;
-}
-
-.epl-action-btn.epl-delete {
-  background-color: #fee;
-  color: #d32f2f;
-}
-
-.epl-action-btn.epl-delete:hover {
-  background-color: #d32f2f;
-  color: white;
-}
+.epl-action-btn.epl-edit  { background-color: #f5f5f5; color: #333; }
+.epl-action-btn.epl-edit:hover  { background-color: #ff3c3c; color: white; }
+.epl-action-btn.epl-delete { background-color: #fee; color: #d32f2f; }
+.epl-action-btn.epl-delete:hover { background-color: #d32f2f; color: white; }
 
 /* ===========================
    EMPTY STATE
@@ -628,17 +692,8 @@
   margin-bottom: 1.5rem;
 }
 
-.epl-empty-state h3 {
-  font-size: 1.5rem;
-  color: #333;
-  margin: 0 0 0.5rem 0;
-}
-
-.epl-empty-state p {
-  font-size: 1rem;
-  color: #999;
-  margin: 0 0 2rem 0;
-}
+.epl-empty-state h3 { font-size: 1.5rem; color: #333; margin: 0 0 0.5rem 0; }
+.epl-empty-state p  { font-size: 1rem; color: #999; margin: 0 0 2rem 0; }
 
 /* ===========================
    DELETE MODAL
@@ -646,25 +701,20 @@
 
 .epl-modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background-color: rgba(0, 0, 0, 0.6);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
   animation: fadeIn 0.3s ease;
+  /* FIX: backdrop-filter for depth */
+  backdrop-filter: blur(2px);
 }
 
 @keyframes fadeIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 .epl-modal {
@@ -678,14 +728,8 @@
 }
 
 @keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(50px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(50px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 .epl-modal-header {
@@ -722,26 +766,12 @@
   transition: all 0.3s ease;
 }
 
-.epl-modal-close:hover {
-  background-color: #f5f5f5;
-  color: #333;
-}
+.epl-modal-close:hover { background-color: #f5f5f5; color: #333; }
 
-.epl-modal-content {
-  padding: 1.5rem;
-}
+.epl-modal-content { padding: 1.5rem; }
 
-.epl-modal-content h2 {
-  font-size: 1.5rem;
-  color: #1a1a1a;
-  margin: 0 0 0.5rem 0;
-}
-
-.epl-modal-content > p {
-  font-size: 1rem;
-  color: #666;
-  margin: 0 0 1.5rem 0;
-}
+.epl-modal-content h2 { font-size: 1.5rem; color: #1a1a1a; margin: 0 0 0.5rem 0; }
+.epl-modal-content > p { font-size: 1rem; color: #666; margin: 0 0 1.5rem 0; }
 
 .epl-modal-product {
   display: flex;
@@ -758,17 +788,25 @@
   object-fit: cover;
   border-radius: 8px;
   border: 2px solid #e0e0e0;
+  flex-shrink: 0;
 }
 
-.epl-modal-product h3 {
-  font-size: 1rem;
-  color: #1a1a1a;
-  margin: 0 0 0.5rem 0;
+.epl-modal-product h3 { font-size: 1rem; color: #1a1a1a; margin: 0 0 0.35rem 0; }
+
+/* FIX: .epl-modal-category was missing */
+.epl-modal-category {
+  font-size: 0.85rem;
+  color: #999;
+  margin: 0 0 0.25rem 0;
 }
 
-.epl-modal-meta {
-  font-size: 0.9rem;
-  color: #666;
+.epl-modal-meta { font-size: 0.9rem; color: #666; margin: 0 0 0.25rem 0; }
+
+/* FIX: .epl-modal-sku was missing */
+.epl-modal-sku {
+  font-size: 0.8rem;
+  color: #aaa;
+  font-family: monospace;
   margin: 0;
 }
 
@@ -790,10 +828,7 @@
   transition: all 0.3s ease;
 }
 
-.epl-modal-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.epl-modal-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .epl-modal-btn.epl-cancel {
   background-color: #f5f5f5;
@@ -801,14 +836,9 @@
   border: 2px solid #e0e0e0;
 }
 
-.epl-modal-btn.epl-cancel:hover:not(:disabled) {
-  background-color: #e8e8e8;
-}
+.epl-modal-btn.epl-cancel:hover:not(:disabled) { background-color: #e8e8e8; }
 
-.epl-modal-btn.epl-confirm {
-  background-color: #d32f2f;
-  color: white;
-}
+.epl-modal-btn.epl-confirm { background-color: #d32f2f; color: white; }
 
 .epl-modal-btn.epl-confirm:hover:not(:disabled) {
   background-color: #b71c1c;
@@ -817,118 +847,51 @@
 }
 
 /* ===========================
-   RESPONSIVE - TABLET
+   RESPONSIVE — TABLET
    =========================== */
 
 @media (max-width: 1024px) {
-  .epl-container {
-    padding: 1.5rem;
-  }
-
-  .epl-grid {
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  }
-
-  .epl-advanced-filters {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .epl-table-container {
-    overflow-x: auto;
-  }
-
-  .epl-table {
-    min-width: 900px;
-  }
+  .epl-container { padding: 1.5rem; }
+  .epl-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+  .epl-advanced-filters { grid-template-columns: 1fr 1fr; }
+  .epl-table-container { overflow-x: auto; }
+  .epl-table { min-width: 900px; }
 }
 
 /* ===========================
-   RESPONSIVE - MOBILE
+   RESPONSIVE — MOBILE
    =========================== */
 
 @media (max-width: 768px) {
-  .epl-container {
-    padding: 1rem;
-  }
+  .epl-container { padding: 1rem; }
 
-  .epl-header {
-    flex-direction: column;
-    gap: 1rem;
-  }
+  .epl-header { flex-direction: column; gap: 1rem; }
+  .epl-header-actions { width: 100%; }
+  .epl-header-actions .epl-btn { flex: 1; }
+  .epl-title { font-size: 1.5rem; }
 
-  .epl-header-actions {
-    width: 100%;
-  }
+  .epl-filters-bar { flex-wrap: wrap; }
+  .epl-search-box  { max-width: 100%; order: -1; flex-basis: 100%; }
+  .epl-advanced-filters { grid-template-columns: 1fr; }
 
-  .epl-header-actions .epl-btn {
-    flex: 1;
-  }
+  .epl-grid { grid-template-columns: 1fr; }
+  .epl-view-toggle { display: none; }
 
-  .epl-title {
-    font-size: 1.5rem;
-  }
-
-  .epl-filters-bar {
-    flex-wrap: wrap;
-  }
-
-  .epl-search-box {
-    max-width: 100%;
-    order: -1;
-    flex-basis: 100%;
-  }
-
-  .epl-advanced-filters {
-    grid-template-columns: 1fr;
-  }
-
-  .epl-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .epl-view-toggle {
-    display: none;
-  }
-
-  .epl-modal {
-    max-width: 95%;
-  }
-
-  .epl-modal-actions {
-    flex-direction: column-reverse;
-  }
-
-  .epl-modal-btn {
-    width: 100%;
-  }
+  .epl-modal { max-width: 95%; }
+  .epl-modal-actions { flex-direction: column-reverse; }
+  .epl-modal-btn { width: 100%; }
 }
 
 /* ===========================
-   RESPONSIVE - SMALL MOBILE
+   RESPONSIVE — SMALL MOBILE
    =========================== */
 
 @media (max-width: 480px) {
-  .epl-container {
-    padding: 0.75rem;
-  }
-
-  .epl-title {
-    font-size: 1.25rem;
-  }
-
-  .epl-card-content {
-    padding: 1rem;
-  }
-
-  .epl-card-actions {
-    grid-template-columns: 1fr;
-  }
-
-  .epl-modal-product {
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-  }
+  .epl-container { padding: 0.75rem; }
+  .epl-title { font-size: 1.25rem; }
+  .epl-card-content { padding: 1rem; }
+  .epl-card-actions { grid-template-columns: 1fr; }
+  .epl-modal-product { flex-direction: column; align-items: center; text-align: center; }
 }
 
 /* ===========================
@@ -936,9 +899,7 @@
    =========================== */
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

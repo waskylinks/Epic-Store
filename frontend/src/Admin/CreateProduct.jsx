@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import PageTitle from '../components/PageTitle';
 import '../AdminStyles/CreateProduct.css';
 import Navbar from '../components/Navbar';
@@ -14,180 +14,75 @@ import {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CATEGORIES = [
-  'Electronics', 'Clothing & Apparel', 'Home & Living',
-  'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'
-];
+const CATEGORIES    = ['Electronics', 'Clothing & Apparel', 'Home & Living', 'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'];
 const CURRENCIES    = ['USD', 'EUR', 'GBP', 'NGN'];
 const WEIGHT_UNITS  = ['kg', 'lb', 'g'];
 const DIM_UNITS     = ['cm', 'in'];
 const SCHEMA_TYPES  = ['Product', 'Book', 'Course', 'SoftwareApplication'];
 const CONDITIONS    = ['NewCondition', 'UsedCondition', 'RefurbishedCondition', 'DamagedCondition'];
 const TWITTER_CARDS = ['summary', 'summary_large_image'];
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 
-// ─── Initial state ────────────────────────────────────────────────────────────
+const TABS = [
+  { id: 'basic',     label: 'Basic Info',   icon: <FiPackage /> },
+  { id: 'pricing',   label: 'Pricing',      icon: <FiDollarSign /> },
+  { id: 'inventory', label: 'Inventory',    icon: <FiPackage /> },
+  { id: 'media',     label: 'Media',        icon: <FiImage /> },
+  { id: 'variants',  label: 'Variants',     icon: <FiSettings /> },
+  { id: 'seo',       label: 'SEO',          icon: <FiTrendingUp /> },
+  { id: 'advanced',  label: 'Advanced SEO', icon: <FiTag /> },
+  { id: 'settings',  label: 'Settings',     icon: <FiFlag /> },
+];
 
-const INITIAL_FORM = () => ({
+const makeInitialForm = () => ({
   name: '', description: '', shortDescription: '',
   category: '', brand: '', manufacturer: '',
-  pricing: { regular: '', sale: '', cost: '', currency: 'USD', validFrom: '', validThrough: '' },
+  pricing:   { regular: '', sale: '', cost: '', currency: 'USD', validFrom: '', validThrough: '' },
   inventory: { stock: '', sku: '', barcode: '', gtin: '', mpn: '', trackInventory: true, lowStockThreshold: 5 },
   dimensions: { length: '', width: '', height: '', unit: 'cm' },
-  weight: { value: '', unit: 'kg' },
+  weight:    { value: '', unit: 'kg' },
   seo: {
-    metaTitle: '', metaDescription: '', keywords: [], canonicalUrl: '',
+    metaTitle: '', metaDescription: '', canonicalUrl: '',
     noIndex: false, noFollow: false,
     ogTitle: '', ogDescription: '', ogImage: '', ogType: 'product',
     twitterCard: 'summary_large_image', twitterTitle: '', twitterDescription: '', twitterImage: '',
-    schemaType: 'Product', condition: 'NewCondition', focusKeyphrase: '', relatedSearchTerms: []
+    schemaType: 'Product', condition: 'NewCondition', focusKeyphrase: '',
   },
-  isFeatured: false, isNewArrival: true, isBestseller: false
+  isFeatured: false, isNewArrival: true, isBestseller: false,
 });
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 function CreateProduct() {
-  // FIX: destructure `productCreated` (not the shared `success`) so this
-  // component only reacts to its own action completing — not to deleteProduct,
-  // addOrderMessage, updateOrder, or any of the other 15 thunks that also
-  // set `success: true` in the old slice.
-  const { productCreated, loading, error } = useSelector(state => state.admin);
+  // FIX: use `creating` (per-action flag) instead of the shared `loading`.
+  // The shared flag is also set by fetchAdminProducts, getOrderMessages, etc.
+  // Any background thunk completing would flip loading → false or back → true,
+  // making the spinner disappear early or stick forever.
+  const { productCreated, creating, error } = useSelector((s) => s.admin);
   const dispatch = useDispatch();
 
-  const [activeTab, setActiveTab]   = useState('basic');
-  const [images, setImages]         = useState([]);
-  const [imagePreviews, setImagePreviews] = useState([]);
-  const [formData, setFormData]     = useState(INITIAL_FORM);
-  const [subcategories, setSubcategories] = useState([]);
-  const [tags, setTags]             = useState([]);
-  const [specifications, setSpecifications] = useState([]);
-  const [variants, setVariants]     = useState([]);
-  const [seoKeywords, setSeoKeywords]         = useState([]);
+  const [activeTab,          setActiveTab]          = useState('basic');
+  const [images,             setImages]             = useState([]);
+  const [imagePreviews,      setImagePreviews]      = useState([]);
+  const [formData,           setFormData]           = useState(makeInitialForm);
+  const [subcategories,      setSubcategories]      = useState([]);
+  const [tags,               setTags]               = useState([]);
+  const [specifications,     setSpecifications]     = useState([]);
+  const [variants,           setVariants]           = useState([]);
+  const [seoKeywords,        setSeoKeywords]        = useState([]);
   const [relatedSearchTerms, setRelatedSearchTerms] = useState([]);
-  const [breadcrumbs, setBreadcrumbs]         = useState([]);
-  const [richSnippets, setRichSnippets]       = useState({ faqs: [], howTo: { name: '', steps: [] }, videos: [] });
+  const [breadcrumbs,        setBreadcrumbs]        = useState([]);
+  const [richSnippets,       setRichSnippets]       = useState({ faqs: [], howTo: { name: '', steps: [] }, videos: [] });
 
   const [newSubcategory, setNewSubcategory] = useState('');
-  const [newTag, setNewTag]                 = useState('');
-  const [newKeyword, setNewKeyword]         = useState('');
+  const [newTag,         setNewTag]         = useState('');
+  const [newKeyword,     setNewKeyword]     = useState('');
   const [newRelatedTerm, setNewRelatedTerm] = useState('');
-  const [newBreadcrumb, setNewBreadcrumb]   = useState({ name: '', url: '' });
+  const [newBreadcrumb,  setNewBreadcrumb]  = useState({ name: '', url: '' });
 
-  // ── Input handler ────────────────────────────────────────────────────────────
-  const handleInputChange = e => {
-    const { name, value, type, checked } = e.target;
-    if (name.includes('.')) {
-      const [parent, child] = name.split('.');
-      setFormData(prev => ({ ...prev, [parent]: { ...prev[parent], [child]: type === 'checkbox' ? checked : value } }));
-    } else {
-      setFormData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
-    }
-  };
-
-  // ── Image handling ───────────────────────────────────────────────────────────
-  const handleImageUpload = e => {
-    const files = Array.from(e.target.files);
-    if (!files.length) return;
-
-    files.forEach(file => {
-      if (file.size > MAX_FILE_SIZE) {
-        toast.error(`"${file.name}" exceeds 10MB and was skipped`);
-        return;
-      }
-      const isDuplicate = images.some(img => img.name === file.name && img.size === file.size);
-      if (isDuplicate) {
-        toast.warn(`"${file.name}" is already added`);
-        return;
-      }
-
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (reader.readyState === 2) {
-          setImages(old => [...old, file]);
-          setImagePreviews(old => [...old, {
-            url: reader.result,
-            name: file.name,
-            size: (file.size / 1024).toFixed(1) + ' KB',
-            alt: '',
-            caption: ''
-          }]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-
-    e.target.value = '';
-  };
-
-  const removeImage = index => {
-    setImages(old => old.filter((_, i) => i !== index));
-    setImagePreviews(old => old.filter((_, i) => i !== index));
-  };
-
-  const setPrimaryImage = index => {
-    if (index === 0) return;
-    setImages(old => { const n = [...old]; [n[0], n[index]] = [n[index], n[0]]; return n; });
-    setImagePreviews(old => { const n = [...old]; [n[0], n[index]] = [n[index], n[0]]; return n; });
-  };
-
-  const updateImageMeta = (index, field, value) => {
-    setImagePreviews(old => old.map((img, i) => i === index ? { ...img, [field]: value } : img));
-  };
-
-  // ── Tag / keyword helpers ────────────────────────────────────────────────────
-  const addItem = (value, setter, resetSetter, transform = v => v) => {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    setter(prev => [...prev, transform(trimmed)]);
-    resetSetter('');
-  };
-
-  const removeItem = (index, setter) => setter(prev => prev.filter((_, i) => i !== index));
-
-  // ── Breadcrumbs ───────────────────────────────────────────────────────────────
-  const addBreadcrumb = () => {
-    if (!newBreadcrumb.name.trim() || !newBreadcrumb.url.trim()) return;
-    setBreadcrumbs(prev => [...prev, { name: newBreadcrumb.name.trim(), url: newBreadcrumb.url.trim(), position: prev.length + 1 }]);
-    setNewBreadcrumb({ name: '', url: '' });
-  };
-  const removeBreadcrumb = index =>
-    setBreadcrumbs(prev => prev.filter((_, i) => i !== index).map((b, i) => ({ ...b, position: i + 1 })));
-
-  // ── Specifications ────────────────────────────────────────────────────────────
-  const addSpec    = () => setSpecifications(prev => [...prev, { key: '', value: '' }]);
-  const updateSpec = (i, field, val) => setSpecifications(prev => prev.map((s, idx) => idx === i ? { ...s, [field]: val } : s));
-  const removeSpec = i => setSpecifications(prev => prev.filter((_, idx) => idx !== i));
-
-  // ── Variants ──────────────────────────────────────────────────────────────────
-  const addVariant          = () => setVariants(prev => [...prev, { name: '', options: [{ value: '', priceModifier: 0, stock: 0 }] }]);
-  const updateVariantName   = (i, name) => setVariants(prev => prev.map((v, idx) => idx === i ? { ...v, name } : v));
-  const removeVariant       = i => setVariants(prev => prev.filter((_, idx) => idx !== i));
-  const addVariantOption    = vi => setVariants(prev => prev.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0 }] } : v));
-  const updateVariantOption = (vi, oi, field, val) =>
-    setVariants(prev => prev.map((v, i) => i === vi
-      ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [field]: val } : o) }
-      : v));
-  const removeVariantOption = (vi, oi) =>
-    setVariants(prev => prev.map((v, i) => i === vi ? { ...v, options: v.options.filter((_, j) => j !== oi) } : v));
-
-  // ── Rich Snippets ─────────────────────────────────────────────────────────────
-  const addFAQ    = () => setRichSnippets(p => ({ ...p, faqs: [...p.faqs, { question: '', answer: '' }] }));
-  const updateFAQ = (i, field, val) => setRichSnippets(p => ({ ...p, faqs: p.faqs.map((f, idx) => idx === i ? { ...f, [field]: val } : f) }));
-  const removeFAQ = i => setRichSnippets(p => ({ ...p, faqs: p.faqs.filter((_, idx) => idx !== i) }));
-
-  const addVideo    = () => setRichSnippets(p => ({ ...p, videos: [...p.videos, { name: '', description: '', thumbnailUrl: '', contentUrl: '' }] }));
-  const updateVideo = (i, field, val) => setRichSnippets(p => ({ ...p, videos: p.videos.map((v, idx) => idx === i ? { ...v, [field]: val } : v) }));
-  const removeVideo = i => setRichSnippets(p => ({ ...p, videos: p.videos.filter((_, idx) => idx !== i) }));
-
-  // ── Reset ─────────────────────────────────────────────────────────────────────
-  // Bug 2 fix: wrapped in useCallback with stable empty-deps so resetForm has a
-  // stable reference and can safely appear in the useEffect dependency array.
-  // Without useCallback, resetForm is recreated every render — listing it in deps
-  // would cause an infinite loop, omitting it leaves a stale closure.
-  // All useState setters are stable by React contract, so [] deps is correct.
+  // ── Reset ─────────────────────────────────────────────────────────────────
   const resetForm = useCallback(() => {
-    setFormData(INITIAL_FORM());
+    setFormData(makeInitialForm());
     setImages([]); setImagePreviews([]);
     setSubcategories([]); setTags([]); setSpecifications([]);
     setVariants([]); setSeoKeywords([]); setRelatedSearchTerms([]);
@@ -196,104 +91,172 @@ function CreateProduct() {
     setActiveTab('basic');
   }, []);
 
-  // ── Validation ────────────────────────────────────────────────────────────────
+  // ── Effects ───────────────────────────────────────────────────────────────
+  // FIX: split error and success into separate effects, and use a ref guard
+  // so StrictMode's double-invoke of cleanup cannot clear productCreated
+  // before the success branch reads it.
+  //
+  // How the old bug manifested in StrictMode (React 18 dev):
+  //   1. createProduct.fulfilled → productCreated = true
+  //   2. React runs effect cleanup (unmount sim): dispatch(removeProductCreated()) → productCreated = false
+  //   3. React re-runs the effect body: productCreated is now false → toast never fires
+  //   4. Component re-renders with creating=false but no toast, so button
+  //      text reverts to "Publish Product" but nothing else happens.
+  //
+  // The ref guard ensures we handle the flag exactly once regardless of how
+  // many times React re-runs the effect.
+  const handledCreated = useRef(false);
+
+  useEffect(() => {
+    if (!error) return;
+    toast.error(error, { position: 'top-center', autoClose: 3000 });
+    dispatch(removeErrors());
+  }, [error, dispatch]);
+
+  useEffect(() => {
+    if (!productCreated || handledCreated.current) return;
+    handledCreated.current = true;
+    toast.success('Product created successfully!', { position: 'top-center', autoClose: 3000 });
+    dispatch(removeProductCreated());
+    resetForm();
+    handledCreated.current = false; // allow future creates in same session
+  }, [productCreated, dispatch, resetForm]);
+
+  // Clear stale flag on unmount only
+  useEffect(() => {
+    return () => { dispatch(removeProductCreated()); };
+  }, [dispatch]);
+
+  // ── Input handler ─────────────────────────────────────────────────────────
+  const handleInputChange = useCallback((e) => {
+    const { name, value, type, checked } = e.target;
+    const val = type === 'checkbox' ? checked : value;
+    if (name.includes('.')) {
+      const [parent, child] = name.split('.');
+      setFormData((prev) => ({ ...prev, [parent]: { ...prev[parent], [child]: val } }));
+    } else {
+      setFormData((prev) => ({ ...prev, [name]: val }));
+    }
+  }, []);
+
+  // ── Image handling ────────────────────────────────────────────────────────
+  const handleImageUpload = useCallback((e) => {
+    Array.from(e.target.files).forEach((file) => {
+      if (file.size > MAX_FILE_SIZE) { toast.error(`"${file.name}" exceeds 10MB`); return; }
+      if (images.some((img) => img.name === file.name && img.size === file.size)) {
+        toast.warn(`"${file.name}" already added`); return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        setImages((o) => [...o, file]);
+        setImagePreviews((o) => [...o, { url: reader.result, name: file.name, size: (file.size / 1024).toFixed(1) + ' KB', alt: '', caption: '' }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+  }, [images]);
+
+  const removeImage      = useCallback((i) => { setImages((o) => o.filter((_, j) => j !== i)); setImagePreviews((o) => o.filter((_, j) => j !== i)); }, []);
+  const setPrimaryImage  = useCallback((i) => { if (i === 0) return; setImages((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); setImagePreviews((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); }, []);
+  const updateImageMeta  = useCallback((i, field, value) => setImagePreviews((o) => o.map((img, j) => j === i ? { ...img, [field]: value } : img)), []);
+
+  // ── List helpers ──────────────────────────────────────────────────────────
+  const addItem    = useCallback((value, setter, resetSetter, transform = (v) => v) => { const t = value.trim(); if (!t) return; setter((p) => [...p, transform(t)]); resetSetter(''); }, []);
+  const removeItem = useCallback((i, setter) => setter((p) => p.filter((_, j) => j !== i)), []);
+
+  const addBreadcrumb    = useCallback(() => { if (!newBreadcrumb.name.trim() || !newBreadcrumb.url.trim()) return; setBreadcrumbs((p) => [...p, { name: newBreadcrumb.name.trim(), url: newBreadcrumb.url.trim(), position: p.length + 1 }]); setNewBreadcrumb({ name: '', url: '' }); }, [newBreadcrumb]);
+  const removeBreadcrumb = useCallback((i) => setBreadcrumbs((p) => p.filter((_, j) => j !== i).map((b, j) => ({ ...b, position: j + 1 }))), []);
+
+  const addSpec    = useCallback(() => setSpecifications((p) => [...p, { key: '', value: '' }]), []);
+  const updateSpec = useCallback((i, field, val) => setSpecifications((p) => p.map((s, j) => j === i ? { ...s, [field]: val } : s)), []);
+  const removeSpec = useCallback((i) => setSpecifications((p) => p.filter((_, j) => j !== i)), []);
+
+  const addVariant          = useCallback(() => setVariants((p) => [...p, { name: '', options: [{ value: '', priceModifier: 0, stock: 0 }] }]), []);
+  const updateVariantName   = useCallback((i, name) => setVariants((p) => p.map((v, j) => j === i ? { ...v, name } : v)), []);
+  const removeVariant       = useCallback((i) => setVariants((p) => p.filter((_, j) => j !== i)), []);
+  const addVariantOption    = useCallback((vi) => setVariants((p) => p.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0 }] } : v)), []);
+  const updateVariantOption = useCallback((vi, oi, f, val) => setVariants((p) => p.map((v, i) => i === vi ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [f]: val } : o) } : v)), []);
+  const removeVariantOption = useCallback((vi, oi) => setVariants((p) => p.map((v, i) => i === vi ? { ...v, options: v.options.filter((_, j) => j !== oi) } : v)), []);
+
+  const addFAQ    = useCallback(() => setRichSnippets((p) => ({ ...p, faqs: [...p.faqs, { question: '', answer: '' }] })), []);
+  const updateFAQ = useCallback((i, field, val) => setRichSnippets((p) => ({ ...p, faqs: p.faqs.map((f, j) => j === i ? { ...f, [field]: val } : f) })), []);
+  const removeFAQ = useCallback((i) => setRichSnippets((p) => ({ ...p, faqs: p.faqs.filter((_, j) => j !== i) })), []);
+
+  const addVideo    = useCallback(() => setRichSnippets((p) => ({ ...p, videos: [...p.videos, { name: '', description: '', thumbnailUrl: '', contentUrl: '' }] })), []);
+  const updateVideo = useCallback((i, field, val) => setRichSnippets((p) => ({ ...p, videos: p.videos.map((v, j) => j === i ? { ...v, [field]: val } : v) })), []);
+  const removeVideo = useCallback((i) => setRichSnippets((p) => ({ ...p, videos: p.videos.filter((_, j) => j !== i) })), []);
+
+  // ── Validation ────────────────────────────────────────────────────────────
   const validateDraft = () => {
-    if (!formData.name.trim()) {
-      toast.error('Product name is required even for a draft'); setActiveTab('basic'); return false;
-    }
-    if (!formData.category) {
-      toast.error('Category is required even for a draft'); setActiveTab('basic'); return false;
-    }
-    if (!formData.pricing.regular) {
-      toast.error('Regular price is required even for a draft'); setActiveTab('pricing'); return false;
-    }
+    if (!formData.name.trim())     { toast.error('Product name is required even for a draft'); setActiveTab('basic');   return false; }
+    if (!formData.category)        { toast.error('Category is required even for a draft');     setActiveTab('basic');   return false; }
+    if (!formData.pricing.regular) { toast.error('Regular price is required even for a draft'); setActiveTab('pricing'); return false; }
     return true;
   };
 
   const validatePublish = () => {
-    if (!formData.name.trim())        { toast.error('Product name is required');        setActiveTab('basic');     return false; }
-    if (!formData.category)           { toast.error('Category is required');            setActiveTab('basic');     return false; }
-    if (!formData.description.trim()) { toast.error('Product description is required'); setActiveTab('basic');     return false; }
-
-    if (!formData.pricing.regular) { toast.error('Regular price is required'); setActiveTab('pricing'); return false; }
+    if (!formData.name.trim())        { toast.error('Product name is required');        setActiveTab('basic');   return false; }
+    if (!formData.category)           { toast.error('Category is required');            setActiveTab('basic');   return false; }
+    if (!formData.description.trim()) { toast.error('Product description is required'); setActiveTab('basic');   return false; }
+    if (!formData.pricing.regular)    { toast.error('Regular price is required');       setActiveTab('pricing'); return false; }
     if (formData.pricing.sale !== '' && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
       toast.error('Sale price must be less than regular price'); setActiveTab('pricing'); return false;
     }
-    if (formData.pricing.validFrom && formData.pricing.validThrough) {
-      if (new Date(formData.pricing.validFrom) > new Date(formData.pricing.validThrough)) {
-        toast.error('Price valid-from must be before valid-through'); setActiveTab('pricing'); return false;
-      }
+    if (formData.pricing.validFrom && formData.pricing.validThrough &&
+        new Date(formData.pricing.validFrom) > new Date(formData.pricing.validThrough)) {
+      toast.error('Price valid-from must be before valid-through'); setActiveTab('pricing'); return false;
     }
-
     if (images.length === 0) { toast.error('At least one product image is required'); setActiveTab('media'); return false; }
-
-    if (formData.seo.metaTitle && formData.seo.metaTitle.length > 60) {
-      toast.error('SEO Meta Title must not exceed 60 characters'); setActiveTab('seo'); return false;
-    }
-    if (formData.seo.metaDescription && formData.seo.metaDescription.length > 160) {
-      toast.error('SEO Meta Description must not exceed 160 characters'); setActiveTab('seo'); return false;
-    }
-    if (formData.seo.metaDescription && formData.seo.metaDescription.length < 120 && formData.seo.metaDescription.length > 0) {
-      toast.warn('SEO Meta Description is below recommended 120 characters');
-    }
-
     return true;
   };
 
-  // ── Submit ────────────────────────────────────────────────────────────────────
-  const handleSubmit = (e, publishStatus) => {
+  // ── Submit ────────────────────────────────────────────────────────────────
+  const handleSubmit = useCallback((e, publishStatus) => {
     e.preventDefault();
-
     const isValid = publishStatus === 'draft' ? validateDraft() : validatePublish();
     if (!isValid) return;
 
-    const myForm = new FormData();
+    const fd = new FormData();
+    fd.append('name',             formData.name.trim());
+    fd.append('description',      formData.description.trim());
+    fd.append('shortDescription', formData.shortDescription.trim());
+    fd.append('category',         formData.category);
+    fd.append('brand',            formData.brand.trim());
+    fd.append('manufacturer',     formData.manufacturer.trim());
+    fd.append('status',           publishStatus || 'published');
 
-    myForm.append('name',             formData.name.trim());
-    myForm.append('description',      formData.description.trim());
-    myForm.append('shortDescription', formData.shortDescription.trim());
-    myForm.append('category',         formData.category);
-    myForm.append('brand',            formData.brand.trim());
-    myForm.append('manufacturer',     formData.manufacturer.trim());
+    // Stringify booleans — raw FormData.append(key, false) sends the string
+    // "false" which evaluates as truthy in a backend `if (val)` check.
+    fd.append('isFeatured',   JSON.stringify(formData.isFeatured));
+    fd.append('isNewArrival', JSON.stringify(formData.isNewArrival));
+    fd.append('isBestseller', JSON.stringify(formData.isBestseller));
 
     const pricingData = { regular: Number(formData.pricing.regular), currency: formData.pricing.currency };
-    if (formData.pricing.cost !== '')       pricingData.cost = Number(formData.pricing.cost);
-    if (formData.pricing.sale !== '')       pricingData.sale = Number(formData.pricing.sale);
-    if (formData.pricing.validFrom)         pricingData.validFrom = formData.pricing.validFrom;
-    if (formData.pricing.validThrough)      pricingData.validThrough = formData.pricing.validThrough;
-    myForm.append('pricing', JSON.stringify(pricingData));
+    if (formData.pricing.sale !== '')  pricingData.sale = Number(formData.pricing.sale);
+    if (formData.pricing.cost !== '')  pricingData.cost = Number(formData.pricing.cost);
+    if (formData.pricing.validFrom)    pricingData.validFrom = formData.pricing.validFrom;
+    if (formData.pricing.validThrough) pricingData.validThrough = formData.pricing.validThrough;
+    fd.append('pricing', JSON.stringify(pricingData));
 
-    const inventoryData = {
-      stock: Number(formData.inventory.stock) || 0,
-      trackInventory: formData.inventory.trackInventory,
-      lowStockThreshold: Number(formData.inventory.lowStockThreshold)
-    };
-    if (formData.inventory.sku.trim())     inventoryData.sku = formData.inventory.sku.trim();
+    const inventoryData = { stock: Number(formData.inventory.stock) || 0, trackInventory: formData.inventory.trackInventory, lowStockThreshold: Number(formData.inventory.lowStockThreshold) };
+    if (formData.inventory.sku.trim())     inventoryData.sku     = formData.inventory.sku.trim();
     if (formData.inventory.barcode.trim()) inventoryData.barcode = formData.inventory.barcode.trim();
-    if (formData.inventory.gtin.trim())    inventoryData.gtin = formData.inventory.gtin.trim();
-    if (formData.inventory.mpn.trim())     inventoryData.mpn = formData.inventory.mpn.trim();
-    myForm.append('inventory', JSON.stringify(inventoryData));
+    if (formData.inventory.gtin.trim())    inventoryData.gtin    = formData.inventory.gtin.trim();
+    if (formData.inventory.mpn.trim())     inventoryData.mpn     = formData.inventory.mpn.trim();
+    fd.append('inventory', JSON.stringify(inventoryData));
 
-    myForm.append('subcategories', JSON.stringify(subcategories));
-    myForm.append('tags',          JSON.stringify(tags));
+    fd.append('subcategories',  JSON.stringify(subcategories));
+    fd.append('tags',           JSON.stringify(tags));
 
-    const validSpecs    = specifications.filter(s => s.key && s.value);
-    const validVariants = variants.filter(v => v.name && v.options.length > 0);
-    if (validSpecs.length)    myForm.append('specifications', JSON.stringify(validSpecs));
-    if (validVariants.length) myForm.append('variants',       JSON.stringify(validVariants));
+    const validSpecs    = specifications.filter((s) => s.key && s.value);
+    const validVariants = variants.filter((v) => v.name && v.options.length > 0);
+    if (validSpecs.length)    fd.append('specifications', JSON.stringify(validSpecs));
+    if (validVariants.length) fd.append('variants',       JSON.stringify(validVariants));
 
-    myForm.append('dimensions', JSON.stringify({
-      length: Number(formData.dimensions.length) || 0,
-      width:  Number(formData.dimensions.width)  || 0,
-      height: Number(formData.dimensions.height) || 0,
-      unit:   formData.dimensions.unit
-    }));
-    myForm.append('weight', JSON.stringify({
-      value: Number(formData.weight.value) || 0,
-      unit:  formData.weight.unit
-    }));
+    fd.append('dimensions', JSON.stringify({ length: Number(formData.dimensions.length) || 0, width: Number(formData.dimensions.width) || 0, height: Number(formData.dimensions.height) || 0, unit: formData.dimensions.unit }));
+    fd.append('weight',     JSON.stringify({ value: Number(formData.weight.value) || 0, unit: formData.weight.unit }));
 
-    const seoData = {
+    fd.append('seo', JSON.stringify({
       metaTitle:          formData.seo.metaTitle.trim(),
       metaDescription:    formData.seo.metaDescription.trim(),
       keywords:           seoKeywords,
@@ -311,68 +274,25 @@ function CreateProduct() {
       schemaType:         formData.seo.schemaType    || 'Product',
       condition:          formData.seo.condition     || 'NewCondition',
       focusKeyphrase:     formData.seo.focusKeyphrase.trim(),
-      relatedSearchTerms
-    };
-    myForm.append('seo', JSON.stringify(seoData));
-
-    if (breadcrumbs.length > 0) myForm.append('breadcrumbs', JSON.stringify(breadcrumbs));
-
-    myForm.append('richSnippets', JSON.stringify({
-      faqs:   richSnippets.faqs.filter(f => f.question && f.answer),
-      howTo:  richSnippets.howTo,
-      videos: richSnippets.videos.filter(v => v.name && v.contentUrl)
+      relatedSearchTerms,
     }));
 
-    myForm.append('isFeatured',   formData.isFeatured);
-    myForm.append('isNewArrival', formData.isNewArrival);
-    myForm.append('isBestseller', formData.isBestseller);
-    myForm.append('status',       publishStatus || 'published');
+    if (breadcrumbs.length > 0) fd.append('breadcrumbs', JSON.stringify(breadcrumbs));
 
-    const imageMetadata = imagePreviews.map(img => ({ alt: img.alt || '', caption: img.caption || '' }));
-    myForm.append('imageMetadata', JSON.stringify(imageMetadata));
+    fd.append('richSnippets', JSON.stringify({
+      faqs:   richSnippets.faqs.filter((f) => f.question && f.answer),
+      howTo:  richSnippets.howTo,
+      videos: richSnippets.videos.filter((v) => v.name && v.contentUrl),
+    }));
 
-    images.forEach(img => myForm.append('images', img));
+    fd.append('imageMetadata', JSON.stringify(imagePreviews.map((img) => ({ alt: img.alt || '', caption: img.caption || '' }))));
+    images.forEach((img) => fd.append('images', img));
 
-    dispatch(createProduct(myForm));
-  };
+    dispatch(createProduct(fd));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formData, images, imagePreviews, subcategories, tags, specifications, variants, seoKeywords, relatedSearchTerms, breadcrumbs, richSnippets, dispatch]);
 
-  // ── Effects ───────────────────────────────────────────────────────────────────
-  // FIX: watch `productCreated` instead of the shared `success` flag.
-  // Previously, `success` was set by 15+ different thunks across the admin
-  // slice (deleteProduct, updateOrder, addOrderMessage, cancelOrder, etc.).
-  // If the admin had performed any of those actions before visiting this page,
-  // `success` would already be `true` in the Redux store. The moment this
-  // component mounted and the useEffect ran, it would fire — showing the
-  // "Product created successfully!" toast and resetting all inputs to empty,
-  // even though no product had been submitted yet.
-  //
-  // Now `productCreated` is only set to `true` by `createProduct.fulfilled`,
-  // so the toast and resetForm() only trigger when this specific action succeeds.
-  useEffect(() => {
-    // Bug 4 fix: `error` is stored as a string in the slice (not an object),
-    // so `error.message` is always undefined. Simplified to just `error`.
-    if (error)          { toast.error(error, { position: 'top-center', autoClose: 3000 }); dispatch(removeErrors()); }
-    if (productCreated) { toast.success('Product created successfully!', { position: 'top-center', autoClose: 3000 }); dispatch(removeProductCreated()); resetForm(); }
-
-    // Bug 3 fix: clear productCreated on unmount so navigating away and back
-    // doesn't leave a stale `true` value in Redux that re-triggers the toast
-    // and form reset the moment the component mounts again.
-    return () => { dispatch(removeProductCreated()); };
-  }, [dispatch, error, productCreated, resetForm]);
-
-  // ── Tab config ────────────────────────────────────────────────────────────────
-  const tabs = [
-    { id: 'basic',     label: 'Basic Info',    icon: <FiPackage /> },
-    { id: 'pricing',   label: 'Pricing',       icon: <FiDollarSign /> },
-    { id: 'inventory', label: 'Inventory',     icon: <FiPackage /> },
-    { id: 'media',     label: 'Media',         icon: <FiImage /> },
-    { id: 'variants',  label: 'Variants',      icon: <FiSettings /> },
-    { id: 'seo',       label: 'SEO',           icon: <FiTrendingUp /> },
-    { id: 'advanced',  label: 'Advanced SEO',  icon: <FiTag /> },
-    { id: 'settings',  label: 'Settings',      icon: <FiFlag /> }
-  ];
-
-  // ── Render ────────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle title="Create Product" />
@@ -393,7 +313,7 @@ function CreateProduct() {
 
         <div className="ecp-content">
           <div className="ecp-tabs">
-            {tabs.map(tab => (
+            {TABS.map((tab) => (
               <button key={tab.id} type="button"
                 className={`ecp-tab ${activeTab === tab.id ? 'active' : ''}`}
                 onClick={() => setActiveTab(tab.id)}>
@@ -404,7 +324,7 @@ function CreateProduct() {
 
           <div className="ecp-form">
 
-            {/* ══ BASIC INFO ══════════════════════════════════════════════════ */}
+            {/* ══ BASIC INFO ══════════════════════════════════════════════ */}
             {activeTab === 'basic' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -422,7 +342,7 @@ function CreateProduct() {
                       <label className="ecp-label ecp-label--required">Category</label>
                       <select className="ecp-select" name="category" value={formData.category} onChange={handleInputChange}>
                         <option value="">Select Category</option>
-                        {CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                        {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
                     <div className="ecp-form-group">
@@ -454,45 +374,32 @@ function CreateProduct() {
                     <span className="ecp-char-count">{formData.description.length}/5000</span>
                   </div>
 
-                  {/* Subcategories */}
                   <div className="ecp-form-group">
                     <label className="ecp-label">Subcategories</label>
                     <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add subcategory"
-                        value={newSubcategory} onChange={e => setNewSubcategory(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addItem(newSubcategory, setSubcategories, setNewSubcategory))} />
-                      <button type="button" className="ecp-btn-icon"
-                        onClick={() => addItem(newSubcategory, setSubcategories, setNewSubcategory)}><FiPlus /></button>
+                      <input type="text" className="ecp-input" placeholder="Add subcategory" value={newSubcategory}
+                        onChange={(e) => setNewSubcategory(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newSubcategory, setSubcategories, setNewSubcategory); } }} />
+                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newSubcategory, setSubcategories, setNewSubcategory)}><FiPlus /></button>
                     </div>
                     <div className="ecp-tags">
-                      {subcategories.map((s, i) => (
-                        <span key={i} className="ecp-tag">{s}
-                          <button type="button" onClick={() => removeItem(i, setSubcategories)}><FiX /></button>
-                        </span>
-                      ))}
+                      {subcategories.map((s, i) => <span key={i} className="ecp-tag">{s}<button type="button" onClick={() => removeItem(i, setSubcategories)}><FiX /></button></span>)}
                     </div>
                   </div>
 
-                  {/* Tags */}
                   <div className="ecp-form-group">
                     <label className="ecp-label">Tags</label>
                     <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add tag"
-                        value={newTag} onChange={e => setNewTag(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addItem(newTag, setTags, setNewTag, v => v.toLowerCase()))} />
-                      <button type="button" className="ecp-btn-icon"
-                        onClick={() => addItem(newTag, setTags, setNewTag, v => v.toLowerCase())}><FiPlus /></button>
+                      <input type="text" className="ecp-input" placeholder="Add tag" value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newTag, setTags, setNewTag, (v) => v.toLowerCase()); } }} />
+                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newTag, setTags, setNewTag, (v) => v.toLowerCase())}><FiPlus /></button>
                     </div>
                     <div className="ecp-tags">
-                      {tags.map((t, i) => (
-                        <span key={i} className="ecp-tag">{t}
-                          <button type="button" onClick={() => removeItem(i, setTags)}><FiX /></button>
-                        </span>
-                      ))}
+                      {tags.map((t, i) => <span key={i} className="ecp-tag">{t}<button type="button" onClick={() => removeItem(i, setTags)}><FiX /></button></span>)}
                     </div>
                   </div>
 
-                  {/* Specifications */}
                   <div className="ecp-form-group">
                     <div className="ecp-label-with-btn">
                       <label className="ecp-label">Specifications</label>
@@ -500,10 +407,8 @@ function CreateProduct() {
                     </div>
                     {specifications.map((spec, i) => (
                       <div key={i} className="ecp-spec-row">
-                        <input type="text" className="ecp-input" placeholder="Key (e.g., Material)"
-                          value={spec.key} onChange={e => updateSpec(i, 'key', e.target.value)} />
-                        <input type="text" className="ecp-input" placeholder="Value (e.g., Cotton)"
-                          value={spec.value} onChange={e => updateSpec(i, 'value', e.target.value)} />
+                        <input type="text" className="ecp-input" placeholder="Key" value={spec.key} onChange={(e) => updateSpec(i, 'key', e.target.value)} />
+                        <input type="text" className="ecp-input" placeholder="Value" value={spec.value} onChange={(e) => updateSpec(i, 'value', e.target.value)} />
                         <button type="button" className="ecp-btn-icon-danger" onClick={() => removeSpec(i)}><FiTrash2 /></button>
                       </div>
                     ))}
@@ -512,7 +417,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ PRICING ═════════════════════════════════════════════════════ */}
+            {/* ══ PRICING ═════════════════════════════════════════════════ */}
             {activeTab === 'pricing' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -538,7 +443,7 @@ function CreateProduct() {
                   </div>
 
                   {formData.pricing.regular !== '' && formData.pricing.sale !== '' &&
-                    Number(formData.pricing.sale) < Number(formData.pricing.regular) && (
+                   Number(formData.pricing.sale) < Number(formData.pricing.regular) && (
                     <div className="ecp-discount-preview">
                       <FiCheck className="ecp-discount-icon" />
                       <span>Discount: {Math.round(((Number(formData.pricing.regular) - Number(formData.pricing.sale)) / Number(formData.pricing.regular)) * 100)}% off</span>
@@ -558,7 +463,7 @@ function CreateProduct() {
                     <div className="ecp-form-group">
                       <label className="ecp-label">Currency</label>
                       <select className="ecp-select" name="pricing.currency" value={formData.pricing.currency} onChange={handleInputChange}>
-                        {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
                     </div>
                   </div>
@@ -566,13 +471,11 @@ function CreateProduct() {
                   <div className="ecp-form-row">
                     <div className="ecp-form-group">
                       <label className="ecp-label">Price Valid From</label>
-                      <input type="date" className="ecp-input" name="pricing.validFrom"
-                        value={formData.pricing.validFrom} onChange={handleInputChange} />
+                      <input type="date" className="ecp-input" name="pricing.validFrom" value={formData.pricing.validFrom} onChange={handleInputChange} />
                     </div>
                     <div className="ecp-form-group">
                       <label className="ecp-label">Price Valid Through</label>
-                      <input type="date" className="ecp-input" name="pricing.validThrough"
-                        value={formData.pricing.validThrough} onChange={handleInputChange} />
+                      <input type="date" className="ecp-input" name="pricing.validThrough" value={formData.pricing.validThrough} onChange={handleInputChange} />
                     </div>
                   </div>
 
@@ -585,7 +488,7 @@ function CreateProduct() {
                         <input type="number" className="ecp-input" placeholder="0 (optional)"
                           name="weight.value" value={formData.weight.value} onChange={handleInputChange} min="0" step="0.01" />
                         <select className="ecp-select-addon" name="weight.unit" value={formData.weight.unit} onChange={handleInputChange}>
-                          {WEIGHT_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                          {WEIGHT_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                         </select>
                       </div>
                     </div>
@@ -594,14 +497,14 @@ function CreateProduct() {
                   <div className="ecp-form-group">
                     <label className="ecp-label">Dimensions (L × W × H)</label>
                     <div className="ecp-dimensions-grid">
-                      {['length', 'width', 'height'].map(dim => (
+                      {['length', 'width', 'height'].map((dim) => (
                         <input key={dim} type="number" className="ecp-input"
                           placeholder={dim.charAt(0).toUpperCase() + dim.slice(1)}
                           name={`dimensions.${dim}`} value={formData.dimensions[dim]}
                           onChange={handleInputChange} min="0" step="0.01" />
                       ))}
                       <select className="ecp-select" name="dimensions.unit" value={formData.dimensions.unit} onChange={handleInputChange}>
-                        {DIM_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                        {DIM_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
                       </select>
                     </div>
                   </div>
@@ -609,7 +512,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ INVENTORY ═══════════════════════════════════════════════════ */}
+            {/* ══ INVENTORY ═══════════════════════════════════════════════ */}
             {activeTab === 'inventory' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -624,8 +527,7 @@ function CreateProduct() {
                     <div className="ecp-form-group">
                       <label className="ecp-label">Low Stock Threshold</label>
                       <input type="number" className="ecp-input" placeholder="5"
-                        name="inventory.lowStockThreshold" value={formData.inventory.lowStockThreshold}
-                        onChange={handleInputChange} min="0" />
+                        name="inventory.lowStockThreshold" value={formData.inventory.lowStockThreshold} onChange={handleInputChange} min="0" />
                     </div>
                   </div>
 
@@ -666,7 +568,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ MEDIA ═══════════════════════════════════════════════════════ */}
+            {/* ══ MEDIA ═══════════════════════════════════════════════════ */}
             {activeTab === 'media' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -674,8 +576,7 @@ function CreateProduct() {
 
                   <div className="ecp-upload-area">
                     <input type="file" id="product-images" className="ecp-file-input"
-                      accept="image/jpeg,image/png,image/webp,image/gif"
-                      multiple onChange={handleImageUpload} />
+                      accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={handleImageUpload} />
                     <label htmlFor="product-images" className="ecp-upload-label">
                       <FiImage className="ecp-upload-icon" />
                       <span className="ecp-upload-text">Click or drag images here</span>
@@ -689,30 +590,22 @@ function CreateProduct() {
                         <FiAlertCircle style={{ marginRight: '0.5rem' }} />
                         <span>First image is the primary. Click <FiEye style={{ verticalAlign: 'middle' }} /> on any image to make it primary.</span>
                       </div>
-
                       <div className="ecp-image-grid">
                         {imagePreviews.map((img, i) => (
                           <div key={i} className="ecp-image-card">
                             <img src={img.url} alt={img.alt || `Product ${i + 1}`} />
                             <div className="ecp-image-overlay">
-                              <button type="button" className="ecp-image-btn"
-                                onClick={() => setPrimaryImage(i)} title="Set as primary">
+                              <button type="button" className="ecp-image-btn" onClick={() => setPrimaryImage(i)} title="Set as primary">
                                 {i === 0 ? <FiCheck /> : <FiEye />}
                               </button>
-                              <button type="button" className="ecp-image-btn ecp-image-btn-danger"
-                                onClick={() => removeImage(i)} title="Remove">
-                                <FiTrash2 />
-                              </button>
+                              <button type="button" className="ecp-image-btn ecp-image-btn-danger" onClick={() => removeImage(i)}><FiTrash2 /></button>
                             </div>
                             {i === 0 && <span className="ecp-primary-badge">Primary</span>}
-
                             <div className="ecp-image-meta">
-                              <input type="text" className="ecp-input ecp-image-meta-input"
-                                placeholder="Alt text (SEO)" maxLength={125}
-                                value={img.alt} onChange={e => updateImageMeta(i, 'alt', e.target.value)} />
-                              <input type="text" className="ecp-input ecp-image-meta-input"
-                                placeholder="Caption (optional)" maxLength={200}
-                                value={img.caption} onChange={e => updateImageMeta(i, 'caption', e.target.value)} />
+                              <input type="text" className="ecp-input ecp-image-meta-input" placeholder="Alt text (SEO)" maxLength={125}
+                                value={img.alt} onChange={(e) => updateImageMeta(i, 'alt', e.target.value)} />
+                              <input type="text" className="ecp-input ecp-image-meta-input" placeholder="Caption (optional)" maxLength={200}
+                                value={img.caption} onChange={(e) => updateImageMeta(i, 'caption', e.target.value)} />
                               <small className="ecp-image-size">{img.size}</small>
                             </div>
                           </div>
@@ -724,7 +617,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ VARIANTS ════════════════════════════════════════════════════ */}
+            {/* ══ VARIANTS ════════════════════════════════════════════════ */}
             {activeTab === 'variants' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -732,35 +625,26 @@ function CreateProduct() {
                     <h3 className="ecp-section-title">Product Variants</h3>
                     <button type="button" className="ecp-btn-small" onClick={addVariant}><FiPlus /> Add Variant</button>
                   </div>
-
                   {variants.length === 0 && (
-                    <div className="ecp-info-box">
-                      <FiAlertCircle style={{ marginRight: '0.5rem' }} />
-                      <span>Add variants if your product comes in different sizes, colors, or styles</span>
-                    </div>
+                    <div className="ecp-info-box"><FiAlertCircle style={{ marginRight: '0.5rem' }} /><span>Add variants if your product comes in different sizes, colors, or styles</span></div>
                   )}
-
                   {variants.map((variant, vi) => (
                     <div key={vi} className="ecp-variant-card">
                       <div className="ecp-variant-header">
                         <input type="text" className="ecp-input" placeholder="Variant name (e.g., Size, Color)"
-                          value={variant.name} onChange={e => updateVariantName(vi, e.target.value)} />
+                          value={variant.name} onChange={(e) => updateVariantName(vi, e.target.value)} />
                         <button type="button" className="ecp-btn-icon-danger" onClick={() => removeVariant(vi)}><FiTrash2 /></button>
                       </div>
                       <div className="ecp-variant-options">
                         {variant.options.map((opt, oi) => (
                           <div key={oi} className="ecp-variant-option-row">
-                            <input type="text" className="ecp-input" placeholder="Value"
-                              value={opt.value} onChange={e => updateVariantOption(vi, oi, 'value', e.target.value)} />
-                            <input type="number" className="ecp-input" placeholder="Price +"
-                              value={opt.priceModifier} onChange={e => updateVariantOption(vi, oi, 'priceModifier', Number(e.target.value))} step="0.01" />
-                            <input type="number" className="ecp-input" placeholder="Stock"
-                              value={opt.stock} onChange={e => updateVariantOption(vi, oi, 'stock', Number(e.target.value))} min="0" />
+                            <input type="text"   className="ecp-input" placeholder="Value"   value={opt.value}         onChange={(e) => updateVariantOption(vi, oi, 'value', e.target.value)} />
+                            <input type="number" className="ecp-input" placeholder="Price +" value={opt.priceModifier} onChange={(e) => updateVariantOption(vi, oi, 'priceModifier', Number(e.target.value))} step="0.01" />
+                            <input type="number" className="ecp-input" placeholder="Stock"   value={opt.stock}         onChange={(e) => updateVariantOption(vi, oi, 'stock', Number(e.target.value))} min="0" />
                             <button type="button" className="ecp-btn-icon-danger" onClick={() => removeVariantOption(vi, oi)}><FiX /></button>
                           </div>
                         ))}
-                        <button type="button" className="ecp-btn-secondary ecp-btn-full"
-                          onClick={() => addVariantOption(vi)}><FiPlus /> Add Option</button>
+                        <button type="button" className="ecp-btn-secondary ecp-btn-full" onClick={() => addVariantOption(vi)}><FiPlus /> Add Option</button>
                       </div>
                     </div>
                   ))}
@@ -768,7 +652,7 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ SEO ═════════════════════════════════════════════════════════ */}
+            {/* ══ SEO ═════════════════════════════════════════════════════ */}
             {activeTab === 'seo' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -789,28 +673,22 @@ function CreateProduct() {
                   <div className="ecp-form-group">
                     <label className="ecp-label">Meta Description <span className="ecp-recommended">(recommended 120–160)</span></label>
                     <textarea className="ecp-textarea" placeholder="Enter SEO meta description"
-                      name="seo.metaDescription" value={formData.seo.metaDescription} onChange={handleInputChange}
-                      rows={3} maxLength={160} />
+                      name="seo.metaDescription" value={formData.seo.metaDescription} onChange={handleInputChange} rows={3} maxLength={160} />
                     <span className={`ecp-char-count ${formData.seo.metaDescription.length > 0 && formData.seo.metaDescription.length < 120 ? 'ecp-char-count--warn' : ''}`}>
-                      {formData.seo.metaDescription.length}/160 {formData.seo.metaDescription.length > 0 && formData.seo.metaDescription.length < 120 ? '(min 120 recommended)' : ''}
+                      {formData.seo.metaDescription.length}/160
                     </span>
                   </div>
 
                   <div className="ecp-form-group">
                     <label className="ecp-label">SEO Keywords</label>
                     <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add keyword"
-                        value={newKeyword} onChange={e => setNewKeyword(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addItem(newKeyword, setSeoKeywords, setNewKeyword))} />
-                      <button type="button" className="ecp-btn-icon"
-                        onClick={() => addItem(newKeyword, setSeoKeywords, setNewKeyword)}><FiPlus /></button>
+                      <input type="text" className="ecp-input" placeholder="Add keyword" value={newKeyword}
+                        onChange={(e) => setNewKeyword(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newKeyword, setSeoKeywords, setNewKeyword); } }} />
+                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newKeyword, setSeoKeywords, setNewKeyword)}><FiPlus /></button>
                     </div>
                     <div className="ecp-tags">
-                      {seoKeywords.map((k, i) => (
-                        <span key={i} className="ecp-tag">{k}
-                          <button type="button" onClick={() => removeItem(i, setSeoKeywords)}><FiX /></button>
-                        </span>
-                      ))}
+                      {seoKeywords.map((k, i) => <span key={i} className="ecp-tag">{k}<button type="button" onClick={() => removeItem(i, setSeoKeywords)}><FiX /></button></span>)}
                     </div>
                   </div>
 
@@ -827,25 +705,17 @@ function CreateProduct() {
                       name="seo.canonicalUrl" value={formData.seo.canonicalUrl} onChange={handleInputChange} />
                   </div>
 
-                  {/* Breadcrumbs */}
                   <div className="ecp-form-group" style={{ marginTop: '2rem' }}>
                     <div className="ecp-label-with-btn">
                       <label className="ecp-label">Breadcrumbs</label>
-                      <button type="button" className="ecp-btn-small" onClick={addBreadcrumb}
-                        disabled={!newBreadcrumb.name || !newBreadcrumb.url}><FiPlus /> Add</button>
+                      <button type="button" className="ecp-btn-small" onClick={addBreadcrumb} disabled={!newBreadcrumb.name || !newBreadcrumb.url}><FiPlus /> Add</button>
                     </div>
                     <div className="ecp-spec-row">
-                      <input type="text" className="ecp-input" placeholder="Name (e.g., Home)"
-                        value={newBreadcrumb.name} onChange={e => setNewBreadcrumb(p => ({ ...p, name: e.target.value }))} />
-                      <input type="text" className="ecp-input" placeholder="URL (e.g., /)"
-                        value={newBreadcrumb.url} onChange={e => setNewBreadcrumb(p => ({ ...p, url: e.target.value }))} />
+                      <input type="text" className="ecp-input" placeholder="Name (e.g., Home)" value={newBreadcrumb.name} onChange={(e) => setNewBreadcrumb((p) => ({ ...p, name: e.target.value }))} />
+                      <input type="text" className="ecp-input" placeholder="URL (e.g., /)" value={newBreadcrumb.url} onChange={(e) => setNewBreadcrumb((p) => ({ ...p, url: e.target.value }))} />
                     </div>
                     <div className="ecp-tags">
-                      {breadcrumbs.map((b, i) => (
-                        <span key={i} className="ecp-tag">{b.position}. {b.name}
-                          <button type="button" onClick={() => removeBreadcrumb(i)}><FiX /></button>
-                        </span>
-                      ))}
+                      {breadcrumbs.map((b, i) => <span key={i} className="ecp-tag">{b.position}. {b.name}<button type="button" onClick={() => removeBreadcrumb(i)}><FiX /></button></span>)}
                     </div>
                   </div>
 
@@ -853,82 +723,66 @@ function CreateProduct() {
                     <div className="ecp-form-group">
                       <label className="ecp-label">Schema Type</label>
                       <select className="ecp-select" name="seo.schemaType" value={formData.seo.schemaType} onChange={handleInputChange}>
-                        {SCHEMA_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                       </select>
                     </div>
                     <div className="ecp-form-group">
                       <label className="ecp-label">Condition</label>
                       <select className="ecp-select" name="seo.condition" value={formData.seo.condition} onChange={handleInputChange}>
-                        {CONDITIONS.map(c => <option key={c} value={c}>{c.replace('Condition', '')}</option>)}
+                        {CONDITIONS.map((c) => <option key={c} value={c}>{c.replace('Condition', '')}</option>)}
                       </select>
                     </div>
                   </div>
 
                   <div className="ecp-checkbox-grid">
-                    <label className="ecp-checkbox">
-                      <input type="checkbox" name="seo.noIndex" checked={formData.seo.noIndex} onChange={handleInputChange} />
-                      <span>No Index (hide from search engines)</span>
-                    </label>
-                    <label className="ecp-checkbox">
-                      <input type="checkbox" name="seo.noFollow" checked={formData.seo.noFollow} onChange={handleInputChange} />
-                      <span>No Follow</span>
-                    </label>
+                    <label className="ecp-checkbox"><input type="checkbox" name="seo.noIndex"  checked={formData.seo.noIndex}  onChange={handleInputChange} /><span>No Index (hide from search engines)</span></label>
+                    <label className="ecp-checkbox"><input type="checkbox" name="seo.noFollow" checked={formData.seo.noFollow} onChange={handleInputChange} /><span>No Follow</span></label>
                   </div>
 
-                  {/* Related Search Terms */}
                   <div className="ecp-form-group" style={{ marginTop: '2rem' }}>
                     <label className="ecp-label">Related Search Terms</label>
                     <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add related search term"
-                        value={newRelatedTerm} onChange={e => setNewRelatedTerm(e.target.value)}
-                        onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), addItem(newRelatedTerm, setRelatedSearchTerms, setNewRelatedTerm, v => v.toLowerCase()))} />
-                      <button type="button" className="ecp-btn-icon"
-                        onClick={() => addItem(newRelatedTerm, setRelatedSearchTerms, setNewRelatedTerm, v => v.toLowerCase())}><FiPlus /></button>
+                      <input type="text" className="ecp-input" placeholder="Add related search term" value={newRelatedTerm}
+                        onChange={(e) => setNewRelatedTerm(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newRelatedTerm, setRelatedSearchTerms, setNewRelatedTerm, (v) => v.toLowerCase()); } }} />
+                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newRelatedTerm, setRelatedSearchTerms, setNewRelatedTerm, (v) => v.toLowerCase())}><FiPlus /></button>
                     </div>
                     <div className="ecp-tags">
-                      {relatedSearchTerms.map((t, i) => (
-                        <span key={i} className="ecp-tag">{t}
-                          <button type="button" onClick={() => removeItem(i, setRelatedSearchTerms)}><FiX /></button>
-                        </span>
-                      ))}
+                      {relatedSearchTerms.map((t, i) => <span key={i} className="ecp-tag">{t}<button type="button" onClick={() => removeItem(i, setRelatedSearchTerms)}><FiX /></button></span>)}
                     </div>
                   </div>
 
-                  {/* FAQs */}
-                  <h3 className="ecp-section-title" style={{ marginTop: '2rem' }}>Rich Snippets — FAQs</h3>
-                  <div className="ecp-label-with-btn">
-                    <label className="ecp-label">Frequently Asked Questions</label>
+                  <div className="ecp-label-with-btn" style={{ marginTop: '2rem' }}>
+                    <h3 className="ecp-section-title">FAQs</h3>
                     <button type="button" className="ecp-btn-small" onClick={addFAQ}><FiPlus /> Add FAQ</button>
                   </div>
                   {richSnippets.faqs.map((faq, i) => (
                     <div key={i} className="ecp-faq-card">
                       <div className="ecp-faq-header">
-                        <input type="text" className="ecp-input" placeholder="Question"
-                          value={faq.question} onChange={e => updateFAQ(i, 'question', e.target.value)} maxLength={200} />
+                        <input type="text" className="ecp-input" placeholder="Question" maxLength={200}
+                          value={faq.question} onChange={(e) => updateFAQ(i, 'question', e.target.value)} />
                         <button type="button" className="ecp-btn-icon-danger" onClick={() => removeFAQ(i)}><FiTrash2 /></button>
                       </div>
-                      <textarea className="ecp-textarea" placeholder="Answer"
-                        value={faq.answer} onChange={e => updateFAQ(i, 'answer', e.target.value)} rows={3} maxLength={1000} />
+                      <textarea className="ecp-textarea" placeholder="Answer" rows={3} maxLength={1000}
+                        value={faq.answer} onChange={(e) => updateFAQ(i, 'answer', e.target.value)} />
                     </div>
                   ))}
 
-                  {/* Videos */}
-                  <h3 className="ecp-section-title" style={{ marginTop: '2rem' }}>Rich Snippets — Videos</h3>
-                  <div className="ecp-label-with-btn">
-                    <label className="ecp-label">Product Videos</label>
+                  <div className="ecp-label-with-btn" style={{ marginTop: '2rem' }}>
+                    <h3 className="ecp-section-title">Videos</h3>
                     <button type="button" className="ecp-btn-small" onClick={addVideo}><FiPlus /> Add Video</button>
                   </div>
                   {richSnippets.videos.map((video, i) => (
                     <div key={i} className="ecp-video-card">
                       <div className="ecp-video-header">
                         <input type="text" className="ecp-input" placeholder="Video Name"
-                          value={video.name} onChange={e => updateVideo(i, 'name', e.target.value)} />
+                          value={video.name} onChange={(e) => updateVideo(i, 'name', e.target.value)} />
                         <button type="button" className="ecp-btn-icon-danger" onClick={() => removeVideo(i)}><FiTrash2 /></button>
                       </div>
                       {[['description','Description'],['contentUrl','Content URL'],['thumbnailUrl','Thumbnail URL']].map(([field, ph]) => (
                         <input key={field} type={field.includes('Url') ? 'url' : 'text'} className="ecp-input"
                           placeholder={ph} value={video[field]} style={{ marginTop: '0.5rem' }}
-                          onChange={e => updateVideo(i, field, e.target.value)} />
+                          onChange={(e) => updateVideo(i, field, e.target.value)} />
                       ))}
                     </div>
                   ))}
@@ -936,71 +790,53 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ ADVANCED SEO ════════════════════════════════════════════════ */}
+            {/* ══ ADVANCED SEO ════════════════════════════════════════════ */}
             {activeTab === 'advanced' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
                   <h3 className="ecp-section-title">Open Graph (Facebook / LinkedIn)</h3>
 
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">OG Title <span className="ecp-recommended">(auto-filled from Meta Title if empty)</span></label>
-                    <input type="text" className="ecp-input" placeholder="Title for social sharing"
-                      name="seo.ogTitle" value={formData.seo.ogTitle} onChange={handleInputChange} maxLength={60} />
-                    <span className="ecp-char-count">{formData.seo.ogTitle.length}/60</span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">OG Description <span className="ecp-recommended">(auto-filled from Meta Description if empty)</span></label>
-                    <textarea className="ecp-textarea" placeholder="Description for social sharing"
-                      name="seo.ogDescription" value={formData.seo.ogDescription} onChange={handleInputChange}
-                      rows={3} maxLength={160} />
-                    <span className="ecp-char-count">{formData.seo.ogDescription.length}/160</span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">OG Image URL <span className="ecp-recommended">(auto-filled from product images if empty)</span></label>
-                    <input type="url" className="ecp-input" placeholder="https://example.com/image.jpg"
-                      name="seo.ogImage" value={formData.seo.ogImage} onChange={handleInputChange} />
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">OG Type</label>
-                    <input type="text" className="ecp-input" placeholder="product"
-                      name="seo.ogType" value={formData.seo.ogType} onChange={handleInputChange} />
-                  </div>
+                  {[
+                    ['ogTitle',       'OG Title',       'text',     60],
+                    ['ogDescription', 'OG Description', 'textarea', 160],
+                    ['ogImage',       'OG Image URL',   'url',      null],
+                    ['ogType',        'OG Type',        'text',     null],
+                  ].map(([field, label, type, max]) => (
+                    <div key={field} className="ecp-form-group">
+                      <label className="ecp-label">{label}</label>
+                      {type === 'textarea'
+                        ? <textarea className="ecp-textarea" name={`seo.${field}`} rows={3} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
+                        : <input type={type} className="ecp-input" name={`seo.${field}`} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
+                      }
+                      {max && <span className="ecp-char-count">{(formData.seo[field] ?? '').length}/{max}</span>}
+                    </div>
+                  ))}
 
                   <h3 className="ecp-section-title" style={{ marginTop: '2rem' }}>Twitter / X Card</h3>
-
                   <div className="ecp-form-group">
                     <label className="ecp-label">Card Type</label>
                     <select className="ecp-select" name="seo.twitterCard" value={formData.seo.twitterCard} onChange={handleInputChange}>
-                      {TWITTER_CARDS.map(t => <option key={t} value={t}>{t}</option>)}
+                      {TWITTER_CARDS.map((t) => <option key={t} value={t}>{t}</option>)}
                     </select>
                   </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Twitter Title <span className="ecp-recommended">(auto-filled from OG Title if empty)</span></label>
-                    <input type="text" className="ecp-input" placeholder="Title for Twitter"
-                      name="seo.twitterTitle" value={formData.seo.twitterTitle} onChange={handleInputChange} maxLength={70} />
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Twitter Description <span className="ecp-recommended">(auto-filled from OG Description if empty)</span></label>
-                    <textarea className="ecp-textarea" placeholder="Description for Twitter"
-                      name="seo.twitterDescription" value={formData.seo.twitterDescription} onChange={handleInputChange}
-                      rows={3} maxLength={200} />
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Twitter Image URL</label>
-                    <input type="url" className="ecp-input" placeholder="https://example.com/image.jpg"
-                      name="seo.twitterImage" value={formData.seo.twitterImage} onChange={handleInputChange} />
-                  </div>
+                  {[
+                    ['twitterTitle',       'Twitter Title',       'text',     70],
+                    ['twitterDescription', 'Twitter Description', 'textarea', 200],
+                    ['twitterImage',       'Twitter Image URL',   'url',      null],
+                  ].map(([field, label, type, max]) => (
+                    <div key={field} className="ecp-form-group">
+                      <label className="ecp-label">{label}</label>
+                      {type === 'textarea'
+                        ? <textarea className="ecp-textarea" name={`seo.${field}`} rows={3} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
+                        : <input type={type} className="ecp-input" name={`seo.${field}`} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
+                      }
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* ══ SETTINGS ════════════════════════════════════════════════════ */}
+            {/* ══ SETTINGS ════════════════════════════════════════════════ */}
             {activeTab === 'settings' && (
               <div className="ecp-tab-content">
                 <div className="ecp-section">
@@ -1020,15 +856,15 @@ function CreateProduct() {
               </div>
             )}
 
-            {/* ══ ACTION BUTTONS ══════════════════════════════════════════════ */}
+            {/* ══ ACTION BUTTONS ══════════════════════════════════════════ */}
             <div className="ecp-actions">
               <button type="button" className="ecp-btn ecp-btn-secondary"
-                onClick={e => handleSubmit(e, 'draft')} disabled={loading}>
-                <FiSave /> Save as Draft
+                onClick={(e) => handleSubmit(e, 'draft')} disabled={creating}>
+                <FiSave /> {creating ? 'Saving…' : 'Save as Draft'}
               </button>
               <button type="button" className="ecp-btn ecp-btn-primary"
-                onClick={e => handleSubmit(e, 'published')} disabled={loading}>
-                {loading ? 'Publishing...' : 'Publish Product'}
+                onClick={(e) => handleSubmit(e, 'published')} disabled={creating}>
+                {creating ? 'Publishing…' : 'Publish Product'}
               </button>
             </div>
 
