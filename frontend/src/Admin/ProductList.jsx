@@ -4,403 +4,561 @@ import { useNavigate } from 'react-router-dom';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
-import '../AdminStyles/ProductsList.css';
-import { Link } from 'react-router-dom';
-import { useDispatch, useSelector } from 'react-redux';
-import {
-    fetchAdminProducts, deleteProduct,
-    removeErrors, removeProductDeleted
-} from '../features/admin/adminSlice';
-// FIX: removed useNavigate (never called) and removeSuccess (wrong flag)
-import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 import {
-    FiEdit2, FiTrash2, FiSearch, FiFilter, FiGrid, FiList,
-    FiPackage, FiStar, FiPlus, FiAlertCircle, FiX, FiChevronDown
-} from 'react-icons/fi';
-// FIX: removed FiDollarSign (imported but never used in JSX)
+  fetchAdminProducts,
+  deleteProduct,
+  deleteMultipleProducts,
+  clearDeleteStatus,
+  clearBatchDeleteStatus,
+  selectAdminProducts,
+  selectAdminProductsLoading,
+  selectAdminProductsError,
+  selectDeleteStatus,
+  selectBatchDeleteStatus,
+  selectProductsCount,
+  selectPublishedProducts,
+  selectDraftProducts,
+  selectArchivedProducts,
+  selectLowStockProducts,
+  selectOutOfStockProducts,
+  selectFeaturedProducts,
+  selectOnSaleProducts,
+} from '../features/admin/adminProductSlice';
+import '../AdminStyles/ProductsList.css';
 
-// FIX: CATEGORIES moved outside component. Was re-created as a new array on
-// every render (every keypress, modal open/close, state change).
-const CATEGORIES = [
-    'Electronics', 'Clothing & Apparel', 'Home & Living',
-    'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+const STATUS_LABELS = { published: 'Published', draft: 'Draft', archived: 'Archived' };
+const INV_LABELS    = { InStock: 'In Stock', LowStock: 'Low Stock', OutOfStock: 'Out of Stock', Discontinued: 'Discontinued' };
+const CATEGORIES    = ['All','Electronics','Clothing & Apparel','Home & Living','Sports & Outdoors','Beauty & Personal Care','Books & Media','Food & Beverages'];
+const SORT_OPTIONS  = [
+  { value: 'createdAt_desc',      label: 'Newest First' },
+  { value: 'createdAt_asc',       label: 'Oldest First' },
+  { value: 'name_asc',            label: 'Name A–Z' },
+  { value: 'name_desc',           label: 'Name Z–A' },
+  { value: 'pricing.regular_asc', label: 'Price Low–High' },
+  { value: 'pricing.regular_desc',label: 'Price High–Low' },
+  { value: 'ratings_desc',        label: 'Top Rated' },
+  { value: 'inventory.stock_asc', label: 'Stock Low–High' },
 ];
 
-function ProductList() {
-    // FIX: watch productDeleted instead of the shared success flag.
-    // The shared `success` flag is set by updateProduct.fulfilled, deleteOrder,
-    // addOrderMessage, cancelOrder, and many other thunks. If any of those ran
-    // before this component mounted (e.g. user saved an update on UpdateProduct
-    // and was navigated here), the useEffect below fires immediately with
-    // success=true and shows "Product deleted!" even though nothing was deleted.
-    // productDeleted is set ONLY by deleteProduct.fulfilled.
-    const { products, loading, error, productDeleted } = useSelector(s => s.admin);
-    const dispatch = useDispatch();
+const fmt = (n) => `$${Number(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-    const [viewMode, setViewMode]           = useState('grid');
-    const [searchQuery, setSearchQuery]     = useState('');
-    const [categoryFilter, setCategoryFilter] = useState('');
-    const [statusFilter, setStatusFilter]   = useState('');
-    const [sortBy, setSortBy]               = useState('newest');
-    const [showFilters, setShowFilters]     = useState(false);
+const getNestedValue = (obj, path) =>
+  path.split('.').reduce((acc, k) => acc?.[k], obj);
 
-    const [deleteModalOpen, setDeleteModalOpen]   = useState(false);
-    const [productToDelete, setProductToDelete]   = useState(null);
-    const [deleting, setDeleting]                 = useState(false);
+const sortProducts = (arr, sortKey) => {
+  const [field, dir] = sortKey.split('_');
+  const realField = sortKey.startsWith('pricing') ? 'pricing.regular'
+    : sortKey.startsWith('inventory') ? 'inventory.stock'
+    : field;
+  return [...arr].sort((a, b) => {
+    const av = getNestedValue(a, realField) ?? '';
+    const bv = getNestedValue(b, realField) ?? '';
+    if (typeof av === 'string') return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+    return dir === 'asc' ? av - bv : bv - av;
+  });
+};
 
-    // FIX: isMounted ref prevents setState on an unmounted component.
-    // Scenario: user confirms delete → navigates away → deleteProduct.fulfilled
-    // fires → useEffect tries setDeleteModalOpen(false) → React warning.
-    const isMounted = useRef(true);
-    useEffect(() => {
-        isMounted.current = true;
-        return () => { isMounted.current = false; };
-    }, []);
+const PAGE_SIZE = 20;
 
-    useEffect(() => {
-        dispatch(fetchAdminProducts());
-    }, [dispatch]);
+// ── component ────────────────────────────────────────────────────────────────
 
-    useEffect(() => {
-        // FIX: error is stored as a plain string in the slice.
-        // Using error.message is always undefined on a string; fall back
-        // would work by accident but is semantically wrong.
-        if (error) {
-            toast.error(error, { position: 'top-center', autoClose: 3000 });
-            dispatch(removeErrors());
-            if (isMounted.current) 
-                setDeleting(false);
-        }
-        if (productDeleted) {
-            toast.success('Product deleted successfully!', { position: 'top-center', autoClose: 3000 });
-            dispatch(removeProductDeleted());
-            if (isMounted.current) {
-                setDeleteModalOpen(false);
-                setProductToDelete(null);
-                setDeleting(false);
-            }
-        }
-        // FIX: clear productDeleted on unmount so re-mounting this component
-        // doesn't immediately re-fire the success toast from a prior delete.
-        return () => { dispatch(removeProductDeleted()); };
-    }, [error, productDeleted, dispatch]);
+export default function ProductList() {
+  const dispatch   = useDispatch();
+  const navigate   = useNavigate();
 
-    const openDeleteModal  = p  => { setProductToDelete(p); setDeleteModalOpen(true); setDeleting(false); };
-    const closeDeleteModal = () => { if (deleting) return; setDeleteModalOpen(false); setProductToDelete(null); };
-    const confirmDelete    = () => {
-        if (!productToDelete || deleting) return;
-        setDeleting(true);
-        dispatch(deleteProduct(productToDelete._id));
-    };
+  const products          = useSelector(selectAdminProducts);
+  const loading           = useSelector(selectAdminProductsLoading);
+  const error             = useSelector(selectAdminProductsError);
+  const totalCount        = useSelector(selectProductsCount);
+  const publishedProducts = useSelector(selectPublishedProducts);
+  const draftProducts     = useSelector(selectDraftProducts);
+  const archivedProducts  = useSelector(selectArchivedProducts);
+  const lowStockProducts  = useSelector(selectLowStockProducts);
+  const outOfStockProducts= useSelector(selectOutOfStockProducts);
+  const featuredProducts  = useSelector(selectFeaturedProducts);
+  const onSaleProducts    = useSelector(selectOnSaleProducts);
+  const deleteStatus      = useSelector(selectDeleteStatus);
+  const batchStatus       = useSelector(selectBatchDeleteStatus);
 
-    // FIX: formatPrice now accepts the product's own currency.
-    // Previously hardcoded 'USD', so NGN/EUR/GBP products showed wrong symbol.
-    // try/catch guards against invalid currency codes from dirty data.
-    const formatPrice = (amount, currency = 'USD') => {
-        try {
-            return new Intl.NumberFormat('en-US', {
-                style: 'currency', currency, minimumFractionDigits: 2
-            }).format(amount || 0);
-        } catch {
-            return new Intl.NumberFormat('en-US', {
-                style: 'currency', currency: 'USD', minimumFractionDigits: 2
-            }).format(amount || 0);
-        }
-    };
+  // ── local state ────────────────────────────────────────────────────────────
+  const [search,       setSearch]       = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [invFilter,    setInvFilter]    = useState('all');
+  const [catFilter,    setCatFilter]    = useState('All');
+  const [sortKey,      setSortKey]      = useState('createdAt_desc');
+  const [page,         setPage]         = useState(1);
+  const [selected,     setSelected]     = useState(new Set());
+  const [confirmId,    setConfirmId]    = useState(null);
+  const [confirmBatch, setConfirmBatch] = useState(false);
+  const [toast,        setToast]        = useState(null);
+  const [filtersOpen,  setFiltersOpen]  = useState(false);
 
-    // FIX: memoized. Previously getFilteredProducts() was called inline in the
-    // render body on every render — every modal open/close, every keypress
-    // fired a full filter+sort pass over the entire products array.
-    const filteredProducts = useMemo(() => {
-        if (!products || !products.length) return [];
-        let out = [...products];
-        if (searchQuery) {
-            const q = searchQuery.toLowerCase();
-            out = out.filter(p =>
-                p.name.toLowerCase().includes(q) ||
-                p.description?.toLowerCase().includes(q) ||
-                p.inventory?.sku?.toLowerCase().includes(q) ||
-                p.brand?.toLowerCase().includes(q)
-            );
-        }
-        if (categoryFilter) out = out.filter(p => p.category === categoryFilter);
-        if (statusFilter)   out = out.filter(p => p.status   === statusFilter);
-        switch (sortBy) {
-            case 'newest':    out.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); break;
-            case 'oldest':    out.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)); break;
-            case 'price-low': out.sort((a, b) => (a.pricing?.regular || a.price || 0) - (b.pricing?.regular || b.price || 0)); break;
-            case 'price-high':out.sort((a, b) => (b.pricing?.regular || b.price || 0) - (a.pricing?.regular || a.price || 0)); break;
-            case 'name':      out.sort((a, b) => a.name.localeCompare(b.name)); break;
-            case 'stock-low': out.sort((a, b) => (a.inventory?.stock ?? a.stock ?? 0) - (b.inventory?.stock ?? b.stock ?? 0)); break;
-            case 'rating':    out.sort((a, b) => (b.ratings || 0) - (a.ratings || 0)); break;
-            default: break;
-        }
-        return out;
-    }, [products, searchQuery, categoryFilter, statusFilter, sortBy]);
+  // ── fetch on mount ─────────────────────────────────────────────────────────
+  useEffect(() => { dispatch(fetchAdminProducts()); }, [dispatch]);
 
-    const getStockStatus = p => {
-        const stock     = p.inventory?.stock ?? p.stock ?? 0;
-        const threshold = p.inventory?.lowStockThreshold ?? 5;
-        if (p.inventory?.status === 'Discontinued') return { label: 'Discontinued', cls: 'discontinued' };
-        if (stock === 0)        return { label: 'Out of Stock', cls: 'out-of-stock' };
-        if (stock <= threshold) return { label: 'Low Stock',    cls: 'low-stock' };
-        return                         { label: 'In Stock',     cls: 'in-stock' };
-    };
+  // ── toast helper ───────────────────────────────────────────────────────────
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
 
-    const getCurrency    = p => p.pricing?.currency || 'USD';
-    const getPrice       = p => p.pricing?.sale || p.pricing?.regular || p.price || 0;
-    const getRegular     = p => p.pricing?.regular || p.price || 0;
-    const isOnSale       = p => { const s = p.pricing?.sale; return s && s < (p.pricing?.regular || p.price || 0); };
-    const getImage       = p => { const imgs = p.images || p.image || []; return (imgs.find(i => i.isPrimary) || imgs[0])?.url || '/placeholder-product.png'; };
-    const getStock       = p => p.inventory?.stock ?? p.stock ?? 0;
+  // ── delete single ──────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (deleteStatus.success) {
+      showToast('Product deleted successfully.');
+      dispatch(clearDeleteStatus());
+      setConfirmId(null);
+    }
+    if (deleteStatus.error) {
+      showToast(deleteStatus.error, 'error');
+      dispatch(clearDeleteStatus());
+    }
+  }, [deleteStatus, dispatch, showToast]);
 
-    if (loading && (!products || !products.length)) return <Loader />;
+  // ── batch delete ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (batchStatus.results) {
+      const { successful, failed } = batchStatus.results;
+      showToast(
+        `Deleted ${successful.length} product${successful.length !== 1 ? 's' : ''}${failed.length ? `, ${failed.length} failed` : ''}.`,
+        failed.length ? 'warn' : 'success'
+      );
+      dispatch(clearBatchDeleteStatus());
+      setSelected(new Set());
+      setConfirmBatch(false);
+    }
+    if (batchStatus.error) {
+      showToast(batchStatus.error, 'error');
+      dispatch(clearBatchDeleteStatus());
+    }
+  }, [batchStatus, dispatch, showToast]);
 
-    return (
-        <>
-            <PageTitle title="Admin Products" />
-            <Navbar />
-            <div className="epl-container">
+  // ── filtered + sorted list ─────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    let list = products;
 
-                {/* ── Header ── */}
-                <div className="epl-header">
-                    <div className="epl-header-content">
-                        <h1 className="epl-title">Product Management</h1>
-                        <p className="epl-subtitle">
-                            {filteredProducts.length} {filteredProducts.length === 1 ? 'product' : 'products'} found
-                            {products.length > 0 && filteredProducts.length !== products.length && ` (${products.length} total)`}
-                        </p>
-                    </div>
-                    <div className="epl-header-actions">
-                        <Link to="/admin/products/create" className="epl-btn epl-btn-primary">
-                            <FiPlus /> Add Product
-                        </Link>
-                    </div>
-                </div>
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(p =>
+        p.name?.toLowerCase().includes(q) ||
+        p.brand?.toLowerCase().includes(q) ||
+        p.inventory?.sku?.toLowerCase().includes(q) ||
+        p.category?.toLowerCase().includes(q)
+      );
+    }
+    if (statusFilter !== 'all') list = list.filter(p => p.status === statusFilter);
+    if (invFilter    !== 'all') list = list.filter(p => p.inventory?.status === invFilter);
+    if (catFilter    !== 'All') list = list.filter(p => p.category === catFilter);
 
-                {/* ── Search + Filters Bar ── */}
-                <div className="epl-filters-bar">
-                    <div className="epl-search-box">
-                        <FiSearch className="epl-search-icon" />
-                        <input
-                            type="text"
-                            className="epl-search-input"
-                            placeholder="Search products by name, SKU, brand, or description..."
-                            value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                        />
-                        {searchQuery && (
-                            <button className="epl-search-clear" onClick={() => setSearchQuery('')} aria-label="Clear search">
-                                <FiX />
-                            </button>
-                        )}
-                    </div>
-                    <button className="epl-filter-toggle" onClick={() => setShowFilters(s => !s)}>
-                        <FiFilter /> Filters
-                        <FiChevronDown className={showFilters ? 'rotated' : ''} />
-                    </button>
-                    <div className="epl-view-toggle">
-                        <button className={`epl-view-btn ${viewMode === 'grid'  ? 'active' : ''}`} onClick={() => setViewMode('grid')}  title="Grid View"><FiGrid /></button>
-                        <button className={`epl-view-btn ${viewMode === 'table' ? 'active' : ''}`} onClick={() => setViewMode('table')} title="Table View"><FiList /></button>
-                    </div>
-                </div>
+    return sortProducts(list, sortKey);
+  }, [products, search, statusFilter, invFilter, catFilter, sortKey]);
 
-                {/* ── Advanced Filters ── */}
-                {showFilters && (
-                    <div className="epl-advanced-filters">
-                        <div className="epl-filter-group">
-                            <label>Category</label>
-                            <select className="epl-filter-select" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
-                                <option value="">All Categories</option>
-                                {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                        </div>
-                        <div className="epl-filter-group">
-                            <label>Status</label>
-                            <select className="epl-filter-select" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
-                                <option value="">All Status</option>
-                                <option value="published">Published</option>
-                                <option value="draft">Draft</option>
-                                <option value="archived">Archived</option>
-                            </select>
-                        </div>
-                        <div className="epl-filter-group">
-                            <label>Sort By</label>
-                            <select className="epl-filter-select" value={sortBy} onChange={e => setSortBy(e.target.value)}>
-                                <option value="newest">Newest First</option>
-                                <option value="oldest">Oldest First</option>
-                                <option value="name">Name (A-Z)</option>
-                                <option value="price-high">Price (High-Low)</option>
-                                <option value="price-low">Price (Low-High)</option>
-                                <option value="stock-low">Stock (Low-High)</option>
-                                <option value="rating">Highest Rated</option>
-                            </select>
-                        </div>
-                        <button className="epl-filter-clear" onClick={() => { setCategoryFilter(''); setStatusFilter(''); setSortBy('newest'); setSearchQuery(''); }}>
-                            Clear Filters
-                        </button>
-                    </div>
-                )}
+  // ── pagination ─────────────────────────────────────────────────────────────
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-                {/* ── Products ── */}
-                {filteredProducts.length === 0 ? (
-                    <div className="epl-empty-state">
-                        <FiPackage className="epl-empty-icon" />
-                        <h3>No Products Found</h3>
-                        <p>{searchQuery || categoryFilter || statusFilter ? 'Try adjusting your filters or search query' : 'Get started by creating your first product'}</p>
-                        <Link to="/admin/products/create" className="epl-btn epl-btn-primary"><FiPlus /> Create Product</Link>
-                    </div>
-                ) : viewMode === 'grid' ? (
-                    <div className="epl-grid">
-                        {filteredProducts.map(product => {
-                            const ss       = getStockStatus(product);
-                            const price    = getPrice(product);
-                            const regular  = getRegular(product);
-                            const onSale   = isOnSale(product);
-                            const image    = getImage(product);
-                            const stock    = getStock(product);
-                            const currency = getCurrency(product);
-                            return (
-                                <div key={product._id} className="epl-card">
-                                    <div className="epl-card-image">
-                                        <img src={image} alt={product.name} />
-                                        <div className="epl-card-badges">
-                                            {product.isFeatured   && <span className="epl-badge featured">Featured</span>}
-                                            {product.isNewArrival && <span className="epl-badge new">New</span>}
-                                            {product.isBestseller && <span className="epl-badge bestseller">Bestseller</span>}
-                                            {onSale               && <span className="epl-badge sale">On Sale</span>}
-                                            <span className={`epl-badge ${ss.cls}`}>{ss.label}</span>
-                                        </div>
-                                    </div>
-                                    <div className="epl-card-content">
-                                        <h3 className="epl-card-title">{product.name}</h3>
-                                        <p className="epl-card-category">{product.category}</p>
-                                        {product.brand && <p className="epl-card-brand">{product.brand}</p>}
-                                        <div className="epl-card-price">
-                                            <span className="epl-price-current">{formatPrice(price, currency)}</span>
-                                            {onSale && <span className="epl-price-original">{formatPrice(regular, currency)}</span>}
-                                        </div>
-                                        <div className="epl-card-meta">
-                                            <div className="epl-meta-item"><FiPackage /><span>{stock} units</span></div>
-                                            <div className="epl-meta-item"><FiStar /><span>{product.ratings?.toFixed(1) || '0.0'} ({product.numOfReviews || 0})</span></div>
-                                        </div>
-                                        {product.inventory?.sku && <p className="epl-card-sku">SKU: {product.inventory.sku}</p>}
-                                        <div className="epl-card-status-badge">
-                                            <span className={`epl-status ${product.status || 'published'}`}>{product.status || 'published'}</span>
-                                        </div>
-                                        <div className="epl-card-actions">
-                                            <Link to={`/admin/product/${product._id}`} className="epl-card-btn epl-edit-btn"><FiEdit2 /> Edit</Link>
-                                            <button onClick={() => openDeleteModal(product)} className="epl-card-btn epl-delete-btn"><FiTrash2 /> Delete</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    <div className="epl-table-container">
-                        <table className="epl-table">
-                            <thead>
-                                <tr>
-                                    <th>Image</th><th>Product</th><th>Category</th><th>Price</th>
-                                    <th>Stock</th><th>Status</th><th>Rating</th><th>Created</th><th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filteredProducts.map(product => {
-                                    const ss       = getStockStatus(product);
-                                    const price    = getPrice(product);
-                                    const regular  = getRegular(product);
-                                    const onSale   = isOnSale(product);
-                                    const image    = getImage(product);
-                                    const stock    = getStock(product);
-                                    const currency = getCurrency(product);
-                                    return (
-                                        <tr key={product._id}>
-                                            <td>
-                                                <div className="epl-table-image">
-                                                    <img src={image} alt={product.name} />
-                                                    {onSale && <span className="epl-sale-badge">Sale</span>}
-                                                </div>
-                                            </td>
-                                            <td>
-                                                <div className="epl-table-product">
-                                                    <p className="epl-table-name">{product.name}</p>
-                                                    {product.brand && <span className="epl-table-brand">{product.brand}</span>}
-                                                    {product.inventory?.sku && <span className="epl-table-sku">SKU: {product.inventory.sku}</span>}
-                                                </div>
-                                            </td>
-                                            <td>{product.category}</td>
-                                            <td>
-                                                <div className="epl-table-price">
-                                                    <span className="epl-price-current">{formatPrice(price, currency)}</span>
-                                                    {onSale && <span className="epl-price-original">{formatPrice(regular, currency)}</span>}
-                                                </div>
-                                            </td>
-                                            <td><span className={`epl-stock-badge ${ss.cls}`}>{stock}</span></td>
-                                            <td><span className={`epl-status-badge ${product.status || 'published'}`}>{product.status || 'published'}</span></td>
-                                            <td>
-                                                <div className="epl-rating">
-                                                    <FiStar className="epl-star-icon" />
-                                                    <span>{product.ratings?.toFixed(1) || '0.0'}</span>
-                                                    <span className="epl-reviews">({product.numOfReviews || 0})</span>
-                                                </div>
-                                            </td>
-                                            <td>{new Date(product.createdAt).toLocaleDateString()}</td>
-                                            <td>
-                                                <div className="epl-table-actions">
-                                                    <Link to={`/admin/product/${product._id}`} className="epl-action-btn epl-edit" title="Edit"><FiEdit2 /></Link>
-                                                    <button onClick={() => openDeleteModal(product)} className="epl-action-btn epl-delete" title="Delete"><FiTrash2 /></button>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
-                            </tbody>
-                        </table>
-                    </div>
-                )}
+  useEffect(() => { setPage(1); }, [search, statusFilter, invFilter, catFilter, sortKey]);
+
+  // ── selection ──────────────────────────────────────────────────────────────
+  const toggleOne  = (id) => setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const toggleAll  = () => {
+    if (selected.size === paginated.length) setSelected(new Set());
+    else setSelected(new Set(paginated.map(p => p._id)));
+  };
+  const allChecked = paginated.length > 0 && selected.size === paginated.length;
+  const someChecked= selected.size > 0 && selected.size < paginated.length;
+
+  // ── handlers ───────────────────────────────────────────────────────────────
+  const handleDelete      = (id) => setConfirmId(id);
+  const confirmDelete     = () => dispatch(deleteProduct(confirmId));
+  const handleBatchDelete = () => setConfirmBatch(true);
+  const confirmBatchDel   = () => dispatch(deleteMultipleProducts([...selected]));
+
+  const activeFiltersCount = [
+    statusFilter !== 'all',
+    invFilter    !== 'all',
+    catFilter    !== 'All',
+    search.trim() !== '',
+  ].filter(Boolean).length;
+
+  // ── stat cards data ────────────────────────────────────────────────────────
+  const stats = [
+    { label: 'Total',       value: totalCount,                    key: 'all' },
+    { label: 'Published',   value: publishedProducts.length,      key: 'published',   color: 'green' },
+    { label: 'Drafts',      value: draftProducts.length,          key: 'draft',       color: 'amber' },
+    { label: 'Archived',    value: archivedProducts.length,       key: 'archived',    color: 'grey' },
+    { label: 'Low Stock',   value: lowStockProducts.length,       key: 'low',         color: 'orange' },
+    { label: 'Out of Stock',value: outOfStockProducts.length,     key: 'out',         color: 'red' },
+    { label: 'Featured',    value: featuredProducts.length,       key: 'featured',    color: 'coral' },
+    { label: 'On Sale',     value: onSaleProducts.length,         key: 'sale',        color: 'blue' },
+  ];
+
+  // ── render ─────────────────────────────────────────────────────────────────
+  if (loading) return <Loader />;
+
+  return (
+    <>
+      <PageTitle title="Products — Admin" />
+      <Navbar />
+
+      <main className="pl-main">
+
+        {/* ── Toast ── */}
+        {toast && (
+          <div className={`pl-toast pl-toast--${toast.type}`}>
+            <span>{toast.type === 'success' ? '✓' : toast.type === 'warn' ? '⚠' : '✕'}</span>
+            {toast.msg}
+          </div>
+        )}
+
+        {/* ── Header ── */}
+        <div className="pl-header">
+          <div className="pl-header__left">
+            <h1 className="pl-title">Products</h1>
+            <span className="pl-subtitle">{totalCount} total products</span>
+          </div>
+          <button className="pl-btn pl-btn--primary" onClick={() => navigate('/admin/products/create')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            New Product
+          </button>
+        </div>
+
+        {/* ── Stats ── */}
+        <div className="pl-stats">
+          {stats.map(s => (
+            <div key={s.key} className={`pl-stat pl-stat--${s.color || 'default'}`}>
+              <span className="pl-stat__value">{s.value}</span>
+              <span className="pl-stat__label">{s.label}</span>
             </div>
+          ))}
+        </div>
 
-            <Footer />
+        {/* ── Toolbar ── */}
+        <div className="pl-toolbar">
+          <div className="pl-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input
+              type="text"
+              placeholder="Search by name, brand, SKU, category…"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && <button className="pl-search__clear" onClick={() => setSearch('')}>✕</button>}
+          </div>
 
-            {/* ── Delete Modal ── */}
-            {deleteModalOpen && (
-                <div className="epl-modal-overlay" onClick={closeDeleteModal}>
-                    <div className="epl-modal" onClick={e => e.stopPropagation()}>
-                        <div className="epl-modal-header">
-                            <div className="epl-modal-icon"><FiAlertCircle /></div>
-                            <button className="epl-modal-close" onClick={closeDeleteModal} disabled={deleting}><FiX /></button>
-                        </div>
-                        <div className="epl-modal-content">
-                            <h2>Delete Product?</h2>
-                            <p>This action cannot be undone. This will permanently delete the product and all associated images from Cloudinary.</p>
-                            {productToDelete && (
-                                <div className="epl-modal-product">
-                                    <img src={getImage(productToDelete)} alt={productToDelete.name} />
-                                    <div>
-                                        <h3>{productToDelete.name}</h3>
-                                        <p className="epl-modal-category">{productToDelete.category}</p>
-                                        <p className="epl-modal-meta">
-                                            {formatPrice(getPrice(productToDelete), getCurrency(productToDelete))} • Stock: {getStock(productToDelete)} units
-                                        </p>
-                                        {productToDelete.inventory?.sku && <p className="epl-modal-sku">SKU: {productToDelete.inventory.sku}</p>}
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-                        <div className="epl-modal-actions">
-                            <button onClick={closeDeleteModal} className="epl-modal-btn epl-cancel" disabled={deleting}>Cancel</button>
-                            <button onClick={confirmDelete}    className="epl-modal-btn epl-confirm" disabled={deleting}>
-                                {deleting ? 'Deleting...' : 'Delete Product'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
+          <div className="pl-toolbar__actions">
+            <button
+              className={`pl-btn pl-btn--filter ${filtersOpen ? 'active' : ''}`}
+              onClick={() => setFiltersOpen(v => !v)}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+              Filters
+              {activeFiltersCount > 0 && <span className="pl-filter-badge">{activeFiltersCount}</span>}
+            </button>
+
+            <select className="pl-select" value={sortKey} onChange={e => setSortKey(e.target.value)}>
+              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+
+            {selected.size > 0 && (
+              <button
+                className="pl-btn pl-btn--danger"
+                onClick={handleBatchDelete}
+                disabled={batchStatus.loading}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                Delete ({selected.size})
+              </button>
             )}
-        </>
-    );
-}
+          </div>
+        </div>
 
-export default ProductList;
+        {/* ── Filter Panel ── */}
+        {filtersOpen && (
+          <div className="pl-filters">
+            <div className="pl-filter-group">
+              <label>Status</label>
+              <div className="pl-filter-pills">
+                {['all','published','draft','archived'].map(s => (
+                  <button
+                    key={s}
+                    className={`pl-pill ${statusFilter === s ? 'active' : ''}`}
+                    onClick={() => setStatusFilter(s)}
+                  >
+                    {s === 'all' ? 'All' : STATUS_LABELS[s]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="pl-filter-group">
+              <label>Inventory</label>
+              <div className="pl-filter-pills">
+                {['all','InStock','LowStock','OutOfStock','Discontinued'].map(s => (
+                  <button
+                    key={s}
+                    className={`pl-pill ${invFilter === s ? 'active' : ''}`}
+                    onClick={() => setInvFilter(s)}
+                  >
+                    {s === 'all' ? 'All' : INV_LABELS[s]}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="pl-filter-group">
+              <label>Category</label>
+              <div className="pl-filter-pills pl-filter-pills--wrap">
+                {CATEGORIES.map(c => (
+                  <button
+                    key={c}
+                    className={`pl-pill ${catFilter === c ? 'active' : ''}`}
+                    onClick={() => setCatFilter(c)}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <button
+              className="pl-btn pl-btn--ghost pl-filter-reset"
+              onClick={() => { setStatusFilter('all'); setInvFilter('all'); setCatFilter('All'); setSearch(''); }}
+            >
+              Reset all filters
+            </button>
+          </div>
+        )}
+
+        {/* ── Error ── */}
+        {error && (
+          <div className="pl-error">
+            <span>⚠</span> {error}
+            <button onClick={() => dispatch(fetchAdminProducts())}>Retry</button>
+          </div>
+        )}
+
+        {/* ── Table ── */}
+        <div className="pl-table-wrap">
+          {filtered.length === 0 ? (
+            <div className="pl-empty">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <p>No products found</p>
+              <span>Try adjusting your search or filters</span>
+            </div>
+          ) : (
+            <table className="pl-table">
+              <thead>
+                <tr>
+                  <th className="pl-th--check">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      ref={el => { if (el) el.indeterminate = someChecked; }}
+                      onChange={toggleAll}
+                    />
+                  </th>
+                  <th>Product</th>
+                  <th className="pl-th--hide-sm">Category</th>
+                  <th>Price</th>
+                  <th className="pl-th--hide-sm">Stock</th>
+                  <th>Status</th>
+                  <th className="pl-th--hide-md">Inventory</th>
+                  <th className="pl-th--hide-md">Rating</th>
+                  <th className="pl-th--hide-lg">Flags</th>
+                  <th className="pl-th--actions">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paginated.map((product, i) => {
+                  const primaryImg = product.images?.find(img => img.isPrimary) || product.images?.[0];
+                  const isChecked  = selected.has(product._id);
+                  return (
+                    <tr
+                      key={product._id}
+                      className={`pl-row ${isChecked ? 'pl-row--selected' : ''}`}
+                      style={{ animationDelay: `${i * 30}ms` }}
+                    >
+                      <td className="pl-td--check">
+                        <input type="checkbox" checked={isChecked} onChange={() => toggleOne(product._id)} />
+                      </td>
+
+                      <td className="pl-td--product">
+                        <div className="pl-product-cell">
+                          <div className="pl-product-img">
+                            {primaryImg
+                              ? <img src={primaryImg.url} alt={primaryImg.alt || product.name} loading="lazy" />
+                              : <span className="pl-product-img--placeholder">
+                                  {product.name?.[0]?.toUpperCase()}
+                                </span>
+                            }
+                          </div>
+                          <div className="pl-product-info">
+                            <span className="pl-product-name">{product.name}</span>
+                            {product.brand && <span className="pl-product-brand">{product.brand}</span>}
+                            {product.inventory?.sku && <span className="pl-product-sku">SKU: {product.inventory.sku}</span>}
+                          </div>
+                        </div>
+                      </td>
+
+                      <td className="pl-th--hide-sm">
+                        <span className="pl-category">{product.category}</span>
+                      </td>
+
+                      <td className="pl-td--price">
+                        <span className="pl-price-final">{fmt(product.pricing?.sale ?? product.pricing?.regular)}</span>
+                        {product.pricing?.sale != null && (
+                          <span className="pl-price-original">{fmt(product.pricing.regular)}</span>
+                        )}
+                      </td>
+
+                      <td className="pl-th--hide-sm">
+                        <span className={`pl-stock ${(product.inventory?.stock ?? 0) <= (product.inventory?.lowStockThreshold ?? 5) && product.inventory?.stock > 0 ? 'pl-stock--low' : ''} ${product.inventory?.stock === 0 ? 'pl-stock--out' : ''}`}>
+                          {product.inventory?.stock ?? 0}
+                        </span>
+                      </td>
+
+                      <td>
+                        <span className={`pl-badge pl-badge--status pl-badge--${product.status}`}>
+                          {STATUS_LABELS[product.status] || product.status}
+                        </span>
+                      </td>
+
+                      <td className="pl-th--hide-md">
+                        <span className={`pl-badge pl-badge--inv pl-badge--inv-${product.inventory?.status}`}>
+                          {INV_LABELS[product.inventory?.status] || product.inventory?.status}
+                        </span>
+                      </td>
+
+                      <td className="pl-th--hide-md">
+                        <div className="pl-rating">
+                          <span className="pl-rating__star">★</span>
+                          <span>{product.ratings != null ? Number(product.ratings).toFixed(1) : '—'}</span>
+                          <span className="pl-rating__count">({product.numOfReviews ?? 0})</span>
+                        </div>
+                      </td>
+
+                      <td className="pl-th--hide-lg">
+                        <div className="pl-flags">
+                          {product.isFeatured   && <span className="pl-flag" title="Featured">★</span>}
+                          {product.isBestseller && <span className="pl-flag" title="Bestseller">🏆</span>}
+                          {product.isNewArrival && <span className="pl-flag" title="New Arrival">✦</span>}
+                          {product.isOnSale     && <span className="pl-flag pl-flag--sale" title="On Sale">%</span>}
+                        </div>
+                      </td>
+
+                      <td className="pl-td--actions">
+                        <div className="pl-actions">
+                          <button
+                            className="pl-action-btn pl-action-btn--edit"
+                            onClick={() => navigate(`/admin/product/${product._id}`)}
+                            title="Edit"
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                          </button>
+                          <button
+                            className="pl-action-btn pl-action-btn--delete"
+                            onClick={() => handleDelete(product._id)}
+                            title="Delete"
+                            disabled={deleteStatus.loading && confirmId === product._id}
+                          >
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* ── Pagination ── */}
+        {totalPages > 1 && (
+          <div className="pl-pagination">
+            <span className="pl-pagination__info">
+              Showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+            </span>
+            <div className="pl-pagination__controls">
+              <button
+                className="pl-page-btn"
+                disabled={page === 1}
+                onClick={() => setPage(1)}
+              >«</button>
+              <button
+                className="pl-page-btn"
+                disabled={page === 1}
+                onClick={() => setPage(p => p - 1)}
+              >‹</button>
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let p;
+                if (totalPages <= 5) p = i + 1;
+                else if (page <= 3) p = i + 1;
+                else if (page >= totalPages - 2) p = totalPages - 4 + i;
+                else p = page - 2 + i;
+                return (
+                  <button
+                    key={p}
+                    className={`pl-page-btn ${page === p ? 'active' : ''}`}
+                    onClick={() => setPage(p)}
+                  >{p}</button>
+                );
+              })}
+              <button
+                className="pl-page-btn"
+                disabled={page === totalPages}
+                onClick={() => setPage(p => p + 1)}
+              >›</button>
+              <button
+                className="pl-page-btn"
+                disabled={page === totalPages}
+                onClick={() => setPage(totalPages)}
+              >»</button>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* ── Confirm Delete Single ── */}
+      {confirmId && (
+        <div className="pl-modal-overlay" onClick={() => setConfirmId(null)}>
+          <div className="pl-modal" onClick={e => e.stopPropagation()}>
+            <div className="pl-modal__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <h3>Delete Product</h3>
+            <p>This will permanently delete the product and all its images from Cloudinary. This action cannot be undone.</p>
+            <div className="pl-modal__actions">
+              <button className="pl-btn pl-btn--ghost" onClick={() => setConfirmId(null)}>Cancel</button>
+              <button className="pl-btn pl-btn--danger" onClick={confirmDelete} disabled={deleteStatus.loading}>
+                {deleteStatus.loading ? 'Deleting…' : 'Delete Product'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Confirm Batch Delete ── */}
+      {confirmBatch && (
+        <div className="pl-modal-overlay" onClick={() => setConfirmBatch(false)}>
+          <div className="pl-modal" onClick={e => e.stopPropagation()}>
+            <div className="pl-modal__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <h3>Delete {selected.size} Products</h3>
+            <p>This will permanently delete {selected.size} product{selected.size !== 1 ? 's' : ''} and their images. Failed deletions will be reported individually.</p>
+            <div className="pl-modal__actions">
+              <button className="pl-btn pl-btn--ghost" onClick={() => setConfirmBatch(false)}>Cancel</button>
+              <button className="pl-btn pl-btn--danger" onClick={confirmBatchDel} disabled={batchStatus.loading}>
+                {batchStatus.loading ? 'Deleting…' : `Delete ${selected.size} Products`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Footer />
+    </>
+  );
+}

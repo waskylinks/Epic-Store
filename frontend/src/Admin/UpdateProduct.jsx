@@ -1,778 +1,936 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useParams, useNavigate } from 'react-router-dom';
-import { toast } from 'react-toastify';
-import { updateProduct, fetchAdminProducts } from '../features/admin/adminSlice';
+import { useNavigate, useParams } from 'react-router-dom';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
-import '../AdminStyles/UpdateProduct.css';
 import {
-  FiImage, FiDollarSign, FiPackage, FiTag, FiSettings,
-  FiTrendingUp, FiX, FiPlus, FiTrash2, FiSave,
-  FiEye, FiAlertCircle, FiCheck, FiArrowLeft, FiFlag,
-} from 'react-icons/fi';
+  fetchAdminProductDetails,
+  updateProduct,
+  fetchProductStructuredData,
+  clearUpdateStatus,
+  clearSelectedProduct,
+  selectSelectedProduct,
+  selectSelectedProductLoading,
+  selectSelectedProductError,
+  selectUpdateStatus,
+  selectStructuredData,
+  selectStructuredDataLoading,
+} from '../features/admin/adminProductSlice';
+import '../AdminStyles/UpdateProduct.css';
 
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-const CATEGORIES    = ['Electronics','Clothing & Apparel','Home & Living','Sports & Outdoors','Beauty & Personal Care','Books & Media','Food & Beverages'];
-const CURRENCIES    = ['USD','EUR','GBP','NGN'];
-const WEIGHT_UNITS  = ['kg','lb','g'];
-const DIM_UNITS     = ['cm','in'];
-const SCHEMA_TYPES  = ['Product','Book','Course','SoftwareApplication'];
-const CONDITIONS    = ['NewCondition','UsedCondition','RefurbishedCondition','DamagedCondition'];
-const TWITTER_CARDS = ['summary','summary_large_image'];
+// ── constants (same as create) ────────────────────────────────────────────────
+const CATEGORIES  = ['Electronics','Clothing & Apparel','Home & Living','Sports & Outdoors','Beauty & Personal Care','Books & Media','Food & Beverages'];
+const CURRENCIES  = ['USD','EUR','GBP','NGN'];
+const DIM_UNITS   = ['cm','in'];
+const W_UNITS     = ['kg','lb','g'];
+const INV_STATUSES= ['InStock','LowStock','OutOfStock','Discontinued'];
+const SCHEMA_TYPES= ['Product','Book','Course','SoftwareApplication'];
+const CONDITIONS  = ['NewCondition','UsedCondition','RefurbishedCondition','DamagedCondition'];
+const TW_CARDS    = ['summary','summary_large_image'];
+const OG_TYPES    = ['product','website','article'];
 
-const TABS = [
-  { id:'basic',     label:'Basic Info',   Icon:FiPackage    },
-  { id:'pricing',   label:'Pricing',      Icon:FiDollarSign },
-  { id:'inventory', label:'Inventory',    Icon:FiPackage    },
-  { id:'media',     label:'Media',        Icon:FiImage      },
-  { id:'variants',  label:'Variants',     Icon:FiSettings   },
-  { id:'seo',       label:'SEO',          Icon:FiTrendingUp },
-  { id:'advanced',  label:'Advanced SEO', Icon:FiTag        },
-  { id:'settings',  label:'Settings',     Icon:FiFlag       },
+const SECTIONS = [
+  'Basic Info','Pricing','Inventory','Images',
+  'Variants','Specifications','Dimensions & Weight',
+  'Breadcrumbs','SEO','Rich Snippets','Relationships & Flags',
 ];
 
-const EMPTY_FORM = {
-  name:'', description:'', shortDescription:'',
-  category:'', brand:'', manufacturer:'',
-  pricing:   { regular:'', sale:'', cost:'', currency:'USD', validFrom:'', validThrough:'' },
-  inventory: { stock:'', sku:'', barcode:'', gtin:'', mpn:'', trackInventory:true, lowStockThreshold:5 },
-  dimensions:{ length:'', width:'', height:'', unit:'cm' },
-  weight:    { value:'', unit:'kg' },
-  seo: {
-    metaTitle:'', metaDescription:'', canonicalUrl:'',
-    noIndex:false, noFollow:false,
-    ogTitle:'', ogDescription:'', ogImage:'', ogType:'product',
-    twitterCard:'summary_large_image', twitterTitle:'', twitterDescription:'', twitterImage:'',
-    schemaType:'Product', condition:'NewCondition', focusKeyphrase:'',
-  },
-  isFeatured:false, isNewArrival:false, isBestseller:false, status:'published',
-};
-
-const buildFormFromProduct = (p) => ({
-  name:             p.name             ?? '',
-  description:      p.description      ?? '',
-  shortDescription: p.shortDescription ?? '',
-  category:         p.category         ?? '',
-  brand:            p.brand            ?? '',
-  manufacturer:     p.manufacturer     ?? '',
+// ── hydrate form from existing product ────────────────────────────────────────
+const hydrateForm = (p) => ({
+  name:             p.name             || '',
+  description:      p.description      || '',
+  shortDescription: p.shortDescription || '',
+  category:         p.category         || '',
+  brand:            p.brand            || '',
+  manufacturer:     p.manufacturer     || '',
+  status:           p.status           || 'published',
   pricing: {
-    regular:      p.pricing?.regular      ?? p.price ?? '',
-    sale:         p.pricing?.sale         ?? '',
-    cost:         p.pricing?.cost         ?? '',
-    currency:     p.pricing?.currency     ?? 'USD',
-    validFrom:    p.pricing?.validFrom    ?? '',
-    validThrough: p.pricing?.validThrough ?? '',
+    regular:     p.pricing?.regular     ?? '',
+    sale:        p.pricing?.sale        ?? '',
+    cost:        p.pricing?.cost        ?? '',
+    currency:    p.pricing?.currency    || 'USD',
+    validFrom:   p.pricing?.validFrom   ? p.pricing.validFrom.substring(0, 10) : '',
+    validThrough:p.pricing?.validThrough? p.pricing.validThrough.substring(0, 10) : '',
   },
   inventory: {
-    stock:             p.inventory?.stock             ?? p.stock ?? '',
-    sku:               p.inventory?.sku               ?? '',
-    barcode:           p.inventory?.barcode           ?? '',
-    gtin:              p.inventory?.gtin              ?? '',
-    mpn:               p.inventory?.mpn               ?? '',
+    stock:             p.inventory?.stock             ?? '',
+    sku:               p.inventory?.sku               || '',
+    gtin:              p.inventory?.gtin              || '',
+    mpn:               p.inventory?.mpn               || '',
+    barcode:           p.inventory?.barcode           || '',
     trackInventory:    p.inventory?.trackInventory    ?? true,
     lowStockThreshold: p.inventory?.lowStockThreshold ?? 5,
+    status:            p.inventory?.status            || 'InStock',
   },
-  dimensions: p.dimensions ?? { length:'', width:'', height:'', unit:'cm' },
-  weight:     { value:p.weight?.value ?? '', unit:p.weight?.unit ?? 'kg' },
+  dimensions: {
+    length: p.dimensions?.length ?? '',
+    width:  p.dimensions?.width  ?? '',
+    height: p.dimensions?.height ?? '',
+    unit:   p.dimensions?.unit   || 'cm',
+  },
+  weight: {
+    value: p.weight?.value ?? '',
+    unit:  p.weight?.unit  || 'kg',
+  },
+  subcategories:  p.subcategories  || [],
+  tags:           p.tags           || [],
+  specifications: p.specifications || [],
+  variants:       p.variants       || [],
+  breadcrumbs:    p.breadcrumbs    || [],
+  isFeatured:     p.isFeatured     || false,
+  isNewArrival:   p.isNewArrival   || false,
+  isBestseller:   p.isBestseller   || false,
   seo: {
-    metaTitle:          p.seo?.metaTitle          ?? '',
-    metaDescription:    p.seo?.metaDescription    ?? '',
-    canonicalUrl:       p.seo?.canonicalUrl       ?? '',
-    noIndex:            p.seo?.noIndex            ?? false,
-    noFollow:           p.seo?.noFollow           ?? false,
-    ogTitle:            p.seo?.ogTitle            ?? '',
-    ogDescription:      p.seo?.ogDescription      ?? '',
-    ogImage:            p.seo?.ogImage            ?? '',
-    ogType:             p.seo?.ogType             ?? 'product',
-    twitterCard:        p.seo?.twitterCard        ?? 'summary_large_image',
-    twitterTitle:       p.seo?.twitterTitle       ?? '',
-    twitterDescription: p.seo?.twitterDescription ?? '',
-    twitterImage:       p.seo?.twitterImage       ?? '',
-    schemaType:         p.seo?.schemaType         ?? 'Product',
-    condition:          p.seo?.condition          ?? 'NewCondition',
-    focusKeyphrase:     p.seo?.focusKeyphrase     ?? '',
+    metaTitle:          p.seo?.metaTitle          || '',
+    metaDescription:    p.seo?.metaDescription    || '',
+    keywords:           p.seo?.keywords           || [],
+    canonicalUrl:       p.seo?.canonicalUrl       || '',
+    noIndex:            p.seo?.noIndex            || false,
+    noFollow:           p.seo?.noFollow           || false,
+    ogTitle:            p.seo?.ogTitle            || '',
+    ogDescription:      p.seo?.ogDescription      || '',
+    ogImage:            p.seo?.ogImage            || '',
+    ogType:             p.seo?.ogType             || 'product',
+    twitterCard:        p.seo?.twitterCard        || 'summary_large_image',
+    twitterTitle:       p.seo?.twitterTitle       || '',
+    twitterDescription: p.seo?.twitterDescription || '',
+    twitterImage:       p.seo?.twitterImage       || '',
+    schemaType:         p.seo?.schemaType         || 'Product',
+    condition:          p.seo?.condition          || 'NewCondition',
+    availability:       p.seo?.availability       || 'InStock',
+    focusKeyphrase:     p.seo?.focusKeyphrase     || '',
+    relatedSearchTerms: p.seo?.relatedSearchTerms || [],
   },
-  isFeatured:   p.isFeatured   ?? false,
-  isNewArrival: p.isNewArrival ?? false,
-  isBestseller: p.isBestseller ?? false,
-  status:       p.status       ?? 'published',
+  richSnippets: {
+    faqs:  p.richSnippets?.faqs  || [],
+    howTo: p.richSnippets?.howTo || { name: '', steps: [] },
+    videos:p.richSnippets?.videos|| [],
+  },
+  relatedProducts: p.relatedProducts?.map(r => r._id || r).join(', ') || '',
+  crossSells:      p.crossSells?.map(r => r._id || r).join(', ')      || '',
+  upsells:         p.upsells?.map(r => r._id || r).join(', ')         || '',
 });
 
 export default function UpdateProduct() {
   const { id }   = useParams();
-  const navigate = useNavigate();
-  const dispatch = useDispatch();
+  const dispatch  = useDispatch();
+  const navigate  = useNavigate();
 
-  // FIX: Do NOT read state.admin.loading here.
-  // That flag is shared across every thunk in adminSlice (orders, users,
-  // products fetch, etc.). When navigate() fires after a successful update,
-  // the products list page immediately dispatches fetchAdminProducts() which
-  // sets state.loading = true. This caused UpdateProduct to re-render one
-  // last time before unmounting, flashing the form with isSubmitting=true
-  // still set — which is what the user saw as "stuck on Updating…".
-  // isSubmitting is already the correct local signal for this component.
-  const products = useSelector((s) => s.admin.products);
+  const product      = useSelector(selectSelectedProduct);
+  const fetchLoading = useSelector(selectSelectedProductLoading);
+  const fetchError   = useSelector(selectSelectedProductError);
+  const updateStatus = useSelector(selectUpdateStatus);
+  const structuredData      = useSelector(selectStructuredData);
+  const structuredDataLoading = useSelector(selectStructuredDataLoading);
 
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [form,           setForm]          = useState(null);
+  const [activeSection,  setActiveSection] = useState(0);
+  // Existing images from DB: { public_id, url, alt, isPrimary, order, caption, width, height }
+  const [existingImages, setExistingImages]= useState([]);
+  // New local file images: { file, preview, alt, caption }
+  const [newImages,      setNewImages]     = useState([]);
+  const [imagesToDelete, setImagesToDelete]= useState([]);
+  const [imageMetadata,  setImageMetadata] = useState([]);
+  const [tagInput,       setTagInput]      = useState('');
+  const [subInput,       setSubInput]      = useState('');
+  const [kwInput,        setKwInput]       = useState('');
+  const [rstInput,       setRstInput]      = useState('');
+  const [toast,          setToast]         = useState(null);
+  const [errors,         setErrors]        = useState({});
+  const [showJSON,       setShowJSON]      = useState(false);
+  const fileRef = useRef();
 
+  // ── fetch product on mount ─────────────────────────────────────────────────
   useEffect(() => {
-    if (products.length === 0) dispatch(fetchAdminProducts());
-  }, [dispatch]); // eslint-disable-line react-hooks/exhaustive-deps
+    dispatch(fetchAdminProductDetails(id));
+    return () => dispatch(clearSelectedProduct());
+  }, [id, dispatch]);
 
-  const product = useMemo(
-    () => products.find((p) => p._id === id) ?? null,
-    [products, id],
-  );
-
-  const [activeTab,          setActiveTab]          = useState('basic');
-  const [formData,           setFormData]           = useState(EMPTY_FORM);
-  const [oldImages,          setOldImages]          = useState([]);
-  const [imagesToDelete,     setImagesToDelete]     = useState([]);
-  const [newImages,          setNewImages]          = useState([]);
-  const [newImagePreviews,   setNewImagePreviews]   = useState([]);
-  const [subcategories,      setSubcategories]      = useState([]);
-  const [tags,               setTags]               = useState([]);
-  const [specifications,     setSpecifications]     = useState([]);
-  const [variants,           setVariants]           = useState([]);
-  const [seoKeywords,        setSeoKeywords]        = useState([]);
-  const [relatedSearchTerms, setRelatedSearchTerms] = useState([]);
-  const [breadcrumbs,        setBreadcrumbs]        = useState([]);
-  const [richSnippets,       setRichSnippets]       = useState({ faqs:[], howTo:{ name:'', steps:[] }, videos:[] });
-  const [newSubcategory,     setNewSubcategory]     = useState('');
-  const [newTag,             setNewTag]             = useState('');
-  const [newKeyword,         setNewKeyword]         = useState('');
-  const [newRelatedTerm,     setNewRelatedTerm]     = useState('');
-  const [newBreadcrumb,      setNewBreadcrumb]      = useState({ name:'', url:'' });
-
-  const hasPrefilled = useRef(false);
+  // ── hydrate form when product loads ───────────────────────────────────────
   useEffect(() => {
-    if (!product || hasPrefilled.current) return;
-    hasPrefilled.current = true;
-    setFormData(buildFormFromProduct(product));
-    setOldImages(product.images ?? product.image ?? []);
-    setSubcategories(product.subcategories ?? []);
-    setTags(product.tags ?? []);
-    setSpecifications(product.specifications ?? []);
-    setVariants(product.variants ?? []);
-    setSeoKeywords(product.seo?.keywords ?? []);
-    setRelatedSearchTerms(product.seo?.relatedSearchTerms ?? []);
-    setBreadcrumbs(product.breadcrumbs ?? []);
-    setRichSnippets(product.richSnippets ?? { faqs:[], howTo:{ name:'', steps:[] }, videos:[] });
+    if (product) {
+      setForm(hydrateForm(product));
+      setExistingImages(product.images || []);
+    }
   }, [product]);
 
-  const handleInputChange = useCallback((e) => {
-    const { name, value, type, checked } = e.target;
-    const val = type === 'checkbox' ? checked : value;
-    if (name.includes('.')) {
-      const [parent, child] = name.split('.');
-      setFormData((prev) => ({ ...prev, [parent]:{ ...prev[parent], [child]:val } }));
-    } else {
-      setFormData((prev) => ({ ...prev, [name]:val }));
-    }
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
   }, []);
 
-  const handleNewImages = useCallback((e) => {
-    Array.from(e.target.files).forEach((file) => {
-      if (file.size > MAX_FILE_SIZE) { toast.error(`"${file.name}" exceeds 10 MB`); return; }
-      if (newImages.some((img) => img.name === file.name && img.size === file.size)) { toast.warn(`"${file.name}" already added`); return; }
-      const reader = new FileReader();
-      reader.onload = () => {
-        setNewImages((o) => [...o, file]);
-        setNewImagePreviews((o) => [...o, { url:reader.result, name:file.name, size:(file.size/1024).toFixed(1)+' KB', alt:'', caption:'' }]);
-      };
-      reader.readAsDataURL(file);
+  // ── update success/error ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (updateStatus.success) {
+      showToast('Product updated successfully!');
+      dispatch(clearUpdateStatus());
+      // structuredData auto-nulled in slice on update — no need to handle here
+    }
+    if (updateStatus.error) {
+      showToast(updateStatus.error, 'error');
+      dispatch(clearUpdateStatus());
+    }
+  }, [updateStatus, dispatch, showToast]);
+
+  // ── generic setter ─────────────────────────────────────────────────────────
+  const set = (path, value) => {
+    setForm(prev => {
+      const next = { ...prev };
+      const keys  = path.split('.');
+      let obj = next;
+      for (let i = 0; i < keys.length - 1; i++) {
+        obj[keys[i]] = { ...obj[keys[i]] };
+        obj = obj[keys[i]];
+      }
+      obj[keys[keys.length - 1]] = value;
+      return next;
     });
+  };
+
+  // ── existing image handlers ────────────────────────────────────────────────
+  const markForDeletion = (publicId) => {
+    setImagesToDelete(prev => [...prev, publicId]);
+    setExistingImages(prev => prev.filter(img => img.public_id !== publicId));
+  };
+
+  const updateExistingImageMeta = (idx, field, value) => {
+    setExistingImages(prev => prev.map((img, i) => i === idx ? { ...img, [field]: value } : img));
+  };
+
+  const setPrimaryImage = (publicId) => {
+    setExistingImages(prev => prev.map(img => ({ ...img, isPrimary: img.public_id === publicId })));
+  };
+
+  // ── new image handlers ─────────────────────────────────────────────────────
+  const handleImageAdd = (e) => {
+    const files = Array.from(e.target.files);
+    const newImgs = files.map(file => ({ file, preview: URL.createObjectURL(file), alt: '', caption: '' }));
+    setNewImages(prev => [...prev, ...newImgs]);
+    setImageMetadata(prev => [...prev, ...newImgs.map(img => ({ alt: img.alt, caption: img.caption }))]);
     e.target.value = '';
-  }, [newImages]);
+  };
 
-  const removeNewImage     = useCallback((i) => { setNewImages((o) => o.filter((_,j) => j!==i)); setNewImagePreviews((o) => o.filter((_,j) => j!==i)); }, []);
-  const updateNewImageMeta = useCallback((i, field, value) => setNewImagePreviews((o) => o.map((img,j) => j===i ? {...img,[field]:value} : img)), []);
-  const removeOldImage     = useCallback((publicId) => { if (!publicId) return; setOldImages((p) => p.filter((img) => img.public_id!==publicId)); setImagesToDelete((p) => [...p, publicId]); }, []);
-  const setPrimaryOldImage = useCallback((i) => { if (i===0) return; setOldImages((p) => { const n=[...p]; [n[0],n[i]]=[n[i],n[0]]; return n; }); }, []);
-  const updateOldImageMeta = useCallback((i, field, value) => setOldImages((p) => p.map((img,j) => j===i ? {...img,[field]:value} : img)), []);
+  const removeNewImage = (idx) => {
+    setNewImages(prev => { URL.revokeObjectURL(prev[idx].preview); return prev.filter((_, i) => i !== idx); });
+    setImageMetadata(prev => prev.filter((_, i) => i !== idx));
+  };
 
-  const addItem    = useCallback((value, setter, resetSetter, transform=(v)=>v) => { const t=value.trim(); if(!t) return; setter((p) => [...p, transform(t)]); resetSetter(''); }, []);
-  const removeItem = useCallback((i, setter) => setter((p) => p.filter((_,j) => j!==i)), []);
+  const updateNewImageMeta = (idx, field, value) => {
+    setNewImages(prev => prev.map((img, i) => i === idx ? { ...img, [field]: value } : img));
+    setImageMetadata(prev => prev.map((m, i) => i === idx ? { ...m, [field]: value } : m));
+  };
 
-  const addBreadcrumb    = useCallback(() => { if (!newBreadcrumb.name.trim()||!newBreadcrumb.url.trim()) return; setBreadcrumbs((p) => [...p,{name:newBreadcrumb.name.trim(),url:newBreadcrumb.url.trim(),position:p.length+1}]); setNewBreadcrumb({name:'',url:''}); }, [newBreadcrumb]);
-  const removeBreadcrumb = useCallback((i) => setBreadcrumbs((p) => p.filter((_,j)=>j!==i).map((b,j)=>({...b,position:j+1}))), []);
+  // ── array helpers ─────────────────────────────────────────────────────────
+  const addToArray = (field, value, setter) => {
+    if (!value.trim()) return;
+    setForm(prev => ({ ...prev, [field]: [...prev[field], value.trim()] }));
+    setter('');
+  };
+  const removeFromArray = (field, idx) => setForm(prev => ({ ...prev, [field]: prev[field].filter((_, i) => i !== idx) }));
+  const addToSeoArray = (field, value, setter) => {
+    if (!value.trim()) return;
+    setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: [...prev.seo[field], value.trim()] } }));
+    setter('');
+  };
+  const removeFromSeoArray = (field, idx) => setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: prev.seo[field].filter((_, i) => i !== idx) } }));
 
-  const addSpec    = useCallback(() => setSpecifications((p) => [...p,{key:'',value:''}]), []);
-  const updateSpec = useCallback((i, field, val) => setSpecifications((p) => p.map((s,j) => j===i ? {...s,[field]:val} : s)), []);
-  const removeSpec = useCallback((i) => setSpecifications((p) => p.filter((_,j)=>j!==i)), []);
+  // ── spec helpers ───────────────────────────────────────────────────────────
+  const addSpec    = () => setForm(prev => ({ ...prev, specifications: [...prev.specifications, { key: '', value: '' }] }));
+  const setSpec    = (idx, field, val) => setForm(prev => ({ ...prev, specifications: prev.specifications.map((s, i) => i === idx ? { ...s, [field]: val } : s) }));
+  const removeSpec = (idx) => setForm(prev => ({ ...prev, specifications: prev.specifications.filter((_, i) => i !== idx) }));
 
-  const addVariant          = useCallback(() => setVariants((p) => [...p,{name:'',options:[{value:'',priceModifier:0,stock:0}]}]), []);
-  const updateVariantName   = useCallback((i, name) => setVariants((p) => p.map((v,j) => j===i ? {...v,name} : v)), []);
-  const removeVariant       = useCallback((i) => setVariants((p) => p.filter((_,j)=>j!==i)), []);
-  const addVariantOption    = useCallback((vi) => setVariants((p) => p.map((v,i) => i===vi ? {...v,options:[...v.options,{value:'',priceModifier:0,stock:0}]} : v)), []);
-  const updateVariantOption = useCallback((vi, oi, f, val) => setVariants((p) => p.map((v,i) => i===vi ? {...v,options:v.options.map((o,j)=>j===oi?{...o,[f]:val}:o)} : v)), []);
-  const removeVariantOption = useCallback((vi, oi) => setVariants((p) => p.map((v,i) => i===vi ? {...v,options:v.options.filter((_,j)=>j!==oi)} : v)), []);
+  // ── variant helpers ────────────────────────────────────────────────────────
+  const addVariant       = () => setForm(prev => ({ ...prev, variants: [...prev.variants, { name: '', options: [{ value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] }] }));
+  const setVariant       = (vi, field, val) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, [field]: val } : v) }));
+  const removeVariant    = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.filter((_, i) => i !== vi) }));
+  const addVariantOption = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] } : v) }));
+  const setVariantOption = (vi, oi, field, val) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [field]: val } : o) } : v) }));
+  const removeVariantOption = (vi, oi) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: v.options.filter((_, j) => j !== oi) } : v) }));
 
-  const addFAQ    = useCallback(() => setRichSnippets((p) => ({...p,faqs:[...p.faqs,{question:'',answer:''}]})), []);
-  const updateFAQ = useCallback((i, field, val) => setRichSnippets((p) => ({...p,faqs:p.faqs.map((f,j)=>j===i?{...f,[field]:val}:f)})), []);
-  const removeFAQ = useCallback((i) => setRichSnippets((p) => ({...p,faqs:p.faqs.filter((_,j)=>j!==i)})), []);
+  // ── breadcrumb helpers ─────────────────────────────────────────────────────
+  const addBreadcrumb    = () => setForm(prev => ({ ...prev, breadcrumbs: [...prev.breadcrumbs, { name: '', url: '', position: prev.breadcrumbs.length + 1 }] }));
+  const setBreadcrumb    = (idx, field, val) => setForm(prev => ({ ...prev, breadcrumbs: prev.breadcrumbs.map((b, i) => i === idx ? { ...b, [field]: val } : b) }));
+  const removeBreadcrumb = (idx) => setForm(prev => ({ ...prev, breadcrumbs: prev.breadcrumbs.filter((_, i) => i !== idx) }));
 
-  const addVideo    = useCallback(() => setRichSnippets((p) => ({...p,videos:[...p.videos,{name:'',description:'',thumbnailUrl:'',contentUrl:''}]})), []);
-  const updateVideo = useCallback((i, field, val) => setRichSnippets((p) => ({...p,videos:p.videos.map((v,j)=>j===i?{...v,[field]:val}:v)})), []);
-  const removeVideo = useCallback((i) => setRichSnippets((p) => ({...p,videos:p.videos.filter((_,j)=>j!==i)})), []);
+  // ── FAQ helpers ────────────────────────────────────────────────────────────
+  const addFaq    = () => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, faqs: [...prev.richSnippets.faqs, { question: '', answer: '' }] } }));
+  const setFaq    = (idx, field, val) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, faqs: prev.richSnippets.faqs.map((f, i) => i === idx ? { ...f, [field]: val } : f) } }));
+  const removeFaq = (idx) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, faqs: prev.richSnippets.faqs.filter((_, i) => i !== idx) } }));
 
-  const handleSubmit = useCallback(async (e) => {
+  // ── HowTo helpers ──────────────────────────────────────────────────────────
+  const addHowToStep    = () => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, steps: [...prev.richSnippets.howTo.steps, { name: '', text: '', image: '' }] } } }));
+  const setHowToStep    = (idx, field, val) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, steps: prev.richSnippets.howTo.steps.map((s, i) => i === idx ? { ...s, [field]: val } : s) } } }));
+  const removeHowToStep = (idx) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, steps: prev.richSnippets.howTo.steps.filter((_, i) => i !== idx) } } }));
+
+  // ── Video helpers ──────────────────────────────────────────────────────────
+  const addVideo    = () => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, videos: [...prev.richSnippets.videos, { name: '', description: '', thumbnailUrl: '', uploadDate: '', contentUrl: '', embedUrl: '', duration: '' }] } }));
+  const setVideo    = (idx, field, val) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, videos: prev.richSnippets.videos.map((v, i) => i === idx ? { ...v, [field]: val } : v) } }));
+  const removeVideo = (idx) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, videos: prev.richSnippets.videos.filter((_, i) => i !== idx) } }));
+
+  // ── validation ─────────────────────────────────────────────────────────────
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim())        e.name        = 'Product name is required';
+    if (!form.description.trim()) e.description = 'Description is required';
+    if (!form.category)           e.category    = 'Category is required';
+    if (!form.pricing.regular)    e.regular     = 'Regular price is required';
+    if (form.pricing.sale && Number(form.pricing.sale) >= Number(form.pricing.regular))
+      e.sale = 'Sale price must be less than regular price';
+    const totalImages = existingImages.length + newImages.length;
+    if (totalImages === 0)        e.images      = 'At least one image is required';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  // ── submit ─────────────────────────────────────────────────────────────────
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (isSubmitting) return;
-
-    if (!formData.name.trim())        { toast.error('Product name is required');        setActiveTab('basic');   return; }
-    if (!formData.category)           { toast.error('Category is required');            setActiveTab('basic');   return; }
-    if (!formData.description.trim()) { toast.error('Description is required');         setActiveTab('basic');   return; }
-    if (!formData.pricing.regular)    { toast.error('Regular price is required');       setActiveTab('pricing'); return; }
-    if (formData.pricing.sale !== '' && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
-      toast.error('Sale price must be less than regular price'); setActiveTab('pricing'); return;
-    }
-    if (formData.pricing.validFrom && formData.pricing.validThrough &&
-        new Date(formData.pricing.validFrom) > new Date(formData.pricing.validThrough)) {
-      toast.error('Valid-from must be before valid-through'); setActiveTab('pricing'); return;
-    }
-    if (oldImages.length + newImages.length === 0) {
-      toast.error('At least one image is required'); setActiveTab('media'); return;
-    }
+    if (!validate()) { showToast('Please fix the errors below', 'error'); return; }
 
     const fd = new FormData();
-    fd.append('name',             formData.name.trim());
-    fd.append('description',      formData.description.trim());
-    fd.append('shortDescription', formData.shortDescription.trim());
-    fd.append('category',         formData.category);
-    fd.append('brand',            formData.brand.trim());
-    fd.append('manufacturer',     formData.manufacturer.trim());
-    fd.append('status',           formData.status);
-    fd.append('isFeatured',       JSON.stringify(formData.isFeatured));
-    fd.append('isNewArrival',     JSON.stringify(formData.isNewArrival));
-    fd.append('isBestseller',     JSON.stringify(formData.isBestseller));
 
-    const pricingData = { regular:Number(formData.pricing.regular), currency:formData.pricing.currency };
-    if (formData.pricing.sale !== '')  pricingData.sale = Number(formData.pricing.sale);
-    if (formData.pricing.cost !== '')  pricingData.cost = Number(formData.pricing.cost);
-    if (formData.pricing.validFrom)    pricingData.validFrom = formData.pricing.validFrom;
-    if (formData.pricing.validThrough) pricingData.validThrough = formData.pricing.validThrough;
-    fd.append('pricing', JSON.stringify(pricingData));
+    fd.append('name',             form.name);
+    fd.append('description',      form.description);
+    fd.append('shortDescription', form.shortDescription);
+    fd.append('category',         form.category);
+    fd.append('brand',            form.brand);
+    fd.append('manufacturer',     form.manufacturer);
+    fd.append('status',           form.status);
+    fd.append('isFeatured',       form.isFeatured);
+    fd.append('isNewArrival',     form.isNewArrival);
+    fd.append('isBestseller',     form.isBestseller);
 
-    fd.append('inventory', JSON.stringify({
-      stock:             Number(formData.inventory.stock) || 0,
-      sku:               formData.inventory.sku.trim(),
-      barcode:           formData.inventory.barcode.trim(),
-      gtin:              formData.inventory.gtin.trim(),
-      mpn:               formData.inventory.mpn.trim(),
-      trackInventory:    formData.inventory.trackInventory,
-      lowStockThreshold: Number(formData.inventory.lowStockThreshold),
-    }));
+    fd.append('pricing',          JSON.stringify(form.pricing));
+    fd.append('inventory',        JSON.stringify(form.inventory));
+    fd.append('dimensions',       JSON.stringify(form.dimensions));
+    fd.append('weight',           JSON.stringify(form.weight));
+    fd.append('subcategories',    JSON.stringify(form.subcategories));
+    fd.append('tags',             JSON.stringify(form.tags));
+    fd.append('specifications',   JSON.stringify(form.specifications));
+    fd.append('variants',         JSON.stringify(form.variants));
+    fd.append('breadcrumbs',      JSON.stringify(form.breadcrumbs));
+    fd.append('seo',              JSON.stringify(form.seo));
+    fd.append('richSnippets',     JSON.stringify(form.richSnippets));
 
-    fd.append('dimensions', JSON.stringify({ length:Number(formData.dimensions.length)||0, width:Number(formData.dimensions.width)||0, height:Number(formData.dimensions.height)||0, unit:formData.dimensions.unit }));
-    fd.append('weight',     JSON.stringify({ value:Number(formData.weight.value)||0, unit:formData.weight.unit }));
-    fd.append('subcategories',  JSON.stringify(subcategories));
-    fd.append('tags',           JSON.stringify(tags));
-    fd.append('specifications', JSON.stringify(specifications.filter((s) => s.key && s.value)));
-    fd.append('variants',       JSON.stringify(variants.filter((v) => v.name && v.options.length > 0)));
+    // Update-specific fields
+    fd.append('imagesToDelete',   JSON.stringify(imagesToDelete));
+    fd.append('existingImages',   JSON.stringify(existingImages));
+    fd.append('imageMetadata',    JSON.stringify(imageMetadata));
 
-    fd.append('seo', JSON.stringify({
-      metaTitle:          formData.seo.metaTitle.trim(),
-      metaDescription:    formData.seo.metaDescription.trim(),
-      keywords:           seoKeywords,
-      canonicalUrl:       formData.seo.canonicalUrl.trim(),
-      noIndex:            formData.seo.noIndex,
-      noFollow:           formData.seo.noFollow,
-      ogTitle:            formData.seo.ogTitle,
-      ogDescription:      formData.seo.ogDescription,
-      ogImage:            formData.seo.ogImage,
-      ogType:             formData.seo.ogType,
-      twitterCard:        formData.seo.twitterCard,
-      twitterTitle:       formData.seo.twitterTitle,
-      twitterDescription: formData.seo.twitterDescription,
-      twitterImage:       formData.seo.twitterImage,
-      schemaType:         formData.seo.schemaType,
-      condition:          formData.seo.condition,
-      focusKeyphrase:     formData.seo.focusKeyphrase,
-      relatedSearchTerms,
-    }));
+    newImages.forEach(img => fd.append('images', img.file));
 
-    fd.append('richSnippets', JSON.stringify({
-      faqs:   richSnippets.faqs.filter((f) => f.question && f.answer),
-      howTo:  richSnippets.howTo,
-      videos: richSnippets.videos.filter((v) => v.name && v.contentUrl),
-    }));
+    dispatch(updateProduct({ id, formData: fd }));
+  };
 
-    if (breadcrumbs.length > 0)    fd.append('breadcrumbs',   JSON.stringify(breadcrumbs));
-    if (imagesToDelete.length > 0) fd.append('imagesToDelete', JSON.stringify(imagesToDelete));
+  // ── structured data panel ──────────────────────────────────────────────────
+  const handleViewStructuredData = () => {
+    if (!structuredData) dispatch(fetchProductStructuredData(id));
+    setShowJSON(v => !v);
+  };
 
-    fd.append('existingImages', JSON.stringify(
-      oldImages.map((img, i) => ({
-        public_id:img.public_id, url:img.url,
-        alt:img.alt??'', caption:img.caption??'',
-        isPrimary:i===0, order:i,
-        width:img.width??null, height:img.height??null,
-      })),
-    ));
-    fd.append('imageMetadata', JSON.stringify(
-      newImagePreviews.map((img) => ({ alt:img.alt??'', caption:img.caption??'' })),
-    ));
-    newImages.forEach((img) => fd.append('images', img));
-
-    setIsSubmitting(true);
-    try {
-      await dispatch(updateProduct({ id, productData: fd })).unwrap();
-      toast.success('Product updated successfully!', { position:'top-center', autoClose:3000 });
-      navigate('/admin/products');
-    } catch (err) {
-      toast.error(typeof err === 'string' ? err : err?.message || 'Failed to update product', {
-        position:'top-center', autoClose:3000,
-      });
-      setIsSubmitting(false); // only reset on failure so user can retry
-    }
-  }, [
-    isSubmitting, formData, oldImages, newImages, newImagePreviews,
-    subcategories, tags, specifications, variants,
-    seoKeywords, relatedSearchTerms, breadcrumbs, richSnippets,
-    imagesToDelete, id, dispatch, navigate,
-  ]);
-
-  // FIX: Use only products.length to gate the loader — not state.admin.loading.
-  // The shared loading flag is set to true by fetchAdminProducts (and other
-  // thunks) which triggers after navigate(), causing a final re-render of this
-  // component with isSubmitting still true, making the button appear frozen.
-  if (products.length === 0) return <Loader />;
-  if (!product) return (
-    <div className="eup-not-found">
-      <FiAlertCircle /><h2>Product not found</h2>
-      <button onClick={() => navigate('/admin/products')}>Back to Products</button>
+  if (fetchLoading || !form) return <Loader />;
+  if (fetchError) return (
+    <div className="up-fetch-error">
+      <p>{fetchError}</p>
+      <button onClick={() => dispatch(fetchAdminProductDetails(id))}>Retry</button>
     </div>
   );
 
   return (
     <>
-      <PageTitle title={`Update — ${product.name}`} />
+      <PageTitle title={`Edit: ${product?.name || 'Product'} — Admin`} />
       <Navbar />
-      <div className="eup-container">
-        <div className="eup-header">
-          <button className="eup-back-btn" onClick={() => navigate('/admin/products')}>
-            <FiArrowLeft /> Back to Products
-          </button>
-          <div>
-            <h1 className="eup-title">Update Product</h1>
-            <p className="eup-subtitle">Editing: <strong>{product.name}</strong></p>
+
+      <main className="up-main">
+        {toast && (
+          <div className={`up-toast up-toast--${toast.type}`}>
+            <span>{toast.type === 'success' ? '✓' : '✕'}</span> {toast.msg}
           </div>
+        )}
+
+        {/* ── Header ── */}
+        <div className="up-header">
+          <button className="up-back" onClick={() => navigate('/admin/products')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Products
+          </button>
+          <div className="up-header__center">
+            <h1 className="up-title">Edit Product</h1>
+            {product?.slug && (
+              <span className="up-slug">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="14" height="14"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+                /products/{product.slug}
+              </span>
+            )}
+          </div>
+          <button
+            className="up-btn up-btn--ghost up-btn--structured"
+            onClick={handleViewStructuredData}
+            disabled={structuredDataLoading}
+          >
+            {structuredDataLoading ? '…' : (showJSON ? 'Hide JSON-LD' : 'View JSON-LD')}
+          </button>
         </div>
 
-        <div className="eup-content">
-          <nav className="eup-tabs">
-            {TABS.map(({ id:tabId, label, Icon }) => (
-              <button key={tabId} type="button"
-                className={`eup-tab ${activeTab===tabId ? 'active' : ''}`}
-                onClick={() => setActiveTab(tabId)}>
-                <Icon /><span>{label}</span>
-              </button>
+        {/* ── Slug History Banner ── */}
+        {product?.slugHistory?.length > 0 && (
+          <div className="up-slug-history">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>Previous slugs (301 redirected):</span>
+            {product.slugHistory.map((h, i) => (
+              <code key={i}>{h.oldSlug}</code>
             ))}
-          </nav>
+          </div>
+        )}
 
-          <div className="eup-form">
-
-            {activeTab === 'basic' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <h3 className="eup-section-title">Product Information</h3>
-                  <div className="eup-form-group">
-                    <label className="eup-label eup-label--required">Product Name</label>
-                    <input type="text" className="eup-input" name="name" value={formData.name} onChange={handleInputChange} maxLength={200} />
-                    <span className="eup-char-count">{formData.name.length}/200</span>
-                  </div>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group">
-                      <label className="eup-label eup-label--required">Category</label>
-                      <select className="eup-select" name="category" value={formData.category} onChange={handleInputChange}>
-                        <option value="">Select Category</option>
-                        {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <div className="eup-form-group">
-                      <label className="eup-label">Brand</label>
-                      <input type="text" className="eup-input" name="brand" value={formData.brand} onChange={handleInputChange} />
-                    </div>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Manufacturer</label>
-                    <input type="text" className="eup-input" name="manufacturer" value={formData.manufacturer} onChange={handleInputChange} />
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Short Description</label>
-                    <textarea className="eup-textarea" name="shortDescription" rows={3} maxLength={500} value={formData.shortDescription} onChange={handleInputChange} />
-                    <span className="eup-char-count">{formData.shortDescription.length}/500</span>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label eup-label--required">Full Description</label>
-                    <textarea className="eup-textarea" name="description" rows={6} maxLength={5000} value={formData.description} onChange={handleInputChange} />
-                    <span className="eup-char-count">{formData.description.length}/5000</span>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Subcategories</label>
-                    <div className="eup-input-with-btn">
-                      <input type="text" className="eup-input" placeholder="Add subcategory" value={newSubcategory} onChange={(e) => setNewSubcategory(e.target.value)} onKeyDown={(e) => { if(e.key==='Enter'){e.preventDefault();addItem(newSubcategory,setSubcategories,setNewSubcategory);} }} />
-                      <button type="button" className="eup-btn-icon" onClick={() => addItem(newSubcategory,setSubcategories,setNewSubcategory)}><FiPlus /></button>
-                    </div>
-                    <div className="eup-tags">{subcategories.map((s,i) => <span key={i} className="eup-tag">{s}<button type="button" onClick={() => removeItem(i,setSubcategories)}><FiX /></button></span>)}</div>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Tags</label>
-                    <div className="eup-input-with-btn">
-                      <input type="text" className="eup-input" placeholder="Add tag" value={newTag} onChange={(e) => setNewTag(e.target.value)} onKeyDown={(e) => { if(e.key==='Enter'){e.preventDefault();addItem(newTag,setTags,setNewTag,(v)=>v.toLowerCase());} }} />
-                      <button type="button" className="eup-btn-icon" onClick={() => addItem(newTag,setTags,setNewTag,(v)=>v.toLowerCase())}><FiPlus /></button>
-                    </div>
-                    <div className="eup-tags">{tags.map((t,i) => <span key={i} className="eup-tag">{t}<button type="button" onClick={() => removeItem(i,setTags)}><FiX /></button></span>)}</div>
-                  </div>
-                  <div className="eup-form-group">
-                    <div className="eup-label-with-btn">
-                      <label className="eup-label">Specifications</label>
-                      <button type="button" className="eup-btn-small" onClick={addSpec}><FiPlus /> Add</button>
-                    </div>
-                    {specifications.map((spec,i) => (
-                      <div key={i} className="eup-spec-row">
-                        <input type="text" className="eup-input" placeholder="Key"   value={spec.key}   onChange={(e) => updateSpec(i,'key',e.target.value)} />
-                        <input type="text" className="eup-input" placeholder="Value" value={spec.value} onChange={(e) => updateSpec(i,'value',e.target.value)} />
-                        <button type="button" className="eup-btn-icon-danger" onClick={() => removeSpec(i)}><FiTrash2 /></button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'pricing' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <h3 className="eup-section-title">Pricing</h3>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group">
-                      <label className="eup-label eup-label--required">Regular Price</label>
-                      <div className="eup-input-with-icon">
-                        <FiDollarSign className="eup-input-icon" />
-                        <input type="number" className="eup-input eup-input-with-padding" name="pricing.regular" value={formData.pricing.regular} onChange={handleInputChange} min="0" step="0.01" />
-                      </div>
-                    </div>
-                    <div className="eup-form-group">
-                      <label className="eup-label">Sale Price</label>
-                      <div className="eup-input-with-icon">
-                        <FiDollarSign className="eup-input-icon" />
-                        <input type="number" className="eup-input eup-input-with-padding" name="pricing.sale" value={formData.pricing.sale} onChange={handleInputChange} min="0" step="0.01" />
-                      </div>
-                    </div>
-                  </div>
-                  {formData.pricing.regular!=='' && formData.pricing.sale!=='' && Number(formData.pricing.sale)<Number(formData.pricing.regular) && (
-                    <div className="eup-discount-preview"><FiCheck className="eup-discount-icon" /><span>{Math.round(((Number(formData.pricing.regular)-Number(formData.pricing.sale))/Number(formData.pricing.regular))*100)}% off</span></div>
-                  )}
-                  <div className="eup-form-row">
-                    <div className="eup-form-group">
-                      <label className="eup-label">Cost Price</label>
-                      <div className="eup-input-with-icon"><FiDollarSign className="eup-input-icon" /><input type="number" className="eup-input eup-input-with-padding" name="pricing.cost" value={formData.pricing.cost} onChange={handleInputChange} min="0" step="0.01" /></div>
-                    </div>
-                    <div className="eup-form-group">
-                      <label className="eup-label">Currency</label>
-                      <select className="eup-select" name="pricing.currency" value={formData.pricing.currency} onChange={handleInputChange}>{CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                    </div>
-                  </div>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group"><label className="eup-label">Valid From</label><input type="date" className="eup-input" name="pricing.validFrom" value={formData.pricing.validFrom} onChange={handleInputChange} /></div>
-                    <div className="eup-form-group"><label className="eup-label">Valid Through</label><input type="date" className="eup-input" name="pricing.validThrough" value={formData.pricing.validThrough} onChange={handleInputChange} /></div>
-                  </div>
-                  <h3 className="eup-section-title" style={{marginTop:'2rem'}}>Shipping</h3>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group">
-                      <label className="eup-label">Weight</label>
-                      <div className="eup-input-group">
-                        <input type="number" className="eup-input" name="weight.value" value={formData.weight.value} onChange={handleInputChange} min="0" step="0.01" />
-                        <select className="eup-select-addon" name="weight.unit" value={formData.weight.unit} onChange={handleInputChange}>{WEIGHT_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Dimensions (L × W × H)</label>
-                    <div className="eup-dimensions-grid">
-                      {['length','width','height'].map((dim) => (<input key={dim} type="number" className="eup-input" placeholder={dim.charAt(0).toUpperCase()+dim.slice(1)} name={`dimensions.${dim}`} value={formData.dimensions[dim]} onChange={handleInputChange} min="0" step="0.01" />))}
-                      <select className="eup-select" name="dimensions.unit" value={formData.dimensions.unit} onChange={handleInputChange}>{DIM_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}</select>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'inventory' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <h3 className="eup-section-title">Inventory</h3>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group"><label className="eup-label">Stock</label><input type="number" className="eup-input" name="inventory.stock" value={formData.inventory.stock} onChange={handleInputChange} min="0" /></div>
-                    <div className="eup-form-group"><label className="eup-label">Low Stock Threshold</label><input type="number" className="eup-input" name="inventory.lowStockThreshold" value={formData.inventory.lowStockThreshold} onChange={handleInputChange} min="0" /></div>
-                  </div>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group"><label className="eup-label">SKU</label><input type="text" className="eup-input" name="inventory.sku" value={formData.inventory.sku} onChange={handleInputChange} /></div>
-                    <div className="eup-form-group"><label className="eup-label">Barcode</label><input type="text" className="eup-input" name="inventory.barcode" value={formData.inventory.barcode} onChange={handleInputChange} /></div>
-                  </div>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group"><label className="eup-label">GTIN <span className="eup-badge">Google Shopping</span></label><input type="text" className="eup-input" placeholder="UPC / EAN / ISBN" name="inventory.gtin" value={formData.inventory.gtin} onChange={handleInputChange} /></div>
-                    <div className="eup-form-group"><label className="eup-label">MPN</label><input type="text" className="eup-input" name="inventory.mpn" value={formData.inventory.mpn} onChange={handleInputChange} /></div>
-                  </div>
-                  <div className="eup-checkbox-group">
-                    <label className="eup-checkbox"><input type="checkbox" name="inventory.trackInventory" checked={formData.inventory.trackInventory} onChange={handleInputChange} /><span>Track inventory for this product</span></label>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'media' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  {oldImages.length > 0 && (
-                    <>
-                      <h3 className="eup-section-title">Current Images</h3>
-                      <div className="eup-info-box" style={{marginBottom:'1rem'}}>
-                        <FiAlertCircle style={{marginRight:'0.5rem'}} />
-                        <span>First image is primary. Click <FiEye style={{verticalAlign:'middle'}} /> to promote.</span>
-                      </div>
-                      <div className="eup-image-grid">
-                        {oldImages.map((img, i) => (
-                          <div key={img.public_id??i} className="eup-image-card">
-                            <img src={img.url} alt={img.alt||`Product ${i+1}`} />
-                            <div className="eup-image-overlay">
-                              <button type="button" className="eup-image-btn" onClick={() => setPrimaryOldImage(i)} title="Set as primary">{i===0 ? <FiCheck /> : <FiEye />}</button>
-                              <button type="button" className="eup-image-btn eup-image-btn-danger" onClick={() => removeOldImage(img.public_id)}><FiTrash2 /></button>
-                            </div>
-                            {i===0 && <span className="eup-primary-badge">Primary</span>}
-                            <div className="eup-image-meta">
-                              <input type="text" className="eup-input eup-image-meta-input" placeholder="Alt text" maxLength={125} value={img.alt??''} onChange={(e) => updateOldImageMeta(i,'alt',e.target.value)} />
-                              <input type="text" className="eup-input eup-image-meta-input" placeholder="Caption" maxLength={200} value={img.caption??''} onChange={(e) => updateOldImageMeta(i,'caption',e.target.value)} />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                  <h3 className="eup-section-title" style={{marginTop:oldImages.length>0?'2rem':0}}>Add Images</h3>
-                  <div className="eup-upload-area">
-                    <input type="file" id="new-images" className="eup-file-input" accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={handleNewImages} />
-                    <label htmlFor="new-images" className="eup-upload-label">
-                      <FiImage className="eup-upload-icon" />
-                      <span className="eup-upload-text">Click to upload</span>
-                      <span className="eup-upload-subtext">JPEG, PNG, WebP — max 10 MB each</span>
-                    </label>
-                  </div>
-                  {newImagePreviews.length > 0 && (
-                    <>
-                      <h3 className="eup-section-title" style={{marginTop:'1.5rem'}}>New Images</h3>
-                      <div className="eup-image-grid">
-                        {newImagePreviews.map((img, i) => (
-                          <div key={i} className="eup-image-card">
-                            <img src={img.url} alt={img.alt||`New ${i+1}`} />
-                            <div className="eup-image-overlay"><button type="button" className="eup-image-btn eup-image-btn-danger" onClick={() => removeNewImage(i)}><FiTrash2 /></button></div>
-                            <span className="eup-new-badge">New</span>
-                            <div className="eup-image-meta">
-                              <input type="text" className="eup-input eup-image-meta-input" placeholder="Alt text" maxLength={125} value={img.alt} onChange={(e) => updateNewImageMeta(i,'alt',e.target.value)} />
-                              <input type="text" className="eup-input eup-image-meta-input" placeholder="Caption" maxLength={200} value={img.caption} onChange={(e) => updateNewImageMeta(i,'caption',e.target.value)} />
-                              <small className="eup-image-size">{img.size}</small>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'variants' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <div className="eup-label-with-btn">
-                    <h3 className="eup-section-title">Variants</h3>
-                    <button type="button" className="eup-btn-small" onClick={addVariant}><FiPlus /> Add Variant</button>
-                  </div>
-                  {variants.length===0 && (<div className="eup-info-box"><FiAlertCircle style={{marginRight:'0.5rem'}} /><span>No variants. Add sizes, colours, or styles.</span></div>)}
-                  {variants.map((variant, vi) => (
-                    <div key={vi} className="eup-variant-card">
-                      <div className="eup-variant-header">
-                        <input type="text" className="eup-input" placeholder="Variant name (e.g. Size)" value={variant.name} onChange={(e) => updateVariantName(vi,e.target.value)} />
-                        <button type="button" className="eup-btn-icon-danger" onClick={() => removeVariant(vi)}><FiTrash2 /></button>
-                      </div>
-                      <div className="eup-variant-options">
-                        {variant.options.map((opt, oi) => (
-                          <div key={oi} className="eup-variant-option-row">
-                            <input type="text"   className="eup-input" placeholder="Value"   value={opt.value}         onChange={(e) => updateVariantOption(vi,oi,'value',e.target.value)} />
-                            <input type="number" className="eup-input" placeholder="Price +" value={opt.priceModifier} onChange={(e) => updateVariantOption(vi,oi,'priceModifier',Number(e.target.value))} step="0.01" />
-                            <input type="number" className="eup-input" placeholder="Stock"   value={opt.stock}         onChange={(e) => updateVariantOption(vi,oi,'stock',Number(e.target.value))} min="0" />
-                            <button type="button" className="eup-btn-icon-danger" onClick={() => removeVariantOption(vi,oi)}><FiX /></button>
-                          </div>
-                        ))}
-                        <button type="button" className="eup-btn-secondary eup-btn-full" onClick={() => addVariantOption(vi)}><FiPlus /> Add Option</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'seo' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <h3 className="eup-section-title">SEO</h3>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Meta Title <span className="eup-recommended">(max 60)</span></label>
-                    <input type="text" className="eup-input" name="seo.metaTitle" value={formData.seo.metaTitle} onChange={handleInputChange} maxLength={60} />
-                    <span className="eup-char-count">{formData.seo.metaTitle.length}/60</span>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Meta Description <span className="eup-recommended">(120–160)</span></label>
-                    <textarea className="eup-textarea" name="seo.metaDescription" rows={3} maxLength={160} value={formData.seo.metaDescription} onChange={handleInputChange} />
-                    <span className={`eup-char-count ${formData.seo.metaDescription.length>0&&formData.seo.metaDescription.length<120?'eup-char-count--warn':''}`}>{formData.seo.metaDescription.length}/160</span>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Keywords</label>
-                    <div className="eup-input-with-btn">
-                      <input type="text" className="eup-input" placeholder="Add keyword" value={newKeyword} onChange={(e) => setNewKeyword(e.target.value)} onKeyDown={(e) => { if(e.key==='Enter'){e.preventDefault();addItem(newKeyword,setSeoKeywords,setNewKeyword);} }} />
-                      <button type="button" className="eup-btn-icon" onClick={() => addItem(newKeyword,setSeoKeywords,setNewKeyword)}><FiPlus /></button>
-                    </div>
-                    <div className="eup-tags">{seoKeywords.map((k,i) => <span key={i} className="eup-tag">{k}<button type="button" onClick={() => removeItem(i,setSeoKeywords)}><FiX /></button></span>)}</div>
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Canonical URL</label>
-                    <input type="url" className="eup-input" name="seo.canonicalUrl" value={formData.seo.canonicalUrl} onChange={handleInputChange} />
-                  </div>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Focus Keyphrase</label>
-                    <input type="text" className="eup-input" name="seo.focusKeyphrase" value={formData.seo.focusKeyphrase} onChange={handleInputChange} />
-                  </div>
-                  <div className="eup-form-group" style={{marginTop:'2rem'}}>
-                    <div className="eup-label-with-btn">
-                      <label className="eup-label">Breadcrumbs</label>
-                      <button type="button" className="eup-btn-small" onClick={addBreadcrumb} disabled={!newBreadcrumb.name||!newBreadcrumb.url}><FiPlus /> Add</button>
-                    </div>
-                    <div className="eup-spec-row">
-                      <input type="text" className="eup-input" placeholder="Name" value={newBreadcrumb.name} onChange={(e) => setNewBreadcrumb((p)=>({...p,name:e.target.value}))} />
-                      <input type="text" className="eup-input" placeholder="URL"  value={newBreadcrumb.url}  onChange={(e) => setNewBreadcrumb((p)=>({...p,url:e.target.value}))} />
-                    </div>
-                    <div className="eup-tags">{breadcrumbs.map((b,i) => <span key={i} className="eup-tag">{b.position}. {b.name}<button type="button" onClick={() => removeBreadcrumb(i)}><FiX /></button></span>)}</div>
-                  </div>
-                  <div className="eup-form-row">
-                    <div className="eup-form-group">
-                      <label className="eup-label">Schema Type</label>
-                      <select className="eup-select" name="seo.schemaType" value={formData.seo.schemaType} onChange={handleInputChange}>{SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select>
-                    </div>
-                    <div className="eup-form-group">
-                      <label className="eup-label">Condition</label>
-                      <select className="eup-select" name="seo.condition" value={formData.seo.condition} onChange={handleInputChange}>{CONDITIONS.map((c) => <option key={c} value={c}>{c.replace('Condition','')}</option>)}</select>
-                    </div>
-                  </div>
-                  <div className="eup-checkbox-grid">
-                    <label className="eup-checkbox"><input type="checkbox" name="seo.noIndex"  checked={formData.seo.noIndex}  onChange={handleInputChange} /><span>No Index</span></label>
-                    <label className="eup-checkbox"><input type="checkbox" name="seo.noFollow" checked={formData.seo.noFollow} onChange={handleInputChange} /><span>No Follow</span></label>
-                  </div>
-                  <div className="eup-form-group" style={{marginTop:'2rem'}}>
-                    <label className="eup-label">Related Search Terms</label>
-                    <div className="eup-input-with-btn">
-                      <input type="text" className="eup-input" placeholder="Add term" value={newRelatedTerm} onChange={(e) => setNewRelatedTerm(e.target.value)} onKeyDown={(e) => { if(e.key==='Enter'){e.preventDefault();addItem(newRelatedTerm,setRelatedSearchTerms,setNewRelatedTerm,(v)=>v.toLowerCase());} }} />
-                      <button type="button" className="eup-btn-icon" onClick={() => addItem(newRelatedTerm,setRelatedSearchTerms,setNewRelatedTerm,(v)=>v.toLowerCase())}><FiPlus /></button>
-                    </div>
-                    <div className="eup-tags">{relatedSearchTerms.map((t,i) => <span key={i} className="eup-tag">{t}<button type="button" onClick={() => removeItem(i,setRelatedSearchTerms)}><FiX /></button></span>)}</div>
-                  </div>
-                  <div className="eup-label-with-btn" style={{marginTop:'2rem'}}>
-                    <h3 className="eup-section-title">FAQs</h3>
-                    <button type="button" className="eup-btn-small" onClick={addFAQ}><FiPlus /> Add FAQ</button>
-                  </div>
-                  {richSnippets.faqs.map((faq,i) => (
-                    <div key={i} className="eup-faq-card">
-                      <div className="eup-faq-header">
-                        <input type="text" className="eup-input" placeholder="Question" maxLength={200} value={faq.question} onChange={(e) => updateFAQ(i,'question',e.target.value)} />
-                        <button type="button" className="eup-btn-icon-danger" onClick={() => removeFAQ(i)}><FiTrash2 /></button>
-                      </div>
-                      <textarea className="eup-textarea" placeholder="Answer" rows={3} maxLength={1000} value={faq.answer} onChange={(e) => updateFAQ(i,'answer',e.target.value)} />
-                    </div>
-                  ))}
-                  <div className="eup-label-with-btn" style={{marginTop:'2rem'}}>
-                    <h3 className="eup-section-title">Videos</h3>
-                    <button type="button" className="eup-btn-small" onClick={addVideo}><FiPlus /> Add Video</button>
-                  </div>
-                  {richSnippets.videos.map((video,i) => (
-                    <div key={i} className="eup-video-card">
-                      <div className="eup-video-header">
-                        <input type="text" className="eup-input" placeholder="Video Name" value={video.name} onChange={(e) => updateVideo(i,'name',e.target.value)} />
-                        <button type="button" className="eup-btn-icon-danger" onClick={() => removeVideo(i)}><FiTrash2 /></button>
-                      </div>
-                      {[['description','Description'],['contentUrl','Content URL'],['thumbnailUrl','Thumbnail URL']].map(([field,ph]) => (
-                        <input key={field} type={field.includes('Url')?'url':'text'} className="eup-input" placeholder={ph} value={video[field]} style={{marginTop:'0.5rem'}} onChange={(e) => updateVideo(i,field,e.target.value)} />
-                      ))}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'advanced' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <h3 className="eup-section-title">Open Graph</h3>
-                  {[['ogTitle','OG Title','text',60],['ogDescription','OG Description','textarea',160],['ogImage','OG Image URL','url',null],['ogType','OG Type','text',null]].map(([field,label,type,max]) => (
-                    <div key={field} className="eup-form-group">
-                      <label className="eup-label">{label}</label>
-                      {type==='textarea' ? <textarea className="eup-textarea" name={`seo.${field}`} rows={3} maxLength={max??undefined} value={formData.seo[field]} onChange={handleInputChange} /> : <input type={type} className="eup-input" name={`seo.${field}`} maxLength={max??undefined} value={formData.seo[field]} onChange={handleInputChange} />}
-                      {max && <span className="eup-char-count">{(formData.seo[field]??'').length}/{max}</span>}
-                    </div>
-                  ))}
-                  <h3 className="eup-section-title" style={{marginTop:'2rem'}}>Twitter / X</h3>
-                  <div className="eup-form-group">
-                    <label className="eup-label">Card Type</label>
-                    <select className="eup-select" name="seo.twitterCard" value={formData.seo.twitterCard} onChange={handleInputChange}>{TWITTER_CARDS.map((t) => <option key={t} value={t}>{t}</option>)}</select>
-                  </div>
-                  {[['twitterTitle','Twitter Title','text',70],['twitterDescription','Twitter Description','textarea',200],['twitterImage','Twitter Image URL','url',null]].map(([field,label,type,max]) => (
-                    <div key={field} className="eup-form-group">
-                      <label className="eup-label">{label}</label>
-                      {type==='textarea' ? <textarea className="eup-textarea" name={`seo.${field}`} rows={3} maxLength={max??undefined} value={formData.seo[field]} onChange={handleInputChange} /> : <input type={type} className="eup-input" name={`seo.${field}`} maxLength={max??undefined} value={formData.seo[field]} onChange={handleInputChange} />}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'settings' && (
-              <div className="eup-tab-content">
-                <div className="eup-section">
-                  <h3 className="eup-section-title">Product Flags</h3>
-                  <div className="eup-checkbox-grid">
-                    {[['isFeatured','Featured'],['isNewArrival','New Arrival'],['isBestseller','Bestseller']].map(([name,label]) => (
-                      <label key={name} className="eup-checkbox">
-                        <input type="checkbox" name={name} checked={formData[name]} onChange={handleInputChange} />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                  <div className="eup-form-group" style={{marginTop:'2rem'}}>
-                    <label className="eup-label">Status</label>
-                    <select className="eup-select" name="status" value={formData.status} onChange={handleInputChange}>
-                      <option value="draft">Draft</option>
-                      <option value="published">Published</option>
-                      <option value="archived">Archived</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="eup-actions">
-              <button type="button" className="eup-btn eup-btn-secondary" onClick={() => navigate('/admin/products')} disabled={isSubmitting}>
-                Cancel
-              </button>
-              <button type="button" className="eup-btn eup-btn-primary" onClick={handleSubmit} disabled={isSubmitting}>
-                {isSubmitting ? 'Updating…' : <><FiSave /> Update Product</>}
+        {/* ── Structured Data JSON Panel ── */}
+        {showJSON && structuredData && (
+          <div className="up-json-panel">
+            <div className="up-json-header">
+              <span>JSON-LD Structured Data</span>
+              <button onClick={() => navigator.clipboard.writeText(JSON.stringify(structuredData, null, 2))}>
+                Copy
               </button>
             </div>
-
+            <pre className="up-json-body">{JSON.stringify(structuredData, null, 2)}</pre>
           </div>
+        )}
+
+        <div className="up-layout">
+
+          {/* ── Sidebar ── */}
+          <aside className="up-sidebar">
+            {SECTIONS.map((s, i) => (
+              <button
+                key={s}
+                className={`up-nav-item ${activeSection === i ? 'active' : ''}`}
+                onClick={() => setActiveSection(i)}
+              >
+                <span className="up-nav-num">{i + 1}</span>
+                {s}
+              </button>
+            ))}
+
+            {/* ── Quick Stats ── */}
+            {product && (
+              <div className="up-sidebar-stats">
+                <div className="up-sidebar-stat">
+                  <span>Views</span>
+                  <strong>{product.analytics?.views ?? 0}</strong>
+                </div>
+                <div className="up-sidebar-stat">
+                  <span>Purchases</span>
+                  <strong>{product.analytics?.purchases ?? 0}</strong>
+                </div>
+                <div className="up-sidebar-stat">
+                  <span>Rating</span>
+                  <strong>{product.ratings != null ? Number(product.ratings).toFixed(1) : '—'}</strong>
+                </div>
+                <div className="up-sidebar-stat">
+                  <span>Reviews</span>
+                  <strong>{product.numOfReviews ?? 0}</strong>
+                </div>
+              </div>
+            )}
+          </aside>
+
+          {/* ── Form ── */}
+          <form className="up-form" onSubmit={handleSubmit} noValidate>
+
+            {/* ── 0: Basic Info ── */}
+            <div className={`up-section ${activeSection === 0 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Basic Information</h2>
+
+              <div className="up-field up-field--full">
+                <label>Product Name <span className="up-req">*</span></label>
+                <input type="text" value={form.name} onChange={e => set('name', e.target.value)} maxLength={200} />
+                {errors.name && <span className="up-error">{errors.name}</span>}
+                <span className="up-hint">{form.name.length}/200</span>
+              </div>
+
+              <div className="up-field up-field--full">
+                <label>Description <span className="up-req">*</span></label>
+                <textarea rows={5} value={form.description} onChange={e => set('description', e.target.value)} maxLength={5000} />
+                {errors.description && <span className="up-error">{errors.description}</span>}
+                <span className="up-hint">{form.description.length}/5000</span>
+              </div>
+
+              <div className="up-field up-field--full">
+                <label>Short Description</label>
+                <textarea rows={2} value={form.shortDescription} onChange={e => set('shortDescription', e.target.value)} maxLength={500} />
+                <span className="up-hint">{form.shortDescription.length}/500</span>
+              </div>
+
+              <div className="up-row">
+                <div className="up-field">
+                  <label>Category <span className="up-req">*</span></label>
+                  <select value={form.category} onChange={e => set('category', e.target.value)}>
+                    <option value="">Select category</option>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  {errors.category && <span className="up-error">{errors.category}</span>}
+                </div>
+                <div className="up-field">
+                  <label>Status</label>
+                  <select value={form.status} onChange={e => set('status', e.target.value)}>
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                    <option value="archived">Archived</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="up-row">
+                <div className="up-field">
+                  <label>Brand</label>
+                  <input type="text" value={form.brand} onChange={e => set('brand', e.target.value)} />
+                </div>
+                <div className="up-field">
+                  <label>Manufacturer</label>
+                  <input type="text" value={form.manufacturer} onChange={e => set('manufacturer', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="up-field">
+                <label>Subcategories</label>
+                <div className="up-tag-input">
+                  <input type="text" value={subInput} onChange={e => setSubInput(e.target.value)} placeholder="Add and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('subcategories', subInput, setSubInput); }}} />
+                  <button type="button" onClick={() => addToArray('subcategories', subInput, setSubInput)}>Add</button>
+                </div>
+                <div className="up-tags">
+                  {form.subcategories.map((s, i) => (
+                    <span key={i} className="up-tag">{s}<button type="button" onClick={() => removeFromArray('subcategories', i)}>×</button></span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="up-field">
+                <label>Tags</label>
+                <div className="up-tag-input">
+                  <input type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Add tag and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('tags', tagInput, setTagInput); }}} />
+                  <button type="button" onClick={() => addToArray('tags', tagInput, setTagInput)}>Add</button>
+                </div>
+                <div className="up-tags">
+                  {form.tags.map((t, i) => (
+                    <span key={i} className="up-tag">{t}<button type="button" onClick={() => removeFromArray('tags', i)}>×</button></span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(1)}>Next: Pricing →</button>
+              </div>
+            </div>
+
+            {/* ── 1: Pricing ── */}
+            <div className={`up-section ${activeSection === 1 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Pricing</h2>
+              <div className="up-row">
+                <div className="up-field">
+                  <label>Regular Price <span className="up-req">*</span></label>
+                  <div className="up-input-prefix"><span>$</span><input type="number" min="0" step="0.01" value={form.pricing.regular} onChange={e => set('pricing.regular', e.target.value)} /></div>
+                  {errors.regular && <span className="up-error">{errors.regular}</span>}
+                </div>
+                <div className="up-field">
+                  <label>Sale Price</label>
+                  <div className="up-input-prefix"><span>$</span><input type="number" min="0" step="0.01" value={form.pricing.sale} onChange={e => set('pricing.sale', e.target.value)} /></div>
+                  {errors.sale && <span className="up-error">{errors.sale}</span>}
+                </div>
+              </div>
+              <div className="up-row">
+                <div className="up-field">
+                  <label>Cost Price</label>
+                  <div className="up-input-prefix"><span>$</span><input type="number" min="0" step="0.01" value={form.pricing.cost} onChange={e => set('pricing.cost', e.target.value)} /></div>
+                </div>
+                <div className="up-field">
+                  <label>Currency</label>
+                  <select value={form.pricing.currency} onChange={e => set('pricing.currency', e.target.value)}>
+                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="up-row">
+                <div className="up-field"><label>Valid From</label><input type="date" value={form.pricing.validFrom} onChange={e => set('pricing.validFrom', e.target.value)} /></div>
+                <div className="up-field"><label>Valid Through</label><input type="date" value={form.pricing.validThrough} onChange={e => set('pricing.validThrough', e.target.value)} /></div>
+              </div>
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(0)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(2)}>Next: Inventory →</button>
+              </div>
+            </div>
+
+            {/* ── 2: Inventory ── */}
+            <div className={`up-section ${activeSection === 2 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Inventory</h2>
+              <div className="up-row">
+                <div className="up-field"><label>Stock</label><input type="number" min="0" value={form.inventory.stock} onChange={e => set('inventory.stock', e.target.value)} /></div>
+                <div className="up-field"><label>Low Stock Threshold</label><input type="number" min="0" value={form.inventory.lowStockThreshold} onChange={e => set('inventory.lowStockThreshold', e.target.value)} /></div>
+              </div>
+              <div className="up-row">
+                <div className="up-field"><label>SKU</label><input type="text" value={form.inventory.sku} onChange={e => set('inventory.sku', e.target.value)} /></div>
+                <div className="up-field">
+                  <label>Inventory Status</label>
+                  <select value={form.inventory.status} onChange={e => set('inventory.status', e.target.value)}>
+                    {INV_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="up-row">
+                <div className="up-field"><label>GTIN</label><input type="text" value={form.inventory.gtin} onChange={e => set('inventory.gtin', e.target.value)} /></div>
+                <div className="up-field"><label>MPN</label><input type="text" value={form.inventory.mpn} onChange={e => set('inventory.mpn', e.target.value)} /></div>
+              </div>
+              <div className="up-row">
+                <div className="up-field"><label>Barcode</label><input type="text" value={form.inventory.barcode} onChange={e => set('inventory.barcode', e.target.value)} /></div>
+                <div className="up-field up-field--checkbox">
+                  <label className="up-checkbox-label">
+                    <input type="checkbox" checked={form.inventory.trackInventory} onChange={e => set('inventory.trackInventory', e.target.checked)} />
+                    <span>Track Inventory</span>
+                  </label>
+                </div>
+              </div>
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(1)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(3)}>Next: Images →</button>
+              </div>
+            </div>
+
+            {/* ── 3: Images ── */}
+            <div className={`up-section ${activeSection === 3 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Images</h2>
+              {errors.images && <div className="up-error up-error--block">{errors.images}</div>}
+
+              {/* Existing Images */}
+              {existingImages.length > 0 && (
+                <>
+                  <h3 className="up-subsection-title">Current Images</h3>
+                  <div className="up-image-grid">
+                    {existingImages.map((img, i) => (
+                      <div key={img.public_id} className={`up-image-card ${img.isPrimary ? 'up-image-card--primary' : ''}`}>
+                        <div className="up-image-preview">
+                          <img src={img.url} alt={img.alt || `Product image ${i + 1}`} loading="lazy" />
+                          {img.isPrimary && <span className="up-image-badge">Primary</span>}
+                          <div className="up-image-overlay">
+                            <button type="button" className="up-image-action" onClick={() => setPrimaryImage(img.public_id)} title="Set as primary">★</button>
+                            <button type="button" className="up-image-action up-image-action--delete" onClick={() => markForDeletion(img.public_id)} title="Remove">×</button>
+                          </div>
+                        </div>
+                        <div className="up-image-meta">
+                          <input type="text" placeholder="Alt text (max 125 chars)" maxLength={125} value={img.alt || ''} onChange={e => updateExistingImageMeta(i, 'alt', e.target.value)} />
+                          <input type="text" placeholder="Caption (max 200 chars)" maxLength={200} value={img.caption || ''} onChange={e => updateExistingImageMeta(i, 'caption', e.target.value)} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* Marked for deletion warning */}
+              {imagesToDelete.length > 0 && (
+                <div className="up-delete-warn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  {imagesToDelete.length} image{imagesToDelete.length !== 1 ? 's' : ''} will be deleted from Cloudinary on save
+                </div>
+              )}
+
+              {/* New Images */}
+              <h3 className="up-subsection-title">Add New Images</h3>
+              <div className="up-dropzone" onClick={() => fileRef.current?.click()}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <p>Click or drag to add more images</p>
+                <input ref={fileRef} type="file" multiple accept="image/*" onChange={handleImageAdd} style={{ display: 'none' }} />
+              </div>
+
+              {newImages.length > 0 && (
+                <div className="up-image-grid">
+                  {newImages.map((img, i) => (
+                    <div key={i} className="up-image-card">
+                      <div className="up-image-preview">
+                        <img src={img.preview} alt={img.alt || `New image ${i + 1}`} />
+                        <span className="up-image-badge up-image-badge--new">New</span>
+                        <button type="button" className="up-image-remove" onClick={() => removeNewImage(i)}>×</button>
+                      </div>
+                      <div className="up-image-meta">
+                        <input type="text" placeholder="Alt text (max 125 chars)" maxLength={125} value={img.alt} onChange={e => updateNewImageMeta(i, 'alt', e.target.value)} />
+                        <input type="text" placeholder="Caption (optional, max 200 chars)" maxLength={200} value={img.caption} onChange={e => updateNewImageMeta(i, 'caption', e.target.value)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(2)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(4)}>Next: Variants →</button>
+              </div>
+            </div>
+
+            {/* ── 4: Variants ── */}
+            <div className={`up-section ${activeSection === 4 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Variants</h2>
+              {form.variants.map((variant, vi) => (
+                <div key={vi} className="up-variant-block">
+                  <div className="up-variant-header">
+                    <input type="text" placeholder="Variant name" value={variant.name} onChange={e => setVariant(vi, 'name', e.target.value)} />
+                    <button type="button" className="up-btn up-btn--danger-sm" onClick={() => removeVariant(vi)}>Remove</button>
+                  </div>
+                  {variant.options.map((opt, oi) => (
+                    <div key={oi} className="up-variant-option">
+                      <input type="text" placeholder="Value" value={opt.value} onChange={e => setVariantOption(vi, oi, 'value', e.target.value)} />
+                      <input type="number" placeholder="Price mod" value={opt.priceModifier} onChange={e => setVariantOption(vi, oi, 'priceModifier', e.target.value)} />
+                      <input type="number" placeholder="Stock" value={opt.stock} onChange={e => setVariantOption(vi, oi, 'stock', e.target.value)} />
+                      <input type="text" placeholder="SKU" value={opt.sku} onChange={e => setVariantOption(vi, oi, 'sku', e.target.value)} />
+                      <input type="text" placeholder="GTIN" value={opt.gtin} onChange={e => setVariantOption(vi, oi, 'gtin', e.target.value)} />
+                      <button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeVariantOption(vi, oi)}>×</button>
+                    </div>
+                  ))}
+                  <button type="button" className="up-btn up-btn--ghost-sm" onClick={() => addVariantOption(vi)}>+ Add Option</button>
+                </div>
+              ))}
+              <button type="button" className="up-btn up-btn--dashed" onClick={addVariant}>+ Add Variant</button>
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(3)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(5)}>Next: Specifications →</button>
+              </div>
+            </div>
+
+            {/* ── 5: Specifications ── */}
+            <div className={`up-section ${activeSection === 5 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Specifications</h2>
+              {form.specifications.map((spec, i) => (
+                <div key={i} className="up-spec-row">
+                  <input type="text" placeholder="Key" value={spec.key} onChange={e => setSpec(i, 'key', e.target.value)} />
+                  <input type="text" placeholder="Value" value={spec.value} onChange={e => setSpec(i, 'value', e.target.value)} />
+                  <button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeSpec(i)}>×</button>
+                </div>
+              ))}
+              <button type="button" className="up-btn up-btn--dashed" onClick={addSpec}>+ Add Specification</button>
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(4)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(6)}>Next: Dimensions →</button>
+              </div>
+            </div>
+
+            {/* ── 6: Dimensions & Weight ── */}
+            <div className={`up-section ${activeSection === 6 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Dimensions & Weight</h2>
+              <div className="up-row up-row--3">
+                <div className="up-field"><label>Length</label><input type="number" min="0" value={form.dimensions.length} onChange={e => set('dimensions.length', e.target.value)} /></div>
+                <div className="up-field"><label>Width</label><input type="number" min="0" value={form.dimensions.width} onChange={e => set('dimensions.width', e.target.value)} /></div>
+                <div className="up-field"><label>Height</label><input type="number" min="0" value={form.dimensions.height} onChange={e => set('dimensions.height', e.target.value)} /></div>
+              </div>
+              <div className="up-field up-field--sm">
+                <label>Unit</label>
+                <select value={form.dimensions.unit} onChange={e => set('dimensions.unit', e.target.value)}>
+                  {DIM_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+              <div className="up-row">
+                <div className="up-field"><label>Weight</label><input type="number" min="0" step="0.01" value={form.weight.value} onChange={e => set('weight.value', e.target.value)} /></div>
+                <div className="up-field"><label>Weight Unit</label><select value={form.weight.unit} onChange={e => set('weight.unit', e.target.value)}>{W_UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
+              </div>
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(5)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(7)}>Next: Breadcrumbs →</button>
+              </div>
+            </div>
+
+            {/* ── 7: Breadcrumbs ── */}
+            <div className={`up-section ${activeSection === 7 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Breadcrumbs</h2>
+              {form.breadcrumbs.map((b, i) => (
+                <div key={i} className="up-spec-row">
+                  <input type="text" placeholder="Name" value={b.name} onChange={e => setBreadcrumb(i, 'name', e.target.value)} />
+                  <input type="text" placeholder="URL" value={b.url} onChange={e => setBreadcrumb(i, 'url', e.target.value)} />
+                  <input type="number" placeholder="Position" value={b.position} onChange={e => setBreadcrumb(i, 'position', Number(e.target.value))} style={{ maxWidth: '80px' }} />
+                  <button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeBreadcrumb(i)}>×</button>
+                </div>
+              ))}
+              <button type="button" className="up-btn up-btn--dashed" onClick={addBreadcrumb}>+ Add Breadcrumb</button>
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(6)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(8)}>Next: SEO →</button>
+              </div>
+            </div>
+
+            {/* ── 8: SEO ── */}
+            <div className={`up-section ${activeSection === 8 ? 'active' : ''}`}>
+              <h2 className="up-section-title">SEO</h2>
+
+              <div className="up-field up-field--full">
+                <label>Meta Title <span className="up-hint-inline">max 60 chars</span></label>
+                <input type="text" maxLength={60} value={form.seo.metaTitle} onChange={e => set('seo.metaTitle', e.target.value)} />
+                <span className="up-hint">{form.seo.metaTitle.length}/60</span>
+              </div>
+              <div className="up-field up-field--full">
+                <label>Meta Description <span className="up-hint-inline">120–160 chars</span></label>
+                <textarea rows={3} maxLength={160} value={form.seo.metaDescription} onChange={e => set('seo.metaDescription', e.target.value)} />
+                <span className={`up-hint ${form.seo.metaDescription.length > 0 && form.seo.metaDescription.length < 120 ? 'up-hint--warn' : ''}`}>
+                  {form.seo.metaDescription.length}/160{form.seo.metaDescription.length > 0 && form.seo.metaDescription.length < 120 ? ' — too short' : ''}
+                </span>
+              </div>
+              <div className="up-field up-field--full">
+                <label>Focus Keyphrase</label>
+                <input type="text" value={form.seo.focusKeyphrase} onChange={e => set('seo.focusKeyphrase', e.target.value)} />
+              </div>
+              <div className="up-field">
+                <label>Keywords</label>
+                <div className="up-tag-input">
+                  <input type="text" value={kwInput} onChange={e => setKwInput(e.target.value)} placeholder="Add keyword" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('keywords', kwInput, setKwInput); }}} />
+                  <button type="button" onClick={() => addToSeoArray('keywords', kwInput, setKwInput)}>Add</button>
+                </div>
+                <div className="up-tags">
+                  {form.seo.keywords.map((k, i) => <span key={i} className="up-tag">{k}<button type="button" onClick={() => removeFromSeoArray('keywords', i)}>×</button></span>)}
+                </div>
+              </div>
+              <div className="up-field up-field--full">
+                <label>Canonical URL</label>
+                <input type="url" value={form.seo.canonicalUrl} onChange={e => set('seo.canonicalUrl', e.target.value)} />
+              </div>
+              <div className="up-row">
+                <div className="up-field"><label>Schema Type</label><select value={form.seo.schemaType} onChange={e => set('seo.schemaType', e.target.value)}>{SCHEMA_TYPES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+                <div className="up-field"><label>Condition</label><select value={form.seo.condition} onChange={e => set('seo.condition', e.target.value)}>{CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+              </div>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">Open Graph</h3>
+                <div className="up-field up-field--full"><label>OG Title</label><input type="text" maxLength={60} value={form.seo.ogTitle} onChange={e => set('seo.ogTitle', e.target.value)} /></div>
+                <div className="up-field up-field--full"><label>OG Description</label><textarea rows={2} maxLength={160} value={form.seo.ogDescription} onChange={e => set('seo.ogDescription', e.target.value)} /></div>
+                <div className="up-row">
+                  <div className="up-field"><label>OG Image URL</label><input type="url" value={form.seo.ogImage} onChange={e => set('seo.ogImage', e.target.value)} /></div>
+                  <div className="up-field"><label>OG Type</label><select value={form.seo.ogType} onChange={e => set('seo.ogType', e.target.value)}>{OG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                </div>
+              </div>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">Twitter Card</h3>
+                <div className="up-row">
+                  <div className="up-field"><label>Card Type</label><select value={form.seo.twitterCard} onChange={e => set('seo.twitterCard', e.target.value)}>{TW_CARDS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                  <div className="up-field"><label>Twitter Title</label><input type="text" maxLength={70} value={form.seo.twitterTitle} onChange={e => set('seo.twitterTitle', e.target.value)} /></div>
+                </div>
+                <div className="up-field up-field--full"><label>Twitter Description</label><textarea rows={2} maxLength={200} value={form.seo.twitterDescription} onChange={e => set('seo.twitterDescription', e.target.value)} /></div>
+                <div className="up-field up-field--full"><label>Twitter Image URL</label><input type="url" value={form.seo.twitterImage} onChange={e => set('seo.twitterImage', e.target.value)} /></div>
+              </div>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">Related Search Terms</h3>
+                <div className="up-tag-input">
+                  <input type="text" value={rstInput} onChange={e => setRstInput(e.target.value)} placeholder="Add term" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('relatedSearchTerms', rstInput, setRstInput); }}} />
+                  <button type="button" onClick={() => addToSeoArray('relatedSearchTerms', rstInput, setRstInput)}>Add</button>
+                </div>
+                <div className="up-tags">
+                  {form.seo.relatedSearchTerms.map((t, i) => <span key={i} className="up-tag">{t}<button type="button" onClick={() => removeFromSeoArray('relatedSearchTerms', i)}>×</button></span>)}
+                </div>
+              </div>
+
+              <div className="up-row">
+                <div className="up-field up-field--checkbox"><label className="up-checkbox-label"><input type="checkbox" checked={form.seo.noIndex} onChange={e => set('seo.noIndex', e.target.checked)} /><span>No Index</span></label></div>
+                <div className="up-field up-field--checkbox"><label className="up-checkbox-label"><input type="checkbox" checked={form.seo.noFollow} onChange={e => set('seo.noFollow', e.target.checked)} /><span>No Follow</span></label></div>
+              </div>
+
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(7)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(9)}>Next: Rich Snippets →</button>
+              </div>
+            </div>
+
+            {/* ── 9: Rich Snippets ── */}
+            <div className={`up-section ${activeSection === 9 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Rich Snippets</h2>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">FAQs</h3>
+                {form.richSnippets.faqs.map((faq, i) => (
+                  <div key={i} className="up-faq-block">
+                    <div className="up-faq-header"><span>FAQ {i + 1}</span><button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeFaq(i)}>×</button></div>
+                    <input type="text" placeholder="Question" maxLength={200} value={faq.question} onChange={e => setFaq(i, 'question', e.target.value)} />
+                    <textarea rows={3} placeholder="Answer" maxLength={1000} value={faq.answer} onChange={e => setFaq(i, 'answer', e.target.value)} />
+                  </div>
+                ))}
+                <button type="button" className="up-btn up-btn--dashed" onClick={addFaq}>+ Add FAQ</button>
+              </div>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">How-To</h3>
+                <div className="up-field"><label>How-To Name</label><input type="text" value={form.richSnippets.howTo.name} onChange={e => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, name: e.target.value } } }))} /></div>
+                {form.richSnippets.howTo.steps.map((step, i) => (
+                  <div key={i} className="up-faq-block">
+                    <div className="up-faq-header"><span>Step {i + 1}</span><button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeHowToStep(i)}>×</button></div>
+                    <input type="text" placeholder="Step name" value={step.name} onChange={e => setHowToStep(i, 'name', e.target.value)} />
+                    <textarea rows={2} placeholder="Instructions" value={step.text} onChange={e => setHowToStep(i, 'text', e.target.value)} />
+                    <input type="url" placeholder="Image URL" value={step.image} onChange={e => setHowToStep(i, 'image', e.target.value)} />
+                  </div>
+                ))}
+                <button type="button" className="up-btn up-btn--dashed" onClick={addHowToStep}>+ Add Step</button>
+              </div>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">Videos</h3>
+                {form.richSnippets.videos.map((video, i) => (
+                  <div key={i} className="up-faq-block">
+                    <div className="up-faq-header"><span>Video {i + 1}</span><button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeVideo(i)}>×</button></div>
+                    <div className="up-row">
+                      <input type="text" placeholder="Name" value={video.name} onChange={e => setVideo(i, 'name', e.target.value)} />
+                      <input type="date" value={video.uploadDate} onChange={e => setVideo(i, 'uploadDate', e.target.value)} />
+                    </div>
+                    <textarea rows={2} placeholder="Description" value={video.description} onChange={e => setVideo(i, 'description', e.target.value)} />
+                    <input type="url" placeholder="Thumbnail URL" value={video.thumbnailUrl} onChange={e => setVideo(i, 'thumbnailUrl', e.target.value)} />
+                    <input type="url" placeholder="Content URL" value={video.contentUrl} onChange={e => setVideo(i, 'contentUrl', e.target.value)} />
+                    <input type="url" placeholder="Embed URL" value={video.embedUrl} onChange={e => setVideo(i, 'embedUrl', e.target.value)} />
+                    <input type="text" placeholder="Duration ISO 8601 (e.g. PT2M30S)" value={video.duration} onChange={e => setVideo(i, 'duration', e.target.value)} />
+                  </div>
+                ))}
+                <button type="button" className="up-btn up-btn--dashed" onClick={addVideo}>+ Add Video</button>
+              </div>
+
+              <div className="up-section-nav">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(8)}>← Back</button>
+                <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(10)}>Next: Relationships →</button>
+              </div>
+            </div>
+
+            {/* ── 10: Relationships & Flags ── */}
+            <div className={`up-section ${activeSection === 10 ? 'active' : ''}`}>
+              <h2 className="up-section-title">Relationships & Flags</h2>
+
+              <div className="up-field up-field--full"><label>Related Products <span className="up-hint-inline">comma-separated IDs</span></label><input type="text" value={form.relatedProducts} onChange={e => set('relatedProducts', e.target.value)} /></div>
+              <div className="up-field up-field--full"><label>Cross-Sells <span className="up-hint-inline">comma-separated IDs</span></label><input type="text" value={form.crossSells} onChange={e => set('crossSells', e.target.value)} /></div>
+              <div className="up-field up-field--full"><label>Upsells <span className="up-hint-inline">comma-separated IDs</span></label><input type="text" value={form.upsells} onChange={e => set('upsells', e.target.value)} /></div>
+
+              <div className="up-subsection">
+                <h3 className="up-subsection-title">Flags</h3>
+                <div className="up-flag-grid">
+                  <label className="up-toggle-label">
+                    <input type="checkbox" checked={form.isFeatured} onChange={e => set('isFeatured', e.target.checked)} />
+                    <span className="up-toggle-track"><span className="up-toggle-thumb" /></span>
+                    <span>Featured</span>
+                  </label>
+                  <label className="up-toggle-label">
+                    <input type="checkbox" checked={form.isNewArrival} onChange={e => set('isNewArrival', e.target.checked)} />
+                    <span className="up-toggle-track"><span className="up-toggle-thumb" /></span>
+                    <span>New Arrival</span>
+                  </label>
+                  <label className="up-toggle-label">
+                    <input type="checkbox" checked={form.isBestseller} onChange={e => set('isBestseller', e.target.checked)} />
+                    <span className="up-toggle-track"><span className="up-toggle-thumb" /></span>
+                    <span>Bestseller</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="up-section-nav up-section-nav--submit">
+                <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(9)}>← Back</button>
+                <button type="submit" className="up-btn up-btn--submit" disabled={updateStatus.loading}>
+                  {updateStatus.loading ? <><span className="up-spinner" /> Saving…</> : 'Save Changes'}
+                </button>
+              </div>
+            </div>
+
+          </form>
         </div>
-      </div>
+      </main>
+
       <Footer />
     </>
   );

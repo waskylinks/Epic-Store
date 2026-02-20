@@ -1,869 +1,960 @@
-import React, { useCallback, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { useNavigate } from 'react-router-dom';
 import PageTitle from '../components/PageTitle';
-import '../AdminStyles/CreateProduct.css';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
-import { useDispatch } from 'react-redux';
-import { createProduct } from '../features/admin/adminSlice';
-import { toast } from 'react-toastify';
+import Loader from '../components/Loader';
 import {
-  FiImage, FiDollarSign, FiPackage, FiTag, FiSettings,
-  FiTrendingUp, FiX, FiPlus, FiTrash2, FiSave,
-  FiEye, FiAlertCircle, FiCheck, FiFlag,
-} from 'react-icons/fi';
+  createProduct,
+  clearCreateStatus,
+  selectCreateStatus,
+} from '../features/admin/adminProductSlice';
+import '../AdminStyles/CreateProduct.css';
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ── constants ─────────────────────────────────────────────────────────────────
+const CATEGORIES = ['Electronics','Clothing & Apparel','Home & Living','Sports & Outdoors','Beauty & Personal Care','Books & Media','Food & Beverages'];
+const CURRENCIES  = ['USD','EUR','GBP','NGN'];
+const DIM_UNITS   = ['cm','in'];
+const W_UNITS     = ['kg','lb','g'];
+const INV_STATUSES= ['InStock','LowStock','OutOfStock','Discontinued'];
+const SCHEMA_TYPES= ['Product','Book','Course','SoftwareApplication'];
+const CONDITIONS  = ['NewCondition','UsedCondition','RefurbishedCondition','DamagedCondition'];
+const TW_CARDS    = ['summary','summary_large_image'];
+const OG_TYPES    = ['product','website','article'];
 
-const CATEGORIES    = ['Electronics', 'Clothing & Apparel', 'Home & Living', 'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'];
-const CURRENCIES    = ['USD', 'EUR', 'GBP', 'NGN'];
-const WEIGHT_UNITS  = ['kg', 'lb', 'g'];
-const DIM_UNITS     = ['cm', 'in'];
-const SCHEMA_TYPES  = ['Product', 'Book', 'Course', 'SoftwareApplication'];
-const CONDITIONS    = ['NewCondition', 'UsedCondition', 'RefurbishedCondition', 'DamagedCondition'];
-const TWITTER_CARDS = ['summary', 'summary_large_image'];
-const MAX_FILE_SIZE = 10 * 1024 * 1024;
-
-const TABS = [
-  { id: 'basic',     label: 'Basic Info',   icon: <FiPackage /> },
-  { id: 'pricing',   label: 'Pricing',      icon: <FiDollarSign /> },
-  { id: 'inventory', label: 'Inventory',    icon: <FiPackage /> },
-  { id: 'media',     label: 'Media',        icon: <FiImage /> },
-  { id: 'variants',  label: 'Variants',     icon: <FiSettings /> },
-  { id: 'seo',       label: 'SEO',          icon: <FiTrendingUp /> },
-  { id: 'advanced',  label: 'Advanced SEO', icon: <FiTag /> },
-  { id: 'settings',  label: 'Settings',     icon: <FiFlag /> },
+const SECTIONS = [
+  'Basic Info', 'Pricing', 'Inventory', 'Images',
+  'Variants', 'Specifications', 'Dimensions & Weight',
+  'Breadcrumbs', 'SEO', 'Rich Snippets', 'Relationships & Flags',
 ];
 
-const makeInitialForm = () => ({
-  name: '', description: '', shortDescription: '',
-  category: '', brand: '', manufacturer: '',
-  pricing:   { regular: '', sale: '', cost: '', currency: 'USD', validFrom: '', validThrough: '' },
-  inventory: { stock: '', sku: '', barcode: '', gtin: '', mpn: '', trackInventory: true, lowStockThreshold: 5 },
+const initState = () => ({
+  // basic
+  name: '', description: '', shortDescription: '', category: '', brand: '', manufacturer: '', status: 'published',
+  // pricing
+  pricing: { regular: '', sale: '', cost: '', currency: 'USD', validFrom: '', validThrough: '' },
+  // inventory
+  inventory: { stock: '', sku: '', gtin: '', mpn: '', barcode: '', trackInventory: true, lowStockThreshold: 5, status: 'InStock' },
+  // dimensions
   dimensions: { length: '', width: '', height: '', unit: 'cm' },
-  weight:    { value: '', unit: 'kg' },
+  weight: { value: '', unit: 'kg' },
+  // arrays
+  subcategories: [], tags: [], specifications: [], variants: [], breadcrumbs: [],
+  // flags
+  isFeatured: false, isNewArrival: false, isBestseller: false,
+  // seo
   seo: {
-    metaTitle: '', metaDescription: '', canonicalUrl: '',
-    noIndex: false, noFollow: false,
+    metaTitle: '', metaDescription: '', keywords: [], canonicalUrl: '', noIndex: false, noFollow: false,
     ogTitle: '', ogDescription: '', ogImage: '', ogType: 'product',
     twitterCard: 'summary_large_image', twitterTitle: '', twitterDescription: '', twitterImage: '',
-    schemaType: 'Product', condition: 'NewCondition', focusKeyphrase: '',
+    schemaType: 'Product', condition: 'NewCondition', availability: 'InStock',
+    focusKeyphrase: '', relatedSearchTerms: [],
   },
-  isFeatured: false, isNewArrival: true, isBestseller: false,
+  // rich snippets
+  richSnippets: {
+    faqs: [], howTo: { name: '', steps: [] }, videos: [],
+  },
+  // relationships (comma separated IDs — admin fills manually)
+  relatedProducts: '', crossSells: '', upsells: '',
 });
 
-// ─── Component ────────────────────────────────────────────────────────────────
+export default function CreateProduct() {
+  const dispatch  = useDispatch();
+  const navigate  = useNavigate();
+  const { loading, error, success } = useSelector(selectCreateStatus);
 
-function CreateProduct() {
-  const dispatch = useDispatch();
+  const [form,          setForm]         = useState(initState());
+  const [activeSection, setActiveSection]= useState(0);
+  const [images,        setImages]       = useState([]);       // { file, preview, alt, caption }
+  const [imageMetadata, setImageMetadata]= useState([]);
+  const [tagInput,      setTagInput]     = useState('');
+  const [subInput,      setSubInput]     = useState('');
+  const [kwInput,       setKwInput]      = useState('');
+  const [rstInput,      setRstInput]     = useState('');
+  const [toast,         setToast]        = useState(null);
+  const [errors,        setErrors]       = useState({});
+  const fileRef = useRef();
 
-  const [isSubmitting,       setIsSubmitting]       = useState(false);
-  const [activeTab,          setActiveTab]          = useState('basic');
-  const [images,             setImages]             = useState([]);
-  const [imagePreviews,      setImagePreviews]      = useState([]);
-  const [formData,           setFormData]           = useState(makeInitialForm);
-  const [subcategories,      setSubcategories]      = useState([]);
-  const [tags,               setTags]               = useState([]);
-  const [specifications,     setSpecifications]     = useState([]);
-  const [variants,           setVariants]           = useState([]);
-  const [seoKeywords,        setSeoKeywords]        = useState([]);
-  const [relatedSearchTerms, setRelatedSearchTerms] = useState([]);
-  const [breadcrumbs,        setBreadcrumbs]        = useState([]);
-  const [richSnippets,       setRichSnippets]       = useState({ faqs: [], howTo: { name: '', steps: [] }, videos: [] });
-
-  const [newSubcategory, setNewSubcategory] = useState('');
-  const [newTag,         setNewTag]         = useState('');
-  const [newKeyword,     setNewKeyword]     = useState('');
-  const [newRelatedTerm, setNewRelatedTerm] = useState('');
-  const [newBreadcrumb,  setNewBreadcrumb]  = useState({ name: '', url: '' });
-
-  // ── Reset ─────────────────────────────────────────────────────────────────
-  const resetForm = useCallback(() => {
-    setFormData(makeInitialForm());
-    setImages([]); setImagePreviews([]);
-    setSubcategories([]); setTags([]); setSpecifications([]);
-    setVariants([]); setSeoKeywords([]); setRelatedSearchTerms([]);
-    setBreadcrumbs([]);
-    setRichSnippets({ faqs: [], howTo: { name: '', steps: [] }, videos: [] });
-    setActiveTab('basic');
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 4000);
   }, []);
 
-  // ── Input handler ─────────────────────────────────────────────────────────
-  const handleInputChange = useCallback((e) => {
-    const { name, value, type, checked } = e.target;
-    const val = type === 'checkbox' ? checked : value;
-    if (name.includes('.')) {
-      const [parent, child] = name.split('.');
-      setFormData((prev) => ({ ...prev, [parent]: { ...prev[parent], [child]: val } }));
-    } else {
-      setFormData((prev) => ({ ...prev, [name]: val }));
+  useEffect(() => {
+    if (success) {
+      showToast('Product created successfully!');
+      dispatch(clearCreateStatus());
+      setTimeout(() => navigate('/admin/products'), 1200);
     }
-  }, []);
+    if (error) { showToast(error, 'error'); dispatch(clearCreateStatus()); }
+  }, [success, error, dispatch, navigate, showToast]);
 
-  // ── Image handling ────────────────────────────────────────────────────────
-  const handleImageUpload = useCallback((e) => {
-    Array.from(e.target.files).forEach((file) => {
-      if (file.size > MAX_FILE_SIZE) { toast.error(`"${file.name}" exceeds 10MB`); return; }
-      if (images.some((img) => img.name === file.name && img.size === file.size)) {
-        toast.warn(`"${file.name}" already added`); return;
+  // ── generic field setter ───────────────────────────────────────────────────
+  const set = (path, value) => {
+    setForm(prev => {
+      const next = { ...prev };
+      const keys  = path.split('.');
+      let obj = next;
+      for (let i = 0; i < keys.length - 1; i++) {
+        obj[keys[i]] = { ...obj[keys[i]] };
+        obj = obj[keys[i]];
       }
-      const reader = new FileReader();
-      reader.onload = () => {
-        setImages((o) => [...o, file]);
-        setImagePreviews((o) => [...o, { url: reader.result, name: file.name, size: (file.size / 1024).toFixed(1) + ' KB', alt: '', caption: '' }]);
-      };
-      reader.readAsDataURL(file);
+      obj[keys[keys.length - 1]] = value;
+      return next;
     });
+  };
+
+  // ── images ─────────────────────────────────────────────────────────────────
+  const handleImageAdd = (e) => {
+    const files = Array.from(e.target.files);
+    const newImgs = files.map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+      alt: '',
+      caption: '',
+    }));
+    setImages(prev => [...prev, ...newImgs]);
+    setImageMetadata(prev => [...prev, ...newImgs.map(img => ({ alt: img.alt, caption: img.caption }))]);
     e.target.value = '';
-  }, [images]);
+  };
 
-  const removeImage     = useCallback((i) => { setImages((o) => o.filter((_, j) => j !== i)); setImagePreviews((o) => o.filter((_, j) => j !== i)); }, []);
-  const setPrimaryImage = useCallback((i) => { if (i === 0) return; setImages((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); setImagePreviews((o) => { const n = [...o]; [n[0], n[i]] = [n[i], n[0]]; return n; }); }, []);
-  const updateImageMeta = useCallback((i, field, value) => setImagePreviews((o) => o.map((img, j) => j === i ? { ...img, [field]: value } : img)), []);
+  const removeImage = (idx) => {
+    setImages(prev => { URL.revokeObjectURL(prev[idx].preview); return prev.filter((_, i) => i !== idx); });
+    setImageMetadata(prev => prev.filter((_, i) => i !== idx));
+  };
 
-  // ── List helpers ──────────────────────────────────────────────────────────
-  const addItem    = useCallback((value, setter, resetSetter, transform = (v) => v) => { const t = value.trim(); if (!t) return; setter((p) => [...p, transform(t)]); resetSetter(''); }, []);
-  const removeItem = useCallback((i, setter) => setter((p) => p.filter((_, j) => j !== i)), []);
+  const updateImageMeta = (idx, field, value) => {
+    setImages(prev => prev.map((img, i) => i === idx ? { ...img, [field]: value } : img));
+    setImageMetadata(prev => prev.map((m, i) => i === idx ? { ...m, [field]: value } : m));
+  };
 
-  const addBreadcrumb    = useCallback(() => { if (!newBreadcrumb.name.trim() || !newBreadcrumb.url.trim()) return; setBreadcrumbs((p) => [...p, { name: newBreadcrumb.name.trim(), url: newBreadcrumb.url.trim(), position: p.length + 1 }]); setNewBreadcrumb({ name: '', url: '' }); }, [newBreadcrumb]);
-  const removeBreadcrumb = useCallback((i) => setBreadcrumbs((p) => p.filter((_, j) => j !== i).map((b, j) => ({ ...b, position: j + 1 }))), []);
+  // ── array field helpers ────────────────────────────────────────────────────
+  const addToArray = (field, value, setter) => {
+    if (!value.trim()) return;
+    setForm(prev => ({ ...prev, [field]: [...prev[field], value.trim()] }));
+    setter('');
+  };
+  const removeFromArray = (field, idx) => {
+    setForm(prev => ({ ...prev, [field]: prev[field].filter((_, i) => i !== idx) }));
+  };
+  const addToSeoArray = (field, value, setter) => {
+    if (!value.trim()) return;
+    setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: [...prev.seo[field], value.trim()] } }));
+    setter('');
+  };
+  const removeFromSeoArray = (field, idx) => {
+    setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: prev.seo[field].filter((_, i) => i !== idx) } }));
+  };
 
-  const addSpec    = useCallback(() => setSpecifications((p) => [...p, { key: '', value: '' }]), []);
-  const updateSpec = useCallback((i, field, val) => setSpecifications((p) => p.map((s, j) => j === i ? { ...s, [field]: val } : s)), []);
-  const removeSpec = useCallback((i) => setSpecifications((p) => p.filter((_, j) => j !== i)), []);
+  // ── specifications ─────────────────────────────────────────────────────────
+  const addSpec = () => setForm(prev => ({ ...prev, specifications: [...prev.specifications, { key: '', value: '' }] }));
+  const setSpec = (idx, field, val) => setForm(prev => ({
+    ...prev,
+    specifications: prev.specifications.map((s, i) => i === idx ? { ...s, [field]: val } : s),
+  }));
+  const removeSpec = (idx) => setForm(prev => ({ ...prev, specifications: prev.specifications.filter((_, i) => i !== idx) }));
 
-  const addVariant          = useCallback(() => setVariants((p) => [...p, { name: '', options: [{ value: '', priceModifier: 0, stock: 0 }] }]), []);
-  const updateVariantName   = useCallback((i, name) => setVariants((p) => p.map((v, j) => j === i ? { ...v, name } : v)), []);
-  const removeVariant       = useCallback((i) => setVariants((p) => p.filter((_, j) => j !== i)), []);
-  const addVariantOption    = useCallback((vi) => setVariants((p) => p.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0 }] } : v)), []);
-  const updateVariantOption = useCallback((vi, oi, f, val) => setVariants((p) => p.map((v, i) => i === vi ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [f]: val } : o) } : v)), []);
-  const removeVariantOption = useCallback((vi, oi) => setVariants((p) => p.map((v, i) => i === vi ? { ...v, options: v.options.filter((_, j) => j !== oi) } : v)), []);
+  // ── variants ───────────────────────────────────────────────────────────────
+  const addVariant = () => setForm(prev => ({ ...prev, variants: [...prev.variants, { name: '', options: [{ value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] }] }));
+  const setVariant = (vi, field, val) => setForm(prev => ({
+    ...prev,
+    variants: prev.variants.map((v, i) => i === vi ? { ...v, [field]: val } : v),
+  }));
+  const addVariantOption = (vi) => setForm(prev => ({
+    ...prev,
+    variants: prev.variants.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] } : v),
+  }));
+  const setVariantOption = (vi, oi, field, val) => setForm(prev => ({
+    ...prev,
+    variants: prev.variants.map((v, i) => i === vi
+      ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [field]: val } : o) }
+      : v),
+  }));
+  const removeVariant = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.filter((_, i) => i !== vi) }));
+  const removeVariantOption = (vi, oi) => setForm(prev => ({
+    ...prev,
+    variants: prev.variants.map((v, i) => i === vi ? { ...v, options: v.options.filter((_, j) => j !== oi) } : v),
+  }));
 
-  const addFAQ    = useCallback(() => setRichSnippets((p) => ({ ...p, faqs: [...p.faqs, { question: '', answer: '' }] })), []);
-  const updateFAQ = useCallback((i, field, val) => setRichSnippets((p) => ({ ...p, faqs: p.faqs.map((f, j) => j === i ? { ...f, [field]: val } : f) })), []);
-  const removeFAQ = useCallback((i) => setRichSnippets((p) => ({ ...p, faqs: p.faqs.filter((_, j) => j !== i) })), []);
+  // ── breadcrumbs ────────────────────────────────────────────────────────────
+  const addBreadcrumb = () => setForm(prev => ({
+    ...prev,
+    breadcrumbs: [...prev.breadcrumbs, { name: '', url: '', position: prev.breadcrumbs.length + 1 }],
+  }));
+  const setBreadcrumb = (idx, field, val) => setForm(prev => ({
+    ...prev,
+    breadcrumbs: prev.breadcrumbs.map((b, i) => i === idx ? { ...b, [field]: val } : b),
+  }));
+  const removeBreadcrumb = (idx) => setForm(prev => ({ ...prev, breadcrumbs: prev.breadcrumbs.filter((_, i) => i !== idx) }));
 
-  const addVideo    = useCallback(() => setRichSnippets((p) => ({ ...p, videos: [...p.videos, { name: '', description: '', thumbnailUrl: '', contentUrl: '' }] })), []);
-  const updateVideo = useCallback((i, field, val) => setRichSnippets((p) => ({ ...p, videos: p.videos.map((v, j) => j === i ? { ...v, [field]: val } : v) })), []);
-  const removeVideo = useCallback((i) => setRichSnippets((p) => ({ ...p, videos: p.videos.filter((_, j) => j !== i) })), []);
+  // ── FAQs ───────────────────────────────────────────────────────────────────
+  const addFaq = () => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, faqs: [...prev.richSnippets.faqs, { question: '', answer: '' }] } }));
+  const setFaq = (idx, field, val) => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, faqs: prev.richSnippets.faqs.map((f, i) => i === idx ? { ...f, [field]: val } : f) },
+  }));
+  const removeFaq = (idx) => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, faqs: prev.richSnippets.faqs.filter((_, i) => i !== idx) } }));
 
-  // ── Submit ────────────────────────────────────────────────────────────────
-  // Validation and submission are co-located to avoid stale-closure bugs.
-  // isSubmitting is local state — no Redux thunk from any other component
-  // can interfere with it, eliminating the stuck-loading-state bug entirely.
-  const handleSubmit = useCallback(async (e, publishStatus) => {
+  // ── HowTo steps ────────────────────────────────────────────────────────────
+  const addHowToStep = () => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, steps: [...prev.richSnippets.howTo.steps, { name: '', text: '', image: '' }] } },
+  }));
+  const setHowToStep = (idx, field, val) => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, steps: prev.richSnippets.howTo.steps.map((s, i) => i === idx ? { ...s, [field]: val } : s) } },
+  }));
+  const removeHowToStep = (idx) => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, steps: prev.richSnippets.howTo.steps.filter((_, i) => i !== idx) } },
+  }));
+
+  // ── Videos ─────────────────────────────────────────────────────────────────
+  const addVideo = () => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, videos: [...prev.richSnippets.videos, { name: '', description: '', thumbnailUrl: '', uploadDate: '', contentUrl: '', embedUrl: '', duration: '' }] },
+  }));
+  const setVideo = (idx, field, val) => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, videos: prev.richSnippets.videos.map((v, i) => i === idx ? { ...v, [field]: val } : v) },
+  }));
+  const removeVideo = (idx) => setForm(prev => ({
+    ...prev,
+    richSnippets: { ...prev.richSnippets, videos: prev.richSnippets.videos.filter((_, i) => i !== idx) },
+  }));
+
+  // ── validation ─────────────────────────────────────────────────────────────
+  const validate = () => {
+    const e = {};
+    if (!form.name.trim())        e.name        = 'Product name is required';
+    if (!form.description.trim()) e.description = 'Description is required';
+    if (!form.category)           e.category    = 'Category is required';
+    if (!form.pricing.regular)    e.regular     = 'Regular price is required';
+    if (form.pricing.sale && Number(form.pricing.sale) >= Number(form.pricing.regular))
+      e.sale = 'Sale price must be less than regular price';
+    if (images.length === 0)      e.images      = 'At least one image is required';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  // ── submit ─────────────────────────────────────────────────────────────────
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (isSubmitting) return;
+    if (!validate()) { showToast('Please fix the errors below', 'error'); return; }
 
-    // ── Validation ────────────────────────────────────────────────────────
-    if (!formData.name.trim()) {
-      toast.error(publishStatus === 'draft' ? 'Product name is required even for a draft' : 'Product name is required');
-      setActiveTab('basic');
-      return;
-    }
-    if (!formData.category) {
-      toast.error(publishStatus === 'draft' ? 'Category is required even for a draft' : 'Category is required');
-      setActiveTab('basic');
-      return;
-    }
-    if (publishStatus !== 'draft') {
-      if (!formData.description.trim()) {
-        toast.error('Product description is required');
-        setActiveTab('basic');
-        return;
-      }
-      if (images.length === 0) {
-        toast.error('At least one product image is required');
-        setActiveTab('media');
-        return;
-      }
-    }
-    if (!formData.pricing.regular) {
-      toast.error('Regular price is required');
-      setActiveTab('pricing');
-      return;
-    }
-    if (formData.pricing.sale !== '' && Number(formData.pricing.sale) >= Number(formData.pricing.regular)) {
-      toast.error('Sale price must be less than regular price');
-      setActiveTab('pricing');
-      return;
-    }
-    if (formData.pricing.validFrom && formData.pricing.validThrough &&
-        new Date(formData.pricing.validFrom) > new Date(formData.pricing.validThrough)) {
-      toast.error('Price valid-from must be before valid-through');
-      setActiveTab('pricing');
-      return;
-    }
-
-    // ── Build FormData ─────────────────────────────────────────────────────
     const fd = new FormData();
-    fd.append('name',             formData.name.trim());
-    fd.append('description',      formData.description.trim());
-    fd.append('shortDescription', formData.shortDescription.trim());
-    fd.append('category',         formData.category);
-    fd.append('brand',            formData.brand.trim());
-    fd.append('manufacturer',     formData.manufacturer.trim());
-    fd.append('status',           publishStatus || 'published');
-    fd.append('isFeatured',       JSON.stringify(formData.isFeatured));
-    fd.append('isNewArrival',     JSON.stringify(formData.isNewArrival));
-    fd.append('isBestseller',     JSON.stringify(formData.isBestseller));
 
-    const pricingData = { regular: Number(formData.pricing.regular), currency: formData.pricing.currency };
-    if (formData.pricing.sale !== '')  pricingData.sale = Number(formData.pricing.sale);
-    if (formData.pricing.cost !== '')  pricingData.cost = Number(formData.pricing.cost);
-    if (formData.pricing.validFrom)    pricingData.validFrom = formData.pricing.validFrom;
-    if (formData.pricing.validThrough) pricingData.validThrough = formData.pricing.validThrough;
-    fd.append('pricing', JSON.stringify(pricingData));
+    fd.append('name',             form.name);
+    fd.append('description',      form.description);
+    fd.append('shortDescription', form.shortDescription);
+    fd.append('category',         form.category);
+    fd.append('brand',            form.brand);
+    fd.append('manufacturer',     form.manufacturer);
+    fd.append('status',           form.status);
+    fd.append('isFeatured',       form.isFeatured);
+    fd.append('isNewArrival',     form.isNewArrival);
+    fd.append('isBestseller',     form.isBestseller);
 
-    const inventoryData = { stock: Number(formData.inventory.stock) || 0, trackInventory: formData.inventory.trackInventory, lowStockThreshold: Number(formData.inventory.lowStockThreshold) };
-    if (formData.inventory.sku.trim())     inventoryData.sku     = formData.inventory.sku.trim();
-    if (formData.inventory.barcode.trim()) inventoryData.barcode = formData.inventory.barcode.trim();
-    if (formData.inventory.gtin.trim())    inventoryData.gtin    = formData.inventory.gtin.trim();
-    if (formData.inventory.mpn.trim())     inventoryData.mpn     = formData.inventory.mpn.trim();
-    fd.append('inventory', JSON.stringify(inventoryData));
+    fd.append('pricing',      JSON.stringify(form.pricing));
+    fd.append('inventory',    JSON.stringify(form.inventory));
+    fd.append('dimensions',   JSON.stringify(form.dimensions));
+    fd.append('weight',       JSON.stringify(form.weight));
+    fd.append('subcategories',JSON.stringify(form.subcategories));
+    fd.append('tags',         JSON.stringify(form.tags));
+    fd.append('specifications',JSON.stringify(form.specifications));
+    fd.append('variants',     JSON.stringify(form.variants));
+    fd.append('breadcrumbs',  JSON.stringify(form.breadcrumbs));
+    fd.append('seo',          JSON.stringify(form.seo));
+    fd.append('richSnippets', JSON.stringify(form.richSnippets));
+    fd.append('imageMetadata',JSON.stringify(imageMetadata));
 
-    fd.append('subcategories', JSON.stringify(subcategories));
-    fd.append('tags',          JSON.stringify(tags));
+    images.forEach(img => fd.append('images', img.file));
 
-    const validSpecs    = specifications.filter((s) => s.key && s.value);
-    const validVariants = variants.filter((v) => v.name && v.options.length > 0);
-    if (validSpecs.length)    fd.append('specifications', JSON.stringify(validSpecs));
-    if (validVariants.length) fd.append('variants',       JSON.stringify(validVariants));
+    dispatch(createProduct(fd));
+  };
 
-    fd.append('dimensions', JSON.stringify({ length: Number(formData.dimensions.length) || 0, width: Number(formData.dimensions.width) || 0, height: Number(formData.dimensions.height) || 0, unit: formData.dimensions.unit }));
-    fd.append('weight',     JSON.stringify({ value: Number(formData.weight.value) || 0, unit: formData.weight.unit }));
+  const sectionComplete = (s) => {
+    if (s === 0) return form.name && form.description && form.category;
+    if (s === 1) return !!form.pricing.regular;
+    if (s === 3) return images.length > 0;
+    return true;
+  };
 
-    fd.append('seo', JSON.stringify({
-      metaTitle:          formData.seo.metaTitle.trim(),
-      metaDescription:    formData.seo.metaDescription.trim(),
-      keywords:           seoKeywords,
-      canonicalUrl:       formData.seo.canonicalUrl.trim(),
-      noIndex:            formData.seo.noIndex  || false,
-      noFollow:           formData.seo.noFollow || false,
-      ogTitle:            formData.seo.ogTitle.trim()            || formData.seo.metaTitle.trim(),
-      ogDescription:      formData.seo.ogDescription.trim()      || formData.seo.metaDescription.trim(),
-      ogImage:            formData.seo.ogImage       || '',
-      ogType:             formData.seo.ogType        || 'product',
-      twitterCard:        formData.seo.twitterCard   || 'summary_large_image',
-      twitterTitle:       formData.seo.twitterTitle  || formData.seo.ogTitle.trim() || formData.seo.metaTitle.trim(),
-      twitterDescription: formData.seo.twitterDescription || formData.seo.ogDescription.trim() || formData.seo.metaDescription.trim(),
-      twitterImage:       formData.seo.twitterImage  || '',
-      schemaType:         formData.seo.schemaType    || 'Product',
-      condition:          formData.seo.condition     || 'NewCondition',
-      focusKeyphrase:     formData.seo.focusKeyphrase.trim(),
-      relatedSearchTerms,
-    }));
+  if (loading) return <Loader />;
 
-    if (breadcrumbs.length > 0) fd.append('breadcrumbs', JSON.stringify(breadcrumbs));
-
-    fd.append('richSnippets', JSON.stringify({
-      faqs:   richSnippets.faqs.filter((f) => f.question && f.answer),
-      howTo:  richSnippets.howTo,
-      videos: richSnippets.videos.filter((v) => v.name && v.contentUrl),
-    }));
-
-    fd.append('imageMetadata', JSON.stringify(imagePreviews.map((img) => ({ alt: img.alt || '', caption: img.caption || '' }))));
-    images.forEach((img) => fd.append('images', img));
-
-    // ── Dispatch ───────────────────────────────────────────────────────────
-    setIsSubmitting(true);
-    try {
-      await dispatch(createProduct(fd)).unwrap();
-      toast.success('Product created successfully!', { position: 'top-center', autoClose: 3000 });
-      resetForm();
-    } catch (err) {
-      toast.error(typeof err === 'string' ? err : err?.message || 'Failed to create product', { position: 'top-center', autoClose: 3000 });
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [
-    isSubmitting, formData, images, imagePreviews, subcategories, tags,
-    specifications, variants, seoKeywords, relatedSearchTerms, breadcrumbs,
-    richSnippets, dispatch, resetForm,
-  ]);
-
-  // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <>
-      <PageTitle title="Create Product" />
+      <PageTitle title="Create Product — Admin" />
       <Navbar />
 
-      <div className="ecp-container">
-        <div className="ecp-header">
-          <div className="ecp-header-content">
-            <h1 className="ecp-title">Create New Product</h1>
-            <p className="ecp-subtitle">Add a new product to your catalog</p>
+      <main className="cp-main">
+        {toast && (
+          <div className={`cp-toast cp-toast--${toast.type}`}>
+            <span>{toast.type === 'success' ? '✓' : '✕'}</span> {toast.msg}
           </div>
-          <div className="ecp-header-actions">
-            <button type="button" className="ecp-btn ecp-btn-secondary" onClick={resetForm} disabled={isSubmitting}>
-              <FiX /> Cancel
-            </button>
-          </div>
+        )}
+
+        {/* ── Page Header ── */}
+        <div className="cp-header">
+          <button className="cp-back" onClick={() => navigate('/admin/products')}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+            Products
+          </button>
+          <h1 className="cp-title">Create Product</h1>
         </div>
 
-        <div className="ecp-content">
-          <div className="ecp-tabs">
-            {TABS.map((tab) => (
-              <button key={tab.id} type="button"
-                className={`ecp-tab ${activeTab === tab.id ? 'active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}>
-                {tab.icon}<span>{tab.label}</span>
+        <div className="cp-layout">
+
+          {/* ── Sidebar Navigation ── */}
+          <aside className="cp-sidebar">
+            {SECTIONS.map((s, i) => (
+              <button
+                key={s}
+                className={`cp-nav-item ${activeSection === i ? 'active' : ''} ${sectionComplete(i) ? 'complete' : ''}`}
+                onClick={() => setActiveSection(i)}
+              >
+                <span className="cp-nav-num">{sectionComplete(i) ? '✓' : i + 1}</span>
+                {s}
               </button>
             ))}
-          </div>
+          </aside>
 
-          <div className="ecp-form">
+          {/* ── Form ── */}
+          <form className="cp-form" onSubmit={handleSubmit} noValidate>
 
-            {/* ══ BASIC INFO ══════════════════════════════════════════════ */}
-            {activeTab === 'basic' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Product Information</h3>
+            {/* ── 0: Basic Info ── */}
+            <div className={`cp-section ${activeSection === 0 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Basic Information</h2>
 
-                  <div className="ecp-form-group">
-                    <label className="ecp-label ecp-label--required">Product Name</label>
-                    <input type="text" className="ecp-input" placeholder="Enter product name"
-                      name="name" value={formData.name} onChange={handleInputChange} maxLength={200} />
-                    <span className="ecp-char-count">{formData.name.length}/200</span>
-                  </div>
+              <div className="cp-field cp-field--full">
+                <label>Product Name <span className="cp-req">*</span></label>
+                <input type="text" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Enter product name" maxLength={200} />
+                {errors.name && <span className="cp-error">{errors.name}</span>}
+                <span className="cp-hint">{form.name.length}/200 characters</span>
+              </div>
 
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label ecp-label--required">Category</label>
-                      <select className="ecp-select" name="category" value={formData.category} onChange={handleInputChange}>
-                        <option value="">Select Category</option>
-                        {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Brand</label>
-                      <input type="text" className="ecp-input" placeholder="Enter brand name (optional)"
-                        name="brand" value={formData.brand} onChange={handleInputChange} />
-                    </div>
-                  </div>
+              <div className="cp-field cp-field--full">
+                <label>Description <span className="cp-req">*</span></label>
+                <textarea rows={5} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Detailed product description" maxLength={5000} />
+                {errors.description && <span className="cp-error">{errors.description}</span>}
+                <span className="cp-hint">{form.description.length}/5000 characters</span>
+              </div>
 
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Manufacturer</label>
-                    <input type="text" className="ecp-input" placeholder="Enter manufacturer name (optional)"
-                      name="manufacturer" value={formData.manufacturer} onChange={handleInputChange} />
-                  </div>
+              <div className="cp-field cp-field--full">
+                <label>Short Description</label>
+                <textarea rows={2} value={form.shortDescription} onChange={e => set('shortDescription', e.target.value)} placeholder="Brief summary (used for SEO meta if metaDescription is blank)" maxLength={500} />
+                <span className="cp-hint">{form.shortDescription.length}/500 characters</span>
+              </div>
 
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Short Description</label>
-                    <textarea className="ecp-textarea" placeholder="Brief product description (optional)"
-                      name="shortDescription" value={formData.shortDescription} onChange={handleInputChange}
-                      rows={3} maxLength={500} />
-                    <span className="ecp-char-count">{formData.shortDescription.length}/500</span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label ecp-label--required">Full Description</label>
-                    <textarea className="ecp-textarea" placeholder="Detailed product description"
-                      name="description" value={formData.description} onChange={handleInputChange}
-                      rows={6} maxLength={5000} />
-                    <span className="ecp-char-count">{formData.description.length}/5000</span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Subcategories</label>
-                    <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add subcategory" value={newSubcategory}
-                        onChange={(e) => setNewSubcategory(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newSubcategory, setSubcategories, setNewSubcategory); } }} />
-                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newSubcategory, setSubcategories, setNewSubcategory)}><FiPlus /></button>
-                    </div>
-                    <div className="ecp-tags">
-                      {subcategories.map((s, i) => <span key={i} className="ecp-tag">{s}<button type="button" onClick={() => removeItem(i, setSubcategories)}><FiX /></button></span>)}
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Tags</label>
-                    <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add tag" value={newTag}
-                        onChange={(e) => setNewTag(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newTag, setTags, setNewTag, (v) => v.toLowerCase()); } }} />
-                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newTag, setTags, setNewTag, (v) => v.toLowerCase())}><FiPlus /></button>
-                    </div>
-                    <div className="ecp-tags">
-                      {tags.map((t, i) => <span key={i} className="ecp-tag">{t}<button type="button" onClick={() => removeItem(i, setTags)}><FiX /></button></span>)}
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <div className="ecp-label-with-btn">
-                      <label className="ecp-label">Specifications</label>
-                      <button type="button" className="ecp-btn-small" onClick={addSpec}><FiPlus /> Add Spec</button>
-                    </div>
-                    {specifications.map((spec, i) => (
-                      <div key={i} className="ecp-spec-row">
-                        <input type="text" className="ecp-input" placeholder="Key" value={spec.key} onChange={(e) => updateSpec(i, 'key', e.target.value)} />
-                        <input type="text" className="ecp-input" placeholder="Value" value={spec.value} onChange={(e) => updateSpec(i, 'value', e.target.value)} />
-                        <button type="button" className="ecp-btn-icon-danger" onClick={() => removeSpec(i)}><FiTrash2 /></button>
-                      </div>
-                    ))}
-                  </div>
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Category <span className="cp-req">*</span></label>
+                  <select value={form.category} onChange={e => set('category', e.target.value)}>
+                    <option value="">Select category</option>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                  {errors.category && <span className="cp-error">{errors.category}</span>}
+                </div>
+                <div className="cp-field">
+                  <label>Status</label>
+                  <select value={form.status} onChange={e => set('status', e.target.value)}>
+                    <option value="published">Published</option>
+                    <option value="draft">Draft</option>
+                    <option value="archived">Archived</option>
+                  </select>
                 </div>
               </div>
-            )}
 
-            {/* ══ PRICING ═════════════════════════════════════════════════ */}
-            {activeTab === 'pricing' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Pricing Information</h3>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label ecp-label--required">Regular Price</label>
-                      <div className="ecp-input-with-icon">
-                        <FiDollarSign className="ecp-input-icon" />
-                        <input type="number" className="ecp-input ecp-input-with-padding" placeholder="0.00"
-                          name="pricing.regular" value={formData.pricing.regular} onChange={handleInputChange} min="0" step="0.01" />
-                      </div>
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Sale Price</label>
-                      <div className="ecp-input-with-icon">
-                        <FiDollarSign className="ecp-input-icon" />
-                        <input type="number" className="ecp-input ecp-input-with-padding" placeholder="0.00 (optional)"
-                          name="pricing.sale" value={formData.pricing.sale} onChange={handleInputChange} min="0" step="0.01" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {formData.pricing.regular !== '' && formData.pricing.sale !== '' &&
-                   Number(formData.pricing.sale) < Number(formData.pricing.regular) && (
-                    <div className="ecp-discount-preview">
-                      <FiCheck className="ecp-discount-icon" />
-                      <span>Discount: {Math.round(((Number(formData.pricing.regular) - Number(formData.pricing.sale)) / Number(formData.pricing.regular)) * 100)}% off</span>
-                    </div>
-                  )}
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Cost Price</label>
-                      <div className="ecp-input-with-icon">
-                        <FiDollarSign className="ecp-input-icon" />
-                        <input type="number" className="ecp-input ecp-input-with-padding" placeholder="0.00 (optional)"
-                          name="pricing.cost" value={formData.pricing.cost} onChange={handleInputChange} min="0" step="0.01" />
-                      </div>
-                      <small className="ecp-help-text">Your cost — used for margin calculations</small>
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Currency</label>
-                      <select className="ecp-select" name="pricing.currency" value={formData.pricing.currency} onChange={handleInputChange}>
-                        {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Price Valid From</label>
-                      <input type="date" className="ecp-input" name="pricing.validFrom" value={formData.pricing.validFrom} onChange={handleInputChange} />
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Price Valid Through</label>
-                      <input type="date" className="ecp-input" name="pricing.validThrough" value={formData.pricing.validThrough} onChange={handleInputChange} />
-                    </div>
-                  </div>
-
-                  <h3 className="ecp-section-title" style={{ marginTop: '2rem' }}>Shipping Information</h3>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Weight</label>
-                      <div className="ecp-input-group">
-                        <input type="number" className="ecp-input" placeholder="0 (optional)"
-                          name="weight.value" value={formData.weight.value} onChange={handleInputChange} min="0" step="0.01" />
-                        <select className="ecp-select-addon" name="weight.unit" value={formData.weight.unit} onChange={handleInputChange}>
-                          {WEIGHT_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Dimensions (L × W × H)</label>
-                    <div className="ecp-dimensions-grid">
-                      {['length', 'width', 'height'].map((dim) => (
-                        <input key={dim} type="number" className="ecp-input"
-                          placeholder={dim.charAt(0).toUpperCase() + dim.slice(1)}
-                          name={`dimensions.${dim}`} value={formData.dimensions[dim]}
-                          onChange={handleInputChange} min="0" step="0.01" />
-                      ))}
-                      <select className="ecp-select" name="dimensions.unit" value={formData.dimensions.unit} onChange={handleInputChange}>
-                        {DIM_UNITS.map((u) => <option key={u} value={u}>{u}</option>)}
-                      </select>
-                    </div>
-                  </div>
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Brand</label>
+                  <input type="text" value={form.brand} onChange={e => set('brand', e.target.value)} placeholder="Brand name" />
+                </div>
+                <div className="cp-field">
+                  <label>Manufacturer</label>
+                  <input type="text" value={form.manufacturer} onChange={e => set('manufacturer', e.target.value)} placeholder="Manufacturer name" />
                 </div>
               </div>
-            )}
 
-            {/* ══ INVENTORY ═══════════════════════════════════════════════ */}
-            {activeTab === 'inventory' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Inventory Management</h3>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Stock Quantity</label>
-                      <input type="number" className="ecp-input" placeholder="0"
-                        name="inventory.stock" value={formData.inventory.stock} onChange={handleInputChange} min="0" />
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Low Stock Threshold</label>
-                      <input type="number" className="ecp-input" placeholder="5"
-                        name="inventory.lowStockThreshold" value={formData.inventory.lowStockThreshold} onChange={handleInputChange} min="0" />
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">SKU</label>
-                      <input type="text" className="ecp-input" placeholder="PROD-001 (optional)"
-                        name="inventory.sku" value={formData.inventory.sku} onChange={handleInputChange} />
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Barcode</label>
-                      <input type="text" className="ecp-input" placeholder="123456789 (optional)"
-                        name="inventory.barcode" value={formData.inventory.barcode} onChange={handleInputChange} />
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">GTIN <span className="ecp-badge">Google Shopping</span></label>
-                      <input type="text" className="ecp-input" placeholder="UPC / EAN / ISBN (optional)"
-                        name="inventory.gtin" value={formData.inventory.gtin} onChange={handleInputChange} />
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">MPN</label>
-                      <input type="text" className="ecp-input" placeholder="Manufacturer Part Number (optional)"
-                        name="inventory.mpn" value={formData.inventory.mpn} onChange={handleInputChange} />
-                    </div>
-                  </div>
-
-                  <div className="ecp-checkbox-group">
-                    <label className="ecp-checkbox">
-                      <input type="checkbox" name="inventory.trackInventory"
-                        checked={formData.inventory.trackInventory} onChange={handleInputChange} />
-                      <span>Track inventory for this product</span>
-                    </label>
-                  </div>
+              <div className="cp-field">
+                <label>Subcategories</label>
+                <div className="cp-tag-input">
+                  <input type="text" value={subInput} onChange={e => setSubInput(e.target.value)} placeholder="Type and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('subcategories', subInput, setSubInput); }}} />
+                  <button type="button" onClick={() => addToArray('subcategories', subInput, setSubInput)}>Add</button>
                 </div>
-              </div>
-            )}
-
-            {/* ══ MEDIA ═══════════════════════════════════════════════════ */}
-            {activeTab === 'media' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Product Images</h3>
-
-                  <div className="ecp-upload-area">
-                    <input type="file" id="product-images" className="ecp-file-input"
-                      accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={handleImageUpload} />
-                    <label htmlFor="product-images" className="ecp-upload-label">
-                      <FiImage className="ecp-upload-icon" />
-                      <span className="ecp-upload-text">Click or drag images here</span>
-                      <span className="ecp-upload-subtext">JPEG, PNG, WebP — max 10MB each</span>
-                    </label>
-                  </div>
-
-                  {imagePreviews.length > 0 && (
-                    <>
-                      <div className="ecp-info-box" style={{ margin: '1rem 0' }}>
-                        <FiAlertCircle style={{ marginRight: '0.5rem' }} />
-                        <span>First image is the primary. Click <FiEye style={{ verticalAlign: 'middle' }} /> on any image to make it primary.</span>
-                      </div>
-                      <div className="ecp-image-grid">
-                        {imagePreviews.map((img, i) => (
-                          <div key={i} className="ecp-image-card">
-                            <img src={img.url} alt={img.alt || `Product ${i + 1}`} />
-                            <div className="ecp-image-overlay">
-                              <button type="button" className="ecp-image-btn" onClick={() => setPrimaryImage(i)} title="Set as primary">
-                                {i === 0 ? <FiCheck /> : <FiEye />}
-                              </button>
-                              <button type="button" className="ecp-image-btn ecp-image-btn-danger" onClick={() => removeImage(i)}><FiTrash2 /></button>
-                            </div>
-                            {i === 0 && <span className="ecp-primary-badge">Primary</span>}
-                            <div className="ecp-image-meta">
-                              <input type="text" className="ecp-input ecp-image-meta-input" placeholder="Alt text (SEO)" maxLength={125}
-                                value={img.alt} onChange={(e) => updateImageMeta(i, 'alt', e.target.value)} />
-                              <input type="text" className="ecp-input ecp-image-meta-input" placeholder="Caption (optional)" maxLength={200}
-                                value={img.caption} onChange={(e) => updateImageMeta(i, 'caption', e.target.value)} />
-                              <small className="ecp-image-size">{img.size}</small>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* ══ VARIANTS ════════════════════════════════════════════════ */}
-            {activeTab === 'variants' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <div className="ecp-label-with-btn">
-                    <h3 className="ecp-section-title">Product Variants</h3>
-                    <button type="button" className="ecp-btn-small" onClick={addVariant}><FiPlus /> Add Variant</button>
-                  </div>
-                  {variants.length === 0 && (
-                    <div className="ecp-info-box"><FiAlertCircle style={{ marginRight: '0.5rem' }} /><span>Add variants if your product comes in different sizes, colors, or styles</span></div>
-                  )}
-                  {variants.map((variant, vi) => (
-                    <div key={vi} className="ecp-variant-card">
-                      <div className="ecp-variant-header">
-                        <input type="text" className="ecp-input" placeholder="Variant name (e.g., Size, Color)"
-                          value={variant.name} onChange={(e) => updateVariantName(vi, e.target.value)} />
-                        <button type="button" className="ecp-btn-icon-danger" onClick={() => removeVariant(vi)}><FiTrash2 /></button>
-                      </div>
-                      <div className="ecp-variant-options">
-                        {variant.options.map((opt, oi) => (
-                          <div key={oi} className="ecp-variant-option-row">
-                            <input type="text"   className="ecp-input" placeholder="Value"   value={opt.value}         onChange={(e) => updateVariantOption(vi, oi, 'value', e.target.value)} />
-                            <input type="number" className="ecp-input" placeholder="Price +" value={opt.priceModifier} onChange={(e) => updateVariantOption(vi, oi, 'priceModifier', Number(e.target.value))} step="0.01" />
-                            <input type="number" className="ecp-input" placeholder="Stock"   value={opt.stock}         onChange={(e) => updateVariantOption(vi, oi, 'stock', Number(e.target.value))} min="0" />
-                            <button type="button" className="ecp-btn-icon-danger" onClick={() => removeVariantOption(vi, oi)}><FiX /></button>
-                          </div>
-                        ))}
-                        <button type="button" className="ecp-btn-secondary ecp-btn-full" onClick={() => addVariantOption(vi)}><FiPlus /> Add Option</button>
-                      </div>
-                    </div>
+                <div className="cp-tags">
+                  {form.subcategories.map((s, i) => (
+                    <span key={i} className="cp-tag">{s}<button type="button" onClick={() => removeFromArray('subcategories', i)}>×</button></span>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* ══ SEO ═════════════════════════════════════════════════════ */}
-            {activeTab === 'seo' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Search Engine Optimization</h3>
-
-                  <div className="ecp-info-box" style={{ marginBottom: '1.5rem' }}>
-                    <FiAlertCircle style={{ marginRight: '0.5rem' }} />
-                    <span>Filling these fields improves search visibility. None are strictly required to save.</span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Meta Title <span className="ecp-recommended">(recommended, max 60)</span></label>
-                    <input type="text" className="ecp-input" placeholder="Enter SEO meta title"
-                      name="seo.metaTitle" value={formData.seo.metaTitle} onChange={handleInputChange} maxLength={60} />
-                    <span className="ecp-char-count">{formData.seo.metaTitle.length}/60</span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Meta Description <span className="ecp-recommended">(recommended 120–160)</span></label>
-                    <textarea className="ecp-textarea" placeholder="Enter SEO meta description"
-                      name="seo.metaDescription" value={formData.seo.metaDescription} onChange={handleInputChange} rows={3} maxLength={160} />
-                    <span className={`ecp-char-count ${formData.seo.metaDescription.length > 0 && formData.seo.metaDescription.length < 120 ? 'ecp-char-count--warn' : ''}`}>
-                      {formData.seo.metaDescription.length}/160
-                    </span>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">SEO Keywords</label>
-                    <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add keyword" value={newKeyword}
-                        onChange={(e) => setNewKeyword(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newKeyword, setSeoKeywords, setNewKeyword); } }} />
-                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newKeyword, setSeoKeywords, setNewKeyword)}><FiPlus /></button>
-                    </div>
-                    <div className="ecp-tags">
-                      {seoKeywords.map((k, i) => <span key={i} className="ecp-tag">{k}<button type="button" onClick={() => removeItem(i, setSeoKeywords)}><FiX /></button></span>)}
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Focus Keyphrase</label>
-                    <input type="text" className="ecp-input" placeholder="Main keyword phrase"
-                      name="seo.focusKeyphrase" value={formData.seo.focusKeyphrase} onChange={handleInputChange} />
-                    <small className="ecp-help-text">Primary keyword/phrase you want this product to rank for</small>
-                  </div>
-
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Canonical URL</label>
-                    <input type="url" className="ecp-input" placeholder="https://example.com/products/name (optional)"
-                      name="seo.canonicalUrl" value={formData.seo.canonicalUrl} onChange={handleInputChange} />
-                  </div>
-
-                  <div className="ecp-form-group" style={{ marginTop: '2rem' }}>
-                    <div className="ecp-label-with-btn">
-                      <label className="ecp-label">Breadcrumbs</label>
-                      <button type="button" className="ecp-btn-small" onClick={addBreadcrumb} disabled={!newBreadcrumb.name || !newBreadcrumb.url}><FiPlus /> Add</button>
-                    </div>
-                    <div className="ecp-spec-row">
-                      <input type="text" className="ecp-input" placeholder="Name (e.g., Home)" value={newBreadcrumb.name} onChange={(e) => setNewBreadcrumb((p) => ({ ...p, name: e.target.value }))} />
-                      <input type="text" className="ecp-input" placeholder="URL (e.g., /)" value={newBreadcrumb.url} onChange={(e) => setNewBreadcrumb((p) => ({ ...p, url: e.target.value }))} />
-                    </div>
-                    <div className="ecp-tags">
-                      {breadcrumbs.map((b, i) => <span key={i} className="ecp-tag">{b.position}. {b.name}<button type="button" onClick={() => removeBreadcrumb(i)}><FiX /></button></span>)}
-                    </div>
-                  </div>
-
-                  <div className="ecp-form-row">
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Schema Type</label>
-                      <select className="ecp-select" name="seo.schemaType" value={formData.seo.schemaType} onChange={handleInputChange}>
-                        {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                      </select>
-                    </div>
-                    <div className="ecp-form-group">
-                      <label className="ecp-label">Condition</label>
-                      <select className="ecp-select" name="seo.condition" value={formData.seo.condition} onChange={handleInputChange}>
-                        {CONDITIONS.map((c) => <option key={c} value={c}>{c.replace('Condition', '')}</option>)}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="ecp-checkbox-grid">
-                    <label className="ecp-checkbox"><input type="checkbox" name="seo.noIndex"  checked={formData.seo.noIndex}  onChange={handleInputChange} /><span>No Index (hide from search engines)</span></label>
-                    <label className="ecp-checkbox"><input type="checkbox" name="seo.noFollow" checked={formData.seo.noFollow} onChange={handleInputChange} /><span>No Follow</span></label>
-                  </div>
-
-                  <div className="ecp-form-group" style={{ marginTop: '2rem' }}>
-                    <label className="ecp-label">Related Search Terms</label>
-                    <div className="ecp-input-with-btn">
-                      <input type="text" className="ecp-input" placeholder="Add related search term" value={newRelatedTerm}
-                        onChange={(e) => setNewRelatedTerm(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem(newRelatedTerm, setRelatedSearchTerms, setNewRelatedTerm, (v) => v.toLowerCase()); } }} />
-                      <button type="button" className="ecp-btn-icon" onClick={() => addItem(newRelatedTerm, setRelatedSearchTerms, setNewRelatedTerm, (v) => v.toLowerCase())}><FiPlus /></button>
-                    </div>
-                    <div className="ecp-tags">
-                      {relatedSearchTerms.map((t, i) => <span key={i} className="ecp-tag">{t}<button type="button" onClick={() => removeItem(i, setRelatedSearchTerms)}><FiX /></button></span>)}
-                    </div>
-                  </div>
-
-                  <div className="ecp-label-with-btn" style={{ marginTop: '2rem' }}>
-                    <h3 className="ecp-section-title">FAQs</h3>
-                    <button type="button" className="ecp-btn-small" onClick={addFAQ}><FiPlus /> Add FAQ</button>
-                  </div>
-                  {richSnippets.faqs.map((faq, i) => (
-                    <div key={i} className="ecp-faq-card">
-                      <div className="ecp-faq-header">
-                        <input type="text" className="ecp-input" placeholder="Question" maxLength={200}
-                          value={faq.question} onChange={(e) => updateFAQ(i, 'question', e.target.value)} />
-                        <button type="button" className="ecp-btn-icon-danger" onClick={() => removeFAQ(i)}><FiTrash2 /></button>
-                      </div>
-                      <textarea className="ecp-textarea" placeholder="Answer" rows={3} maxLength={1000}
-                        value={faq.answer} onChange={(e) => updateFAQ(i, 'answer', e.target.value)} />
-                    </div>
-                  ))}
-
-                  <div className="ecp-label-with-btn" style={{ marginTop: '2rem' }}>
-                    <h3 className="ecp-section-title">Videos</h3>
-                    <button type="button" className="ecp-btn-small" onClick={addVideo}><FiPlus /> Add Video</button>
-                  </div>
-                  {richSnippets.videos.map((video, i) => (
-                    <div key={i} className="ecp-video-card">
-                      <div className="ecp-video-header">
-                        <input type="text" className="ecp-input" placeholder="Video Name"
-                          value={video.name} onChange={(e) => updateVideo(i, 'name', e.target.value)} />
-                        <button type="button" className="ecp-btn-icon-danger" onClick={() => removeVideo(i)}><FiTrash2 /></button>
-                      </div>
-                      {[['description','Description'],['contentUrl','Content URL'],['thumbnailUrl','Thumbnail URL']].map(([field, ph]) => (
-                        <input key={field} type={field.includes('Url') ? 'url' : 'text'} className="ecp-input"
-                          placeholder={ph} value={video[field]} style={{ marginTop: '0.5rem' }}
-                          onChange={(e) => updateVideo(i, field, e.target.value)} />
-                      ))}
-                    </div>
+              <div className="cp-field">
+                <label>Tags</label>
+                <div className="cp-tag-input">
+                  <input type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Type and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('tags', tagInput, setTagInput); }}} />
+                  <button type="button" onClick={() => addToArray('tags', tagInput, setTagInput)}>Add</button>
+                </div>
+                <div className="cp-tags">
+                  {form.tags.map((t, i) => (
+                    <span key={i} className="cp-tag">{t}<button type="button" onClick={() => removeFromArray('tags', i)}>×</button></span>
                   ))}
                 </div>
               </div>
-            )}
 
-            {/* ══ ADVANCED SEO ════════════════════════════════════════════ */}
-            {activeTab === 'advanced' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Open Graph (Facebook / LinkedIn)</h3>
-
-                  {[
-                    ['ogTitle',       'OG Title',       'text',     60],
-                    ['ogDescription', 'OG Description', 'textarea', 160],
-                    ['ogImage',       'OG Image URL',   'url',      null],
-                    ['ogType',        'OG Type',        'text',     null],
-                  ].map(([field, label, type, max]) => (
-                    <div key={field} className="ecp-form-group">
-                      <label className="ecp-label">{label}</label>
-                      {type === 'textarea'
-                        ? <textarea className="ecp-textarea" name={`seo.${field}`} rows={3} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
-                        : <input type={type} className="ecp-input" name={`seo.${field}`} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
-                      }
-                      {max && <span className="ecp-char-count">{(formData.seo[field] ?? '').length}/{max}</span>}
-                    </div>
-                  ))}
-
-                  <h3 className="ecp-section-title" style={{ marginTop: '2rem' }}>Twitter / X Card</h3>
-                  <div className="ecp-form-group">
-                    <label className="ecp-label">Card Type</label>
-                    <select className="ecp-select" name="seo.twitterCard" value={formData.seo.twitterCard} onChange={handleInputChange}>
-                      {TWITTER_CARDS.map((t) => <option key={t} value={t}>{t}</option>)}
-                    </select>
-                  </div>
-                  {[
-                    ['twitterTitle',       'Twitter Title',       'text',     70],
-                    ['twitterDescription', 'Twitter Description', 'textarea', 200],
-                    ['twitterImage',       'Twitter Image URL',   'url',      null],
-                  ].map(([field, label, type, max]) => (
-                    <div key={field} className="ecp-form-group">
-                      <label className="ecp-label">{label}</label>
-                      {type === 'textarea'
-                        ? <textarea className="ecp-textarea" name={`seo.${field}`} rows={3} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
-                        : <input type={type} className="ecp-input" name={`seo.${field}`} maxLength={max ?? undefined} value={formData.seo[field]} onChange={handleInputChange} />
-                      }
-                    </div>
-                  ))}
-                </div>
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(1)}>Next: Pricing →</button>
               </div>
-            )}
-
-            {/* ══ SETTINGS ════════════════════════════════════════════════ */}
-            {activeTab === 'settings' && (
-              <div className="ecp-tab-content">
-                <div className="ecp-section">
-                  <h3 className="ecp-section-title">Product Flags</h3>
-                  <p className="ecp-help-text" style={{ marginBottom: '1.5rem' }}>
-                    These flags control how the product appears in storefront sections and promotions.
-                  </p>
-                  <div className="ecp-checkbox-grid">
-                    {[['isFeatured','Featured Product'],['isNewArrival','New Arrival'],['isBestseller','Bestseller']].map(([name, label]) => (
-                      <label key={name} className="ecp-checkbox">
-                        <input type="checkbox" name={name} checked={formData[name]} onChange={handleInputChange} />
-                        <span>{label}</span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ══ ACTION BUTTONS ══════════════════════════════════════════ */}
-            <div className="ecp-actions">
-              <button type="button" className="ecp-btn ecp-btn-secondary"
-                onClick={(e) => handleSubmit(e, 'draft')} disabled={isSubmitting}>
-                <FiSave /> {isSubmitting ? 'Saving…' : 'Save as Draft'}
-              </button>
-              <button type="button" className="ecp-btn ecp-btn-primary"
-                onClick={(e) => handleSubmit(e, 'published')} disabled={isSubmitting}>
-                {isSubmitting ? 'Publishing…' : 'Publish Product'}
-              </button>
             </div>
 
-          </div>
+            {/* ── 1: Pricing ── */}
+            <div className={`cp-section ${activeSection === 1 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Pricing</h2>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Regular Price <span className="cp-req">*</span></label>
+                  <div className="cp-input-prefix">
+                    <span>$</span>
+                    <input type="number" min="0" step="0.01" value={form.pricing.regular} onChange={e => set('pricing.regular', e.target.value)} placeholder="0.00" />
+                  </div>
+                  {errors.regular && <span className="cp-error">{errors.regular}</span>}
+                </div>
+                <div className="cp-field">
+                  <label>Sale Price</label>
+                  <div className="cp-input-prefix">
+                    <span>$</span>
+                    <input type="number" min="0" step="0.01" value={form.pricing.sale} onChange={e => set('pricing.sale', e.target.value)} placeholder="0.00" />
+                  </div>
+                  {errors.sale && <span className="cp-error">{errors.sale}</span>}
+                </div>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Cost Price</label>
+                  <div className="cp-input-prefix">
+                    <span>$</span>
+                    <input type="number" min="0" step="0.01" value={form.pricing.cost} onChange={e => set('pricing.cost', e.target.value)} placeholder="0.00" />
+                  </div>
+                </div>
+                <div className="cp-field">
+                  <label>Currency</label>
+                  <select value={form.pricing.currency} onChange={e => set('pricing.currency', e.target.value)}>
+                    {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Price Valid From</label>
+                  <input type="date" value={form.pricing.validFrom} onChange={e => set('pricing.validFrom', e.target.value)} />
+                </div>
+                <div className="cp-field">
+                  <label>Price Valid Through</label>
+                  <input type="date" value={form.pricing.validThrough} onChange={e => set('pricing.validThrough', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(0)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(2)}>Next: Inventory →</button>
+              </div>
+            </div>
+
+            {/* ── 2: Inventory ── */}
+            <div className={`cp-section ${activeSection === 2 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Inventory</h2>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Stock Quantity</label>
+                  <input type="number" min="0" value={form.inventory.stock} onChange={e => set('inventory.stock', e.target.value)} placeholder="0" />
+                </div>
+                <div className="cp-field">
+                  <label>Low Stock Threshold</label>
+                  <input type="number" min="0" value={form.inventory.lowStockThreshold} onChange={e => set('inventory.lowStockThreshold', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>SKU</label>
+                  <input type="text" value={form.inventory.sku} onChange={e => set('inventory.sku', e.target.value)} placeholder="Stock keeping unit" />
+                </div>
+                <div className="cp-field">
+                  <label>Inventory Status</label>
+                  <select value={form.inventory.status} onChange={e => set('inventory.status', e.target.value)}>
+                    {INV_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>GTIN <span className="cp-hint-inline">(Google Shopping)</span></label>
+                  <input type="text" value={form.inventory.gtin} onChange={e => set('inventory.gtin', e.target.value)} placeholder="Global Trade Item Number" />
+                </div>
+                <div className="cp-field">
+                  <label>MPN <span className="cp-hint-inline">(Manufacturer Part No.)</span></label>
+                  <input type="text" value={form.inventory.mpn} onChange={e => set('inventory.mpn', e.target.value)} placeholder="Manufacturer part number" />
+                </div>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Barcode</label>
+                  <input type="text" value={form.inventory.barcode} onChange={e => set('inventory.barcode', e.target.value)} placeholder="Barcode" />
+                </div>
+                <div className="cp-field cp-field--checkbox">
+                  <label className="cp-checkbox-label">
+                    <input type="checkbox" checked={form.inventory.trackInventory} onChange={e => set('inventory.trackInventory', e.target.checked)} />
+                    <span>Track Inventory</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(1)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(3)}>Next: Images →</button>
+              </div>
+            </div>
+
+            {/* ── 3: Images ── */}
+            <div className={`cp-section ${activeSection === 3 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Images</h2>
+              {errors.images && <div className="cp-error cp-error--block">{errors.images}</div>}
+
+              <div className="cp-dropzone" onClick={() => fileRef.current?.click()}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <p>Click or drag to upload images</p>
+                <span>First image becomes the primary / thumbnail</span>
+                <input ref={fileRef} type="file" multiple accept="image/*" onChange={handleImageAdd} style={{ display: 'none' }} />
+              </div>
+
+              {images.length > 0 && (
+                <div className="cp-image-grid">
+                  {images.map((img, i) => (
+                    <div key={i} className={`cp-image-card ${i === 0 ? 'cp-image-card--primary' : ''}`}>
+                      <div className="cp-image-preview">
+                        <img src={img.preview} alt={img.alt || `Preview ${i + 1}`} />
+                        {i === 0 && <span className="cp-image-badge">Primary</span>}
+                        <button type="button" className="cp-image-remove" onClick={() => removeImage(i)}>×</button>
+                      </div>
+                      <div className="cp-image-meta">
+                        <input
+                          type="text"
+                          placeholder="Alt text (max 125 chars)"
+                          maxLength={125}
+                          value={img.alt}
+                          onChange={e => updateImageMeta(i, 'alt', e.target.value)}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Caption (optional, max 200 chars)"
+                          maxLength={200}
+                          value={img.caption}
+                          onChange={e => updateImageMeta(i, 'caption', e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(2)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(4)}>Next: Variants →</button>
+              </div>
+            </div>
+
+            {/* ── 4: Variants ── */}
+            <div className={`cp-section ${activeSection === 4 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Variants</h2>
+              <p className="cp-section-desc">Define product variants such as Size, Color, Storage, etc.</p>
+
+              {form.variants.map((variant, vi) => (
+                <div key={vi} className="cp-variant-block">
+                  <div className="cp-variant-header">
+                    <input
+                      type="text"
+                      placeholder="Variant name (e.g. Size, Color)"
+                      value={variant.name}
+                      onChange={e => setVariant(vi, 'name', e.target.value)}
+                    />
+                    <button type="button" className="cp-btn cp-btn--danger-sm" onClick={() => removeVariant(vi)}>Remove Variant</button>
+                  </div>
+                  {variant.options.map((opt, oi) => (
+                    <div key={oi} className="cp-variant-option">
+                      <input type="text" placeholder="Value (e.g. Red, XL)" value={opt.value} onChange={e => setVariantOption(vi, oi, 'value', e.target.value)} />
+                      <input type="number" placeholder="Price modifier ($)" value={opt.priceModifier} onChange={e => setVariantOption(vi, oi, 'priceModifier', e.target.value)} />
+                      <input type="number" placeholder="Stock" value={opt.stock} onChange={e => setVariantOption(vi, oi, 'stock', e.target.value)} />
+                      <input type="text" placeholder="SKU" value={opt.sku} onChange={e => setVariantOption(vi, oi, 'sku', e.target.value)} />
+                      <input type="text" placeholder="GTIN" value={opt.gtin} onChange={e => setVariantOption(vi, oi, 'gtin', e.target.value)} />
+                      <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeVariantOption(vi, oi)}>×</button>
+                    </div>
+                  ))}
+                  <button type="button" className="cp-btn cp-btn--ghost-sm" onClick={() => addVariantOption(vi)}>+ Add Option</button>
+                </div>
+              ))}
+
+              <button type="button" className="cp-btn cp-btn--dashed" onClick={addVariant}>
+                + Add Variant
+              </button>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(3)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(5)}>Next: Specifications →</button>
+              </div>
+            </div>
+
+            {/* ── 5: Specifications ── */}
+            <div className={`cp-section ${activeSection === 5 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Specifications</h2>
+
+              {form.specifications.map((spec, i) => (
+                <div key={i} className="cp-spec-row">
+                  <input type="text" placeholder="Key (e.g. Material)" value={spec.key} onChange={e => setSpec(i, 'key', e.target.value)} />
+                  <input type="text" placeholder="Value (e.g. Cotton)" value={spec.value} onChange={e => setSpec(i, 'value', e.target.value)} />
+                  <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeSpec(i)}>×</button>
+                </div>
+              ))}
+
+              <button type="button" className="cp-btn cp-btn--dashed" onClick={addSpec}>+ Add Specification</button>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(4)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(6)}>Next: Dimensions →</button>
+              </div>
+            </div>
+
+            {/* ── 6: Dimensions & Weight ── */}
+            <div className={`cp-section ${activeSection === 6 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Dimensions & Weight</h2>
+
+              <div className="cp-row cp-row--3">
+                <div className="cp-field">
+                  <label>Length</label>
+                  <input type="number" min="0" value={form.dimensions.length} onChange={e => set('dimensions.length', e.target.value)} placeholder="0" />
+                </div>
+                <div className="cp-field">
+                  <label>Width</label>
+                  <input type="number" min="0" value={form.dimensions.width} onChange={e => set('dimensions.width', e.target.value)} placeholder="0" />
+                </div>
+                <div className="cp-field">
+                  <label>Height</label>
+                  <input type="number" min="0" value={form.dimensions.height} onChange={e => set('dimensions.height', e.target.value)} placeholder="0" />
+                </div>
+              </div>
+
+              <div className="cp-field cp-field--sm">
+                <label>Dimension Unit</label>
+                <select value={form.dimensions.unit} onChange={e => set('dimensions.unit', e.target.value)}>
+                  {DIM_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Weight</label>
+                  <input type="number" min="0" step="0.01" value={form.weight.value} onChange={e => set('weight.value', e.target.value)} placeholder="0" />
+                </div>
+                <div className="cp-field">
+                  <label>Weight Unit</label>
+                  <select value={form.weight.unit} onChange={e => set('weight.unit', e.target.value)}>
+                    {W_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(5)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(7)}>Next: Breadcrumbs →</button>
+              </div>
+            </div>
+
+            {/* ── 7: Breadcrumbs ── */}
+            <div className={`cp-section ${activeSection === 7 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Breadcrumbs</h2>
+              <p className="cp-section-desc">Positions must be unique. Used for structured data breadcrumb trails.</p>
+
+              {form.breadcrumbs.map((b, i) => (
+                <div key={i} className="cp-spec-row">
+                  <input type="text" placeholder="Name" value={b.name} onChange={e => setBreadcrumb(i, 'name', e.target.value)} />
+                  <input type="text" placeholder="URL" value={b.url} onChange={e => setBreadcrumb(i, 'url', e.target.value)} />
+                  <input type="number" placeholder="Position" value={b.position} onChange={e => setBreadcrumb(i, 'position', Number(e.target.value))} style={{ maxWidth: '80px' }} />
+                  <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeBreadcrumb(i)}>×</button>
+                </div>
+              ))}
+
+              <button type="button" className="cp-btn cp-btn--dashed" onClick={addBreadcrumb}>+ Add Breadcrumb</button>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(6)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(8)}>Next: SEO →</button>
+              </div>
+            </div>
+
+            {/* ── 8: SEO ── */}
+            <div className={`cp-section ${activeSection === 8 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">SEO</h2>
+
+              <div className="cp-field cp-field--full">
+                <label>Meta Title <span className="cp-hint-inline">max 60 chars</span></label>
+                <input type="text" maxLength={60} value={form.seo.metaTitle} onChange={e => set('seo.metaTitle', e.target.value)} placeholder="Auto-filled from product name if blank" />
+                <span className="cp-hint">{form.seo.metaTitle.length}/60</span>
+              </div>
+
+              <div className="cp-field cp-field--full">
+                <label>Meta Description <span className="cp-hint-inline">120–160 chars</span></label>
+                <textarea rows={3} maxLength={160} value={form.seo.metaDescription} onChange={e => set('seo.metaDescription', e.target.value)} placeholder="Min 120 characters enforced on create" />
+                <span className={`cp-hint ${form.seo.metaDescription.length > 0 && form.seo.metaDescription.length < 120 ? 'cp-hint--warn' : ''}`}>
+                  {form.seo.metaDescription.length}/160 {form.seo.metaDescription.length > 0 && form.seo.metaDescription.length < 120 ? '— too short (min 120)' : ''}
+                </span>
+              </div>
+
+              <div className="cp-field cp-field--full">
+                <label>Focus Keyphrase</label>
+                <input type="text" value={form.seo.focusKeyphrase} onChange={e => set('seo.focusKeyphrase', e.target.value)} placeholder="Primary keyword to rank for" />
+              </div>
+
+              <div className="cp-field">
+                <label>Keywords</label>
+                <div className="cp-tag-input">
+                  <input type="text" value={kwInput} onChange={e => setKwInput(e.target.value)} placeholder="Add keyword and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('keywords', kwInput, setKwInput); }}} />
+                  <button type="button" onClick={() => addToSeoArray('keywords', kwInput, setKwInput)}>Add</button>
+                </div>
+                <div className="cp-tags">
+                  {form.seo.keywords.map((k, i) => (
+                    <span key={i} className="cp-tag">{k}<button type="button" onClick={() => removeFromSeoArray('keywords', i)}>×</button></span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="cp-field cp-field--full">
+                <label>Canonical URL</label>
+                <input type="url" value={form.seo.canonicalUrl} onChange={e => set('seo.canonicalUrl', e.target.value)} placeholder="https://yourdomain.com/products/..." />
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field">
+                  <label>Schema Type</label>
+                  <select value={form.seo.schemaType} onChange={e => set('seo.schemaType', e.target.value)}>
+                    {SCHEMA_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div className="cp-field">
+                  <label>Condition</label>
+                  <select value={form.seo.condition} onChange={e => set('seo.condition', e.target.value)}>
+                    {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">Open Graph</h3>
+                <div className="cp-field cp-field--full">
+                  <label>OG Title</label>
+                  <input type="text" maxLength={60} value={form.seo.ogTitle} onChange={e => set('seo.ogTitle', e.target.value)} placeholder="Auto-filled from Meta Title if blank" />
+                </div>
+                <div className="cp-field cp-field--full">
+                  <label>OG Description</label>
+                  <textarea rows={2} maxLength={160} value={form.seo.ogDescription} onChange={e => set('seo.ogDescription', e.target.value)} />
+                </div>
+                <div className="cp-row">
+                  <div className="cp-field">
+                    <label>OG Image URL</label>
+                    <input type="url" value={form.seo.ogImage} onChange={e => set('seo.ogImage', e.target.value)} placeholder="Auto-filled from primary image if blank" />
+                  </div>
+                  <div className="cp-field">
+                    <label>OG Type</label>
+                    <select value={form.seo.ogType} onChange={e => set('seo.ogType', e.target.value)}>
+                      {OG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">Twitter Card</h3>
+                <div className="cp-row">
+                  <div className="cp-field">
+                    <label>Twitter Card Type</label>
+                    <select value={form.seo.twitterCard} onChange={e => set('seo.twitterCard', e.target.value)}>
+                      {TW_CARDS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div className="cp-field">
+                    <label>Twitter Title</label>
+                    <input type="text" maxLength={70} value={form.seo.twitterTitle} onChange={e => set('seo.twitterTitle', e.target.value)} />
+                  </div>
+                </div>
+                <div className="cp-field cp-field--full">
+                  <label>Twitter Description</label>
+                  <textarea rows={2} maxLength={200} value={form.seo.twitterDescription} onChange={e => set('seo.twitterDescription', e.target.value)} />
+                </div>
+                <div className="cp-field cp-field--full">
+                  <label>Twitter Image URL</label>
+                  <input type="url" value={form.seo.twitterImage} onChange={e => set('seo.twitterImage', e.target.value)} />
+                </div>
+              </div>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">Related Search Terms</h3>
+                <div className="cp-tag-input">
+                  <input type="text" value={rstInput} onChange={e => setRstInput(e.target.value)} placeholder="Add term and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('relatedSearchTerms', rstInput, setRstInput); }}} />
+                  <button type="button" onClick={() => addToSeoArray('relatedSearchTerms', rstInput, setRstInput)}>Add</button>
+                </div>
+                <div className="cp-tags">
+                  {form.seo.relatedSearchTerms.map((t, i) => (
+                    <span key={i} className="cp-tag">{t}<button type="button" onClick={() => removeFromSeoArray('relatedSearchTerms', i)}>×</button></span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="cp-row">
+                <div className="cp-field cp-field--checkbox">
+                  <label className="cp-checkbox-label">
+                    <input type="checkbox" checked={form.seo.noIndex} onChange={e => set('seo.noIndex', e.target.checked)} />
+                    <span>No Index</span>
+                  </label>
+                </div>
+                <div className="cp-field cp-field--checkbox">
+                  <label className="cp-checkbox-label">
+                    <input type="checkbox" checked={form.seo.noFollow} onChange={e => set('seo.noFollow', e.target.checked)} />
+                    <span>No Follow</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(7)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(9)}>Next: Rich Snippets →</button>
+              </div>
+            </div>
+
+            {/* ── 9: Rich Snippets ── */}
+            <div className={`cp-section ${activeSection === 9 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Rich Snippets</h2>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">FAQs <span className="cp-hint-inline">(questions must be unique)</span></h3>
+                {form.richSnippets.faqs.map((faq, i) => (
+                  <div key={i} className="cp-faq-block">
+                    <div className="cp-faq-header">
+                      <span>FAQ {i + 1}</span>
+                      <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeFaq(i)}>×</button>
+                    </div>
+                    <input type="text" placeholder="Question (max 200 chars)" maxLength={200} value={faq.question} onChange={e => setFaq(i, 'question', e.target.value)} />
+                    <textarea rows={3} placeholder="Answer (max 1000 chars)" maxLength={1000} value={faq.answer} onChange={e => setFaq(i, 'answer', e.target.value)} />
+                  </div>
+                ))}
+                <button type="button" className="cp-btn cp-btn--dashed" onClick={addFaq}>+ Add FAQ</button>
+              </div>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">How-To</h3>
+                <div className="cp-field">
+                  <label>How-To Name</label>
+                  <input type="text" value={form.richSnippets.howTo.name} onChange={e => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, name: e.target.value } } }))} placeholder="e.g. How to assemble the product" />
+                </div>
+                {form.richSnippets.howTo.steps.map((step, i) => (
+                  <div key={i} className="cp-faq-block">
+                    <div className="cp-faq-header">
+                      <span>Step {i + 1}</span>
+                      <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeHowToStep(i)}>×</button>
+                    </div>
+                    <input type="text" placeholder="Step name" value={step.name} onChange={e => setHowToStep(i, 'name', e.target.value)} />
+                    <textarea rows={2} placeholder="Step instructions" value={step.text} onChange={e => setHowToStep(i, 'text', e.target.value)} />
+                    <input type="url" placeholder="Step image URL (optional)" value={step.image} onChange={e => setHowToStep(i, 'image', e.target.value)} />
+                  </div>
+                ))}
+                <button type="button" className="cp-btn cp-btn--dashed" onClick={addHowToStep}>+ Add Step</button>
+              </div>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">Videos</h3>
+                {form.richSnippets.videos.map((video, i) => (
+                  <div key={i} className="cp-faq-block">
+                    <div className="cp-faq-header">
+                      <span>Video {i + 1}</span>
+                      <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeVideo(i)}>×</button>
+                    </div>
+                    <div className="cp-row">
+                      <input type="text" placeholder="Video name" value={video.name} onChange={e => setVideo(i, 'name', e.target.value)} />
+                      <input type="date" placeholder="Upload date" value={video.uploadDate} onChange={e => setVideo(i, 'uploadDate', e.target.value)} />
+                    </div>
+                    <textarea rows={2} placeholder="Description" value={video.description} onChange={e => setVideo(i, 'description', e.target.value)} />
+                    <input type="url" placeholder="Thumbnail URL" value={video.thumbnailUrl} onChange={e => setVideo(i, 'thumbnailUrl', e.target.value)} />
+                    <input type="url" placeholder="Content URL" value={video.contentUrl} onChange={e => setVideo(i, 'contentUrl', e.target.value)} />
+                    <input type="url" placeholder="Embed URL" value={video.embedUrl} onChange={e => setVideo(i, 'embedUrl', e.target.value)} />
+                    <input type="text" placeholder="Duration (ISO 8601, e.g. PT2M30S)" value={video.duration} onChange={e => setVideo(i, 'duration', e.target.value)} />
+                  </div>
+                ))}
+                <button type="button" className="cp-btn cp-btn--dashed" onClick={addVideo}>+ Add Video</button>
+              </div>
+
+              <div className="cp-section-nav">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(8)}>← Back</button>
+                <button type="button" className="cp-btn cp-btn--primary" onClick={() => setActiveSection(10)}>Next: Relationships →</button>
+              </div>
+            </div>
+
+            {/* ── 10: Relationships & Flags ── */}
+            <div className={`cp-section ${activeSection === 10 ? 'active' : ''}`}>
+              <h2 className="cp-section-title">Relationships & Flags</h2>
+
+              <div className="cp-field cp-field--full">
+                <label>Related Products <span className="cp-hint-inline">comma-separated product IDs</span></label>
+                <input type="text" value={form.relatedProducts} onChange={e => set('relatedProducts', e.target.value)} placeholder="6507f1f77bcf86cd79..." />
+              </div>
+              <div className="cp-field cp-field--full">
+                <label>Cross-Sells <span className="cp-hint-inline">comma-separated product IDs</span></label>
+                <input type="text" value={form.crossSells} onChange={e => set('crossSells', e.target.value)} placeholder="6507f1f77bcf86cd79..." />
+              </div>
+              <div className="cp-field cp-field--full">
+                <label>Upsells <span className="cp-hint-inline">comma-separated product IDs</span></label>
+                <input type="text" value={form.upsells} onChange={e => set('upsells', e.target.value)} placeholder="6507f1f77bcf86cd79..." />
+              </div>
+
+              <div className="cp-subsection">
+                <h3 className="cp-subsection-title">Product Flags</h3>
+                <div className="cp-flag-grid">
+                  <label className="cp-toggle-label">
+                    <input type="checkbox" checked={form.isFeatured} onChange={e => set('isFeatured', e.target.checked)} />
+                    <span className="cp-toggle-track"><span className="cp-toggle-thumb" /></span>
+                    <span>Featured</span>
+                  </label>
+                  <label className="cp-toggle-label">
+                    <input type="checkbox" checked={form.isNewArrival} onChange={e => set('isNewArrival', e.target.checked)} />
+                    <span className="cp-toggle-track"><span className="cp-toggle-thumb" /></span>
+                    <span>New Arrival</span>
+                  </label>
+                  <label className="cp-toggle-label">
+                    <input type="checkbox" checked={form.isBestseller} onChange={e => set('isBestseller', e.target.checked)} />
+                    <span className="cp-toggle-track"><span className="cp-toggle-thumb" /></span>
+                    <span>Bestseller</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="cp-section-nav cp-section-nav--submit">
+                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(9)}>← Back</button>
+                <button type="submit" className="cp-btn cp-btn--submit" disabled={loading}>
+                  {loading ? (
+                    <><span className="cp-spinner" /> Creating Product…</>
+                  ) : 'Create Product'}
+                </button>
+              </div>
+            </div>
+
+          </form>
         </div>
-      </div>
+      </main>
 
       <Footer />
     </>
   );
 }
-
-export default CreateProduct;

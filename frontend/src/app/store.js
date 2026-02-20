@@ -34,7 +34,7 @@ export const store = configureStore({
         checkout: checkoutReducer,
         adminRefund: adminRefundReducer,
         adminReturn: adminReturnReducer,
-        adminProduct: adminProductReducer,
+        adminProducts: adminProductReducer,
         refund: refundReducer,
         return: returnReducer,
         analytics: analyticsReducer,
