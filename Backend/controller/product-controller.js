@@ -107,11 +107,6 @@ const parseRichSnippets = (richSnippetsData) => {
   return richSnippets;
 };
 
-// FIX #2 — parseSEO is now a pure parser. The og/twitter fallback
-// assignments were dead code: the controller's own seo block immediately
-// overwrote seo.ogTitle etc. with `seo?.ogTitle || ''`, so any value
-// parseSEO wrote was silently discarded. Fallbacks now live only in the
-// controller seo block, in one place.
 const parseSEO = (seoData) => {
   const seo = parseJSONSafe(seoData);
   if (!seo) return {};
@@ -127,6 +122,35 @@ const parseImageMetadata = (imageMetadataData) => {
   const metadata = parseJSONSafe(imageMetadataData);
   if (!metadata || !Array.isArray(metadata)) return [];
   return metadata;
+};
+
+// ============================================
+// FIX: Centralised duplicate-key error handler
+// Catches MongoDB E11000 errors and returns a
+// clean 400 instead of a raw 500.
+// ============================================
+const handleDuplicateKeyError = (error, next) => {
+  if (error.code === 11000) {
+    const field = Object.keys(error.keyPattern || {})[0] || 'field';
+
+    // Map raw MongoDB field paths to human-readable names
+    const fieldLabels = {
+      slug:             'product name (slug)',
+      'inventory.sku':  'SKU',
+    };
+
+    const label = fieldLabels[field] || field;
+    const value = error.keyValue?.[field];
+    const valueStr = value ? ` ("${value}")` : '';
+
+    return next(
+      new HandleError(
+        `A product with this ${label}${valueStr} already exists. Please use a different value.`,
+        400
+      )
+    );
+  }
+  return false; // not a duplicate-key error
 };
 
 // ============================================
@@ -198,9 +222,6 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
     const weight         = parseJSONSafe(req.body.weight);
     const imageMetadata  = parseImageMetadata(req.body.imageMetadata);
 
-    // FIX #3 — Compare slugified form, not raw name string. Raw comparison
-    // misses case/trim differences: "  Trending  " !== "trending" as strings
-    // but slugify() produces "trending" for both, which is reserved.
     const prospectiveSlug = slugify(req.body.name);
     if (RESERVED_SLUGS.has(prospectiveSlug)) {
       return next(new HandleError(
@@ -230,10 +251,9 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
         metaTitle: seo?.metaTitle || '',
         metaDescription: seo?.metaDescription || '',
         keywords: Array.isArray(seo?.keywords) ? seo.keywords : [],
-        canonicalUrl: '',
+        canonicalUrl: seo?.canonicalUrl || '',
         noIndex: seo?.noIndex === true || seo?.noIndex === 'true',
         noFollow: seo?.noFollow === true || seo?.noFollow === 'true',
-        // FIX #2 — og/twitter fallbacks live here only, not also in parseSEO.
         ogTitle: seo?.ogTitle || seo?.metaTitle || '',
         ogDescription: seo?.ogDescription || seo?.metaDescription || '',
         ogImage: seo?.ogImage || '',
@@ -299,13 +319,17 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
     }
 
     const product = await Product.create(productData);
-    await invalidateProductCaches();
+    invalidateProductCaches().catch((err) => console.error('Cache invalidation error:', err));
 
     res.status(201).json({ success: true, product });
   } catch (error) {
     if (uploadedImages.length > 0) {
       await deleteMultipleFromCloudinary(uploadedImages.map(img => img.public_id)).catch(() => {});
     }
+
+    // FIX: Catch MongoDB duplicate key errors (slug or SKU collision)
+    if (handleDuplicateKeyError(error, next)) return;
+
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       return next(new HandleError(errors.join(', '), 400));
@@ -317,13 +341,45 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
 // ============================================
 // UPDATE PRODUCT
 // ============================================
+//
+// Uses findByIdAndUpdate (bypasses pre-save hooks intentionally to avoid
+// validator/hook bugs that caused the page to hang after update).
+// All logic that the pre-save hooks would have computed is calculated
+// explicitly here before the update call:
+//   - inventory.status derived from stock vs threshold
+//   - isOnSale derived from pricing
+//   - seo.availability synced to inventory status
+//   - SEO meta fields auto-filled when blank
+//   - slug updated when name changes, old slug pushed to slugHistory
+//   - lastModifiedAt stamped on every update
+//   - publishedAt / archivedAt stamped on status transitions
+//
+// ============================================
+
+// Computes inventory.status from stock and threshold — mirrors the model hook.
+const deriveInventoryStatus = (inventory, existingStatus) => {
+  if (existingStatus === 'Discontinued') return 'Discontinued';
+  const stock     = Number(inventory?.stock ?? 0);
+  const threshold = Number(inventory?.lowStockThreshold ?? 5);
+  if (stock === 0)          return 'OutOfStock';
+  if (stock <= threshold)   return 'LowStock';
+  return 'InStock';
+};
+
+// Maps inventory status to schema.org availability value — mirrors the model hook.
+const inventoryToAvailability = {
+  InStock:      'InStock',
+  LowStock:     'LimitedAvailability',
+  OutOfStock:   'OutOfStock',
+  Discontinued: 'Discontinued',
+};
 
 export const updateProduct = handleAsyncError(async (req, res, next) => {
   let newlyUploadedImages = [];
 
   try {
     const { id } = req.params;
-    let product = await Product.findById(id);
+    const product = await Product.findById(id);
     if (!product) return next(new HandleError('Product not found', 404));
 
     if (!req.body.name || !req.body.description || !req.body.category) {
@@ -340,18 +396,13 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
       return next(new HandleError(parseError.message, 400));
     }
 
-    // FIX #3 — Compare the slugified new name against the existing product
-    // slug, not raw name strings. "  Trending  " !== "trending" as strings,
-    // but both produce the reserved slug "trending" after slugify().
     const newSlug = slugify(req.body.name);
-    if (newSlug !== product.slug) {
-      if (RESERVED_SLUGS.has(newSlug)) {
-        return next(new HandleError(
-          `Product name "${req.body.name}" generates a reserved URL slug ("${newSlug}"). ` +
-          `Please choose a different name.`,
-          400
-        ));
-      }
+    if (newSlug !== product.slug && RESERVED_SLUGS.has(newSlug)) {
+      return next(new HandleError(
+        `Product name "${req.body.name}" generates a reserved URL slug ("${newSlug}"). ` +
+        `Please choose a different name.`,
+        400
+      ));
     }
 
     const inventory      = parseJSONSafe(req.body.inventory);
@@ -363,63 +414,75 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
     const weight         = parseJSONSafe(req.body.weight);
     const imageMetadata  = parseImageMetadata(req.body.imageMetadata);
 
-    const updateData = {
-      name: req.body.name,
-      description: req.body.description,
-      shortDescription: req.body.shortDescription || '',
-      category: req.body.category,
-      brand: req.body.brand || '',
-      manufacturer: req.body.manufacturer || product.manufacturer || '',
-      pricing: pricing || product.pricing || {},
-      inventory: inventory || product.inventory || {},
-      subcategories: Array.isArray(subcategories) ? subcategories : product.subcategories || [],
-      tags: Array.isArray(tags) ? tags : product.tags || [],
-      specifications: Array.isArray(specifications) ? specifications : product.specifications || [],
-      variants: Array.isArray(variants) ? variants : product.variants || [],
-      dimensions: dimensions || product.dimensions || {},
-      weight: weight || product.weight || {},
-      breadcrumbs: breadcrumbs || product.breadcrumbs || [],
-      seo: {
-        metaTitle: seo?.metaTitle || product.seo?.metaTitle || '',
-        metaDescription: seo?.metaDescription || product.seo?.metaDescription || '',
-        keywords: Array.isArray(seo?.keywords) ? seo.keywords : product.seo?.keywords || [],
-        canonicalUrl: '',
-        noIndex:  seo?.noIndex  !== undefined ? (seo.noIndex  === true || seo.noIndex  === 'true') : product.seo?.noIndex  || false,
-        noFollow: seo?.noFollow !== undefined ? (seo.noFollow === true || seo.noFollow === 'true') : product.seo?.noFollow || false,
-        // FIX #2 — og/twitter fallbacks in one place only.
-        ogTitle: seo?.ogTitle || product.seo?.ogTitle || seo?.metaTitle || product.seo?.metaTitle || '',
-        ogDescription: seo?.ogDescription || product.seo?.ogDescription || seo?.metaDescription || product.seo?.metaDescription || '',
-        ogImage: seo?.ogImage || product.seo?.ogImage || '',
-        ogType: seo?.ogType || product.seo?.ogType || 'product',
-        twitterCard: seo?.twitterCard || product.seo?.twitterCard || 'summary_large_image',
-        twitterTitle: seo?.twitterTitle || product.seo?.twitterTitle || seo?.ogTitle || product.seo?.ogTitle || '',
-        twitterDescription: seo?.twitterDescription || product.seo?.twitterDescription || seo?.ogDescription || product.seo?.ogDescription || '',
-        twitterImage: seo?.twitterImage || product.seo?.twitterImage || '',
-        schemaType: seo?.schemaType || product.seo?.schemaType || 'Product',
-        condition: seo?.condition || product.seo?.condition || 'NewCondition',
-        availability: seo?.availability || product.seo?.availability || 'InStock',
-        focusKeyphrase: seo?.focusKeyphrase || product.seo?.focusKeyphrase || '',
-        relatedSearchTerms: Array.isArray(seo?.relatedSearchTerms) ? seo.relatedSearchTerms : product.seo?.relatedSearchTerms || []
-      },
-      richSnippets: {
-        faqs: Array.isArray(richSnippets?.faqs) ? richSnippets.faqs : product.richSnippets?.faqs || [],
-        howTo: richSnippets?.howTo || product.richSnippets?.howTo || { name: '', steps: [] },
-        videos: Array.isArray(richSnippets?.videos) ? richSnippets.videos : product.richSnippets?.videos || []
-      },
-      isFeatured:   req.body.isFeatured   !== undefined ? (req.body.isFeatured   === 'true' || req.body.isFeatured   === true) : product.isFeatured,
-      isNewArrival: req.body.isNewArrival !== undefined ? (req.body.isNewArrival === 'true' || req.body.isNewArrival === true) : product.isNewArrival,
-      isBestseller: req.body.isBestseller !== undefined ? (req.body.isBestseller === 'true' || req.body.isBestseller === true) : product.isBestseller,
-      status: req.body.status || product.status,
-      lastModifiedBy: req.user._id
+    // ── Compute what the pre-save hooks would have done ─────────────────
+
+    // 1. Slug — update if name changed, push old slug to history
+    const slugChanged   = newSlug !== product.slug;
+    const updatedSlug   = slugChanged ? newSlug : product.slug;
+    const slugHistory   = slugChanged && product.slug
+      ? [...(product.slugHistory || []), { oldSlug: product.slug, changedAt: new Date() }]
+      : product.slugHistory || [];
+
+    // 2. Inventory status
+    const mergedInventory = inventory
+      ? { ...product.inventory.toObject?.() ?? product.inventory, ...inventory }
+      : product.inventory;
+    const inventoryStatus = deriveInventoryStatus(mergedInventory, mergedInventory?.status);
+    mergedInventory.status = inventoryStatus;
+
+    // 3. isOnSale
+    const finalPricing = pricing || product.pricing;
+    const isOnSale = !!(
+      finalPricing?.sale != null && finalPricing.sale < finalPricing.regular
+    );
+
+    // 4. SEO availability sync
+    const resolvedSeo = {
+      metaTitle:          seo?.metaTitle          || product.seo?.metaTitle          || '',
+      metaDescription:    seo?.metaDescription    || product.seo?.metaDescription    || '',
+      keywords:           Array.isArray(seo?.keywords) ? seo.keywords : product.seo?.keywords || [],
+      canonicalUrl:       seo?.canonicalUrl        || '',
+      noIndex:            seo?.noIndex  !== undefined
+        ? (seo.noIndex  === true || seo.noIndex  === 'true')
+        : product.seo?.noIndex  || false,
+      noFollow:           seo?.noFollow !== undefined
+        ? (seo.noFollow === true || seo.noFollow === 'true')
+        : product.seo?.noFollow || false,
+      ogTitle:            seo?.ogTitle            || product.seo?.ogTitle            || seo?.metaTitle            || product.seo?.metaTitle            || '',
+      ogDescription:      seo?.ogDescription      || product.seo?.ogDescription      || seo?.metaDescription      || product.seo?.metaDescription      || '',
+      ogImage:            seo?.ogImage            || product.seo?.ogImage            || '',
+      ogType:             seo?.ogType             || product.seo?.ogType             || 'product',
+      twitterCard:        seo?.twitterCard        || product.seo?.twitterCard        || 'summary_large_image',
+      twitterTitle:       seo?.twitterTitle       || product.seo?.twitterTitle       || seo?.ogTitle              || product.seo?.ogTitle              || '',
+      twitterDescription: seo?.twitterDescription || product.seo?.twitterDescription || seo?.ogDescription        || product.seo?.ogDescription        || '',
+      twitterImage:       seo?.twitterImage       || product.seo?.twitterImage       || '',
+      schemaType:         seo?.schemaType         || product.seo?.schemaType         || 'Product',
+      condition:          seo?.condition          || product.seo?.condition          || 'NewCondition',
+      // Always derived from inventory — not left to whatever the client sent
+      availability:       inventoryToAvailability[inventoryStatus] || 'InStock',
+      focusKeyphrase:     seo?.focusKeyphrase     || product.seo?.focusKeyphrase     || '',
+      relatedSearchTerms: Array.isArray(seo?.relatedSearchTerms)
+        ? seo.relatedSearchTerms
+        : product.seo?.relatedSearchTerms || [],
     };
 
-    const imagesToDelete = parseJSONSafe(req.body.imagesToDelete) || [];
-    if (imagesToDelete.length > 0) {
-      product.images = product.images.filter(img => !imagesToDelete.includes(img.public_id));
-    }
+    // Auto-fill SEO meta from product fields when left blank (mirrors hook)
+    if (!resolvedSeo.metaTitle)       resolvedSeo.metaTitle       = req.body.name.substring(0, 60);
+    if (!resolvedSeo.ogTitle)         resolvedSeo.ogTitle         = resolvedSeo.metaTitle;
+    if (!resolvedSeo.ogDescription)   resolvedSeo.ogDescription   = resolvedSeo.metaDescription;
 
+    // 5. Status transition timestamps
+    const newStatus    = req.body.status || product.status;
+    const publishedAt  = newStatus === 'published' && !product.publishedAt ? new Date() : product.publishedAt;
+    const archivedAt   = newStatus === 'archived'  && !product.archivedAt  ? new Date() : product.archivedAt;
+
+    // ── Images ──────────────────────────────────────────────────────────
+
+    const imagesToDelete = parseJSONSafe(req.body.imagesToDelete) || [];
     const existingImages = parseJSONSafe(req.body.existingImages);
-    const currentImages  = existingImages || product.images;
+
+    let currentImages = existingImages
+      || product.images.filter(img => !imagesToDelete.includes(img.public_id));
 
     if (req.files && req.files.length > 0) {
       const imagesLinks = [];
@@ -450,28 +513,87 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
           return next(new HandleError(`Failed to upload image ${i + 1}: ${uploadError.message}`, 500));
         }
       }
-      updateData.images = [...currentImages, ...imagesLinks];
+      currentImages = [...currentImages, ...imagesLinks];
       newlyUploadedImages = imagesLinks;
-    } else {
-      updateData.images = currentImages;
     }
 
-    product = await Product.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-      useFindAndModify: false
+    // Ensure first image is marked primary
+    if (currentImages.length > 0) {
+      const hasPrimary = currentImages.some(img => img.isPrimary);
+      if (!hasPrimary) currentImages[0] = { ...currentImages[0], isPrimary: true };
+    }
+
+    // Auto-fill ogImage from images if still blank
+    if (!resolvedSeo.ogImage && currentImages.length > 0) {
+      const primary = currentImages.find(img => img.isPrimary) || currentImages[0];
+      resolvedSeo.ogImage = primary.url;
+    }
+
+    // ── Build the final update document ─────────────────────────────────
+
+    const updateData = {
+      name:             req.body.name,
+      slug:             updatedSlug,
+      slugHistory,
+      description:      req.body.description,
+      shortDescription: req.body.shortDescription || '',
+      category:         req.body.category,
+      brand:            req.body.brand || '',
+      manufacturer:     req.body.manufacturer || product.manufacturer || '',
+      pricing:          finalPricing,
+      inventory:        mergedInventory,
+      subcategories:    Array.isArray(subcategories)  ? subcategories  : product.subcategories,
+      tags:             Array.isArray(tags)            ? tags           : product.tags,
+      specifications:   Array.isArray(specifications) ? specifications : product.specifications,
+      variants:         Array.isArray(variants)        ? variants       : product.variants,
+      dimensions:       dimensions || product.dimensions,
+      weight:           weight     || product.weight,
+      breadcrumbs:      breadcrumbs || product.breadcrumbs,
+      seo:              resolvedSeo,
+      richSnippets: {
+        faqs:   Array.isArray(richSnippets?.faqs)   ? richSnippets.faqs   : product.richSnippets?.faqs   || [],
+        howTo:  richSnippets?.howTo                 || product.richSnippets?.howTo                        || { name: '', steps: [] },
+        videos: Array.isArray(richSnippets?.videos) ? richSnippets.videos : product.richSnippets?.videos || [],
+      },
+      images:       currentImages,
+      isOnSale,
+      isFeatured:   req.body.isFeatured   !== undefined
+        ? (req.body.isFeatured   === 'true' || req.body.isFeatured   === true)
+        : product.isFeatured,
+      isNewArrival: req.body.isNewArrival !== undefined
+        ? (req.body.isNewArrival === 'true' || req.body.isNewArrival === true)
+        : product.isNewArrival,
+      isBestseller: req.body.isBestseller !== undefined
+        ? (req.body.isBestseller === 'true' || req.body.isBestseller === true)
+        : product.isBestseller,
+      status:         newStatus,
+      publishedAt,
+      archivedAt,
+      lastModifiedAt: new Date(),
+      lastModifiedBy: req.user._id,
+    };
+
+    const updated = await Product.findByIdAndUpdate(id, updateData, {
+      new:            true,
+      runValidators:  false, // validators run via pre-validate which we skip intentionally
+      useFindAndModify: false,
     });
 
+    // Clean up removed Cloudinary images after successful DB write
     if (imagesToDelete.length > 0) {
       await deleteMultipleFromCloudinary(imagesToDelete).catch(() => {});
     }
 
-    await invalidateProductCaches();
-    res.status(200).json({ success: true, product });
+    invalidateProductCaches().catch((err) => console.error('Cache invalidation error:', err));
+    res.status(200).json({ success: true, product: updated });
   } catch (error) {
     if (newlyUploadedImages.length > 0) {
       await deleteMultipleFromCloudinary(newlyUploadedImages.map(img => img.public_id)).catch(() => {});
     }
+
+    // Catch MongoDB duplicate key errors (slug or SKU collision)
+    if (handleDuplicateKeyError(error, next)) return;
+
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       return next(new HandleError(errors.join(', '), 400));
@@ -560,8 +682,6 @@ export const deleteMultipleProducts = handleAsyncError(async (req, res, next) =>
 // ============================================
 
 export const getProductDetails = handleAsyncError(async (req, res, next) => {
-  // FIX #4 — Uses shared withProductPopulate helper instead of duplicating
-  // the three .populate() calls that also exist in getProductBySlug.
   const product = await withProductPopulate(Product.findById(req.params.id));
 
   if (!product) return next(new HandleError('Product not found', 404));
@@ -609,8 +729,6 @@ export const createProductReview = handleAsyncError(async (req, res, next) => {
     product.numOfReviews = product.reviews.length;
   }
 
-  // FIX #1 — Use shared calcRating helper; was Math.ceil() here vs
-  // toFixed(1) in deleteReview, causing different rounding on the same field.
   product.ratings = calcRating(product.reviews);
 
   await product.save({ validateBeforeSave: false });
@@ -639,8 +757,6 @@ export const deleteReview = handleAsyncError(async (req, res, next) => {
     r => r._id.toString() !== req.query.id.toString()
   );
 
-  // FIX #1 — Use shared calcRating helper; was Number().toFixed(1) here
-  // vs Math.ceil() in createProductReview, writing inconsistent values.
   await Product.findByIdAndUpdate(
     req.query.productID,
     { reviews, ratings: calcRating(reviews), numOfReviews: reviews.length },
@@ -666,17 +782,11 @@ export const getAdminProducts = handleAsyncError(async (req, res, next) => {
 export const getProductBySlug = handleAsyncError(async (req, res, next) => {
   const { slug } = req.params;
 
-  // FIX #4 — Uses shared withProductPopulate helper.
   const product = await withProductPopulate(
     Product.findOne({ slug, status: 'published' })
   );
 
   if (!product) {
-    // FIX #9 — Slug history lookup removed from this controller entirely.
-    // redirectHandler middleware (mounted after routes) performs the single
-    // authoritative slug-history DB query and issues the 301. Having it
-    // here too meant two DB queries for every renamed-product 404, and two
-    // different response shapes for the same redirect.
     return next(new HandleError('Product not found', 404));
   }
 

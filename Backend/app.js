@@ -31,36 +31,27 @@ import discountRoutes from './routes/discount-routes.js';
 import checkoutRoutes from './routes/checkout-routes.js';
 import analyticsRoutes from './routes/analytics-routes-index.js';
 import adminStatsRoutes from './routes/admin-stats-routes.js';
-
 import seoRoutes from './routes/seo-routes.js';
-
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
 
-// Import passport configuration
 import './config/passport.js';
 
 const app = express();
 
 /* ================= WEBHOOK ROUTES (MUST BE BEFORE BODY PARSERS) ================= */
 
-/**
- * Stripe Webhook - Raw body required for signature verification
- */
 app.post(
   '/api/v1/payment/webhook/stripe',
   webhookLimiter,
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     console.log('>>> Stripe webhook route reached');
-
     try {
       const service = PaymentFactory.getService('stripe');
-
       if (!service || typeof service.handleWebhook !== 'function') {
         console.error('Stripe webhook service unavailable');
         return res.status(500).json({ message: 'Webhook service unavailable' });
       }
-
       await service.handleWebhook(req, res);
     } catch (err) {
       console.error('❌ Stripe webhook error:', err);
@@ -69,24 +60,18 @@ app.post(
   }
 );
 
-/**
- * Paystack Webhook - Raw body required for signature verification
- */
 app.post(
   '/api/v1/payment/webhook/paystack',
   webhookLimiter,
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     console.log('>>> Paystack webhook route reached');
-
     try {
       const service = PaymentFactory.getService('paystack');
-
       if (!service || typeof service.handleWebhook !== 'function') {
         console.error('Paystack webhook service unavailable');
         return res.status(500).json({ message: 'Webhook service unavailable' });
       }
-
       await service.handleWebhook(req, res);
     } catch (err) {
       console.error('❌ Paystack webhook error:', err);
@@ -95,24 +80,18 @@ app.post(
   }
 );
 
-/**
- * Flutterwave Webhook - Raw body required for signature verification
- */
 app.post(
   '/api/v1/payment/webhook/flutterwave',
   webhookLimiter,
   express.raw({ type: 'application/json' }),
   async (req, res) => {
     console.log('>>> Flutterwave webhook route reached');
-
     try {
       const service = PaymentFactory.getService('flutterwave');
-
       if (!service || typeof service.handleWebhook !== 'function') {
         console.error('Flutterwave webhook service unavailable');
         return res.status(500).json({ message: 'Webhook service unavailable' });
       }
-
       await service.handleWebhook(req, res);
     } catch (err) {
       console.error('❌ Flutterwave webhook error:', err);
@@ -126,74 +105,19 @@ app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
 
-/* ================= CUSTOM REDIS SESSION STORE ================= */
-// Simple Redis store implementation (no connect-redis needed)
-class RedisSessionStore extends EventEmitter {
-  constructor(redisClient, options = {}) {
-    super();
-    this.client = redisClient;
-    this.prefix = options.prefix || 'sess:';
-    this.ttl = options.ttl || 900; // 15 minutes default
-  }
-
-  async get(sid, callback) {
-    try {
-      const data = await this.client.get(this.prefix + sid);
-      callback(null, data ? JSON.parse(data) : null);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  async set(sid, session, callback) {
-    try {
-      await this.client.set(
-        this.prefix + sid,
-        JSON.stringify(session),
-        { EX: this.ttl }
-      );
-      callback(null);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  async destroy(sid, callback) {
-    try {
-      await this.client.del(this.prefix + sid);
-      callback(null);
-    } catch (err) {
-      callback(err);
-    }
-  }
-
-  async touch(sid, session, callback) {
-    try {
-      await this.client.expire(this.prefix + sid, this.ttl);
-      callback(null);
-    } catch (err) {
-      callback(err);
-    }
-  }
-}
-
-const sessionStore = new RedisSessionStore(redis, {
-  prefix: 'epicstore:session:',
-  ttl: 900 // 15 minutes
-});
-
+/* ================= SESSION ================= */
 app.use(
   session({
-    store: new RedisStore({ 
+    store: new RedisStore({
       client: redis,
       prefix: 'epicstore:session:',
-      ttl: 900 // 15 minutes in seconds
+      ttl: 900
     }),
     secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
     resave: false,
     saveUninitialized: false,
     cookie: {
-      maxAge: 1000 * 60 * 15, // 15 minutes
+      maxAge: 1000 * 60 * 15,
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax'
@@ -203,7 +127,6 @@ app.use(
 );
 
 /* ================= PASSPORT ================= */
-// Passport is used for OAuth only (JWT handles auth)
 app.use(passport.initialize());
 
 /* ================= REQUEST LOGGING (DEVELOPMENT ONLY) ================= */
@@ -214,6 +137,9 @@ if (process.env.NODE_ENV === 'development') {
         method: req.method,
         path: req.originalUrl,
         contentType: req.headers['content-type'],
+        // NOTE: bodyExists will always be false for multipart/form-data here
+        // because multer only runs inside the route, not at app level.
+        // This is expected and does NOT mean the body is missing.
         bodyExists: !!req.body,
         bodyKeys: req.body ? Object.keys(req.body) : []
       });
@@ -223,21 +149,39 @@ if (process.env.NODE_ENV === 'development') {
 }
 
 /* ================= SECURITY ================= */
-// Startup guard (non-destructive, validates app)
 startupGuards(app);
-
-// Standard security middlewares
 app.use(cors(corsOptions));
 app.use(helmetConfig);
-app.use(hppProtection);
-app.use(additionalSecurityHeaders);
 
-// Track UTM parameters and attribution data on ALL requests
+// ============================================
+// FIX: hpp (HTTP Parameter Pollution) must NOT
+// run on multipart/form-data requests.
+//
+// hpp internally reads the request body to check
+// for duplicate parameters. On multipart requests
+// this drains the raw stream before multer (which
+// runs inside the route) can parse it — leaving
+// req.body = {} and req.files = [] silently, which
+// caused every product create/update to hang.
+//
+// The fix: skip hpp entirely when the content-type
+// is multipart/form-data. It only needs to protect
+// against pollution on JSON and urlencoded routes
+// anyway — multipart form fields can't be polluted
+// in the same way.
+// ============================================
+app.use((req, res, next) => {
+  const contentType = req.headers['content-type'] || '';
+  if (contentType.includes('multipart/form-data')) {
+    return next(); // skip hpp for file upload requests
+  }
+  return hppProtection(req, res, next);
+});
+
+app.use(additionalSecurityHeaders);
 app.use(trackAttribution);
 
 /* ================= ROUTES ================= */
-
-// Core Application Routes
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
 app.use('/api/v1', orderRoutes);
@@ -246,17 +190,12 @@ app.use('/api/v1/payment', paymentRoutes);
 app.use('/api/v1/receipts', receiptRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
 app.use('/api/v1/cart', cartRoutes);
-app.use('/api/v1', cartRoutes); // For /products/:id/availability endpoint
+app.use('/api/v1', cartRoutes);
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/discounts', discountRoutes);
 app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1', seoRoutes);
-
-
-// Analytics Routes (Unified through index router)
 app.use('/api/v1/analytics', analyticsRoutes);
-
-// Admin Routes
 app.use('/api/v1/admin', adminStatsRoutes);
 
 /* ================= ERROR HANDLER ================= */

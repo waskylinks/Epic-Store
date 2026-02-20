@@ -21,9 +21,8 @@ import {
 } from '../controller/public-controller.js';
 import { roleBaseAccess, verifyUserAuth } from '../middleware/user-auth.js';
 import { publicProductLimiter, adminLimiter } from '../middleware/rateLimiter.js';
-import upload from '../middleware/multer.js';
+import { uploadProductImages } from '../middleware/multer.js';
 import { trackProductView } from '../middleware/product-tracking-middleware.js';
-
 import { RESERVED_SLUGS } from '../utils/reserved-slugs.js'; 
 
 const router = express.Router();
@@ -97,6 +96,19 @@ router.route('/reviews')
 // ADMIN ROUTES — Product Management
 // ============================================
 
+// ============================================
+// ADMIN ROUTES
+//
+// Upload middleware order on multipart routes:
+//   1. verifyUserAuth      — checks JWT header only, never touches body
+//   2. roleBaseAccess      — checks user.role only, never touches body
+//   3. uploadProductImages — parses multipart stream immediately
+//                            (wrapped so multer errors return clean 400
+//                             instead of leaving req.body undefined)
+//   4. adminLimiter        — runs after body is already parsed
+//   5. controller          — receives populated req.body and req.files
+// ============================================
+
 router.route('/product/:id')
   .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getProductDetails);
 
@@ -107,8 +119,8 @@ router.route('/admin/products/create')
   .post(
     verifyUserAuth,
     roleBaseAccess('admin'),
+    uploadProductImages,   // ← wrapped multer, before adminLimiter
     adminLimiter,
-    upload.array('images', 10), 
     createProducts
   );
 
@@ -119,8 +131,8 @@ router.route('/admin/product/:id')
   .put(
     verifyUserAuth,
     roleBaseAccess('admin'),
+    uploadProductImages,   // ← wrapped multer, before adminLimiter
     adminLimiter,
-    upload.array('images', 10), 
     updateProduct
   )
   .delete(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, deleteProduct);
