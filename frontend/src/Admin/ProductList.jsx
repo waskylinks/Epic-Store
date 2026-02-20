@@ -17,6 +17,7 @@ import {
   selectDeleteStatus,
   selectBatchDeleteStatus,
   selectProductsCount,
+  selectPaginationMeta,
   selectPublishedProducts,
   selectDraftProducts,
   selectArchivedProducts,
@@ -45,46 +46,30 @@ const SORT_OPTIONS  = [
 
 const fmt = (n) => `$${Number(n ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const getNestedValue = (obj, path) =>
-  path.split('.').reduce((acc, k) => acc?.[k], obj);
-
-const sortProducts = (arr, sortKey) => {
-  const [field, dir] = sortKey.split('_');
-  const realField = sortKey.startsWith('pricing') ? 'pricing.regular'
-    : sortKey.startsWith('inventory') ? 'inventory.stock'
-    : field;
-  return [...arr].sort((a, b) => {
-    const av = getNestedValue(a, realField) ?? '';
-    const bv = getNestedValue(b, realField) ?? '';
-    if (typeof av === 'string') return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
-    return dir === 'asc' ? av - bv : bv - av;
-  });
-};
-
-const PAGE_SIZE = 20;
-
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function ProductList() {
   const dispatch   = useDispatch();
   const navigate   = useNavigate();
 
-  const products          = useSelector(selectAdminProducts);
-  const loading           = useSelector(selectAdminProductsLoading);
-  const error             = useSelector(selectAdminProductsError);
-  const totalCount        = useSelector(selectProductsCount);
-  const publishedProducts = useSelector(selectPublishedProducts);
-  const draftProducts     = useSelector(selectDraftProducts);
-  const archivedProducts  = useSelector(selectArchivedProducts);
-  const lowStockProducts  = useSelector(selectLowStockProducts);
-  const outOfStockProducts= useSelector(selectOutOfStockProducts);
-  const featuredProducts  = useSelector(selectFeaturedProducts);
-  const onSaleProducts    = useSelector(selectOnSaleProducts);
-  const deleteStatus      = useSelector(selectDeleteStatus);
-  const batchStatus       = useSelector(selectBatchDeleteStatus);
+  const products           = useSelector(selectAdminProducts);
+  const loading            = useSelector(selectAdminProductsLoading);
+  const error              = useSelector(selectAdminProductsError);
+  const totalCount         = useSelector(selectProductsCount);
+  const { totalPages, currentPage, resultPerPage } = useSelector(selectPaginationMeta);
+  const publishedProducts  = useSelector(selectPublishedProducts);
+  const draftProducts      = useSelector(selectDraftProducts);
+  const archivedProducts   = useSelector(selectArchivedProducts);
+  const lowStockProducts   = useSelector(selectLowStockProducts);
+  const outOfStockProducts = useSelector(selectOutOfStockProducts);
+  const featuredProducts   = useSelector(selectFeaturedProducts);
+  const onSaleProducts     = useSelector(selectOnSaleProducts);
+  const deleteStatus       = useSelector(selectDeleteStatus);
+  const batchStatus        = useSelector(selectBatchDeleteStatus);
 
   // ── local state ────────────────────────────────────────────────────────────
   const [search,       setSearch]       = useState('');
+  const [searchInput,  setSearchInput]  = useState(''); // unbound input value
   const [statusFilter, setStatusFilter] = useState('all');
   const [invFilter,    setInvFilter]    = useState('all');
   const [catFilter,    setCatFilter]    = useState('All');
@@ -96,8 +81,30 @@ export default function ProductList() {
   const [toast,        setToast]        = useState(null);
   const [filtersOpen,  setFiltersOpen]  = useState(false);
 
-  // ── fetch on mount ─────────────────────────────────────────────────────────
-  useEffect(() => { dispatch(fetchAdminProducts()); }, [dispatch]);
+  // ── fetch whenever query params change ─────────────────────────────────────
+  useEffect(() => {
+    dispatch(fetchAdminProducts({
+      page,
+      limit: 20,
+      ...(search      && { search }),
+      ...(statusFilter !== 'all' && { status: statusFilter }),
+      ...(invFilter   !== 'all' && { inventoryStatus: invFilter }),
+      ...(catFilter   !== 'All' && { category: catFilter }),
+      ...(sortKey     && { sort: sortKey }),
+    }));
+  }, [dispatch, page, search, statusFilter, invFilter, catFilter, sortKey]);
+
+  // ── debounce search input so we don't hit the server on every keystroke ────
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput);
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
+  // ── reset to page 1 when any filter/sort changes ───────────────────────────
+  useEffect(() => { setPage(1); }, [statusFilter, invFilter, catFilter, sortKey]);
 
   // ── toast helper ───────────────────────────────────────────────────────────
   const showToast = useCallback((msg, type = 'success') => {
@@ -136,40 +143,14 @@ export default function ProductList() {
     }
   }, [batchStatus, dispatch, showToast]);
 
-  // ── filtered + sorted list ─────────────────────────────────────────────────
-  const filtered = useMemo(() => {
-    let list = products;
-
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      list = list.filter(p =>
-        p.name?.toLowerCase().includes(q) ||
-        p.brand?.toLowerCase().includes(q) ||
-        p.inventory?.sku?.toLowerCase().includes(q) ||
-        p.category?.toLowerCase().includes(q)
-      );
-    }
-    if (statusFilter !== 'all') list = list.filter(p => p.status === statusFilter);
-    if (invFilter    !== 'all') list = list.filter(p => p.inventory?.status === invFilter);
-    if (catFilter    !== 'All') list = list.filter(p => p.category === catFilter);
-
-    return sortProducts(list, sortKey);
-  }, [products, search, statusFilter, invFilter, catFilter, sortKey]);
-
-  // ── pagination ─────────────────────────────────────────────────────────────
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paginated  = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  useEffect(() => { setPage(1); }, [search, statusFilter, invFilter, catFilter, sortKey]);
-
   // ── selection ──────────────────────────────────────────────────────────────
-  const toggleOne  = (id) => setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
-  const toggleAll  = () => {
-    if (selected.size === paginated.length) setSelected(new Set());
-    else setSelected(new Set(paginated.map(p => p._id)));
+  const toggleOne   = (id) => setSelected(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const toggleAll   = () => {
+    if (selected.size === products.length) setSelected(new Set());
+    else setSelected(new Set(products.map(p => p._id)));
   };
-  const allChecked = paginated.length > 0 && selected.size === paginated.length;
-  const someChecked= selected.size > 0 && selected.size < paginated.length;
+  const allChecked  = products.length > 0 && selected.size === products.length;
+  const someChecked = selected.size > 0 && selected.size < products.length;
 
   // ── handlers ───────────────────────────────────────────────────────────────
   const handleDelete      = (id) => setConfirmId(id);
@@ -184,20 +165,40 @@ export default function ProductList() {
     search.trim() !== '',
   ].filter(Boolean).length;
 
-  // ── stat cards data ────────────────────────────────────────────────────────
+  const resetFilters = () => {
+    setStatusFilter('all');
+    setInvFilter('all');
+    setCatFilter('All');
+    setSearchInput('');
+    setSearch('');
+    setPage(1);
+  };
+
+  // ── stat cards ─────────────────────────────────────────────────────────────
+  // Note: stat card counts reflect the current page's products for filtered
+  // counts (published, draft, etc.) since the server sends one page at a time.
+  // totalCount always comes from the server's real total.
   const stats = [
-    { label: 'Total',       value: totalCount,                    key: 'all' },
-    { label: 'Published',   value: publishedProducts.length,      key: 'published',   color: 'green' },
-    { label: 'Drafts',      value: draftProducts.length,          key: 'draft',       color: 'amber' },
-    { label: 'Archived',    value: archivedProducts.length,       key: 'archived',    color: 'grey' },
-    { label: 'Low Stock',   value: lowStockProducts.length,       key: 'low',         color: 'orange' },
-    { label: 'Out of Stock',value: outOfStockProducts.length,     key: 'out',         color: 'red' },
-    { label: 'Featured',    value: featuredProducts.length,       key: 'featured',    color: 'coral' },
-    { label: 'On Sale',     value: onSaleProducts.length,         key: 'sale',        color: 'blue' },
+    { label: 'Total',        value: totalCount,               key: 'all' },
+    { label: 'Published',    value: publishedProducts.length, key: 'published', color: 'green' },
+    { label: 'Drafts',       value: draftProducts.length,     key: 'draft',     color: 'amber' },
+    { label: 'Archived',     value: archivedProducts.length,  key: 'archived',  color: 'grey' },
+    { label: 'Low Stock',    value: lowStockProducts.length,  key: 'low',       color: 'orange' },
+    { label: 'Out of Stock', value: outOfStockProducts.length,key: 'out',       color: 'red' },
+    { label: 'Featured',     value: featuredProducts.length,  key: 'featured',  color: 'coral' },
+    { label: 'On Sale',      value: onSaleProducts.length,    key: 'sale',      color: 'blue' },
   ];
 
   // ── render ─────────────────────────────────────────────────────────────────
-  if (loading) return <Loader />;
+  if (loading) 
+    return( 
+          <>  
+          <Navbar />
+          <Loader />
+          <Footer />
+          </>
+    );
+    
 
   return (
     <>
@@ -243,10 +244,10 @@ export default function ProductList() {
             <input
               type="text"
               placeholder="Search by name, brand, SKU, category…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
             />
-            {search && <button className="pl-search__clear" onClick={() => setSearch('')}>✕</button>}
+            {searchInput && <button className="pl-search__clear" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>✕</button>}
           </div>
 
           <div className="pl-toolbar__actions">
@@ -321,10 +322,7 @@ export default function ProductList() {
                 ))}
               </div>
             </div>
-            <button
-              className="pl-btn pl-btn--ghost pl-filter-reset"
-              onClick={() => { setStatusFilter('all'); setInvFilter('all'); setCatFilter('All'); setSearch(''); }}
-            >
+            <button className="pl-btn pl-btn--ghost pl-filter-reset" onClick={resetFilters}>
               Reset all filters
             </button>
           </div>
@@ -334,13 +332,13 @@ export default function ProductList() {
         {error && (
           <div className="pl-error">
             <span>⚠</span> {error}
-            <button onClick={() => dispatch(fetchAdminProducts())}>Retry</button>
+            <button onClick={() => dispatch(fetchAdminProducts({ page, limit: 20 }))}>Retry</button>
           </div>
         )}
 
         {/* ── Table ── */}
         <div className="pl-table-wrap">
-          {filtered.length === 0 ? (
+          {products.length === 0 ? (
             <div className="pl-empty">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
               <p>No products found</p>
@@ -370,7 +368,7 @@ export default function ProductList() {
                 </tr>
               </thead>
               <tbody>
-                {paginated.map((product, i) => {
+                {products.map((product, i) => {
                   const primaryImg = product.images?.find(img => img.isPrimary) || product.images?.[0];
                   const isChecked  = selected.has(product._id);
                   return (
@@ -388,9 +386,7 @@ export default function ProductList() {
                           <div className="pl-product-img">
                             {primaryImg
                               ? <img src={primaryImg.url} alt={primaryImg.alt || product.name} loading="lazy" />
-                              : <span className="pl-product-img--placeholder">
-                                  {product.name?.[0]?.toUpperCase()}
-                                </span>
+                              : <span className="pl-product-img--placeholder">{product.name?.[0]?.toUpperCase()}</span>
                             }
                           </div>
                           <div className="pl-product-info">
@@ -478,43 +474,27 @@ export default function ProductList() {
         {totalPages > 1 && (
           <div className="pl-pagination">
             <span className="pl-pagination__info">
-              Showing {((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}
+              Showing {((currentPage - 1) * resultPerPage) + 1}–{Math.min(currentPage * resultPerPage, totalCount)} of {totalCount}
             </span>
             <div className="pl-pagination__controls">
-              <button
-                className="pl-page-btn"
-                disabled={page === 1}
-                onClick={() => setPage(1)}
-              >«</button>
-              <button
-                className="pl-page-btn"
-                disabled={page === 1}
-                onClick={() => setPage(p => p - 1)}
-              >‹</button>
+              <button className="pl-page-btn" disabled={currentPage === 1} onClick={() => setPage(1)}>«</button>
+              <button className="pl-page-btn" disabled={currentPage === 1} onClick={() => setPage(p => p - 1)}>‹</button>
               {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                 let p;
-                if (totalPages <= 5) p = i + 1;
-                else if (page <= 3) p = i + 1;
-                else if (page >= totalPages - 2) p = totalPages - 4 + i;
-                else p = page - 2 + i;
+                if (totalPages <= 5)           p = i + 1;
+                else if (currentPage <= 3)     p = i + 1;
+                else if (currentPage >= totalPages - 2) p = totalPages - 4 + i;
+                else                           p = currentPage - 2 + i;
                 return (
                   <button
                     key={p}
-                    className={`pl-page-btn ${page === p ? 'active' : ''}`}
+                    className={`pl-page-btn ${currentPage === p ? 'active' : ''}`}
                     onClick={() => setPage(p)}
                   >{p}</button>
                 );
               })}
-              <button
-                className="pl-page-btn"
-                disabled={page === totalPages}
-                onClick={() => setPage(p => p + 1)}
-              >›</button>
-              <button
-                className="pl-page-btn"
-                disabled={page === totalPages}
-                onClick={() => setPage(totalPages)}
-              >»</button>
+              <button className="pl-page-btn" disabled={currentPage === totalPages} onClick={() => setPage(p => p + 1)}>›</button>
+              <button className="pl-page-btn" disabled={currentPage === totalPages} onClick={() => setPage(totalPages)}>»</button>
             </div>
           </div>
         )}

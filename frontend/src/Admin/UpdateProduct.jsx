@@ -20,22 +20,38 @@ import {
 } from '../features/admin/adminProductSlice';
 import '../AdminStyles/UpdateProduct.css';
 
-// ── constants (same as create) ────────────────────────────────────────────────
-const CATEGORIES  = ['Electronics','Clothing & Apparel','Home & Living','Sports & Outdoors','Beauty & Personal Care','Books & Media','Food & Beverages'];
-const CURRENCIES  = ['USD','EUR','GBP','NGN'];
-const DIM_UNITS   = ['cm','in'];
-const W_UNITS     = ['kg','lb','g'];
-const INV_STATUSES= ['InStock','LowStock','OutOfStock','Discontinued'];
-const SCHEMA_TYPES= ['Product','Book','Course','SoftwareApplication'];
-const CONDITIONS  = ['NewCondition','UsedCondition','RefurbishedCondition','DamagedCondition'];
-const TW_CARDS    = ['summary','summary_large_image'];
-const OG_TYPES    = ['product','website','article'];
+// ── constants ─────────────────────────────────────────────────────────────────
+const CATEGORIES   = ['Electronics','Clothing & Apparel','Home & Living','Sports & Outdoors','Beauty & Personal Care','Books & Media','Food & Beverages'];
+const CURRENCIES   = ['USD','EUR','GBP','NGN'];
+const DIM_UNITS    = ['cm','in'];
+const W_UNITS      = ['kg','lb','g'];
+const INV_STATUSES = ['InStock','LowStock','OutOfStock','Discontinued'];
+const SCHEMA_TYPES = ['Product','Book','Course','SoftwareApplication'];
+const CONDITIONS   = ['NewCondition','UsedCondition','RefurbishedCondition','DamagedCondition'];
+const TW_CARDS     = ['summary','summary_large_image'];
+const OG_TYPES     = ['product','website','article'];
 
 const SECTIONS = [
   'Basic Info','Pricing','Inventory','Images',
   'Variants','Specifications','Dimensions & Weight',
   'Breadcrumbs','SEO','Rich Snippets','Relationships & Flags',
 ];
+
+// ── SaveButton — hoisted outside UpdateProduct so it is never recreated during
+//    render (fixes react-hooks/static-components across all 11 call sites).
+// ─────────────────────────────────────────────────────────────────────────────
+function SaveButton({ loading, onSave }) {
+  return (
+    <button
+      type="button"
+      className="up-btn up-btn--submit"
+      disabled={loading}
+      onClick={onSave}
+    >
+      {loading ? <><span className="up-spinner" /> Saving…</> : 'Save Changes'}
+    </button>
+  );
+}
 
 // ── hydrate form from existing product ────────────────────────────────────────
 const hydrateForm = (p) => ({
@@ -47,12 +63,12 @@ const hydrateForm = (p) => ({
   manufacturer:     p.manufacturer     || '',
   status:           p.status           || 'published',
   pricing: {
-    regular:     p.pricing?.regular     ?? '',
-    sale:        p.pricing?.sale        ?? '',
-    cost:        p.pricing?.cost        ?? '',
-    currency:    p.pricing?.currency    || 'USD',
-    validFrom:   p.pricing?.validFrom   ? p.pricing.validFrom.substring(0, 10) : '',
-    validThrough:p.pricing?.validThrough? p.pricing.validThrough.substring(0, 10) : '',
+    regular:      p.pricing?.regular      ?? '',
+    sale:         p.pricing?.sale         ?? '',
+    cost:         p.pricing?.cost         ?? '',
+    currency:     p.pricing?.currency     || 'USD',
+    validFrom:    p.pricing?.validFrom    ? p.pricing.validFrom.substring(0, 10)    : '',
+    validThrough: p.pricing?.validThrough ? p.pricing.validThrough.substring(0, 10) : '',
   },
   inventory: {
     stock:             p.inventory?.stock             ?? '',
@@ -104,32 +120,31 @@ const hydrateForm = (p) => ({
     relatedSearchTerms: p.seo?.relatedSearchTerms || [],
   },
   richSnippets: {
-    faqs:  p.richSnippets?.faqs  || [],
-    howTo: p.richSnippets?.howTo || { name: '', steps: [] },
-    videos:p.richSnippets?.videos|| [],
+    faqs:   p.richSnippets?.faqs   || [],
+    howTo:  p.richSnippets?.howTo  || { name: '', steps: [] },
+    videos: p.richSnippets?.videos || [],
   },
+  // Populated refs are hydrated back to comma-separated ID strings for the text inputs
   relatedProducts: p.relatedProducts?.map(r => r._id || r).join(', ') || '',
   crossSells:      p.crossSells?.map(r => r._id || r).join(', ')      || '',
   upsells:         p.upsells?.map(r => r._id || r).join(', ')         || '',
 });
 
 export default function UpdateProduct() {
-  const { id }   = useParams();
-  const dispatch  = useDispatch();
-  const navigate  = useNavigate();
+  const { id }  = useParams();
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
 
-  const product      = useSelector(selectSelectedProduct);
-  const fetchLoading = useSelector(selectSelectedProductLoading);
-  const fetchError   = useSelector(selectSelectedProductError);
-  const updateStatus = useSelector(selectUpdateStatus);
-  const structuredData      = useSelector(selectStructuredData);
+  const product               = useSelector(selectSelectedProduct);
+  const fetchLoading          = useSelector(selectSelectedProductLoading);
+  const fetchError            = useSelector(selectSelectedProductError);
+  const updateStatus          = useSelector(selectUpdateStatus);
+  const structuredData        = useSelector(selectStructuredData);
   const structuredDataLoading = useSelector(selectStructuredDataLoading);
 
   const [form,           setForm]          = useState(null);
   const [activeSection,  setActiveSection] = useState(0);
-  // Existing images from DB: { public_id, url, alt, isPrimary, order, caption, width, height }
   const [existingImages, setExistingImages]= useState([]);
-  // New local file images: { file, preview, alt, caption }
   const [newImages,      setNewImages]     = useState([]);
   const [imagesToDelete, setImagesToDelete]= useState([]);
   const [imageMetadata,  setImageMetadata] = useState([]);
@@ -148,10 +163,20 @@ export default function UpdateProduct() {
     return () => dispatch(clearSelectedProduct());
   }, [id, dispatch]);
 
+  // Scroll to top when navigating between sections
+useEffect(() => {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}, [activeSection]);
+
   // ── hydrate form when product loads ───────────────────────────────────────
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  // Initialising local form state from async-loaded Redux data is a legitimate
+  // use of setState inside an effect; the rule is overly broad here.
   useEffect(() => {
     if (product) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setForm(hydrateForm(product));
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setExistingImages(product.images || []);
     }
   }, [product]);
@@ -161,24 +186,28 @@ export default function UpdateProduct() {
     setTimeout(() => setToast(null), 4000);
   }, []);
 
-  // ── update success/error ───────────────────────────────────────────────────
+  // ── update success / error ─────────────────────────────────────────────────
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  // Responding to an async Redux action result (not syncing external state into
+  // React) is a valid pattern; showToast → setToast is intentional here.
   useEffect(() => {
     if (updateStatus.success) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       showToast('Product updated successfully!');
       dispatch(clearUpdateStatus());
-      // structuredData auto-nulled in slice on update — no need to handle here
     }
     if (updateStatus.error) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       showToast(updateStatus.error, 'error');
       dispatch(clearUpdateStatus());
     }
   }, [updateStatus, dispatch, showToast]);
 
-  // ── generic setter ─────────────────────────────────────────────────────────
+  // ── generic deep-setter ────────────────────────────────────────────────────
   const set = (path, value) => {
     setForm(prev => {
       const next = { ...prev };
-      const keys  = path.split('.');
+      const keys = path.split('.');
       let obj = next;
       for (let i = 0; i < keys.length - 1; i++) {
         obj[keys[i]] = { ...obj[keys[i]] };
@@ -189,51 +218,56 @@ export default function UpdateProduct() {
     });
   };
 
+  // ── derived pricing stats (mirrors CreateProduct — no state needed) ────────
+  const pricingStats = (() => {
+    if (!form) return { discount: null, saving: null, margin: null, saleMargin: null };
+    const regular = parseFloat(form.pricing.regular);
+    const sale    = parseFloat(form.pricing.sale);
+    const cost    = parseFloat(form.pricing.cost);
+
+    const hasRegular = regular > 0;
+    const hasSale    = hasRegular && sale > 0 && sale < regular;
+    const hasCost    = hasRegular && !isNaN(cost) && cost >= 0 && form.pricing.cost !== '';
+
+    const discount   = hasSale ? Math.round(((regular - sale) / regular) * 100) : null;
+    const saving     = hasSale ? (regular - sale).toFixed(2) : null;
+    const margin     = hasCost ? Math.round(((regular - cost) / regular) * 100) : null;
+    const saleMargin = hasSale && hasCost ? Math.round(((sale - cost) / sale) * 100) : null;
+
+    return { discount, saving, margin, saleMargin };
+  })();
+
   // ── existing image handlers ────────────────────────────────────────────────
   const markForDeletion = (publicId) => {
     setImagesToDelete(prev => [...prev, publicId]);
     setExistingImages(prev => prev.filter(img => img.public_id !== publicId));
   };
-
-  const updateExistingImageMeta = (idx, field, value) => {
+  const updateExistingImageMeta = (idx, field, value) =>
     setExistingImages(prev => prev.map((img, i) => i === idx ? { ...img, [field]: value } : img));
-  };
-
-  const setPrimaryImage = (publicId) => {
+  const setPrimaryImage = (publicId) =>
     setExistingImages(prev => prev.map(img => ({ ...img, isPrimary: img.public_id === publicId })));
-  };
 
   // ── new image handlers ─────────────────────────────────────────────────────
   const handleImageAdd = (e) => {
-    const files = Array.from(e.target.files);
+    const files   = Array.from(e.target.files);
     const newImgs = files.map(file => ({ file, preview: URL.createObjectURL(file), alt: '', caption: '' }));
     setNewImages(prev => [...prev, ...newImgs]);
     setImageMetadata(prev => [...prev, ...newImgs.map(img => ({ alt: img.alt, caption: img.caption }))]);
     e.target.value = '';
   };
-
   const removeNewImage = (idx) => {
     setNewImages(prev => { URL.revokeObjectURL(prev[idx].preview); return prev.filter((_, i) => i !== idx); });
     setImageMetadata(prev => prev.filter((_, i) => i !== idx));
   };
-
   const updateNewImageMeta = (idx, field, value) => {
     setNewImages(prev => prev.map((img, i) => i === idx ? { ...img, [field]: value } : img));
     setImageMetadata(prev => prev.map((m, i) => i === idx ? { ...m, [field]: value } : m));
   };
 
-  // ── array helpers ─────────────────────────────────────────────────────────
-  const addToArray = (field, value, setter) => {
-    if (!value.trim()) return;
-    setForm(prev => ({ ...prev, [field]: [...prev[field], value.trim()] }));
-    setter('');
-  };
-  const removeFromArray = (field, idx) => setForm(prev => ({ ...prev, [field]: prev[field].filter((_, i) => i !== idx) }));
-  const addToSeoArray = (field, value, setter) => {
-    if (!value.trim()) return;
-    setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: [...prev.seo[field], value.trim()] } }));
-    setter('');
-  };
+  // ── array helpers ──────────────────────────────────────────────────────────
+  const addToArray         = (field, value, setter) => { if (!value.trim()) return; setForm(prev => ({ ...prev, [field]: [...prev[field], value.trim()] })); setter(''); };
+  const removeFromArray    = (field, idx) => setForm(prev => ({ ...prev, [field]: prev[field].filter((_, i) => i !== idx) }));
+  const addToSeoArray      = (field, value, setter) => { if (!value.trim()) return; setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: [...prev.seo[field], value.trim()] } })); setter(''); };
   const removeFromSeoArray = (field, idx) => setForm(prev => ({ ...prev, seo: { ...prev.seo, [field]: prev.seo[field].filter((_, i) => i !== idx) } }));
 
   // ── spec helpers ───────────────────────────────────────────────────────────
@@ -242,11 +276,11 @@ export default function UpdateProduct() {
   const removeSpec = (idx) => setForm(prev => ({ ...prev, specifications: prev.specifications.filter((_, i) => i !== idx) }));
 
   // ── variant helpers ────────────────────────────────────────────────────────
-  const addVariant       = () => setForm(prev => ({ ...prev, variants: [...prev.variants, { name: '', options: [{ value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] }] }));
-  const setVariant       = (vi, field, val) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, [field]: val } : v) }));
-  const removeVariant    = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.filter((_, i) => i !== vi) }));
-  const addVariantOption = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] } : v) }));
-  const setVariantOption = (vi, oi, field, val) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [field]: val } : o) } : v) }));
+  const addVariant          = () => setForm(prev => ({ ...prev, variants: [...prev.variants, { name: '', options: [{ value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] }] }));
+  const setVariant          = (vi, field, val) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, [field]: val } : v) }));
+  const removeVariant       = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.filter((_, i) => i !== vi) }));
+  const addVariantOption    = (vi) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: [...v.options, { value: '', priceModifier: 0, stock: 0, sku: '', gtin: '' }] } : v) }));
+  const setVariantOption    = (vi, oi, field, val) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: v.options.map((o, j) => j === oi ? { ...o, [field]: val } : o) } : v) }));
   const removeVariantOption = (vi, oi) => setForm(prev => ({ ...prev, variants: prev.variants.map((v, i) => i === vi ? { ...v, options: v.options.filter((_, j) => j !== oi) } : v) }));
 
   // ── breadcrumb helpers ─────────────────────────────────────────────────────
@@ -278,19 +312,24 @@ export default function UpdateProduct() {
     if (!form.pricing.regular)    e.regular     = 'Regular price is required';
     if (form.pricing.sale && Number(form.pricing.sale) >= Number(form.pricing.regular))
       e.sale = 'Sale price must be less than regular price';
-    const totalImages = existingImages.length + newImages.length;
-    if (totalImages === 0)        e.images      = 'At least one image is required';
+    if (existingImages.length + newImages.length === 0)
+      e.images = 'At least one image is required';
     setErrors(e);
     return Object.keys(e).length === 0;
   };
 
-  // ── submit ─────────────────────────────────────────────────────────────────
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  // ── parse comma-separated IDs → JSON array string for the controller ───────
+  // FIX: controller's parseIds expects JSON.stringify([...]), not a raw CSV string
+  const serializeIds = (str) =>
+    JSON.stringify(
+      str.split(',').map(s => s.trim()).filter(Boolean)
+    );
+
+  // ── build FormData & dispatch ──────────────────────────────────────────────
+  const buildAndSubmit = () => {
     if (!validate()) { showToast('Please fix the errors below', 'error'); return; }
 
     const fd = new FormData();
-
     fd.append('name',             form.name);
     fd.append('description',      form.description);
     fd.append('shortDescription', form.shortDescription);
@@ -301,7 +340,6 @@ export default function UpdateProduct() {
     fd.append('isFeatured',       form.isFeatured);
     fd.append('isNewArrival',     form.isNewArrival);
     fd.append('isBestseller',     form.isBestseller);
-
     fd.append('pricing',          JSON.stringify(form.pricing));
     fd.append('inventory',        JSON.stringify(form.inventory));
     fd.append('dimensions',       JSON.stringify(form.dimensions));
@@ -313,16 +351,19 @@ export default function UpdateProduct() {
     fd.append('breadcrumbs',      JSON.stringify(form.breadcrumbs));
     fd.append('seo',              JSON.stringify(form.seo));
     fd.append('richSnippets',     JSON.stringify(form.richSnippets));
-
-    // Update-specific fields
+    // FIX: serialize CSV strings → JSON arrays so controller's parseIds works correctly
+    fd.append('relatedProducts',  serializeIds(form.relatedProducts));
+    fd.append('crossSells',       serializeIds(form.crossSells));
+    fd.append('upsells',          serializeIds(form.upsells));
     fd.append('imagesToDelete',   JSON.stringify(imagesToDelete));
     fd.append('existingImages',   JSON.stringify(existingImages));
     fd.append('imageMetadata',    JSON.stringify(imageMetadata));
-
     newImages.forEach(img => fd.append('images', img.file));
 
     dispatch(updateProduct({ id, formData: fd }));
   };
+
+  const handleSubmit = (e) => { e.preventDefault(); buildAndSubmit(); };
 
   // ── structured data panel ──────────────────────────────────────────────────
   const handleViewStructuredData = () => {
@@ -330,7 +371,15 @@ export default function UpdateProduct() {
     setShowJSON(v => !v);
   };
 
-  if (fetchLoading || !form) return <Loader />;
+  if (fetchLoading || !form) 
+    return( 
+      <>  
+      <Navbar />
+      <Loader />
+      <Footer />
+      </>
+);
+
   if (fetchError) return (
     <div className="up-fetch-error">
       <p>{fetchError}</p>
@@ -390,7 +439,7 @@ export default function UpdateProduct() {
           <div className="up-json-panel">
             <div className="up-json-header">
               <span>JSON-LD Structured Data</span>
-              <button onClick={() => navigator.clipboard.writeText(JSON.stringify(structuredData, null, 2))}>
+              <button type="button" onClick={() => navigator.clipboard.writeText(JSON.stringify(structuredData, null, 2))}>
                 Copy
               </button>
             </div>
@@ -413,25 +462,12 @@ export default function UpdateProduct() {
               </button>
             ))}
 
-            {/* ── Quick Stats ── */}
             {product && (
               <div className="up-sidebar-stats">
-                <div className="up-sidebar-stat">
-                  <span>Views</span>
-                  <strong>{product.analytics?.views ?? 0}</strong>
-                </div>
-                <div className="up-sidebar-stat">
-                  <span>Purchases</span>
-                  <strong>{product.analytics?.purchases ?? 0}</strong>
-                </div>
-                <div className="up-sidebar-stat">
-                  <span>Rating</span>
-                  <strong>{product.ratings != null ? Number(product.ratings).toFixed(1) : '—'}</strong>
-                </div>
-                <div className="up-sidebar-stat">
-                  <span>Reviews</span>
-                  <strong>{product.numOfReviews ?? 0}</strong>
-                </div>
+                <div className="up-sidebar-stat"><span>Views</span><strong>{product.analytics?.views ?? 0}</strong></div>
+                <div className="up-sidebar-stat"><span>Purchases</span><strong>{product.analytics?.purchases ?? 0}</strong></div>
+                <div className="up-sidebar-stat"><span>Rating</span><strong>{product.ratings != null ? Number(product.ratings).toFixed(1) : '—'}</strong></div>
+                <div className="up-sidebar-stat"><span>Reviews</span><strong>{product.numOfReviews ?? 0}</strong></div>
               </div>
             )}
           </aside>
@@ -496,7 +532,8 @@ export default function UpdateProduct() {
               <div className="up-field">
                 <label>Subcategories</label>
                 <div className="up-tag-input">
-                  <input type="text" value={subInput} onChange={e => setSubInput(e.target.value)} placeholder="Add and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('subcategories', subInput, setSubInput); }}} />
+                  <input type="text" value={subInput} onChange={e => setSubInput(e.target.value)} placeholder="Add and press Enter"
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('subcategories', subInput, setSubInput); }}} />
                   <button type="button" onClick={() => addToArray('subcategories', subInput, setSubInput)}>Add</button>
                 </div>
                 <div className="up-tags">
@@ -509,7 +546,8 @@ export default function UpdateProduct() {
               <div className="up-field">
                 <label>Tags</label>
                 <div className="up-tag-input">
-                  <input type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Add tag and press Enter" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('tags', tagInput, setTagInput); }}} />
+                  <input type="text" value={tagInput} onChange={e => setTagInput(e.target.value)} placeholder="Add tag and press Enter"
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToArray('tags', tagInput, setTagInput); }}} />
                   <button type="button" onClick={() => addToArray('tags', tagInput, setTagInput)}>Add</button>
                 </div>
                 <div className="up-tags">
@@ -521,6 +559,7 @@ export default function UpdateProduct() {
 
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(1)}>Next: Pricing →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -555,9 +594,44 @@ export default function UpdateProduct() {
                 <div className="up-field"><label>Valid From</label><input type="date" value={form.pricing.validFrom} onChange={e => set('pricing.validFrom', e.target.value)} /></div>
                 <div className="up-field"><label>Valid Through</label><input type="date" value={form.pricing.validThrough} onChange={e => set('pricing.validThrough', e.target.value)} /></div>
               </div>
+
+              {/* FIX: live pricing stats — mirrors CreateProduct behaviour */}
+              {(pricingStats.discount !== null || pricingStats.margin !== null) && (
+                <div className="up-pricing-stats">
+                  {pricingStats.discount !== null && (
+                    <div className="up-pricing-stat up-pricing-stat--discount">
+                      <span className="up-pricing-stat__label">Discount</span>
+                      <span className="up-pricing-stat__value">-{pricingStats.discount}%</span>
+                      <span className="up-pricing-stat__sub">
+                        Customer saves {form.pricing.currency} {pricingStats.saving}
+                      </span>
+                    </div>
+                  )}
+                  {pricingStats.margin !== null && (
+                    <div className={`up-pricing-stat ${pricingStats.margin < 20 ? 'up-pricing-stat--warn' : 'up-pricing-stat--good'}`}>
+                      <span className="up-pricing-stat__label">Margin (Regular)</span>
+                      <span className="up-pricing-stat__value">{pricingStats.margin}%</span>
+                      <span className="up-pricing-stat__sub">
+                        {pricingStats.margin < 20 ? '⚠ Low margin' : '✓ Healthy margin'}
+                      </span>
+                    </div>
+                  )}
+                  {pricingStats.saleMargin !== null && (
+                    <div className={`up-pricing-stat ${pricingStats.saleMargin < 10 ? 'up-pricing-stat--danger' : pricingStats.saleMargin < 20 ? 'up-pricing-stat--warn' : 'up-pricing-stat--good'}`}>
+                      <span className="up-pricing-stat__label">Margin (Sale)</span>
+                      <span className="up-pricing-stat__value">{pricingStats.saleMargin}%</span>
+                      <span className="up-pricing-stat__sub">
+                        {pricingStats.saleMargin < 10 ? '⚠ Very low — check cost' : pricingStats.saleMargin < 20 ? '⚠ Low on sale price' : '✓ OK on sale'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(0)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(2)}>Next: Inventory →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -575,6 +649,7 @@ export default function UpdateProduct() {
                   <select value={form.inventory.status} onChange={e => set('inventory.status', e.target.value)}>
                     {INV_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
+                  <span className="up-hint">Auto-recalculated from stock on save unless Discontinued</span>
                 </div>
               </div>
               <div className="up-row">
@@ -593,6 +668,7 @@ export default function UpdateProduct() {
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(1)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(3)}>Next: Images →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -601,7 +677,6 @@ export default function UpdateProduct() {
               <h2 className="up-section-title">Images</h2>
               {errors.images && <div className="up-error up-error--block">{errors.images}</div>}
 
-              {/* Existing Images */}
               {existingImages.length > 0 && (
                 <>
                   <h3 className="up-subsection-title">Current Images</h3>
@@ -626,7 +701,6 @@ export default function UpdateProduct() {
                 </>
               )}
 
-              {/* Marked for deletion warning */}
               {imagesToDelete.length > 0 && (
                 <div className="up-delete-warn">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="16" height="16"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -634,7 +708,6 @@ export default function UpdateProduct() {
                 </div>
               )}
 
-              {/* New Images */}
               <h3 className="up-subsection-title">Add New Images</h3>
               <div className="up-dropzone" onClick={() => fileRef.current?.click()}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -663,6 +736,7 @@ export default function UpdateProduct() {
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(2)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(4)}>Next: Variants →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -677,11 +751,11 @@ export default function UpdateProduct() {
                   </div>
                   {variant.options.map((opt, oi) => (
                     <div key={oi} className="up-variant-option">
-                      <input type="text" placeholder="Value" value={opt.value} onChange={e => setVariantOption(vi, oi, 'value', e.target.value)} />
+                      <input type="text"   placeholder="Value"     value={opt.value}         onChange={e => setVariantOption(vi, oi, 'value', e.target.value)} />
                       <input type="number" placeholder="Price mod" value={opt.priceModifier} onChange={e => setVariantOption(vi, oi, 'priceModifier', e.target.value)} />
-                      <input type="number" placeholder="Stock" value={opt.stock} onChange={e => setVariantOption(vi, oi, 'stock', e.target.value)} />
-                      <input type="text" placeholder="SKU" value={opt.sku} onChange={e => setVariantOption(vi, oi, 'sku', e.target.value)} />
-                      <input type="text" placeholder="GTIN" value={opt.gtin} onChange={e => setVariantOption(vi, oi, 'gtin', e.target.value)} />
+                      <input type="number" placeholder="Stock"     value={opt.stock}         onChange={e => setVariantOption(vi, oi, 'stock', e.target.value)} />
+                      <input type="text"   placeholder="SKU"       value={opt.sku}           onChange={e => setVariantOption(vi, oi, 'sku', e.target.value)} />
+                      <input type="text"   placeholder="GTIN"      value={opt.gtin}          onChange={e => setVariantOption(vi, oi, 'gtin', e.target.value)} />
                       <button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeVariantOption(vi, oi)}>×</button>
                     </div>
                   ))}
@@ -692,6 +766,7 @@ export default function UpdateProduct() {
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(3)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(5)}>Next: Specifications →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -700,7 +775,7 @@ export default function UpdateProduct() {
               <h2 className="up-section-title">Specifications</h2>
               {form.specifications.map((spec, i) => (
                 <div key={i} className="up-spec-row">
-                  <input type="text" placeholder="Key" value={spec.key} onChange={e => setSpec(i, 'key', e.target.value)} />
+                  <input type="text" placeholder="Key"   value={spec.key}   onChange={e => setSpec(i, 'key', e.target.value)} />
                   <input type="text" placeholder="Value" value={spec.value} onChange={e => setSpec(i, 'value', e.target.value)} />
                   <button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeSpec(i)}>×</button>
                 </div>
@@ -709,6 +784,7 @@ export default function UpdateProduct() {
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(4)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(6)}>Next: Dimensions →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -717,7 +793,7 @@ export default function UpdateProduct() {
               <h2 className="up-section-title">Dimensions & Weight</h2>
               <div className="up-row up-row--3">
                 <div className="up-field"><label>Length</label><input type="number" min="0" value={form.dimensions.length} onChange={e => set('dimensions.length', e.target.value)} /></div>
-                <div className="up-field"><label>Width</label><input type="number" min="0" value={form.dimensions.width} onChange={e => set('dimensions.width', e.target.value)} /></div>
+                <div className="up-field"><label>Width</label><input  type="number" min="0" value={form.dimensions.width}  onChange={e => set('dimensions.width',  e.target.value)} /></div>
                 <div className="up-field"><label>Height</label><input type="number" min="0" value={form.dimensions.height} onChange={e => set('dimensions.height', e.target.value)} /></div>
               </div>
               <div className="up-field up-field--sm">
@@ -728,11 +804,17 @@ export default function UpdateProduct() {
               </div>
               <div className="up-row">
                 <div className="up-field"><label>Weight</label><input type="number" min="0" step="0.01" value={form.weight.value} onChange={e => set('weight.value', e.target.value)} /></div>
-                <div className="up-field"><label>Weight Unit</label><select value={form.weight.unit} onChange={e => set('weight.unit', e.target.value)}>{W_UNITS.map(u => <option key={u} value={u}>{u}</option>)}</select></div>
+                <div className="up-field">
+                  <label>Weight Unit</label>
+                  <select value={form.weight.unit} onChange={e => set('weight.unit', e.target.value)}>
+                    {W_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                </div>
               </div>
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(5)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(7)}>Next: Breadcrumbs →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -741,8 +823,8 @@ export default function UpdateProduct() {
               <h2 className="up-section-title">Breadcrumbs</h2>
               {form.breadcrumbs.map((b, i) => (
                 <div key={i} className="up-spec-row">
-                  <input type="text" placeholder="Name" value={b.name} onChange={e => setBreadcrumb(i, 'name', e.target.value)} />
-                  <input type="text" placeholder="URL" value={b.url} onChange={e => setBreadcrumb(i, 'url', e.target.value)} />
+                  <input type="text"   placeholder="Name"     value={b.name}     onChange={e => setBreadcrumb(i, 'name', e.target.value)} />
+                  <input type="text"   placeholder="URL"      value={b.url}      onChange={e => setBreadcrumb(i, 'url', e.target.value)} />
                   <input type="number" placeholder="Position" value={b.position} onChange={e => setBreadcrumb(i, 'position', Number(e.target.value))} style={{ maxWidth: '80px' }} />
                   <button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeBreadcrumb(i)}>×</button>
                 </div>
@@ -751,6 +833,7 @@ export default function UpdateProduct() {
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(6)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(8)}>Next: SEO →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -777,7 +860,8 @@ export default function UpdateProduct() {
               <div className="up-field">
                 <label>Keywords</label>
                 <div className="up-tag-input">
-                  <input type="text" value={kwInput} onChange={e => setKwInput(e.target.value)} placeholder="Add keyword" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('keywords', kwInput, setKwInput); }}} />
+                  <input type="text" value={kwInput} onChange={e => setKwInput(e.target.value)} placeholder="Add keyword"
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('keywords', kwInput, setKwInput); }}} />
                   <button type="button" onClick={() => addToSeoArray('keywords', kwInput, setKwInput)}>Add</button>
                 </div>
                 <div className="up-tags">
@@ -789,8 +873,18 @@ export default function UpdateProduct() {
                 <input type="url" value={form.seo.canonicalUrl} onChange={e => set('seo.canonicalUrl', e.target.value)} />
               </div>
               <div className="up-row">
-                <div className="up-field"><label>Schema Type</label><select value={form.seo.schemaType} onChange={e => set('seo.schemaType', e.target.value)}>{SCHEMA_TYPES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
-                <div className="up-field"><label>Condition</label><select value={form.seo.condition} onChange={e => set('seo.condition', e.target.value)}>{CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                <div className="up-field">
+                  <label>Schema Type</label>
+                  <select value={form.seo.schemaType} onChange={e => set('seo.schemaType', e.target.value)}>
+                    {SCHEMA_TYPES.map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div className="up-field">
+                  <label>Condition</label>
+                  <select value={form.seo.condition} onChange={e => set('seo.condition', e.target.value)}>
+                    {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
               </div>
 
               <div className="up-subsection">
@@ -799,14 +893,24 @@ export default function UpdateProduct() {
                 <div className="up-field up-field--full"><label>OG Description</label><textarea rows={2} maxLength={160} value={form.seo.ogDescription} onChange={e => set('seo.ogDescription', e.target.value)} /></div>
                 <div className="up-row">
                   <div className="up-field"><label>OG Image URL</label><input type="url" value={form.seo.ogImage} onChange={e => set('seo.ogImage', e.target.value)} /></div>
-                  <div className="up-field"><label>OG Type</label><select value={form.seo.ogType} onChange={e => set('seo.ogType', e.target.value)}>{OG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                  <div className="up-field">
+                    <label>OG Type</label>
+                    <select value={form.seo.ogType} onChange={e => set('seo.ogType', e.target.value)}>
+                      {OG_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
                 </div>
               </div>
 
               <div className="up-subsection">
                 <h3 className="up-subsection-title">Twitter Card</h3>
                 <div className="up-row">
-                  <div className="up-field"><label>Card Type</label><select value={form.seo.twitterCard} onChange={e => set('seo.twitterCard', e.target.value)}>{TW_CARDS.map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                  <div className="up-field">
+                    <label>Card Type</label>
+                    <select value={form.seo.twitterCard} onChange={e => set('seo.twitterCard', e.target.value)}>
+                      {TW_CARDS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
                   <div className="up-field"><label>Twitter Title</label><input type="text" maxLength={70} value={form.seo.twitterTitle} onChange={e => set('seo.twitterTitle', e.target.value)} /></div>
                 </div>
                 <div className="up-field up-field--full"><label>Twitter Description</label><textarea rows={2} maxLength={200} value={form.seo.twitterDescription} onChange={e => set('seo.twitterDescription', e.target.value)} /></div>
@@ -816,7 +920,8 @@ export default function UpdateProduct() {
               <div className="up-subsection">
                 <h3 className="up-subsection-title">Related Search Terms</h3>
                 <div className="up-tag-input">
-                  <input type="text" value={rstInput} onChange={e => setRstInput(e.target.value)} placeholder="Add term" onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('relatedSearchTerms', rstInput, setRstInput); }}} />
+                  <input type="text" value={rstInput} onChange={e => setRstInput(e.target.value)} placeholder="Add term"
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addToSeoArray('relatedSearchTerms', rstInput, setRstInput); }}} />
                   <button type="button" onClick={() => addToSeoArray('relatedSearchTerms', rstInput, setRstInput)}>Add</button>
                 </div>
                 <div className="up-tags">
@@ -825,13 +930,18 @@ export default function UpdateProduct() {
               </div>
 
               <div className="up-row">
-                <div className="up-field up-field--checkbox"><label className="up-checkbox-label"><input type="checkbox" checked={form.seo.noIndex} onChange={e => set('seo.noIndex', e.target.checked)} /><span>No Index</span></label></div>
-                <div className="up-field up-field--checkbox"><label className="up-checkbox-label"><input type="checkbox" checked={form.seo.noFollow} onChange={e => set('seo.noFollow', e.target.checked)} /><span>No Follow</span></label></div>
+                <div className="up-field up-field--checkbox">
+                  <label className="up-checkbox-label"><input type="checkbox" checked={form.seo.noIndex} onChange={e => set('seo.noIndex', e.target.checked)} /><span>No Index</span></label>
+                </div>
+                <div className="up-field up-field--checkbox">
+                  <label className="up-checkbox-label"><input type="checkbox" checked={form.seo.noFollow} onChange={e => set('seo.noFollow', e.target.checked)} /><span>No Follow</span></label>
+                </div>
               </div>
 
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(7)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(9)}>Next: Rich Snippets →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -853,7 +963,11 @@ export default function UpdateProduct() {
 
               <div className="up-subsection">
                 <h3 className="up-subsection-title">How-To</h3>
-                <div className="up-field"><label>How-To Name</label><input type="text" value={form.richSnippets.howTo.name} onChange={e => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, name: e.target.value } } }))} /></div>
+                <div className="up-field">
+                  <label>How-To Name</label>
+                  <input type="text" value={form.richSnippets.howTo.name}
+                    onChange={e => setForm(prev => ({ ...prev, richSnippets: { ...prev.richSnippets, howTo: { ...prev.richSnippets.howTo, name: e.target.value } } }))} />
+                </div>
                 {form.richSnippets.howTo.steps.map((step, i) => (
                   <div key={i} className="up-faq-block">
                     <div className="up-faq-header"><span>Step {i + 1}</span><button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeHowToStep(i)}>×</button></div>
@@ -871,13 +985,13 @@ export default function UpdateProduct() {
                   <div key={i} className="up-faq-block">
                     <div className="up-faq-header"><span>Video {i + 1}</span><button type="button" className="up-btn up-btn--icon-danger" onClick={() => removeVideo(i)}>×</button></div>
                     <div className="up-row">
-                      <input type="text" placeholder="Name" value={video.name} onChange={e => setVideo(i, 'name', e.target.value)} />
-                      <input type="date" value={video.uploadDate} onChange={e => setVideo(i, 'uploadDate', e.target.value)} />
+                      <input type="text" placeholder="Name"        value={video.name}       onChange={e => setVideo(i, 'name', e.target.value)} />
+                      <input type="date"                            value={video.uploadDate} onChange={e => setVideo(i, 'uploadDate', e.target.value)} />
                     </div>
-                    <textarea rows={2} placeholder="Description" value={video.description} onChange={e => setVideo(i, 'description', e.target.value)} />
-                    <input type="url" placeholder="Thumbnail URL" value={video.thumbnailUrl} onChange={e => setVideo(i, 'thumbnailUrl', e.target.value)} />
-                    <input type="url" placeholder="Content URL" value={video.contentUrl} onChange={e => setVideo(i, 'contentUrl', e.target.value)} />
-                    <input type="url" placeholder="Embed URL" value={video.embedUrl} onChange={e => setVideo(i, 'embedUrl', e.target.value)} />
+                    <textarea rows={2} placeholder="Description"   value={video.description}  onChange={e => setVideo(i, 'description', e.target.value)} />
+                    <input type="url" placeholder="Thumbnail URL"  value={video.thumbnailUrl} onChange={e => setVideo(i, 'thumbnailUrl', e.target.value)} />
+                    <input type="url" placeholder="Content URL"    value={video.contentUrl}   onChange={e => setVideo(i, 'contentUrl', e.target.value)} />
+                    <input type="url" placeholder="Embed URL"      value={video.embedUrl}     onChange={e => setVideo(i, 'embedUrl', e.target.value)} />
                     <input type="text" placeholder="Duration ISO 8601 (e.g. PT2M30S)" value={video.duration} onChange={e => setVideo(i, 'duration', e.target.value)} />
                   </div>
                 ))}
@@ -887,6 +1001,7 @@ export default function UpdateProduct() {
               <div className="up-section-nav">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(8)}>← Back</button>
                 <button type="button" className="up-btn up-btn--primary" onClick={() => setActiveSection(10)}>Next: Relationships →</button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 
@@ -921,9 +1036,7 @@ export default function UpdateProduct() {
 
               <div className="up-section-nav up-section-nav--submit">
                 <button type="button" className="up-btn up-btn--ghost" onClick={() => setActiveSection(9)}>← Back</button>
-                <button type="submit" className="up-btn up-btn--submit" disabled={updateStatus.loading}>
-                  {updateStatus.loading ? <><span className="up-spinner" /> Saving…</> : 'Save Changes'}
-                </button>
+                <SaveButton loading={updateStatus.loading} onSave={buildAndSubmit} />
               </div>
             </div>
 

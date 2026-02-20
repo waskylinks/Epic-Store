@@ -11,15 +11,17 @@ const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 // ============================================
 
 // GET /admin/products
-// Controller res: { success, products }
+// Controller res: { success, products, total, totalPages, currentPage, resultPerPage }
+// Accepts optional params: { page, limit, search }
 export const fetchAdminProducts = createAsyncThunk(
   'adminProducts/fetchAll',
-  async (_, { rejectWithValue }) => {
+  async (params = {}, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(`${API_URL}/admin/products`, {
+        params,
         withCredentials: true,
       });
-      return data.products; // FIX: return only the array, not the whole envelope
+      return data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || 'Failed to fetch products'
@@ -104,13 +106,10 @@ export const deleteProduct = createAsyncThunk(
       const { data } = await axios.delete(`${API_URL}/admin/product/${id}`, {
         withCredentials: true,
       });
-      // FIX: explicitly return the id we passed in (the _id string) alongside
-      // the server's deletedProduct summary. data.deletedProduct.id is the
-      // same value but we keep our own `id` for the state filter below.
       return {
-        id,                          // the _id string we used in the URL
+        id,
         message: data.message,
-        deletedProduct: data.deletedProduct, // { id, name, imagesDeleted }
+        deletedProduct: data.deletedProduct,
       };
     } catch (error) {
       return rejectWithValue(
@@ -135,7 +134,7 @@ export const deleteMultipleProducts = createAsyncThunk(
         }
       );
       return {
-        results: data.results, // { successful: [{id, name}], failed: [{id, reason}] }
+        results: data.results,
       };
     } catch (error) {
       return rejectWithValue(
@@ -175,7 +174,7 @@ export const fetchProductReviews = createAsyncThunk(
   async (productId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(`${API_URL}/reviews`, {
-        params: { id: productId }, // req.query.id in controller
+        params: { id: productId },
         withCredentials: true,
       });
       return data.reviews;
@@ -190,16 +189,14 @@ export const fetchProductReviews = createAsyncThunk(
 // DELETE /reviews?productID=:productId&id=:reviewId
 // Controller uses req.query.productID and req.query.id
 // Controller res: { success, message }
-// After deletion the controller recalculates ratings and numOfReviews —
-// we pass productId + reviewId back so the reducer can sync local state.
 export const deleteProductReview = createAsyncThunk(
   'adminProducts/deleteReview',
   async ({ productId, reviewId }, { rejectWithValue }) => {
     try {
       await axios.delete(`${API_URL}/reviews`, {
         params: {
-          productID: productId, // matches req.query.productID
-          id: reviewId,         // matches req.query.id
+          productID: productId,
+          id: reviewId,
         },
         withCredentials: true,
       });
@@ -221,6 +218,12 @@ const initialState = {
   products: [],
   productsLoading: false,
   productsError: null,
+
+  // Pagination meta
+  total: 0,
+  totalPages: 0,
+  currentPage: 1,
+  resultPerPage: 20,
 
   // Single product with populated relatedProducts / crossSells / upsells
   selectedProduct: null,
@@ -255,7 +258,7 @@ const initialState = {
   // Batch delete — results shape: { successful: [{id, name}], failed: [{id, reason}] }
   batchDeleteLoading: false,
   batchDeleteError: null,
-  batchDeleteResults: null, // null until a batch completes
+  batchDeleteResults: null,
 
   // Delete review
   deleteReviewLoading: false,
@@ -327,7 +330,11 @@ const adminProductSlice = createSlice({
       })
       .addCase(fetchAdminProducts.fulfilled, (state, { payload }) => {
         state.productsLoading = false;
-        state.products        = payload; // already the array after FIX #1
+        state.products        = payload.products;
+        state.total           = payload.total;
+        state.totalPages      = payload.totalPages;
+        state.currentPage     = payload.currentPage;
+        state.resultPerPage   = payload.resultPerPage;
       })
       .addCase(fetchAdminProducts.rejected, (state, { payload }) => {
         state.productsLoading = false;
@@ -360,7 +367,8 @@ const adminProductSlice = createSlice({
       .addCase(createProduct.fulfilled, (state, { payload }) => {
         state.createLoading = false;
         state.createSuccess = true;
-        state.products.unshift(payload); // newest first to match admin table expectation
+        state.products.unshift(payload);
+        state.total += 1;
       })
       .addCase(createProduct.rejected, (state, { payload }) => {
         state.createLoading = false;
@@ -377,17 +385,11 @@ const adminProductSlice = createSlice({
       .addCase(updateProduct.fulfilled, (state, { payload }) => {
         state.updateLoading = false;
         state.updateSuccess = true;
-        // Keep product list in sync without a re-fetch
         const idx = state.products.findIndex((p) => p._id === payload._id);
         if (idx !== -1) state.products[idx] = payload;
-        // Keep detail view in sync if this product is open
         if (state.selectedProduct?._id === payload._id) {
           state.selectedProduct = payload;
-          // FIX: structuredData is generated server-side from the product instance
-          // via getStructuredData(). It uses virtuals (finalPrice, url) and live
-          // inventory/pricing fields. After an update those values change, so the
-          // cached JSON-LD is stale. Clear it so the UI re-fetches if needed.
-          state.structuredData = null;
+          state.structuredData  = null;
         }
       })
       .addCase(updateProduct.rejected, (state, { payload }) => {
@@ -405,8 +407,8 @@ const adminProductSlice = createSlice({
       .addCase(deleteProduct.fulfilled, (state, { payload }) => {
         state.deleteLoading = false;
         state.deleteSuccess = true;
-        // payload.id is the _id string we dispatched with
-        state.products = state.products.filter((p) => p._id !== payload.id);
+        state.products      = state.products.filter((p) => p._id !== payload.id);
+        state.total         = Math.max(0, state.total - 1);
         if (state.selectedProduct?._id === payload.id) {
           state.selectedProduct = null;
         }
@@ -417,7 +419,6 @@ const adminProductSlice = createSlice({
       });
 
     // ── DELETE /admin/products/batch-delete ───────────────────────────────
-    // results.successful items have shape { id, name } (from controller)
     builder
       .addCase(deleteMultipleProducts.pending, (state) => {
         state.batchDeleteLoading = true;
@@ -427,11 +428,9 @@ const adminProductSlice = createSlice({
       .addCase(deleteMultipleProducts.fulfilled, (state, { payload }) => {
         state.batchDeleteLoading = false;
         state.batchDeleteResults = payload.results;
-        // Build a Set of successfully deleted _id strings
-        const deletedIds = new Set(
-          payload.results.successful.map((r) => r.id)
-        );
-        state.products = state.products.filter((p) => !deletedIds.has(p._id));
+        const deletedIds = new Set(payload.results.successful.map((r) => r.id));
+        state.products   = state.products.filter((p) => !deletedIds.has(p._id));
+        state.total      = Math.max(0, state.total - deletedIds.size);
         if (state.selectedProduct && deletedIds.has(state.selectedProduct._id)) {
           state.selectedProduct = null;
         }
@@ -449,7 +448,7 @@ const adminProductSlice = createSlice({
       })
       .addCase(fetchProductStructuredData.fulfilled, (state, { payload }) => {
         state.structuredDataLoading = false;
-        state.structuredData        = payload; // already the structuredData object
+        state.structuredData        = payload;
       })
       .addCase(fetchProductStructuredData.rejected, (state, { payload }) => {
         state.structuredDataLoading = false;
@@ -464,7 +463,7 @@ const adminProductSlice = createSlice({
       })
       .addCase(fetchProductReviews.fulfilled, (state, { payload }) => {
         state.reviewsLoading = false;
-        state.reviews        = payload; // already the reviews array
+        state.reviews        = payload;
       })
       .addCase(fetchProductReviews.rejected, (state, { payload }) => {
         state.reviewsLoading = false;
@@ -472,9 +471,6 @@ const adminProductSlice = createSlice({
       });
 
     // ── DELETE /reviews?productID=&id= ────────────────────────────────────
-    // FIX: after deletion the controller recalculates ratings via calcRating().
-    // We can't know the new rating without a re-fetch, so we null it out to
-    // signal staleness rather than leaving a wrong value.
     builder
       .addCase(deleteProductReview.pending, (state) => {
         state.deleteReviewLoading = true;
@@ -484,14 +480,9 @@ const adminProductSlice = createSlice({
       .addCase(deleteProductReview.fulfilled, (state, { payload }) => {
         state.deleteReviewLoading = false;
         state.deleteReviewSuccess = true;
-
-        // FIX: use String() comparison — _id from JSON is already a string
-        // but being explicit is safer than assuming
         state.reviews = state.reviews.filter(
           (r) => String(r._id) !== String(payload.reviewId)
         );
-
-        // Sync selectedProduct if it's the product whose review was deleted
         if (
           state.selectedProduct &&
           String(state.selectedProduct._id) === String(payload.productId)
@@ -500,10 +491,6 @@ const adminProductSlice = createSlice({
             0,
             (state.selectedProduct.numOfReviews || 1) - 1
           );
-          // FIX: mark rating as stale — controller recalculates with calcRating()
-          // which we can't replicate here without the full reviews array.
-          // Caller should re-fetch the product or reviews after delete to get
-          // the accurate rating.
           state.selectedProduct.ratings = null;
         }
       })
@@ -535,6 +522,14 @@ export const {
 export const selectAdminProducts        = (state) => state.adminProducts.products;
 export const selectAdminProductsLoading = (state) => state.adminProducts.productsLoading;
 export const selectAdminProductsError   = (state) => state.adminProducts.productsError;
+
+// Pagination
+export const selectPaginationMeta = (state) => ({
+  total:         state.adminProducts.total,
+  totalPages:    state.adminProducts.totalPages,
+  currentPage:   state.adminProducts.currentPage,
+  resultPerPage: state.adminProducts.resultPerPage,
+});
 
 // Selected product (fully populated)
 export const selectSelectedProduct        = (state) => state.adminProducts.selectedProduct;
@@ -573,7 +568,6 @@ export const selectDeleteStatus = (state) => ({
 export const selectBatchDeleteStatus = (state) => ({
   loading: state.adminProducts.batchDeleteLoading,
   error:   state.adminProducts.batchDeleteError,
-  // results: { successful: [{id, name}], failed: [{id, reason}] }
   results: state.adminProducts.batchDeleteResults,
 });
 
@@ -583,13 +577,11 @@ export const selectDeleteReviewStatus = (state) => ({
   success: state.adminProducts.deleteReviewSuccess,
 });
 
-// ── Derived selectors (no re-computation cost for simple filters) ──────────
+// ── Derived selectors ──────────────────────────────────────────────────────
 
-// Find a product by its _id string directly from the list
 export const selectProductById = (id) => (state) =>
   state.adminProducts.products.find((p) => p._id === id) ?? null;
 
-// Status-based filters — matches model enum: 'draft' | 'published' | 'archived'
 export const selectPublishedProducts = (state) =>
   state.adminProducts.products.filter((p) => p.status === 'published');
 
@@ -599,24 +591,16 @@ export const selectDraftProducts = (state) =>
 export const selectArchivedProducts = (state) =>
   state.adminProducts.products.filter((p) => p.status === 'archived');
 
-// Inventory-based filters — matches model enum: 'InStock' | 'LowStock' | 'OutOfStock' | 'Discontinued'
 export const selectLowStockProducts = (state) =>
-  state.adminProducts.products.filter(
-    (p) => p.inventory?.status === 'LowStock'
-  );
+  state.adminProducts.products.filter((p) => p.inventory?.status === 'LowStock');
 
 export const selectOutOfStockProducts = (state) =>
-  state.adminProducts.products.filter(
-    (p) => p.inventory?.status === 'OutOfStock'
-  );
+  state.adminProducts.products.filter((p) => p.inventory?.status === 'OutOfStock');
 
 export const selectDiscontinuedProducts = (state) =>
-  state.adminProducts.products.filter(
-    (p) => p.inventory?.status === 'Discontinued'
-  );
+  state.adminProducts.products.filter((p) => p.inventory?.status === 'Discontinued');
 
-// Flag-based filters — matches model booleans
-export const selectFeaturedProducts  = (state) =>
+export const selectFeaturedProducts = (state) =>
   state.adminProducts.products.filter((p) => p.isFeatured);
 
 export const selectBestsellerProducts = (state) =>
@@ -628,8 +612,7 @@ export const selectNewArrivalProducts = (state) =>
 export const selectOnSaleProducts = (state) =>
   state.adminProducts.products.filter((p) => p.isOnSale);
 
-// Count
-export const selectProductsCount = (state) => state.adminProducts.products.length;
+export const selectProductsCount = (state) => state.adminProducts.total;
 
 // ============================================
 // REDUCER

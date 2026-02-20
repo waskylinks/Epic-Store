@@ -2,91 +2,6 @@ import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Products
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const fetchAdminProducts = createAsyncThunk(
-  "admin/fetchAdminProducts",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get("/api/v1/admin/products");
-      return data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch products");
-    }
-  }
-);
-
-export const createProduct = createAsyncThunk(
-  "admin/createProduct",
-  async (productData, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post("/api/v1/admin/products/create", productData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to create product");
-    }
-  }
-);
-
-export const updateProduct = createAsyncThunk(
-  "admin/updateProduct",
-  async ({ id, productData }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(`/api/v1/admin/product/${id}`, productData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to update product");
-    }
-  }
-);
-
-export const deleteProduct = createAsyncThunk(
-  "admin/deleteProduct",
-  async (id, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.delete(`/api/v1/admin/product/${id}`);
-      return { id, message: data.message };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to delete product");
-    }
-  }
-);
-
-export const deleteMultipleProducts = createAsyncThunk(
-  "admin/deleteMultipleProducts",
-  async (productIds, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.delete("/api/v1/admin/products/batch-delete", {
-        data: { productIds },
-      });
-      return {
-        productIds: data.results.successful.map((p) => p.id),
-        results: data.results,
-      };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to delete products");
-    }
-  }
-);
-
-export const getProductStructuredData = createAsyncThunk(
-  "admin/getProductStructuredData",
-  async (id, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`/api/v1/admin/product/${id}/structured-data`);
-      return data.structuredData;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch structured data");
-    }
-  }
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
 // THUNKS — Users
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -394,21 +309,15 @@ export const getOrderAuditLog = createAsyncThunk(
 // ─────────────────────────────────────────────────────────────────────────────
 
 const initialState = {
-  products:       [],
-  structuredData: null,
-  users:          [],
-  currentUser:    null,
-  orders:         [],
-  currentOrder:   null,
-  orderMessages:  [],
-  unreadOrders:   [],
-  auditLog:       [],
-  reviews:        [],
-  fraudReviews:   [],
-
-  // Product delete flag (used by products list component)
-  productDeleted: false,
-  deleting:       false,
+  users:         [],
+  currentUser:   null,
+  orders:        [],
+  currentOrder:  null,
+  orderMessages: [],
+  unreadOrders:  [],
+  auditLog:      [],
+  reviews:       [],
+  fraudReviews:  [],
 
   // Generic success/loading for user & order mutations
   success:        false,
@@ -427,100 +336,14 @@ const adminSlice = createSlice({
   initialState,
 
   reducers: {
-    removeErrors:         (state) => { state.error          = null;  },
-    removeSuccess:        (state) => { state.success        = false; },
-    removeProductDeleted: (state) => { state.productDeleted = false; },
-    clearCurrentUser:     (state) => { state.currentUser    = null;  },
-    clearCurrentOrder:    (state) => { state.currentOrder   = null;  },
+    removeErrors:      (state) => { state.error   = null;  },
+    removeSuccess:     (state) => { state.success  = false; },
+    clearCurrentUser:  (state) => { state.currentUser  = null; },
+    clearCurrentOrder: (state) => { state.currentOrder = null; },
   },
 
   extraReducers: (builder) => {
     builder
-
-      // ── fetchAdminProducts ──────────────────────────────────────────────
-      .addCase(fetchAdminProducts.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(fetchAdminProducts.fulfilled, (state, action) => {
-        state.loading  = false;
-        state.products = action.payload.products;
-      })
-      .addCase(fetchAdminProducts.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload || "Failed to fetch products";
-      })
-
-      // ── createProduct ───────────────────────────────────────────────────
-      // Loading state is managed locally in CreateProduct via dispatch().unwrap().
-      // The slice only keeps the store in sync.
-      .addCase(createProduct.fulfilled, (state, action) => {
-        if (action.payload?.product) {
-          state.products.push(action.payload.product);
-        }
-      })
-      .addCase(createProduct.rejected, (_state) => {
-        // Error is surfaced via the unwrap() catch block in the component.
-      })
-
-      // ── updateProduct ───────────────────────────────────────────────────
-      .addCase(updateProduct.fulfilled, (state, action) => {
-        if (!action.payload?.product) return;
-        const index = state.products.findIndex(
-          (p) => p._id === action.payload.product._id
-        );
-        if (index !== -1) state.products[index] = action.payload.product;
-      })
-      .addCase(updateProduct.rejected, (_state) => {
-        // Error surfaced via unwrap() in UpdateProduct component.
-      })
-
-      // ── deleteProduct ───────────────────────────────────────────────────
-      .addCase(deleteProduct.pending, (state) => {
-        state.deleting = true;
-        state.error    = null;
-      })
-      .addCase(deleteProduct.fulfilled, (state, action) => {
-        state.deleting       = false;
-        state.productDeleted = true;
-        state.products       = state.products.filter(
-          (p) => p._id !== action.payload.id
-        );
-      })
-      .addCase(deleteProduct.rejected, (state, action) => {
-        state.deleting = false;
-        state.error    = action.payload || "Failed to delete product";
-      })
-
-      // ── deleteMultipleProducts ──────────────────────────────────────────
-      .addCase(deleteMultipleProducts.pending, (state) => {
-        state.deleting = true;
-        state.error    = null;
-      })
-      .addCase(deleteMultipleProducts.fulfilled, (state, action) => {
-        state.deleting       = false;
-        state.productDeleted = true;
-        const deleted        = new Set(action.payload.productIds);
-        state.products       = state.products.filter((p) => !deleted.has(p._id));
-      })
-      .addCase(deleteMultipleProducts.rejected, (state, action) => {
-        state.deleting = false;
-        state.error    = action.payload || "Failed to delete products";
-      })
-
-      // ── getProductStructuredData ────────────────────────────────────────
-      .addCase(getProductStructuredData.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(getProductStructuredData.fulfilled, (state, action) => {
-        state.loading        = false;
-        state.structuredData = action.payload;
-      })
-      .addCase(getProductStructuredData.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload || "Failed to fetch structured data";
-      })
 
       // ── fetchAllUsers ───────────────────────────────────────────────────
       .addCase(fetchAllUsers.pending, (state) => {
@@ -859,7 +682,6 @@ const adminSlice = createSlice({
 export const {
   removeErrors,
   removeSuccess,
-  removeProductDeleted,
   clearCurrentUser,
   clearCurrentOrder,
 } = adminSlice.actions;
