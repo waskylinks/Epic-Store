@@ -1,6 +1,10 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
+// ============================================
+// THUNKS
+// ============================================
+
 export const getProduct = createAsyncThunk(
   'product/getProduct',
   async ({ keyword, page = 1, category }, { rejectWithValue }) => {
@@ -50,74 +54,188 @@ export const getProductBySlug = createAsyncThunk(
   }
 );
 
+// ── Reviews ──────────────────────────────────────────────────────────────────
+// Matches PUT /api/v1/review → createProductReview controller.
+// Backend returns { success, product } and infers create vs update
+// via reviewExists check — we derive reviewAction from numOfReviews delta.
+
 export const createReviews = createAsyncThunk(
   'product/createReviews',
-  async ({ rating, comment, productID, reviewTitle, pros, cons }, { rejectWithValue }) => {
+  async ({ rating, comment, productID, reviewTitle, pros, cons }, { getState, rejectWithValue }) => {
     try {
       const { data } = await axios.put(
         '/api/v1/review',
         { rating, comment, productID, reviewTitle, pros, cons },
         { headers: { 'Content-Type': 'application/json' } }
       );
-      return data;
+      // Capture current numOfReviews before the update to determine create vs update
+      const prevCount = getState().product.product?.numOfReviews ?? 0;
+      return { ...data, prevCount };
     } catch (error) {
       return rejectWithValue(error.response?.data || 'Unable to create review. Please try again');
     }
   }
 );
 
+// Matches GET /api/v1/reviews?id= → getProductReviews controller
+export const getProductReviews = createAsyncThunk(
+  'product/getProductReviews',
+  async (productId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`/api/v1/reviews?id=${productId}`);
+      return data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || 'Unable to fetch reviews');
+    }
+  }
+);
+
+// Matches DELETE /api/v1/reviews?id=&productID= → deleteReview controller
+export const deleteProductReview = createAsyncThunk(
+  'product/deleteProductReview',
+  async ({ reviewId, productId }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.delete(
+        `/api/v1/reviews?id=${reviewId}&productID=${productId}`
+      );
+      return data;
+    } catch (error) {
+      return rejectWithValue(error.response?.data || 'Unable to delete review');
+    }
+  }
+);
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+// Maps to incrementView instance method on the model.
+// Fire-and-forget — failures are silently swallowed so they never
+// block the product detail page from rendering.
+
+export const trackProductView = createAsyncThunk(
+  'product/trackView',
+  async (id, { rejectWithValue }) => {
+    try {
+      await axios.post(`/api/v1/product/${id}/view`);
+    } catch (error) {
+      return rejectWithValue(error.response?.data);
+    }
+  }
+);
+
+// Maps to incrementWishlist instance method on the model.
+// Called from wishlistSlice after add/remove so analytics stay in sync.
+export const trackWishlistAnalytics = createAsyncThunk(
+  'product/trackWishlist',
+  async ({ id, increment }, { rejectWithValue }) => {
+    try {
+      await axios.post(`/api/v1/product/${id}/wishlist`, { increment });
+    } catch (error) {
+      return rejectWithValue(error.response?.data);
+    }
+  }
+);
+
+// ============================================
+// SLICE
+// ============================================
+
 const productSlice = createSlice({
   name: 'product',
   initialState: {
+    // Product list (getProduct)
     products: [],
     productCount: 0,
     loading: false,
     error: null,
-    product: null,
-    seo: null,
-    resultsPerPage: 0,
+    // resultPerPage matches the backend key name exactly (resultPerPage, not resultsPerPage)
+    resultPerPage: 0,
     totalPages: 0,
     currentPage: 1,
+
+    // Single product (getProductDetails / getProductBySlug)
+    product: null,
+
+    // SEO — split to match the three objects the backend returns:
+    // { metaTags, structuredData, breadcrumbs }
+    // Source: getProductBySlug controller → seoService
+    seoMetaTags: null,
+    structuredData: null,
+    breadcrumbs: [],
+
+    // Populated relationships — returned by withProductPopulate in getProductBySlug
+    // populated with: name, pricing, images, slug, ratings (relatedProducts)
+    // and: name, pricing, images, slug (crossSells / upsells)
+    relatedProducts: [],
+    crossSells: [],
+    upsells: [],
+
+    // 301 redirect info from slugHistory
+    redirectInfo: null,
+
+    // Reviews
+    reviews: [],
+    reviewsLoading: false,
     reviewSuccess: false,
     reviewLoading: false,
-    redirectInfo: null,
+    // 'created' | 'updated' | null — derived from numOfReviews delta
+    reviewAction: null,
   },
+
   reducers: {
     removeErrors: (state) => {
       state.error = null;
     },
     removeSuccess: (state) => {
       state.reviewSuccess = false;
+      state.reviewAction  = null;
     },
     clearRedirectInfo: (state) => {
       state.redirectInfo = null;
     },
     clearProduct: (state) => {
-      state.product = null;
-      state.seo = null;
+      state.product        = null;
+      state.seoMetaTags    = null;
+      state.structuredData = null;
+      state.breadcrumbs    = [];
+      state.relatedProducts = [];
+      state.crossSells     = [];
+      state.upsells        = [];
+    },
+    // Clears the product list between route/filter changes to prevent
+    // stale data rendering before the next fetch resolves
+    clearProducts: (state) => {
+      state.products      = [];
+      state.productCount  = 0;
+      state.totalPages    = 0;
+      state.currentPage   = 1;
     },
   },
+
   extraReducers: (builder) => {
     builder
+
+      // ── getProduct ──────────────────────────────────────────────────────────
       .addCase(getProduct.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(getProduct.fulfilled, (state, action) => {
-        state.loading      = false;
-        state.error        = null;
-        state.products     = action.payload.products;
-        state.productCount = action.payload.productsCount;
-        state.resultsPerPage = action.payload.resultPerPage;
-        state.totalPages   = action.payload.totalPages;
-        state.currentPage  = action.payload.currentPage;
+        state.loading       = false;
+        state.error         = null;
+        state.products      = action.payload.products;
+        state.productCount  = action.payload.productsCount;
+        // Use resultPerPage to match the exact key the backend returns
+        state.resultPerPage = action.payload.resultPerPage;
+        state.totalPages    = action.payload.totalPages;
+        state.currentPage   = action.payload.currentPage;
       })
       .addCase(getProduct.rejected, (state, action) => {
-        state.loading  = false;
-        state.error    = action.payload || 'Something went wrong';
-        state.products = [];
+        state.loading   = false;
+        state.error     = action.payload || 'Something went wrong';
+        state.products  = [];
       })
 
+      // ── getProductDetails ───────────────────────────────────────────────────
+      // Admin-facing route — does not return SEO or populated relationships
       .addCase(getProductDetails.pending, (state) => {
         state.loading = true;
         state.error   = null;
@@ -132,22 +250,39 @@ const productSlice = createSlice({
         state.error   = action.payload || 'Something went wrong';
       })
 
+      // ── getProductBySlug ────────────────────────────────────────────────────
+      // Public SEO route — returns product + seo { metaTags, structuredData, breadcrumbs }
+      // product is populated via withProductPopulate:
+      //   relatedProducts → name, pricing, images, slug, ratings
+      //   crossSells / upsells → name, pricing, images, slug
       .addCase(getProductBySlug.pending, (state) => {
-        state.loading      = true;
-        state.error        = null;
-        state.redirectInfo = null;
-        state.seo          = null;
+        state.loading        = true;
+        state.error          = null;
+        state.redirectInfo   = null;
+        state.seoMetaTags    = null;
+        state.structuredData = null;
+        state.breadcrumbs    = [];
       })
       .addCase(getProductBySlug.fulfilled, (state, action) => {
-        state.loading      = false;
-        state.error        = null;
-        state.product      = action.payload.product;
-        state.seo          = action.payload.seo ?? null;
-        state.redirectInfo = null;
+        const { product, seo } = action.payload;
+        state.loading        = false;
+        state.error          = null;
+        state.product        = product ?? null;
+        state.redirectInfo   = null;
+        // Split the three SEO objects the backend constructs via seoService
+        state.seoMetaTags    = seo?.metaTags    ?? null;
+        state.structuredData = seo?.structuredData ?? null;
+        state.breadcrumbs    = seo?.breadcrumbs  ?? [];
+        // Populated relationships from withProductPopulate
+        state.relatedProducts = product?.relatedProducts ?? [];
+        state.crossSells      = product?.crossSells      ?? [];
+        state.upsells         = product?.upsells         ?? [];
       })
       .addCase(getProductBySlug.rejected, (state, action) => {
         state.loading = false;
         if (action.payload?.redirect) {
+          // Slug has changed — slugHistory entry exists on the product doc.
+          // Store redirect info so the consuming component can navigate.
           state.redirectInfo = {
             newSlug: action.payload.newSlug,
             newUrl:  action.payload.newUrl,
@@ -160,18 +295,62 @@ const productSlice = createSlice({
         }
       })
 
+      // ── createReviews ───────────────────────────────────────────────────────
+      // Backend createProductReview increments numOfReviews only for NEW reviews.
+      // We compare against prevCount (captured in the thunk) to set reviewAction.
       .addCase(createReviews.pending, (state) => {
         state.reviewLoading = true;
         state.error         = null;
       })
-      .addCase(createReviews.fulfilled, (state) => {
+      .addCase(createReviews.fulfilled, (state, action) => {
+        const newCount    = action.payload.product?.numOfReviews ?? 0;
+        const prevCount   = action.payload.prevCount ?? 0;
         state.reviewLoading = false;
         state.reviewSuccess = true;
+        state.reviewAction  = newCount > prevCount ? 'created' : 'updated';
+        // Keep product in sync so ratings/numOfReviews update immediately
+        if (action.payload.product) {
+          state.product = action.payload.product;
+        }
       })
       .addCase(createReviews.rejected, (state, action) => {
         state.reviewLoading = false;
         state.error = action.payload || 'Unable to create review. Please try again';
-      });
+      })
+
+      // ── getProductReviews ───────────────────────────────────────────────────
+      .addCase(getProductReviews.pending, (state) => {
+        state.reviewsLoading = true;
+        state.error          = null;
+      })
+      .addCase(getProductReviews.fulfilled, (state, action) => {
+        state.reviewsLoading = false;
+        state.reviews        = action.payload.reviews ?? [];
+      })
+      .addCase(getProductReviews.rejected, (state, action) => {
+        state.reviewsLoading = false;
+        state.error          = action.payload || 'Unable to fetch reviews';
+      })
+
+      // ── deleteProductReview ─────────────────────────────────────────────────
+      .addCase(deleteProductReview.pending, (state) => {
+        state.reviewsLoading = true;
+        state.error          = null;
+      })
+      .addCase(deleteProductReview.fulfilled, (state) => {
+        state.reviewsLoading = false;
+      })
+      .addCase(deleteProductReview.rejected, (state, action) => {
+        state.reviewsLoading = false;
+        state.error          = action.payload || 'Unable to delete review';
+      })
+
+      // ── Analytics — fire-and-forget ─────────────────────────────────────────
+      // No loading state — failures must never surface to the user.
+      // trackProductView → incrementView instance method
+      // trackWishlistAnalytics → incrementWishlist instance method
+      .addCase(trackProductView.rejected, () => {})
+      .addCase(trackWishlistAnalytics.rejected, () => {});
   },
 });
 
@@ -180,6 +359,7 @@ export const {
   removeSuccess,
   clearRedirectInfo,
   clearProduct,
+  clearProducts,
 } = productSlice.actions;
 
 export default productSlice.reducer;

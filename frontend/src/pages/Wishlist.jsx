@@ -111,12 +111,12 @@ function Wishlist() {
   // ==================== HELPER FUNCTIONS ====================
 
   const formatPrice = (amount) => {
-    return new Intl.NumberFormat('en-NG', {
-      style: 'currency',
-      currency: 'NGN',
-      minimumFractionDigits: 0
-    }).format(amount);
-  };
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',        // ← USD
+    minimumFractionDigits: 2
+  }).format(amount);
+};
 
   const getProductPrice = (product) => {
     return product.pricing?.sale || product.pricing?.regular || product.price || 0;

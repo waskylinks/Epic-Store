@@ -1,68 +1,112 @@
-import React, { useState } from 'react';
+import { useState, useCallback } from 'react';
 import '../componentStyles/Product.css';
 import { Link, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { addToWishlist, removeFromWishlist, getWishlist } from '../features/products/wishlistSlice';
+import { trackWishlistAnalytics } from '../features/products/productSlice';
 import { addItemsToCart } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
-import { FiHeart, FiEye, FiShoppingCart, FiStar } from 'react-icons/fi';
+import { FiEye, FiShoppingCart } from 'react-icons/fi';
+import { FaHeart, FaRegHeart } from 'react-icons/fa';
 
-function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions = true }) {
-  const dispatch = useDispatch();
-  const navigate = useNavigate();
-  const [isHovered, setIsHovered] = useState(false);
+// ── Pure helpers (outside component — no re-creation on render) ───────────────
 
-  const { items: wishlistItems, itemLoading } = useSelector(state => state.wishlist);
-  const { isAuthenticated } = useSelector(state => state.user);
-
-  if (!product) return null;
-
-  // ── Helpers ──────────────────────────────────────────────
-  const getProductPrice  = () => product.pricing?.regular || product.price || 0;
-  const getSalePrice     = () => product.pricing?.sale || null;
-  const getProductImage  = () => {
-    const arr = product.images || product.image || [];
-    const primary = arr.find(img => img.isPrimary) || arr[0];
-    return primary?.url || '/placeholder-product.png';
-  };
-  const getDiscountPercentage = () => {
-    const regular = getProductPrice();
-    const sale = getSalePrice();
-    return sale && regular > sale ? Math.round(((regular - sale) / regular) * 100) : 0;
-  };
-  const getStockStatus = () => {
-    const stock = product.inventory?.stock ?? product.stock ?? 0;
-    return stock > 0 ? 'In Stock' : 'Out of Stock';
-  };
-
-  const formatPrice = (amount) => {
-  return new Intl.NumberFormat('en-US', {
+const formatPrice = (amount, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD',        // ← USD
-    minimumFractionDigits: 2
+    currency: ['USD', 'EUR', 'GBP', 'NGN'].includes(currency) ? currency : 'USD',
+    minimumFractionDigits: 2,
   }).format(amount);
+
+const getPrimaryImage = (product) => {
+  const arr = product.images || product.image || [];
+  const primary = arr.find((img) => img.isPrimary) || arr[0];
+  return {
+    url: primary?.url || '/placeholder-product.png',
+    // Model stores dedicated alt per image for SEO/accessibility
+    alt: primary?.alt || product.name,
+  };
 };
 
-  // Prefer slug-based URL, fall back to ID for legacy products
-  const productUrl = product.slug
+const getStock = (product) => product.inventory?.stock ?? product.stock ?? 0;
+
+// Use model's isOnSale flag as source of truth; fall back to price comparison
+const resolveSalePrice = (product) => {
+  if (product.isOnSale && product.pricing?.sale != null) return product.pricing.sale;
+  const regular = product.pricing?.regular || product.price || 0;
+  const sale = product.pricing?.sale;
+  return sale != null && sale < regular ? sale : null;
+};
+
+const getDiscountPct = (regular, sale) =>
+  sale && regular > sale ? Math.round(((regular - sale) / regular) * 100) : 0;
+
+// Respects model's inventory.status values: InStock | LowStock | OutOfStock | Discontinued
+const resolveStockState = (product) => {
+  const status = product.inventory?.status;
+  if (status === 'Discontinued') return 'discontinued';
+  if (status === 'OutOfStock' || getStock(product) === 0) return 'out';
+  if (status === 'LowStock') return 'low';
+  return 'in';
+};
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+function Product({
+  product,
+  hideNewBadge = false,
+  onQuickAdd,
+  showQuickActions = true,
+}) {
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
+
+  // All hooks unconditional — Rules of Hooks requires no hooks after early returns
+  const [isHovered, setIsHovered] = useState(false);
+  const [cartLoading, setCartLoading] = useState(false);
+
+  const { items: wishlistItems, itemLoading } = useSelector((s) => s.wishlist);
+  const { isAuthenticated } = useSelector((s) => s.user);
+
+  // ── Derived values above handlers so closures capture current values ──────
+  // Optional-chain safely when product is null (early return is below hooks)
+  const currency    = product?.pricing?.currency || 'USD';
+  const regular     = product?.pricing?.regular || product?.price || 0;
+  const salePrice   = product ? resolveSalePrice(product) : null;
+  const discount    = getDiscountPct(regular, salePrice);
+  const primaryImg  = product ? getPrimaryImage(product) : { url: '/placeholder-product.png', alt: '' };
+  const stockState  = product ? resolveStockState(product) : 'out';
+  const stock       = product ? getStock(product) : 0;
+  const isAddable   = stockState === 'in' || stockState === 'low';
+
+  const productUrl = product?.slug
     ? `/products/${product.slug}`
-    : `/product/${product._id}`;
+    : `/product/${product?._id}`;
 
-  const isInWishlist = wishlistItems.some(item => {
+  const isInWishlist  = wishlistItems.some((item) => {
     const wid = item.product?._id || item.product;
-    return wid === product._id;
+    return wid === product?._id;
   });
-  const isWishlistLoading = itemLoading[product._id] || false;
+  const isWishlistBusy = itemLoading[product?._id] || false;
 
-  // ── Handlers ─────────────────────────────────────────────
-  const handleWishlistToggle = async (e) => {
+  const stockLabel = {
+    in:           'In Stock',
+    low:          `Only ${stock} left`,
+    out:          'Out of Stock',
+    discontinued: 'Discontinued',
+  }[stockState];
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleWishlistToggle = useCallback(async (e) => {
     e.preventDefault();
     e.stopPropagation();
+
     if (!isAuthenticated) {
       toast.info('Please login to add items to wishlist', { position: 'top-center', autoClose: 2000 });
       navigate('/login');
       return;
     }
+
     try {
       if (isInWishlist) {
         await dispatch(removeFromWishlist(product._id)).unwrap();
@@ -72,109 +116,183 @@ function Product({ product, hideNewBadge = false, onQuickAdd, showQuickActions =
         toast.success('Added to wishlist', { position: 'top-center', autoClose: 2000 });
       }
       dispatch(getWishlist());
+      // Fire analytics after wishlist state is confirmed — maps to incrementWishlist on the model
+      dispatch(trackWishlistAnalytics({ id: product._id, increment: !isInWishlist }));
     } catch (err) {
-      toast.error(err.message || 'Something went wrong', { position: 'top-center', autoClose: 3000 });
+      toast.error(err?.message || 'Something went wrong', { position: 'top-center', autoClose: 3000 });
     }
-  };
+  }, [isAuthenticated, isInWishlist, product, dispatch, navigate]);
 
-  const handleQuickAdd = (e) => {
+  const handleQuickAdd = useCallback(async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const stock = product.inventory?.stock ?? product.stock ?? 0;
-    if (stock === 0) {
-      toast.error('Product is out of stock', { position: 'top-center', autoClose: 2000 });
+
+    if (!isAddable) {
+      toast.error('This product is unavailable', { position: 'top-center', autoClose: 2000 });
       return;
     }
+
     if (onQuickAdd) {
       onQuickAdd(product._id);
-    } else {
-      dispatch(addItemsToCart({ id: product._id, quantity: 1 }));
+      return;
     }
-  };
 
-  // ── Derived values ───────────────────────────────────────
-  const price    = getProductPrice();
-  const salePrice = getSalePrice();
-  const discount = getDiscountPercentage();
-  const image    = getProductImage();
-  const stock    = product.inventory?.stock ?? product.stock ?? 0;
+    try {
+      setCartLoading(true);
+      await dispatch(addItemsToCart({ id: product._id, quantity: 1 })).unwrap();
+      toast.success('Added to cart', { position: 'top-center', autoClose: 2000 });
+    } catch (err) {
+      toast.error(err?.message || 'Could not add to cart', {
+        position: 'top-center',
+        autoClose: 3000,
+      });
+    } finally {
+      setCartLoading(false);
+    }
+  }, [isAddable, onQuickAdd, product, dispatch]);
 
+  // ── Early return after all hooks — Rules of Hooks compliant ──────────────
+  if (!product) return null;
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <Link to={productUrl} className="product_id">
-      <div
-        className="ep-product-card"
+    <Link to={productUrl} className="pc-link" aria-label={`View ${product.name}`}>
+      <article
+        className={`pc-card ${isHovered ? 'pc-card--hovered' : ''}`}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        <div className="ep-product-image-wrapper">
-          <img src={image} alt={product.name} className="ep-product-image" />
+        {/* ── Image ── */}
+        <div className="pc-image-wrap">
+          <img
+            src={primaryImg.url}
+            alt={primaryImg.alt}
+            className="pc-image"
+            loading="lazy"
+            decoding="async"
+          />
 
-          <div className="ep-product-badges">
-            {discount > 0 && <span className="ep-badge discount">-{discount}%</span>}
-            {product.isNewArrival && !hideNewBadge && <span className="ep-badge new">New</span>}
-            {product.isFeatured && <span className="ep-badge featured">Featured</span>}
-            {product.isBestseller && <span className="ep-badge bestseller">Bestseller</span>}
-            {stock === 0 && <span className="ep-badge sold-out">Sold Out</span>}
+          {/* Badges */}
+          <div className="pc-badges" aria-label="Product labels">
+            {discount > 0 && (
+              <span className="pc-badge pc-badge--discount">−{discount}%</span>
+            )}
+            {product.isNewArrival && !hideNewBadge && (
+              <span className="pc-badge pc-badge--new">New</span>
+            )}
+            {product.isFeatured && (
+              <span className="pc-badge pc-badge--featured">Featured</span>
+            )}
+            {product.isBestseller && (
+              <span className="pc-badge pc-badge--bestseller">Bestseller</span>
+            )}
+            {stockState === 'out' && (
+              <span className="pc-badge pc-badge--soldout">Sold Out</span>
+            )}
+            {stockState === 'discontinued' && (
+              <span className="pc-badge pc-badge--discontinued">Discontinued</span>
+            )}
           </div>
 
+          {/* Quick actions overlay */}
           {showQuickActions && (
-            <div className={`ep-quick-actions ${isHovered ? 'show' : ''}`}>
+            <div
+              className={`pc-actions ${isHovered ? 'pc-actions--visible' : ''}`}
+              role="group"
+              aria-label="Quick actions"
+            >
               <button
-                className="ep-action-btn"
+                className="pc-action-btn"
                 onClick={(e) => { e.preventDefault(); navigate(productUrl); }}
                 title="View Details"
+                aria-label="View product details"
               >
-                <FiEye />
+                <FiEye aria-hidden="true" />
               </button>
+
               <button
-                className={`ep-action-btn ${isInWishlist ? 'active' : ''}`}
+                className={`pc-action-btn pc-action-btn--wish ${isInWishlist ? 'pc-action-btn--wish-active' : ''}`}
                 onClick={handleWishlistToggle}
-                disabled={isWishlistLoading}
-                title={isInWishlist ? 'Remove from Wishlist' : 'Add to Wishlist'}
+                disabled={isWishlistBusy}
+                title={isInWishlist ? 'Remove from wishlist' : 'Save to wishlist'}
+                aria-label={isInWishlist ? 'Remove from wishlist' : 'Save to wishlist'}
+                aria-pressed={isInWishlist}
               >
-                <FiHeart className={isInWishlist ? 'filled' : ''} />
+                {isInWishlist ? (
+                  <FaHeart aria-hidden="true" />
+                ) : (
+                  <FaRegHeart aria-hidden="true" />
+                )}
               </button>
             </div>
           )}
         </div>
 
-        <div className="ep-product-info">
-          <h3 className="ep-product-name">{product.name}</h3>
-          {product.brand && <p className="ep-product-brand">{product.brand}</p>}
-          <p className="ep-product-category">{product.category}</p>
-
-          <div className="ep-product-rating">
-            <div className="ep-stars">
-              {[...Array(5)].map((_, i) => (
-                <FiStar key={i} className={i < Math.floor(product.ratings || 0) ? 'filled' : ''} />
-              ))}
-            </div>
-            <span className="ep-rating-text">({product.numOfReviews || 0})</span>
+        {/* ── Info ── */}
+        <div className="pc-info">
+          {/* Brand + Category */}
+          <div className="pc-meta">
+            {product.brand && <span className="pc-brand">{product.brand}</span>}
+            <span className="pc-category">{product.category}</span>
           </div>
 
-          <div className="ep-product-price">
-            {salePrice ? (
+          {/* Name */}
+          <h3 className="pc-name">{product.name}</h3>
+
+          {/* Rating — Number() guards against NaN from undefined/null ratings */}
+          <div className="pc-rating" aria-label={`Rated ${product.ratings || 0} out of 5`}>
+            <div className="pc-stars" aria-hidden="true">
+              {[...Array(5)].map((_, i) => (
+                <span
+                  key={i}
+                  className={`pc-star ${i < Math.floor(Number(product.ratings) || 0) ? 'pc-star--filled' : ''}`}
+                >
+                  ★
+                </span>
+              ))}
+            </div>
+            <span className="pc-review-count">({product.numOfReviews || 0})</span>
+          </div>
+
+          {/* Price — reads currency from model's pricing.currency enum */}
+          <div className="pc-price">
+            {salePrice != null ? (
               <>
-                <span className="ep-price-sale">{formatPrice(salePrice)}</span>
-                <span className="ep-price-original">{formatPrice(price)}</span>
+                <span className="pc-price-sale">{formatPrice(salePrice, currency)}</span>
+                <span className="pc-price-regular">{formatPrice(regular, currency)}</span>
               </>
             ) : (
-              <span className="ep-price-current">{formatPrice(price)}</span>
+              <span className="pc-price-current">{formatPrice(regular, currency)}</span>
             )}
           </div>
 
-          <div className="ep-product-footer">
-            <span className={`ep-stock-status ${stock > 0 ? 'in-stock' : 'out-stock'}`}>
-              {getStockStatus()}
+          {/* Footer: stock status + add to cart */}
+          <div className="pc-footer">
+            <span className={`pc-stock pc-stock--${stockState}`} aria-live="polite">
+              {stockState === 'low' && <span className="pc-stock-dot" aria-hidden="true" />}
+              {stockLabel}
             </span>
-            {stock > 0 && (
-              <button className="ep-add-cart-btn" onClick={handleQuickAdd}>
-                <FiShoppingCart /> Add
+
+            {isAddable && (
+              <button
+                className={`pc-cart-btn ${cartLoading ? 'pc-cart-btn--loading' : ''}`}
+                onClick={handleQuickAdd}
+                disabled={cartLoading}
+                aria-label={`Add ${product.name} to cart`}
+              >
+                {cartLoading ? (
+                  <span className="pc-spinner" aria-hidden="true" />
+                ) : (
+                  <>
+                    <FiShoppingCart aria-hidden="true" />
+                    <span>Add</span>
+                  </>
+                )}
               </button>
             )}
           </div>
         </div>
-      </div>
+      </article>
     </Link>
   );
 }

@@ -112,12 +112,12 @@ function SalePage() {
     };
 
     const formatPrice = (amount) => {
-        return new Intl.NumberFormat('en-NG', {
-            style: 'currency',
-            currency: 'NGN',
-            minimumFractionDigits: 0
-        }).format(amount);
-    };
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',        // ← USD
+    minimumFractionDigits: 2
+  }).format(amount);
+};
 
     // Calculate statistics
     const totalSavings = saleProducts.reduce((sum, p) => sum + p.savings, 0);
