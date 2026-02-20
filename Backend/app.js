@@ -36,6 +36,8 @@ import { trackAttribution } from './middleware/attribution-tracking-middleware.j
 
 import './config/passport.js';
 
+import redirectHandler from './middleware/redirectHandler.js';
+
 const app = express();
 
 /* ================= WEBHOOK ROUTES (MUST BE BEFORE BODY PARSERS) ================= */
@@ -153,23 +155,7 @@ startupGuards(app);
 app.use(cors(corsOptions));
 app.use(helmetConfig);
 
-// ============================================
-// FIX: hpp (HTTP Parameter Pollution) must NOT
-// run on multipart/form-data requests.
-//
-// hpp internally reads the request body to check
-// for duplicate parameters. On multipart requests
-// this drains the raw stream before multer (which
-// runs inside the route) can parse it — leaving
-// req.body = {} and req.files = [] silently, which
-// caused every product create/update to hang.
-//
-// The fix: skip hpp entirely when the content-type
-// is multipart/form-data. It only needs to protect
-// against pollution on JSON and urlencoded routes
-// anyway — multipart form fields can't be polluted
-// in the same way.
-// ============================================
+
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('multipart/form-data')) {
@@ -197,6 +183,8 @@ app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1', seoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/admin', adminStatsRoutes);
+
+app.use(redirectHandler);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {

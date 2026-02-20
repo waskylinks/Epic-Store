@@ -2,14 +2,21 @@ import Product from '../models/product-model.js';
 import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import APIFunctionality from '../utils/apiFunctionality.js';
-import {
-  uploadToCloudinary,
-  deleteMultipleFromCloudinary
-} from '../utils/cloudinaryUpload.js';
+import { deleteMultipleFromCloudinary } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import seoService from '../Services/seo.service.js';
 import { RESERVED_SLUGS } from '../utils/reserved-slugs.js';
 import { slugify } from '../utils/slugify.js';
+import {
+  parseProductBody,
+  uploadProductImages,
+  buildProductData,
+  buildProductUpdateData,
+  buildSeoForUpdate,
+  resolveUpdateImages,
+  deriveInventoryStatus,
+  handleDuplicateKeyError,
+} from '../utils/productController.js';
 
 // ============================================
 // SHARED HELPERS
@@ -38,120 +45,16 @@ const invalidateProductCaches = async () => {
   }
 };
 
-// FIX #1 — Shared rating helper: eliminates the Math.ceil vs toFixed(1)
-// inconsistency between createProductReview and deleteReview.
 const calcRating = (reviews) =>
   reviews.length === 0
     ? 0
     : Math.round((reviews.reduce((s, r) => s + r.rating, 0) / reviews.length) * 10) / 10;
 
-// FIX #4 — Shared populate chain: getProductDetails and getProductBySlug
-// previously duplicated the same three .populate() calls. One change here
-// now covers both controllers.
 const withProductPopulate = (query) =>
   query
     .populate('relatedProducts', 'name pricing images slug ratings')
     .populate('crossSells', 'name pricing images slug')
     .populate('upsells', 'name pricing images slug');
-
-const parseJSONSafe = (field) => {
-  if (!field) return null;
-  if (typeof field === 'object') return field;
-  try {
-    return JSON.parse(field);
-  } catch {
-    return null;
-  }
-};
-
-const parsePricing = (pricingData) => {
-  const pricing = parseJSONSafe(pricingData);
-  if (!pricing) return null;
-
-  if (pricing.validFrom && pricing.validThrough) {
-    const from = new Date(pricing.validFrom);
-    const through = new Date(pricing.validThrough);
-    if (from > through) {
-      throw new Error('Pricing validFrom date must be before validThrough date');
-    }
-  }
-
-  return pricing;
-};
-
-const parseBreadcrumbs = (breadcrumbsData) => {
-  const breadcrumbs = parseJSONSafe(breadcrumbsData);
-  if (!Array.isArray(breadcrumbs)) return [];
-
-  const positions = breadcrumbs.map(b => b.position);
-  const uniquePositions = new Set(positions);
-  if (positions.length !== uniquePositions.size) {
-    throw new Error('Breadcrumb positions must be unique');
-  }
-
-  return breadcrumbs.sort((a, b) => a.position - b.position);
-};
-
-const parseRichSnippets = (richSnippetsData) => {
-  const richSnippets = parseJSONSafe(richSnippetsData);
-  if (!richSnippets) return {};
-
-  if (richSnippets.faqs && Array.isArray(richSnippets.faqs)) {
-    const questions = richSnippets.faqs.map(faq => faq.question?.toLowerCase());
-    const uniqueQuestions = new Set(questions);
-    if (questions.length !== uniqueQuestions.size) {
-      throw new Error('FAQ questions must be unique');
-    }
-  }
-
-  return richSnippets;
-};
-
-const parseSEO = (seoData) => {
-  const seo = parseJSONSafe(seoData);
-  if (!seo) return {};
-
-  if (seo.metaDescription && seo.metaDescription.length < 120) {
-    console.warn('SEO metaDescription is shorter than recommended 120 characters');
-  }
-
-  return seo;
-};
-
-const parseImageMetadata = (imageMetadataData) => {
-  const metadata = parseJSONSafe(imageMetadataData);
-  if (!metadata || !Array.isArray(metadata)) return [];
-  return metadata;
-};
-
-// ============================================
-// FIX: Centralised duplicate-key error handler
-// Catches MongoDB E11000 errors and returns a
-// clean 400 instead of a raw 500.
-// ============================================
-const handleDuplicateKeyError = (error, next) => {
-  if (error.code === 11000) {
-    const field = Object.keys(error.keyPattern || {})[0] || 'field';
-
-    // Map raw MongoDB field paths to human-readable names
-    const fieldLabels = {
-      slug:             'product name (slug)',
-      'inventory.sku':  'SKU',
-    };
-
-    const label = fieldLabels[field] || field;
-    const value = error.keyValue?.[field];
-    const valueStr = value ? ` ("${value}")` : '';
-
-    return next(
-      new HandleError(
-        `A product with this ${label}${valueStr} already exists. Please use a different value.`,
-        400
-      )
-    );
-  }
-  return false; // not a duplicate-key error
-};
 
 // ============================================
 // GET ALL PRODUCTS
@@ -167,7 +70,7 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
 
   const filteredQuery = apiFeatures.query.clone();
   const productsCount = await filteredQuery.countDocuments();
-  const totalPages = Math.ceil(productsCount / resultPerPage);
+  const totalPages    = Math.ceil(productsCount / resultPerPage);
 
   const page = Number(req.query.page) || 1;
   if (page > totalPages && productsCount > 0) {
@@ -203,24 +106,12 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
       return next(new HandleError('Name, description, and category are required', 400));
     }
 
-    let pricing, breadcrumbs, richSnippets, seo;
+    let parsed;
     try {
-      pricing      = parsePricing(req.body.pricing);
-      breadcrumbs  = parseBreadcrumbs(req.body.breadcrumbs);
-      richSnippets = parseRichSnippets(req.body.richSnippets);
-      seo          = parseSEO(req.body.seo);
+      parsed = parseProductBody(req.body);
     } catch (parseError) {
       return next(new HandleError(parseError.message, 400));
     }
-
-    const inventory      = parseJSONSafe(req.body.inventory);
-    const subcategories  = parseJSONSafe(req.body.subcategories);
-    const tags           = parseJSONSafe(req.body.tags);
-    const specifications = parseJSONSafe(req.body.specifications);
-    const variants       = parseJSONSafe(req.body.variants);
-    const dimensions     = parseJSONSafe(req.body.dimensions);
-    const weight         = parseJSONSafe(req.body.weight);
-    const imageMetadata  = parseImageMetadata(req.body.imageMetadata);
 
     const prospectiveSlug = slugify(req.body.name);
     if (RESERVED_SLUGS.has(prospectiveSlug)) {
@@ -231,105 +122,20 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
       ));
     }
 
-    const productData = {
-      name: req.body.name,
-      description: req.body.description,
-      shortDescription: req.body.shortDescription || '',
-      category: req.body.category,
-      brand: req.body.brand || '',
-      manufacturer: req.body.manufacturer || '',
-      pricing: pricing || {},
-      inventory: inventory || {},
-      subcategories: Array.isArray(subcategories) ? subcategories : [],
-      tags: Array.isArray(tags) ? tags : [],
-      specifications: Array.isArray(specifications) ? specifications : [],
-      variants: Array.isArray(variants) ? variants : [],
-      dimensions: dimensions || {},
-      weight: weight || {},
-      breadcrumbs: breadcrumbs || [],
-      seo: {
-        metaTitle: seo?.metaTitle || '',
-        metaDescription: seo?.metaDescription || '',
-        keywords: Array.isArray(seo?.keywords) ? seo.keywords : [],
-        canonicalUrl: seo?.canonicalUrl || '',
-        noIndex: seo?.noIndex === true || seo?.noIndex === 'true',
-        noFollow: seo?.noFollow === true || seo?.noFollow === 'true',
-        ogTitle: seo?.ogTitle || seo?.metaTitle || '',
-        ogDescription: seo?.ogDescription || seo?.metaDescription || '',
-        ogImage: seo?.ogImage || '',
-        ogType: seo?.ogType || 'product',
-        twitterCard: seo?.twitterCard || 'summary_large_image',
-        twitterTitle: seo?.twitterTitle || seo?.ogTitle || seo?.metaTitle || '',
-        twitterDescription: seo?.twitterDescription || seo?.ogDescription || seo?.metaDescription || '',
-        twitterImage: seo?.twitterImage || '',
-        schemaType: seo?.schemaType || 'Product',
-        condition: seo?.condition || 'NewCondition',
-        availability: seo?.availability || 'InStock',
-        focusKeyphrase: seo?.focusKeyphrase || '',
-        relatedSearchTerms: Array.isArray(seo?.relatedSearchTerms) ? seo.relatedSearchTerms : []
-      },
-      richSnippets: {
-        faqs: Array.isArray(richSnippets?.faqs) ? richSnippets.faqs : [],
-        howTo: richSnippets?.howTo || { name: '', steps: [] },
-        videos: Array.isArray(richSnippets?.videos) ? richSnippets.videos : []
-      },
-      isFeatured:   req.body.isFeatured   === 'true' || req.body.isFeatured   === true,
-      isNewArrival: req.body.isNewArrival === 'true' || req.body.isNewArrival === true,
-      isBestseller: req.body.isBestseller === 'true' || req.body.isBestseller === true,
-      status: req.body.status || 'published',
-      user: req.user._id,
-      analytics: {
-        views: 0, purchases: 0, addedToCart: 0, addedToWishlist: 0,
-        conversions: 0, searchImpressions: 0, searchClicks: 0,
-        avgTimeOnPage: 0, bounceRate: 0
-      }
-    };
-
     if (req.files && req.files.length > 0) {
-      const imagesLinks = [];
-      for (let i = 0; i < req.files.length; i++) {
-        try {
-          const result = await uploadToCloudinary(req.files[i].buffer, {
-            folder: 'products',
-            transformation: [
-              { width: 1000, height: 1000, crop: 'limit' },
-              { quality: 'auto:good' }
-            ]
-          });
-          const metadata = imageMetadata[i] || {};
-          imagesLinks.push({
-            public_id: result.public_id,
-            url: result.secure_url,
-            alt: metadata.alt || '',
-            isPrimary: i === 0,
-            order: i,
-            width: result.width || metadata.width || null,
-            height: result.height || metadata.height || null,
-            caption: metadata.caption || ''
-          });
-        } catch (uploadError) {
-          if (imagesLinks.length > 0) {
-            await deleteMultipleFromCloudinary(imagesLinks.map(img => img.public_id));
-          }
-          return next(new HandleError(`Failed to upload image ${i + 1}: ${uploadError.message}`, 500));
-        }
-      }
-      productData.images = imagesLinks;
-      uploadedImages = imagesLinks;
+      uploadedImages = await uploadProductImages(req.files, parsed.imageMetadata, 0);
     }
 
-    const product = await Product.create(productData);
-    invalidateProductCaches().catch((err) => console.error('Cache invalidation error:', err));
+    const productData = buildProductData(req, parsed, uploadedImages, req.user._id);
+    const product     = await Product.create(productData);
 
+    invalidateProductCaches().catch((err) => console.error('Cache invalidation error:', err));
     res.status(201).json({ success: true, product });
   } catch (error) {
     if (uploadedImages.length > 0) {
       await deleteMultipleFromCloudinary(uploadedImages.map(img => img.public_id)).catch(() => {});
     }
-
-    // FIX: Catch MongoDB duplicate key errors (slug or SKU collision)
     if (handleDuplicateKeyError(error, next)) return;
-
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       return next(new HandleError(errors.join(', '), 400));
@@ -342,37 +148,11 @@ export const createProducts = handleAsyncError(async (req, res, next) => {
 // UPDATE PRODUCT
 // ============================================
 //
-// Uses findByIdAndUpdate (bypasses pre-save hooks intentionally to avoid
-// validator/hook bugs that caused the page to hang after update).
-// All logic that the pre-save hooks would have computed is calculated
-// explicitly here before the update call:
-//   - inventory.status derived from stock vs threshold
-//   - isOnSale derived from pricing
-//   - seo.availability synced to inventory status
-//   - SEO meta fields auto-filled when blank
-//   - slug updated when name changes, old slug pushed to slugHistory
-//   - lastModifiedAt stamped on every update
-//   - publishedAt / archivedAt stamped on status transitions
+// Uses findByIdAndUpdate (bypasses pre-save hooks intentionally).
+// All logic the pre-save hooks would compute is calculated
+// explicitly via utils before the update call.
 //
 // ============================================
-
-// Computes inventory.status from stock and threshold — mirrors the model hook.
-const deriveInventoryStatus = (inventory, existingStatus) => {
-  if (existingStatus === 'Discontinued') return 'Discontinued';
-  const stock     = Number(inventory?.stock ?? 0);
-  const threshold = Number(inventory?.lowStockThreshold ?? 5);
-  if (stock === 0)          return 'OutOfStock';
-  if (stock <= threshold)   return 'LowStock';
-  return 'InStock';
-};
-
-// Maps inventory status to schema.org availability value — mirrors the model hook.
-const inventoryToAvailability = {
-  InStock:      'InStock',
-  LowStock:     'LimitedAvailability',
-  OutOfStock:   'OutOfStock',
-  Discontinued: 'Discontinued',
-};
 
 export const updateProduct = handleAsyncError(async (req, res, next) => {
   let newlyUploadedImages = [];
@@ -386,12 +166,9 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
       return next(new HandleError('Name, description, and category are required', 400));
     }
 
-    let pricing, breadcrumbs, richSnippets, seo;
+    let parsed;
     try {
-      pricing      = parsePricing(req.body.pricing);
-      breadcrumbs  = parseBreadcrumbs(req.body.breadcrumbs);
-      richSnippets = parseRichSnippets(req.body.richSnippets);
-      seo          = parseSEO(req.body.seo);
+      parsed = parseProductBody(req.body);
     } catch (parseError) {
       return next(new HandleError(parseError.message, 400));
     }
@@ -405,178 +182,65 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
       ));
     }
 
-    const inventory      = parseJSONSafe(req.body.inventory);
-    const subcategories  = parseJSONSafe(req.body.subcategories);
-    const tags           = parseJSONSafe(req.body.tags);
-    const specifications = parseJSONSafe(req.body.specifications);
-    const variants       = parseJSONSafe(req.body.variants);
-    const dimensions     = parseJSONSafe(req.body.dimensions);
-    const weight         = parseJSONSafe(req.body.weight);
-    const imageMetadata  = parseImageMetadata(req.body.imageMetadata);
+    // ── Compute what pre-save hooks would have done ──────────────────────
 
-    // ── Compute what the pre-save hooks would have done ─────────────────
-
-    // 1. Slug — update if name changed, push old slug to history
-    const slugChanged   = newSlug !== product.slug;
-    const updatedSlug   = slugChanged ? newSlug : product.slug;
-    const slugHistory   = slugChanged && product.slug
+    // 1. Slug
+    const slugChanged = newSlug !== product.slug;
+    const updatedSlug = slugChanged ? newSlug : product.slug;
+    const slugHistory = slugChanged && product.slug
       ? [...(product.slugHistory || []), { oldSlug: product.slug, changedAt: new Date() }]
       : product.slugHistory || [];
 
     // 2. Inventory status
-    const mergedInventory = inventory
-      ? { ...product.inventory.toObject?.() ?? product.inventory, ...inventory }
-      : product.inventory;
-    const inventoryStatus = deriveInventoryStatus(mergedInventory, mergedInventory?.status);
-    mergedInventory.status = inventoryStatus;
+    const mergedInventory  = {
+      ...(product.inventory.toObject?.() ?? product.inventory),
+      ...(parsed.inventory || {})
+    };
+    const inventoryStatus  = deriveInventoryStatus(mergedInventory, mergedInventory?.status);
+    mergedInventory.status  = inventoryStatus;
 
     // 3. isOnSale
-    const finalPricing = pricing || product.pricing;
-    const isOnSale = !!(
-      finalPricing?.sale != null && finalPricing.sale < finalPricing.regular
-    );
+    const finalPricing = parsed.pricing || product.pricing;
+    const isOnSale     = !!(finalPricing?.sale != null && finalPricing.sale < finalPricing.regular);
 
-    // 4. SEO availability sync
-    const resolvedSeo = {
-      metaTitle:          seo?.metaTitle          || product.seo?.metaTitle          || '',
-      metaDescription:    seo?.metaDescription    || product.seo?.metaDescription    || '',
-      keywords:           Array.isArray(seo?.keywords) ? seo.keywords : product.seo?.keywords || [],
-      canonicalUrl:       seo?.canonicalUrl        || '',
-      noIndex:            seo?.noIndex  !== undefined
-        ? (seo.noIndex  === true || seo.noIndex  === 'true')
-        : product.seo?.noIndex  || false,
-      noFollow:           seo?.noFollow !== undefined
-        ? (seo.noFollow === true || seo.noFollow === 'true')
-        : product.seo?.noFollow || false,
-      ogTitle:            seo?.ogTitle            || product.seo?.ogTitle            || seo?.metaTitle            || product.seo?.metaTitle            || '',
-      ogDescription:      seo?.ogDescription      || product.seo?.ogDescription      || seo?.metaDescription      || product.seo?.metaDescription      || '',
-      ogImage:            seo?.ogImage            || product.seo?.ogImage            || '',
-      ogType:             seo?.ogType             || product.seo?.ogType             || 'product',
-      twitterCard:        seo?.twitterCard        || product.seo?.twitterCard        || 'summary_large_image',
-      twitterTitle:       seo?.twitterTitle       || product.seo?.twitterTitle       || seo?.ogTitle              || product.seo?.ogTitle              || '',
-      twitterDescription: seo?.twitterDescription || product.seo?.twitterDescription || seo?.ogDescription        || product.seo?.ogDescription        || '',
-      twitterImage:       seo?.twitterImage       || product.seo?.twitterImage       || '',
-      schemaType:         seo?.schemaType         || product.seo?.schemaType         || 'Product',
-      condition:          seo?.condition          || product.seo?.condition          || 'NewCondition',
-      // Always derived from inventory — not left to whatever the client sent
-      availability:       inventoryToAvailability[inventoryStatus] || 'InStock',
-      focusKeyphrase:     seo?.focusKeyphrase     || product.seo?.focusKeyphrase     || '',
-      relatedSearchTerms: Array.isArray(seo?.relatedSearchTerms)
-        ? seo.relatedSearchTerms
-        : product.seo?.relatedSearchTerms || [],
-    };
-
-    // Auto-fill SEO meta from product fields when left blank (mirrors hook)
-    if (!resolvedSeo.metaTitle)       resolvedSeo.metaTitle       = req.body.name.substring(0, 60);
-    if (!resolvedSeo.ogTitle)         resolvedSeo.ogTitle         = resolvedSeo.metaTitle;
-    if (!resolvedSeo.ogDescription)   resolvedSeo.ogDescription   = resolvedSeo.metaDescription;
+    // 4. SEO
+    const resolvedSeo = buildSeoForUpdate(parsed.seo, product.seo, req.body.name, inventoryStatus);
 
     // 5. Status transition timestamps
-    const newStatus    = req.body.status || product.status;
-    const publishedAt  = newStatus === 'published' && !product.publishedAt ? new Date() : product.publishedAt;
-    const archivedAt   = newStatus === 'archived'  && !product.archivedAt  ? new Date() : product.archivedAt;
+    const newStatus   = req.body.status || product.status;
+    const publishedAt = newStatus === 'published' && !product.publishedAt ? new Date() : product.publishedAt;
+    const archivedAt  = newStatus === 'archived'  && !product.archivedAt  ? new Date() : product.archivedAt;
 
-    // ── Images ──────────────────────────────────────────────────────────
+    // ── Images ───────────────────────────────────────────────────────────
 
-    const imagesToDelete = parseJSONSafe(req.body.imagesToDelete) || [];
-    const existingImages = parseJSONSafe(req.body.existingImages);
-
-    let currentImages = existingImages
-      || product.images.filter(img => !imagesToDelete.includes(img.public_id));
-
-    if (req.files && req.files.length > 0) {
-      const imagesLinks = [];
-      for (let i = 0; i < req.files.length; i++) {
-        try {
-          const result = await uploadToCloudinary(req.files[i].buffer, {
-            folder: 'products',
-            transformation: [
-              { width: 1000, height: 1000, crop: 'limit' },
-              { quality: 'auto:good' }
-            ]
-          });
-          const metadata = imageMetadata[i] || {};
-          imagesLinks.push({
-            public_id: result.public_id,
-            url: result.secure_url,
-            alt: metadata.alt || '',
-            isPrimary: false,
-            order: currentImages.length + i,
-            width: result.width || metadata.width || null,
-            height: result.height || metadata.height || null,
-            caption: metadata.caption || ''
-          });
-        } catch (uploadError) {
-          if (imagesLinks.length > 0) {
-            await deleteMultipleFromCloudinary(imagesLinks.map(img => img.public_id));
-          }
-          return next(new HandleError(`Failed to upload image ${i + 1}: ${uploadError.message}`, 500));
-        }
-      }
-      currentImages = [...currentImages, ...imagesLinks];
-      newlyUploadedImages = imagesLinks;
-    }
-
-    // Ensure first image is marked primary
-    if (currentImages.length > 0) {
-      const hasPrimary = currentImages.some(img => img.isPrimary);
-      if (!hasPrimary) currentImages[0] = { ...currentImages[0], isPrimary: true };
-    }
+    const { currentImages, newlyUploaded, imagesToDelete } =
+      await resolveUpdateImages(req, product, parsed.imageMetadata);
+    newlyUploadedImages = newlyUploaded;
 
     // Auto-fill ogImage from images if still blank
     if (!resolvedSeo.ogImage && currentImages.length > 0) {
-      const primary = currentImages.find(img => img.isPrimary) || currentImages[0];
-      resolvedSeo.ogImage = primary.url;
+      const primary        = currentImages.find(img => img.isPrimary) || currentImages[0];
+      resolvedSeo.ogImage  = primary.url;
     }
 
-    // ── Build the final update document ─────────────────────────────────
+    // ── Build update document ─────────────────────────────────────────────
 
-    const updateData = {
-      name:             req.body.name,
-      slug:             updatedSlug,
+    const updateData = buildProductUpdateData(req, parsed, product, {
+      updatedSlug,
       slugHistory,
-      description:      req.body.description,
-      shortDescription: req.body.shortDescription || '',
-      category:         req.body.category,
-      brand:            req.body.brand || '',
-      manufacturer:     req.body.manufacturer || product.manufacturer || '',
-      pricing:          finalPricing,
-      inventory:        mergedInventory,
-      subcategories:    Array.isArray(subcategories)  ? subcategories  : product.subcategories,
-      tags:             Array.isArray(tags)            ? tags           : product.tags,
-      specifications:   Array.isArray(specifications) ? specifications : product.specifications,
-      variants:         Array.isArray(variants)        ? variants       : product.variants,
-      dimensions:       dimensions || product.dimensions,
-      weight:           weight     || product.weight,
-      breadcrumbs:      breadcrumbs || product.breadcrumbs,
-      seo:              resolvedSeo,
-      richSnippets: {
-        faqs:   Array.isArray(richSnippets?.faqs)   ? richSnippets.faqs   : product.richSnippets?.faqs   || [],
-        howTo:  richSnippets?.howTo                 || product.richSnippets?.howTo                        || { name: '', steps: [] },
-        videos: Array.isArray(richSnippets?.videos) ? richSnippets.videos : product.richSnippets?.videos || [],
-      },
-      images:       currentImages,
+      mergedInventory,
       isOnSale,
-      isFeatured:   req.body.isFeatured   !== undefined
-        ? (req.body.isFeatured   === 'true' || req.body.isFeatured   === true)
-        : product.isFeatured,
-      isNewArrival: req.body.isNewArrival !== undefined
-        ? (req.body.isNewArrival === 'true' || req.body.isNewArrival === true)
-        : product.isNewArrival,
-      isBestseller: req.body.isBestseller !== undefined
-        ? (req.body.isBestseller === 'true' || req.body.isBestseller === true)
-        : product.isBestseller,
-      status:         newStatus,
+      resolvedSeo,
+      currentImages,
+      newStatus,
       publishedAt,
       archivedAt,
-      lastModifiedAt: new Date(),
-      lastModifiedBy: req.user._id,
-    };
+      userId: req.user._id,
+    });
 
     const updated = await Product.findByIdAndUpdate(id, updateData, {
-      new:            true,
-      runValidators:  false, // validators run via pre-validate which we skip intentionally
-      useFindAndModify: false,
+      new:           true,
+      runValidators: false,
     });
 
     // Clean up removed Cloudinary images after successful DB write
@@ -590,10 +254,7 @@ export const updateProduct = handleAsyncError(async (req, res, next) => {
     if (newlyUploadedImages.length > 0) {
       await deleteMultipleFromCloudinary(newlyUploadedImages.map(img => img.public_id)).catch(() => {});
     }
-
-    // Catch MongoDB duplicate key errors (slug or SKU collision)
     if (handleDuplicateKeyError(error, next)) return;
-
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => err.message);
       return next(new HandleError(errors.join(', '), 400));
@@ -628,8 +289,8 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
     success: true,
     message: 'Product and images deleted successfully',
     deletedProduct: {
-      id: product._id,
-      name: product.name,
+      id:            product._id,
+      name:          product.name,
       imagesDeleted: product.images?.length || 0
     }
   });
@@ -637,6 +298,14 @@ export const deleteProduct = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // BATCH DELETE PRODUCTS
+// ============================================
+//
+// Strategy:
+//   1. Single find() for all products — one DB round-trip
+//   2. Single deleteMany to remove all found products
+//   3. Response sent immediately
+//   4. Cloudinary cleanup fires after response (fire-and-forget)
+//
 // ============================================
 
 export const deleteMultipleProducts = handleAsyncError(async (req, res, next) => {
@@ -646,35 +315,55 @@ export const deleteMultipleProducts = handleAsyncError(async (req, res, next) =>
     return next(new HandleError('Please provide an array of product IDs', 400));
   }
 
-  const results = { successful: [], failed: [] };
+  if (productIds.length > 100) {
+    return next(new HandleError('Cannot delete more than 100 products at once', 400));
+  }
 
-  for (const productId of productIds) {
+  // ── Step 1: Single query instead of N findById calls ──────────────────
+  const products = await Product.find(
+    { _id: { $in: productIds } },
+    { _id: 1, name: 1, 'images.public_id': 1 }
+  ).lean();
+
+  const foundIds  = new Set(products.map(p => p._id.toString()));
+  const results   = { successful: [], failed: [] };
+
+  // Mark any IDs that weren't found
+  productIds.forEach(id => {
+    if (!foundIds.has(id.toString())) {
+      results.failed.push({ id, reason: 'Product not found' });
+    }
+  });
+
+  // ── Step 2: Delete all found products in one round-trip ───────────────
+  if (products.length > 0) {
     try {
-      const product = await Product.findById(productId);
-      if (!product) {
-        results.failed.push({ id: productId, reason: 'Product not found' });
-        continue;
-      }
-      if (product.images && product.images.length > 0) {
-        const publicIds = product.images.map(img => img.public_id).filter(Boolean);
-        if (publicIds.length > 0) {
-          await deleteMultipleFromCloudinary(publicIds).catch(() => {});
-        }
-      }
-      await Product.findByIdAndDelete(productId);
-      results.successful.push({ id: productId, name: product.name });
-    } catch (error) {
-      results.failed.push({ id: productId, reason: error.message });
+      await Product.deleteMany({ _id: { $in: products.map(p => p._id) } });
+      products.forEach(p => results.successful.push({ id: p._id, name: p.name }));
+    } catch (err) {
+      products.forEach(p => results.failed.push({ id: p._id, name: p.name, reason: err.message }));
     }
   }
 
-  await invalidateProductCaches();
+  // ── Step 3: Respond immediately ───────────────────────────────────────
+  invalidateProductCaches().catch(() => {});
 
   res.status(200).json({
     success: true,
     message: `Deleted ${results.successful.length}/${productIds.length} products`,
-    results
+    results,
   });
+
+  // ── Step 4: Cloudinary cleanup after response ─────────────────────────
+  const allPublicIds = products
+    .filter(p => results.successful.some(s => s.id.toString() === p._id.toString()))
+    .flatMap(p => (p.images || []).map(img => img.public_id).filter(Boolean));
+
+  if (allPublicIds.length > 0) {
+    deleteMultipleFromCloudinary(allPublicIds).catch((err) => {
+      console.error('Batch delete — Cloudinary cleanup failed:', err.message);
+    });
+  }
 });
 
 // ============================================
@@ -683,9 +372,7 @@ export const deleteMultipleProducts = handleAsyncError(async (req, res, next) =>
 
 export const getProductDetails = handleAsyncError(async (req, res, next) => {
   const product = await withProductPopulate(Product.findById(req.params.id));
-
   if (!product) return next(new HandleError('Product not found', 404));
-
   res.status(200).json({ success: true, product });
 });
 
@@ -697,14 +384,14 @@ export const createProductReview = handleAsyncError(async (req, res, next) => {
   const { rating, comment, productID, reviewTitle, pros, cons } = req.body;
 
   const review = {
-    user: req.user._id,
-    name: req.user.name,
-    rating: Number(rating),
+    user:        req.user._id,
+    name:        req.user.name,
+    rating:      Number(rating),
     comment,
-    verified: false,
+    verified:    false,
     reviewTitle: reviewTitle || '',
-    pros: Array.isArray(pros) ? pros : [],
-    cons: Array.isArray(cons) ? cons : []
+    pros:        Array.isArray(pros) ? pros : [],
+    cons:        Array.isArray(cons) ? cons : []
   };
 
   const product = await Product.findById(productID);
@@ -717,11 +404,11 @@ export const createProductReview = handleAsyncError(async (req, res, next) => {
   if (reviewExists) {
     product.reviews.forEach(r => {
       if (r.user.toString() === req.user._id.toString()) {
-        r.rating = Number(rating);
-        r.comment = comment;
+        r.rating      = Number(rating);
+        r.comment     = comment;
         r.reviewTitle = reviewTitle || '';
-        r.pros = Array.isArray(pros) ? pros : [];
-        r.cons = Array.isArray(cons) ? cons : [];
+        r.pros        = Array.isArray(pros) ? pros : [];
+        r.cons        = Array.isArray(cons) ? cons : [];
       }
     });
   } else {
@@ -770,9 +457,55 @@ export const deleteReview = handleAsyncError(async (req, res, next) => {
 // ADMIN — GET ALL PRODUCTS
 // ============================================
 
+const SORT_MAP = {
+  createdAt_desc:           { createdAt: -1 },
+  createdAt_asc:            { createdAt:  1 },
+  name_asc:                 { name:  1 },
+  name_desc:                { name: -1 },
+  'pricing.regular_asc':    { 'pricing.regular':  1 },
+  'pricing.regular_desc':   { 'pricing.regular': -1 },
+  ratings_desc:             { ratings: -1 },
+  'inventory.stock_asc':    { 'inventory.stock':  1 },
+};
+
+const VALID_STATUSES   = new Set(['draft', 'published', 'archived']);
+const VALID_INV_STATUS = new Set(['InStock', 'LowStock', 'OutOfStock', 'Discontinued']);
+const VALID_CATEGORIES = new Set([
+  'Electronics', 'Clothing & Apparel', 'Home & Living',
+  'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'
+]);
+
 export const getAdminProducts = handleAsyncError(async (req, res, next) => {
-  const products = await Product.find();
-  res.status(200).json({ success: true, products });
+  const page  = Math.max(Number(req.query.page)  || 1,  1);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const skip  = (page - 1) * limit;
+
+  const filter = {};
+
+  const search = req.query.search?.trim();
+  if (search) filter.$text = { $search: search };
+
+  const { status, inventoryStatus, category } = req.query;
+
+  if (status          && VALID_STATUSES.has(status))             filter.status               = status;
+  if (inventoryStatus && VALID_INV_STATUS.has(inventoryStatus))  filter['inventory.status']  = inventoryStatus;
+  if (category        && VALID_CATEGORIES.has(category))         filter.category             = category;
+
+  const sort = SORT_MAP[req.query.sort] || SORT_MAP.createdAt_desc;
+
+  const [products, total] = await Promise.all([
+    Product.find(filter).sort(sort).skip(skip).limit(limit),
+    Product.countDocuments(filter),
+  ]);
+
+  res.status(200).json({
+    success:       true,
+    products,
+    total,
+    totalPages:    Math.ceil(total / limit),
+    currentPage:   page,
+    resultPerPage: limit,
+  });
 });
 
 // ============================================
@@ -786,14 +519,12 @@ export const getProductBySlug = handleAsyncError(async (req, res, next) => {
     Product.findOne({ slug, status: 'published' })
   );
 
-  if (!product) {
-    return next(new HandleError('Product not found', 404));
-  }
+  if (!product) return next(new HandleError('Product not found', 404));
 
   const seoData = {
-    metaTags: seoService.generateMetaTags(product),
+    metaTags:       seoService.generateMetaTags(product),
     structuredData: seoService.generateStructuredData(product),
-    breadcrumbs: seoService.generateBreadcrumbs(product)
+    breadcrumbs:    seoService.generateBreadcrumbs(product)
   };
 
   res.status(200).json({ success: true, product, seo: seoData });
