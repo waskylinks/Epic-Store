@@ -45,6 +45,7 @@ import AnalyticsOverview from './Admin/AnalyticsOverview';
 import Reports from './Admin/Reports';
 import CustomerAnalytics from './Admin/CustomerAnalytics';
 import AttributionAnalytics from './Admin/AttributionAnalytics';
+import CheckoutAnalytics from './Admin/CheckoutAnalytics';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -128,6 +129,7 @@ function App() {
         <Route path='/admin/reports' element={<ProtectedRoute element={<Reports />} adminOnly={true} />} />
         <Route path='/admin/customers' element={<ProtectedRoute element={<CustomerAnalytics />} adminOnly={true} />} />
         <Route path='/admin/attribution' element={<ProtectedRoute element={<AttributionAnalytics />} adminOnly={true} />} />
+        <Route path='/admin/checkout' element={<ProtectedRoute element={<CheckoutAnalytics />} adminOnly={true} />} />
 
 
       
