@@ -24,7 +24,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 2rem;
-  height: 75px;
+  height: 70px;
   position: relative;
 }
 
@@ -35,7 +35,7 @@
 
 .nb-navbar-logo a {
   display: flex;
-  margin-right: 40px;
+  margin-right: 100px;
   align-items: center;
   gap: 0.5rem;
   text-decoration: none;
@@ -53,7 +53,7 @@
 }
 
 .nb-logo-text {
-  font-size: 1.75rem;
+  font-size: 1.65rem;
   font-weight: 700;
   color: #1a1a1a;
   letter-spacing: -0.5px;
@@ -84,7 +84,7 @@
   text-decoration: none;
   text-transform: uppercase;
   color: #333;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   font-weight: 500;
   padding: 0.5rem 0;
   position: relative;
@@ -105,8 +105,7 @@
   transition: width 0.3s ease;
 }
 
-.nb-nav-link:hover,
-.nb-nav-link.nb-active {
+.nb-nav-link:hover {
   color: #ff3c3c;
 }
 
@@ -121,12 +120,12 @@
 }
 
 .nb-sale-icon {
-  font-size: 1rem !important;
+  font-size: 0.6rem !important;
   animation: nb-pulse 2s infinite;
 }
 
 @keyframes nb-pulse {
-  0%, 100% { transform: scale(1); }
+  0%, 100% { transform: scale(1.6); }
   50% { transform: scale(1.1); }
 }
 
@@ -508,6 +507,7 @@
    =========================== */
 .nb-overlay {
   display: none;
+  
 }
 
 /* ===========================
@@ -542,6 +542,7 @@
   .nb-navbar-container {
     height: 65px;
     padding: 0 1rem;
+    background: transparent;
   }
 
   .nb-logo-text {
@@ -639,6 +640,7 @@
   .nb-nav-link:hover {
     background-color: rgba(255, 60, 60, 0.05);
   }
+
 
   .nb-mobile-menu-footer {
     display: block;
@@ -850,6 +852,7 @@
    RESPONSIVE - SMALL MOBILE
    =========================== */
 @media (max-width: 480px) {
+
   .nb-navbar-container {
     padding: 0 0.75rem;
   }
