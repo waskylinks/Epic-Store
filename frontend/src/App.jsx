@@ -43,6 +43,7 @@ import ReturnRequest from './Orders/ReturnRequest';
 import ScrollToTop from './components/ScrollToTop';
 import AnalyticsOverview from './Admin/AnalyticsOverview';
 import Reports from './Admin/Reports';
+import CustomerAnalytics from './Admin/CustomerAnalytics';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -124,6 +125,8 @@ function App() {
         <Route path='/admin/refunds' element={<ProtectedRoute element={<AdminRefunds />} adminOnly={true} />} />
         <Route path='/admin/analytics' element={<ProtectedRoute element={<AnalyticsOverview />} adminOnly={true} />} />
         <Route path='/admin/reports' element={<ProtectedRoute element={<Reports />} adminOnly={true} />} />
+        <Route path='/admin/customers' element={<ProtectedRoute element={<CustomerAnalytics />} adminOnly={true} />} />
+
 
       
       </Routes>
