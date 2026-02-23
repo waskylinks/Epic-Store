@@ -322,5 +322,186 @@ export const emailTemplates = {
                 </center>
             </div>
         `)
-    })
+    }),
+
+    /**
+     * Cart Recovery Email Template
+     *
+     * @param {Object} params
+     * @param {string} params.firstName       - Customer first name
+     * @param {Array}  params.items           - Cart items [{ name, price, quantity, image }]
+     * @param {number} params.totalPrice      - Cart total
+     * @param {string} params.recoveryUrl     - Tokenized recovery link
+     * @param {number} params.attemptNumber   - Which attempt this is (1, 2, or 3)
+     * @param {string} params.currency        - Currency symbol, defaults to '$'
+     */
+    cartRecoveryEmail: ({ firstName, items = [], totalPrice, recoveryUrl, attemptNumber = 1, currency = '$' }) => {
+        // Subject line varies by attempt to avoid feeling spammy
+        const subjects = {
+            1: `${firstName}, you left something behind 🛒`,
+            2: `Still thinking it over, ${firstName}? Your cart is waiting`,
+            3: `Last chance — your cart expires soon, ${firstName}`,
+        };
+
+        const subject = subjects[attemptNumber] || subjects[1];
+
+        // Build item rows for the cart summary table
+        const itemRows = items.map((item) => `
+            <tr>
+                <td style="padding: 12px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: middle;">
+                    ${item.image
+                        ? `<img
+                                src="${item.image}"
+                                alt="${item.name}"
+                                width="56"
+                                height="56"
+                                style="border-radius: 6px; object-fit: cover; display: block;"
+                            />`
+                        : `<div style="
+                                width: 56px; height: 56px; border-radius: 6px;
+                                background: linear-gradient(135deg, #667eea22 0%, #764ba222 100%);
+                                display: flex; align-items: center; justify-content: center;
+                                font-size: 24px;
+                            ">🛍️</div>`
+                    }
+                </td>
+                <td style="padding: 12px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: middle;">
+                    <div style="font-weight: 600; color: #333; font-size: 14px;">${item.name}</div>
+                    <div style="color: #888; font-size: 13px; margin-top: 3px;">Qty: ${item.quantity}</div>
+                </td>
+                <td style="padding: 12px 8px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; text-align: right;">
+                    <div style="font-weight: 700; color: #667eea; font-size: 14px;">
+                        ${currency}${(item.price * item.quantity).toFixed(2)}
+                    </div>
+                    ${item.quantity > 1
+                        ? `<div style="color: #aaa; font-size: 12px;">${currency}${item.price.toFixed(2)} each</div>`
+                        : ''
+                    }
+                </td>
+            </tr>
+        `).join('');
+
+        // Urgency message varies by attempt
+        const urgencyMessages = {
+            1: `<div class="info-box">
+                    <strong>💡 Your cart is saved!</strong> We've held your items for you.
+                    Complete your purchase before they sell out.
+                </div>`,
+            2: `<div class="warning">
+                    <strong>⏳ Your cart is still waiting.</strong> Some items in your cart
+                    have limited stock. Don't miss out — complete your order today.
+                </div>`,
+            3: `<div style="
+                    background-color: #fdecea;
+                    border-left: 4px solid #dc3545;
+                    padding: 15px;
+                    margin: 20px 0;
+                    border-radius: 4px;
+                    color: #721c24;
+                ">
+                    <strong>🚨 Final reminder!</strong> This is your last recovery email.
+                    Your cart will expire soon — complete your purchase now before your
+                    items are gone.
+                </div>`,
+        };
+
+        const urgencyMessage = urgencyMessages[attemptNumber] || urgencyMessages[1];
+
+        const text = [
+            `Hi ${firstName},`,
+            '',
+            `You left ${items.length} item${items.length !== 1 ? 's' : ''} in your EpicStore cart.`,
+            '',
+            'Your cart:',
+            ...items.map((i) => `  - ${i.name} x${i.quantity}  ${currency}${(i.price * i.quantity).toFixed(2)}`),
+            '',
+            `Cart Total: ${currency}${totalPrice.toFixed(2)}`,
+            '',
+            'Complete your purchase here:',
+            recoveryUrl,
+            '',
+            'This link expires in 72 hours.',
+            '',
+            'Best regards,',
+            'The EpicStore Team',
+        ].join('\n');
+
+        return {
+            subject,
+            text,
+            html: getEmailWrapper(`
+                <div class="content">
+                    <h2>You left something behind 🛒</h2>
+                    <p>Hi <strong>${firstName}</strong>,</p>
+                    <p>
+                        You were so close! You left
+                        <strong>${items.length} item${items.length !== 1 ? 's' : ''}</strong>
+                        in your cart. The good news — we saved everything for you.
+                    </p>
+
+                    ${urgencyMessage}
+
+                    <!-- Cart summary -->
+                    <div style="
+                        background-color: #f8f9fa;
+                        border-radius: 8px;
+                        overflow: hidden;
+                        margin: 24px 0;
+                        border: 1px solid #e9ecef;
+                    ">
+                        <div style="
+                            padding: 14px 16px;
+                            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
+                            border-bottom: 1px solid #e9ecef;
+                            font-weight: 700;
+                            color: #333;
+                            font-size: 14px;
+                        ">
+                            🛍️ Your Cart Summary
+                        </div>
+                        <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse: collapse;">
+                            <tbody>
+                                ${itemRows}
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td colspan="2" style="padding: 14px 8px; font-weight: 700; color: #333; font-size: 15px;">
+                                        Total
+                                    </td>
+                                    <td style="padding: 14px 8px; text-align: right; font-weight: 800; color: #667eea; font-size: 18px;">
+                                        ${currency}${totalPrice.toFixed(2)}
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <!-- CTA -->
+                    <center>
+                        <a href="${recoveryUrl}" class="button" style="font-size: 16px; padding: 16px 40px;">
+                            Complete My Purchase
+                        </a>
+                    </center>
+
+                    <p style="margin-top: 24px; color: #888; font-size: 13px; text-align: center;">
+                        This link expires in <strong>72 hours</strong>. After that you'll need to
+                        add your items to the cart again.
+                    </p>
+
+                    <div style="
+                        margin-top: 28px;
+                        padding-top: 20px;
+                        border-top: 1px solid #f0f0f0;
+                        color: #999;
+                        font-size: 12px;
+                        text-align: center;
+                        line-height: 1.8;
+                    ">
+                        You're receiving this because you started a checkout on EpicStore
+                        and didn't complete it. If this wasn't you, you can safely ignore this email.
+                    </div>
+                </div>
+            `),
+        };
+    },
 };
