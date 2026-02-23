@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { deleteCachePattern } from '../utils/redis.js';
+import { generateRecoveryToken } from '../utils/recoveryToken.js';
 
 // ============================================
 // SHARED PRIORITY CALCULATION
@@ -34,8 +35,10 @@ export const calculatePriorityScore = (checkout) => {
   // Recency scoring (20 points max)
   const abandonedAt = checkout.abandonment?.abandonedAt;
   if (abandonedAt) {
-    const hoursSince = Math.floor((Date.now() - new Date(abandonedAt).getTime()) / (1000 * 60 * 60));
-    if (hoursSince < 6) score += 20;
+    const hoursSince = Math.floor(
+      (Date.now() - new Date(abandonedAt).getTime()) / (1000 * 60 * 60)
+    );
+    if (hoursSince < 6)       score += 20;
     else if (hoursSince < 24) score += 15;
     else if (hoursSince < 48) score += 10;
     else if (hoursSince < 72) score += 5;
@@ -65,116 +68,105 @@ const checkoutSchema = new mongoose.Schema(
         ref: "Product",
         required: true
       },
-      name: String,
-      price: Number,
+      name:     String,
+      price:    Number,
       quantity: Number,
-      image: String
+      image:    String
     }],
 
     pricing: {
-      itemPrice: Number,
-      taxPrice: Number,
-      shippingPrice: Number,
-      discountAmount: {
-        type: Number,
-        default: 0
-      },
-      totalPrice: Number,
-      currency: {
-        type: String,
-        default: 'USD'
-      }
+      itemPrice:      Number,
+      taxPrice:       Number,
+      shippingPrice:  Number,
+      discountAmount: { type: Number, default: 0 },
+      totalPrice:     Number,
+      currency:       { type: String, default: 'USD' }
     },
 
     shippingInfo: {
       firstName: String,
-      lastName: String,
-      address: String,
-      city: String,
-      state: String,
-      pinCode: String,
-      country: String,
-      phoneNo: String
+      lastName:  String,
+      address:   String,
+      city:      String,
+      state:     String,
+      pinCode:   String,
+      country:   String,
+      phoneNo:   String
     },
 
     discount: {
-      code: String,
-      discountId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Discount"
-      },
+      code:           String,
+      discountId:     { type: mongoose.Schema.Types.ObjectId, ref: "Discount" },
       discountAmount: Number
     },
 
     status: {
-      type: String,
-      enum: ['pending', 'completed', 'abandoned', 'expired'],
+      type:    String,
+      enum:    ['pending', 'completed', 'abandoned', 'expired'],
       default: 'pending',
-      index: true
+      index:   true
     },
 
     currentStep: {
-      type: String,
-      enum: ['shipping_info', 'payment_selection', 'payment_gateway', 'payment_failed'],
+      type:    String,
+      enum:    ['shipping_info', 'payment_selection', 'payment_gateway', 'payment_failed'],
       default: 'shipping_info'
     },
 
     stepsCompleted: [{
-      step: String,
+      step:        String,
       completedAt: Date
     }],
 
     abandonment: {
       isAbandoned: {
-        type: Boolean,
+        type:    Boolean,
         default: false,
-        index: true
+        index:   true
       },
-      abandonedAt: Date,
-      abandonedAtStep: String,
-      
-      recoveryEmailSent: {
-        type: Boolean,
-        default: false
-      },
+      abandonedAt:      Date,
+      abandonedAtStep:  String,
+
+      recoveryEmailSent:  { type: Boolean, default: false },
       recoveryEmailSentAt: Date,
-      recoveryEmailCount: {
-        type: Number,
-        default: 0
-      },
-      
-      recovered: {
-        type: Boolean,
-        default: false
-      },
-      recoveredAt: Date,
+      recoveryEmailCount: { type: Number, default: 0 },
+
+      // ── NEW: last recovery token issued ─────────────────
+      // Stored for audit/reference only — NOT used for verification.
+      // Verification is done by JWT signature via recoveryToken.js.
+      // Lets you see in the DB which token was last generated,
+      // and lets the recovery route do a secondary ownership check
+      // if you ever want to invalidate tokens early.
+      lastRecoveryToken:       { type: String, select: false },
+      lastRecoveryTokenIssuedAt: Date,
+      // ────────────────────────────────────────────────────
+
+      recovered:        { type: Boolean, default: false },
+      recoveredAt:      Date,
       recoveryTimeframe: Number,
-      likelyFromEmail: Boolean
+      likelyFromEmail:  Boolean
     },
 
     conversion: {
       isConverted: {
-        type: Boolean,
+        type:    Boolean,
         default: false,
-        index: true
+        index:   true
       },
-      convertedAt: Date,
-      orderId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Order"
-      },
+      convertedAt:      Date,
+      orderId:          { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
       paymentReference: String
     },
 
     analytics: {
       source: {
-        type: String,
-        enum: ['organic', 'paid', 'referral', 'email', 'social', 'direct'],
+        type:    String,
+        enum:    ['organic', 'paid', 'referral', 'email', 'social', 'direct'],
         default: 'direct'
       },
-      medium: String,
-      campaign: String,
-      referrer: String,
+      medium:      String,
+      campaign:    String,
+      referrer:    String,
       landingPage: String,
       device: {
         type: String,
@@ -188,76 +180,75 @@ const checkoutSchema = new mongoose.Schema(
       enum: ['stripe', 'paystack', 'flutterwave']
     },
 
-    paymentInitialized: {
-      type: Boolean,
-      default: false
-    },
-
+    paymentInitialized:   { type: Boolean, default: false },
     paymentInitializedAt: Date,
 
     lastActivityAt: {
-      type: Date,
+      type:    Date,
       default: Date.now,
-      index: true
+      index:   true
     },
 
-    expiresAt: {
-      type: Date,
-    }
+    expiresAt: { type: Date }
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
+    toJSON:  { virtuals: true },
     toObject: { virtuals: true }
   }
 );
 
 // ============================================
-// INDEXES - Optimized for actual query patterns
+// INDEXES
 // ============================================
 
 checkoutSchema.index({ createdAt: -1 });
-checkoutSchema.index({ user: 1, status: 1, lastActivityAt: -1 }, { name: 'user_active_checkout_idx' });
+checkoutSchema.index(
+  { user: 1, status: 1, lastActivityAt: -1 },
+  { name: 'user_active_checkout_idx' }
+);
 checkoutSchema.index({ status: 1, lastActivityAt: -1 });
 checkoutSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
-// Compound index for abandonment analytics queries
-checkoutSchema.index({
-  'abandonment.isAbandoned': 1,
-  'abandonment.abandonedAt': -1,
-  'conversion.isConverted': 1,
-  'pricing.totalPrice': -1
-}, { 
-  name: 'abandonment_analytics_idx'
-});
+checkoutSchema.index(
+  {
+    'abandonment.isAbandoned':    1,
+    'abandonment.abandonedAt':    -1,
+    'conversion.isConverted':     1,
+    'pricing.totalPrice':         -1
+  },
+  { name: 'abandonment_analytics_idx' }
+);
 
-// Index for recovery email queries
-checkoutSchema.index({
-  'abandonment.isAbandoned': 1,
-  'abandonment.recoveryEmailSent': 1,
-  'conversion.isConverted': 1,
-  status: 1
-}, {
-  name: 'recovery_email_idx'
-});
+checkoutSchema.index(
+  {
+    'abandonment.isAbandoned':     1,
+    'abandonment.recoveryEmailSent': 1,
+    'conversion.isConverted':      1,
+    status:                        1
+  },
+  { name: 'recovery_email_idx' }
+);
 
 // ============================================
 // VIRTUALS
 // ============================================
 
-checkoutSchema.virtual('minutesSinceLastActivity').get(function() {
+checkoutSchema.virtual('minutesSinceLastActivity').get(function () {
   if (!this.lastActivityAt) return 0;
   return Math.floor((Date.now() - this.lastActivityAt.getTime()) / (1000 * 60));
 });
 
-checkoutSchema.virtual('shouldBeAbandoned').get(function() {
-  const ABANDONMENT_THRESHOLD_HOURS = parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
-  const thresholdMinutes = ABANDONMENT_THRESHOLD_HOURS * 60;
-  return this.status === 'pending' && this.minutesSinceLastActivity >= thresholdMinutes;
+checkoutSchema.virtual('shouldBeAbandoned').get(function () {
+  const ABANDONMENT_THRESHOLD_HOURS =
+    parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+  return (
+    this.status === 'pending' &&
+    this.minutesSinceLastActivity >= ABANDONMENT_THRESHOLD_HOURS * 60
+  );
 });
 
-// Uses shared calculation function
-checkoutSchema.virtual('recoveryPriority').get(function() {
+checkoutSchema.virtual('recoveryPriority').get(function () {
   return calculatePriorityScore(this);
 });
 
@@ -265,124 +256,106 @@ checkoutSchema.virtual('recoveryPriority').get(function() {
 // STATIC METHODS
 // ============================================
 
-checkoutSchema.statics.getAbandonmentRate = async function(startDate, endDate) {
+checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) {
   const stats = await this.aggregate([
-    {
-      $match: {
-        createdAt: { $gte: startDate, $lte: endDate }
-      }
-    },
+    { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
     {
       $group: {
-        _id: null,
-        total: { $sum: 1 },
-        abandoned: {
-          $sum: { $cond: ['$abandonment.isAbandoned', 1, 0] }
-        },
-        converted: {
-          $sum: { $cond: ['$conversion.isConverted', 1, 0] }
-        },
-        pending: {
-          $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
-        },
-        expired: {
-          $sum: { $cond: [{ $eq: ['$status', 'expired'] }, 1, 0] }
-        }
+        _id:       null,
+        total:     { $sum: 1 },
+        abandoned: { $sum: { $cond: ['$abandonment.isAbandoned', 1, 0] } },
+        converted: { $sum: { $cond: ['$conversion.isConverted', 1, 0] } },
+        pending:   { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+        expired:   { $sum: { $cond: [{ $eq: ['$status', 'expired'] }, 1, 0] } }
       }
     }
   ]);
 
-  const result = stats[0] || { 
-    total: 0, 
-    abandoned: 0, 
-    converted: 0, 
-    pending: 0,
-    expired: 0 
+  const result = stats[0] || {
+    total: 0, abandoned: 0, converted: 0, pending: 0, expired: 0
   };
 
   const completedCheckouts = result.abandoned + result.converted;
-  const rate = completedCheckouts > 0 
-    ? (result.abandoned / completedCheckouts) * 100 
-    : 0;
+  const rate =
+    completedCheckouts > 0
+      ? (result.abandoned / completedCheckouts) * 100
+      : 0;
 
   return {
-    totalCheckouts: result.total,
+    totalCheckouts:     result.total,
     abandonedCheckouts: result.abandoned,
     convertedCheckouts: result.converted,
-    pendingCheckouts: result.pending,
-    expiredCheckouts: result.expired,
+    pendingCheckouts:   result.pending,
+    expiredCheckouts:   result.expired,
     completedCheckouts,
     abandonmentRate: Math.round(rate * 100) / 100,
-    conversionRate: completedCheckouts > 0 
-      ? Math.round((result.converted / completedCheckouts) * 10000) / 100
-      : 0
+    conversionRate:
+      completedCheckouts > 0
+        ? Math.round((result.converted / completedCheckouts) * 10000) / 100
+        : 0
   };
 };
 
-checkoutSchema.statics.getRecoveryOpportunities = async function(limit = 50) {
-  const checkouts = await this.find({
-    'abandonment.isAbandoned': true,
+checkoutSchema.statics.getRecoveryOpportunities = async function (limit = 50) {
+  return this.find({
+    'abandonment.isAbandoned':      true,
     'abandonment.recoveryEmailSent': false,
-    'conversion.isConverted': false,
-    status: 'abandoned'
+    'conversion.isConverted':        false,
+    status:                          'abandoned'
   })
     .populate('user', 'firstName lastName email')
     .populate('items.product', 'name images')
     .sort({ 'pricing.totalPrice': -1 })
     .limit(limit)
     .lean();
-  
-  return checkouts;
 };
 
 // ============================================
 // INSTANCE METHODS
 // ============================================
 
-checkoutSchema.methods.updateStep = function(step) {
+checkoutSchema.methods.updateStep = function (step) {
   this.currentStep = step;
-  this.stepsCompleted.push({
-    step,
-    completedAt: new Date()
-  });
+  this.stepsCompleted.push({ step, completedAt: new Date() });
   this.lastActivityAt = new Date();
 };
 
-checkoutSchema.methods.markAsAbandoned = function() {
-  this.abandonment.isAbandoned = true;
-  this.abandonment.abandonedAt = new Date();
+checkoutSchema.methods.markAsAbandoned = function () {
+  this.abandonment.isAbandoned    = true;
+  this.abandonment.abandonedAt    = new Date();
   this.abandonment.abandonedAtStep = this.currentStep;
-  this.status = 'abandoned';
-  this._shouldInvalidateCache = true;
+  this.status                     = 'abandoned';
+  this._shouldInvalidateCache     = true;
 };
 
-checkoutSchema.methods.markAsConverted = function(orderId, paymentReference) {
-  this.conversion.isConverted = true;
-  this.conversion.convertedAt = new Date();
-  this.conversion.orderId = orderId;
+checkoutSchema.methods.markAsConverted = function (orderId, paymentReference) {
+  this.conversion.isConverted      = true;
+  this.conversion.convertedAt      = new Date();
+  this.conversion.orderId          = orderId;
   this.conversion.paymentReference = paymentReference;
-  this.status = 'completed';
-  
+  this.status                      = 'completed';
+
   if (this.abandonment.isAbandoned) {
-    this.abandonment.recovered = true;
+    this.abandonment.recovered   = true;
     this.abandonment.recoveredAt = new Date();
-    
+
     if (this.abandonment.recoveryEmailSentAt) {
-      const hoursAfterEmail = 
-        (this.conversion.convertedAt - this.abandonment.recoveryEmailSentAt) / (1000 * 60 * 60);
-      
+      const hoursAfterEmail =
+        (this.conversion.convertedAt - this.abandonment.recoveryEmailSentAt) /
+        (1000 * 60 * 60);
+
       this.abandonment.recoveryTimeframe = hoursAfterEmail;
-      this.abandonment.likelyFromEmail = hoursAfterEmail < 72;
+      this.abandonment.likelyFromEmail   = hoursAfterEmail < 72;
     }
   }
-  
+
   this._shouldInvalidateCache = true;
 };
 
-checkoutSchema.methods.canSendRecoveryEmail = function() {
-  const MAX_ATTEMPTS = parseInt(process.env.MAX_RECOVERY_ATTEMPTS) || 3;
+checkoutSchema.methods.canSendRecoveryEmail = function () {
+  const MAX_ATTEMPTS  = parseInt(process.env.MAX_RECOVERY_ATTEMPTS)  || 3;
   const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
-  const MAX_AGE_DAYS = 7;
+  const MAX_AGE_DAYS  = 7;
 
   if (this.conversion.isConverted) {
     return { canSend: false, reason: 'Checkout already converted' };
@@ -393,66 +366,93 @@ checkoutSchema.methods.canSendRecoveryEmail = function() {
   }
 
   if (this.abandonment.recoveryEmailCount >= MAX_ATTEMPTS) {
-    return { 
-      canSend: false, 
-      reason: `Maximum recovery attempts (${MAX_ATTEMPTS}) reached` 
+    return {
+      canSend: false,
+      reason:  `Maximum recovery attempts (${MAX_ATTEMPTS}) reached`
     };
   }
 
   if (this.abandonment.recoveryEmailSentAt) {
-    const hoursSinceLastEmail = 
-      (Date.now() - this.abandonment.recoveryEmailSentAt.getTime()) / (1000 * 60 * 60);
-    
+    const hoursSinceLastEmail =
+      (Date.now() - this.abandonment.recoveryEmailSentAt.getTime()) /
+      (1000 * 60 * 60);
+
     if (hoursSinceLastEmail < COOLDOWN_HOURS) {
       const hoursRemaining = Math.ceil(COOLDOWN_HOURS - hoursSinceLastEmail);
-      return { 
-        canSend: false, 
-        reason: `Cooldown active. ${hoursRemaining} hours remaining before next email` 
+      return {
+        canSend: false,
+        reason:  `Cooldown active. ${hoursRemaining} hours remaining before next email`
       };
     }
   }
 
   const daysSinceAbandoned = this.abandonment.abandonedAt
-    ? (Date.now() - this.abandonment.abandonedAt.getTime()) / (1000 * 60 * 60 * 24)
+    ? (Date.now() - this.abandonment.abandonedAt.getTime()) /
+      (1000 * 60 * 60 * 24)
     : 0;
 
   if (daysSinceAbandoned > MAX_AGE_DAYS) {
     return {
       canSend: false,
-      reason: `Checkout abandoned ${Math.floor(daysSinceAbandoned)} days ago (max ${MAX_AGE_DAYS} days)`
+      reason:  `Checkout abandoned ${Math.floor(daysSinceAbandoned)} days ago (max ${MAX_AGE_DAYS} days)`
     };
   }
 
   return { canSend: true };
 };
 
-checkoutSchema.methods.markRecoveryEmailSent = function() {
+checkoutSchema.methods.markRecoveryEmailSent = function () {
   const canSend = this.canSendRecoveryEmail();
-  if (!canSend.canSend) {
-    throw new Error(canSend.reason);
-  }
-  
-  this.abandonment.recoveryEmailSent = true;
+  if (!canSend.canSend) throw new Error(canSend.reason);
+
+  this.abandonment.recoveryEmailSent   = true;
   this.abandonment.recoveryEmailSentAt = new Date();
   this.abandonment.recoveryEmailCount += 1;
-  this._shouldInvalidateCache = true;
+  this._shouldInvalidateCache          = true;
+};
+
+/**
+ * Generate a signed JWT recovery token for this checkout and
+ * store a reference on the document (select: false — never sent
+ * to the client in normal queries).
+ *
+ * Call checkout.save() after this to persist the audit fields.
+ *
+ * @returns {string} signed JWT — pass this to recoveryEmailService
+ */
+checkoutSchema.methods.generateRecoveryToken = function () {
+  // Reuse the canSendRecoveryEmail guard so we never issue a token
+  // for a checkout that can't legally receive one
+  const canSend = this.canSendRecoveryEmail();
+  if (!canSend.canSend) throw new Error(canSend.reason);
+
+  const token = generateRecoveryToken({
+    checkoutId: this._id,
+    userId:     this.user,
+    email:      this.email,
+  });
+
+  // Audit trail — stored but never returned by default queries
+  this.abandonment.lastRecoveryToken        = token;
+  this.abandonment.lastRecoveryTokenIssuedAt = new Date();
+
+  return token;
 };
 
 // ============================================
 // MIDDLEWARE
 // ============================================
 
-checkoutSchema.pre('save', function(next) {
+checkoutSchema.pre('save', function (next) {
   if (this.isModified('lastActivityAt') || !this.expiresAt) {
     const expiryDate = new Date(this.lastActivityAt || Date.now());
     expiryDate.setDate(expiryDate.getDate() + 30);
     this.expiresAt = expiryDate;
   }
-  
   next();
 });
 
-checkoutSchema.post('save', async function(doc, next) {
+checkoutSchema.post('save', async function (doc, next) {
   if (this._shouldInvalidateCache) {
     try {
       await Promise.all([
