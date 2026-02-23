@@ -4,10 +4,26 @@ import {
   createCheckout,
   updateCheckoutStep,
   getActiveCheckout,
-  abandonCheckout
+  abandonCheckout,
+  redeemRecoveryToken,
 } from '../controller/checkout-controller.js';
 
 const router = express.Router();
+
+/**
+ * Redeem a cart recovery token
+ * @route GET /api/v1/checkout/recover
+ * @access Public — no auth required, token in query string
+ *
+ * IMPORTANT: This route MUST be declared before /:id routes
+ * to prevent Express matching 'recover' as an :id param.
+ *
+ * The frontend recovery link looks like:
+ *   https://yourstore.com/checkout/recover?token=<jwt>
+ * The frontend hits this endpoint, gets the restored cart
+ * data back, and redirects the user into the checkout flow.
+ */
+router.get('/recover', redeemRecoveryToken);
 
 /**
  * Create/update checkout session
