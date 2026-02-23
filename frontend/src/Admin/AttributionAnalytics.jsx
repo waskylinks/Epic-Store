@@ -1,0 +1,842 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useDispatch, useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
+import {
+  ArrowBack, Refresh, ArrowUpward, ArrowDownward, Remove,
+  TrendingUp, TrendingDown, DevicesOther, Language,
+  Campaign, Link as LinkIcon, Laptop, Smartphone,
+  BarChart as BarChartIcon, TableChart, ErrorOutline,
+  TouchApp, FilterAlt, CompareArrows, OpenInNew,
+} from '@mui/icons-material';
+import {
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  PieChart, Pie, Cell, FunnelChart, Funnel,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer,
+} from 'recharts';
+import {
+  fetchChannelPerformance,
+  fetchCampaignPerformance,
+  fetchDevicePerformance,
+  fetchBrowserPerformance,
+  fetchReferrerPerformance,
+  fetchAttributionModels,
+  fetchLandingPagePerformance,
+} from '../features/analytics/analyticsSlice';
+import Navbar from '../components/Navbar';
+import '../AdminStyles/AttributionAnalytics.css';
+
+/* ── Palette ─────────────────────────────────────────────────── */
+const PAL = ['#F5C842','#FB923C','#4ADE80','#60A5FA','#C084FC','#2DD4BF','#FB7185','#A3E635'];
+
+/* ── Formatters ──────────────────────────────────────────────── */
+const fmt = {
+  currency: (v) => new Intl.NumberFormat('en-US',{ style:'currency',currency:'USD',maximumFractionDigits:0 }).format(v||0),
+  number:   (v) => new Intl.NumberFormat('en-US').format(v||0),
+  pct:      (v) => `${(v||0).toFixed(1)}%`,
+  compact:  (v) => {
+    const n = v||0;
+    if (n >= 1_000_000) return `$${(n/1_000_000).toFixed(1)}M`;
+    if (n >= 1_000)     return `$${(n/1_000).toFixed(0)}k`;
+    return fmt.currency(n);
+  },
+};
+
+/* ── Helpers ────────────────────────────────────────────────── */
+function TrendBadge({ value }) {
+  if (value == null) return <span className="at-badge at-badge--flat">—</span>;
+  if (value === 0)   return <span className="at-badge at-badge--flat"><Remove style={{fontSize:10}}/>0%</span>;
+  return (
+    <span className={`at-badge ${value > 0 ? 'at-badge--pos' : 'at-badge--neg'}`}>
+      {value > 0 ? <ArrowUpward style={{fontSize:10}}/> : <ArrowDownward style={{fontSize:10}}/>}
+      {Math.abs(value).toFixed(1)}%
+    </span>
+  );
+}
+function Spinner({ h=200 }) {
+  return <div className="at-loading" style={{minHeight:h}}><div className="at-spinner"/><span>Loading…</span></div>;
+}
+function Empty({ label='No data available', h=180 }) {
+  return (
+    <div className="at-empty" style={{minHeight:h}}>
+      <Campaign style={{fontSize:38,color:'#4A4235'}}/>
+      <span>{label}</span>
+    </div>
+  );
+}
+function KpiSkel() {
+  return (
+    <div className="at-kpi-skel">
+      <div className="at-skel" style={{width:'55%',height:10,marginBottom:12}}/>
+      <div className="at-skel" style={{width:'75%',height:28,marginBottom:8}}/>
+      <div className="at-skel" style={{width:'45%',height:10}}/>
+    </div>
+  );
+}
+function Card({ title, sub, icon:Icon, iconColor, action, flush, footer, children }) {
+  return (
+    <div className="at-card">
+      <div className="at-card-hd">
+        <div className="at-card-hd-left">
+          {Icon && <span className="at-card-icon" style={{background:iconColor+'18',color:iconColor}}><Icon style={{fontSize:18}}/></span>}
+          <div>
+            <h3 className="at-card-title">{title}</h3>
+            {sub && <p className="at-card-sub">{sub}</p>}
+          </div>
+        </div>
+        {action}
+      </div>
+      <div className={flush ? 'at-card-body--np' : 'at-card-body'}>{children}</div>
+      {footer && <div className="at-card-footer">{footer}</div>}
+    </div>
+  );
+}
+
+const TT = {
+  contentStyle:{ background:'#141209',border:'1px solid #2C2618',borderRadius:8,fontSize:13,boxShadow:'0 8px 32px rgba(0,0,0,0.5)',color:'#C8BEA8' },
+  labelStyle:{ color:'#F5F0E8',fontWeight:700 },
+};
+
+/* ── View tabs ───────────────────────────────────────────────── */
+const VIEWS = [
+  { key:'channels',   label:'Channels',      icon:Campaign },
+  { key:'campaigns',  label:'Campaigns',     icon:FilterAlt },
+  { key:'devices',    label:'Devices',       icon:DevicesOther },
+  { key:'browsers',   label:'Browsers',      icon:Language },
+  { key:'referrers',  label:'Referrers',     icon:LinkIcon },
+  { key:'models',     label:'Models',        icon:CompareArrows },
+  { key:'landing',    label:'Landing Pages', icon:OpenInNew },
+];
+
+/* ══════════════════════════════════════════════════════════════
+   MAIN COMPONENT
+══════════════════════════════════════════════════════════════ */
+export default function AttributionAnalytics() {
+  const dispatch = useDispatch();
+  const {
+    channelPerformance, campaignPerformance, devicePerformance,
+    browserPerformance, referrerPerformance, attributionModels,
+    landingPagePerformance, loading, error,
+  } = useSelector(s => s.analytics);
+
+  const [activeView, setActiveView] = useState('channels');
+  const [timeframe,  setTimeframe]  = useState('month');
+  const [hasFetched, setHasFetched] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const loadingRef = useRef(false);
+
+  const loadAll = useCallback(() => {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    setRefreshing(true);
+    setHasFetched(false);
+    Promise.allSettled([
+      dispatch(fetchChannelPerformance({ timeframe })),
+      dispatch(fetchCampaignPerformance({ timeframe })),
+      dispatch(fetchDevicePerformance({ timeframe })),
+      dispatch(fetchBrowserPerformance({ timeframe })),
+      dispatch(fetchReferrerPerformance({ timeframe })),
+      dispatch(fetchAttributionModels({ timeframe })),
+      dispatch(fetchLandingPagePerformance({ timeframe })),
+    ]).finally(() => {
+      loadingRef.current = false;
+      setRefreshing(false);
+      setHasFetched(true);
+    });
+  }, [dispatch, timeframe]);
+
+  useEffect(() => { loadAll(); }, [timeframe]); // eslint-disable-line
+
+  /* ── Derived data ─────────────────────────────────────────── */
+  // channelPerformance: { channels: [{ _id, orders, revenue, customers, newCustomers, ... }] }
+  const channels   = channelPerformance?.channels   || [];
+  const chMax      = channels.length ? Math.max(...channels.map(c => c.revenue||0)) : 1;
+
+  // campaignPerformance: { campaigns: [{ _id, orders, revenue, conversionRate, ... }] }
+  const campaigns  = campaignPerformance?.campaigns || [];
+
+  // devicePerformance: { devices: [{ _id, orders, revenue, percentage, ... }] }
+  const devices    = devicePerformance?.devices     || [];
+
+  // browserPerformance: { browsers: [{ _id, orders, revenue, ... }] }
+  const browsers   = browserPerformance?.browsers   || [];
+
+  // referrerPerformance: { referrers: [{ _id, orders, revenue, ... }] }
+  const referrers  = referrerPerformance?.referrers || [];
+
+  // attributionModels: { firstTouch: {...}, lastTouch: {...} }
+  const firstTouch = attributionModels?.firstTouch  || {};
+  const lastTouch  = attributionModels?.lastTouch   || {};
+
+  // landingPagePerformance: { pages: [{ _id, sessions, orders, revenue, conversionRate, ... }] }
+  const pages      = landingPagePerformance?.pages  || [];
+
+  /* ── Totals for overview KPIs ─────────────────────────────── */
+  const totalRevenue   = channels.reduce((s,c)  => s+(c.revenue||0), 0);
+  const totalOrders    = channels.reduce((s,c)  => s+(c.orders||0), 0);
+  const totalCustomers = channels.reduce((s,c)  => s+(c.customers||0), 0);
+  const totalNewCust   = channels.reduce((s,c)  => s+(c.newCustomers||0), 0);
+
+  const first = !hasFetched;
+
+  return (
+    <>
+      <Navbar/>
+      <div className="at-page">
+        <div className="at-body">
+
+          {/* ── Back ──────────────────────────────────────── */}
+          <Link to="/admin/dashboard" className="at-back">
+            <ArrowBack style={{fontSize:16}}/> Dashboard
+          </Link>
+
+          {/* ── Header ────────────────────────────────────── */}
+          <div className="at-hd">
+            <div className="at-hd-left">
+              <span className="at-hd-icon">
+                <Campaign style={{fontSize:28}}/>
+              </span>
+              <div>
+                <div className="at-hd-eyebrow">Marketing Intelligence</div>
+                <h1 className="at-hd-title">Attribution Analytics</h1>
+                <p className="at-hd-sub">Channels · Campaigns · Devices · Referrers · Attribution Models</p>
+              </div>
+            </div>
+            <div className="at-hd-right">
+              <div className="at-tf">
+                {['day','week','month','quarter','year'].map(t => (
+                  <button
+                    key={t}
+                    className={`at-tf-btn ${timeframe===t?'at-tf-btn--active':''}`}
+                    onClick={() => setTimeframe(t)}
+                    disabled={refreshing}
+                  >
+                    {t.charAt(0).toUpperCase()+t.slice(1)}
+                  </button>
+                ))}
+              </div>
+              <button className={`at-icon-btn ${refreshing?'at-icon-btn--spin':''}`} onClick={loadAll} disabled={refreshing} title="Refresh">
+                <Refresh style={{fontSize:19}}/>
+              </button>
+            </div>
+          </div>
+
+          {error && <div className="at-error"><ErrorOutline style={{fontSize:17}}/>{error}</div>}
+
+          {/* ── Summary KPIs (always visible) ─────────────── */}
+          <div className="at-grid-4">
+            {first ? Array.from({length:4}).map((_,i) => <KpiSkel key={i}/>) : (
+              <>
+                <div className="at-kpi" style={{'--kpi-color':'#F5C842'}}>
+                  <div className="at-kpi-eyebrow">Total Revenue</div>
+                  <div className="at-kpi-value">{fmt.compact(totalRevenue)}</div>
+                  <div className="at-kpi-label">All attributed channels</div>
+                </div>
+                <div className="at-kpi" style={{'--kpi-color':'#4ADE80'}}>
+                  <div className="at-kpi-eyebrow">Total Orders</div>
+                  <div className="at-kpi-value">{fmt.number(totalOrders)}</div>
+                  <div className="at-kpi-label">Across {channels.length} channels</div>
+                </div>
+                <div className="at-kpi" style={{'--kpi-color':'#60A5FA'}}>
+                  <div className="at-kpi-eyebrow">Total Customers</div>
+                  <div className="at-kpi-value">{fmt.number(totalCustomers)}</div>
+                  <div className="at-kpi-label">New: {fmt.number(totalNewCust)}</div>
+                </div>
+                <div className="at-kpi" style={{'--kpi-color':'#C084FC'}}>
+                  <div className="at-kpi-eyebrow">Active Channels</div>
+                  <div className="at-kpi-value">{channels.length}</div>
+                  <div className="at-kpi-label">{campaigns.length} campaigns tracked</div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ── View tabs ─────────────────────────────────── */}
+          <div className="at-tabs">
+            {VIEWS.map(({key,label,icon:Icon}) => (
+              <button key={key} className={`at-tab ${activeView===key?'at-tab--active':''}`} onClick={() => setActiveView(key)}>
+                <Icon style={{fontSize:15}}/>{label}
+              </button>
+            ))}
+          </div>
+
+          {/* ══════════════════════════════════════════════
+              CHANNELS
+          ══════════════════════════════════════════════ */}
+          {activeView === 'channels' && (
+            <div className="at-panel">
+              <div className="at-section"><span className="at-section-text">Channel Performance</span><span className="at-section-line"/></div>
+
+              <div className="at-grid-3-2">
+                {/* Revenue by channel bar */}
+                <Card title="Revenue by Channel" sub="Attributed revenue across all marketing channels" icon={Campaign} iconColor="#F5C842">
+                  {first ? <Spinner h={280}/> : channels.length===0 ? <Empty h={280}/> : (
+                    <>
+                      <div>
+                        {channels.map((c,i) => {
+                          const pct = chMax>0 ? (c.revenue/chMax)*100 : 0;
+                          return (
+                            <div className="at-bar-row" key={i}>
+                              <span className="at-bar-label" title={c._id}>{c._id||'Unknown'}</span>
+                              <div className="at-bar-track">
+                                <div className="at-bar-fill" style={{width:`${pct}%`,background:PAL[i%PAL.length]}}/>
+                              </div>
+                              <span className="at-bar-pct">{fmt.pct(chMax>0?(c.revenue/totalRevenue)*100:0)}</span>
+                              <span className="at-bar-val">{fmt.compact(c.revenue)}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="at-summary-bar" style={{margin:'20px -22px -20px'}}>
+                        <div className="at-summary-item"><div className="at-summary-label">Total Rev</div><div className="at-summary-val">{fmt.compact(totalRevenue)}</div></div>
+                        <div className="at-summary-item"><div className="at-summary-label">Channels</div><div className="at-summary-val">{channels.length}</div></div>
+                        <div className="at-summary-item"><div className="at-summary-label">Top Channel</div><div className="at-summary-val" style={{fontSize:13,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{channels[0]?._id||'—'}</div></div>
+                      </div>
+                    </>
+                  )}
+                </Card>
+
+                {/* Pie */}
+                <Card title="Channel Share" sub="Revenue distribution" icon={BarChartIcon} iconColor="#C084FC">
+                  {first ? <Spinner h={280}/> : channels.length===0 ? <Empty h={280}/> : (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <PieChart>
+                        <Pie data={channels.map((c,i) => ({name:c._id||'Unknown',value:c.revenue||0,fill:PAL[i%PAL.length]}))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({name,percent}) => `${name} ${(percent*100).toFixed(0)}%`} labelLine={{stroke:'#4A4235'}}>
+                          {channels.map((_,i) => <Cell key={i} fill={PAL[i%PAL.length]}/>)}
+                        </Pie>
+                        <Tooltip {...TT} formatter={(v) => [fmt.compact(v),'Revenue']}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
+                </Card>
+              </div>
+
+              {/* Channel detail table */}
+              <div className="at-section"><span className="at-section-text">Detailed Breakdown</span><span className="at-section-line"/></div>
+              <div className="at-row">
+                <Card title="Channel Metrics Table" sub="Orders, revenue, customers and new acquisitions per channel" icon={TableChart} iconColor="#60A5FA"
+                  action={<span style={{fontSize:12,color:'#7A7060',fontWeight:600}}>{channels.length} channels</span>}
+                >
+                  {first ? <Spinner h={200}/> : channels.length===0 ? <Empty/> : (
+                    <div className="at-tbl-wrap">
+                      <table className="at-tbl">
+                        <thead>
+                          <tr><th>#</th><th>Channel</th><th>Orders</th><th>Revenue</th><th>Customers</th><th>New Customers</th><th>Rev/Order</th><th>Share</th></tr>
+                        </thead>
+                        <tbody>
+                          {channels.map((c,i) => (
+                            <tr key={i}>
+                              <td className="at-td-rank">{i+1}</td>
+                              <td><span className="at-dot" style={{background:PAL[i%PAL.length]}}/><span className="at-channel-pill">{c._id||'Unknown'}</span></td>
+                              <td>{fmt.number(c.orders)}</td>
+                              <td className="at-td-money">{fmt.compact(c.revenue)}</td>
+                              <td>{fmt.number(c.customers)}</td>
+                              <td className="at-td-gold">{fmt.number(c.newCustomers)}</td>
+                              <td className="at-td-mono">{fmt.currency((c.revenue||0)/(c.orders||1))}</td>
+                              <td className="at-td-mono">{fmt.pct(totalRevenue>0?(c.revenue/totalRevenue)*100:0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              CAMPAIGNS
+          ══════════════════════════════════════════════ */}
+          {activeView === 'campaigns' && (
+            <div className="at-panel">
+              <div className="at-section"><span className="at-section-text">Campaign Performance</span><span className="at-section-line"/></div>
+
+              {/* Top campaign KPIs */}
+              <div className="at-grid-4">
+                {first ? Array.from({length:4}).map((_,i)=><KpiSkel key={i}/>) : (
+                  <>
+                    <div className="at-kpi" style={{'--kpi-color':'#F5C842'}}>
+                      <div className="at-kpi-eyebrow">Active Campaigns</div>
+                      <div className="at-kpi-value">{campaigns.length}</div>
+                      <div className="at-kpi-label">In selected period</div>
+                    </div>
+                    <div className="at-kpi" style={{'--kpi-color':'#4ADE80'}}>
+                      <div className="at-kpi-eyebrow">Campaign Revenue</div>
+                      <div className="at-kpi-value">{fmt.compact(campaigns.reduce((s,c)=>s+(c.revenue||0),0))}</div>
+                      <div className="at-kpi-label">Total attributed</div>
+                    </div>
+                    <div className="at-kpi" style={{'--kpi-color':'#60A5FA'}}>
+                      <div className="at-kpi-eyebrow">Campaign Orders</div>
+                      <div className="at-kpi-value">{fmt.number(campaigns.reduce((s,c)=>s+(c.orders||0),0))}</div>
+                      <div className="at-kpi-label">Total orders</div>
+                    </div>
+                    <div className="at-kpi" style={{'--kpi-color':'#FB923C'}}>
+                      <div className="at-kpi-eyebrow">Avg Conv Rate</div>
+                      <div className="at-kpi-value">{fmt.pct(campaigns.length>0 ? campaigns.reduce((s,c)=>s+(c.conversionRate||0),0)/campaigns.length : 0)}</div>
+                      <div className="at-kpi-label">Across all campaigns</div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="at-grid-2">
+                <Card title="Revenue by Campaign" sub="Top performing campaigns" icon={Campaign} iconColor="#F5C842">
+                  {first ? <Spinner h={280}/> : campaigns.length===0 ? <Empty h={280}/> : (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={campaigns.slice(0,8).map(c=>({name:(c._id||'').substring(0,16),revenue:c.revenue||0,orders:c.orders||0}))} layout="vertical" margin={{left:4,right:12,top:4,bottom:4}}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#2C2618" horizontal={false}/>
+                        <XAxis type="number" tick={{fontSize:10,fill:'#7A7060'}} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
+                        <YAxis type="category" dataKey="name" tick={{fontSize:10,fill:'#C8BEA8'}} width={110}/>
+                        <Tooltip {...TT} formatter={(v,n)=>[n==='revenue'?fmt.compact(v):fmt.number(v),n==='revenue'?'Revenue':'Orders']}/>
+                        <Bar dataKey="revenue" radius={[0,4,4,0]}>
+                          {campaigns.slice(0,8).map((_,i)=><Cell key={i} fill={PAL[i%PAL.length]}/>)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </Card>
+
+                <Card title="Conversion Rates" sub="Campaign effectiveness" icon={TrendingUp} iconColor="#4ADE80">
+                  {first ? <Spinner h={280}/> : campaigns.length===0 ? <Empty h={280}/> : (
+                    <div>
+                      {campaigns.slice(0,8).map((c,i) => (
+                        <div className="at-bar-row" key={i}>
+                          <span className="at-bar-label" title={c._id}>{(c._id||'').substring(0,20)||'Unknown'}</span>
+                          <div className="at-bar-track">
+                            <div className="at-bar-fill" style={{width:`${Math.min(c.conversionRate||0,100)}%`,background:PAL[i%PAL.length]}}/>
+                          </div>
+                          <span className="at-bar-val">{fmt.pct(c.conversionRate)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              <div className="at-section"><span className="at-section-text">All Campaigns</span><span className="at-section-line"/></div>
+              <div className="at-row">
+                <Card title="Campaign Data Table" sub="Full campaign metrics" icon={TableChart} iconColor="#60A5FA">
+                  {first ? <Spinner h={200}/> : campaigns.length===0 ? <Empty/> : (
+                    <div className="at-tbl-wrap">
+                      <table className="at-tbl">
+                        <thead><tr><th>#</th><th>Campaign</th><th>Orders</th><th>Revenue</th><th>Conv Rate</th><th>Rev/Order</th></tr></thead>
+                        <tbody>
+                          {campaigns.map((c,i) => (
+                            <tr key={i}>
+                              <td className="at-td-rank">{i+1}</td>
+                              <td className="at-td-name">{c._id||'—'}</td>
+                              <td>{fmt.number(c.orders)}</td>
+                              <td className="at-td-money">{fmt.compact(c.revenue)}</td>
+                              <td className="at-td-gold">{fmt.pct(c.conversionRate)}</td>
+                              <td className="at-td-mono">{fmt.currency((c.revenue||0)/(c.orders||1))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              DEVICES
+          ══════════════════════════════════════════════ */}
+          {activeView === 'devices' && (
+            <div className="at-panel">
+              <div className="at-section"><span className="at-section-text">Device Performance</span><span className="at-section-line"/></div>
+              <div className="at-grid-2">
+                <Card title="Orders by Device" sub="With percentage of total orders" icon={DevicesOther} iconColor="#2DD4BF">
+                  {first ? <Spinner h={260}/> : devices.length===0 ? <Empty h={260}/> : (
+                    <div>
+                      {devices.map((d,i) => (
+                        <div className="at-bar-row" key={i}>
+                          <span className="at-bar-label">{d._id||'Unknown'}</span>
+                          <div className="at-bar-track">
+                            <div className="at-bar-fill" style={{width:`${d.percentage||0}%`,background:PAL[i%PAL.length]}}/>
+                          </div>
+                          <span className="at-bar-pct">{fmt.pct(d.percentage)}</span>
+                          <span className="at-bar-val">{fmt.number(d.orders)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card title="Revenue by Device" sub="Attributed revenue per device type" icon={Laptop} iconColor="#F5C842">
+                  {first ? <Spinner h={260}/> : devices.length===0 ? <Empty h={260}/> : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <PieChart>
+                        <Pie data={devices.map((d,i)=>({name:d._id||'Unknown',value:d.revenue||0,fill:PAL[i%PAL.length]}))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label={({name,percent})=>`${name} ${(percent*100).toFixed(0)}%`} labelLine={{stroke:'#4A4235'}}>
+                          {devices.map((_,i)=><Cell key={i} fill={PAL[i%PAL.length]}/>)}
+                        </Pie>
+                        <Tooltip {...TT} formatter={v=>[fmt.compact(v),'Revenue']}/>
+                      </PieChart>
+                    </ResponsiveContainer>
+                  )}
+                </Card>
+              </div>
+
+              <div className="at-row">
+                <Card title="Device Breakdown" sub="Full metrics per device" icon={Smartphone} iconColor="#C084FC">
+                  {first ? <Spinner h={160}/> : devices.length===0 ? <Empty/> : (
+                    <div className="at-tbl-wrap">
+                      <table className="at-tbl">
+                        <thead><tr><th>#</th><th>Device</th><th>Orders</th><th>% of Orders</th><th>Revenue</th><th>Rev/Order</th></tr></thead>
+                        <tbody>
+                          {devices.map((d,i) => (
+                            <tr key={i}>
+                              <td className="at-td-rank">{i+1}</td>
+                              <td><span className="at-dot" style={{background:PAL[i%PAL.length]}}/><span style={{fontWeight:600,color:'#F5F0E8'}}>{d._id||'Unknown'}</span></td>
+                              <td>{fmt.number(d.orders)}</td>
+                              <td className="at-td-gold">{fmt.pct(d.percentage)}</td>
+                              <td className="at-td-money">{fmt.compact(d.revenue)}</td>
+                              <td className="at-td-mono">{fmt.currency((d.revenue||0)/(d.orders||1))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              BROWSERS
+          ══════════════════════════════════════════════ */}
+          {activeView === 'browsers' && (
+            <div className="at-panel">
+              <div className="at-section"><span className="at-section-text">Browser Performance</span><span className="at-section-line"/></div>
+              <div className="at-grid-2">
+                <Card title="Orders by Browser" sub="Breakdown of orders per browser" icon={Language} iconColor="#60A5FA">
+                  {first ? <Spinner h={260}/> : browsers.length===0 ? <Empty h={260}/> : (
+                    <div>
+                      {browsers.map((b,i) => {
+                        const max = Math.max(...browsers.map(x=>x.orders||0))||1;
+                        return (
+                          <div className="at-bar-row" key={i}>
+                            <span className="at-bar-label">{b._id||'Unknown'}</span>
+                            <div className="at-bar-track">
+                              <div className="at-bar-fill" style={{width:`${(b.orders/max)*100}%`,background:PAL[i%PAL.length]}}/>
+                            </div>
+                            <span className="at-bar-val">{fmt.number(b.orders)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+
+                <Card title="Revenue by Browser" sub="Which browsers drive most value" icon={Language} iconColor="#F5C842">
+                  {first ? <Spinner h={260}/> : browsers.length===0 ? <Empty h={260}/> : (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={browsers.map(b=>({name:(b._id||'Unknown').substring(0,12),revenue:b.revenue||0,orders:b.orders||0}))} margin={{top:4,right:8,left:0,bottom:0}}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#2C2618"/>
+                        <XAxis dataKey="name" tick={{fontSize:10,fill:'#7A7060'}}/>
+                        <YAxis tick={{fontSize:10,fill:'#7A7060'}} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
+                        <Tooltip {...TT} formatter={(v,n)=>[n==='revenue'?fmt.compact(v):fmt.number(v),n==='revenue'?'Revenue':'Orders']}/>
+                        <Bar dataKey="revenue" radius={[4,4,0,0]}>
+                          {browsers.map((_,i)=><Cell key={i} fill={PAL[i%PAL.length]}/>)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </Card>
+              </div>
+
+              <div className="at-row">
+                <Card title="Browser Detail Table" sub="Complete metrics per browser" icon={TableChart} iconColor="#60A5FA">
+                  {first ? <Spinner h={160}/> : browsers.length===0 ? <Empty/> : (
+                    <div className="at-tbl-wrap">
+                      <table className="at-tbl">
+                        <thead><tr><th>#</th><th>Browser</th><th>Orders</th><th>Revenue</th><th>Rev/Order</th></tr></thead>
+                        <tbody>
+                          {browsers.map((b,i) => (
+                            <tr key={i}>
+                              <td className="at-td-rank">{i+1}</td>
+                              <td><span className="at-dot" style={{background:PAL[i%PAL.length]}}/><span style={{fontWeight:600,color:'#F5F0E8'}}>{b._id||'Unknown'}</span></td>
+                              <td>{fmt.number(b.orders)}</td>
+                              <td className="at-td-money">{fmt.compact(b.revenue)}</td>
+                              <td className="at-td-mono">{fmt.currency((b.revenue||0)/(b.orders||1))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              REFERRERS
+          ══════════════════════════════════════════════ */}
+          {activeView === 'referrers' && (
+            <div className="at-panel">
+              <div className="at-section"><span className="at-section-text">Referrer Performance</span><span className="at-section-line"/></div>
+              <div className="at-grid-2">
+                <Card title="Top Referrers by Revenue" sub="Traffic sources driving most revenue" icon={LinkIcon} iconColor="#4ADE80">
+                  {first ? <Spinner h={280}/> : referrers.length===0 ? <Empty h={280}/> : (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart data={referrers.slice(0,8).map(r=>({name:(r._id||'Direct').substring(0,18),revenue:r.revenue||0,orders:r.orders||0}))} layout="vertical" margin={{left:4,right:12,top:4,bottom:4}}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#2C2618" horizontal={false}/>
+                        <XAxis type="number" tick={{fontSize:10,fill:'#7A7060'}} tickFormatter={v=>`$${(v/1000).toFixed(0)}k`}/>
+                        <YAxis type="category" dataKey="name" tick={{fontSize:10,fill:'#C8BEA8'}} width={130}/>
+                        <Tooltip {...TT} formatter={(v,n)=>[n==='revenue'?fmt.compact(v):fmt.number(v),n==='revenue'?'Revenue':'Orders']}/>
+                        <Bar dataKey="revenue" radius={[0,4,4,0]}>
+                          {referrers.slice(0,8).map((_,i)=><Cell key={i} fill={PAL[i%PAL.length]}/>)}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </Card>
+
+                <Card title="Referrer Order Share" sub="Orders per referral source" icon={BarChartIcon} iconColor="#F5C842">
+                  {first ? <Spinner h={280}/> : referrers.length===0 ? <Empty h={280}/> : (
+                    <div>
+                      {referrers.slice(0,8).map((r,i) => {
+                        const max = Math.max(...referrers.map(x=>x.orders||0))||1;
+                        return (
+                          <div className="at-bar-row" key={i}>
+                            <span className="at-bar-label" title={r._id||'Direct'}>{(r._id||'Direct').substring(0,20)}</span>
+                            <div className="at-bar-track">
+                              <div className="at-bar-fill" style={{width:`${(r.orders/max)*100}%`,background:PAL[i%PAL.length]}}/>
+                            </div>
+                            <span className="at-bar-val">{fmt.number(r.orders)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              <div className="at-row">
+                <Card title="All Referrers" sub="Complete referral source data" icon={TableChart} iconColor="#60A5FA"
+                  action={<span style={{fontSize:12,color:'#7A7060',fontWeight:600}}>{referrers.length} sources</span>}
+                >
+                  {first ? <Spinner h={200}/> : referrers.length===0 ? <Empty/> : (
+                    <div className="at-tbl-wrap">
+                      <table className="at-tbl">
+                        <thead><tr><th>#</th><th>Referrer</th><th>Orders</th><th>Revenue</th><th>Rev/Order</th></tr></thead>
+                        <tbody>
+                          {referrers.map((r,i) => (
+                            <tr key={i}>
+                              <td className="at-td-rank">{i+1}</td>
+                              <td className="at-td-name">{r._id||'Direct'}</td>
+                              <td>{fmt.number(r.orders)}</td>
+                              <td className="at-td-money">{fmt.compact(r.revenue)}</td>
+                              <td className="at-td-mono">{fmt.currency((r.revenue||0)/(r.orders||1))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              ATTRIBUTION MODELS
+          ══════════════════════════════════════════════ */}
+          {activeView === 'models' && (
+            <div className="at-panel">
+              <div className="at-section"><span className="at-section-text">Attribution Model Comparison</span><span className="at-section-line"/></div>
+
+              <div className="at-grid-2">
+                <Card title="First-Touch Attribution" sub="Credit given to the first channel a customer interacted with" icon={TouchApp} iconColor="#F5C842">
+                  {first ? <Spinner h={240}/> : !attributionModels ? <Empty h={240}/> : (
+                    <div>
+                      {(firstTouch.channels || firstTouch.topChannels || []).map((c,i) => (
+                        <div className="at-metric-row" key={i}>
+                          <span className="at-metric-label" style={{display:'flex',alignItems:'center',gap:8}}>
+                            <span style={{width:8,height:8,borderRadius:'50%',background:PAL[i%PAL.length],display:'inline-block',flexShrink:0}}/>
+                            {c._id||c.channel||'Unknown'}
+                          </span>
+                          <div style={{display:'flex',alignItems:'center',gap:10}}>
+                            <span className="at-metric-val at-metric-val--gold">{fmt.compact(c.revenue||c.totalRevenue)}</span>
+                            <span style={{fontSize:12,color:'#7A7060'}}>{fmt.number(c.orders||c.totalOrders)} orders</span>
+                          </div>
+                        </div>
+                      ))}
+                      {/* Fallback summary if no channels array */}
+                      {!(firstTouch.channels||firstTouch.topChannels)?.length && (
+                        <div>
+                          {Object.entries(firstTouch).map(([k,v],i) => (
+                            <div className="at-metric-row" key={k}>
+                              <span className="at-metric-label" style={{textTransform:'capitalize'}}>{k.replace(/([A-Z])/g,' $1')}</span>
+                              <span className="at-metric-val at-metric-val--gold">{typeof v==='number' ? (k.toLowerCase().includes('revenue') ? fmt.compact(v) : fmt.number(v)) : String(v)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+
+                <Card title="Last-Touch Attribution" sub="Credit given to the final channel before conversion" icon={TouchApp} iconColor="#60A5FA">
+                  {first ? <Spinner h={240}/> : !attributionModels ? <Empty h={240}/> : (
+                    <div>
+                      {(lastTouch.channels || lastTouch.topChannels || []).map((c,i) => (
+                        <div className="at-metric-row" key={i}>
+                          <span className="at-metric-label" style={{display:'flex',alignItems:'center',gap:8}}>
+                            <span style={{width:8,height:8,borderRadius:'50%',background:PAL[i%PAL.length],display:'inline-block',flexShrink:0}}/>
+                            {c._id||c.channel||'Unknown'}
+                          </span>
+                          <div style={{display:'flex',alignItems:'center',gap:10}}>
+                            <span className="at-metric-val at-metric-val--blue">{fmt.compact(c.revenue||c.totalRevenue)}</span>
+                            <span style={{fontSize:12,color:'#7A7060'}}>{fmt.number(c.orders||c.totalOrders)} orders</span>
+                          </div>
+                        </div>
+                      ))}
+                      {!(lastTouch.channels||lastTouch.topChannels)?.length && (
+                        <div>
+                          {Object.entries(lastTouch).map(([k,v]) => (
+                            <div className="at-metric-row" key={k}>
+                              <span className="at-metric-label" style={{textTransform:'capitalize'}}>{k.replace(/([A-Z])/g,' $1')}</span>
+                              <span className="at-metric-val at-metric-val--blue">{typeof v==='number' ? (k.toLowerCase().includes('revenue') ? fmt.compact(v) : fmt.number(v)) : String(v)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              {/* Comparison explainer */}
+              <div className="at-row">
+                <Card title="Attribution Model Guide" sub="Understanding first-touch vs last-touch" icon={CompareArrows} iconColor="#C084FC">
+                  <div className="at-model-hd">
+                    <div className="at-model-col">
+                      <div className="at-model-title">First-Touch</div>
+                      <div style={{fontSize:13,color:'#C8BEA8',lineHeight:1.7}}>
+                        All credit goes to the very first channel the customer interacted with. Best for measuring
+                        <span style={{color:'#F5C842',fontWeight:600}}> awareness &amp; discovery</span> effectiveness.
+                        Shows which channels attract new audiences into your funnel.
+                      </div>
+                    </div>
+                    <div className="at-model-col">
+                      <div className="at-model-title">Last-Touch</div>
+                      <div style={{fontSize:13,color:'#C8BEA8',lineHeight:1.7}}>
+                        All credit goes to the final channel before purchase. Best for measuring
+                        <span style={{color:'#60A5FA',fontWeight:600}}> conversion &amp; closing</span> performance.
+                        Shows which channels directly drive purchases.
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════
+              LANDING PAGES
+          ══════════════════════════════════════════════ */}
+          {activeView === 'landing' && (
+            <div className="at-panel">
+              <div className="at-grid-4">
+                {first ? Array.from({length:4}).map((_,i)=><KpiSkel key={i}/>) : (
+                  <>
+                    <div className="at-kpi" style={{'--kpi-color':'#F5C842'}}>
+                      <div className="at-kpi-eyebrow">Total Pages</div>
+                      <div className="at-kpi-value">{pages.length}</div>
+                      <div className="at-kpi-label">Tracked landing pages</div>
+                    </div>
+                    <div className="at-kpi" style={{'--kpi-color':'#60A5FA'}}>
+                      <div className="at-kpi-eyebrow">Total Sessions</div>
+                      <div className="at-kpi-value">{fmt.number(pages.reduce((s,p)=>s+(p.sessions||0),0))}</div>
+                      <div className="at-kpi-label">All landing page visits</div>
+                    </div>
+                    <div className="at-kpi" style={{'--kpi-color':'#4ADE80'}}>
+                      <div className="at-kpi-eyebrow">Total Revenue</div>
+                      <div className="at-kpi-value">{fmt.compact(pages.reduce((s,p)=>s+(p.revenue||0),0))}</div>
+                      <div className="at-kpi-label">From landing pages</div>
+                    </div>
+                    <div className="at-kpi" style={{'--kpi-color':'#FB923C'}}>
+                      <div className="at-kpi-eyebrow">Avg Conv Rate</div>
+                      <div className="at-kpi-value">{fmt.pct(pages.length>0?pages.reduce((s,p)=>s+(p.conversionRate||0),0)/pages.length:0)}</div>
+                      <div className="at-kpi-label">Sessions → orders</div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="at-section"><span className="at-section-text">Landing Page Performance</span><span className="at-section-line"/></div>
+
+              <div className="at-grid-2">
+                <Card title="Conv Rate by Page" sub="Top converting landing pages" icon={OpenInNew} iconColor="#F5C842">
+                  {first ? <Spinner h={280}/> : pages.length===0 ? <Empty h={280}/> : (
+                    <div>
+                      {pages.slice(0,8).map((p,i) => (
+                        <div className="at-bar-row" key={i}>
+                          <span className="at-bar-label" title={p._id}>{(p._id||'/').substring(0,22)}</span>
+                          <div className="at-bar-track">
+                            <div className="at-bar-fill" style={{width:`${Math.min(p.conversionRate||0,100)}%`,background:PAL[i%PAL.length]}}/>
+                          </div>
+                          <span className="at-bar-val">{fmt.pct(p.conversionRate)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card title="Revenue by Page" sub="Top earning landing pages" icon={BarChartIcon} iconColor="#4ADE80">
+                  {first ? <Spinner h={280}/> : pages.length===0 ? <Empty h={280}/> : (
+                    <div>
+                      {pages.slice(0,8).map((p,i) => {
+                        const max = Math.max(...pages.map(x=>x.revenue||0))||1;
+                        return (
+                          <div className="at-bar-row" key={i}>
+                            <span className="at-bar-label" title={p._id}>{(p._id||'/').substring(0,22)}</span>
+                            <div className="at-bar-track">
+                              <div className="at-bar-fill" style={{width:`${(p.revenue/max)*100}%`,background:PAL[i%PAL.length]}}/>
+                            </div>
+                            <span className="at-bar-val">{fmt.compact(p.revenue)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Card>
+              </div>
+
+              <div className="at-row">
+                <Card title="Landing Page Table" sub="All pages: sessions, orders, revenue, conversion rate" icon={TableChart} iconColor="#60A5FA">
+                  {first ? <Spinner h={200}/> : pages.length===0 ? <Empty/> : (
+                    <div className="at-tbl-wrap">
+                      <table className="at-tbl">
+                        <thead><tr><th>#</th><th>Page</th><th>Sessions</th><th>Orders</th><th>Revenue</th><th>Conv Rate</th><th>Rev/Session</th></tr></thead>
+                        <tbody>
+                          {pages.map((p,i) => (
+                            <tr key={i}>
+                              <td className="at-td-rank">{i+1}</td>
+                              <td><span className="at-url" title={p._id}>{p._id||'/'}</span></td>
+                              <td>{fmt.number(p.sessions)}</td>
+                              <td>{fmt.number(p.orders)}</td>
+                              <td className="at-td-money">{fmt.compact(p.revenue)}</td>
+                              <td className="at-td-gold">{fmt.pct(p.conversionRate)}</td>
+                              <td className="at-td-mono">{fmt.currency((p.revenue||0)/(p.sessions||1))}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+
+        </div>
+      </div>
+    </>
+  );
+}
