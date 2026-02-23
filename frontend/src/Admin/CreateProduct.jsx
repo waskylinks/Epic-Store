@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
-import Loader from '../components/Loader';
 import {
   createProduct,
   clearCreateStatus,
@@ -29,21 +28,23 @@ const SECTIONS = [
   'Breadcrumbs', 'SEO', 'Rich Snippets', 'Relationships & Flags',
 ];
 
+// ── REQUIRED SECTIONS (derived from model + controller validation) ───────────
+// Section 0: name, description, category — all required by model
+// Section 1: pricing.regular — required by model
+// Section 3: images — at least one required by controller
+// All other sections are fully optional.
+const REQUIRED_SECTIONS = new Set([0, 1, 3, 8]);
+
+const DRAFT_KEY = 'cp_draft_form';
+
 const initState = () => ({
-  // basic — status intentionally excluded from UI; always 'published' on create
   name: '', description: '', shortDescription: '', category: '', brand: '', manufacturer: '',
-  // pricing
   pricing: { regular: '', sale: '', cost: '', currency: 'USD', validFrom: '', validThrough: '' },
-  // inventory
   inventory: { stock: '', sku: '', gtin: '', mpn: '', barcode: '', trackInventory: true, lowStockThreshold: 5, status: 'InStock' },
-  // dimensions
   dimensions: { length: '', width: '', height: '', unit: 'cm' },
   weight: { value: '', unit: 'kg' },
-  // arrays
   subcategories: [], tags: [], specifications: [], variants: [], breadcrumbs: [],
-  // flags
   isFeatured: false, isNewArrival: false, isBestseller: false,
-  // seo
   seo: {
     metaTitle: '', metaDescription: '', keywords: [], canonicalUrl: '', noIndex: false, noFollow: false,
     ogTitle: '', ogDescription: '', ogImage: '', ogType: 'product',
@@ -51,13 +52,37 @@ const initState = () => ({
     schemaType: 'Product', condition: 'NewCondition', availability: 'InStock',
     focusKeyphrase: '', relatedSearchTerms: [],
   },
-  // rich snippets
   richSnippets: {
     faqs: [], howTo: { name: '', steps: [] }, videos: [],
   },
-  // relationships — comma-separated product IDs entered by admin
   relatedProducts: '', crossSells: '', upsells: '',
 });
+
+// ── Draft persistence helpers ─────────────────────────────────────────────────
+const saveDraft = (form, images) => {
+  try {
+    const draft = {
+      form,
+      // Store image metadata (not File objects — those can't be serialised)
+      imageMeta: images.map(img => ({ alt: img.alt, caption: img.caption, name: img.file?.name })),
+    };
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+  } catch { /* quota exceeded — silently skip */ }
+};
+
+const loadDraft = () => {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+};
+
+const clearDraft = () => {
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+};
 
 export default function CreateProduct() {
   const dispatch  = useDispatch();
@@ -66,7 +91,8 @@ export default function CreateProduct() {
 
   const [form,           setForm]          = useState(initState());
   const [activeSection,  setActiveSection] = useState(0);
-  const [images,         setImages]        = useState([]);  // { file, preview, alt, caption }
+  // images: { file, preview, alt, caption } — file may be null if restored from draft without re-upload
+  const [images,         setImages]        = useState([]);
   const [imageMetadata,  setImageMetadata] = useState([]);
   const [tagInput,       setTagInput]      = useState('');
   const [subInput,       setSubInput]      = useState('');
@@ -74,7 +100,22 @@ export default function CreateProduct() {
   const [rstInput,       setRstInput]      = useState('');
   const [toast,          setToast]         = useState(null);
   const [errors,         setErrors]        = useState({});
+  const [draftRestored,  setDraftRestored] = useState(false);
   const fileRef = useRef();
+
+  // ── Restore draft on mount ────────────────────────────────────────────────
+  useEffect(() => {
+    const draft = loadDraft();
+    if (draft?.form) {
+      setForm(draft.form);
+      setDraftRestored(true);
+    }
+  }, []);
+
+  // ── Auto-save draft whenever form changes ────────────────────────────────
+  useEffect(() => {
+    saveDraft(form, images);
+  }, [form, images]);
 
   // ── toast helper ──────────────────────────────────────────────────────────
   const showToast = useCallback((msg, type = 'success') => {
@@ -83,13 +124,14 @@ export default function CreateProduct() {
   }, []);
 
   // Scroll to top when navigating between sections
-useEffect(() => {
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}, [activeSection]);
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [activeSection]);
 
   useEffect(() => {
     if (success) {
       showToast('Product created successfully!');
+      clearDraft();
       dispatch(clearCreateStatus());
       setTimeout(() => navigate('/admin/products'), 1200);
     }
@@ -99,21 +141,18 @@ useEffect(() => {
     }
   }, [success, error, dispatch, navigate, showToast]);
 
-  // ── derived pricing stats (computed, no state needed) ─────────────────────
+  // ── derived pricing stats ─────────────────────────────────────────────────
   const pricingStats = (() => {
     const regular = parseFloat(form.pricing.regular);
     const sale    = parseFloat(form.pricing.sale);
     const cost    = parseFloat(form.pricing.cost);
-
     const hasRegular = regular > 0;
     const hasSale    = hasRegular && sale > 0 && sale < regular;
     const hasCost    = hasRegular && !isNaN(cost) && cost >= 0 && form.pricing.cost !== '';
-
     const discount   = hasSale ? Math.round(((regular - sale) / regular) * 100) : null;
     const saving     = hasSale ? (regular - sale).toFixed(2) : null;
     const margin     = hasCost ? Math.round(((regular - cost) / regular) * 100) : null;
     const saleMargin = hasSale && hasCost ? Math.round(((sale - cost) / sale) * 100) : null;
-
     return { discount, saving, margin, saleMargin };
   })();
 
@@ -252,14 +291,12 @@ useEffect(() => {
     return Object.keys(e).length === 0;
   };
 
-  // ── submit ────────────────────────────────────────────────────────────────
+  // ── submit handler ────────────────────────────────────────────────────────
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!validate()) { showToast('Please fix the errors below', 'error'); return; }
 
     const fd = new FormData();
-
-    // FIX: status hardcoded to 'published' — no draft on create
     fd.append('name',             form.name);
     fd.append('description',      form.description);
     fd.append('shortDescription', form.shortDescription);
@@ -270,7 +307,6 @@ useEffect(() => {
     fd.append('isFeatured',       form.isFeatured);
     fd.append('isNewArrival',     form.isNewArrival);
     fd.append('isBestseller',     form.isBestseller);
-
     fd.append('pricing',         JSON.stringify(form.pricing));
     fd.append('inventory',       JSON.stringify(form.inventory));
     fd.append('dimensions',      JSON.stringify(form.dimensions));
@@ -284,26 +320,100 @@ useEffect(() => {
     fd.append('richSnippets',    JSON.stringify(form.richSnippets));
     fd.append('imageMetadata',   JSON.stringify(imageMetadata));
 
-    // FIX: parse comma-separated IDs and send as JSON arrays
     const parseIds = (str) => str.split(',').map(s => s.trim()).filter(Boolean);
     fd.append('relatedProducts', JSON.stringify(parseIds(form.relatedProducts)));
     fd.append('crossSells',      JSON.stringify(parseIds(form.crossSells)));
     fd.append('upsells',         JSON.stringify(parseIds(form.upsells)));
 
-    images.forEach(img => fd.append('images', img.file));
+    images.forEach(img => { if (img.file) fd.append('images', img.file); });
 
     dispatch(createProduct(fd));
   };
 
-  // ── sidebar completion check ──────────────────────────────────────────────
-  const sectionComplete = (s) => {
-    if (s === 0) return !!(form.name && form.description && form.category);
-    if (s === 1) return !!form.pricing.regular;
-    if (s === 3) return images.length > 0;
-    return true;
+  // ── save as draft ─────────────────────────────────────────────────────────
+  const handleSaveDraft = (e) => {
+    e.preventDefault();
+    saveDraft(form, images);
+    showToast('Draft saved — your progress is stored locally.', 'info');
   };
 
-  if (loading) return <Loader />;
+  // ── discard draft ─────────────────────────────────────────────────────────
+  const handleDiscardDraft = () => {
+    clearDraft();
+    setForm(initState());
+    setImages([]);
+    setImageMetadata([]);
+    setDraftRestored(false);
+    showToast('Draft discarded.', 'info');
+  };
+
+  // ── sectionComplete: green tick for ANY section once it has meaningful data ─
+  // Required sections (0, 1, 3) need their mandatory fields.
+  // Optional sections turn green the moment the admin has entered anything useful.
+  const sectionComplete = (s) => {
+    switch (s) {
+      // ── Required ──────────────────────────────────────────────────────────
+      case 0: return !!(form.name.trim() && form.description.trim() && form.category);
+      case 1: return !!form.pricing.regular;
+      case 3: return images.length > 0;
+      // ── Optional — green once any meaningful data exists ─────────────────
+      case 2: // Inventory: stock entered, or SKU, or GTIN, or any identifier
+        return !!(
+          form.inventory.stock !== '' ||
+          form.inventory.sku.trim() ||
+          form.inventory.gtin.trim() ||
+          form.inventory.mpn.trim() ||
+          form.inventory.barcode.trim()
+        );
+      case 4: // Variants: at least one variant with a name
+        return form.variants.length > 0 && form.variants.some(v => v.name.trim());
+      case 5: // Specifications: at least one complete key/value pair
+        return form.specifications.length > 0 && form.specifications.some(s => s.key.trim() && s.value.trim());
+      case 6: // Dimensions & Weight: any numeric value entered
+        return !!(
+          form.dimensions.length ||
+          form.dimensions.width  ||
+          form.dimensions.height ||
+          form.weight.value
+        );
+      case 7: // Breadcrumbs: at least one breadcrumb with name + url
+        return form.breadcrumbs.length > 0 && form.breadcrumbs.some(b => b.name.trim() && b.url.trim());
+      case 8: // SEO: meta title or meta description filled
+        return !!(form.seo.metaTitle.trim() || form.seo.metaDescription.trim() || form.seo.focusKeyphrase.trim());
+      case 9: // Rich Snippets: any FAQ, how-to step, or video added
+        return (
+          form.richSnippets.faqs.length > 0 ||
+          form.richSnippets.howTo.steps.length > 0 ||
+          form.richSnippets.videos.length > 0 ||
+          !!form.richSnippets.howTo.name.trim()
+        );
+      case 10: // Relationships & Flags: any IDs entered or any flag toggled
+        return !!(
+          form.relatedProducts.trim() ||
+          form.crossSells.trim()      ||
+          form.upsells.trim()         ||
+          form.isFeatured             ||
+          form.isNewArrival           ||
+          form.isBestseller
+        );
+      default: return false;
+    }
+  };
+
+  // ── prevent Enter key from submitting the form ────────────────────────────
+  // Only textarea elements and explicitly marked buttons should "act" on Enter.
+  const handleFormKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      const tag  = e.target.tagName;
+      const type = e.target.type;
+      // Allow Enter in textareas (new line)
+      if (tag === 'TEXTAREA') return;
+      // Allow Enter on buttons that are type="button" (e.g. Add tag) — those handle their own clicks
+      if (tag === 'BUTTON') return;
+      // Block Enter everywhere else (inputs, selects) from triggering form submission
+      e.preventDefault();
+    }
+  };
 
   return (
     <>
@@ -313,7 +423,17 @@ useEffect(() => {
       <main className="cp-main">
         {toast && (
           <div className={`cp-toast cp-toast--${toast.type}`}>
-            <span>{toast.type === 'success' ? '✓' : '✕'}</span> {toast.msg}
+            <span>{toast.type === 'success' ? '✓' : toast.type === 'info' ? 'ℹ' : '✕'}</span> {toast.msg}
+          </div>
+        )}
+
+        {/* Draft restored banner */}
+        {draftRestored && (
+          <div className="cp-draft-banner">
+            <span>📝 Draft restored — your previously saved progress has been loaded.</span>
+            <button type="button" className="cp-draft-discard" onClick={handleDiscardDraft}>
+              Discard draft
+            </button>
           </div>
         )}
 
@@ -326,7 +446,7 @@ useEffect(() => {
             </svg>
             Products
           </button>
-          <h1 className="cp-title">Create Product</h1>
+          <h4 className="cp-title">Create Product</h4>
         </div>
 
         <div className="cp-layout">
@@ -336,17 +456,21 @@ useEffect(() => {
             {SECTIONS.map((s, i) => (
               <button
                 key={s}
-                className={`cp-nav-item ${activeSection === i ? 'active' : ''} ${sectionComplete(i) ? 'complete' : ''}`}
+                type="button"
+                className={`cp-nav-item ${activeSection === i ? 'active' : ''} ${sectionComplete(i) ? 'complete' : ''} ${REQUIRED_SECTIONS.has(i) ? 'required' : ''}`}
                 onClick={() => setActiveSection(i)}
               >
                 <span className="cp-nav-num">{sectionComplete(i) ? '✓' : i + 1}</span>
-                {s}
+                <span className="cp-nav-label">
+                  {s}
+                  {REQUIRED_SECTIONS.has(i) && <span className="cp-nav-req"> *</span>}
+                </span>
               </button>
             ))}
           </aside>
 
-          {/* ── Form ── */}
-          <form className="cp-form" onSubmit={handleSubmit} noValidate>
+          {/* ── Form — onKeyDown blocks Enter submission ── */}
+          <form className="cp-form" onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} noValidate>
 
             {/* ────────────────────────────────────────────────────────────
                 SECTION 0 — Basic Info
@@ -392,7 +516,6 @@ useEffect(() => {
                 <span className="cp-hint">{form.shortDescription.length}/500 characters</span>
               </div>
 
-              {/* FIX: status dropdown removed — only category remains in this row */}
               <div className="cp-field cp-field--half">
                 <label>Category <span className="cp-req">*</span></label>
                 <select value={form.category} onChange={e => set('category', e.target.value)}>
@@ -553,25 +676,20 @@ useEffect(() => {
                 </div>
               </div>
 
-              {/* FIX: live pricing stats cards */}
               {(pricingStats.discount !== null || pricingStats.margin !== null) && (
                 <div className="cp-pricing-stats">
                   {pricingStats.discount !== null && (
                     <div className="cp-pricing-stat cp-pricing-stat--discount">
                       <span className="cp-pricing-stat__label">Discount</span>
                       <span className="cp-pricing-stat__value">-{pricingStats.discount}%</span>
-                      <span className="cp-pricing-stat__sub">
-                        Customer saves {form.pricing.currency} {pricingStats.saving}
-                      </span>
+                      <span className="cp-pricing-stat__sub">Customer saves {form.pricing.currency} {pricingStats.saving}</span>
                     </div>
                   )}
                   {pricingStats.margin !== null && (
                     <div className={`cp-pricing-stat ${pricingStats.margin < 20 ? 'cp-pricing-stat--warn' : 'cp-pricing-stat--good'}`}>
                       <span className="cp-pricing-stat__label">Margin (Regular)</span>
                       <span className="cp-pricing-stat__value">{pricingStats.margin}%</span>
-                      <span className="cp-pricing-stat__sub">
-                        {pricingStats.margin < 20 ? '⚠ Low margin' : '✓ Healthy margin'}
-                      </span>
+                      <span className="cp-pricing-stat__sub">{pricingStats.margin < 20 ? '⚠ Low margin' : '✓ Healthy margin'}</span>
                     </div>
                   )}
                   {pricingStats.saleMargin !== null && (
@@ -601,34 +719,18 @@ useEffect(() => {
               <div className="cp-row">
                 <div className="cp-field">
                   <label>Stock Quantity</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.inventory.stock}
-                    onChange={e => set('inventory.stock', e.target.value)}
-                    placeholder="0"
-                  />
+                  <input type="number" min="0" value={form.inventory.stock} onChange={e => set('inventory.stock', e.target.value)} placeholder="0" />
                 </div>
                 <div className="cp-field">
                   <label>Low Stock Threshold</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={form.inventory.lowStockThreshold}
-                    onChange={e => set('inventory.lowStockThreshold', e.target.value)}
-                  />
+                  <input type="number" min="0" value={form.inventory.lowStockThreshold} onChange={e => set('inventory.lowStockThreshold', e.target.value)} />
                 </div>
               </div>
 
               <div className="cp-row">
                 <div className="cp-field">
                   <label>SKU</label>
-                  <input
-                    type="text"
-                    value={form.inventory.sku}
-                    onChange={e => set('inventory.sku', e.target.value)}
-                    placeholder="Stock keeping unit"
-                  />
+                  <input type="text" value={form.inventory.sku} onChange={e => set('inventory.sku', e.target.value)} placeholder="Stock keeping unit" />
                 </div>
                 <div className="cp-field">
                   <label>
@@ -644,41 +746,22 @@ useEffect(() => {
               <div className="cp-row">
                 <div className="cp-field">
                   <label>GTIN <span className="cp-hint-inline">(Google Shopping)</span></label>
-                  <input
-                    type="text"
-                    value={form.inventory.gtin}
-                    onChange={e => set('inventory.gtin', e.target.value)}
-                    placeholder="Global Trade Item Number"
-                  />
+                  <input type="text" value={form.inventory.gtin} onChange={e => set('inventory.gtin', e.target.value)} placeholder="Global Trade Item Number" />
                 </div>
                 <div className="cp-field">
                   <label>MPN <span className="cp-hint-inline">(Manufacturer Part No.)</span></label>
-                  <input
-                    type="text"
-                    value={form.inventory.mpn}
-                    onChange={e => set('inventory.mpn', e.target.value)}
-                    placeholder="Manufacturer part number"
-                  />
+                  <input type="text" value={form.inventory.mpn} onChange={e => set('inventory.mpn', e.target.value)} placeholder="Manufacturer part number" />
                 </div>
               </div>
 
               <div className="cp-row">
                 <div className="cp-field">
                   <label>Barcode</label>
-                  <input
-                    type="text"
-                    value={form.inventory.barcode}
-                    onChange={e => set('inventory.barcode', e.target.value)}
-                    placeholder="Barcode"
-                  />
+                  <input type="text" value={form.inventory.barcode} onChange={e => set('inventory.barcode', e.target.value)} placeholder="Barcode" />
                 </div>
                 <div className="cp-field cp-field--checkbox">
                   <label className="cp-checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={form.inventory.trackInventory}
-                      onChange={e => set('inventory.trackInventory', e.target.checked)}
-                    />
+                    <input type="checkbox" checked={form.inventory.trackInventory} onChange={e => set('inventory.trackInventory', e.target.checked)} />
                     <span>Track Inventory</span>
                   </label>
                 </div>
@@ -694,7 +777,7 @@ useEffect(() => {
                 SECTION 3 — Images
             ──────────────────────────────────────────────────────────── */}
             <div className={`cp-section ${activeSection === 3 ? 'active' : ''}`}>
-              <h2 className="cp-section-title">Images</h2>
+              <h2 className="cp-section-title">Images <span className="cp-req">*</span></h2>
               {errors.images && <div className="cp-error cp-error--block">{errors.images}</div>}
 
               <div className="cp-dropzone" onClick={() => fileRef.current?.click()}>
@@ -705,14 +788,7 @@ useEffect(() => {
                 </svg>
                 <p>Click or drag to upload images</p>
                 <span>First image becomes the primary / thumbnail</span>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  multiple
-                  accept="image/*"
-                  onChange={handleImageAdd}
-                  style={{ display: 'none' }}
-                />
+                <input ref={fileRef} type="file" multiple accept="image/*" onChange={handleImageAdd} style={{ display: 'none' }} />
               </div>
 
               {images.length > 0 && (
@@ -767,9 +843,7 @@ useEffect(() => {
                       value={variant.name}
                       onChange={e => setVariant(vi, 'name', e.target.value)}
                     />
-                    <button type="button" className="cp-btn cp-btn--danger-sm" onClick={() => removeVariant(vi)}>
-                      Remove Variant
-                    </button>
+                    <button type="button" className="cp-btn cp-btn--danger-sm" onClick={() => removeVariant(vi)}>Remove Variant</button>
                   </div>
                   {variant.options.map((opt, oi) => (
                     <div key={oi} className="cp-variant-option">
@@ -894,13 +968,7 @@ useEffect(() => {
 
               <div className="cp-field cp-field--full">
                 <label>Meta Title <span className="cp-hint-inline">max 60 chars</span></label>
-                <input
-                  type="text"
-                  maxLength={60}
-                  value={form.seo.metaTitle}
-                  onChange={e => set('seo.metaTitle', e.target.value)}
-                  placeholder="Auto-filled from product name if blank"
-                />
+                <input type="text" maxLength={60} value={form.seo.metaTitle} onChange={e => set('seo.metaTitle', e.target.value)} placeholder="Auto-filled from product name if blank" />
                 <span className="cp-hint">{form.seo.metaTitle.length}/60</span>
               </div>
 
@@ -921,12 +989,7 @@ useEffect(() => {
 
               <div className="cp-field cp-field--full">
                 <label>Focus Keyphrase</label>
-                <input
-                  type="text"
-                  value={form.seo.focusKeyphrase}
-                  onChange={e => set('seo.focusKeyphrase', e.target.value)}
-                  placeholder="Primary keyword to rank for"
-                />
+                <input type="text" value={form.seo.focusKeyphrase} onChange={e => set('seo.focusKeyphrase', e.target.value)} placeholder="Primary keyword to rank for" />
               </div>
 
               <div className="cp-field">
@@ -952,12 +1015,7 @@ useEffect(() => {
 
               <div className="cp-field cp-field--full">
                 <label>Canonical URL</label>
-                <input
-                  type="url"
-                  value={form.seo.canonicalUrl}
-                  onChange={e => set('seo.canonicalUrl', e.target.value)}
-                  placeholder="https://yourdomain.com/products/..."
-                />
+                <input type="url" value={form.seo.canonicalUrl} onChange={e => set('seo.canonicalUrl', e.target.value)} placeholder="https://yourdomain.com/products/..." />
               </div>
 
               <div className="cp-row">
@@ -979,32 +1037,16 @@ useEffect(() => {
                 <h3 className="cp-subsection-title">Open Graph</h3>
                 <div className="cp-field cp-field--full">
                   <label>OG Title</label>
-                  <input
-                    type="text"
-                    maxLength={60}
-                    value={form.seo.ogTitle}
-                    onChange={e => set('seo.ogTitle', e.target.value)}
-                    placeholder="Auto-filled from Meta Title if blank"
-                  />
+                  <input type="text" maxLength={60} value={form.seo.ogTitle} onChange={e => set('seo.ogTitle', e.target.value)} placeholder="Auto-filled from Meta Title if blank" />
                 </div>
                 <div className="cp-field cp-field--full">
                   <label>OG Description</label>
-                  <textarea
-                    rows={2}
-                    maxLength={160}
-                    value={form.seo.ogDescription}
-                    onChange={e => set('seo.ogDescription', e.target.value)}
-                  />
+                  <textarea rows={2} maxLength={160} value={form.seo.ogDescription} onChange={e => set('seo.ogDescription', e.target.value)} />
                 </div>
                 <div className="cp-row">
                   <div className="cp-field">
                     <label>OG Image URL</label>
-                    <input
-                      type="url"
-                      value={form.seo.ogImage}
-                      onChange={e => set('seo.ogImage', e.target.value)}
-                      placeholder="Auto-filled from primary image if blank"
-                    />
+                    <input type="url" value={form.seo.ogImage} onChange={e => set('seo.ogImage', e.target.value)} placeholder="Auto-filled from primary image if blank" />
                   </div>
                   <div className="cp-field">
                     <label>OG Type</label>
@@ -1026,30 +1068,16 @@ useEffect(() => {
                   </div>
                   <div className="cp-field">
                     <label>Twitter Title</label>
-                    <input
-                      type="text"
-                      maxLength={70}
-                      value={form.seo.twitterTitle}
-                      onChange={e => set('seo.twitterTitle', e.target.value)}
-                    />
+                    <input type="text" maxLength={70} value={form.seo.twitterTitle} onChange={e => set('seo.twitterTitle', e.target.value)} />
                   </div>
                 </div>
                 <div className="cp-field cp-field--full">
                   <label>Twitter Description</label>
-                  <textarea
-                    rows={2}
-                    maxLength={200}
-                    value={form.seo.twitterDescription}
-                    onChange={e => set('seo.twitterDescription', e.target.value)}
-                  />
+                  <textarea rows={2} maxLength={200} value={form.seo.twitterDescription} onChange={e => set('seo.twitterDescription', e.target.value)} />
                 </div>
                 <div className="cp-field cp-field--full">
                   <label>Twitter Image URL</label>
-                  <input
-                    type="url"
-                    value={form.seo.twitterImage}
-                    onChange={e => set('seo.twitterImage', e.target.value)}
-                  />
+                  <input type="url" value={form.seo.twitterImage} onChange={e => set('seo.twitterImage', e.target.value)} />
                 </div>
               </div>
 
@@ -1101,7 +1129,6 @@ useEffect(() => {
             <div className={`cp-section ${activeSection === 9 ? 'active' : ''}`}>
               <h2 className="cp-section-title">Rich Snippets</h2>
 
-              {/* FAQs */}
               <div className="cp-subsection" style={{ marginTop: 0, borderTop: 'none', paddingTop: 0 }}>
                 <h3 className="cp-subsection-title">FAQs <span className="cp-hint-inline">(questions must be unique)</span></h3>
                 {form.richSnippets.faqs.map((faq, i) => (
@@ -1117,7 +1144,6 @@ useEffect(() => {
                 <button type="button" className="cp-btn cp-btn--dashed" onClick={addFaq}>+ Add FAQ</button>
               </div>
 
-              {/* How-To */}
               <div className="cp-subsection">
                 <h3 className="cp-subsection-title">How-To</h3>
                 <div className="cp-field">
@@ -1135,15 +1161,14 @@ useEffect(() => {
                       <span>Step {i + 1}</span>
                       <button type="button" className="cp-btn cp-btn--icon-danger" onClick={() => removeHowToStep(i)}>×</button>
                     </div>
-                    <input    type="text" placeholder="Step name"                       value={step.name}  onChange={e => setHowToStep(i, 'name',  e.target.value)} />
-                    <textarea rows={2}   placeholder="Step instructions"               value={step.text}  onChange={e => setHowToStep(i, 'text',  e.target.value)} />
-                    <input    type="url" placeholder="Step image URL (optional)"       value={step.image} onChange={e => setHowToStep(i, 'image', e.target.value)} />
+                    <input    type="text" placeholder="Step name"              value={step.name}  onChange={e => setHowToStep(i, 'name',  e.target.value)} />
+                    <textarea rows={2}   placeholder="Step instructions"      value={step.text}  onChange={e => setHowToStep(i, 'text',  e.target.value)} />
+                    <input    type="url" placeholder="Step image URL (optional)" value={step.image} onChange={e => setHowToStep(i, 'image', e.target.value)} />
                   </div>
                 ))}
                 <button type="button" className="cp-btn cp-btn--dashed" onClick={addHowToStep}>+ Add Step</button>
               </div>
 
-              {/* Videos */}
               <div className="cp-subsection">
                 <h3 className="cp-subsection-title">Videos</h3>
                 {form.richSnippets.videos.map((video, i) => (
@@ -1180,30 +1205,15 @@ useEffect(() => {
 
               <div className="cp-field cp-field--full">
                 <label>Related Products <span className="cp-hint-inline">comma-separated product IDs</span></label>
-                <input
-                  type="text"
-                  value={form.relatedProducts}
-                  onChange={e => set('relatedProducts', e.target.value)}
-                  placeholder="6507f1f77bcf86cd79..."
-                />
+                <input type="text" value={form.relatedProducts} onChange={e => set('relatedProducts', e.target.value)} placeholder="6507f1f77bcf86cd79..." />
               </div>
               <div className="cp-field cp-field--full">
                 <label>Cross-Sells <span className="cp-hint-inline">comma-separated product IDs</span></label>
-                <input
-                  type="text"
-                  value={form.crossSells}
-                  onChange={e => set('crossSells', e.target.value)}
-                  placeholder="6507f1f77bcf86cd79..."
-                />
+                <input type="text" value={form.crossSells} onChange={e => set('crossSells', e.target.value)} placeholder="6507f1f77bcf86cd79..." />
               </div>
               <div className="cp-field cp-field--full">
                 <label>Upsells <span className="cp-hint-inline">comma-separated product IDs</span></label>
-                <input
-                  type="text"
-                  value={form.upsells}
-                  onChange={e => set('upsells', e.target.value)}
-                  placeholder="6507f1f77bcf86cd79..."
-                />
+                <input type="text" value={form.upsells} onChange={e => set('upsells', e.target.value)} placeholder="6507f1f77bcf86cd79..." />
               </div>
 
               <div className="cp-subsection">
@@ -1227,10 +1237,33 @@ useEffect(() => {
                 </div>
               </div>
 
+              {/* ── Submit row with Save as Draft + Create Product ── */}
               <div className="cp-section-nav cp-section-nav--submit">
-                <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(9)}>← Back</button>
-                <button type="submit" className="cp-btn cp-btn--submit" disabled={loading}>
-                  {loading ? <><span className="cp-spinner" /> Creating Product…</> : 'Create Product'}
+                <div className="cp-submit-left">
+                  <button type="button" className="cp-btn cp-btn--ghost" onClick={() => setActiveSection(9)}>← Back</button>
+                  <button
+                    type="button"
+                    className="cp-btn cp-btn--draft"
+                    onClick={handleSaveDraft}
+                    disabled={loading}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15">
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                      <polyline points="17 21 17 13 7 13 7 21"/>
+                      <polyline points="7 3 7 8 15 8"/>
+                    </svg>
+                    Save as Draft
+                  </button>
+                </div>
+                <button
+                  type="submit"
+                  className="cp-btn cp-btn--submit"
+                  disabled={loading}
+                >
+                  {loading
+                    ? <><span className="cp-spinner" /> Creating Product…</>
+                    : 'Create Product'
+                  }
                 </button>
               </div>
             </div>

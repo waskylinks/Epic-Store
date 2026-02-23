@@ -20,6 +20,7 @@
   --green:       #22c55e;
   --red:         #ef4444;
   --amber:       #f59e0b;
+  --blue:        #3b82f6;
   --radius:      10px;
   --radius-sm:   6px;
   --shadow:      0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05);
@@ -56,10 +57,42 @@
 }
 .cp-toast--success { background: #111; color: #fff; }
 .cp-toast--error   { background: var(--red); color: #fff; }
+.cp-toast--info    { background: var(--blue); color: #fff; }
 @keyframes cpToastIn {
   from { opacity: 0; transform: translateY(-12px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ── Draft Banner ──────────────────────────────────────────── */
+.cp-draft-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  color: #1d4ed8;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+.cp-draft-discard {
+  background: none;
+  border: 1px solid #93c5fd;
+  color: #1d4ed8;
+  border-radius: var(--radius-sm);
+  padding: 4px 12px;
+  font-family: var(--font-body);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition);
+}
+.cp-draft-discard:hover { background: #bfdbfe; }
 
 /* ── Header ────────────────────────────────────────────────── */
 .cp-header { display: flex; align-items: center; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
@@ -74,7 +107,7 @@
 .cp-back:hover { color: var(--black); }
 .cp-title {
   font-family: var(--font-display);
-  font-size: clamp(22px, 3.5vw, 30px);
+  font-size: clamp(22px, 2.5vw, 22px);
   font-weight: 700; color: var(--black); letter-spacing: -.4px;
 }
 
@@ -115,11 +148,22 @@
   color: var(--grey-500); cursor: pointer; text-align: left;
   transition: all var(--transition);
   white-space: nowrap;
+  width: 100%;
 }
 .cp-nav-item:hover { background: var(--white); color: var(--black); }
 .cp-nav-item.active { background: var(--white); color: var(--black); box-shadow: var(--shadow); }
-.cp-nav-item.active .cp-nav-num { background: var(--coral); color: var(--white); }
+
+/* Any completed section — required or optional — gets a green tick */
 .cp-nav-item.complete .cp-nav-num { background: var(--green); color: var(--white); }
+/* Active section num is always coral (takes priority over green) */
+.cp-nav-item.active .cp-nav-num { background: var(--coral); color: var(--white); }
+/* Required but not yet complete: amber ring so admin sees what still needs attention */
+.cp-nav-item.required:not(.complete):not(.active) .cp-nav-num {
+  background: var(--grey-200);
+  color: var(--grey-700);
+  box-shadow: 0 0 0 1.5px var(--amber);
+}
+
 .cp-nav-num {
   width: 22px; height: 22px;
   border-radius: 50%;
@@ -130,6 +174,9 @@
   flex-shrink: 0;
   transition: all var(--transition);
 }
+
+.cp-nav-label { display: flex; align-items: center; gap: 4px; }
+.cp-nav-req   { color: var(--coral); font-size: 12px; font-weight: 700; }
 
 /* ── Form ───────────────────────────────────────────────────── */
 .cp-form {
@@ -256,68 +303,26 @@
 
 /* ── Pricing Stats ─────────────────────────────────────────── */
 .cp-pricing-stats {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  margin-top: 20px;
-  margin-bottom: 4px;
+  display: flex; gap: 12px; flex-wrap: wrap;
+  margin-top: 20px; margin-bottom: 4px;
   animation: sectionIn 200ms ease;
 }
-
 .cp-pricing-stat {
-  flex: 1;
-  min-width: 140px;
-  padding: 14px 16px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+  flex: 1; min-width: 140px; padding: 14px 16px;
+  border-radius: var(--radius); border: 1px solid transparent;
+  display: flex; flex-direction: column; gap: 3px;
 }
-
-.cp-pricing-stat--discount {
-  background: #eff6ff;
-  border-color: #bfdbfe;
-}
-.cp-pricing-stat--good {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-}
-.cp-pricing-stat--warn {
-  background: #fffbeb;
-  border-color: #fde68a;
-}
-.cp-pricing-stat--danger {
-  background: #fff1f2;
-  border-color: #fecdd3;
-}
-
-.cp-pricing-stat__label {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--grey-500);
-}
-
-.cp-pricing-stat__value {
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 1.15;
-  font-family: var(--font-display);
-}
-
+.cp-pricing-stat--discount { background: #eff6ff; border-color: #bfdbfe; }
+.cp-pricing-stat--good     { background: #f0fdf4; border-color: #bbf7d0; }
+.cp-pricing-stat--warn     { background: #fffbeb; border-color: #fde68a; }
+.cp-pricing-stat--danger   { background: #fff1f2; border-color: #fecdd3; }
+.cp-pricing-stat__label    { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--grey-500); }
+.cp-pricing-stat__value    { font-size: 26px; font-weight: 700; line-height: 1.15; font-family: var(--font-display); }
 .cp-pricing-stat--discount .cp-pricing-stat__value { color: #2563eb; }
 .cp-pricing-stat--good     .cp-pricing-stat__value { color: #16a34a; }
 .cp-pricing-stat--warn     .cp-pricing-stat__value { color: #d97706; }
 .cp-pricing-stat--danger   .cp-pricing-stat__value { color: #e11d48; }
-
-.cp-pricing-stat__sub {
-  font-size: 11px;
-  color: var(--grey-500);
-  margin-top: 1px;
-}
-
+.cp-pricing-stat__sub      { font-size: 11px; color: var(--grey-500); margin-top: 1px; }
 @media (max-width: 480px) {
   .cp-pricing-stats { flex-direction: column; }
   .cp-pricing-stat  { min-width: unset; }
@@ -326,226 +331,132 @@
 /* ── Tag Input ─────────────────────────────────────────────── */
 .cp-tag-input { display: flex; gap: 8px; }
 .cp-tag-input input {
-  flex: 1;
-  padding: 10px 14px;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body); font-size: 14px;
-  outline: none;
+  flex: 1; padding: 10px 14px;
+  border: 1.5px solid var(--grey-200); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 14px; outline: none;
   transition: border-color var(--transition), box-shadow var(--transition);
 }
-.cp-tag-input input:focus {
-  border-color: var(--coral);
-  box-shadow: 0 0 0 3px rgba(255,107,107,.1);
-}
+.cp-tag-input input:focus { border-color: var(--coral); box-shadow: 0 0 0 3px rgba(255,107,107,.1); }
 .cp-tag-input button {
   padding: 0 16px;
   background: var(--black); color: var(--white);
   border: none; border-radius: var(--radius-sm);
   font-family: var(--font-body); font-size: 13px; font-weight: 500;
-  cursor: pointer; white-space: nowrap;
-  transition: background var(--transition);
+  cursor: pointer; white-space: nowrap; transition: background var(--transition);
 }
 .cp-tag-input button:hover { background: var(--grey-700); }
-
 .cp-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .cp-tag {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px;
-  background: var(--grey-100);
-  border-radius: 999px;
+  padding: 4px 10px; background: var(--grey-100); border-radius: 999px;
   font-size: 12px; font-weight: 500; color: var(--grey-700);
 }
 .cp-tag button {
   background: none; border: none; cursor: pointer;
-  color: var(--grey-500); font-size: 13px; line-height: 1;
-  padding: 0 1px;
+  color: var(--grey-500); font-size: 13px; line-height: 1; padding: 0 1px;
   transition: color var(--transition);
 }
 .cp-tag button:hover { color: var(--coral); }
 
 /* ── Image Upload ──────────────────────────────────────────── */
 .cp-dropzone {
-  border: 2px dashed var(--grey-200);
-  border-radius: var(--radius);
-  padding: 36px 20px;
-  text-align: center;
-  cursor: pointer;
-  transition: all var(--transition);
-  margin-bottom: 20px;
+  border: 2px dashed var(--grey-200); border-radius: var(--radius);
+  padding: 36px 20px; text-align: center; cursor: pointer;
+  transition: all var(--transition); margin-bottom: 20px;
 }
 .cp-dropzone:hover { border-color: var(--coral); background: var(--coral-light); }
 .cp-dropzone svg  { width: 36px; height: 36px; color: var(--grey-300); margin-bottom: 10px; }
 .cp-dropzone p    { font-size: 15px; font-weight: 500; color: var(--grey-700); margin-bottom: 4px; }
 .cp-dropzone span { font-size: 12px; color: var(--grey-500); }
-
 .cp-image-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
-  margin-bottom: 16px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px; margin-bottom: 16px;
 }
-.cp-image-card {
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius);
-  overflow: hidden;
-  transition: box-shadow var(--transition);
-}
+.cp-image-card { border: 1.5px solid var(--grey-200); border-radius: var(--radius); overflow: hidden; transition: box-shadow var(--transition); }
 .cp-image-card:hover { box-shadow: var(--shadow-md); }
 .cp-image-card--primary { border-color: var(--coral); }
-
-.cp-image-preview {
-  position: relative; aspect-ratio: 1;
-  background: var(--grey-50);
-}
+.cp-image-preview { position: relative; aspect-ratio: 1; background: var(--grey-50); }
 .cp-image-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cp-image-badge {
   position: absolute; top: 8px; left: 8px;
   background: var(--coral); color: #fff;
-  font-size: 10px; font-weight: 700;
-  padding: 2px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
 }
 .cp-image-remove {
   position: absolute; top: 6px; right: 6px;
   width: 24px; height: 24px;
   background: rgba(0,0,0,.55); color: #fff;
-  border: none; border-radius: 50%;
-  font-size: 14px; cursor: pointer;
+  border: none; border-radius: 50%; font-size: 14px; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background var(--transition);
 }
 .cp-image-remove:hover { background: var(--coral); }
-
-.cp-image-meta {
-  padding: 8px;
-  display: flex; flex-direction: column; gap: 6px;
-}
+.cp-image-meta { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .cp-image-meta input {
-  padding: 6px 10px;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body); font-size: 12px;
-  outline: none; width: 100%;
-  transition: border-color var(--transition);
+  padding: 6px 10px; border: 1.5px solid var(--grey-200);
+  border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 12px;
+  outline: none; width: 100%; transition: border-color var(--transition);
 }
 .cp-image-meta input:focus { border-color: var(--coral); }
 
 /* ── Variants ──────────────────────────────────────────────── */
-.cp-variant-block {
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius);
-  padding: 16px;
-  margin-bottom: 16px;
-}
-.cp-variant-header {
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 12px;
-}
+.cp-variant-block { border: 1.5px solid var(--grey-200); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+.cp-variant-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .cp-variant-header input {
-  flex: 1;
-  padding: 9px 14px;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body); font-size: 14px;
-  outline: none;
+  flex: 1; padding: 9px 14px;
+  border: 1.5px solid var(--grey-200); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 14px; outline: none;
   transition: border-color var(--transition);
 }
 .cp-variant-header input:focus { border-color: var(--coral); }
-
 .cp-variant-option {
-  display: grid;
-  grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
-  gap: 8px; align-items: center;
-  margin-bottom: 8px;
+  display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr auto;
+  gap: 8px; align-items: center; margin-bottom: 8px;
 }
 .cp-variant-option input {
-  padding: 8px 12px;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body); font-size: 13px;
-  outline: none; width: 100%;
-  transition: border-color var(--transition);
+  padding: 8px 12px; border: 1.5px solid var(--grey-200);
+  border-radius: var(--radius-sm); font-family: var(--font-body); font-size: 13px;
+  outline: none; width: 100%; transition: border-color var(--transition);
 }
 .cp-variant-option input:focus { border-color: var(--coral); }
-@media (max-width: 600px) {
-  .cp-variant-option { grid-template-columns: 1fr 1fr; }
-}
+@media (max-width: 600px) { .cp-variant-option { grid-template-columns: 1fr 1fr; } }
 
 /* ── Specifications ────────────────────────────────────────── */
-.cp-spec-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr auto;
-  gap: 8px; align-items: center;
-  margin-bottom: 10px;
-}
+.cp-spec-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; align-items: center; margin-bottom: 10px; }
 .cp-spec-row input {
-  padding: 10px 14px;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body); font-size: 14px;
-  outline: none; width: 100%;
+  padding: 10px 14px; border: 1.5px solid var(--grey-200); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 14px; outline: none; width: 100%;
   transition: border-color var(--transition);
 }
 .cp-spec-row input:focus { border-color: var(--coral); }
-@media (max-width: 480px) {
-  .cp-spec-row { grid-template-columns: 1fr; }
-}
+@media (max-width: 480px) { .cp-spec-row { grid-template-columns: 1fr; } }
 
 /* ── FAQs / HowTo ──────────────────────────────────────────── */
 .cp-faq-block {
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius);
-  padding: 14px;
-  margin-bottom: 12px;
-  display: flex; flex-direction: column; gap: 10px;
+  border: 1.5px solid var(--grey-200); border-radius: var(--radius);
+  padding: 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px;
 }
-.cp-faq-header {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 13px; font-weight: 600; color: var(--grey-500);
-}
+.cp-faq-header { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 600; color: var(--grey-500); }
 .cp-faq-block input, .cp-faq-block textarea {
-  padding: 10px 14px;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-body); font-size: 14px;
-  outline: none; width: 100%; resize: vertical;
+  padding: 10px 14px; border: 1.5px solid var(--grey-200); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 14px; outline: none; width: 100%; resize: vertical;
   transition: border-color var(--transition);
 }
 .cp-faq-block input:focus, .cp-faq-block textarea:focus { border-color: var(--coral); }
 
 /* ── Toggle ─────────────────────────────────────────────────── */
 .cp-flag-grid { display: flex; flex-wrap: wrap; gap: 20px; }
-.cp-toggle-label {
-  display: flex; align-items: center; gap: 10px;
-  cursor: pointer; user-select: none;
-  font-size: 14px; font-weight: 500; color: var(--grey-700);
-}
+.cp-toggle-label { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; font-size: 14px; font-weight: 500; color: var(--grey-700); }
 .cp-toggle-label input[type="checkbox"] { display: none; }
-.cp-toggle-track {
-  width: 42px; height: 24px;
-  background: var(--grey-200);
-  border-radius: 999px;
-  position: relative;
-  transition: background var(--transition);
-  flex-shrink: 0;
-}
-.cp-toggle-thumb {
-  position: absolute;
-  width: 18px; height: 18px;
-  background: var(--white);
-  border-radius: 50%;
-  top: 3px; left: 3px;
-  transition: transform var(--transition);
-  box-shadow: 0 1px 4px rgba(0,0,0,.2);
-}
+.cp-toggle-track { width: 42px; height: 24px; background: var(--grey-200); border-radius: 999px; position: relative; transition: background var(--transition); flex-shrink: 0; }
+.cp-toggle-thumb { position: absolute; width: 18px; height: 18px; background: var(--white); border-radius: 50%; top: 3px; left: 3px; transition: transform var(--transition); box-shadow: 0 1px 4px rgba(0,0,0,.2); }
 .cp-toggle-label input:checked ~ .cp-toggle-track { background: var(--coral); }
 .cp-toggle-label input:checked ~ .cp-toggle-track .cp-toggle-thumb { transform: translateX(18px); }
 
 /* ── Buttons ───────────────────────────────────────────────── */
 .cp-btn {
   display: inline-flex; align-items: center; gap: 7px;
-  padding: 10px 18px;
-  border-radius: var(--radius-sm);
+  padding: 10px 18px; border-radius: var(--radius-sm);
   font-family: var(--font-body); font-size: 14px; font-weight: 500;
   cursor: pointer; border: 1.5px solid transparent;
   transition: all var(--transition); white-space: nowrap;
@@ -556,50 +467,53 @@
 .cp-btn--ghost:hover { background: var(--grey-50); border-color: var(--grey-500); }
 .cp-btn--ghost-sm {
   padding: 6px 12px; font-size: 13px;
-  background: transparent; color: var(--grey-700);
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  cursor: pointer; font-family: var(--font-body);
+  background: transparent; color: var(--grey-700); border: 1.5px solid var(--grey-200);
+  border-radius: var(--radius-sm); cursor: pointer; font-family: var(--font-body);
   transition: all var(--transition);
 }
 .cp-btn--ghost-sm:hover { border-color: var(--grey-500); }
 .cp-btn--dashed {
-  width: 100%; padding: 12px;
-  border: 2px dashed var(--grey-200);
-  border-radius: var(--radius);
+  width: 100%; padding: 12px; border: 2px dashed var(--grey-200); border-radius: var(--radius);
   background: transparent; color: var(--grey-500);
-  font-family: var(--font-body); font-size: 14px;
-  cursor: pointer; text-align: center;
+  font-family: var(--font-body); font-size: 14px; cursor: pointer; text-align: center;
   transition: all var(--transition);
 }
 .cp-btn--dashed:hover { border-color: var(--coral); color: var(--coral); background: var(--coral-light); }
 .cp-btn--danger-sm {
-  padding: 7px 12px;
-  background: transparent; color: var(--red);
+  padding: 7px 12px; background: transparent; color: var(--red);
   border: 1.5px solid var(--red); border-radius: var(--radius-sm);
   font-family: var(--font-body); font-size: 12px; font-weight: 500;
-  cursor: pointer; white-space: nowrap;
-  transition: all var(--transition);
+  cursor: pointer; white-space: nowrap; transition: all var(--transition);
 }
 .cp-btn--danger-sm:hover { background: var(--red); color: #fff; }
 .cp-btn--icon-danger {
   width: 32px; height: 32px;
-  background: transparent; color: #9ca3af;
-  border: 1.5px solid var(--grey-200);
-  border-radius: var(--radius-sm);
-  font-size: 16px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
+  background: transparent; color: #9ca3af; border: 1.5px solid var(--grey-200);
+  border-radius: var(--radius-sm); font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   transition: all var(--transition);
 }
 .cp-btn--icon-danger:hover { background: #fef2f2; color: var(--red); border-color: var(--red); }
 .cp-btn--submit {
-  background: var(--coral); color: var(--white);
-  border-color: var(--coral);
+  background: var(--coral); color: var(--white); border-color: var(--coral);
   padding: 12px 32px; font-size: 15px;
 }
 .cp-btn--submit:hover:not(:disabled) { background: var(--coral-dark); }
 .cp-btn--submit:disabled { opacity: .65; cursor: not-allowed; }
+
+/* Save as Draft button */
+.cp-btn--draft {
+  background: transparent;
+  color: var(--grey-700);
+  border-color: var(--grey-300);
+  padding: 10px 18px;
+}
+.cp-btn--draft:hover:not(:disabled) {
+  background: var(--grey-50);
+  border-color: var(--grey-500);
+  color: var(--black);
+}
+.cp-btn--draft:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── Section Nav ───────────────────────────────────────────── */
 .cp-section-nav {
@@ -607,16 +521,25 @@
   margin-top: 28px; padding-top: 20px;
   border-top: 1px solid var(--grey-100);
 }
-.cp-section-nav--submit { justify-content: space-between; }
+.cp-section-nav--submit {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+/* Left cluster inside submit nav */
+.cp-submit-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 
 /* ── Spinner ───────────────────────────────────────────────── */
 .cp-spinner {
-  display: inline-block;
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255,255,255,.3);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation: spin 600ms linear infinite;
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,.3); border-top-color: #fff;
+  border-radius: 50%; animation: spin 600ms linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -628,4 +551,6 @@
   .cp-section-nav { flex-direction: column-reverse; }
   .cp-section-nav .cp-btn { width: 100%; justify-content: center; }
   .cp-field--half { max-width: 100%; }
+  .cp-submit-left { width: 100%; }
+  .cp-btn--submit { width: 100%; justify-content: center; }
 }
