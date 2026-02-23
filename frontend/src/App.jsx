@@ -42,6 +42,7 @@ import NewArrivals from './pages/NewArrivals';
 import ReturnRequest from './Orders/ReturnRequest';
 import ScrollToTop from './components/ScrollToTop';
 import AnalyticsOverview from './Admin/AnalyticsOverview';
+import Reports from './Admin/Reports';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -122,6 +123,8 @@ function App() {
         <Route path='/admin/reviews' element={<ProtectedRoute element={<ReviewList />} adminOnly={true} />} />
         <Route path='/admin/refunds' element={<ProtectedRoute element={<AdminRefunds />} adminOnly={true} />} />
         <Route path='/admin/analytics' element={<ProtectedRoute element={<AnalyticsOverview />} adminOnly={true} />} />
+        <Route path='/admin/reports' element={<ProtectedRoute element={<Reports />} adminOnly={true} />} />
+
       
       </Routes>
     </Router>
