@@ -21,8 +21,8 @@
   --hm-text-sec:     #374151;
   --hm-text-muted:   #6B7280;
 
-  --hm-coral:        #FF6B6B;
-  --hm-coral-dark:   #e05555;
+  --hm-coral:        #ff3c3c;
+  --hm-coral-dark:   #ff3c3c;
   --hm-coral-bg:     #FFF0F0;
   --hm-coral-glow:   rgba(255,107,107,0.18);
 
@@ -53,11 +53,11 @@
 }
 
 /* ── Section Headers ────────────────────────────────────────── */
-.section-header {
+.home-section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
   gap: 12px;
 }
 
@@ -83,9 +83,9 @@
   50%       { transform: scale(1.1); }
 }
 
-.section-title {
+.home-section-title {
   font-size: clamp(18px, 2.5vw, 24px);
-  font-weight: 800;
+  font-weight: 700;
   color: var(--hm-text);
   margin: 0;
   letter-spacing: -0.4px;
@@ -150,6 +150,7 @@
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
+  color: #ff3c3c;
 }
 
 /* ── Trust Features ─────────────────────────────────────────── */
@@ -252,9 +253,9 @@
 @media (max-width: 768px) {
   .container { padding: 0 16px; }
 
-  .section-header { margin-bottom: 18px; }
+  .home-section-header { margin-bottom: 18px; }
 
-  .section-title { font-size: 18px; }
+  .home-section-title { font-size: 18px; }
 
   .section-icon { font-size: 1.5rem !important; }
 
@@ -284,7 +285,7 @@
 @media (max-width: 480px) {
   .container { padding: 0 12px; }
 
-  .section-header {
+  .home-section-header {
     flex-wrap: wrap;
     gap: 8px;
     margin-bottom: 14px;
@@ -330,7 +331,7 @@
     gap: 8px;
   }
 
-  .section-title { font-size: 16px; }
+  .home-section-title { font-size: 16px; }
 
   .section-link { display: none; } /* too cramped — link still in nav */
 

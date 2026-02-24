@@ -8,7 +8,6 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 
 import { redeemRecoveryToken, removeErrors, removeMessage } from '../features/checkout/checkoutSlice';
-import { syncCartFromRecovery } from '../features/cart/cartSlice';
 
 import '../CartStyles/RecoverCart.css';
 
@@ -86,13 +85,6 @@ export default function RecoverCart() {
         }
 
         setRestoredCart(data.checkout);
-
-        // Sync items back into the cart slice so OrderConfirm.jsx
-        // can read them via cartDetails
-        if (data.checkout.items?.length > 0) {
-          dispatch(syncCartFromRecovery(data.checkout.items));
-        }
-
         setPhase('success');
       })
       .catch(err => {

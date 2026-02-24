@@ -127,10 +127,10 @@ function Home() {
                         {featuredProducts.length > 0 && (
                             <section className="featured-section">
                                 <div className="container">
-                                    <div className="section-header">
+                                    <div className="home-section-header">
                                         <div className="section-header-left">
                                             <Star className="section-icon featured-icon" />
-                                            <h2 className="section-title">Featured Products</h2>
+                                            <h2 className="home-section-title">Featured Products</h2>
                                         </div>
                                         <Link to="/products" className="section-link">
                                             View All <ArrowForward />
@@ -155,10 +155,10 @@ function Home() {
                         {trendingProducts.length > 0 && (
                             <section className="trending-section">
                                 <div className="container">
-                                    <div className="section-header">
+                                    <div className="home-section-header">
                                         <div className="section-header-left">
                                             <TrendingUp className="section-icon trending-icon" />
-                                            <h2 className="section-title">Trending Now</h2>
+                                            <h2 className="home-section-title">Trending Now</h2>
                                         </div>
                                         <Link to="/products" className="section-link">
                                             View All <ArrowForward />
@@ -183,10 +183,10 @@ function Home() {
                         {newArrivals.length > 0 && (
                             <section className="new-arrivals-section">
                                 <div className="container">
-                                    <div className="section-header">
+                                    <div className="home-section-header">
                                         <div className="section-header-left">
                                             <NewReleases className="section-icon new-icon" />
-                                            <h2 className="section-title">New Arrivals</h2>
+                                            <h2 className="home-section-title">New Arrivals</h2>
                                         </div>
                                         <Link to="/new-arrivals" className="section-link">
                                             View All <ArrowForward />
@@ -211,10 +211,10 @@ function Home() {
                         {bestsellers.length > 0 && (
                             <section className="bestsellers-section">
                                 <div className="container">
-                                    <div className="section-header">
+                                    <div className="home-section-header">
                                         <div className="section-header-left">
                                             <Whatshot className="section-icon bestseller-icon" />
-                                            <h2 className="section-title">Best Sellers</h2>
+                                            <h2 className="home-section-title">Best Sellers</h2>
                                         </div>
                                         <Link to="/products" className="section-link">
                                             View All <ArrowForward />
