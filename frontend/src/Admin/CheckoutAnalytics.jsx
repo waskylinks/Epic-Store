@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
@@ -213,6 +213,10 @@ const COOLDOWN_MS  = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 
 const MAX_ATTEMPTS = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 
 function RecoveryEmailButton({ checkout, loading, result, sendError, onSend }) {
+  // Capture a stable timestamp for this render — satisfies react-hooks/purity
+  // which flags Date.now() as impure when called directly during render.
+  const now = useMemo(() => Date.now(), []);
+
   const ab        = checkout.abandonment || {};
   const converted = checkout.conversion?.isConverted;
 
@@ -229,12 +233,12 @@ function RecoveryEmailButton({ checkout, loading, result, sendError, onSend }) {
     sentAt ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS) :
     null;
 
-  const inCooldown = !!(cooldownUntil && cooldownUntil.getTime() > Date.now());
+  const inCooldown = !!(cooldownUntil && cooldownUntil.getTime() > now);
   const maxReached = count >= MAX_ATTEMPTS;
 
   const cooldownLabel = (() => {
     if (!inCooldown) return null;
-    const h = Math.ceil((cooldownUntil.getTime() - Date.now()) / 3_600_000);
+    const h = Math.ceil((cooldownUntil.getTime() - now) / 3_600_000);
     return `${h}h left`;
   })();
 
@@ -331,30 +335,40 @@ export default function CheckoutAnalytics() {
   const loadAll = useCallback(() => {
     if (loadingRef.current) return;
     loadingRef.current = true;
-    setRefreshing(true);
-    setHasFetched(false);
-    Promise.allSettled([
+    return Promise.allSettled([
       dispatch(fetchCheckoutAbandonmentStats(timeframe)),
       dispatch(fetchRecoveryOpportunities(50)),
       dispatch(
         fetchAbandonedCheckouts({
-          hours:   720,
+          hours:    720,
           minValue: 0,
-          limit:   100,
-          page:    1,
-          sortBy:  'priority',
+          limit:    100,
+          page:     1,
+          sortBy:   'priority',
         })
       ),
     ]).finally(() => {
       loadingRef.current = false;
-      setRefreshing(false);
-      setHasFetched(true);
     });
   }, [dispatch, timeframe]);
 
   useEffect(() => {
-    loadAll();
+    setRefreshing(true);
+    setHasFetched(false);
+    loadAll()?.then(() => {
+      setRefreshing(false);
+      setHasFetched(true);
+    });
   }, [timeframe]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    setHasFetched(false);
+    loadAll()?.then(() => {
+      setRefreshing(false);
+      setHasFetched(true);
+    });
+  }, [loadAll]);
 
   /* ── Derived data ─────────────────────────────────────────── */
   const stats    = checkoutAbandonment || {};
@@ -414,7 +428,7 @@ export default function CheckoutAnalytics() {
               </div>
               <button
                 className={`ck-icon-btn ${refreshing ? 'ck-icon-btn--spin' : ''}`}
-                onClick={loadAll}
+                onClick={handleRefresh}
                 disabled={refreshing}
                 title="Refresh"
               >

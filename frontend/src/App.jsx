@@ -46,6 +46,7 @@ import Reports from './Admin/Reports';
 import CustomerAnalytics from './Admin/CustomerAnalytics';
 import AttributionAnalytics from './Admin/AttributionAnalytics';
 import CheckoutAnalytics from './Admin/CheckoutAnalytics';
+import RecoverCart from './Cart/RecoverCart';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -94,6 +95,8 @@ function App() {
         <Route path="/sale" element={<SalePage />} />
         <Route path="/wishlist" element={<Wishlist />} />
         <Route path="/new-arrivals" element={<NewArrivals />} />
+        <Route path="/checkout/recover" element={<RecoverCart />} />
+      
         
         {/* Password Reset Routes */}
         <Route path='/password/forgot' element={<ForgotPassword />} />
