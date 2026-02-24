@@ -47,6 +47,7 @@ import CustomerAnalytics from './Admin/CustomerAnalytics';
 import AttributionAnalytics from './Admin/AttributionAnalytics';
 import CheckoutAnalytics from './Admin/CheckoutAnalytics';
 import RecoverCart from './Cart/RecoverCart';
+import RecoveryEmailManager from './Admin/RecoveryEmailManager';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -133,6 +134,7 @@ function App() {
         <Route path='/admin/customers' element={<ProtectedRoute element={<CustomerAnalytics />} adminOnly={true} />} />
         <Route path='/admin/attribution' element={<ProtectedRoute element={<AttributionAnalytics />} adminOnly={true} />} />
         <Route path='/admin/checkout' element={<ProtectedRoute element={<CheckoutAnalytics />} adminOnly={true} />} />
+        <Route path='/admin/recovery-emails' element={<ProtectedRoute element={<RecoveryEmailManager />} adminOnly={true} />} />
 
 
       

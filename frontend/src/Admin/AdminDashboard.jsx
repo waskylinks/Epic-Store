@@ -7,6 +7,7 @@ import {
   ShoppingCart, People, Inventory,
   Assessment,
   StarOutline,
+  MarkEmailRead,
   AttachMoney, Menu, Close,
   Warning, CheckCircle,
   Category,
@@ -91,6 +92,7 @@ const NAV_GROUPS = [
       { path: '/admin/returns', icon: ReplayCircleFilled, label: 'Returns', color: '#EF4444' },
       { path: '/admin/refunds', icon: CurrencyExchange,   label: 'Refunds', color: '#14B8A6' },
       { path: '/admin/reviews',  icon: StarOutline,        label: 'Reviews', color: '#F59E0B' },
+      { path: '/admin/recovery-emails', icon: MarkEmailRead, label: 'Recovery Emails', color: '#FF6B6B' },
     ],
   },
 ];
@@ -442,6 +444,14 @@ export default function AdminDashboard() {
       icon: ErrorOutline,
       accent: '#EF4444',
       bg: '#EF444415',
+    },
+    {
+      key: 'recoveryEmails',
+      label: 'Recovery Emails',
+      value: fmt.number(checkoutAbandonment?.emailsSent),
+      icon: MarkEmailRead,
+      accent: '#FF6B6B',
+      bg: '#FF6B6B15',
     },
   ];
 
@@ -952,6 +962,26 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
+
+                <SectionCard
+                  title="Recovery Email Manager"
+                  subtitle="Send & track cart recovery emails"
+                  icon={MarkEmailRead}
+                  iconColor="#FF6B6B"
+                  link="/admin/recovery-emails"
+                  linkLabel="Open Manager"
+                >
+                  {firstLoad ? (
+                    <LoadingState label="Loading recovery data…" />
+                  ) : (
+                    <div className="adm-metric-list">
+                      <MetricRow label="Emails Sent"      value={fmt.number(checkoutAbandonment?.emailsSent)}    accent="#FF6B6B" />
+                      <MetricRow label="Recovered Orders" value={fmt.number(checkoutAbandonment?.recoveredOrders)} accent="#10B981" />
+                      <MetricRow label="Recovery Rate"    value={fmt.pct(checkoutAbandonment?.recoveryRate)}      accent="#06B6D4" />
+                    </div>
+                  )}
+                </SectionCard>
+                
               </div>
             </div>
 
