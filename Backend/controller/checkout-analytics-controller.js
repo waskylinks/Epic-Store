@@ -178,27 +178,45 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
 
 export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next) => {
   const {
-    hours   = 24,
-    minValue = 0,
-    limit   = 50,
-    page    = 1,
-    sortBy  = "priority"
+    hours     = 24,
+    minValue  = 0,
+    limit     = 50,
+    page      = 1,
+    sortBy    = "priority",
+    emailSent,  // 'true' | 'false' | undefined  →  Sent tab / Queue tab
+    recovered,  // 'true' | undefined             →  Recovered tab
   } = req.query;
 
-  const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}`;
+  // Each filter combination gets its own cache entry
+  const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}_es${emailSent ?? ''}_rec${recovered ?? ''}`;
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const checkouts = await Checkout.find({
-    "abandonment.isAbandoned":  true,
-    "abandonment.abandonedAt":  {
-      $gte: new Date(Date.now() - parseInt(hours) * 60 * 60 * 1000)
+  // Base query — always applied
+  const query = {
+    'abandonment.isAbandoned': true,
+    'abandonment.abandonedAt': {
+      $gte: new Date(Date.now() - parseInt(hours) * 60 * 60 * 1000),
     },
-    "pricing.totalPrice":       { $gte: parseFloat(minValue) },
-    "conversion.isConverted":   false
-  })
+    'pricing.totalPrice':     { $gte: parseFloat(minValue) },
+    'conversion.isConverted': false,
+  };
+
+  // emailSent=true  → Sent tab:      has received at least one recovery email
+  // emailSent=false → Queue tab:     has never received a recovery email
+  if (emailSent === 'true')  query['abandonment.recoveryEmailSent'] = true;
+  if (emailSent === 'false') query['abandonment.recoveryEmailSent'] = false;
+
+  // recovered=true  → Recovered tab: cart was recovered (may be converted)
+  // Drop the isConverted=false guard so converted-recovered carts are included
+  if (recovered === 'true') {
+    query['abandonment.recovered'] = true;
+    delete query['conversion.isConverted'];
+  }
+
+  const checkouts = await Checkout.find(query)
     .populate("user", "firstName lastName email")
     .populate("items.product", "name images pricing")
     .lean();
@@ -303,14 +321,6 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
 export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => {
   const { checkoutId } = req.params;
 
-  /**
-   * Populate user and items.product so that:
-   *  - recoveryEmailService has firstName + email for the template
-   *  - cart item names/images render correctly in the email
-   * We also need the model instance (not .lean()) so instance
-   * methods (generateRecoveryToken, markRecoveryEmailSent, canSendRecoveryEmail)
-   * are available.
-   */
   const checkout = await Checkout.findById(checkoutId)
     .populate("user", "firstName lastName email")
     .populate("items.product", "name images pricing");
@@ -319,38 +329,22 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
     return next(new HandleError("Checkout not found", 404));
   }
 
-  /**
-   * Sequence:
-   *   1. generateRecoveryToken() — runs canSendRecoveryEmail() guard internally,
-   *      throws if sending is not allowed, returns the signed JWT and
-   *      stores audit fields on the document (not saved yet)
-   *   2. sendRecoveryEmail()     — renders template, calls sendEmail, throws on
-   *      SMTP failure so we never mark a send that didn't happen
-   *   3. markRecoveryEmailSent() — increments count, updates timestamps
-   *   4. checkout.save()         — persists everything + triggers cache invalidation
-   */
   let token;
   try {
     token = checkout.generateRecoveryToken();
   } catch (err) {
-    // canSendRecoveryEmail guard fired — cooldown, max attempts, expired etc.
     return next(new HandleError(err.message, 400));
   }
 
   try {
     await sendRecoveryEmail({ checkout, token });
   } catch (err) {
-    // SMTP failed — do not update the model, do not save
-    // The token audit fields set by generateRecoveryToken() are
-    // discarded since we never call save()
     return next(new HandleError(`Email delivery failed: ${err.message}`, 500));
   }
 
-  // Email confirmed sent — now update the audit trail and save
   checkout.markRecoveryEmailSent();
   await checkout.save();
 
-  // Determine when the next email can be sent for the UI cooldown display
   const canSendNext = checkout.canSendRecoveryEmail();
   const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
   const nextAvailableAt = new Date(
