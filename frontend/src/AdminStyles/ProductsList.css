@@ -16,8 +16,8 @@
   --grey-700:    #3d4252;
   --grey-500:    #6b7280;
   --grey-300:    #d1d5db;
-  --grey-100:    #f3f4f6;
-  --grey-50:     #fafafa;
+  --grey-100:    #292b2e;
+  --grey-50:     #524d4d;
   --white:       #ffffff;
   --green:       #22c55e;
   --green-bg:    #f0fdf4;
@@ -35,8 +35,8 @@
   --shadow-md:   0 4px 16px rgba(0,0,0,.10);
   --shadow-lg:   0 12px 40px rgba(0,0,0,.14);
   --transition:  180ms cubic-bezier(.4,0,.2,1);
-  --font-body:   'DM Sans', sans-serif;
-  --font-display:'Playfair Display', serif;
+  --font-body:   -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
 }
 
 /* ── Reset ─────────────────────────────────────────────────── */
@@ -90,7 +90,7 @@
 .pl-header__left { display: flex; flex-direction: column; gap: 2px; }
 .pl-title {
   font-family: var(--font-display);
-  font-size: clamp(24px, 4vw, 32px);
+  font-size: clamp(19px, 3.5vw, 27px);
   font-weight: 700;
   color: var(--black);
   letter-spacing: -.5px;
@@ -527,3 +527,23 @@ input[type="checkbox"] {
   .pl-pagination { flex-direction: column; align-items: flex-start; }
   .pl-modal { padding: 24px 18px; }
 }
+
+
+.ao-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6B7280;
+  text-decoration: none;
+  padding: 7px 12px;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  background: #fff;
+  transition: all 0.15s;
+  white-space: nowrap;
+  margin-bottom: 0;
+  
+}
+.ao-back-btn:hover { color: #111827; border-color: #9CA3AF; background: #F9FAFB; }

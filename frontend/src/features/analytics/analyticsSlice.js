@@ -572,6 +572,29 @@ export const fetchRecoveryOpportunities = createAsyncThunk(
     }
 );
 
+export const markRecoveryEmailSent = createAsyncThunk(
+    'analytics/markRecoveryEmailSent',
+    async (checkoutId, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.post(
+                `${API_BASE}/analytics/checkout/${checkoutId}/mark-recovery-sent`,
+                {},
+                { withCredentials: true }
+            );
+            // Controller returns: { success, message, result: {
+            //   checkoutId, recipient, attemptNumber, sentAt,
+            //   nextAvailableAt, attemptsRemaining, canSendAnother, cooldownReason
+            // }}
+            return { checkoutId, result: data.result };
+        } catch (error) {
+            return rejectWithValue({
+                checkoutId,
+                message: error.response?.data?.message || 'Failed to send recovery email'
+            });
+        }
+    }
+);
+
 // ============================================
 // PRODUCT ANALYTICS THUNKS
 // ============================================
@@ -942,6 +965,10 @@ const analyticsSlice = createSlice({
         checkoutAbandonment:  null,
         abandonedCheckouts:   [],
         recoveryOpportunities: [],
+        // Recovery email send state — keyed by checkoutId for per-row UI
+        emailSendLoading: {},  
+        emailSendResults: {},  
+        emailSendError:   {},  
 
         // Products
         productPerformance:    null,
@@ -1292,6 +1319,60 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchRecoveryOpportunities.fulfilled, (state, action) => {
                 state.recoveryOpportunities = action.payload;
+            })
+
+            .addCase(markRecoveryEmailSent.pending, (state, action) => {
+                // action.meta.arg is the checkoutId passed to the thunk
+                state.emailSendLoading[action.meta.arg] = true;
+                delete state.emailSendError[action.meta.arg];
+            })
+            .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
+                const { checkoutId, result } = action.payload;
+                state.emailSendLoading[checkoutId] = false;
+                state.emailSendResults[checkoutId] = result;
+                state.success = true;
+                state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
+
+                // Optimistically update the abandonedCheckouts list so the
+                // send button reflects the new attempt count + cooldown immediately
+                // without needing a refetch.
+                const list = state.abandonedCheckouts?.abandonedCheckouts;
+                if (Array.isArray(list)) {
+                    const idx = list.findIndex(c => c._id === checkoutId);
+                    if (idx !== -1) {
+                        list[idx] = {
+                            ...list[idx],
+                            abandonment: {
+                                ...list[idx].abandonment,
+                                recoveryEmailSent:    true,
+                                recoveryEmailSentAt:  result.sentAt,
+                                recoveryEmailCount:   result.attemptNumber,
+                            }
+                        };
+                    }
+                }
+                // Same for recoveryOpportunities list
+                const opps = state.recoveryOpportunities?.opportunities;
+                if (Array.isArray(opps)) {
+                    const idx = opps.findIndex(c => c._id === checkoutId);
+                    if (idx !== -1) {
+                        opps[idx] = {
+                            ...opps[idx],
+                            abandonment: {
+                                ...opps[idx].abandonment,
+                                recoveryEmailSent:   true,
+                                recoveryEmailSentAt: result.sentAt,
+                                recoveryEmailCount:  result.attemptNumber,
+                            }
+                        };
+                    }
+                }
+            })
+            .addCase(markRecoveryEmailSent.rejected, (state, action) => {
+                const { checkoutId, message } = action.payload;
+                state.emailSendLoading[checkoutId] = false;
+                state.emailSendError[checkoutId]   = message;
+                state.error = message;
             });
 
         // ============================================

@@ -26,6 +26,9 @@ import {
   selectFeaturedProducts,
   selectOnSaleProducts,
 } from '../features/admin/adminProductSlice';
+import { Link } from 'react-router-dom';
+import {ArrowBack }from '@mui/icons-material';
+
 import '../AdminStyles/ProductsList.css';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -216,6 +219,12 @@ export default function ProductList() {
         )}
 
         {/* ── Header ── */}
+
+        <Link to="/admin/dashboard" className="ao-back-btn">
+            <ArrowBack style={{ fontSize: 16 }} />
+            Dashboard
+        </Link>
+                        
         <div className="pl-header">
           <div className="pl-header__left">
             <h1 className="pl-title">Products</h1>
