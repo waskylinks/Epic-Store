@@ -578,7 +578,8 @@ customerAnalyticsSchema.statics.getSegmentDistribution = async function() {
         _id: '$rfm.segment',
         count: { $sum: 1 },
         totalRevenue: { $sum: '$clv.totalRevenue' },
-        avgRevenue: { $avg: '$clv.totalRevenue' }
+        avgRevenue: { $avg: '$clv.totalRevenue' },
+        avgOrders: { $avg: '$clv.totalOrders' }
       }
     },
     {

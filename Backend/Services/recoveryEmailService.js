@@ -1,4 +1,4 @@
-import { sendEmail } from './sendEmail.js';
+import { sendEmail } from '../utils/sendEmail.js';
 import { emailTemplates } from '../utils/emailTemplates.js';
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
