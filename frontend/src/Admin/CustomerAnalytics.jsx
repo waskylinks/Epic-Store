@@ -48,7 +48,7 @@ import Navbar from '../components/Navbar';
 import '../AdminStyles/CustomerAnalytics.css';
 
 // ── Palette ──────────────────────────────────────────────────
-const PAL = ['#3B82F6','#8B5CF6','#10B981','#F59E0B','#EF4444','#EC4899','#F97316','#06B6D4'];
+const PAL = ['#6366F1','#10B981','#F59E0B','#EF4444','#06B6D4','#8B5CF6','#F97316','#14B8A6'];
 
 // ── Formatters ───────────────────────────────────────────────
 const fmt = {
@@ -149,13 +149,13 @@ function Card({ title, sub, icon: Icon, iconColor, action, flush, footer, childr
 const TT = {
   contentStyle: {
     background: '#FFFFFF',
-    border: '1px solid #E2E8F0',
-    borderRadius: 10,
+    border: '1px solid #D1D5DB',
+    borderRadius: 8,
     fontSize: 13,
-    boxShadow: '0 4px 24px rgba(0,0,0,0.10)',
-    color: '#334155',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+    color: '#374151',
   },
-  labelStyle: { color: '#0F172A', fontWeight: 700 },
+  labelStyle: { color: '#111827', fontWeight: 700 },
 };
 
 // ── Bar chart icon (SVG) ─────────────────────────────────────
@@ -320,7 +320,7 @@ export default function CustomerAnalytics() {
               <div className="ca-grid-4">
                 {first ? Array.from({ length: 8 }).map((_, i) => <KpiSkel key={i} />) : (
                   <>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': 'rgba(59,130,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': '#EFF6FF' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><People style={{ fontSize: 20 }} /></span>
                         <TrendBadge value={ov.newCustomersGrowth} />
@@ -332,7 +332,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': 'rgba(16,185,129,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': '#ECFDF5' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><CheckCircleOutline style={{ fontSize: 20 }} /></span>
                       </div>
@@ -343,7 +343,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': 'rgba(139,92,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': '#EEF2FF' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><AttachMoney style={{ fontSize: 20 }} /></span>
                       </div>
@@ -354,7 +354,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': 'rgba(245,158,11,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': '#FFFBEB' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><ShoppingCart style={{ fontSize: 20 }} /></span>
                       </div>
@@ -365,7 +365,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': 'rgba(245,158,11,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': '#FFFBEB' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><Star style={{ fontSize: 20 }} /></span>
                       </div>
@@ -376,7 +376,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#EF4444', '--kpi-bg': 'rgba(239,68,68,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#EF4444', '--kpi-bg': '#FEF2F2' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><Warning style={{ fontSize: 20 }} /></span>
                       </div>
@@ -387,7 +387,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#06B6D4', '--kpi-bg': 'rgba(6,182,212,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#06B6D4', '--kpi-bg': '#ECFEFF' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><TrendingUp style={{ fontSize: 20 }} /></span>
                       </div>
@@ -398,7 +398,7 @@ export default function CustomerAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ca-kpi" style={{ '--kpi-color': '#EC4899', '--kpi-bg': 'rgba(236,72,153,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': '#EEF2FF' }}>
                       <div className="ca-kpi-top">
                         <span className="ca-kpi-icon"><Psychology style={{ fontSize: 20 }} /></span>
                       </div>
@@ -436,7 +436,7 @@ export default function CustomerAnalytics() {
                   {first ? <Spinner h={220} /> : clvDist.length === 0 ? <Empty /> : (
                     <ResponsiveContainer width="100%" height={220}>
                       <BarChart data={clvDist} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="range" tick={{ fontSize: 10, fill: '#64748B' }} />
                         <YAxis tick={{ fontSize: 10, fill: '#64748B' }} />
                         <Tooltip {...TT} formatter={(v) => [fmt.number(v), 'Customers']} />
@@ -483,7 +483,7 @@ export default function CustomerAnalytics() {
                           }))}
                           dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75}
                           label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                          labelLine={{ stroke: '#CBD5E1' }}
+                          labelLine={{ stroke: '#D1D5DB' }}
                         >
                           {(ov.churnRisk || []).map((_, i) => (
                             <Cell key={i} fill={['#EF4444', '#F97316', '#F59E0B', '#10B981'][i % 4]} />
@@ -559,7 +559,7 @@ export default function CustomerAnalytics() {
                         layout="vertical"
                         margin={{ left: 4, right: 12, top: 4, bottom: 4 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 10, fill: '#64748B' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: '#334155' }} width={72} />
                         <Tooltip {...TT} formatter={(v, n) => [n === 'revenue' ? fmt.compact(v) : fmt.number(v), n === 'revenue' ? 'Revenue' : 'Customers']} />
@@ -611,19 +611,19 @@ export default function CustomerAnalytics() {
               <div className="ca-grid-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
                 {first ? Array.from({ length: 4 }).map((_, i) => <KpiSkel key={i} />) : (
                   <>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': 'rgba(59,130,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': '#EFF6FF' }}>
                       <div className="ca-kpi-label">High Value Count</div>
                       <div className="ca-kpi-value">{fmt.number(highValueCustomers?.count || hvList.length)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': 'rgba(16,185,129,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': '#ECFDF5' }}>
                       <div className="ca-kpi-label">Total Revenue</div>
                       <div className="ca-kpi-value">{fmt.compact(hvStats.totalRevenue)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': 'rgba(139,92,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': '#EEF2FF' }}>
                       <div className="ca-kpi-label">Avg Revenue</div>
                       <div className="ca-kpi-value">{fmt.currency(hvStats.avgRevenue)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': 'rgba(245,158,11,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': '#FFFBEB' }}>
                       <div className="ca-kpi-label">Avg Orders</div>
                       <div className="ca-kpi-value">{(hvStats.avgOrders || 0).toFixed(1)}</div>
                     </div>
@@ -680,19 +680,19 @@ export default function CustomerAnalytics() {
               <div className="ca-grid-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
                 {first ? Array.from({ length: 4 }).map((_, i) => <KpiSkel key={i} />) : (
                   <>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#EF4444', '--kpi-bg': 'rgba(239,68,68,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#EF4444', '--kpi-bg': '#FEF2F2' }}>
                       <div className="ca-kpi-label">Total At Risk</div>
                       <div className="ca-kpi-value">{fmt.number(atRiskCustomers?.count || arList.length)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#F97316', '--kpi-bg': 'rgba(249,115,22,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#F97316', '--kpi-bg': '#FFF7ED' }}>
                       <div className="ca-kpi-label">Revenue at Risk</div>
                       <div className="ca-kpi-value">{fmt.compact(arRevAtRisk)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#EF4444', '--kpi-bg': 'rgba(239,68,68,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#EF4444', '--kpi-bg': '#FEF2F2' }}>
                       <div className="ca-kpi-label">Critical</div>
                       <div className="ca-kpi-value">{fmt.number(arRisk.critical)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': 'rgba(245,158,11,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': '#FFFBEB' }}>
                       <div className="ca-kpi-label">High Risk</div>
                       <div className="ca-kpi-value">{fmt.number(arRisk.high)}</div>
                     </div>
@@ -743,7 +743,7 @@ export default function CustomerAnalytics() {
                           ].filter(d => d.value > 0)}
                           dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75}
                           label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                          labelLine={{ stroke: '#CBD5E1' }}
+                          labelLine={{ stroke: '#D1D5DB' }}
                         >
                           {['#EF4444', '#F97316', '#F59E0B', '#10B981'].map((c, i) => <Cell key={i} fill={c} />)}
                         </Pie>
@@ -802,19 +802,19 @@ export default function CustomerAnalytics() {
               <div className="ca-grid-4" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
                 {first ? Array.from({ length: 4 }).map((_, i) => <KpiSkel key={i} />) : (
                   <>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': 'rgba(245,158,11,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#F59E0B', '--kpi-bg': '#FFFBEB' }}>
                       <div className="ca-kpi-label">VIP Count</div>
                       <div className="ca-kpi-value">{fmt.number(vipCustomers?.count || vipList.length)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': 'rgba(16,185,129,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': '#ECFDF5' }}>
                       <div className="ca-kpi-label">VIP Revenue</div>
                       <div className="ca-kpi-value">{fmt.compact(vipStats.totalRevenue)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': 'rgba(59,130,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': '#EFF6FF' }}>
                       <div className="ca-kpi-label">Avg VIP Revenue</div>
                       <div className="ca-kpi-value">{fmt.currency(vipStats.avgRevenue)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': 'rgba(139,92,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': '#EEF2FF' }}>
                       <div className="ca-kpi-label">Avg VIP Orders</div>
                       <div className="ca-kpi-value">{(vipStats.avgOrders || 0).toFixed(1)}</div>
                     </div>
@@ -938,7 +938,7 @@ export default function CustomerAnalytics() {
                           ].filter(d => d.value > 0)}
                           dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75}
                           label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                          labelLine={{ stroke: '#CBD5E1' }}
+                          labelLine={{ stroke: '#D1D5DB' }}
                         >
                           {['#EF4444', '#3B82F6', '#10B981'].map((c, i) => <Cell key={i} fill={c} />)}
                         </Pie>
@@ -980,7 +980,7 @@ export default function CustomerAnalytics() {
                         }))}
                         margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748B' }} />
                         <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <Tooltip {...TT} formatter={(v, n) => [n === 'avgRev' ? fmt.currency(v) : fmt.number(v), n === 'avgRev' ? 'Avg Revenue' : 'Customers']} />
@@ -1017,11 +1017,11 @@ export default function CustomerAnalytics() {
                       >
                         <defs>
                           <linearGradient id="gCohortRev" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%"  stopColor="#3B82F6" stopOpacity={0.15} />
-                            <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
+                            <stop offset="5%"  stopColor="#6366F1" stopOpacity={0.15} />
+                            <stop offset="95%" stopColor="#6366F1" stopOpacity={0} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#64748B' }} />
                         <YAxis tick={{ fontSize: 10, fill: '#64748B' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <Tooltip {...TT} formatter={(v, n) => [
@@ -1029,7 +1029,7 @@ export default function CustomerAnalytics() {
                           n === 'revenue' ? 'Revenue' : n === 'customers' ? 'Customers' : 'Avg Revenue',
                         ]} />
                         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8, color: '#64748B' }} />
-                        <Area type="monotone" dataKey="revenue" stroke="#3B82F6" strokeWidth={2} fill="url(#gCohortRev)" dot={false} />
+                        <Area type="monotone" dataKey="revenue" stroke="#6366F1" strokeWidth={2} fill="url(#gCohortRev)" dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
@@ -1071,11 +1071,11 @@ export default function CustomerAnalytics() {
                         }))}
                         margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#64748B' }} />
                         <YAxis tick={{ fontSize: 10, fill: '#64748B' }} />
                         <Tooltip {...TT} formatter={(v, n) => [fmt.number(v), n === 'customers' ? 'Customers' : 'Avg Orders']} />
-                        <Bar dataKey="customers" radius={[4, 4, 0, 0]} fill="#3B82F6" opacity={0.85} />
+                        <Bar dataKey="customers" radius={[4, 4, 0, 0]} fill="#6366F1" opacity={0.85} />
                       </BarChart>
                     </ResponsiveContainer>
                   )}
@@ -1092,15 +1092,15 @@ export default function CustomerAnalytics() {
               <div className="ca-grid-4" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 {first ? Array.from({ length: 3 }).map((_, i) => <KpiSkel key={i} />) : (
                   <>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': 'rgba(59,130,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#3B82F6', '--kpi-bg': '#EFF6FF' }}>
                       <div className="ca-kpi-label">Total Sources</div>
                       <div className="ca-kpi-value">{srcList.length}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': 'rgba(16,185,129,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#10B981', '--kpi-bg': '#ECFDF5' }}>
                       <div className="ca-kpi-label">Total Customers</div>
                       <div className="ca-kpi-value">{fmt.number(acquisitionSources?.totalCustomers)}</div>
                     </div>
-                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': 'rgba(139,92,246,0.08)' }}>
+                    <div className="ca-kpi" style={{ '--kpi-color': '#8B5CF6', '--kpi-bg': '#EEF2FF' }}>
                       <div className="ca-kpi-label">Total Revenue</div>
                       <div className="ca-kpi-value">{fmt.compact(acquisitionSources?.totalRevenue)}</div>
                     </div>
@@ -1118,7 +1118,7 @@ export default function CustomerAnalytics() {
                         layout="vertical"
                         margin={{ left: 4, right: 12, top: 4, bottom: 4 }}
                       >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                        <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 10, fill: '#64748B' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 10, fill: '#334155' }} width={72} />
                         <Tooltip {...TT} formatter={(v, n) => [n === 'revenue' ? fmt.compact(v) : fmt.number(v), n === 'revenue' ? 'Revenue' : 'Customers']} />

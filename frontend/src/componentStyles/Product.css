@@ -21,8 +21,8 @@
    - Danger:           #991b1b  (dark red — 7.7:1 on white, WCAG AA)
    ──────────────────────────────────────────────────────────────────────────── */
 :root {
-  --pc-font-body:    'DM Sans', sans-serif;
-  --pc-font-display: 'Playfair Display', serif;
+  --pc-font-body:    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+  --pc-font-display: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
 
   /* Backgrounds */
   --pc-clr-bg:       #ffffff;
