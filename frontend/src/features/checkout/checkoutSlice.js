@@ -96,6 +96,28 @@ export const abandonCheckout = createAsyncThunk(
   }
 );
 
+export const redeemRecoveryToken = createAsyncThunk(
+    'checkout/redeemRecoveryToken',
+    async (token, { rejectWithValue }) => {
+        try {
+            const { data } = await axios.get(
+                `/api/v1/checkout/recover?token=${token}`
+            );
+            // Controller returns: {
+            //   success, message, alreadyConverted,
+            //   checkout?: { id, items, pricing, shippingInfo, currentStep, unavailableItems },
+            //   orderId?  (only when alreadyConverted: true)
+            // }
+            return data;
+        } catch (error) {
+            return rejectWithValue({
+                message: error.response?.data?.message || 'Recovery link is invalid',
+                status:  error.response?.status || 400
+            });
+        }
+    }
+);
+
 // ============================================
 // INITIAL STATE
 // ============================================
@@ -128,7 +150,18 @@ const initialState = {
   message: null,
   
   // Resume state
-  hasActiveCheckout: false
+  hasActiveCheckout: false,
+  // Cart recovery state (customer-facing — email link redemption)
+    recovery: {
+        loading:          false,
+        error:            null,
+        errorStatus:      null,   // 410 = expired, 400/403 = invalid, 404 = not found
+        alreadyConverted: false,
+        orderId:          null,   // populated when alreadyConverted: true
+        restoredCheckout: null,   // the checkout object to hydrate into session
+        unavailableItems: [],     // items removed because product is unpublished
+        message:          null,
+    }
 };
 
 // ============================================
@@ -278,8 +311,49 @@ const checkoutSlice = createSlice({
         state.actionLoading = false;
         state.error = action.payload;
       });
+
+    builder
+    .addCase(redeemRecoveryToken.pending, (state) => {
+        state.recovery.loading          = true;
+        state.recovery.error            = null;
+        state.recovery.errorStatus      = null;
+        state.recovery.alreadyConverted = false;
+        state.recovery.restoredCheckout = null;
+        state.recovery.unavailableItems = [];
+    })
+    .addCase(redeemRecoveryToken.fulfilled, (state, action) => {
+        state.recovery.loading  = false;
+        state.recovery.message  = action.payload.message;
+
+        if (action.payload.alreadyConverted) {
+            state.recovery.alreadyConverted = true;
+            state.recovery.orderId          = action.payload.orderId || null;
+            return;
+        }
+
+        // Restore the cart into active session state so
+        // Payment.jsx and OrderConfirm.jsx work without changes
+        const c = action.payload.checkout;
+        state.recovery.restoredCheckout = c;
+        state.recovery.unavailableItems = c.unavailableItems || [];
+
+        state.session            = c;
+        state.checkoutId         = c.id;
+        state.currentStep        = c.currentStep || 'shipping_info';
+        state.pricing            = c.pricing     || initialState.pricing;
+        state.hasActiveCheckout  = true;
+        // shippingInfo restored — OrderConfirm can prefill it
+    })
+    .addCase(redeemRecoveryToken.rejected, (state, action) => {
+        state.recovery.loading     = false;
+        state.recovery.error       = action.payload.message;
+        state.recovery.errorStatus = action.payload.status;
+    });
+    
   }
 });
+
+
 
 // ============================================
 // ACTIONS
