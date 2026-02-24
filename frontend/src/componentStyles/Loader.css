@@ -1,76 +1,269 @@
-/* Container */
+/* ============================================================
+   Loader.css
+   Matches full design system — coral accent: #FF6B6B
+   Font: Plus Jakarta Sans
+   Fully responsive
+   ============================================================ */
+
+/* ── Container ──────────────────────────────────────────────── */
 .loader-container {
   display: flex;
   justify-content: center;
   align-items: center;
   min-height: 50vh;
-  background: transparent; /* adaptable for web apps */
+  width: 100%;
+  background: transparent;
 }
 
-/* ================= CLASSIC DOT LOADER ================= */
+/* ============================================================
+   CLASSIC — three bouncing coral dots
+   ============================================================ */
 .dots-loader-classic {
   display: flex;
-  gap: 0.5rem;
+  gap: 10px;
   align-items: center;
 }
 
 .dots-loader-classic div {
   width: 12px;
   height: 12px;
-  background-color: #555; /* minimal neutral color */
   border-radius: 50%;
-  animation: bounce-classic 0.6s infinite alternate;
+  background: #FF6B6B;
+  animation: cl-bounce 0.65s ease-in-out infinite alternate;
+  box-shadow: 0 4px 10px rgba(255, 107, 107, 0.35);
 }
 
-.dots-loader-classic div:nth-child(2) { animation-delay: 0.2s; }
-.dots-loader-classic div:nth-child(3) { animation-delay: 0.4s; }
+.dots-loader-classic div:nth-child(1) { animation-delay: 0s; }
+.dots-loader-classic div:nth-child(2) { animation-delay: 0.18s; }
+.dots-loader-classic div:nth-child(3) { animation-delay: 0.36s; }
 
-@keyframes bounce-classic {
-  0%   { transform: translateY(0); opacity: 0.6; }
-  50%  { transform: translateY(-10px); opacity: 1; }
-  100% { transform: translateY(0); opacity: 0.6; }
+@keyframes cl-bounce {
+  0%   { transform: translateY(0)     scale(1);    opacity: 0.5; }
+  50%  { transform: translateY(-12px) scale(1.15); opacity: 1;   }
+  100% { transform: translateY(0)     scale(1);    opacity: 0.5; }
 }
 
-/* ================= PREMIUM DOT LOADER ================= */
+/* ============================================================
+   PREMIUM — five dots orbiting a coral core
+   ============================================================ */
 .dots-loader-premium {
   position: relative;
   width: 80px;
   height: 80px;
 }
 
-.dots-loader-premium div {
+/* Central coral pulse core */
+.dots-loader-premium::before {
+  content: '';
   position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
   width: 14px;
   height: 14px;
-  background: linear-gradient(45deg, #ff6a3d, #ff854e, #6c5b7b);
   border-radius: 50%;
-  animation: rotate-dots 1.2s linear infinite;
-  transform-origin: 50% 50%;
-  box-shadow: 0 0 8px rgba(255, 106, 61, 0.6);
+  background: #FF6B6B;
+  animation: pm-core-pulse 1.4s ease-in-out infinite;
+  box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.5);
 }
 
-/* Positioning 5 dots around circle */
-.dots-loader-premium div:nth-child(1) { top: 0; left: 50%; transform: translate(-50%, 0) rotate(0deg); }
-.dots-loader-premium div:nth-child(2) { top: 15%; right: 0; transform: translate(0, -50%) rotate(72deg); }
-.dots-loader-premium div:nth-child(3) { bottom: 15%; right: 0; transform: translate(0, 50%) rotate(144deg); }
-.dots-loader-premium div:nth-child(4) { bottom: 0; left: 50%; transform: translate(50%, 0) rotate(216deg); }
-.dots-loader-premium div:nth-child(5) { top: 15%; left: 0; transform: translate(0, -50%) rotate(288deg); }
-
-/* Rotate the circle of dots */
-@keyframes rotate-dots {
-  0%   { transform: rotate(0deg) translateX(30px) rotate(0deg); }
-  100% { transform: rotate(360deg) translateX(30px) rotate(-360deg); }
+@keyframes pm-core-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(255,107,107,0.55); transform: translate(-50%,-50%) scale(1); }
+  50%  { box-shadow: 0 0 0 10px rgba(255,107,107,0);   transform: translate(-50%,-50%) scale(1.15); }
+  100% { box-shadow: 0 0 0 0   rgba(255,107,107,0);    transform: translate(-50%,-50%) scale(1); }
 }
 
-/* Optional responsive scaling */
+/* Orbit ring */
+.dots-loader-premium {
+  animation: pm-rotate 1.4s linear infinite;
+}
+
+.dots-loader-premium div {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #FF6B6B;
+  top: 50%;
+  left: 50%;
+  /* orbit radius = 30px, each dot offset then rotated */
+  transform-origin: 0 0;
+}
+
+/* Place each dot at equal intervals around the orbit */
+.dots-loader-premium div:nth-child(1) {
+  transform: rotate(0deg)   translateX(30px) translateY(-50%);
+  opacity: 1;
+}
+.dots-loader-premium div:nth-child(2) {
+  transform: rotate(72deg)  translateX(30px) translateY(-50%);
+  opacity: 0.85;
+}
+.dots-loader-premium div:nth-child(3) {
+  transform: rotate(144deg) translateX(30px) translateY(-50%);
+  opacity: 0.65;
+}
+.dots-loader-premium div:nth-child(4) {
+  transform: rotate(216deg) translateX(30px) translateY(-50%);
+  opacity: 0.45;
+}
+.dots-loader-premium div:nth-child(5) {
+  transform: rotate(288deg) translateX(30px) translateY(-50%);
+  opacity: 0.25;
+}
+
+@keyframes pm-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .dots-loader-classic div { width: 10px; height: 10px; }
-  .dots-loader-premium { width: 60px; height: 60px; }
-  .dots-loader-premium div { width: 10px; height: 10px; }
+  .dots-loader-classic div {
+    width: 11px;
+    height: 11px;
+  }
+
+  .dots-loader-premium {
+    width: 68px;
+    height: 68px;
+  }
+  .dots-loader-premium div {
+    width: 9px;
+    height: 9px;
+  }
 }
 
 @media (max-width: 480px) {
-  .dots-loader-classic div { width: 8px; height: 8px; }
-  .dots-loader-premium { width: 50px; height: 50px; }
-  .dots-loader-premium div { width: 8px; height: 8px; }
+  .dots-loader-classic { gap: 8px; }
+  .dots-loader-classic div {
+    width: 9px;
+    height: 9px;
+  }
+
+  .dots-loader-premium {
+    width: 56px;
+    height: 56px;
+  }
+  .dots-loader-premium div {
+    width: 8px;
+    height: 8px;
+    transform-origin: 0 0;
+  }
+  .dots-loader-premium div:nth-child(1) { transform: rotate(0deg)   translateX(22px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(2) { transform: rotate(72deg)  translateX(22px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(3) { transform: rotate(144deg) translateX(22px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(4) { transform: rotate(216deg) translateX(22px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(5) { transform: rotate(288deg) translateX(22px) translateY(-50%); }
+
+  .dots-loader-premium::before {
+    width: 11px;
+    height: 11px;
+  }
+}
+
+@media (max-width: 360px) {
+  .dots-loader-classic div {
+    width: 8px;
+    height: 8px;
+  }
+  .dots-loader-classic { gap: 7px; }
+
+  .dots-loader-premium {
+    width: 48px;
+    height: 48px;
+  }
+  .dots-loader-premium div {
+    width: 7px;
+    height: 7px;
+  }
+  .dots-loader-premium div:nth-child(1) { transform: rotate(0deg)   translateX(18px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(2) { transform: rotate(72deg)  translateX(18px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(3) { transform: rotate(144deg) translateX(18px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(4) { transform: rotate(216deg) translateX(18px) translateY(-50%); }
+  .dots-loader-premium div:nth-child(5) { transform: rotate(288deg) translateX(18px) translateY(-50%); }
+
+  .dots-loader-premium::before {
+    width: 9px;
+    height: 9px;
+  }
+}
+
+/* ============================================================
+   SNAKE — SVG arc that chases its own tail (Google-style)
+   ============================================================ */
+.snake-loader {
+  display: block;
+  /* rotation of the whole ring */
+  animation: sk-rotate 1.6s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Size variants */
+.snake-loader--sm  { width: 28px;  height: 28px;  }
+.snake-loader--md  { width: 48px;  height: 48px;  }
+.snake-loader--lg  { width: 72px;  height: 72px;  }
+
+/* Faint track ring */
+.snake-loader__track {
+  stroke: rgba(255, 107, 107, 0.15);
+}
+
+/* The coral arc that grows and shrinks */
+.snake-loader__arc {
+  stroke: #FF6B6B;
+  /* dash + offset animation creates the snake grow/shrink */
+  animation: sk-dash 1.6s ease-in-out infinite;
+  transform-origin: center;
+  filter: drop-shadow(0 0 4px rgba(255, 107, 107, 0.45));
+}
+
+/* 1 — spin the whole SVG */
+@keyframes sk-rotate {
+  100% { transform: rotate(360deg); }
+}
+
+/* 2 — grow the arc out then snap it back (the snake effect) */
+@keyframes sk-dash {
+  0%   {
+    stroke-dasharray:  2, 150;
+    stroke-dashoffset: 0;
+  }
+  50%  {
+    stroke-dasharray:  90, 150;
+    stroke-dashoffset: -35;
+  }
+  100% {
+    stroke-dasharray:  90, 150;
+    stroke-dashoffset: -124;
+  }
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .snake-loader--lg { width: 60px; height: 60px; }
+  .snake-loader--md { width: 42px; height: 42px; }
+}
+
+@media (max-width: 480px) {
+  .snake-loader--lg { width: 48px; height: 48px; }
+  .snake-loader--md { width: 36px; height: 36px; }
+  .snake-loader--sm { width: 24px; height: 24px; }
+}
+
+@media (max-width: 360px) {
+  .snake-loader--lg { width: 40px; height: 40px; }
+  .snake-loader--md { width: 30px; height: 30px; }
+  .snake-loader--sm { width: 22px; height: 22px; }
+}
+
+/* ── Accessibility ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .dots-loader-classic div,
+  .dots-loader-premium,
+  .dots-loader-premium::before,
+  .snake-loader,
+  .snake-loader__arc {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
 }

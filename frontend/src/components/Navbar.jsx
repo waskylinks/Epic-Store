@@ -178,12 +178,6 @@ function Navbar() {
         {/* Desktop Navigation Links */}
         <div className={`nb-navbar-links ${isMenuOpen ? 'nb-active' : ''}`}>
           <div className="nb-mobile-menu-header">
-            <div className="nb-mobile-logo">
-              <StorefrontIcon className="nb-logo-icon" />
-              <span className="nb-logo-text">
-                Epic <span className="nb-logo-accent">Store</span>
-              </span>
-            </div>
             <button className="nb-mobile-close" onClick={toggleMenu}>
               <CloseIcon />
             </button>
