@@ -1,5 +1,4 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
-// FIX ATTR1: Removed unused HandleError import — was imported but never called in this file.
 import Order from "../models/order-model.js";
 import CustomerAnalytics from "../models/customer-analytics-model.js";
 import { getCache, setCache } from "../utils/redis.js";
