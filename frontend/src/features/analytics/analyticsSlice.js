@@ -916,6 +916,7 @@ const analyticsSlice = createSlice({
             users:      0,
             adminCount: 0,
         },
+        basicStatsFetched: false, 
         ordersByStatus:  null,
         inventoryStatus: null,
         basicAnalytics: {
@@ -1040,6 +1041,7 @@ const analyticsSlice = createSlice({
                     users:      data.users      || 0,
                     adminCount: data.adminCount || 0,
                 };
+                 state.basicStatsFetched = true; 
             })
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;

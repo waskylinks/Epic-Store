@@ -25,6 +25,7 @@ import {
   CampaignOutlined,
   ShoppingCartCheckout,
   ErrorOutline,
+  PersonAdd,
 } from '@mui/icons-material';
 import {
   BarChart as ReChart, Bar,
@@ -55,67 +56,52 @@ import {
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
 
-// ─── Navigation Config ──────────────────────────────────────────────────────
+// --- Navigation Config
 const NAV_GROUPS = [
-  {
-    group: 'Overview',
-    items: [
-      { path: '/admin/dashboard', icon: DashboardIcon, label: 'Dashboard', color: '#6366F1' },
-    ],
-  },
+  { group: 'Overview', items: [{ path: '/admin/dashboard', icon: DashboardIcon, label: 'Dashboard', color: '#6366F1' }] },
   {
     group: 'Analytics',
     items: [
-      { path: '/admin/analytics',   icon: BarChart,             label: 'Overview',    color: '#8B5CF6' },
-      { path: '/admin/reports',     icon: Assessment,           label: 'Reports',     color: '#EC4899' },
-      { path: '/admin/customers',   icon: PersonSearch,         label: 'Customers',   color: '#06B6D4' },
-      { path: '/admin/attribution', icon: CampaignOutlined,     label: 'Attribution', color: '#F59E0B' },
-      { path: '/admin/checkout',    icon: ShoppingCartCheckout, label: 'Checkout',    color: '#10B981' },
+      { path: '/admin/analytics', icon: BarChart, label: 'Overview', color: '#8B5CF6' },
+      { path: '/admin/reports', icon: Assessment, label: 'Reports', color: '#EC4899' },
+      { path: '/admin/customers', icon: PersonSearch, label: 'Customers', color: '#06B6D4' },
+      { path: '/admin/attribution', icon: CampaignOutlined, label: 'Attribution', color: '#F59E0B' },
+      { path: '/admin/checkout', icon: ShoppingCartCheckout, label: 'Checkout', color: '#10B981' },
     ],
   },
   {
     group: 'Commerce',
     items: [
-      { path: '/admin/products', icon: Inventory,    label: 'Products', color: '#3B82F6' },
-      { path: '/admin/orders',   icon: ShoppingCart, label: 'Orders',   color: '#F97316' },
+      { path: '/admin/products', icon: Inventory, label: 'Products', color: '#3B82F6' },
+      { path: '/admin/orders', icon: ShoppingCart, label: 'Orders', color: '#F97316' },
     ],
   },
-  {
-    group: 'Management',
-    items: [
-      { path: '/admin/users', icon: ManageAccounts, label: 'Users', color: '#A855F7' },
-    ],
-  },
+  { group: 'Management', items: [{ path: '/admin/users', icon: ManageAccounts, label: 'Users', color: '#A855F7' }] },
   {
     group: 'Operations',
     items: [
       { path: '/admin/returns', icon: ReplayCircleFilled, label: 'Returns', color: '#EF4444' },
-      { path: '/admin/refunds', icon: CurrencyExchange,   label: 'Refunds', color: '#14B8A6' },
-      { path: '/admin/reviews',  icon: StarOutline,        label: 'Reviews', color: '#F59E0B' },
+      { path: '/admin/refunds', icon: CurrencyExchange, label: 'Refunds', color: '#14B8A6' },
+      { path: '/admin/reviews', icon: StarOutline, label: 'Reviews', color: '#F59E0B' },
       { path: '/admin/recovery-emails', icon: MarkEmailRead, label: 'Recovery Emails', color: '#FF6B6B' },
     ],
   },
 ];
 
-// ─── AUTO-REFRESH CONFIG ─────────────────────────────────────────────────────
-const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
-const STALE_DATA_THRESHOLD  = 3 * 60 * 1000; // 3 minutes
+const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000;
+const STALE_DATA_THRESHOLD  = 3 * 60 * 1000;
 const DEBOUNCE_DELAY        = 500;
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
 const fmt = {
-  currency: (v) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
-  number:  (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  pct:     (v) => `${(v || 0).toFixed(1)}%`,
-  compact: (v) => {
+  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
+  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
+  pct:      (v) => `${(v || 0).toFixed(1)}%`,
+  compact:  (v) => {
     if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
     if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}k`;
     return fmt.currency(v);
   },
 };
-
-// ─── Reusable UI Primitives ───────────────────────────────────────────────────
 
 function TrendChip({ value }) {
   const isPos = value >= 0;
@@ -128,22 +114,7 @@ function TrendChip({ value }) {
 }
 
 function SkeletonBlock({ h = 20, w = '100%', radius = 6, mb = 0 }) {
-  return (
-    <div
-      className="adm-skeleton"
-      style={{ height: h, width: w, borderRadius: radius, marginBottom: mb }}
-    />
-  );
-}
-
-function SectionSkeleton({ rows = 4 }) {
-  return (
-    <div className="adm-skeleton-section">
-      {Array.from({ length: rows }).map((_, i) => (
-        <SkeletonBlock key={i} h={48} radius={8} mb={10} w={`${65 + (i % 3) * 10}%`} />
-      ))}
-    </div>
-  );
+  return <div className="adm-skeleton" style={{ height: h, width: w, borderRadius: radius, marginBottom: mb }} />;
 }
 
 function KpiSkeleton() {
@@ -156,14 +127,17 @@ function KpiSkeleton() {
   );
 }
 
-/** Spinner shown when data is still loading (first fetch) */
-function LoadingState({ label = 'Loading data…' }) {
+function LoadingState({ label = 'Loading data...' }) {
   return (
     <div className="adm-loading-state">
       <div className="adm-loading-spinner" />
       <span className="adm-loading-text">{label}</span>
     </div>
   );
+}
+
+function Dash() {
+  return <span style={{ color: '#9CA3AF', fontWeight: 400 }}>-</span>;
 }
 
 function MetricRow({ label, value, sub, accent }) {
@@ -204,24 +178,22 @@ function SectionCard({ title, subtitle, link, linkLabel = 'View All', children, 
 
 function LastUpdated({ timestamp }) {
   const [timeAgo, setTimeAgo] = useState('');
-
   useEffect(() => {
     const update = () => {
-      if (!timestamp) { setTimeAgo('Never'); return; }
-      const diff    = Date.now() - timestamp;
+      if (!timestamp) return setTimeAgo('Never');
+      const diff = Date.now() - timestamp;
       const minutes = Math.floor(diff / 60000);
-      const hours   = Math.floor(diff / 3600000);
-      if (minutes < 1)  setTimeAgo('Just now');
+      const hours = Math.floor(diff / 3600000);
+      if (minutes < 1) setTimeAgo('Just now');
       else if (minutes === 1) setTimeAgo('1 min ago');
       else if (minutes < 60) setTimeAgo(`${minutes} mins ago`);
-      else if (hours === 1)  setTimeAgo('1 hour ago');
+      else if (hours === 1) setTimeAgo('1 hour ago');
       else setTimeAgo(`${hours} hours ago`);
     };
     update();
     const id = setInterval(update, 30000);
     return () => clearInterval(id);
   }, [timestamp]);
-
   return (
     <div className="adm-last-updated">
       <span className="adm-last-updated-label">Last updated:</span>
@@ -230,33 +202,28 @@ function LastUpdated({ timestamp }) {
   );
 }
 
-// ─── Custom Debounce Hook ─────────────────────────────────────────────────────
 function useDebounce(callback, delay) {
-  const cbRef      = useRef(callback);
-  const timerRef   = useRef(null);
-
+  const cbRef = useRef(callback);
+  const timerRef = useRef(null);
   useEffect(() => { cbRef.current = callback; }, [callback]);
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-
   const debounced = useCallback((...args) => {
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => cbRef.current(...args), delay);
   }, [delay]);
-
   const cancel = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
   }, []);
-
   return [debounced, cancel];
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const dispatch = useDispatch();
   const location = useLocation();
 
   const {
     basicStats,
+    basicStatsFetched,
     ordersByStatus,
     inventoryStatus,
     kpis,
@@ -274,218 +241,213 @@ export default function AdminDashboard() {
     slaBreaches,
     returnOverview,
     refundOverview,
-    loading,
-    dashboardLoading,
     error,
   } = useSelector((s) => s.analytics);
 
-  const [sidebarOpen, setSidebarOpen]   = useState(false);
-  const [timeframe, setTimeframe]       = useState('month');
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [timeframe, setTimeframe] = useState('month');
   const [lastFetchTime, setLastFetchTime] = useState(null);
-
   const [hasFetched, setHasFetched] = useState(false);
 
-  const isLoadingRef          = useRef(false);
-  const abortControllerRef    = useRef(null);
-  const lastFetchedRef        = useRef({});
-  const autoRefreshTimerRef   = useRef(null);
-  const isMountedRef          = useRef(true);
+  // kpisReady: true once fetchDashboardKPIs resolves for the current timeframe
+  const kpisReady = kpis !== null;
 
-  const loadDashboardData = useCallback((currentTimeframe) => {
+  const isLoadingRef = useRef(false);
+  const abortControllerRef = useRef(null);
+  const lastFetchedRef = useRef({});
+  const autoRefreshTimerRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  const loadDashboardData = useCallback((currentTimeframe, force = false) => {
     if (isLoadingRef.current) return;
-
     if (abortControllerRef.current) abortControllerRef.current.abort();
-    if (typeof AbortController !== 'undefined') {
-      abortControllerRef.current = new AbortController();
-    }
-
-    const now              = Date.now();
-    const lastFetch        = lastFetchedRef.current[currentTimeframe] || 0;
-    const timeSinceLastFetch = now - lastFetch;
-
-    if (timeSinceLastFetch < 30000) return;
-
+    abortControllerRef.current = new AbortController();
+    const now = Date.now();
+    const last = lastFetchedRef.current[currentTimeframe] || 0;
+    if (!force && now - last < 30000) return;
     lastFetchedRef.current[currentTimeframe] = now;
     setLastFetchTime(now);
     isLoadingRef.current = true;
 
+    const staticThunks = [
+      fetchAdminStats(),
+      fetchOrderStatusBreakdown(),
+      fetchInventoryBreakdown(),
+      fetchDashboardAlerts(),
+      fetchLowStockAlerts(),
+      fetchCustomerOverview(),
+    ];
+
+    const timeframeThunks = [
+      fetchDashboardKPIs(currentTimeframe),
+      fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' }),
+      fetchTopPerformers(currentTimeframe),
+      fetchChannelPerformance(currentTimeframe),
+      fetchDevicePerformance(currentTimeframe),
+      fetchCheckoutAbandonmentStats(currentTimeframe),
+      fetchCategoryPerformance(currentTimeframe),
+      fetchFulfillmentAnalytics(currentTimeframe),
+      fetchFraudAnalytics(currentTimeframe),
+      fetchSLABreaches(currentTimeframe),
+      fetchReturnOverview(currentTimeframe),
+      fetchRefundOverview(currentTimeframe),
+    ];
+
     Promise.allSettled([
-      dispatch(fetchAdminStats()),
-      dispatch(fetchOrderStatusBreakdown()),
-      dispatch(fetchInventoryBreakdown()),
-      dispatch(fetchDashboardKPIs(currentTimeframe)),
-      dispatch(fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' })),
-      dispatch(fetchTopPerformers(currentTimeframe)),
-      dispatch(fetchDashboardAlerts()),
-      dispatch(fetchCustomerOverview()),
-      dispatch(fetchChannelPerformance(currentTimeframe)),
-      dispatch(fetchDevicePerformance(currentTimeframe)),
-      dispatch(fetchCheckoutAbandonmentStats(currentTimeframe)),
-      dispatch(fetchCategoryPerformance(currentTimeframe)),
-      dispatch(fetchLowStockAlerts()),
-      dispatch(fetchFulfillmentAnalytics(currentTimeframe)),
-      dispatch(fetchFraudAnalytics(currentTimeframe)),
-      dispatch(fetchSLABreaches(currentTimeframe)),
-      dispatch(fetchReturnOverview(currentTimeframe)),
-      dispatch(fetchRefundOverview(currentTimeframe)),
+      ...staticThunks.map(thunk => dispatch(thunk).unwrap().catch(() => {})),
+      ...timeframeThunks.map(thunk => dispatch(thunk).unwrap().catch(() => {})),
     ]).finally(() => {
-      isLoadingRef.current        = false;
-      abortControllerRef.current  = null;
+      isLoadingRef.current = false;
+      abortControllerRef.current = null;
       if (isMountedRef.current) setHasFetched(true);
     });
   }, [dispatch]);
 
-  const [debouncedLoad, cancelDebounce] = useDebounce((tf) => loadDashboardData(tf), DEBOUNCE_DELAY);
+  const [debouncedLoad, cancelDebounce] = useDebounce(loadDashboardData, DEBOUNCE_DELAY);
 
   const handleTimeframeChange = useCallback((newTf) => {
     setTimeframe(newTf);
-    setHasFetched(false);
     cancelDebounce();
-    debouncedLoad(newTf);
+    debouncedLoad(newTf, true);
   }, [debouncedLoad, cancelDebounce]);
 
   useEffect(() => {
     isMountedRef.current = true;
-    loadDashboardData(timeframe);
+    loadDashboardData(timeframe, false);
     return () => {
       isMountedRef.current = false;
-      if (abortControllerRef.current)  abortControllerRef.current.abort();
+      if (abortControllerRef.current) abortControllerRef.current.abort();
       cancelDebounce();
       if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadDashboardData, cancelDebounce]);
 
   useEffect(() => {
-    if (autoRefreshTimerRef.current) {
-      clearInterval(autoRefreshTimerRef.current);
-      autoRefreshTimerRef.current = null;
-    }
+    if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current);
+    autoRefreshTimerRef.current = null;
     if (['day', 'week', 'month'].includes(timeframe)) {
       autoRefreshTimerRef.current = setInterval(() => {
-        const lastFetch        = lastFetchedRef.current[timeframe] || 0;
-        const timeSinceLastFetch = Date.now() - lastFetch;
-        if (timeSinceLastFetch >= STALE_DATA_THRESHOLD && !isLoadingRef.current) {
-          loadDashboardData(timeframe);
+        const last = lastFetchedRef.current[timeframe] || 0;
+        if (Date.now() - last >= STALE_DATA_THRESHOLD && !isLoadingRef.current) {
+          loadDashboardData(timeframe, false);
         }
       }, AUTO_REFRESH_INTERVAL);
     }
-    return () => {
-      if (autoRefreshTimerRef.current) {
-        clearInterval(autoRefreshTimerRef.current);
-        autoRefreshTimerRef.current = null;
-      }
-    };
+    return () => { if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current); };
   }, [timeframe, loadDashboardData]);
 
   const isActive = (p) => location.pathname === p || location.pathname.startsWith(p + '/');
-
   const firstLoad = !hasFetched;
-
   const inv = inventoryStatus || { inStock: 0, lowStock: 0, outOfStock: 0, discontinued: 0, total: 0 };
-  const orders = ordersByStatus || { processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
 
-  // ── KPI values: prioritize fast basicStats, upgrade with timeframe-aware kpis when available ──
-  const displayedRevenue   = kpis?.revenue?.current   ?? basicStats?.revenue   ?? 0;
-  const displayedOrders    = kpis?.orders?.current    ?? basicStats?.orders    ?? 0;
-  const displayedCustomers = kpis?.customers?.current ?? basicStats?.users     ?? 0;
-  const displayedProducts  = basicStats?.products ?? 0;
-
+  // --- KPI cards
+  // Order: revenue | orders | payingCustomers | totalUsers grouped at top,
+  // then static cards. Dynamic cards show dash until kpisReady.
+  // Static cards show dash until basicStatsFetched, then real values immediately.
   const kpiCards = [
+    // Dynamic (timeframe-dependent)
     {
-      key: 'revenue',
-      label: 'Total Revenue',
-      value: fmt.currency(displayedRevenue),
-      change: kpis?.revenue?.change,
-      icon: AttachMoney,
+      key:    'revenue',
+      label:  'Total Revenue',
+      value:  kpisReady ? fmt.currency(kpis?.revenue?.current) : <Dash />,
+      change: kpisReady ? kpis?.revenue?.change : undefined,
+      icon:   AttachMoney,
       accent: '#10B981',
-      bg: '#10B98115',
+      bg:     '#10B98115',
     },
     {
-      key: 'orders',
-      label: 'Total Orders',
-      value: fmt.number(displayedOrders),
-      change: kpis?.orders?.change,
-      icon: ShoppingCart,
+      key:    'orders',
+      label:  'Total Orders',
+      value:  kpisReady ? fmt.number(kpis?.orders?.current) : <Dash />,
+      change: kpisReady ? kpis?.orders?.change : undefined,
+      icon:   ShoppingCart,
       accent: '#3B82F6',
-      bg: '#3B82F615',
+      bg:     '#3B82F615',
     },
     {
-      key: 'customers',
-      label: 'Customers',
-      value: fmt.number(displayedCustomers),
-      change: kpis?.customers?.change,
-      icon: People,
+      key:    'payingCustomers',
+      label:  'Customers',
+      value:  kpisReady ? fmt.number(kpis?.customers?.current) : <Dash />,
+      change: kpisReady ? kpis?.customers?.change : undefined,
+      icon:   PersonAdd,
       accent: '#8B5CF6',
-      bg: '#8B5CF615',
+      bg:     '#8B5CF615',
+    },
+    // Static (no timeframe)
+    {
+      key:   'totalUsers',
+      label: 'Total Users',
+      value: basicStatsFetched ? fmt.number(basicStats?.users) : <Dash />,
+      icon:  People,
+      accent: '#06B6D4',
+      bg:    '#06B6D415',
     },
     {
-      key: 'products',
+      key:   'products',
       label: 'Products',
-      value: fmt.number(displayedProducts),
-      icon: Inventory,
+      value: basicStatsFetched ? fmt.number(basicStats?.products) : <Dash />,
+      icon:  Inventory,
       accent: '#F97316',
-      bg: '#F9731615',
+      bg:    '#F9731615',
     },
     {
-      key: 'lowStock',
+      key:   'lowStock',
       label: 'Low Stock',
-      value: fmt.number(inv.lowStock),
-      icon: Warning,
+      value: basicStatsFetched ? fmt.number(inv.lowStock) : <Dash />,
+      icon:  Warning,
       accent: '#F59E0B',
-      bg: '#F59E0B15',
+      bg:    '#F59E0B15',
     },
     {
-      key: 'outOfStock',
+      key:   'outOfStock',
       label: 'Out of Stock',
-      value: fmt.number(inv.outOfStock),
-      icon: ErrorOutline,
+      value: basicStatsFetched ? fmt.number(inv.outOfStock) : <Dash />,
+      icon:  ErrorOutline,
       accent: '#EF4444',
-      bg: '#EF444415',
+      bg:    '#EF444415',
     },
     {
-      key: 'recoveryEmails',
+      key:   'recoveryEmails',
       label: 'Recovery Emails',
-      value: fmt.number(checkoutAbandonment?.emailsSent),
-      icon: MarkEmailRead,
+      value: basicStatsFetched ? fmt.number(checkoutAbandonment?.emailsSent ?? 0) : <Dash />,
+      icon:  MarkEmailRead,
       accent: '#FF6B6B',
-      bg: '#FF6B6B15',
+      bg:    '#FF6B6B15',
     },
   ];
 
   const revenueData = revenueTrends?.data || [];
-
   const catData = (topPerformers?.categories || categoryPerformance?.categories || [])
     .slice(0, 5)
-    .map((c, i) => ({
-      name:  c.name,
-      value: c.revenue,
-      fill:  ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i],
-    }));
+    .map((c, i) => ({ name: c.name, value: c.revenue, fill: ['#6366F1','#10B981','#F59E0B','#EF4444','#14B8A6'][i] }));
 
-  const channelData = channelPerformance?.channels || [];
-  const deviceData  = devicePerformance?.devices  || [];
+  const channelData  = channelPerformance?.channels || [];
+  const deviceData   = devicePerformance?.devices   || [];
+  const safeSegments = customerOverview?.segments   ?? [];
 
-  const safeSegments = customerOverview?.segments ?? [];
+  const quickStats = [
+    { label: 'Products',     value: basicStats?.products   ?? null, color: '#3B82F6', icon: Inventory },
+    { label: 'Users',        value: basicStats?.users       ?? null, color: '#8B5CF6', icon: People },
+    { label: 'In Stock',     value: inv.inStock             ?? null, color: '#10B981', icon: CheckCircle },
+    { label: 'Out of Stock', value: inv.outOfStock          ?? null, color: '#EF4444', icon: ErrorOutline },
+    { label: 'Orders',       value: basicStats?.orders      ?? null, color: '#F97316', icon: ShoppingCart },
+    { label: 'Admins',       value: basicStats?.adminCount  ?? null, color: '#A855F7', icon: ManageAccounts },
+  ];
 
   return (
     <>
       <Navbar />
       <div className="adm-wrap">
-        {/* ── Sidebar ──────────────────────────────────────────────────── */}
         <aside className={`adm-sidebar ${sidebarOpen ? 'adm-sidebar--open' : ''}`}>
           <div className="adm-sidebar-logo">
-            <span className="adm-logo-mark">
-              <DashboardIcon style={{ fontSize: 20 }} />
-            </span>
+            <span className="adm-logo-mark"><DashboardIcon style={{ fontSize: 20 }} /></span>
             <span className="adm-logo-text">Admin Panel</span>
           </div>
-
           <nav className="adm-nav">
-            {NAV_GROUPS.map((group) => (
+            {NAV_GROUPS.map(group => (
               <div key={group.group} className="adm-nav-group">
                 <span className="adm-nav-group-label">{group.group}</span>
-                {group.items.map((item) => {
+                {group.items.map(item => {
                   const active = isActive(item.path);
                   return (
                     <Link
@@ -496,13 +458,7 @@ export default function AdminDashboard() {
                       onClick={() => setSidebarOpen(false)}
                       title={item.label}
                     >
-                      <span
-                        className="adm-nav-icon"
-                        style={{
-                          color:      active ? item.color : undefined,
-                          background: active ? item.color + '18' : undefined,
-                        }}
-                      >
+                      <span className="adm-nav-icon" style={{ color: active ? item.color : undefined, background: active ? item.color + '18' : undefined }}>
                         <item.icon style={{ fontSize: 18 }} />
                       </span>
                       <span className="adm-nav-text">{item.label}</span>
@@ -515,11 +471,8 @@ export default function AdminDashboard() {
           </nav>
         </aside>
 
-        {sidebarOpen && (
-          <div className="adm-overlay" onClick={() => setSidebarOpen(false)} />
-        )}
+        {sidebarOpen && <div className="adm-overlay" onClick={() => setSidebarOpen(false)} />}
 
-        {/* ── Main ─────────────────────────────────────────────────────── */}
         <div className="adm-main">
           <div className="adm-page-hd">
             <div className="adm-page-hd-left">
@@ -531,17 +484,11 @@ export default function AdminDashboard() {
                 <p className="adm-page-sub">Monitor all business analytics in one place</p>
               </div>
             </div>
-
             <div className="adm-page-hd-right">
               <LastUpdated timestamp={lastFetchTime} />
               <div className="adm-timeframe">
-                {['day', 'week', 'month', 'year'].map((t) => (
-                  <button
-                    key={t}
-                    className={`adm-tf-btn ${timeframe === t ? 'adm-tf-btn--active' : ''}`}
-                    onClick={() => handleTimeframeChange(t)}
-                    disabled={loading}
-                  >
+                {['day', 'week', 'month', 'year'].map(t => (
+                  <button key={t} className={`adm-tf-btn ${timeframe === t ? 'adm-tf-btn--active' : ''}`} onClick={() => handleTimeframeChange(t)}>
                     {t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
@@ -552,12 +499,17 @@ export default function AdminDashboard() {
           <div className="adm-content">
             {error && (
               <div className="adm-error-banner">
-                <Warning style={{ fontSize: 18 }} />
-                <span>{error}</span>
+                <Warning style={{ fontSize: 18 }} /><span>{error}</span>
               </div>
             )}
 
-            {/* ── SECTION 1: KPIs ────────────────────────────────────────── */}
+            {/* KPIs
+                Skeleton until basicStatsFetched (set by fetchAdminStats.fulfilled in slice).
+                Dynamic: revenue, orders, payingCustomers show dash until kpisReady.
+                Static: totalUsers, products, lowStock, outOfStock show immediately.
+                Trend chips only render once kpisReady - no phantom +0.0% chips.
+                NOTE: Add basicStatsFetched: false to slice initialState,
+                      set basicStatsFetched: true in fetchAdminStats.fulfilled case. */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -566,28 +518,29 @@ export default function AdminDashboard() {
                   </span>
                   Key Performance Indicators
                 </h2>
-                <TrendChip value={kpis?.revenue?.change || 0} />
+                {kpisReady && <TrendChip value={kpis?.revenue?.change || 0} />}
               </div>
-
               <div className="adm-kpi-grid">
-                {firstLoad
-                  ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
-                  : kpiCards.map((k) => (
-                      <div key={k.key} className="adm-kpi-card">
-                        <div className="adm-kpi-top">
-                          <span className="adm-kpi-icon" style={{ background: k.bg, color: k.accent }}>
-                            <k.icon style={{ fontSize: 20 }} />
-                          </span>
-                          {k.change !== undefined && <TrendChip value={k.change} />}
-                        </div>
-                        <div className="adm-kpi-label">{k.label}</div>
-                        <div className="adm-kpi-value">{k.value}</div>
+                {!basicStatsFetched ? (
+                  Array.from({ length: 8 }).map((_, i) => <KpiSkeleton key={i} />)
+                ) : (
+                  kpiCards.map(k => (
+                    <div key={k.key} className="adm-kpi-card">
+                      <div className="adm-kpi-top">
+                        <span className="adm-kpi-icon" style={{ background: k.bg, color: k.accent }}>
+                          <k.icon style={{ fontSize: 20 }} />
+                        </span>
+                        {k.change !== undefined && kpisReady && <TrendChip value={k.change} />}
                       </div>
-                    ))}
+                      <div className="adm-kpi-label">{k.label}</div>
+                      <div className="adm-kpi-value">{k.value}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
-            {/* ── SECTION 1b: Orders & Inventory ─────────────────────────── */}
+            {/* Orders & Inventory */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -596,43 +549,35 @@ export default function AdminDashboard() {
                   </span>
                   Orders &amp; Inventory Status
                 </h2>
-                <Link to="/admin/orders" className="adm-section-link">
-                  View Orders <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/orders" className="adm-section-link">View Orders <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-charts-row">
                 <SectionCard title="Order Status Breakdown" icon={ShoppingCart} iconColor="#F97316" link="/admin/orders">
-                  {firstLoad ? (
-                    <LoadingState label="Loading orders…" />
-                  ) : (
+                  {firstLoad ? <LoadingState label="Loading orders..." /> : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Processing" value={fmt.number(orders.processing)} accent="#F59E0B" />
-                      <MetricRow label="Shipped"    value={fmt.number(orders.shipped)}    accent="#3B82F6" />
-                      <MetricRow label="Delivered"  value={fmt.number(orders.delivered)}  accent="#10B981" />
-                      <MetricRow label="Cancelled"  value={fmt.number(orders.cancelled)}  accent="#EF4444" />
-                      <MetricRow label="Total"      value={fmt.number(basicStats?.orders)} />
+                      <MetricRow label="Processing" value={fmt.number(ordersByStatus?.processing)} accent="#F59E0B" />
+                      <MetricRow label="Shipped"    value={fmt.number(ordersByStatus?.shipped)}    accent="#3B82F6" />
+                      <MetricRow label="Delivered"  value={fmt.number(ordersByStatus?.delivered)}  accent="#10B981" />
+                      <MetricRow label="Cancelled"  value={fmt.number(ordersByStatus?.cancelled)}  accent="#EF4444" />
+                      <MetricRow label="Total"      value={basicStats?.orders !== undefined ? fmt.number(basicStats.orders) : <Dash />} />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Inventory Breakdown" icon={Inventory} iconColor="#3B82F6" link="/admin/products">
-                  {firstLoad ? (
-                    <LoadingState label="Loading inventory…" />
-                  ) : (
+                  {firstLoad ? <LoadingState label="Loading inventory..." /> : (
                     <div className="adm-metric-list">
-                      <MetricRow label="In Stock"      value={fmt.number(inv.inStock)}      accent="#10B981" />
-                      <MetricRow label="Low Stock"     value={fmt.number(inv.lowStock)}     accent="#F59E0B" />
-                      <MetricRow label="Out of Stock"  value={fmt.number(inv.outOfStock)}   accent="#EF4444" />
-                      <MetricRow label="Discontinued"  value={fmt.number(inv.discontinued)} accent="#6B7280" />
-                      <MetricRow label="Total SKUs"    value={fmt.number(inv.total)} />
+                      <MetricRow label="In Stock"     value={fmt.number(inv.inStock)}      accent="#10B981" />
+                      <MetricRow label="Low Stock"    value={fmt.number(inv.lowStock)}     accent="#F59E0B" />
+                      <MetricRow label="Out of Stock" value={fmt.number(inv.outOfStock)}   accent="#EF4444" />
+                      <MetricRow label="Discontinued" value={fmt.number(inv.discontinued)} accent="#6B7280" />
+                      <MetricRow label="Total SKUs"   value={fmt.number(inv.total)} />
                     </div>
                   )}
                 </SectionCard>
               </div>
             </div>
 
-            {/* ── SECTION 2: Revenue Analytics ───────────────────────────── */}
+            {/* Revenue Analytics */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -641,27 +586,12 @@ export default function AdminDashboard() {
                   </span>
                   Revenue Analytics
                 </h2>
-                <Link to="/admin/reports" className="adm-section-link">
-                  Full Reports <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/reports" className="adm-section-link">Full Reports <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-charts-row">
-                <SectionCard
-                  title="Revenue Trends"
-                  subtitle={`${timeframe} view — daily breakdown`}
-                  icon={TrendingUp}
-                  iconColor="#10B981"
-                  link="/admin/reports"
-                  linkLabel="Reports"
-                >
-                  {firstLoad ? (
-                    <LoadingState label="Loading revenue data…" />
-                  ) : revenueData.length === 0 ? (
-                    <div className="adm-empty">
-                      <Assessment style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No revenue data available for this period</span>
-                    </div>
+                <SectionCard title="Revenue Trends" subtitle={`${timeframe} view - daily breakdown`} icon={TrendingUp} iconColor="#10B981" link="/admin/reports" linkLabel="Reports">
+                  {firstLoad ? <LoadingState label="Loading revenue data..." /> : revenueData.length === 0 ? (
+                    <div className="adm-empty"><Assessment style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No revenue data available for this period</span></div>
                   ) : (
                     <ResponsiveContainer width="100%" height={260}>
                       <AreaChart data={revenueData}>
@@ -673,48 +603,23 @@ export default function AdminDashboard() {
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }} />
-                        <YAxis
-                          tick={{ fontSize: 11, fill: '#6B7280' }}
-                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                        />
-                        <Tooltip
-                          contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
-                          formatter={(v) => [fmt.currency(v), 'Revenue']}
-                        />
+                        <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }} formatter={(v) => [fmt.currency(v), 'Revenue']} />
                         <Area type="monotone" dataKey="revenue" stroke="#10B981" strokeWidth={2} fill="url(#revGrad)" dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
                   )}
                 </SectionCard>
-
-                <SectionCard
-                  title="Sales by Category"
-                  subtitle="Revenue distribution"
-                  icon={Category}
-                  iconColor="#6366F1"
-                  link="/admin/analytics"
-                >
-                  {firstLoad ? (
-                    <LoadingState label="Loading categories…" />
-                  ) : catData.length === 0 ? (
-                    <div className="adm-empty">
-                      <Category style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No category data available</span>
-                    </div>
+                <SectionCard title="Sales by Category" subtitle="Revenue distribution" icon={Category} iconColor="#6366F1" link="/admin/analytics">
+                  {firstLoad ? <LoadingState label="Loading categories..." /> : catData.length === 0 ? (
+                    <div className="adm-empty"><Category style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No category data available</span></div>
                   ) : (
                     <ResponsiveContainer width="100%" height={260}>
                       <ReChart data={catData} layout="vertical">
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
-                        <XAxis
-                          type="number"
-                          tick={{ fontSize: 11, fill: '#6B7280' }}
-                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-                        />
+                        <XAxis type="number" tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#6B7280' }} width={90} />
-                        <Tooltip
-                          contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
-                          formatter={(v) => [fmt.currency(v), 'Revenue']}
-                        />
+                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }} formatter={(v) => [fmt.currency(v), 'Revenue']} />
                         <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                           {catData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                         </Bar>
@@ -725,7 +630,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── SECTION 3: Customer Analytics ──────────────────────────── */}
+            {/* Customer Analytics */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -734,51 +639,31 @@ export default function AdminDashboard() {
                   </span>
                   Customer Analytics
                 </h2>
-                <Link to="/admin/customers" className="adm-section-link">
-                  Full Customer Data <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/customers" className="adm-section-link">Full Customer Data <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-cards-3">
                 <SectionCard title="Customer Overview" icon={People} iconColor="#06B6D4">
-                  {firstLoad ? (
-                    <LoadingState label="Loading customers…" />
-                  ) : (
+                  {firstLoad ? <LoadingState label="Loading customers..." /> : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Total Customers"   value={fmt.number(customerOverview?.totalCustomers)}  accent="#06B6D4" />
-                      <MetricRow
-                        label="New This Period"
-                        value={fmt.number(customerOverview?.newCustomers)}
-                        sub={<TrendChip value={customerOverview?.newCustomersGrowth || 0} />}
-                      />
+                      <MetricRow label="Total Registered"  value={basicStatsFetched ? fmt.number(basicStats?.users) : <Dash />}       accent="#06B6D4" />
+                      <MetricRow label="Paying Customers"  value={kpisReady ? fmt.number(kpis?.customers?.current) : <Dash />}         accent="#8B5CF6" />
+                      <MetricRow label="New This Period"   value={fmt.number(customerOverview?.newCustomers)} sub={<TrendChip value={customerOverview?.newCustomersGrowth || 0} />} />
                       <MetricRow label="Active Customers"  value={fmt.number(customerOverview?.activeCustomers)} />
                       <MetricRow label="Avg. Order Value"  value={fmt.currency(customerOverview?.avgOrderValue)}  accent="#10B981" />
                       <MetricRow label="Customer LTV"      value={fmt.currency(customerOverview?.avgLifetimeValue)} accent="#8B5CF6" />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Segment Distribution" icon={BarChart} iconColor="#8B5CF6" link="/admin/customers">
-                  {firstLoad ? (
-                    <LoadingState label="Loading segments…" />
-                  ) : safeSegments.length === 0 ? (
-                    <div className="adm-empty">
-                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No segment data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading segments..." /> : safeSegments.length === 0 ? (
+                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No segment data available</span></div>
                   ) : (
                     <div className="adm-segment-list">
                       {safeSegments.map((seg, i) => (
                         <div key={i} className="adm-segment-row">
                           <div className="adm-segment-label">{seg.name}</div>
                           <div className="adm-segment-bar-wrap">
-                            <div
-                              className="adm-segment-bar"
-                              style={{
-                                width:      `${seg.percentage || 0}%`,
-                                background: ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#06B6D4'][i % 5],
-                              }}
-                            />
+                            <div className="adm-segment-bar" style={{ width: `${seg.percentage || 0}%`, background: ['#6366F1','#10B981','#F59E0B','#EF4444','#06B6D4'][i % 5] }} />
                           </div>
                           <div className="adm-segment-pct">{fmt.pct(seg.percentage)}</div>
                         </div>
@@ -786,25 +671,13 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Top Customers" icon={ManageAccounts} iconColor="#A855F7" link="/admin/customers">
-                  {firstLoad ? (
-                    <LoadingState label="Loading top customers…" />
-                  ) : !topPerformers?.customers || topPerformers.customers.length === 0 ? (
-                    <div className="adm-empty">
-                      <People style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No customer data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading top customers..." /> : !topPerformers?.customers?.length ? (
+                    <div className="adm-empty"><People style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No customer data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
                       {topPerformers.customers.slice(0, 5).map((c, i) => (
-                        <MetricRow
-                          key={i}
-                          label={c.name || c.email || `Customer #${i + 1}`}
-                          value={fmt.currency(c.totalSpent)}
-                          sub={`${fmt.number(c.orderCount)} orders`}
-                          accent="#A855F7"
-                        />
+                        <MetricRow key={i} label={c.name || c.email || `Customer #${i + 1}`} value={fmt.currency(c.totalSpent)} sub={`${fmt.number(c.orderCount)} orders`} accent="#A855F7" />
                       ))}
                     </div>
                   )}
@@ -812,7 +685,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── SECTION 4: Marketing Attribution ───────────────────────── */}
+            {/* Marketing Attribution */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -821,28 +694,17 @@ export default function AdminDashboard() {
                   </span>
                   Marketing Attribution
                 </h2>
-                <Link to="/admin/attribution" className="adm-section-link">
-                  Full Attribution <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/attribution" className="adm-section-link">Full Attribution <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-charts-row">
                 <SectionCard title="Channel Performance" icon={CampaignOutlined} iconColor="#F59E0B" link="/admin/attribution">
-                  {firstLoad ? (
-                    <LoadingState label="Loading channels…" />
-                  ) : channelData.length === 0 ? (
-                    <div className="adm-empty">
-                      <CampaignOutlined style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No channel data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading channels..." /> : channelData.length === 0 ? (
+                    <div className="adm-empty"><CampaignOutlined style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No channel data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
                       {channelData.slice(0, 6).map((ch, i) => (
                         <div key={i} className="adm-channel-row">
-                          <span
-                            className="adm-channel-dot"
-                            style={{ background: ['#F59E0B', '#6366F1', '#10B981', '#EF4444', '#06B6D4', '#8B5CF6'][i % 6] }}
-                          />
+                          <span className="adm-channel-dot" style={{ background: ['#F59E0B','#6366F1','#10B981','#EF4444','#06B6D4','#8B5CF6'][i % 6] }} />
                           <span className="adm-channel-name">{ch.channel || ch.name}</span>
                           <span className="adm-channel-sessions">{fmt.number(ch.sessions)} sessions</span>
                           <span className="adm-channel-revenue" style={{ color: '#10B981' }}>{fmt.compact(ch.revenue)}</span>
@@ -851,34 +713,16 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Device Performance" icon={DevicesOther} iconColor="#6366F1" link="/admin/attribution">
-                  {firstLoad ? (
-                    <LoadingState label="Loading device data…" />
-                  ) : deviceData.length === 0 ? (
-                    <div className="adm-empty">
-                      <DevicesOther style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No device data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading device data..." /> : deviceData.length === 0 ? (
+                    <div className="adm-empty"><DevicesOther style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No device data available</span></div>
                   ) : (
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
-                        <Pie
-                          data={deviceData}
-                          dataKey="sessions"
-                          nameKey="device"
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={80}
-                          label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}
-                        >
-                          {deviceData.map((_, i) => (
-                            <Cell key={i} fill={['#6366F1', '#10B981', '#F59E0B'][i % 3]} />
-                          ))}
+                        <Pie data={deviceData} dataKey="sessions" nameKey="device" cx="50%" cy="50%" outerRadius={80} label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}>
+                          {deviceData.map((_, i) => <Cell key={i} fill={['#6366F1','#10B981','#F59E0B'][i % 3]} />)}
                         </Pie>
-                        <Tooltip
-                          contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
-                        />
+                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }} />
                       </PieChart>
                     </ResponsiveContainer>
                   )}
@@ -886,7 +730,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── SECTION 5: Checkout Analytics ──────────────────────────── */}
+            {/* Checkout Analytics */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -895,39 +739,25 @@ export default function AdminDashboard() {
                   </span>
                   Checkout Analytics
                 </h2>
-                <Link to="/admin/checkout" className="adm-section-link">
-                  Full Checkout Data <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/checkout" className="adm-section-link">Full Checkout Data <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-cards-3">
                 <SectionCard title="Abandonment Stats" icon={ShoppingCartCheckout} iconColor="#10B981">
-                  {firstLoad ? (
-                    <LoadingState label="Loading checkout data…" />
-                  ) : !checkoutAbandonment ? (
-                    <div className="adm-empty">
-                      <ShoppingCartCheckout style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No checkout data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading checkout data..." /> : !checkoutAbandonment ? (
+                    <div className="adm-empty"><ShoppingCartCheckout style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No checkout data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Abandonment Rate"      value={fmt.pct(checkoutAbandonment.abandonmentRate)}          accent="#EF4444" />
-                      <MetricRow label="Completed Checkouts"   value={fmt.number(checkoutAbandonment.completedCheckouts)}    accent="#10B981" />
-                      <MetricRow label="Abandoned Checkouts"   value={fmt.number(checkoutAbandonment.abandonedCheckouts)} />
-                      <MetricRow label="Lost Revenue"          value={fmt.currency(checkoutAbandonment.lostRevenue)}         accent="#F59E0B" />
-                      <MetricRow label="Recovery Rate"         value={fmt.pct(checkoutAbandonment.recoveryRate)}             accent="#06B6D4" />
+                      <MetricRow label="Abandonment Rate"    value={fmt.pct(checkoutAbandonment.abandonmentRate)}       accent="#EF4444" />
+                      <MetricRow label="Completed Checkouts" value={fmt.number(checkoutAbandonment.completedCheckouts)} accent="#10B981" />
+                      <MetricRow label="Abandoned Checkouts" value={fmt.number(checkoutAbandonment.abandonedCheckouts)} />
+                      <MetricRow label="Lost Revenue"        value={fmt.currency(checkoutAbandonment.lostRevenue)}      accent="#F59E0B" />
+                      <MetricRow label="Recovery Rate"       value={fmt.pct(checkoutAbandonment.recoveryRate)}          accent="#06B6D4" />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Abandonment by Step" icon={FactCheck} iconColor="#8B5CF6">
-                  {firstLoad ? (
-                    <LoadingState label="Loading step data…" />
-                  ) : !checkoutAbandonment?.stepBreakdown || checkoutAbandonment.stepBreakdown.length === 0 ? (
-                    <div className="adm-empty">
-                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No checkout abandonment steps recorded</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading step data..." /> : !checkoutAbandonment?.stepBreakdown?.length ? (
+                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No checkout abandonment steps recorded</span></div>
                   ) : (
                     <div className="adm-segment-list">
                       {checkoutAbandonment.stepBreakdown.map((step, i) => (
@@ -942,15 +772,9 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Recovery Opportunities" icon={CurrencyExchange} iconColor="#14B8A6" link="/admin/checkout">
-                  {firstLoad ? (
-                    <LoadingState label="Loading recovery data…" />
-                  ) : !checkoutAbandonment ? (
-                    <div className="adm-empty">
-                      <CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No recovery data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading recovery data..." /> : !checkoutAbandonment ? (
+                    <div className="adm-empty"><CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No recovery data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Recoverable Revenue" value={fmt.currency(checkoutAbandonment.recoverableRevenue)} accent="#14B8A6" />
@@ -960,30 +784,19 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-
-                <SectionCard
-                  title="Recovery Email Manager"
-                  subtitle="Send & track cart recovery emails"
-                  icon={MarkEmailRead}
-                  iconColor="#FF6B6B"
-                  link="/admin/recovery-emails"
-                  linkLabel="Open Manager"
-                >
-                  {firstLoad ? (
-                    <LoadingState label="Loading recovery data…" />
-                  ) : (
+                <SectionCard title="Recovery Email Manager" subtitle="Send & track cart recovery emails" icon={MarkEmailRead} iconColor="#FF6B6B" link="/admin/recovery-emails" linkLabel="Open Manager">
+                  {firstLoad ? <LoadingState label="Loading recovery data..." /> : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Emails Sent"      value={fmt.number(checkoutAbandonment?.emailsSent)}    accent="#FF6B6B" />
+                      <MetricRow label="Emails Sent"      value={fmt.number(checkoutAbandonment?.emailsSent)}     accent="#FF6B6B" />
                       <MetricRow label="Recovered Orders" value={fmt.number(checkoutAbandonment?.recoveredOrders)} accent="#10B981" />
-                      <MetricRow label="Recovery Rate"    value={fmt.pct(checkoutAbandonment?.recoveryRate)}      accent="#06B6D4" />
+                      <MetricRow label="Recovery Rate"    value={fmt.pct(checkoutAbandonment?.recoveryRate)}       accent="#06B6D4" />
                     </div>
                   )}
                 </SectionCard>
-                
               </div>
             </div>
 
-            {/* ── SECTION 6: Product Performance ─────────────────────────── */}
+            {/* Product Performance */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -992,25 +805,15 @@ export default function AdminDashboard() {
                   </span>
                   Product Performance
                 </h2>
-                <Link to="/admin/products" className="adm-section-link">
-                  View Products <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/products" className="adm-section-link">View Products <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-charts-row">
                 <SectionCard title="Top Products" icon={Storefront} iconColor="#3B82F6" link="/admin/products">
-                  {firstLoad ? (
-                    <LoadingState label="Loading products…" />
-                  ) : !topPerformers?.products || topPerformers.products.length === 0 ? (
-                    <div className="adm-empty">
-                      <Storefront style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No product data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading products..." /> : !topPerformers?.products?.length ? (
+                    <div className="adm-empty"><Storefront style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No product data available</span></div>
                   ) : (
                     <div className="adm-product-list">
-                      <div className="adm-table-hd">
-                        <span>Product</span><span>Sales</span><span>Revenue</span><span>Trend</span>
-                      </div>
+                      <div className="adm-table-hd"><span>Product</span><span>Sales</span><span>Revenue</span><span>Trend</span></div>
                       {topPerformers.products.slice(0, 6).map((p, i) => (
                         <div key={i} className="adm-table-row">
                           <span className="adm-table-name">{p.name}</span>
@@ -1022,21 +825,15 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Inventory Alerts" icon={Warning} iconColor="#F59E0B" link="/admin/products">
-                  {firstLoad ? (
-                    <LoadingState label="Loading inventory alerts…" />
-                  ) : !lowStockAlerts ? (
-                    <div className="adm-empty">
-                      <Warning style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No inventory alert data</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading inventory alerts..." /> : !lowStockAlerts ? (
+                    <div className="adm-empty"><Warning style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No inventory alert data</span></div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Low Stock Items"   value={fmt.number(lowStockAlerts.lowStockCount)}       accent="#F59E0B" />
-                      <MetricRow label="Out of Stock"      value={fmt.number(lowStockAlerts.outOfStockCount)}     accent="#EF4444" />
-                      <MetricRow label="Reorder Needed"    value={fmt.number(lowStockAlerts.reorderCount)}        accent="#F97316" />
-                      <MetricRow label="Inventory Value"   value={fmt.currency(lowStockAlerts.totalInventoryValue)} accent="#3B82F6" />
+                      <MetricRow label="Low Stock Items"  value={fmt.number(lowStockAlerts.lowStockCount)}         accent="#F59E0B" />
+                      <MetricRow label="Out of Stock"     value={fmt.number(lowStockAlerts.outOfStockCount)}       accent="#EF4444" />
+                      <MetricRow label="Reorder Needed"   value={fmt.number(lowStockAlerts.reorderCount)}          accent="#F97316" />
+                      <MetricRow label="Inventory Value"  value={fmt.currency(lowStockAlerts.totalInventoryValue)} accent="#3B82F6" />
                       {(lowStockAlerts.criticalItems || []).slice(0, 3).map((item, i) => (
                         <div key={i} className="adm-alert-row">
                           <ErrorOutline style={{ fontSize: 14, color: '#EF4444', flexShrink: 0 }} />
@@ -1050,7 +847,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── SECTION 7: Operational Metrics ─────────────────────────── */}
+            {/* Operational Metrics */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -1060,67 +857,49 @@ export default function AdminDashboard() {
                   Operational Metrics
                 </h2>
               </div>
-
               <div className="adm-cards-3">
                 <SectionCard title="Fulfillment" icon={LocalShipping} iconColor="#64748B">
-                  {firstLoad ? (
-                    <LoadingState label="Loading fulfillment data…" />
-                  ) : !fulfillmentAnalytics ? (
-                    <div className="adm-empty">
-                      <LocalShipping style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No fulfillment data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading fulfillment data..." /> : !fulfillmentAnalytics ? (
+                    <div className="adm-empty"><LocalShipping style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No fulfillment data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="On-Time Rate"          value={fmt.pct(fulfillmentAnalytics.onTimeRate)}                            accent="#10B981" />
-                      <MetricRow label="Avg. Processing Time"  value={`${fulfillmentAnalytics.avgProcessingTime?.toFixed(1) || '—'} hrs`} />
-                      <MetricRow label="Avg. Shipping Time"    value={`${fulfillmentAnalytics.avgShippingTime?.toFixed(1) || '—'} days`} />
-                      <MetricRow label="Pending Shipments"     value={fmt.number(fulfillmentAnalytics.pendingShipments)}                   accent="#F59E0B" />
-                      <MetricRow label="Delivered Today"       value={fmt.number(fulfillmentAnalytics.deliveredToday)}                     accent="#10B981" />
+                      <MetricRow label="On-Time Rate"         value={fmt.pct(fulfillmentAnalytics.onTimeRate)}                           accent="#10B981" />
+                      <MetricRow label="Avg. Processing Time" value={`${fulfillmentAnalytics.avgProcessingTime?.toFixed(1) || '-'} hrs`} />
+                      <MetricRow label="Avg. Shipping Time"   value={`${fulfillmentAnalytics.avgShippingTime?.toFixed(1)  || '-'} days`} />
+                      <MetricRow label="Pending Shipments"    value={fmt.number(fulfillmentAnalytics.pendingShipments)}                  accent="#F59E0B" />
+                      <MetricRow label="Delivered Today"      value={fmt.number(fulfillmentAnalytics.deliveredToday)}                    accent="#10B981" />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="SLA Compliance" icon={FactCheck} iconColor="#8B5CF6">
-                  {firstLoad ? (
-                    <LoadingState label="Loading SLA data…" />
-                  ) : !slaBreaches ? (
-                    <div className="adm-empty">
-                      <FactCheck style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No SLA data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading SLA data..." /> : !slaBreaches ? (
+                    <div className="adm-empty"><FactCheck style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No SLA data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Compliance Rate"       value={fmt.pct(slaBreaches.complianceRate)}                              accent="#10B981" />
-                      <MetricRow label="Total Breaches"        value={fmt.number(slaBreaches.totalBreaches)}                            accent="#EF4444" />
-                      <MetricRow label="Critical Breaches"     value={fmt.number(slaBreaches.criticalBreaches)}                         accent="#DC2626" />
-                      <MetricRow label="Avg. Resolution Time"  value={`${slaBreaches.avgResolutionTime?.toFixed(1) || '—'} hrs`} />
+                      <MetricRow label="Compliance Rate"      value={fmt.pct(slaBreaches.complianceRate)}                             accent="#10B981" />
+                      <MetricRow label="Total Breaches"       value={fmt.number(slaBreaches.totalBreaches)}                           accent="#EF4444" />
+                      <MetricRow label="Critical Breaches"    value={fmt.number(slaBreaches.criticalBreaches)}                        accent="#DC2626" />
+                      <MetricRow label="Avg. Resolution Time" value={`${slaBreaches.avgResolutionTime?.toFixed(1) || '-'} hrs`} />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Fraud Detection" icon={Security} iconColor="#EF4444">
-                  {firstLoad ? (
-                    <LoadingState label="Loading fraud data…" />
-                  ) : !fraudAnalytics ? (
-                    <div className="adm-empty">
-                      <Security style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No fraud data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading fraud data..." /> : !fraudAnalytics ? (
+                    <div className="adm-empty"><Security style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No fraud data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Fraud Rate"       value={fmt.pct(fraudAnalytics.fraudRate)}          accent="#EF4444" />
-                      <MetricRow label="Flagged Orders"   value={fmt.number(fraudAnalytics.flaggedOrders)}   accent="#F59E0B" />
-                      <MetricRow label="Confirmed Fraud"  value={fmt.number(fraudAnalytics.confirmedFraud)}  accent="#DC2626" />
-                      <MetricRow label="Revenue Saved"    value={fmt.currency(fraudAnalytics.revenueSaved)}  accent="#10B981" />
-                      <MetricRow label="Pending Review"   value={fmt.number(fraudAnalytics.pendingReview)} />
+                      <MetricRow label="Fraud Rate"      value={fmt.pct(fraudAnalytics.fraudRate)}         accent="#EF4444" />
+                      <MetricRow label="Flagged Orders"  value={fmt.number(fraudAnalytics.flaggedOrders)}  accent="#F59E0B" />
+                      <MetricRow label="Confirmed Fraud" value={fmt.number(fraudAnalytics.confirmedFraud)} accent="#DC2626" />
+                      <MetricRow label="Revenue Saved"   value={fmt.currency(fraudAnalytics.revenueSaved)} accent="#10B981" />
+                      <MetricRow label="Pending Review"  value={fmt.number(fraudAnalytics.pendingReview)} />
                     </div>
                   )}
                 </SectionCard>
               </div>
             </div>
 
-            {/* ── SECTION 8: Returns ─────────────────────────────────────── */}
+            {/* Returns Analytics */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -1129,40 +908,26 @@ export default function AdminDashboard() {
                   </span>
                   Returns Analytics
                 </h2>
-                <Link to="/admin/returns" className="adm-section-link">
-                  Manage Returns <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/returns" className="adm-section-link">Manage Returns <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-charts-row">
                 <SectionCard title="Returns Overview" icon={ReplayCircleFilled} iconColor="#EF4444">
-                  {firstLoad ? (
-                    <LoadingState label="Loading returns data…" />
-                  ) : !returnOverview ? (
-                    <div className="adm-empty">
-                      <ReplayCircleFilled style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No returns data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading returns data..." /> : !returnOverview ? (
+                    <div className="adm-empty"><ReplayCircleFilled style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No returns data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Total Returns"    value={fmt.number(returnOverview.totalReturns)} />
-                      <MetricRow label="Return Rate"      value={fmt.pct(returnOverview.returnRate)}              accent="#EF4444" />
-                      <MetricRow label="Pending Review"   value={fmt.number(returnOverview.pendingReview)}        accent="#F59E0B" />
-                      <MetricRow label="Approved Returns" value={fmt.number(returnOverview.approved)}             accent="#10B981" />
-                      <MetricRow label="Value Returned"   value={fmt.currency(returnOverview.totalValue)}         accent="#EF4444" />
-                      <MetricRow label="Avg. Processing"  value={`${returnOverview.avgProcessingDays?.toFixed(1) || '—'} days`} />
+                      <MetricRow label="Return Rate"      value={fmt.pct(returnOverview.returnRate)}             accent="#EF4444" />
+                      <MetricRow label="Pending Review"   value={fmt.number(returnOverview.pendingReview)}       accent="#F59E0B" />
+                      <MetricRow label="Approved Returns" value={fmt.number(returnOverview.approved)}            accent="#10B981" />
+                      <MetricRow label="Value Returned"   value={fmt.currency(returnOverview.totalValue)}        accent="#EF4444" />
+                      <MetricRow label="Avg. Processing"  value={`${returnOverview.avgProcessingDays?.toFixed(1) || '-'} days`} />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Top Return Reasons" icon={Assessment} iconColor="#F97316" link="/admin/returns">
-                  {firstLoad ? (
-                    <LoadingState label="Loading return reasons…" />
-                  ) : !returnOverview?.topReasons || returnOverview.topReasons.length === 0 ? (
-                    <div className="adm-empty">
-                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No return reasons data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading return reasons..." /> : !returnOverview?.topReasons?.length ? (
+                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No return reasons data available</span></div>
                   ) : (
                     <div className="adm-segment-list">
                       {returnOverview.topReasons.map((r, i) => (
@@ -1180,7 +945,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── SECTION 9: Refunds ─────────────────────────────────────── */}
+            {/* Refunds Analytics */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -1189,53 +954,33 @@ export default function AdminDashboard() {
                   </span>
                   Refunds Analytics
                 </h2>
-                <Link to="/admin/refunds" className="adm-section-link">
-                  Manage Refunds <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
+                <Link to="/admin/refunds" className="adm-section-link">Manage Refunds <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
               </div>
-
               <div className="adm-charts-row">
                 <SectionCard title="Refunds Overview" icon={CurrencyExchange} iconColor="#14B8A6">
-                  {firstLoad ? (
-                    <LoadingState label="Loading refund data…" />
-                  ) : !refundOverview ? (
-                    <div className="adm-empty">
-                      <CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No refund data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading refund data..." /> : !refundOverview ? (
+                    <div className="adm-empty"><CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No refund data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Total Refunds"     value={fmt.number(refundOverview.totalRefunds)} />
-                      <MetricRow label="Refund Rate"       value={fmt.pct(refundOverview.refundRate)}              accent="#14B8A6" />
-                      <MetricRow label="Pending Refunds"   value={fmt.number(refundOverview.pending)}              accent="#F59E0B" />
-                      <MetricRow label="Total Refunded"    value={fmt.currency(refundOverview.totalAmount)}        accent="#EF4444" />
+                      <MetricRow label="Refund Rate"       value={fmt.pct(refundOverview.refundRate)}             accent="#14B8A6" />
+                      <MetricRow label="Pending Refunds"   value={fmt.number(refundOverview.pending)}             accent="#F59E0B" />
+                      <MetricRow label="Total Refunded"    value={fmt.currency(refundOverview.totalAmount)}       accent="#EF4444" />
                       <MetricRow label="Avg. Refund Value" value={fmt.currency(refundOverview.avgAmount)} />
-                      <MetricRow label="Avg. Processing"   value={`${refundOverview.avgProcessingTime?.toFixed(1) || '—'} hrs`} />
+                      <MetricRow label="Avg. Processing"   value={`${refundOverview.avgProcessingTime?.toFixed(1) || '-'} hrs`} />
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Refund Status Breakdown" icon={BarChart} iconColor="#8B5CF6" link="/admin/refunds">
-                  {firstLoad ? (
-                    <LoadingState label="Loading refund status…" />
-                  ) : !refundOverview?.statusBreakdown || refundOverview.statusBreakdown.length === 0 ? (
-                    <div className="adm-empty">
-                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
-                      <span>No refund status data available</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading refund status..." /> : !refundOverview?.statusBreakdown?.length ? (
+                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No refund status data available</span></div>
                   ) : (
                     <div className="adm-segment-list">
                       {refundOverview.statusBreakdown.map((s, i) => (
                         <div key={i} className="adm-segment-row">
                           <div className="adm-segment-label">{s.status}</div>
                           <div className="adm-segment-bar-wrap">
-                            <div
-                              className="adm-segment-bar"
-                              style={{
-                                width:      `${s.percentage || 0}%`,
-                                background: ['#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#8B5CF6'][i % 5],
-                              }}
-                            />
+                            <div className="adm-segment-bar" style={{ width: `${s.percentage || 0}%`, background: ['#10B981','#F59E0B','#EF4444','#06B6D4','#8B5CF6'][i % 5] }} />
                           </div>
                           <div className="adm-segment-pct">{fmt.number(s.count)}</div>
                         </div>
@@ -1246,7 +991,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── SECTION 10: Alerts & Quick Stats ───────────────────────── */}
+            {/* Alerts & Quick Stats */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -1256,28 +1001,18 @@ export default function AdminDashboard() {
                   Alerts &amp; Activity
                 </h2>
               </div>
-
               <div className="adm-charts-row">
                 <SectionCard title="Dashboard Alerts" icon={Warning} iconColor="#F59E0B">
-                  {firstLoad ? (
-                    <LoadingState label="Loading alerts…" />
-                  ) : alerts.length === 0 ? (
-                    <div className="adm-empty">
-                      <CheckCircle style={{ fontSize: 36, color: '#10B981' }} />
-                      <span>All systems operational</span>
-                    </div>
+                  {firstLoad ? <LoadingState label="Loading alerts..." /> : alerts.length === 0 ? (
+                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#10B981' }} /><span>All systems operational</span></div>
                   ) : (
                     <div className="adm-alert-feed">
                       {alerts.slice(0, 8).map((a, i) => (
                         <div key={i} className={`adm-alert-item adm-alert-item--${a.severity || 'info'}`}>
                           <div className="adm-alert-item-icon">
-                            {a.severity === 'critical' ? (
-                              <ErrorOutline style={{ fontSize: 16, color: '#EF4444' }} />
-                            ) : a.severity === 'warning' ? (
-                              <Warning style={{ fontSize: 16, color: '#F59E0B' }} />
-                            ) : (
-                              <CheckCircle style={{ fontSize: 16, color: '#10B981' }} />
-                            )}
+                            {a.severity === 'critical' ? <ErrorOutline style={{ fontSize: 16, color: '#EF4444' }} />
+                              : a.severity === 'warning' ? <Warning style={{ fontSize: 16, color: '#F59E0B' }} />
+                              : <CheckCircle style={{ fontSize: 16, color: '#10B981' }} />}
                           </div>
                           <div className="adm-alert-item-body">
                             <div className="adm-alert-item-msg">{a.message}</div>
@@ -1288,30 +1023,20 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-
                 <SectionCard title="Quick Stats" icon={DashboardIcon} iconColor="#6366F1">
-                  {firstLoad ? (
-                    <LoadingState label="Loading stats…" />
-                  ) : (
-                    <div className="adm-quick-grid">
-                      {[
-                        { label: 'Products',     value: fmt.number(basicStats?.products),   color: '#3B82F6', icon: Inventory },
-                        { label: 'Users',        value: fmt.number(basicStats?.users),       color: '#8B5CF6', icon: People },
-                        { label: 'In Stock',     value: fmt.number(inv.inStock),             color: '#10B981', icon: CheckCircle },
-                        { label: 'Out of Stock', value: fmt.number(inv.outOfStock),          color: '#EF4444', icon: ErrorOutline },
-                        { label: 'Orders',       value: fmt.number(basicStats?.orders),      color: '#F97316', icon: ShoppingCart },
-                        { label: 'Admins',       value: fmt.number(basicStats?.adminCount),  color: '#A855F7', icon: ManageAccounts },
-                      ].map((s, i) => (
-                        <div key={i} className="adm-quick-stat">
-                          <span className="adm-quick-icon" style={{ background: s.color + '15', color: s.color }}>
-                            <s.icon style={{ fontSize: 16 }} />
-                          </span>
-                          <span className="adm-quick-value">{s.value}</span>
-                          <span className="adm-quick-label">{s.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div className="adm-quick-grid">
+                    {quickStats.map((s, i) => (
+                      <div key={i} className="adm-quick-stat">
+                        <span className="adm-quick-icon" style={{ background: s.color + '15', color: s.color }}>
+                          <s.icon style={{ fontSize: 16 }} />
+                        </span>
+                        <span className="adm-quick-value">
+                          {s.value === null ? <Dash /> : fmt.number(s.value)}
+                        </span>
+                        <span className="adm-quick-label">{s.label}</span>
+                      </div>
+                    ))}
+                  </div>
                 </SectionCard>
               </div>
             </div>
