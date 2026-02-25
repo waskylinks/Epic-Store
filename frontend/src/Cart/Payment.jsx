@@ -380,18 +380,29 @@ function Payment() {
                         flutterwaveTriggered.current = false;
                       }}
                     />
-                    <div className="ep-gateway-content">
-                      <img
-                        src={gateway.logo}
-                        alt={gateway.label}
-                        className="ep-gateway-logo-img"
-                        onError={(e) => { e.target.style.display = "none"; }}
-                      />
-                      <span className="ep-gateway-name">{gateway.label}</span>
-                      {selectedGateway === gateway.value && (
-                        <FiCheckCircle className="ep-check-icon" />
-                      )}
-                    </div>
+                    
+                      <div className="ep-gateway-content">
+                        <div className="ep-gateway-logo-wrapper">
+                          <img
+                            src={gateway.logo}
+                            alt={gateway.label}
+                            className="ep-gateway-logo-img"
+                            onError={(e) => {
+                              e.target.style.display = "none";
+                              const fallback = e.target.parentNode.querySelector('.ep-gateway-logo-fallback');
+                              if (fallback) fallback.style.display = 'block';
+                            }}
+                          />
+                          <span className="ep-gateway-logo-fallback" style={{ display: 'none' }}>
+                            {gateway.label}
+                          </span>
+                        </div>
+                        <span className="ep-gateway-name">{gateway.label}</span>
+                        {selectedGateway === gateway.value && (
+                          <FiCheckCircle className="ep-check-icon" />
+                        )}
+                      </div>
+
                   </label>
                 ))}
               </div>

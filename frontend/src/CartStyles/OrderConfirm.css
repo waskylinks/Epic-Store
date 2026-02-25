@@ -1,237 +1,286 @@
-/* ===========================
-   ENTERPRISE ORDER CONFIRM
-   =========================== */
+/* ============================================================
+   OrderConfirm.css — eoc- prefix
+   Matches full design system
+   Coral: #FF6B6B | Page bg: #F0F2F5 | Surface: #FFFFFF
+   Font: Plus Jakarta Sans
+   Fully responsive
+   ============================================================ */
 
-.eoc-container {
-  max-width: 1200px;
-  margin: 2rem auto;
-  padding: 0 2rem;
-  min-height: 60vh;
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+/* ── Tokens ─────────────────────────────────────────────────── */
+:root {
+  --eoc-font:         'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  --eoc-bg:           #F0F2F5;
+  --eoc-surface:      #FFFFFF;
+  --eoc-surface-2:    #F9FAFB;
+  --eoc-border:       #D1D5DB;
+  --eoc-border-md:    #9CA3AF;
+
+  --eoc-text:         #111827;
+  --eoc-text-sec:     #374151;
+  --eoc-text-muted:   #6B7280;
+  --eoc-text-xs:      #9CA3AF;
+
+  /* Coral — full strength */
+  --eoc-coral:        #FF6B6B;
+  --eoc-coral-dark:   #e05555;
+  --eoc-coral-bg:     #FFF0F0;
+  --eoc-coral-border: #FECACA;
+  --eoc-coral-glow:   rgba(255, 107, 107, 0.28);
+
+  --eoc-green:        #16a34a;
+  --eoc-green-bg:     #DCFCE7;
+  --eoc-green-border: #BBF7D0;
+
+  --eoc-blue:         #2563EB;
+  --eoc-blue-bg:      #DBEAFE;
+  --eoc-blue-border:  #BFDBFE;
+
+  --eoc-radius:       12px;
+  --eoc-radius-sm:    8px;
+  --eoc-radius-xs:    6px;
+  --eoc-shadow-sm:    0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+  --eoc-shadow:       0 4px 12px rgba(0,0,0,0.09);
+  --eoc-transition:   all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* ── Container ──────────────────────────────────────────────── */
+.eoc-container {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 28px 48px;
+  min-height: 60vh;
+  font-family: var(--eoc-font);
+  background: var(--eoc-bg);
+}
+
+/* ── Page Header ────────────────────────────────────────────── */
 .eoc-header {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  font-size: 2rem;
-  font-weight: 700;
-  color: #1a1a1a;
-  margin: 0 0 2rem 0;
+  gap: 12px;
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--eoc-text);
+  margin: 0 0 20px;
+  letter-spacing: -0.4px;
 }
 
 .eoc-header svg {
-  color: #28a745;
-  font-size: 2.5rem;
+  color: var(--eoc-green);
+  font-size: 1.6rem;
+  flex-shrink: 0;
 }
 
-/* ===========================
-   INFO BANNER
-   =========================== */
+/* ── Info Banner ────────────────────────────────────────────── */
 .eoc-info-banner {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 1rem 1.5rem;
-  background-color: #e7f3ff;
-  border: 1px solid #2196f3;
-  border-radius: 8px;
-  margin-bottom: 2rem;
+  gap: 12px;
+  padding: 13px 16px;
+  background: var(--eoc-blue-bg);
+  border: 1px solid var(--eoc-blue-border);
+  border-radius: var(--eoc-radius-sm);
+  margin-bottom: 20px;
 }
 
 .eoc-info-banner svg {
-  color: #2196f3;
-  font-size: 1.5rem;
+  color: var(--eoc-blue);
+  font-size: 1.2rem;
   flex-shrink: 0;
 }
 
 .eoc-info-banner p {
   margin: 0;
-  color: #0d47a1;
-  font-size: 0.95rem;
+  color: var(--eoc-blue);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--eoc-font);
 }
 
-/* ===========================
-   CONTENT
-   =========================== */
+/* ── Content ────────────────────────────────────────────────── */
 .eoc-content {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 16px;
 }
 
+/* ── Section Card ───────────────────────────────────────────── */
 .eoc-section {
-  background-color: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  background: var(--eoc-surface);
+  border: 1px solid var(--eoc-border);
+  border-radius: var(--eoc-radius);
+  box-shadow: var(--eoc-shadow-sm);
   overflow: hidden;
 }
 
 .eoc-section-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: #1a1a1a;
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--eoc-text);
   margin: 0;
-  padding: 1.5rem 2rem;
-  background-color: #f8f9fa;
-  border-bottom: 1px solid #e0e0e0;
+  padding: 14px 20px;
+  background: var(--eoc-surface-2);
+  border-bottom: 1px solid var(--eoc-border);
+  letter-spacing: -0.1px;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.7px;
+  color: var(--eoc-text-muted);
 }
 
 .eoc-table-container {
-  padding: 1.5rem 2rem;
+  padding: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-/* ===========================
-   TABLES
-   =========================== */
+/* ── Tables ─────────────────────────────────────────────────── */
 .eoc-table {
   width: 100%;
   border-collapse: collapse;
+  font-family: var(--eoc-font);
 }
 
 .eoc-table thead {
-  background-color: #f8f9fa;
+  background: var(--eoc-surface-2);
 }
 
 .eoc-table th {
-  padding: 1rem;
+  padding: 11px 20px;
   text-align: left;
-  font-weight: 600;
-  color: #666;
-  font-size: 0.9rem;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--eoc-text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 2px solid #e0e0e0;
+  letter-spacing: 0.6px;
+  border-bottom: 1px solid var(--eoc-border);
+  white-space: nowrap;
 }
 
 .eoc-table td {
-  padding: 1rem;
-  border-bottom: 1px solid #f0f0f0;
-  color: #1a1a1a;
-  font-size: 0.95rem;
+  padding: 13px 20px;
+  border-bottom: 1px solid var(--eoc-border);
+  color: var(--eoc-text-sec);
+  font-size: 13.5px;
+  font-weight: 500;
+  vertical-align: middle;
 }
 
-.eoc-table tbody tr:last-child td {
-  border-bottom: none;
-}
+.eoc-table tbody tr:last-child td { border-bottom: none; }
 
-.eoc-table tbody tr:hover {
-  background-color: #f8f9fa;
-}
+.eoc-table tbody tr:hover { background: var(--eoc-surface-2); }
 
-/* Product Image */
+/* Product image — contain so full product visible */
 .eoc-product-image {
-  width: 60px;
-  height: 60px;
-  object-fit: cover;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: var(--eoc-radius-xs);
+  border: 1px solid var(--eoc-border);
+  background: var(--eoc-surface-2);
+  padding: 4px;
+  display: block;
 }
 
 .eoc-product-name {
-  font-weight: 600;
-  color: #1a1a1a;
-}
-
-.eoc-item-total {
   font-weight: 700;
-  color: #ff3c3c;
+  color: var(--eoc-text);
 }
 
-/* Summary Table */
-.eoc-summary-table th {
-  text-align: center;
+/* Item total — coral, full strength */
+.eoc-item-total {
+  font-weight: 800 !important;
+  color: var(--eoc-coral) !important;
+  font-size: 14px !important;
 }
+
+/* Summary table centering */
+.eoc-summary-table th { text-align: center; }
 
 .eoc-summary-table td {
   text-align: center;
-  font-weight: 600;
-  font-size: 1rem;
+  font-weight: 700;
+  font-size: 14px;
 }
 
+/* Grand total — large coral */
 .eoc-total-amount {
-  color: #ff3c3c;
-  font-size: 1.25rem !important;
-  font-weight: 700 !important;
+  color: var(--eoc-coral) !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.3px;
 }
 
 .eoc-free-shipping {
-  color: #28a745;
-  font-weight: 700;
+  color: var(--eoc-green);
+  font-weight: 800;
+  background: var(--eoc-green-bg);
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--eoc-green-border);
+  font-size: 11.5px;
+  display: inline-block;
 }
 
-.eoc-summary-note {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin-top: 1rem;
-  padding: 0.75rem;
-  background-color: #f8f9fa;
-  border-radius: 8px;
-  font-size: 0.85rem;
-  color: #666;
-}
-
-.eoc-summary-note svg {
-  color: #17a2b8;
-  flex-shrink: 0;
-}
-
-/* ===========================
-   LOADING STATE
-   =========================== */
-.eoc-loading {
-  text-align: center;
-  padding: 2rem;
-  color: #666;
-}
-
-/* ===========================
-   ACTIONS
-   =========================== */
+/* ── Actions ────────────────────────────────────────────────── */
 .eoc-actions {
   display: flex;
   justify-content: space-between;
-  gap: 1rem;
-  margin-top: 2rem;
-  padding: 2rem 0;
-  border-top: 2px solid #f0f0f0;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--eoc-border);
 }
 
 .eoc-back-btn,
 .eoc-proceed-btn {
-  padding: 1rem 2rem;
-  font-size: 1rem;
-  font-weight: 600;
-  border-radius: 8px;
+  padding: 12px 24px;
+  font-family: var(--eoc-font);
+  font-size: 13.5px;
+  font-weight: 700;
+  border-radius: var(--eoc-radius-sm);
   cursor: pointer;
-  transition: all 0.3s ease;
-  border: none;
+  transition: var(--eoc-transition);
+  border: 1px solid transparent;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: var(--eoc-shadow-sm);
 }
 
+/* Back — neutral */
 .eoc-back-btn {
-  background-color: #fff;
-  border: 2px solid #ddd;
-  color: #666;
+  background: var(--eoc-surface);
+  border-color: var(--eoc-border);
+  color: var(--eoc-text-muted);
 }
 
 .eoc-back-btn:hover:not(:disabled) {
-  border-color: #999;
-  color: #333;
+  border-color: var(--eoc-border-md);
+  color: var(--eoc-text-sec);
+  background: var(--eoc-surface-2);
 }
 
+/* Proceed — coral, full strength */
 .eoc-proceed-btn {
-  background-color: #ff3c3c;
-  color: #fff;
+  background: var(--eoc-coral);
+  color: #ffffff;
+  border-color: var(--eoc-coral);
   flex: 1;
-  max-width: 400px;
+  max-width: 360px;
   margin-left: auto;
+  justify-content: center;
 }
 
 .eoc-proceed-btn:hover:not(:disabled) {
-  background-color: #e03030;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(255, 60, 60, 0.3);
+  background: var(--eoc-coral-dark);
+  border-color: var(--eoc-coral-dark);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px var(--eoc-coral-glow);
 }
 
 .eoc-back-btn:disabled,
@@ -239,50 +288,70 @@
   opacity: 0.6;
   cursor: not-allowed;
   transform: none;
+  box-shadow: none;
 }
 
-/* ===========================
-   RESPONSIVE
-   =========================== */
+/* Focus states */
+.eoc-back-btn:focus-visible,
+.eoc-proceed-btn:focus-visible {
+  outline: 2px solid var(--eoc-coral);
+  outline-offset: 2px;
+}
+
+/* ── Responsive — Tablet (≤1024px) ─────────────────────────── */
+@media (max-width: 1024px) {
+  .eoc-container { padding: 20px 20px 40px; }
+}
+
+/* ── Responsive — Mobile (≤768px) ──────────────────────────── */
 @media (max-width: 768px) {
-  .eoc-container {
-    padding: 0 1rem;
-    margin: 1rem auto;
-  }
+  .eoc-container { padding: 16px 16px 32px; }
 
-  .eoc-header {
-    font-size: 1.5rem;
-  }
-
-  .eoc-section-title {
-    font-size: 1.125rem;
-    padding: 1.25rem 1rem;
-  }
-
-  .eoc-table-container {
-    padding: 1rem;
-    overflow-x: auto;
-  }
-
-  .eoc-table {
-    font-size: 0.85rem;
-  }
+  .eoc-header { font-size: 19px; gap: 10px; }
+  .eoc-header svg { font-size: 1.4rem; }
 
   .eoc-table th,
-  .eoc-table td {
-    padding: 0.75rem 0.5rem;
-  }
+  .eoc-table td { padding: 10px 14px; }
 
-  .eoc-product-image {
-    width: 50px;
-    height: 50px;
-  }
+  .eoc-product-image { width: 48px; height: 48px; }
 
-  .eoc-actions {
-    flex-direction: column;
-  }
+  .eoc-actions { flex-direction: column; }
 
-  .eoc-proceed-btn {
-    max-width: 100%;
+  .eoc-proceed-btn { max-width: 100%; width: 100%; }
+  .eoc-back-btn { width: 100%; justify-content: center; }
+}
+
+/* ── Responsive — Small Mobile (≤480px) ────────────────────── */
+@media (max-width: 480px) {
+  .eoc-container { padding: 12px 12px 28px; }
+
+  .eoc-header { font-size: 17px; }
+
+  .eoc-table th { font-size: 10px; padding: 9px 12px; }
+  .eoc-table td { font-size: 12.5px; padding: 10px 12px; }
+
+  .eoc-product-image { width: 42px; height: 42px; }
+
+  .eoc-total-amount { font-size: 16px !important; }
+
+  .eoc-info-banner p { font-size: 12.5px; }
+}
+
+/* ── Responsive — Very Small (≤360px) ──────────────────────── */
+@media (max-width: 360px) {
+  .eoc-container { padding: 10px 10px 24px; }
+
+  .eoc-table th,
+  .eoc-table td { padding: 8px 10px; }
+
+  .eoc-proceed-btn,
+  .eoc-back-btn { padding: 11px 16px; font-size: 13px; }
+}
+
+/* ── Accessibility ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
   }
 }
