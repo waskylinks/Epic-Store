@@ -283,8 +283,6 @@ export default function AdminDashboard() {
   const [timeframe, setTimeframe]       = useState('month');
   const [lastFetchTime, setLastFetchTime] = useState(null);
 
-  // Track whether we have ever completed a fetch so we can distinguish
-  // "still loading first time" vs "loaded but empty"
   const [hasFetched, setHasFetched] = useState(false);
 
   const isLoadingRef          = useRef(false);
@@ -341,7 +339,7 @@ export default function AdminDashboard() {
 
   const handleTimeframeChange = useCallback((newTf) => {
     setTimeframe(newTf);
-    setHasFetched(false);      // reset so spinners show again while re-fetching
+    setHasFetched(false);
     cancelDebounce();
     debouncedLoad(newTf);
   }, [debouncedLoad, cancelDebounce]);
@@ -382,22 +380,22 @@ export default function AdminDashboard() {
 
   const isActive = (p) => location.pathname === p || location.pathname.startsWith(p + '/');
 
-  // ── Convenience: "still on first load for this section?" ─────────────────
-  // hasFetched flips to true once Promise.allSettled resolves.
-  // loading is the redux per-request flag.
-  // We show spinner when: !hasFetched (never loaded yet this session).
   const firstLoad = !hasFetched;
 
-  // ── Derived data ──────────────────────────────────────────────────────────
   const inv = inventoryStatus || { inStock: 0, lowStock: 0, outOfStock: 0, discontinued: 0, total: 0 };
-
   const orders = ordersByStatus || { processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
+
+  // ── KPI values: prioritize fast basicStats, upgrade with timeframe-aware kpis when available ──
+  const displayedRevenue   = kpis?.revenue?.current   ?? basicStats?.revenue   ?? 0;
+  const displayedOrders    = kpis?.orders?.current    ?? basicStats?.orders    ?? 0;
+  const displayedCustomers = kpis?.customers?.current ?? basicStats?.users     ?? 0;
+  const displayedProducts  = basicStats?.products ?? 0;
 
   const kpiCards = [
     {
       key: 'revenue',
       label: 'Total Revenue',
-      value: kpis?.revenue ? fmt.currency(kpis.revenue.current) : fmt.currency(basicStats?.revenue),
+      value: fmt.currency(displayedRevenue),
       change: kpis?.revenue?.change,
       icon: AttachMoney,
       accent: '#10B981',
@@ -406,7 +404,7 @@ export default function AdminDashboard() {
     {
       key: 'orders',
       label: 'Total Orders',
-      value: kpis?.orders ? fmt.number(kpis.orders.current) : fmt.number(basicStats?.orders),
+      value: fmt.number(displayedOrders),
       change: kpis?.orders?.change,
       icon: ShoppingCart,
       accent: '#3B82F6',
@@ -415,7 +413,7 @@ export default function AdminDashboard() {
     {
       key: 'customers',
       label: 'Customers',
-      value: kpis?.customers ? fmt.number(kpis.customers.current) : fmt.number(basicStats?.users),
+      value: fmt.number(displayedCustomers),
       change: kpis?.customers?.change,
       icon: People,
       accent: '#8B5CF6',
@@ -424,7 +422,7 @@ export default function AdminDashboard() {
     {
       key: 'products',
       label: 'Products',
-      value: fmt.number(basicStats?.products),
+      value: fmt.number(displayedProducts),
       icon: Inventory,
       accent: '#F97316',
       bg: '#F9731615',
@@ -573,7 +571,7 @@ export default function AdminDashboard() {
 
               <div className="adm-kpi-grid">
                 {firstLoad
-                  ? Array.from({ length: 6 }).map((_, i) => <KpiSkeleton key={i} />)
+                  ? Array.from({ length: 7 }).map((_, i) => <KpiSkeleton key={i} />)
                   : kpiCards.map((k) => (
                       <div key={k.key} className="adm-kpi-card">
                         <div className="adm-kpi-top">
