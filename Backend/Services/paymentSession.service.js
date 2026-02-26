@@ -28,18 +28,19 @@ export const generatePaymentReference = () => {
  * @returns {string} Reference ID
  */
 export const createPaymentSession = async (sessionData) => {
-  const reference = generatePaymentReference();
+  // Use provided reference if given, otherwise generate one
+  const reference = sessionData.reference || generatePaymentReference();
   
   const session = {
-    reference,
     ...sessionData,
+    reference,  // ensure reference is canonical in the session body
     createdAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + SESSION_TTL * 1000).toISOString()
   };
 
   try {
     await redis.set(
-      `${SESSION_PREFIX}${reference}`,
+      `${SESSION_PREFIX}${reference}`,  // ← key matches the reference
       JSON.stringify(session),
       { EX: SESSION_TTL }
     );

@@ -6,13 +6,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Initialize Paystack payment with metadata
- * @param {Object} params - Payment initialization parameters
- * @returns {Object} Paystack initialization response with authorization URL
  */
 export async function initializePaystackPayment({
   email,
-  amount, // Amount in currency base unit (e.g., naira, not kobo)
-  currency = "NGN",
+  amount,
+  currency,
   reference,
   userId,
   orderReference,
@@ -21,7 +19,6 @@ export async function initializePaystackPayment({
 }) {
   const url = "https://api.paystack.co/transaction/initialize";
 
-  // Convert amount to kobo/cents (Paystack expects smallest currency unit)
   const amountInMinorUnit = Math.round(amount * 100);
 
   try {
@@ -34,13 +31,11 @@ export async function initializePaystackPayment({
         reference,
         callback_url,
         metadata: {
-          // Custom metadata for tracking and debugging
           user_id: userId,
           order_reference: orderReference,
           item_count: itemCount,
           payment_source: "epicstore",
           initialized_at: new Date().toISOString(),
-          // Can add more custom fields as needed
           custom_fields: [
             {
               display_name: "Order Reference",
@@ -79,8 +74,8 @@ export async function initializePaystackPayment({
   } catch (err) {
     console.error("Paystack initialization error:", err.response?.data || err.message);
     throw new Error(
-      err.response?.data?.message || 
-      err.message || 
+      err.response?.data?.message ||
+      err.message ||
       "Failed to initialize Paystack payment"
     );
   }
@@ -88,9 +83,6 @@ export async function initializePaystackPayment({
 
 /**
  * Verify Paystack transaction with retry logic
- * @param {string} reference - Paystack transaction reference
- * @param {number} maxAttempts - Number of retries for verification
- * @returns {Object} Paystack transaction data
  */
 export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
   const url = `https://api.paystack.co/transaction/verify/${reference}`;
@@ -114,7 +106,7 @@ export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
     } catch (err) {
       lastErr = err;
       if (attempt < maxAttempts) {
-        await sleep(attempt * 500); // exponential backoff
+        await sleep(attempt * 500);
         continue;
       }
       throw lastErr;
@@ -123,9 +115,7 @@ export async function verifyPaystackTransaction(reference, maxAttempts = 3) {
 }
 
 /**
- * Verify payment and update pending order (NEW SECURE METHOD)
- * @param {Object} params - Verification parameters
- * @returns {Object} Updated order and success status
+ * Verify payment and update pending order
  */
 export async function verifyAndUpdateOrder({
   reference,
@@ -134,55 +124,35 @@ export async function verifyAndUpdateOrder({
   expectedCurrency,
   userId
 }) {
-  // 1. Verify transaction with Paystack
   const tx = await verifyPaystackTransaction(reference);
 
-  // 2. Convert Paystack amount (kobo → naira)
   const paystackAmount = tx.amount / 100;
   const currency = tx.currency;
 
-  // 3. Validate currency matches expected
   if (currency.toUpperCase() !== expectedCurrency.toUpperCase()) {
-    throw new Error(
-      `Currency mismatch: expected ${expectedCurrency}, got ${currency}`
-    );
+    throw new Error(`Currency mismatch: expected ${expectedCurrency}, got ${currency}`);
   }
 
-  // 4. Validate amount matches pending order (critical security check)
   if (Math.abs(Number(expectedAmount) - paystackAmount) > 0.01) {
-    throw new Error(
-      `Amount mismatch: expected ${expectedAmount}, gateway charged ${paystackAmount}`
-    );
+    throw new Error(`Amount mismatch: expected ${expectedAmount}, gateway charged ${paystackAmount}`);
   }
 
-  // 5. Find and update the pending order
   const order = await Order.findById(orderId);
+  if (!order) throw new Error("Order not found");
 
-  if (!order) {
-    throw new Error("Order not found");
-  }
-
-  // 6. Verify order belongs to user (security check)
   if (order.user.toString() !== userId.toString()) {
     throw new Error("Unauthorized: Order does not belong to user");
   }
 
-  // 7. Check if already processed (idempotency)
   if (order.paymentInfo.status === "success") {
-    return { 
-      success: true, 
-      order, 
-      alreadyProcessed: true 
-    };
+    return { success: true, order, alreadyProcessed: true };
   }
 
-  // 8. Update order with payment confirmation
   order.paymentInfo.status = "success";
   order.paymentInfo.providerTxId = tx.id;
   order.paymentInfo.paidAt = new Date(tx.paid_at);
   order.amountPaid = paystackAmount;
 
-  // 9. Store payment metadata (including our custom metadata)
   order.paymentMeta = {
     channel: tx.channel,
     ipAddress: tx.ip_address,
@@ -194,23 +164,16 @@ export async function verifyAndUpdateOrder({
       expMonth: tx.authorization?.exp_month,
       expYear: tx.authorization?.exp_year
     },
-    // Store custom metadata we sent during initialization
     customMetadata: tx.metadata,
     raw: tx
   };
 
   await order.save();
-
-  return { 
-    success: true, 
-    order,
-    alreadyProcessed: false 
-  };
+  return { success: true, order, alreadyProcessed: false };
 }
 
 /**
  * DEPRECATED: Old method for backward compatibility
- * Use verifyAndUpdateOrder instead
  */
 export async function verifyAndCreateOrder({
   reference,
@@ -223,28 +186,17 @@ export async function verifyAndCreateOrder({
   amountPaid,
   userId
 }) {
-  console.warn(
-    'verifyAndCreateOrder is deprecated. Use initializePayment + verifyAndUpdateOrder instead.'
-  );
+  console.warn('verifyAndCreateOrder is deprecated. Use initializePayment + verifyAndUpdateOrder instead.');
 
   const tx = await verifyPaystackTransaction(reference);
-
   const paystackAmount = tx.amount / 100;
   const currency = tx.currency;
 
   if (currency !== "NGN") throw new Error("Invalid payment currency");
-  if (Math.abs(Number(totalPrice) - paystackAmount) > 0.01) {
-    throw new Error("Amount mismatch");
-  }
+  if (Math.abs(Number(totalPrice) - paystackAmount) > 0.01) throw new Error("Amount mismatch");
 
-  // Idempotency check
-  const existingOrder = await Order.findOne({ 
-    "paymentInfo.reference": reference 
-  });
-  
-  if (existingOrder) {
-    return { created: false, order: existingOrder, reason: "duplicate" };
-  }
+  const existingOrder = await Order.findOne({ "paymentInfo.reference": reference });
+  if (existingOrder) return { created: false, order: existingOrder, reason: "duplicate" };
 
   const newOrder = await Order.create({
     user: userId,
@@ -278,15 +230,11 @@ export async function verifyAndCreateOrder({
 
 /**
  * Handle Paystack webhook with signature verification
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
  */
-
 export async function handleWebhook(req, res) {
   try {
-    // 1-5: Your existing signature verification and order lookup code
     const paystackSignature = req.headers["x-paystack-signature"];
-    
+
     if (!paystackSignature) {
       console.warn("❌ Missing Paystack signature");
       return res.status(400).send("Missing signature");
@@ -311,15 +259,11 @@ export async function handleWebhook(req, res) {
       return res.status(200).json({ message: "Event ignored" });
     }
 
-    const order = await Order.findOne({
-      "paymentInfo.reference": tx.reference
-    });
+    const order = await Order.findOne({ "paymentInfo.reference": tx.reference });
 
     if (!order) {
       console.warn("⚠️ Webhook: Order not found for reference:", tx.reference);
-      return res.status(200).json({
-        message: "Order not found, ignoring webhook"
-      });
+      return res.status(200).json({ message: "Order not found, ignoring webhook" });
     }
 
     if (order.paymentInfo.status === "success") {
@@ -327,7 +271,6 @@ export async function handleWebhook(req, res) {
       return res.status(200).json({ message: "Already processed" });
     }
 
-    // 6: Update order
     order.paymentInfo.status = "success";
     order.paymentInfo.providerTxId = tx.id;
     order.paymentInfo.paidAt = new Date(tx.paid_at);
@@ -351,14 +294,12 @@ export async function handleWebhook(req, res) {
     await order.save();
     console.log("✅ Order updated via webhook");
 
-    // 7: CREATE RECEIPT 
     try {
       const { createReceiptIfNotExists } = await import('../receipt.service.js');
-      
       await createReceiptIfNotExists({
         orderId: order._id,
         userId: order.user,
-        reference: tx.reference, 
+        reference: tx.reference,
         orderItems: order.orderItems,
         itemPrice: order.itemPrice,
         taxPrice: order.taxPrice,
@@ -368,11 +309,9 @@ export async function handleWebhook(req, res) {
         currency: order.paymentInfo.currency,
         paymentGateway: 'paystack'
       });
-      
       console.log("✅ Receipt created via Paystack webhook");
     } catch (receiptErr) {
       console.error("⚠️ Receipt creation failed:", receiptErr);
-      // Don't fail the webhook for receipt errors
     }
 
     console.log("✅ Webhook: Order confirmed for reference:", tx.reference);
@@ -386,47 +325,32 @@ export async function handleWebhook(req, res) {
 
 /**
  * Process Paystack refund
- * @param {Object} params - Refund parameters
- * @returns {Object} Refund response
  */
-export async function refundPayment({
-  transactionReference, // Paystack transaction reference
-  amount, // Amount to refund (in naira, optional - full refund if not provided)
-  reason, // Refund reason
-  merchantNote // Internal note
-}) {
+export async function refundPayment({ transactionReference, amount, reason, merchantNote }) {
   const url = "https://api.paystack.co/refund";
 
   try {
-    // Convert amount to kobo if provided (partial refund)
     const refundData = {
       transaction: transactionReference,
-      ...(amount && { amount: Math.round(amount * 100) }), // Only include if partial refund
+      ...(amount && { amount: Math.round(amount * 100) }),
       ...(merchantNote && { merchant_note: merchantNote })
     };
 
-    const { data } = await axios.post(
-      url,
-      refundData,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-          "Content-Type": "application/json"
-        },
-        timeout: 15000
-      }
-    );
+    const { data } = await axios.post(url, refundData, {
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 15000
+    });
 
-    if (!data.status) {
-      throw new Error(data.message || "Paystack refund failed");
-    }
+    if (!data.status) throw new Error(data.message || "Paystack refund failed");
 
-    // Paystack refund response structure
     return {
       success: true,
       refundId: data.data.id,
-      status: data.data.status, // "pending", "processing", "success", "failed"
-      amount: data.data.amount / 100, // Convert back to naira
+      status: data.data.status,
+      amount: data.data.amount / 100,
       currency: data.data.currency,
       transaction: data.data.transaction,
       createdAt: data.data.created_at,
@@ -435,33 +359,23 @@ export async function refundPayment({
 
   } catch (err) {
     console.error("Paystack refund error:", err.response?.data || err.message);
-    throw new Error(
-      err.response?.data?.message || 
-      err.message || 
-      "Failed to process Paystack refund"
-    );
+    throw new Error(err.response?.data?.message || err.message || "Failed to process Paystack refund");
   }
 }
 
 /**
  * Check Paystack refund status
- * @param {string} refundReference - Paystack refund reference
- * @returns {Object} Refund status
  */
 export async function getRefundStatus(refundReference) {
   const url = `https://api.paystack.co/refund/${refundReference}`;
 
   try {
     const { data } = await axios.get(url, {
-      headers: { 
-        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` 
-      },
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
       timeout: 8000
     });
 
-    if (!data.status) {
-      throw new Error(data.message || "Failed to get refund status");
-    }
+    if (!data.status) throw new Error(data.message || "Failed to get refund status");
 
     return {
       success: true,
@@ -476,10 +390,6 @@ export async function getRefundStatus(refundReference) {
 
   } catch (err) {
     console.error("Get refund status error:", err.response?.data || err.message);
-    throw new Error(
-      err.response?.data?.message || 
-      err.message || 
-      "Failed to get refund status"
-    );
+    throw new Error(err.response?.data?.message || err.message || "Failed to get refund status");
   }
 }

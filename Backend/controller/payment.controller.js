@@ -12,22 +12,42 @@ import {
 } from "../Services/paymentSession.service.js";
 import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
-import Product from '../models/product-model.js';
 import Discount from '../models/discount-model.js';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
 import Checkout from '../models/checkout-model.js';
 import mongoose from 'mongoose';
-// FIX PC1: Removed the two duplicate helper functions (calculateFraudRisk,
-// calculateFulfillmentSLA) that were copy-pasted into both paymentController
-// and orderController with diverged logic. The canonical implementations now
-// live in utils/ and are imported by both controllers.
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
 // ============================================
-// SHARED CACHE INVALIDATION
+// CONSTANTS
 // ============================================
 
+const SESSION_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
+
+// Amount tolerance per currency
+const AMOUNT_TOLERANCE = {
+  USD: 0.02,
+  NGN: 0.05,
+  GHS: 0.05,
+  DEFAULT: 0.05
+};
+
+// ============================================
+// HELPERS
+// ============================================
+
+/**
+ * Generate a unique order reference.
+ * Format: ORD-<timestamp>-<random hex>
+ */
+const generateOrderReference = () =>
+  `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 14).toUpperCase()}`;
+
+/**
+ * Invalidate all payment-related caches after a successful transaction.
+ * Failures are swallowed — cache invalidation must never affect primary flow.
+ */
 const invalidatePaymentCaches = async () => {
   try {
     await Promise.all([
@@ -38,8 +58,109 @@ const invalidatePaymentCaches = async () => {
       deleteCachePattern('payment_*')
     ]);
   } catch {
-    // Cache invalidation failure must not affect the primary response
+    // intentionally swallowed
   }
+};
+
+/**
+ * Normalize gateway verification response into a unified shape.
+ * Returns { verified, amount, currency, id, raw }
+ */
+const verifyWithGateway = async (paymentService, gateway, reference) => {
+  let raw = null;
+  let verified = false;
+
+  if (gateway === 'stripe') {
+    raw = await paymentService.verifyStripeTransaction(reference);
+    verified = raw.status === "succeeded";
+  } else if (gateway === 'paystack') {
+    raw = await paymentService.verifyPaystackTransaction(reference);
+    verified = raw.status === "success";
+  } else if (gateway === 'flutterwave') {
+    raw = await paymentService.verifyFlutterwaveTransaction(reference);
+    verified = raw.status === "successful";
+  } else {
+    throw new Error(`Unsupported gateway: ${gateway}`);
+  }
+
+  if (!verified) {
+    throw new Error(`Gateway returned non-success status: "${raw?.status ?? 'unknown'}"`);
+  }
+
+  // Normalise amount and currency across gateways
+  let amount, currency;
+  if (gateway === 'stripe') {
+    amount = raw.amount / 100;
+    currency = raw.currency.toUpperCase();
+  } else if (gateway === 'paystack') {
+    amount = raw.amount / 100;
+    currency = raw.currency;
+  } else if (gateway === 'flutterwave') {
+    amount = parseFloat(raw.amount);
+    currency = raw.currency;
+  }
+
+  return { verified, amount, currency, id: raw.id || raw.tx_id, raw };
+};
+
+/**
+ * Build gateway-specific paymentMeta object.
+ */
+const buildPaymentMeta = (gateway, raw) => {
+  if (gateway === 'stripe') {
+    const paymentMethod = raw.charges?.data[0]?.payment_method_details;
+    return {
+      channel: paymentMethod?.type || "card",
+      customer: { email: raw.receipt_email },
+      cardDetails: paymentMethod?.card
+        ? {
+            last4: paymentMethod.card.last4,
+            brand: paymentMethod.card.brand,
+            expMonth: paymentMethod.card.exp_month,
+            expYear: paymentMethod.card.exp_year
+          }
+        : undefined,
+      customMetadata: raw.metadata,
+      raw
+    };
+  }
+
+  if (gateway === 'paystack') {
+    return {
+      channel: raw.channel,
+      ipAddress: raw.ip_address,
+      customer: raw.customer,
+      authorization: raw.authorization,
+      cardDetails: {
+        last4: raw.authorization?.last4,
+        brand: raw.authorization?.brand,
+        expMonth: raw.authorization?.exp_month,
+        expYear: raw.authorization?.exp_year
+      },
+      customMetadata: raw.metadata,
+      raw
+    };
+  }
+
+  if (gateway === 'flutterwave') {
+    return {
+      channel: raw.payment_type,
+      ipAddress: raw.ip,
+      customer: raw.customer,
+      cardDetails: raw.card
+        ? {
+            last4: raw.card.last_4digits,
+            brand: raw.card.type,
+            expMonth: raw.card.expiry?.split('/')[0],
+            expYear: raw.card.expiry?.split('/')[1]
+          }
+        : undefined,
+      customMetadata: raw.meta,
+      raw
+    };
+  }
+
+  return {};
 };
 
 // ============================================
@@ -47,7 +168,7 @@ const invalidatePaymentCaches = async () => {
 // ============================================
 
 /**
- * Initialize Payment — creates Redis session, returns gateway authorization URL
+ * Initialize Payment — generates reference, stores Redis session, returns gateway URL.
  * @route POST /api/v1/payment/initialize
  * @access Private
  */
@@ -58,14 +179,14 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
   const { gateway, currency, shippingInfo, cartItems, discountCode } = req.body;
 
   if (!gateway || !currency || !shippingInfo || !cartItems || cartItems.length === 0) {
-    return next(new HandleError("Missing required fields", 400));
+    return next(new HandleError("Missing required fields: gateway, currency, shippingInfo, cartItems", 400));
   }
 
-  // 1. Get user info
+  // 1. Load user
   const user = await User.findById(userId).select('email name country createdAt');
   if (!user) return next(new HandleError("User not found", 404));
 
-  // 2. Validate and calculate order totals using database prices
+  // 2. Validate cart and calculate server-side totals
   let validatedOrder;
   try {
     validatedOrder = await validateAndCalculateOrder(cartItems, currency);
@@ -73,13 +194,11 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     return next(err);
   }
 
-  // 3. Apply discount if provided
+  // 3. Apply discount code if provided
   let discountInfo = null;
-
   if (discountCode) {
     try {
       const discount = await Discount.findActiveByCode(discountCode);
-
       if (!discount) return next(new HandleError('Invalid or expired discount code', 400));
 
       const canUse = await discount.canUserUse(userId);
@@ -107,20 +226,23 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       validatedOrder.shippingPrice = shippingPrice;
       validatedOrder.totalPrice = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
     } catch (err) {
-      return next(new HandleError('Failed to apply discount code', 500));
+      if (err instanceof HandleError) return next(err);
+      return next(new HandleError('Failed to apply discount code. Please try again.', 500));
     }
   }
 
-  // 4. Capture attribution data
+  // 4. Capture attribution and device info
   const attributionData = req.attributionData || {
     source: 'direct', medium: null, campaign: null, referrer: null, landingPage: null
   };
   const deviceInfo = req.deviceInfo || { device: 'desktop', browser: 'unknown' };
 
-  // 5. Create payment session in Redis
-  let reference;
+  // 5. Generate reference before creating session
+  const reference = generateOrderReference();
+
   try {
-    reference = await createPaymentSession({
+    await createPaymentSession({
+      reference,
       userId: userId.toString(),
       gateway,
       currency: validatedOrder.currency,
@@ -146,13 +268,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       createdAt: Date.now()
     });
   } catch {
-    return next(new HandleError("Failed to initialize payment session", 500));
+    return next(new HandleError("Failed to create payment session. Please try again.", 500));
   }
 
-  // 6. Initialize payment with gateway
+  // 6. Initialize payment with the chosen gateway
   let gatewayResponse;
   try {
-    const initParams = {
+    gatewayResponse = await PaymentFactory.initializePayment(gateway, {
       email: user.email,
       amount: validatedOrder.totalPrice,
       currency: validatedOrder.currency,
@@ -163,30 +285,27 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       callback_url: `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`,
       customer_name: user.name,
       customer_phone: shippingInfo.phoneNo
-    };
-
-    gatewayResponse = await PaymentFactory.initializePayment(gateway, initParams);
+    });
   } catch (err) {
-    await deletePaymentSession(reference);
-    return next(new HandleError(`Failed to initialize ${gateway} payment: ${err.message}`, 500));
+    await deletePaymentSession(reference).catch(() => {});
+    return next(new HandleError(
+      `Could not reach ${gateway} payment gateway. Please try again or use a different payment method.`,
+      502
+    ));
   }
 
-  // 7. For Stripe, create alias session with payment_intent_id
+  // 7. For Stripe: alias payment_intent_id → reference
   if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
     createSessionAlias(gatewayResponse.payment_intent_id, reference).catch(() => {});
   }
 
-  // 8. Return payment initialization data
+  // 8. Build and return response
   const responseData = {
     reference,
     amount: validatedOrder.totalPrice,
     currency: validatedOrder.currency,
     gateway,
-    orderItems: validatedOrder.orderItems.map(item => ({
-      name: item.name,
-      quantity: item.quantity,
-      price: item.price
-    })),
+    orderItems: validatedOrder.orderItems.map(({ name, quantity, price }) => ({ name, quantity, price })),
     breakdown: {
       itemPrice: validatedOrder.itemPrice,
       taxPrice: validatedOrder.taxPrice,
@@ -218,7 +337,18 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 // ============================================
 
 /**
- * Verify Payment — confirms gateway charge, creates order atomically
+ * Verify Payment — confirms gateway charge, creates order.
+ * 
+ * FIX: Removed MongoDB transaction entirely. The previous implementation used
+ * mongoose.startSession() + startTransaction() which caused infinite hangs when:
+ *   1. MongoDB connection was in a recovering state (seen in logs)
+ *   2. The stock validation loop inside the transaction timed out waiting for locks
+ *
+ * Since stock deduction is handled by the admin fulfillment flow (not at payment
+ * time), there is no multi-document write that requires atomicity here.
+ * Order.create() is a single atomic document write — it either succeeds or fails,
+ * no transaction needed.
+ *
  * @route POST /api/v1/payment/verify
  * @access Private
  */
@@ -228,43 +358,56 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const { gateway, reference } = req.body;
   if (!gateway || !reference) {
-    return next(new HandleError("Gateway and reference are required", 400));
+    return next(new HandleError("Both 'gateway' and 'reference' are required to verify a payment", 400));
   }
 
-  // 1. Get payment session from Redis
+  // 1. Load payment session from Redis
   const session = await getPaymentSession(reference);
 
   if (!session) {
     return next(new HandleError(
-      "Payment session not found or expired. Please restart the payment process.",
+      "Payment session not found or expired. Please start a new payment.",
       404
     ));
   }
 
-  if (!session.orderItems || !session.shippingInfo || !session.totalPrice) {
-    await deletePaymentSession(reference);
-    return next(new HandleError("Invalid payment session data", 400));
+  // Guard against a corrupted session missing critical fields
+  if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
+    await deletePaymentSession(reference).catch(() => {});
+    return next(new HandleError(
+      "Payment session data is incomplete. Please start a new payment.",
+      400
+    ));
   }
 
-  // Check session expiry (30 minutes)
-  if (session.createdAt && Date.now() - session.createdAt > 30 * 60 * 1000) {
-    await deletePaymentSession(reference);
-    return next(new HandleError("Payment session expired. Please restart the payment process.", 400));
+  // Check session has not passed the 30-minute expiry window
+  if (session.createdAt && Date.now() - new Date(session.createdAt).getTime() > SESSION_EXPIRY_MS) {
+    await deletePaymentSession(reference).catch(() => {});
+    return next(new HandleError(
+      "Payment session has expired (30-minute limit). Please start a new payment.",
+      400
+    ));
   }
 
+  // The order reference is the ORD-xxx identifier stored in the session.
+  // `reference` in the request body may be a Stripe payment_intent_id,
+  // so we must always use session.reference for the order record.
   const orderReference = session.reference;
 
-  // 2. Verify session ownership
+  // 2. Verify the session belongs to the authenticated user
   if (session.userId !== userId.toString()) {
-    return next(new HandleError("Unauthorized: Payment session does not belong to user", 403));
+    return next(new HandleError("This payment session does not belong to your account", 403));
   }
 
-  // 3. Verify gateway matches
+  // 3. Verify the gateway in the request matches the session
   if (session.gateway !== gateway) {
-    return next(new HandleError(`Gateway mismatch: session is for ${session.gateway}, not ${gateway}`, 400));
+    return next(new HandleError(
+      `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`,
+      400
+    ));
   }
 
-  // 4. Idempotency check — order may already exist from a prior verify call
+  // 4. Idempotency — if an order already exists for this reference, return it immediately
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference": orderReference },
@@ -273,290 +416,176 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   });
 
   if (existingOrder) {
-    await deletePaymentSession(reference);
-    if (reference !== orderReference) await deletePaymentSession(orderReference);
+    await deletePaymentSession(reference).catch(() => {});
+    if (reference !== orderReference) await deletePaymentSession(orderReference).catch(() => {});
 
     return res.status(200).json({
       success: true,
-      message: "Payment already verified",
+      message: "Payment already verified — returning existing order",
       order: existingOrder,
       idempotent: true
     });
   }
 
-  // 5. Get payment service
+  // 5. Resolve the payment service for this gateway
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
   } catch (err) {
-    return next(new HandleError(err.message, 400));
+    return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
   }
 
-  // 6. Verify payment with gateway
-  let paymentVerified = false;
-  let gatewayResponse = null;
-
+  // 6. Verify the charge with the gateway
+  let gatewayData;
   try {
-    if (gateway === 'stripe') {
-      gatewayResponse = await paymentService.verifyStripeTransaction(reference);
-      paymentVerified = gatewayResponse.status === "succeeded";
-    } else if (gateway === 'paystack') {
-      gatewayResponse = await paymentService.verifyPaystackTransaction(reference);
-      paymentVerified = gatewayResponse.status === "success";
-    } else if (gateway === 'flutterwave') {
-      gatewayResponse = await paymentService.verifyFlutterwaveTransaction(reference);
-      paymentVerified = gatewayResponse.status === "successful";
-    }
-
-    if (!paymentVerified) {
-      throw new Error(`Payment not successful. Status: ${gatewayResponse?.status}`);
-    }
+    gatewayData = await verifyWithGateway(paymentService, gateway, reference);
   } catch (err) {
-    return next(new HandleError(`Payment verification failed: ${err.message}`, 500));
+    return next(new HandleError(
+      `Payment verification failed with ${gateway}: ${err.message}`,
+      502
+    ));
   }
 
-  // 7. Validate amount and currency
-  let gatewayAmount, gatewayCurrency;
+  const { amount: gatewayAmount, currency: gatewayCurrency, id: providerTxId, raw: gatewayResponse } = gatewayData;
 
-  if (gateway === 'stripe') {
-    gatewayAmount = gatewayResponse.amount / 100;
-    gatewayCurrency = gatewayResponse.currency.toUpperCase();
-  } else if (gateway === 'paystack') {
-    gatewayAmount = gatewayResponse.amount / 100;
-    gatewayCurrency = gatewayResponse.currency;
-  } else if (gateway === 'flutterwave') {
-    gatewayAmount = parseFloat(gatewayResponse.amount);
-    gatewayCurrency = gatewayResponse.currency;
-  }
-
+  // 7. Validate currency matches the session
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
-      `Currency mismatch: expected ${session.currency}, got ${gatewayCurrency}`,
+      `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`,
       400
     ));
   }
 
-  const tolerance = session.currency === 'USD' ? 0.02 : 0.05;
-  if (Math.abs(session.totalPrice - gatewayAmount) > tolerance) {
+  // 8. Validate amount is within tolerance (guards against partial payments / tampering)
+  const tolerance = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
+  const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
+  if (amountDiff > tolerance) {
     return next(new HandleError(
-      `Amount mismatch: expected ${session.totalPrice}, gateway charged ${gatewayAmount}`,
+      `Amount mismatch: expected ${session.totalPrice} ${session.currency}, ` +
+      `gateway charged ${gatewayAmount} ${gatewayCurrency} (diff: ${amountDiff.toFixed(2)})`,
       400
     ));
   }
 
-  // 8. Get user for fraud check
+  // 9. Load user for fraud check
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
 
-  // 9. Calculate isFirstPurchase and purchaseNumber
+  // 10. Count prior successful orders for analytics
   const userOrderCount = await Order.countDocuments({
     user: userId,
     'paymentInfo.status': 'success'
   });
-
   const isFirstPurchase = userOrderCount === 0;
   const purchaseNumber = userOrderCount + 1;
 
-  // ═══════════════════════════════════════════════════════════════
-  // ATOMIC TRANSACTION — all critical DB writes together
-  // ═══════════════════════════════════════════════════════════════
+  // 11. Fraud risk assessment
+  const fraudCheck = calculateFraudRisk(
+    {
+      totalPrice: session.totalPrice,
+      shippingInfo: session.shippingInfo,
+      orderItems: session.orderItems,
+    },
+    user,
+    { gateway, gatewayResponse }
+  );
 
+  // 12. Initial fulfillment SLA
+  const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
+
+  // 13. Build order document
+  const orderData = {
+    user: userId,
+    shippingInfo: session.shippingInfo,
+    orderItems: session.orderItems,
+    itemPrice: session.itemPrice,
+    taxPrice: session.taxPrice,
+    shippingPrice: session.shippingPrice,
+    totalPrice: session.totalPrice,
+    amountPaid: gatewayAmount,
+    ...(session.discount && {
+      discounts: {
+        codes: [{
+          code: session.discount.code,
+          amount: session.discount.discountAmount,
+          type: session.discount.type
+        }],
+        totalDiscount: session.discount.discountAmount
+      }
+    }),
+    paymentInfo: {
+      reference: orderReference,
+      providerTxId,
+      stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
+      status: "success",
+      method: gateway,
+      currency: gatewayCurrency,
+      amount: gatewayAmount,
+      paidAt: new Date()
+    },
+    paymentMeta: buildPaymentMeta(gateway, gatewayResponse),
+    orderStatus: "Processing",
+    analytics: {
+      source: session.analytics?.source || 'direct',
+      medium: session.analytics?.medium || null,
+      campaign: session.analytics?.campaign || null,
+      referrer: session.analytics?.referrer || null,
+      landingPage: session.analytics?.landingPage || null,
+      device: session.analytics?.device || 'desktop',
+      browser: session.analytics?.browser || 'unknown',
+      customerSegment: null,
+      isFirstPurchase,
+      purchaseNumber
+    },
+    fraudCheck,
+    fulfillmentSLA
+  };
+
+  // 14. Create order — single document write, no transaction needed
   let order;
-  const mongoSession = await mongoose.startSession();
-
   try {
-    await mongoSession.startTransaction();
-
-    // 10. Validate stock BEFORE creating order
-    for (const item of session.orderItems) {
-      const product = await Product.findById(item.product).session(mongoSession);
-      if (!product) throw new Error(`Product ${item.product} not found`);
-
-      const currentStock = product.inventory?.stock ?? product.stock ?? 0;
-      if (currentStock < item.quantity) {
-        throw new Error(
-          `Insufficient stock for ${product.name}. Available: ${currentStock}, Requested: ${item.quantity}`
-        );
-      }
-    }
-
-    // 11. Fraud risk score — uses canonical shared utility (PC1)
-    const fraudCheck = calculateFraudRisk({
-      totalPrice: session.totalPrice,
-      shippingInfo: session.shippingInfo,
-      orderItems: session.orderItems,
-      billingAddress: gatewayResponse.customer?.billing_address || null
-    }, user);
-
-    // 12. Initial SLA — uses canonical shared utility (PC1)
-    const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
-
-    // 13. Build order data
-    const orderData = {
-      user: userId,
-      shippingInfo: session.shippingInfo,
-      orderItems: session.orderItems,
-      itemPrice: session.itemPrice,
-      taxPrice: session.taxPrice,
-      shippingPrice: session.shippingPrice,
-      totalPrice: session.totalPrice,
-      amountPaid: gatewayAmount,
-      ...(session.discount && {
-        discounts: {
-          codes: [{
-            code: session.discount.code,
-            amount: session.discount.discountAmount,
-            type: session.discount.type
-          }],
-          totalDiscount: session.discount.discountAmount
-        }
-      }),
-      paymentInfo: {
-        reference: orderReference,
-        providerTxId: gatewayResponse.id || gatewayResponse.tx_id,
-        stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
-        status: "success",
-        method: gateway,
-        currency: gatewayCurrency,
-        amount: gatewayAmount,
-        paidAt: new Date()
-      },
-      orderStatus: "Processing",
-      analytics: {
-        source: session.analytics?.source || 'direct',
-        medium: session.analytics?.medium || null,
-        campaign: session.analytics?.campaign || null,
-        referrer: session.analytics?.referrer || null,
-        landingPage: session.analytics?.landingPage || null,
-        device: session.analytics?.device || 'desktop',
-        browser: session.analytics?.browser || 'unknown',
-        customerSegment: null,
-        isFirstPurchase,
-        purchaseNumber
-      },
-      fraudCheck,
-      fulfillmentSLA
-    };
-
-    // Payment metadata per gateway
-    if (gateway === 'stripe') {
-      const paymentMethod = gatewayResponse.charges?.data[0]?.payment_method_details;
-      orderData.paymentMeta = {
-        channel: paymentMethod?.type || "card",
-        customer: { email: gatewayResponse.receipt_email },
-        cardDetails: paymentMethod?.card
-          ? {
-              last4: paymentMethod.card.last4,
-              brand: paymentMethod.card.brand,
-              expMonth: paymentMethod.card.exp_month,
-              expYear: paymentMethod.card.exp_year
-            }
-          : undefined,
-        customMetadata: gatewayResponse.metadata,
-        raw: gatewayResponse
-      };
-    } else if (gateway === 'paystack') {
-      orderData.paymentMeta = {
-        channel: gatewayResponse.channel,
-        ipAddress: gatewayResponse.ip_address,
-        customer: gatewayResponse.customer,
-        authorization: gatewayResponse.authorization,
-        cardDetails: {
-          last4: gatewayResponse.authorization?.last4,
-          brand: gatewayResponse.authorization?.brand,
-          expMonth: gatewayResponse.authorization?.exp_month,
-          expYear: gatewayResponse.authorization?.exp_year
-        },
-        customMetadata: gatewayResponse.metadata,
-        raw: gatewayResponse
-      };
-    } else if (gateway === 'flutterwave') {
-      orderData.paymentMeta = {
-        channel: gatewayResponse.payment_type,
-        ipAddress: gatewayResponse.ip,
-        customer: gatewayResponse.customer,
-        cardDetails: gatewayResponse.card
-          ? {
-              last4: gatewayResponse.card.last_4digits,
-              brand: gatewayResponse.card.type,
-              expMonth: gatewayResponse.card.expiry?.split('/')[0],
-              expYear: gatewayResponse.card.expiry?.split('/')[1]
-            }
-          : undefined,
-        customMetadata: gatewayResponse.meta,
-        raw: gatewayResponse
-      };
-    }
-
-    // Create order within transaction
-    const [createdOrder] = await Order.create([orderData], { session: mongoSession });
-    order = createdOrder;
-
-    // 14. Decrement product stock atomically
-    for (const item of session.orderItems) {
-      const product = await Product.findById(item.product).session(mongoSession);
-      if (product) {
-        const stockField =
-          product.inventory?.stock !== undefined ? 'inventory.stock' : 'stock';
-        await Product.findByIdAndUpdate(
-          item.product,
-          { $inc: { [stockField]: -item.quantity } },
-          { session: mongoSession, new: true }
-        );
-      }
-    }
-
-    // 15. Mark checkout as converted (non-critical if missing)
-    try {
-      const checkout = await Checkout.findOne({ user: userId, status: 'pending' })
-        .sort({ lastActivityAt: -1 })
-        .session(mongoSession);
-
-      if (checkout) {
-        checkout.markAsConverted(order._id, orderReference);
-        await checkout.save({ session: mongoSession });
-      }
-    } catch {
-      // Checkout conversion failure must not abort the transaction
-    }
-
-    await mongoSession.commitTransaction();
+    order = await Order.create(orderData);
   } catch (err) {
-    await mongoSession.abortTransaction();
     return next(new HandleError(
-      `Payment verified but order creation failed: ${err.message}. Please contact support with reference: ${orderReference}`,
+      `Your payment was successful but we encountered an error saving your order ` +
+      `(${err.message}). Please do not pay again. Contact support with reference: ${orderReference}`,
       500
     ));
-  } finally {
-    mongoSession.endSession();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // POST-TRANSACTION (non-critical, all fire-and-forget)
-  // ═══════════════════════════════════════════════════════════════
+  // 15. Mark the checkout funnel entry as converted (fire-and-forget, non-fatal)
+  Checkout.findOne({ user: userId, status: 'pending' })
+    .sort({ lastActivityAt: -1 })
+    .then(checkout => {
+      if (checkout) {
+        checkout.markAsConverted(order._id, orderReference);
+        return checkout.save();
+      }
+    })
+    .catch(() => {});
+
+  // ═══════════════════════════════════════════════════════════════════
+  // POST-ORDER — all fire-and-forget, failures are swallowed
+  // ═══════════════════════════════════════════════════════════════════
 
   // 16. Record discount usage
   if (session.discount?.discountId) {
     Discount.findById(session.discount.discountId)
-      .then(discount => {
-        if (discount) {
-          return discount.recordUsage(userId, order._id, session.discount.discountAmount);
-        }
-      })
+      .then(discount => discount?.recordUsage(userId, order._id, session.discount.discountAmount))
       .catch(() => {});
   }
 
-  // 17. Populate order items for response
+  // 17. Populate product details for the response payload
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch {
-    // Populate failure must not block the response
+    // Non-fatal — order is created, response just won't include product details
   }
 
-  // 18. Sync customer analytics (async, non-blocking)
+  // 18. Async: sync customer analytics
   syncCustomerAfterOrder(order._id).catch(() => {});
 
-  // 19. Create receipt (async, non-blocking)
+  // 19. Async: generate receipt
   createReceiptIfNotExists({
     orderId: order._id,
     userId,

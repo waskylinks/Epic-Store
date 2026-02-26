@@ -6,13 +6,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Initialize Stripe Payment Intent
- * @param {Object} params - Payment initialization parameters
- * @returns {Object} Stripe payment intent with client secret
  */
 export async function initializeStripePayment({
   email,
   amount,
-  currency = "USD",
+  currency,
   reference,
   userId,
   orderReference,
@@ -22,11 +20,9 @@ export async function initializeStripePayment({
 }) {
   const url = "https://api.stripe.com/v1/payment_intents";
 
-  // Stripe expects amount in smallest currency unit (cents for USD, pence for GBP)
   const amountInMinorUnit = Math.round(amount * 100);
 
   try {
-    // Create payment intent
     const { data } = await axios.post(
       url,
       new URLSearchParams({
@@ -53,14 +49,14 @@ export async function initializeStripePayment({
       success: true,
       client_secret: data.client_secret,
       payment_intent_id: data.id,
-      reference: reference
+      reference
     };
 
   } catch (err) {
     console.error("Stripe initialization error:", err.response?.data || err.message);
     throw new Error(
-      err.response?.data?.error?.message || 
-      err.message || 
+      err.response?.data?.error?.message ||
+      err.message ||
       "Failed to initialize Stripe payment"
     );
   }
@@ -68,9 +64,6 @@ export async function initializeStripePayment({
 
 /**
  * Verify Stripe Payment Intent with retry logic
- * @param {string} paymentIntentId - Stripe payment intent ID
- * @param {number} maxAttempts - Number of retries for verification
- * @returns {Object} Stripe payment intent data
  */
 export async function verifyStripeTransaction(paymentIntentId, maxAttempts = 3) {
   const url = `https://api.stripe.com/v1/payment_intents/${paymentIntentId}`;
@@ -82,9 +75,7 @@ export async function verifyStripeTransaction(paymentIntentId, maxAttempts = 3) 
 
     try {
       const { data } = await axios.get(url, {
-        headers: { 
-          Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` 
-        },
+        headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
         timeout: 8000
       });
 
@@ -96,7 +87,7 @@ export async function verifyStripeTransaction(paymentIntentId, maxAttempts = 3) 
     } catch (err) {
       lastErr = err;
       if (attempt < maxAttempts) {
-        await sleep(attempt * 500); // exponential backoff
+        await sleep(attempt * 500);
         continue;
       }
       throw lastErr;
@@ -106,8 +97,6 @@ export async function verifyStripeTransaction(paymentIntentId, maxAttempts = 3) 
 
 /**
  * Verify payment and update pending order
- * @param {Object} params - Verification parameters
- * @returns {Object} Updated order and success status
  */
 export async function verifyAndUpdateOrder({
   reference,
@@ -116,69 +105,46 @@ export async function verifyAndUpdateOrder({
   expectedCurrency,
   userId
 }) {
-  // 1. For Stripe, reference could be payment_intent_id
-  // We need to verify using the payment intent ID
   let paymentIntent;
-  
+
   try {
     paymentIntent = await verifyStripeTransaction(reference);
   } catch (err) {
     throw new Error("Payment verification failed: " + err.message);
   }
 
-  // 2. Convert Stripe amount (cents → dollars/pounds/euros)
   const stripeAmount = paymentIntent.amount / 100;
   const currency = paymentIntent.currency.toUpperCase();
 
-  // 3. Validate currency matches expected
   if (currency !== expectedCurrency.toUpperCase()) {
-    throw new Error(
-      `Currency mismatch: expected ${expectedCurrency}, got ${currency}`
-    );
+    throw new Error(`Currency mismatch: expected ${expectedCurrency}, got ${currency}`);
   }
 
-  // 4. Validate amount matches pending order (critical security check)
   if (Math.abs(Number(expectedAmount) - stripeAmount) > 0.01) {
-    throw new Error(
-      `Amount mismatch: expected ${expectedAmount}, gateway charged ${stripeAmount}`
-    );
+    throw new Error(`Amount mismatch: expected ${expectedAmount}, gateway charged ${stripeAmount}`);
   }
 
-  // 5. Find and update the pending order
   const order = await Order.findById(orderId);
+  if (!order) throw new Error("Order not found");
 
-  if (!order) {
-    throw new Error("Order not found");
-  }
-
-  // 6. Verify order belongs to user (security check)
   if (order.user.toString() !== userId.toString()) {
     throw new Error("Unauthorized: Order does not belong to user");
   }
 
-  // 7. Check if already processed (idempotency)
   if (order.paymentInfo.status === "success") {
-    return { 
-      success: true, 
-      order, 
-      alreadyProcessed: true 
-    };
+    return { success: true, order, alreadyProcessed: true };
   }
 
-  // 8. Update order with payment confirmation
   order.paymentInfo.status = "success";
   order.paymentInfo.providerTxId = paymentIntent.id;
-  order.paymentInfo.paidAt = new Date(paymentIntent.created * 1000); // Stripe uses Unix timestamp
+  order.paymentInfo.paidAt = new Date(paymentIntent.created * 1000);
   order.amountPaid = stripeAmount;
 
-  // 9. Store payment metadata
   const paymentMethod = paymentIntent.charges?.data[0]?.payment_method_details;
-  
+
   order.paymentMeta = {
     channel: paymentMethod?.type || "card",
-    customer: {
-      email: paymentIntent.receipt_email
-    },
+    customer: { email: paymentIntent.receipt_email },
     cardDetails: paymentMethod?.card ? {
       last4: paymentMethod.card.last4,
       brand: paymentMethod.card.brand,
@@ -190,32 +156,23 @@ export async function verifyAndUpdateOrder({
   };
 
   await order.save();
-
-  return { 
-    success: true, 
-    order,
-    alreadyProcessed: false 
-  };
+  return { success: true, order, alreadyProcessed: false };
 }
 
 /**
  * Handle Stripe webhook with signature verification
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
  */
-
 export async function handleWebhook(req, res) {
   try {
-    // 1-4: Signature verification (your existing code)
     const stripeSignature = req.headers["stripe-signature"];
-    
+
     if (!stripeSignature) {
       console.warn("❌ Missing Stripe signature");
       return res.status(400).send("Missing signature");
     }
 
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-    
+
     const elements = stripeSignature.split(',');
     const timestamp = elements.find(el => el.startsWith('t='))?.split('=')[1];
     const signatures = elements
@@ -228,13 +185,13 @@ export async function handleWebhook(req, res) {
     }
 
     const signedPayload = `${timestamp}.${req.body.toString()}`;
-    
+
     const expectedSignature = crypto
       .createHmac("sha256", webhookSecret)
       .update(signedPayload)
       .digest("hex");
 
-    const isValid = signatures.some(sig => 
+    const isValid = signatures.some(sig =>
       crypto.timingSafeEqual(
         Buffer.from(sig, 'hex'),
         Buffer.from(expectedSignature, 'hex')
@@ -252,9 +209,7 @@ export async function handleWebhook(req, res) {
       return res.status(400).send("Timestamp too old");
     }
 
-    // 5-7: Parse and process event
     const event = JSON.parse(req.body.toString());
-
     console.log("📨 Stripe webhook event:", event.type);
 
     if (event.type !== "payment_intent.succeeded") {
@@ -262,23 +217,18 @@ export async function handleWebhook(req, res) {
     }
 
     const paymentIntent = event.data.object;
-
     const orderReference = paymentIntent.metadata?.tx_ref;
-    
+
     if (!orderReference) {
       console.warn("⚠️ Webhook: No order reference in metadata");
       return res.status(200).json({ message: "No order reference" });
     }
 
-    const order = await Order.findOne({
-      "paymentInfo.reference": orderReference
-    });
+    const order = await Order.findOne({ "paymentInfo.reference": orderReference });
 
     if (!order) {
       console.warn("⚠️ Webhook: Order not found for reference:", orderReference);
-      return res.status(200).json({
-        message: "Order not found, ignoring webhook"
-      });
+      return res.status(200).json({ message: "Order not found, ignoring webhook" });
     }
 
     if (order.paymentInfo.status === "success") {
@@ -286,19 +236,16 @@ export async function handleWebhook(req, res) {
       return res.status(200).json({ message: "Already processed" });
     }
 
-    // 8: Update order
     order.paymentInfo.status = "success";
     order.paymentInfo.providerTxId = paymentIntent.id;
     order.paymentInfo.paidAt = new Date(paymentIntent.created * 1000);
     order.amountPaid = paymentIntent.amount / 100;
 
     const paymentMethod = paymentIntent.charges?.data[0]?.payment_method_details;
-    
+
     order.paymentMeta = {
       channel: paymentMethod?.type || "card",
-      customer: {
-        email: paymentIntent.receipt_email
-      },
+      customer: { email: paymentIntent.receipt_email },
       cardDetails: paymentMethod?.card ? {
         last4: paymentMethod.card.last4,
         brand: paymentMethod.card.brand,
@@ -312,14 +259,12 @@ export async function handleWebhook(req, res) {
     await order.save();
     console.log("✅ Order updated via webhook");
 
-    // 9: ✅ CREATE RECEIPT (correct location)
     try {
       const { createReceiptIfNotExists } = await import('../receipt.service.js');
-      
       await createReceiptIfNotExists({
         orderId: order._id,
         userId: order.user,
-        reference: orderReference, 
+        reference: orderReference,
         orderItems: order.orderItems,
         itemPrice: order.itemPrice,
         taxPrice: order.taxPrice,
@@ -329,11 +274,9 @@ export async function handleWebhook(req, res) {
         currency: order.paymentInfo.currency,
         paymentGateway: 'stripe'
       });
-      
       console.log("✅ Receipt created via Stripe webhook");
     } catch (receiptErr) {
       console.error("⚠️ Receipt creation failed:", receiptErr);
-      // Don't fail the webhook for receipt errors
     }
 
     console.log("✅ Webhook: Order confirmed for reference:", orderReference);
@@ -345,32 +288,20 @@ export async function handleWebhook(req, res) {
   }
 }
 
-
 /**
  * Process Stripe refund
- * @param {Object} params - Refund parameters
- * @returns {Object} Refund response
  */
-export async function refundPayment({
-  paymentIntentId, // Stripe payment intent ID
-  amount, // Amount to refund in currency base unit (optional - full refund if not provided)
-  reason, // Refund reason: "duplicate", "fraudulent", "requested_by_customer"
-  merchantNote // Internal note (metadata)
-}) {
+export async function refundPayment({ paymentIntentId, amount, reason, merchantNote }) {
   const url = "https://api.stripe.com/v1/refunds";
 
   try {
-    // Build refund data
     const refundParams = {
       payment_intent: paymentIntentId,
-      ...(reason && { reason }), // Stripe accepts: duplicate, fraudulent, requested_by_customer
+      ...(reason && { reason }),
       ...(merchantNote && { 'metadata[merchant_note]': merchantNote })
     };
 
-    // Add amount only if partial refund (cents/pence)
-    if (amount) {
-      refundParams.amount = Math.round(amount * 100);
-    }
+    if (amount) refundParams.amount = Math.round(amount * 100);
 
     const { data } = await axios.post(
       url,
@@ -384,12 +315,11 @@ export async function refundPayment({
       }
     );
 
-    // Stripe refund response structure
     return {
       success: true,
       refundId: data.id,
-      status: data.status, // "pending", "succeeded", "failed", "canceled"
-      amount: data.amount / 100, // Convert back to base currency unit
+      status: data.status,
+      amount: data.amount / 100,
       currency: data.currency.toUpperCase(),
       paymentIntentId: data.payment_intent,
       reason: data.reason,
@@ -400,27 +330,19 @@ export async function refundPayment({
 
   } catch (err) {
     console.error("Stripe refund error:", err.response?.data || err.message);
-    throw new Error(
-      err.response?.data?.error?.message || 
-      err.message || 
-      "Failed to process Stripe refund"
-    );
+    throw new Error(err.response?.data?.error?.message || err.message || "Failed to process Stripe refund");
   }
 }
 
 /**
  * Check Stripe refund status
- * @param {string} refundId - Stripe refund ID
- * @returns {Object} Refund status
  */
 export async function getRefundStatus(refundId) {
   const url = `https://api.stripe.com/v1/refunds/${refundId}`;
 
   try {
     const { data } = await axios.get(url, {
-      headers: { 
-        Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` 
-      },
+      headers: { Authorization: `Bearer ${process.env.STRIPE_SECRET_KEY}` },
       timeout: 8000
     });
 
@@ -439,10 +361,6 @@ export async function getRefundStatus(refundId) {
 
   } catch (err) {
     console.error("Get refund status error:", err.response?.data || err.message);
-    throw new Error(
-      err.response?.data?.error?.message || 
-      err.message || 
-      "Failed to get refund status"
-    );
+    throw new Error(err.response?.data?.error?.message || err.message || "Failed to get refund status");
   }
 }

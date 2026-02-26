@@ -9,7 +9,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function initializeFlutterwavePayment({
   email,
   amount,
-  currency = "NGN",
+  currency,
   reference,
   userId,
   orderReference,
@@ -25,7 +25,7 @@ export async function initializeFlutterwavePayment({
       url,
       {
         tx_ref: reference,
-        amount: amount,
+        amount,
         currency: currency.toUpperCase(),
         redirect_url: callback_url,
         customer: {
@@ -63,36 +63,35 @@ export async function initializeFlutterwavePayment({
     return {
       success: true,
       payment_link: data.data.link,
-      reference: reference
+      reference
     };
 
   } catch (err) {
     console.error("Flutterwave initialization error:", err.response?.data || err.message);
     throw new Error(
-      err.response?.data?.message || 
-      err.message || 
+      err.response?.data?.message ||
+      err.message ||
       "Failed to initialize Flutterwave payment"
     );
   }
 }
 
 /**
- * Get transaction by tx_ref
- * ✅ FIXED: Use this to find transaction_id from tx_ref
+ * Get transaction by tx_ref.
+ * Used to resolve an ORD-xxx string reference → numeric transaction_id
+ * because Flutterwave's verify endpoint requires a numeric ID in the URL path.
  */
 export async function getTransactionByReference(txRef) {
   try {
     const url = `https://api.flutterwave.com/v3/transactions?tx_ref=${txRef}`;
-    
+
     const { data } = await axios.get(url, {
-      headers: { 
-        Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` 
-      },
+      headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` },
       timeout: 8000
     });
 
     if (data.status === "success" && data.data && data.data.length > 0) {
-      return data.data[0]; // Return first matching transaction
+      return data.data[0];
     }
 
     throw new Error("Transaction not found for tx_ref: " + txRef);
@@ -103,9 +102,24 @@ export async function getTransactionByReference(txRef) {
 }
 
 /**
- * Verify Flutterwave transaction by transaction ID
+ * Verify Flutterwave transaction.
+ *
+ * FIX: Flutterwave's verify endpoint requires a numeric transaction_id:
+ *   /v3/transactions/:id/verify
+ * The controller passes reference which is an ORD-xxx string (tx_ref).
+ * If non-numeric, resolve tx_ref → transaction_id via getTransactionByReference()
+ * before hitting the verify endpoint.
  */
-export async function verifyFlutterwaveTransaction(transactionId, maxAttempts = 3) {
+export async function verifyFlutterwaveTransaction(reference, maxAttempts = 3) {
+  let transactionId = reference;
+
+  if (isNaN(Number(reference))) {
+    console.log(`🔍 Resolving tx_ref to transaction_id: ${reference}`);
+    const tx = await getTransactionByReference(reference);
+    transactionId = tx.id;
+    console.log(`✅ Resolved transaction_id: ${transactionId}`);
+  }
+
   const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
   let attempt = 0;
   let lastErr;
@@ -115,9 +129,7 @@ export async function verifyFlutterwaveTransaction(transactionId, maxAttempts = 
 
     try {
       const { data } = await axios.get(url, {
-        headers: { 
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` 
-        },
+        headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` },
         timeout: 8000
       });
 
@@ -139,21 +151,19 @@ export async function verifyFlutterwaveTransaction(transactionId, maxAttempts = 
 
 /**
  * Verify payment and update pending order
- * ✅ FIXED: For Flutterwave flow - verify transaction, get tx_ref, find order, update
  */
 export async function verifyAndUpdateOrder({
   reference,
-  orderId, // May be undefined for Flutterwave
-  expectedAmount, // May be undefined for Flutterwave
+  orderId,
+  expectedAmount,
   expectedCurrency,
   userId
 }) {
   let tx;
   let order;
-  
+
   try {
-    // Step 1: Verify transaction with Flutterwave using transaction_id
-    console.log(`🔍 Verifying Flutterwave transaction ID: ${reference}`);
+    console.log(`🔍 Verifying Flutterwave transaction: ${reference}`);
     tx = await verifyFlutterwaveTransaction(reference);
     console.log(`✅ Transaction verified. tx_ref: ${tx.tx_ref}, amount: ${tx.amount}`);
   } catch (err) {
@@ -161,50 +171,29 @@ export async function verifyAndUpdateOrder({
     throw new Error("Transaction verification failed: " + err.message);
   }
 
-  // Step 2: Find the order using tx_ref from Flutterwave response
   try {
-    order = await Order.findOne({
-      "paymentInfo.reference": tx.tx_ref,
-      user: userId
-    });
-
-    if (!order) {
-      throw new Error(`Order not found for tx_ref: ${tx.tx_ref}`);
-    }
-
+    order = await Order.findOne({ "paymentInfo.reference": tx.tx_ref, user: userId });
+    if (!order) throw new Error(`Order not found for tx_ref: ${tx.tx_ref}`);
     console.log(`✅ Order found: ${order._id} for tx_ref: ${tx.tx_ref}`);
   } catch (err) {
     throw new Error(`Order lookup failed: ${err.message}`);
   }
 
-  // Step 3: Validate amount and currency using order data
   const flutterwaveAmount = parseFloat(tx.amount);
   const currency = tx.currency;
-  const orderAmount = order.totalPrice;
-  const orderCurrency = order.paymentInfo.currency;
 
-  if (currency.toUpperCase() !== orderCurrency.toUpperCase()) {
-    throw new Error(
-      `Currency mismatch: expected ${orderCurrency}, got ${currency}`
-    );
+  if (currency.toUpperCase() !== order.paymentInfo.currency.toUpperCase()) {
+    throw new Error(`Currency mismatch: expected ${order.paymentInfo.currency}, got ${currency}`);
   }
 
-  if (Math.abs(orderAmount - flutterwaveAmount) > 0.01) {
-    throw new Error(
-      `Amount mismatch: expected ${orderAmount}, gateway charged ${flutterwaveAmount}`
-    );
+  if (Math.abs(order.totalPrice - flutterwaveAmount) > 0.01) {
+    throw new Error(`Amount mismatch: expected ${order.totalPrice}, gateway charged ${flutterwaveAmount}`);
   }
 
-  // Step 4: Check idempotency
   if (order.paymentInfo.status === "success") {
-    return { 
-      success: true, 
-      order, 
-      alreadyProcessed: true 
-    };
+    return { success: true, order, alreadyProcessed: true };
   }
 
-  // Step 5: Update order
   order.paymentInfo.status = "success";
   order.paymentInfo.providerTxId = tx.id;
   order.paymentInfo.paidAt = new Date(tx.created_at);
@@ -225,12 +214,7 @@ export async function verifyAndUpdateOrder({
   };
 
   await order.save();
-
-  return { 
-    success: true, 
-    order,
-    alreadyProcessed: false 
-  };
+  return { success: true, order, alreadyProcessed: false };
 }
 
 /**
@@ -239,15 +223,13 @@ export async function verifyAndUpdateOrder({
 export async function handleWebhook(req, res) {
   try {
     const flutterwaveSignature = req.headers["verif-hash"];
-    
+
     if (!flutterwaveSignature) {
       console.warn("Missing Flutterwave signature");
       return res.status(400).send("Missing signature");
     }
 
-    const secretHash = process.env.FLUTTERWAVE_SECRET_HASH;
-    
-    if (flutterwaveSignature !== secretHash) {
+    if (flutterwaveSignature !== process.env.FLUTTERWAVE_SECRET_HASH) {
       console.warn("Invalid Flutterwave webhook signature");
       return res.status(400).send("Invalid signature");
     }
@@ -266,15 +248,11 @@ export async function handleWebhook(req, res) {
       return res.status(200).json({ message: "Transaction not successful" });
     }
 
-    const order = await Order.findOne({
-      "paymentInfo.reference": tx.tx_ref
-    });
+    const order = await Order.findOne({ "paymentInfo.reference": tx.tx_ref });
 
     if (!order) {
       console.warn("Webhook: Order not found for reference:", tx.tx_ref);
-      return res.status(200).json({
-        message: "Order not found, ignoring webhook"
-      });
+      return res.status(200).json({ message: "Order not found, ignoring webhook" });
     }
 
     if (order.paymentInfo.status === "success") {
@@ -301,11 +279,10 @@ export async function handleWebhook(req, res) {
     };
 
     await order.save();
+    console.log("✅ Order updated via webhook");
 
-    // Create receipt via webhook
     try {
       const { createReceiptIfNotExists } = await import('../receipt.service.js');
-      
       await createReceiptIfNotExists({
         orderId: order._id,
         userId: order.user,
@@ -317,13 +294,11 @@ export async function handleWebhook(req, res) {
         totalPrice: order.totalPrice,
         shippingInfo: order.shippingInfo,
         currency: order.paymentInfo.currency,
-        paymentGateway: 'flutterwave' // or 'stripe', 'flutterwave'
+        paymentGateway: 'flutterwave'
       });
-      
       console.log("✅ Receipt created via webhook");
     } catch (receiptErr) {
       console.error("⚠️ Receipt creation failed:", receiptErr);
-      // Don't fail the webhook for receipt errors
     }
 
     console.log("Webhook: Order confirmed for reference:", tx.tx_ref);
@@ -335,47 +310,32 @@ export async function handleWebhook(req, res) {
   }
 }
 
-
 /**
  * Process Flutterwave refund
- * @param {Object} params - Refund parameters
- * @returns {Object} Refund response
  */
-export async function refundPayment({
-  transactionId, // Flutterwave transaction ID (NOT tx_ref)
-  amount, // Amount to refund (optional - full refund if not provided)
-  reason, // Refund reason
-  merchantNote // Internal note
-}) {
+export async function refundPayment({ transactionId, amount, reason, merchantNote }) {
   const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/refund`;
 
   try {
     const refundData = {
-      ...(amount && { amount }), // Only include if partial refund
+      ...(amount && { amount }),
       ...(reason && { comments: reason })
     };
 
-    const { data } = await axios.post(
-      url,
-      refundData,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
-          "Content-Type": "application/json"
-        },
-        timeout: 15000
-      }
-    );
+    const { data } = await axios.post(url, refundData, {
+      headers: {
+        Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
+        "Content-Type": "application/json"
+      },
+      timeout: 15000
+    });
 
-    if (data.status !== "success") {
-      throw new Error(data.message || "Flutterwave refund failed");
-    }
+    if (data.status !== "success") throw new Error(data.message || "Flutterwave refund failed");
 
-    // Flutterwave refund response structure
     return {
       success: true,
       refundId: data.data.id,
-      status: data.data.status, // "pending", "completed", "failed"
+      status: data.data.status,
       amount: parseFloat(data.data.amount_refunded || data.data.amount),
       currency: data.data.settlement_currency,
       transactionId: data.data.tx_id,
@@ -386,37 +346,27 @@ export async function refundPayment({
 
   } catch (err) {
     console.error("Flutterwave refund error:", err.response?.data || err.message);
-    throw new Error(
-      err.response?.data?.message || 
-      err.message || 
-      "Failed to process Flutterwave refund"
-    );
+    throw new Error(err.response?.data?.message || err.message || "Failed to process Flutterwave refund");
   }
 }
 
 /**
  * Check Flutterwave refund status
- * @param {string} transactionId - Original transaction ID
- * @returns {Object} Refund status
  */
 export async function getRefundStatus(transactionId) {
   const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/refund`;
 
   try {
     const { data } = await axios.get(url, {
-      headers: { 
-        Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` 
-      },
+      headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` },
       timeout: 8000
     });
 
-    if (data.status !== "success") {
-      throw new Error(data.message || "Failed to get refund status");
-    }
+    if (data.status !== "success") throw new Error(data.message || "Failed to get refund status");
 
     return {
       success: true,
-      refundId: data.data[0]?.id, // Returns array of refunds
+      refundId: data.data[0]?.id,
       status: data.data[0]?.status,
       amount: parseFloat(data.data[0]?.amount_refunded),
       currency: data.data[0]?.settlement_currency,
@@ -426,10 +376,6 @@ export async function getRefundStatus(transactionId) {
 
   } catch (err) {
     console.error("Get refund status error:", err.response?.data || err.message);
-    throw new Error(
-      err.response?.data?.message || 
-      err.message || 
-      "Failed to get refund status"
-    );
+    throw new Error(err.response?.data?.message || err.message || "Failed to get refund status");
   }
 }
