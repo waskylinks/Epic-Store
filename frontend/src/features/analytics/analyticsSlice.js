@@ -14,6 +14,7 @@ export const fetchAdminStats = createAsyncThunk(
     async (_, { rejectWithValue }) => {
         try {
             const { data } = await axios.get(`${API_BASE}/admin/stats`);
+            console.log('API response /admin/stats:', data);
             return data;
         } catch (error) {
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch dashboard stats');
@@ -1033,6 +1034,9 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchAdminStats.fulfilled, (state, action) => {
                 state.loading = false;
+
+                 console.log('fetchAdminStats payload:', action.payload);
+
                 const { success, ...data } = action.payload;
                 state.basicStats = {
                     products:   data.products   || 0,
