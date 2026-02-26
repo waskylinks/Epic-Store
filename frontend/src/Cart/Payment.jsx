@@ -220,7 +220,7 @@ function Payment() {
         if (response.status === "successful" || response.status === "completed") {
           const transactionId = String(response.transaction_id);
           const txRef = response.tx_ref;
-          dispatch(verifyPayment({ gateway: "flutterwave", reference: transactionId }))
+          dispatch(verifyPayment({ gateway: "flutterwave", reference: response.tx_ref }))
             .unwrap()
             .then(() => {
               dispatch(clearCart());
@@ -332,14 +332,19 @@ function Payment() {
 
   const selectedGatewayConfig = gateways.find((g) => g.value === selectedGateway);
 
-  const orderSummary = checkoutPricing?.totalPrice
-    ? {
-        subtotal: checkoutPricing.itemPrice || 0,
-        tax: checkoutPricing.taxPrice || 0,
-        shipping: checkoutPricing.shippingPrice || 0,
-        total: checkoutPricing.totalPrice || 0
-      }
-    : { subtotal: 0, tax: 0, shipping: 0, total: 0 };
+const orderSummary = paymentData?.breakdown
+  ? {
+      subtotal: paymentData.breakdown.itemPrice || 0,
+      tax: paymentData.breakdown.taxPrice || 0,
+      shipping: paymentData.breakdown.shippingPrice || 0,
+      total: paymentData.breakdown.totalPrice || 0
+    }
+  : {
+      subtotal: checkoutPricing?.itemPrice || 0,
+      tax: checkoutPricing?.taxPrice || 0,
+      shipping: checkoutPricing?.shippingPrice || 0,
+      total: checkoutPricing?.totalPrice || 0
+    };
 
   return (
     <>

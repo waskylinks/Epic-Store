@@ -8,7 +8,7 @@ export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
   async (payload, { rejectWithValue }) => {
     try {
-      const { gateway = "paystack", currency = "NGN", shippingInfo, cartItems } = payload;
+      const { gateway, currency, shippingInfo, cartItems } = payload;
 
       const { data } = await axios.post(
         "/api/v1/payment/initialize",
