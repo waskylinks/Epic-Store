@@ -7,6 +7,7 @@ import { connectDB, setupGracefulShutdown, getDBStatus } from './Database/databa
 import { initializeRedis, shutdownRedis, default as redis } from './utils/redis.js';
 import { configureCloudinary } from './utils/cloudinaryUpload.js'; // ✅ Import centralized config
 
+
 /* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
     const required = [
@@ -145,6 +146,6 @@ const startServer = async () => {
         process.exit(1);
     }
 };
-
+  
 /* ================= INITIALIZE APP ================= */
 startServer();

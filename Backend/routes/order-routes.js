@@ -70,8 +70,6 @@ import {
   getOrdersWithUnreadMessages,
   cancelOrderWithRefund,
   getOrderByReference,
-  getAdminAnalytics,
-  getAdminStats,
   deleteAdminOrderNote,
   editAdminOrderNote,
   getAdminOrderNotes,
@@ -645,30 +643,6 @@ router.delete(
   deleteAdminOrderNote
 );
 
-/* ======================================================
-   ADMIN STATISTICS & ANALYTICS
-====================================================== */
 
-/**
- * Get admin dashboard statistics
- * @route GET /api/v1/admin/stats
- */
-router.get(
-  '/admin/stats',
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  getAdminStats
-);
-
-/**
- * Get admin analytics
- * @route GET /api/v1/admin/analytics
- */
-router.get(
-  '/admin/analytics',
-  verifyUserAuth,
-  roleBaseAccess('admin'),
-  getAdminAnalytics
-);
 
 export default router;

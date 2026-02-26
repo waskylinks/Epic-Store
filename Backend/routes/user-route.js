@@ -1,7 +1,6 @@
 import express from "express";
 import { 
   deleteUser, 
-  getAdminStats, 
   getSingleUser, 
   getUserDetails, 
   getUsersList, 
@@ -94,9 +93,7 @@ router.route("/profile/update")
 router.route("/admin/users")
   .get(verifyUserAuth, roleBaseAccess('admin'), getUsersList);
 
-// Get dashboard stats
-router.route("/admin/stats")
-  .get(verifyUserAuth, roleBaseAccess('admin'), getAdminStats);
+
 
 // Manage specific user
 router.route("/admin/user/:id")
