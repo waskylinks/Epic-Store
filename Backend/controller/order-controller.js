@@ -85,7 +85,7 @@ export const getOrderDetails = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('user', 'name email')
+    .populate('user', 'firstName lastName email')
     .populate('orderItems.product', 'name images price');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -161,7 +161,7 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     fulfillmentSLA
   });
 
-  await order.populate('orderItems.product', 'name images price');
+  await order.populate('orderItems.product', 'firstName lastName images price');
 
   await updateProductAnalytics(orderItems);
 
@@ -189,7 +189,7 @@ export const getOrderTimeline = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('statusHistory.updatedBy', 'name email')
+    .populate('statusHistory.updatedBy', 'firstName lastName email')
     .select('statusHistory orderStatus user');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -244,7 +244,7 @@ export const getOrderNotes = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('notes.author', 'name email role')
+    .populate('notes.author', 'firstName lastName email role')
     .select('notes user');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -577,7 +577,7 @@ export const downloadInvoice = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('user', 'name email')
+    .populate('user', 'firstName lastName email')
     .populate('orderItems.product', 'name');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -633,7 +633,7 @@ export const getPendingFraudReviews = handleAsyncError(async (req, res, next) =>
     'fraudCheck.reviewRequired': true,
     'fraudCheck.reviewDecision': 'Pending'
   })
-    .populate('user', 'name email')
+    .populate('user', 'firstName lastName email')
     .sort({ createdAt: -1 });
 
   return res.status(200).json({
@@ -691,7 +691,7 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id)
-    .populate('auditLog.performedBy', 'name email role')
+    .populate('auditLog.performedBy', 'firstName lastName email role')
     .select('auditLog');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -760,7 +760,7 @@ export const getOrderMessages = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('orderMessages.sender', 'name email role')
+    .populate('orderMessages.sender', 'firstName lastName email role')
     .select('orderMessages user');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -832,7 +832,7 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
 
   const [orders, totalOrders] = await Promise.all([
     Order.find(query)
-      .populate('user', 'name email phone')
+      .populate('user', 'firstName lastName email phone')
       .populate('orderItems.product', 'name images price')
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -862,14 +862,14 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id)
-    .populate('user', 'name email phone')
+    .populate('user', 'firstName lastName email phone')
     .populate('orderItems.product', 'name images price stock')
-    .populate('statusHistory.updatedBy', 'name email')
-    .populate('notes.createdBy', 'name email role')
-    .populate('refundInfo.requestedBy', 'name email')
-    .populate('refundInfo.approvedBy', 'name email')
-    .populate('returnInfo.requestedBy', 'name email')
-    .populate('returnInfo.approvedBy', 'name email');
+    .populate('statusHistory.updatedBy', 'firstName lastName email')
+    .populate('notes.createdBy', 'firstName lastName email role')
+    .populate('refundInfo.requestedBy', 'firstName lastName email')
+    .populate('refundInfo.approvedBy', 'firstName lastName email')
+    .populate('returnInfo.requestedBy', 'firstName lastName email')
+    .populate('returnInfo.approvedBy', 'firstName lastName email');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -988,7 +988,7 @@ export const addAdminOrderNote = handleAsyncError(async (req, res, next) => {
 
   await order.save();
 
-  const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'name email role');
+  const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'firstName lastName email role');
   const addedNote = populatedOrder.notes[populatedOrder.notes.length - 1];
 
   return res.status(200).json({ success: true, message: 'Note added successfully', note: addedNote });
@@ -998,7 +998,7 @@ export const getAdminOrderNotes = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id)
-    .populate('notes.createdBy', 'name email role')
+    .populate('notes.createdBy', 'firstName lastName email role')
     .select('notes');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -1030,7 +1030,7 @@ export const editAdminOrderNote = handleAsyncError(async (req, res, next) => {
 
   await order.save();
 
-  const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'name email role');
+  const populatedOrder = await Order.findById(id).populate('notes.createdBy', 'firstName lastName email role');
   const updatedNote = populatedOrder.notes.id(noteId);
 
   return res.status(200).json({ success: true, message: 'Note updated successfully', note: updatedNote });
@@ -1136,10 +1136,10 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
 
   if (!reference) return next(new HandleError('Reference number is required', 400));
 
-  let order = await Order.findOne({ 'paymentInfo.reference': reference }).populate('user', 'name email');
+  let order = await Order.findOne({ 'paymentInfo.reference': reference }).populate('user', 'firstName lastName email');
 
   if (!order && reference.match(/^[0-9a-fA-F]{24}$/)) {
-    order = await Order.findById(reference).populate('user', 'name email');
+    order = await Order.findById(reference).populate('user', 'firstName lastName email');
   }
 
   if (!order) return next(new HandleError('Order not found with this reference', 404));
