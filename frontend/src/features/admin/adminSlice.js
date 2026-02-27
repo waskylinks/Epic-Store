@@ -1,441 +1,375 @@
-import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
-import axios from "axios";
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import axios from 'axios';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Users
-// ─────────────────────────────────────────────────────────────────────────────
+const BASE = '/api/v1';
 
-export const fetchAllUsers = createAsyncThunk(
-  "admin/fetchAllUsers",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get("/api/v1/admin/users");
-      return data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch users");
-    }
-  }
-);
-
-export const getSingleUser = createAsyncThunk(
-  "admin/getSingleUser",
-  async (id, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`/api/v1/admin/user/${id}`);
-      return data.user;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch user");
-    }
-  }
-);
-
-export const updateUserRole = createAsyncThunk(
-  "admin/updateUserRole",
-  async ({ id, role }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(`/api/v1/admin/user/${id}`, { role });
-      return data.user;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to update user role");
-    }
-  }
-);
-
-export const deleteUser = createAsyncThunk(
-  "admin/deleteUser",
-  async (id, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.delete(`/api/v1/admin/user/${id}`);
-      return { id, message: data.message };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to delete user");
-    }
-  }
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Orders
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================
+// ASYNC THUNKS — ORDERS (admin)
+// ============================================
 
 export const fetchAllOrders = createAsyncThunk(
-  "admin/fetchAllOrders",
-  async (_, { rejectWithValue }) => {
+  'admin/fetchAllOrders',
+  async (params = {}, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get("/api/v1/admin/orders");
-      return data.orders;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch orders");
+      const query = new URLSearchParams(params).toString();
+      const { data } = await axios.get(`${BASE}/admin/orders${query ? `?${query}` : ''}`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch orders');
     }
   }
 );
 
 export const getSingleOrder = createAsyncThunk(
-  "admin/getSingleOrder",
+  'admin/getSingleOrder',
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`/api/v1/admin/order/${id}`);
-      return data.order;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch order");
+      const { data } = await axios.get(`${BASE}/admin/orders/${id}`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch order');
     }
   }
 );
 
 export const updateOrder = createAsyncThunk(
-  "admin/updateOrder",
-  async ({ id, status }, { rejectWithValue }) => {
+  'admin/updateOrder',
+  async ({ id, status, note }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(`/api/v1/admin/order/${id}`, { status });
-      return data.order;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to update order");
+      const { data } = await axios.put(`${BASE}/admin/orders/${id}`, { status, note });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to update order');
     }
   }
 );
 
 export const deleteOrder = createAsyncThunk(
-  "admin/deleteOrder",
+  'admin/deleteOrder',
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.delete(`/api/v1/admin/order/${id}`);
-      return { id, message: data.message };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to delete order");
-    }
-  }
-);
-
-export const cancelOrder = createAsyncThunk(
-  "admin/cancelOrder",
-  async (id, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(`/api/v1/admin/order/${id}`, { status: "Cancelled" });
-      return data.order;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to cancel order");
+      const { data } = await axios.delete(`${BASE}/admin/orders/${id}`);
+      return { ...data, id };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete order');
     }
   }
 );
 
 export const cancelOrderWithRefund = createAsyncThunk(
-  "admin/cancelOrderWithRefund",
+  'admin/cancelOrderWithRefund',
   async ({ orderId, reason, skipRefund = false }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(`/api/v1/admin/orders/${orderId}/cancel`, {
+      const { data } = await axios.put(`${BASE}/admin/orders/${orderId}/cancel`, {
         reason,
-        skipRefund,
+        skipRefund
       });
       return data;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to cancel order");
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to cancel order');
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Messages
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const getOrdersWithUnreadMessages = createAsyncThunk(
-  "admin/getOrdersWithUnreadMessages",
-  async (_, { rejectWithValue }) => {
+export const addTrackingInfo = createAsyncThunk(
+  'admin/addTrackingInfo',
+  async ({ orderId, carrier, trackingNumber, estimatedDelivery }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get("/api/v1/admin/orders/unread-messages");
-      return data.orders;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch unread messages");
+      const { data } = await axios.put(`${BASE}/admin/orders/${orderId}/tracking`, {
+        carrier,
+        trackingNumber,
+        estimatedDelivery
+      });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to add tracking info');
     }
   }
 );
+
+export const getOrderAuditLog = createAsyncThunk(
+  'admin/getOrderAuditLog',
+  async (id, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${BASE}/admin/orders/${id}/audit`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch audit log');
+    }
+  }
+);
+
+// ============================================
+// ASYNC THUNKS — MESSAGES
+// ============================================
 
 export const addOrderMessage = createAsyncThunk(
-  "admin/addOrderMessage",
+  'admin/addOrderMessage',
   async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(`/api/v1/orders/${orderId}/messages`, {
+      const { data } = await axios.post(`${BASE}/orders/${orderId}/messages`, {
         content,
-        attachments,
+        attachments
       });
-      return { orderId, message: data.orderMessage };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to send message");
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to send message');
     }
   }
 );
 
 export const getOrderMessages = createAsyncThunk(
-  "admin/getOrderMessages",
+  'admin/getOrderMessages',
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`/api/v1/orders/${orderId}/messages`);
-      return { orderId, messages: data.messages };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch messages");
+      const { data } = await axios.get(`${BASE}/orders/${orderId}/messages`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch messages');
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Tracking & Shipments
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const addTrackingInfo = createAsyncThunk(
-  "admin/addTrackingInfo",
-  async ({ orderId, carrier, trackingNumber, estimatedDelivery }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(`/api/v1/admin/orders/${orderId}/tracking`, {
-        carrier,
-        trackingNumber,
-        estimatedDelivery,
-      });
-      return { orderId, tracking: data.tracking };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to add tracking info");
-    }
-  }
-);
-
-export const createShipment = createAsyncThunk(
-  "admin/createShipment",
-  async ({ orderId, items, warehouse, carrier, weight, dimensions }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(`/api/v1/admin/orders/${orderId}/shipments`, {
-        items,
-        warehouse,
-        carrier,
-        weight,
-        dimensions,
-      });
-      return { orderId, shipment: data.shipment };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to create shipment");
-    }
-  }
-);
-
-export const updateShipmentStatus = createAsyncThunk(
-  "admin/updateShipmentStatus",
-  async ({ orderId, shipmentId, status, trackingNumber }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.put(
-        `/api/v1/admin/orders/${orderId}/shipments/${shipmentId}`,
-        { status, trackingNumber }
-      );
-      return { orderId, shipmentId, shipment: data.shipment };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to update shipment");
-    }
-  }
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Reviews
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const fetchAllReviews = createAsyncThunk(
-  "admin/fetchAllReviews",
+export const getOrdersWithUnreadMessages = createAsyncThunk(
+  'admin/getOrdersWithUnreadMessages',
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get("/api/v1/admin/reviews");
-      return data.reviews;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch reviews");
+      const { data } = await axios.get(`${BASE}/admin/orders/unread-messages`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch orders with unread messages');
+    }
+  }
+);
+
+// ============================================
+// ASYNC THUNKS — USERS (admin)
+// ============================================
+
+export const getAllUsers = createAsyncThunk(
+  'admin/getAllUsers',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${BASE}/admin/users`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch users');
+    }
+  }
+);
+
+export const getSingleUser = createAsyncThunk(
+  'admin/getSingleUser',
+  async (id, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${BASE}/admin/users/${id}`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch user');
+    }
+  }
+);
+
+export const updateUserRole = createAsyncThunk(
+  'admin/updateUserRole',
+  async ({ id, role }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.put(`${BASE}/admin/users/${id}`, { role });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to update user role');
+    }
+  }
+);
+
+export const deleteUser = createAsyncThunk(
+  'admin/deleteUser',
+  async (id, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.delete(`${BASE}/admin/users/${id}`);
+      return { ...data, id };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete user');
+    }
+  }
+);
+
+// ============================================
+// ASYNC THUNKS — REVIEWS (admin)
+// ============================================
+
+export const fetchAllReviews = createAsyncThunk(
+  'admin/fetchAllReviews',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${BASE}/admin/reviews`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch reviews');
     }
   }
 );
 
 export const deleteReview = createAsyncThunk(
-  "admin/deleteReview",
+  'admin/deleteReview',
   async ({ reviewId, productId }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.delete(
-        `/api/v1/reviews?id=${reviewId}&productID=${productId}`
-      );
-      return { reviewId, productId, message: data.message };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to delete review");
+      const { data } = await axios.delete(`${BASE}/admin/reviews?reviewId=${reviewId}&productId=${productId}`);
+      return { ...data, reviewId };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to delete review');
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Fraud
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================
+// ASYNC THUNKS — FRAUD (admin)
+// ============================================
 
 export const getPendingFraudReviews = createAsyncThunk(
-  "admin/getPendingFraudReviews",
+  'admin/getPendingFraudReviews',
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get("/api/v1/admin/orders/fraud-review");
-      return data.orders;
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch fraud reviews");
+      const { data } = await axios.get(`${BASE}/admin/orders/fraud-reviews`);
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch fraud reviews');
     }
   }
 );
 
 export const reviewFraudCheck = createAsyncThunk(
-  "admin/reviewFraudCheck",
-  async ({ orderId, decision }, { rejectWithValue }) => {
+  'admin/reviewFraudCheck',
+  async ({ id, decision, note }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(`/api/v1/admin/orders/${orderId}/fraud-review`, {
-        decision,
-      });
-      return { orderId, order: data.order };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to review fraud check");
+      const { data } = await axios.put(`${BASE}/admin/orders/${id}/fraud-review`, { decision, note });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message || 'Failed to review fraud check');
     }
   }
 );
 
-// ─────────────────────────────────────────────────────────────────────────────
-// THUNKS — Audit Log
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const getOrderAuditLog = createAsyncThunk(
-  "admin/getOrderAuditLog",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`/api/v1/admin/orders/${orderId}/audit`);
-      return { orderId, auditLog: data.auditLog };
-    } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to fetch audit log");
-    }
-  }
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================
 // INITIAL STATE
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================
 
 const initialState = {
-  users:         [],
-  currentUser:   null,
+  // Orders
   orders:        [],
   currentOrder:  null,
-  orderMessages: [],
-  unreadOrders:  [],
-  auditLog:      [],
-  reviews:       [],
-  fraudReviews:  [],
+  totalOrders:   0,
+  stats:         null,
 
-  // Generic success/loading for user & order mutations
-  success:        false,
+  // Messages
+  orderMessages:  [],
+  unreadOrders:   [],
+
+  // Users
+  users:          [],
+  currentUser:    null,
+
+  // Reviews
+  reviews:        [],
+
+  // Fraud
+  fraudOrders:    [],
+
+  // Audit
+  auditLog:       [],
+
+  // Loading states — separate per concern so they don't conflict
   loading:        false,
   messageLoading: false,
+  userLoading:    false,
 
-  error: null,
+  // Flags
+  success:        false,
+  error:          null
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================
+// HELPER — safely update a single order in the orders array
+// ============================================
+const upsertOrder = (orders, updatedOrder) => {
+  if (!updatedOrder?._id) return orders;
+  const index = orders.findIndex(o => o._id === updatedOrder._id);
+  if (index === -1) return orders;
+  // FIX: Merge rather than replace — preserve user/orderItems/totalPrice if not returned
+  const merged = { ...orders[index], ...updatedOrder };
+  return [
+    ...orders.slice(0, index),
+    merged,
+    ...orders.slice(index + 1)
+  ];
+};
+
+// ============================================
 // SLICE
-// ─────────────────────────────────────────────────────────────────────────────
+// ============================================
 
 const adminSlice = createSlice({
-  name: "admin",
+  name: 'admin',
   initialState,
-
   reducers: {
-    removeErrors:      (state) => { state.error   = null;  },
-    removeSuccess:     (state) => { state.success  = false; },
-    clearCurrentUser:  (state) => { state.currentUser  = null; },
-    clearCurrentOrder: (state) => { state.currentOrder = null; },
+    removeErrors(state) {
+      state.error = null;
+    },
+    removeSuccess(state) {
+      state.success = false;
+    },
+    clearCurrentOrder(state) {
+      state.currentOrder = null;
+    },
+    clearCurrentUser(state) {
+      state.currentUser = null;
+    }
   },
-
   extraReducers: (builder) => {
+
+    // ─────────────────────────────────────────────────────────────
+    // fetchAllOrders
+    // ─────────────────────────────────────────────────────────────
     builder
-
-      // ── fetchAllUsers ───────────────────────────────────────────────────
-      .addCase(fetchAllUsers.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(fetchAllUsers.fulfilled, (state, action) => {
-        state.loading = false;
-        state.users   = action.payload.users;
-      })
-      .addCase(fetchAllUsers.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── getSingleUser ───────────────────────────────────────────────────
-      .addCase(getSingleUser.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(getSingleUser.fulfilled, (state, action) => {
-        state.loading     = false;
-        state.currentUser = action.payload;
-      })
-      .addCase(getSingleUser.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── updateUserRole ──────────────────────────────────────────────────
-      .addCase(updateUserRole.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(updateUserRole.fulfilled, (state, action) => {
-        state.loading = false;
-        state.success = true;
-        const index = state.users.findIndex((u) => u._id === action.payload._id);
-        if (index !== -1) state.users[index] = action.payload;
-        if (state.currentUser?._id === action.payload._id) {
-          state.currentUser = action.payload;
-        }
-      })
-      .addCase(updateUserRole.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── deleteUser ──────────────────────────────────────────────────────
-      .addCase(deleteUser.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(deleteUser.fulfilled, (state, action) => {
-        state.loading = false;
-        state.success = true;
-        state.users   = state.users.filter((u) => u._id !== action.payload.id);
-      })
-      .addCase(deleteUser.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── fetchAllOrders ──────────────────────────────────────────────────
       .addCase(fetchAllOrders.pending, (state) => {
         state.loading = true;
         state.error   = null;
       })
       .addCase(fetchAllOrders.fulfilled, (state, action) => {
-        state.loading = false;
-        state.orders  = action.payload;
+        state.loading     = false;
+        // FIX #1: Controller returns { success, orders, totalOrders, stats, ... }
+        state.orders      = action.payload.orders      ?? [];
+        state.totalOrders = action.payload.totalOrders ?? 0;
+        state.stats       = action.payload.stats       ?? null;
       })
       .addCase(fetchAllOrders.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── getSingleOrder ──────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // getSingleOrder
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(getSingleOrder.pending, (state) => {
         state.loading      = true;
         state.error        = null;
+        state.currentOrder = null;
       })
       .addCase(getSingleOrder.fulfilled, (state, action) => {
         state.loading      = false;
-        state.currentOrder = action.payload;
+        // FIX #2: Controller returns { success, order }
+        state.currentOrder = action.payload.order ?? null;
       })
       .addCase(getSingleOrder.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── updateOrder ─────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // updateOrder
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(updateOrder.pending, (state) => {
         state.loading = true;
         state.error   = null;
@@ -443,18 +377,22 @@ const adminSlice = createSlice({
       .addCase(updateOrder.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        const index = state.orders.findIndex((o) => o._id === action.payload._id);
-        if (index !== -1) state.orders[index] = action.payload;
-        if (state.currentOrder?._id === action.payload._id) {
-          state.currentOrder = action.payload;
+        // FIX #3: Controller returns { success, message, order } — not order at top level
+        const updated = action.payload.order;
+        if (updated?._id) {
+          state.orders      = upsertOrder(state.orders, updated);
+          state.currentOrder = updated;
         }
       })
       .addCase(updateOrder.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── deleteOrder ─────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // deleteOrder
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(deleteOrder.pending, (state) => {
         state.loading = true;
         state.error   = null;
@@ -462,33 +400,17 @@ const adminSlice = createSlice({
       .addCase(deleteOrder.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        state.orders  = state.orders.filter((o) => o._id !== action.payload.id);
+        state.orders  = state.orders.filter(o => o._id !== action.payload.id);
       })
       .addCase(deleteOrder.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── cancelOrder ─────────────────────────────────────────────────────
-      .addCase(cancelOrder.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(cancelOrder.fulfilled, (state, action) => {
-        state.loading = false;
-        state.success = true;
-        const index = state.orders.findIndex((o) => o._id === action.payload._id);
-        if (index !== -1) state.orders[index] = action.payload;
-        if (state.currentOrder?._id === action.payload._id) {
-          state.currentOrder = action.payload;
-        }
-      })
-      .addCase(cancelOrder.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── cancelOrderWithRefund ───────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // cancelOrderWithRefund
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(cancelOrderWithRefund.pending, (state) => {
         state.loading = true;
         state.error   = null;
@@ -496,63 +418,23 @@ const adminSlice = createSlice({
       .addCase(cancelOrderWithRefund.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        const index = state.orders.findIndex(
-          (o) => o._id === action.payload.order._id
-        );
-        if (index !== -1) state.orders[index] = action.payload.order;
-        if (state.currentOrder?._id === action.payload.order._id) {
-          state.currentOrder = action.payload.order;
+        // FIX #4: Controller returns { success, message, order } — use same fix as updateOrder
+        // FIX for logic gap: merge with existing order rather than replace — preserves user/orderItems
+        const updated = action.payload.order;
+        if (updated?._id) {
+          state.orders      = upsertOrder(state.orders, updated);
+          state.currentOrder = updated;
         }
       })
       .addCase(cancelOrderWithRefund.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── getOrdersWithUnreadMessages ─────────────────────────────────────
-      .addCase(getOrdersWithUnreadMessages.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(getOrdersWithUnreadMessages.fulfilled, (state, action) => {
-        state.loading      = false;
-        state.unreadOrders = action.payload;
-      })
-      .addCase(getOrdersWithUnreadMessages.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── addOrderMessage ─────────────────────────────────────────────────
-      .addCase(addOrderMessage.pending, (state) => {
-        state.messageLoading = true;
-        state.error          = null;
-      })
-      .addCase(addOrderMessage.fulfilled, (state, action) => {
-        state.messageLoading = false;
-        state.success        = true;
-        state.orderMessages.push(action.payload.message);
-      })
-      .addCase(addOrderMessage.rejected, (state, action) => {
-        state.messageLoading = false;
-        state.error          = action.payload;
-      })
-
-      // ── getOrderMessages ────────────────────────────────────────────────
-      .addCase(getOrderMessages.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(getOrderMessages.fulfilled, (state, action) => {
-        state.loading       = false;
-        state.orderMessages = action.payload.messages;
-      })
-      .addCase(getOrderMessages.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
-
-      // ── addTrackingInfo ─────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // addTrackingInfo
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(addTrackingInfo.pending, (state) => {
         state.loading = true;
         state.error   = null;
@@ -560,58 +442,198 @@ const adminSlice = createSlice({
       .addCase(addTrackingInfo.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        if (state.currentOrder?._id === action.payload.orderId) {
-          state.currentOrder.tracking = action.payload.tracking;
+        // FIX logic gap #12: Controller returns { success, tracking, order }
+        // Must update both state.orders[] and state.currentOrder
+        // The controller also auto-sets status to 'Shipped' when tracking is added
+        const updated = action.payload.order;
+        if (updated?._id) {
+          state.orders       = upsertOrder(state.orders, updated);
+          state.currentOrder = updated;
         }
       })
       .addCase(addTrackingInfo.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── createShipment ──────────────────────────────────────────────────
-      .addCase(createShipment.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
+    // ─────────────────────────────────────────────────────────────
+    // getOrderAuditLog
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(getOrderAuditLog.pending, (state) => {
+        state.error    = null;
+        state.auditLog = [];
       })
-      .addCase(createShipment.fulfilled, (state) => {
-        state.loading = false;
-        state.success = true;
+      .addCase(getOrderAuditLog.fulfilled, (state, action) => {
+        state.auditLog = action.payload.auditLog ?? [];
       })
-      .addCase(createShipment.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
+      .addCase(getOrderAuditLog.rejected, (state, action) => {
+        state.error    = action.payload;
+        state.auditLog = [];
+      });
 
-      // ── updateShipmentStatus ────────────────────────────────────────────
-      .addCase(updateShipmentStatus.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
+    // ─────────────────────────────────────────────────────────────
+    // addOrderMessage
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(addOrderMessage.pending, (state) => {
+        // FIX #10: Use messageLoading — not the main loading flag
+        state.messageLoading = true;
+        state.error          = null;
       })
-      .addCase(updateShipmentStatus.fulfilled, (state) => {
-        state.loading = false;
-        state.success = true;
+      .addCase(addOrderMessage.fulfilled, (state, action) => {
+        // FIX #10: NEVER set state.success = true here — that closes the modal
+        state.messageLoading = false;
+        // Append the new message to local state if returned
+        const msg = action.payload.orderMessage;
+        if (msg) {
+          state.orderMessages = [...(state.orderMessages || []), msg];
+        }
       })
-      .addCase(updateShipmentStatus.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
-      })
+      .addCase(addOrderMessage.rejected, (state, action) => {
+        state.messageLoading = false;
+        state.error          = action.payload;
+      });
 
-      // ── fetchAllReviews ─────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // getOrderMessages
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(getOrderMessages.pending, (state) => {
+        // FIX #11: Use messageLoading — not state.loading (which triggers full-page loader)
+        state.messageLoading = true;
+        state.error          = null;
+      })
+      .addCase(getOrderMessages.fulfilled, (state, action) => {
+        state.messageLoading = false;
+        state.orderMessages  = action.payload.messages ?? [];
+      })
+      .addCase(getOrderMessages.rejected, (state, action) => {
+        state.messageLoading = false;
+        state.error          = action.payload;
+      });
+
+    // ─────────────────────────────────────────────────────────────
+    // getOrdersWithUnreadMessages
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(getOrdersWithUnreadMessages.pending, (state) => {
+        state.error = null;
+      })
+      .addCase(getOrdersWithUnreadMessages.fulfilled, (state, action) => {
+        // FIX #5: Controller returns { success, count, orders }
+        state.unreadOrders = action.payload.orders ?? [];
+      })
+      .addCase(getOrdersWithUnreadMessages.rejected, (state, action) => {
+        state.error = action.payload;
+      });
+
+    // ─────────────────────────────────────────────────────────────
+    // getAllUsers
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(getAllUsers.pending, (state) => {
+        state.userLoading = true;
+        state.error       = null;
+      })
+      .addCase(getAllUsers.fulfilled, (state, action) => {
+        state.userLoading = false;
+        state.users       = action.payload.users ?? [];
+      })
+      .addCase(getAllUsers.rejected, (state, action) => {
+        state.userLoading = false;
+        state.error       = action.payload;
+      });
+
+    // ─────────────────────────────────────────────────────────────
+    // getSingleUser
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(getSingleUser.pending, (state) => {
+        state.userLoading  = true;
+        state.error        = null;
+        state.currentUser  = null;
+      })
+      .addCase(getSingleUser.fulfilled, (state, action) => {
+        state.userLoading = false;
+        // FIX #6: Controller returns { success, user }
+        state.currentUser = action.payload.user ?? null;
+      })
+      .addCase(getSingleUser.rejected, (state, action) => {
+        state.userLoading = false;
+        state.error       = action.payload;
+      });
+
+    // ─────────────────────────────────────────────────────────────
+    // updateUserRole
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(updateUserRole.pending, (state) => {
+        state.userLoading = true;
+        state.error       = null;
+      })
+      .addCase(updateUserRole.fulfilled, (state, action) => {
+        state.userLoading = false;
+        state.success     = true;
+        // FIX #7: Controller returns { success, user } — not user at top level
+        const updated = action.payload.user;
+        if (updated?._id) {
+          const index = state.users.findIndex(u => u._id === updated._id);
+          if (index !== -1) {
+            state.users = [
+              ...state.users.slice(0, index),
+              { ...state.users[index], ...updated },
+              ...state.users.slice(index + 1)
+            ];
+          }
+          state.currentUser = updated;
+        }
+      })
+      .addCase(updateUserRole.rejected, (state, action) => {
+        state.userLoading = false;
+        state.error       = action.payload;
+      });
+
+    // ─────────────────────────────────────────────────────────────
+    // deleteUser
+    // ─────────────────────────────────────────────────────────────
+    builder
+      .addCase(deleteUser.pending, (state) => {
+        state.userLoading = true;
+        state.error       = null;
+      })
+      .addCase(deleteUser.fulfilled, (state, action) => {
+        state.userLoading = false;
+        state.success     = true;
+        state.users       = state.users.filter(u => u._id !== action.payload.id);
+      })
+      .addCase(deleteUser.rejected, (state, action) => {
+        state.userLoading = false;
+        state.error       = action.payload;
+      });
+
+    // ─────────────────────────────────────────────────────────────
+    // fetchAllReviews
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(fetchAllReviews.pending, (state) => {
         state.loading = true;
         state.error   = null;
       })
       .addCase(fetchAllReviews.fulfilled, (state, action) => {
         state.loading = false;
-        state.reviews = action.payload;
+        // FIX #8: Controller returns { success, reviews }
+        state.reviews = action.payload.reviews ?? [];
       })
       .addCase(fetchAllReviews.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── deleteReview ────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // deleteReview
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(deleteReview.pending, (state) => {
         state.loading = true;
         state.error   = null;
@@ -619,71 +641,57 @@ const adminSlice = createSlice({
       .addCase(deleteReview.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        state.reviews = state.reviews.filter(
-          (r) => r._id.toString() !== action.payload.reviewId.toString()
-        );
+        state.reviews = state.reviews.filter(r => r._id !== action.payload.reviewId);
       })
       .addCase(deleteReview.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── getPendingFraudReviews ──────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // getPendingFraudReviews
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(getPendingFraudReviews.pending, (state) => {
         state.loading = true;
         state.error   = null;
       })
       .addCase(getPendingFraudReviews.fulfilled, (state, action) => {
         state.loading      = false;
-        state.fraudReviews = action.payload;
+        // FIX #9: Controller returns { success, count, orders }
+        state.fraudOrders  = action.payload.orders ?? [];
       })
       .addCase(getPendingFraudReviews.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
+      });
 
-      // ── reviewFraudCheck ────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────
+    // reviewFraudCheck
+    // ─────────────────────────────────────────────────────────────
+    builder
       .addCase(reviewFraudCheck.pending, (state) => {
         state.loading = true;
         state.error   = null;
       })
       .addCase(reviewFraudCheck.fulfilled, (state, action) => {
-        state.loading      = false;
-        state.success      = true;
-        state.fraudReviews = state.fraudReviews.filter(
-          (f) => f._id.toString() !== action.payload.orderId.toString()
-        );
+        state.loading = false;
+        state.success = true;
+        const updated = action.payload.order;
+        if (updated?._id) {
+          // Remove from fraud queue
+          state.fraudOrders = state.fraudOrders.filter(o => o._id !== updated._id);
+          // Update in main orders list if present
+          state.orders      = upsertOrder(state.orders, updated);
+        }
       })
       .addCase(reviewFraudCheck.rejected, (state, action) => {
         state.loading = false;
         state.error   = action.payload;
-      })
-
-      // ── getOrderAuditLog ────────────────────────────────────────────────
-      .addCase(getOrderAuditLog.pending, (state) => {
-        state.loading = true;
-        state.error   = null;
-      })
-      .addCase(getOrderAuditLog.fulfilled, (state, action) => {
-        state.loading  = false;
-        state.auditLog = action.payload.auditLog;
-      })
-      .addCase(getOrderAuditLog.rejected, (state, action) => {
-        state.loading = false;
-        state.error   = action.payload;
       });
-  },
+  }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EXPORTS
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const {
-  removeErrors,
-  removeSuccess,
-  clearCurrentUser,
-  clearCurrentOrder,
-} = adminSlice.actions;
+export const { removeErrors, removeSuccess, clearCurrentOrder, clearCurrentUser } = adminSlice.actions;
 
 export default adminSlice.reducer;

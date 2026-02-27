@@ -1,60 +1,104 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import MessagesModal from '../components/MessagesModal';
 import '../AdminStyles/AllOrders.css';
-import { 
-    Delete, Edit, Visibility, Message, LocalShipping, 
-    Cancel, AttachMoney, Assessment, History, Block 
+import {
+    Delete, Edit, Visibility, Message, LocalShipping,
+    Cancel, History, ArrowBack, Search
 } from '@mui/icons-material';
 import { useDispatch, useSelector } from 'react-redux';
-import { 
-    fetchAllOrders, 
-    updateOrder, 
-    deleteOrder, 
+import {
+    fetchAllOrders,
+    updateOrder,
+    deleteOrder,
     cancelOrderWithRefund,
     addOrderMessage,
     getOrderMessages,
     addTrackingInfo,
     getOrderAuditLog,
-    removeErrors, 
-    removeSuccess 
+    removeErrors,
+    removeSuccess
 } from '../features/admin/adminSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
 
-function AllOrders() {
-    const dispatch = useDispatch();
-    const { orders, loading, error, success, orderMessages, auditLog, messageLoading } = useSelector(state => state.admin);
-
-    const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState('all');
-    const [modal, setModal] = useState({ 
-        type: '', 
-        open: false, 
-        order: null, 
-        loading: false 
-    });
-    
-    // Messages Modal State
-    const [messagesModal, setMessagesModal] = useState({
-        open: false,
-        order: null
-    });
-
-    // Form states for different modals
-    const [cancelForm, setCancelForm] = useState({ reason: '', skipRefund: false });
-    const [trackingForm, setTrackingForm] = useState({
-        carrier: '',
-        trackingNumber: '',
-        estimatedDelivery: ''
-    });
-
+// ─── Debounce hook ───────────────────────────────────────────
+function useDebounce(value, delay) {
+    const [debounced, setDebounced] = useState(value);
     useEffect(() => {
-        dispatch(fetchAllOrders());
-    }, [dispatch]);
+        const t = setTimeout(() => setDebounced(value), delay);
+        return () => clearTimeout(t);
+    }, [value, delay]);
+    return debounced;
+}
 
+// ─── Status tabs config ──────────────────────────────────────
+const TABS = [
+    { key: 'all',        label: 'All' },
+    { key: 'Processing', label: 'Processing' },
+    { key: 'Shipped',    label: 'Shipped' },
+    { key: 'Delivered',  label: 'Delivered' },
+    { key: 'Cancelled',  label: 'Cancelled' },
+];
+
+// ─── Sort options ────────────────────────────────────────────
+const SORT_OPTIONS = [
+    { value: 'newest',    label: 'Newest First' },
+    { value: 'oldest',    label: 'Oldest First' },
+    { value: 'amount_hi', label: 'Amount: High → Low' },
+    { value: 'amount_lo', label: 'Amount: Low → High' },
+    { value: 'status_az', label: 'Status: A → Z' },
+    { value: 'status_za', label: 'Status: Z → A' },
+];
+
+// ─── Helpers ─────────────────────────────────────────────────
+const getUnreadCount = (order) => {
+    if (!order.messages || !Array.isArray(order.messages)) return 0;
+    return order.messages.filter(
+        msg => !msg.isRead && (msg.sender === 'customer' || msg.senderType === 'customer')
+    ).length;
+};
+
+const getCustomerName = (user) => {
+    if (!user) return 'N/A';
+    const first = user.firstName || '';
+    const last  = user.lastName  || '';
+    if (first && last) return `${first} ${last}`;
+    return user.name || 'N/A';
+};
+
+// ─── Main Component ──────────────────────────────────────────
+function AllOrders() {
+    const dispatch   = useDispatch();
+    const navigate   = useNavigate();
+    const { orders, loading, error, success, orderMessages, auditLog, messageLoading } =
+        useSelector(state => state.admin);
+
+    // ── Filters ───────────────────────────────────────────────
+    const [activeTab,   setActiveTab]   = useState('all');
+    const [searchRaw,   setSearchRaw]   = useState('');
+    const [dateFrom,    setDateFrom]    = useState('');
+    const [dateTo,      setDateTo]      = useState('');
+    const [sortBy,      setSortBy]      = useState('newest');
+    const searchTerm = useDebounce(searchRaw, 300);
+
+    // ── Modals ────────────────────────────────────────────────
+    const [modal, setModal] = useState({ type: '', open: false, order: null, loading: false });
+    const [messagesModal, setMessagesModal] = useState({ open: false, order: null });
+
+    // ── Form states ───────────────────────────────────────────
+    const [cancelForm,    setCancelForm]   = useState({ reason: '', skipRefund: false });
+    const [trackingForm,  setTrackingForm] = useState({ carrier: '', trackingNumber: '', estimatedDelivery: '' });
+    // Fix #3 & #8: controlled state for status select — replaces getElementById + defaultValue anti-pattern
+    const [selectedStatus, setSelectedStatus] = useState('');
+
+    // ── Fetch on mount ────────────────────────────────────────
+    useEffect(() => { dispatch(fetchAllOrders()); }, [dispatch]);
+
+    // ── Error / success toasts ────────────────────────────────
     useEffect(() => {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
@@ -65,332 +109,423 @@ function AllOrders() {
             toast.success('Action completed successfully!', { position: 'top-center', autoClose: 3000 });
             dispatch(removeSuccess());
             setModal({ type: '', open: false, order: null, loading: false });
-            // Reset forms
             setCancelForm({ reason: '', skipRefund: false });
             setTrackingForm({ carrier: '', trackingNumber: '', estimatedDelivery: '' });
+            setSelectedStatus('');
         }
     }, [error, success, dispatch]);
 
-    // Enhanced search with status filter
-    const filteredOrders = useMemo(() => {
-        let filtered = orders;
+    // ── Tab counts ────────────────────────────────────────────
+    const tabCounts = useMemo(() => ({
+        all:        orders.length,
+        Processing: orders.filter(o => o.orderStatus === 'Processing').length,
+        Shipped:    orders.filter(o => o.orderStatus === 'Shipped').length,
+        Delivered:  orders.filter(o => o.orderStatus === 'Delivered').length,
+        Cancelled:  orders.filter(o => o.orderStatus === 'Cancelled').length,
+    }), [orders]);
 
-        // Status filter
-        if (statusFilter !== 'all') {
-            filtered = filtered.filter(order => 
-                order.orderStatus.toLowerCase() === statusFilter.toLowerCase()
+    // ── Unread dots per tab ───────────────────────────────────
+    const tabHasUnread = useMemo(() => {
+        const map = { all: false, Processing: false, Shipped: false, Delivered: false, Cancelled: false };
+        orders.forEach(order => {
+            if (getUnreadCount(order) > 0) {
+                map.all = true;
+                map[order.orderStatus] = true;
+            }
+        });
+        return map;
+    }, [orders]);
+
+    // ── Stats bar ─────────────────────────────────────────────
+    const totalRevenue = useMemo(() =>
+        orders
+            .filter(o => o.orderStatus !== 'Cancelled')
+            .reduce((sum, o) => sum + (o.totalPrice || 0), 0),
+        [orders]
+    );
+
+    // ── Filter + sort ─────────────────────────────────────────
+    const processedOrders = useMemo(() => {
+        let result = [...orders];
+
+        // Tab filter
+        if (activeTab !== 'all') {
+            result = result.filter(o => o.orderStatus === activeTab);
+        }
+
+        // Search
+        if (searchTerm.trim()) {
+            const lower = searchTerm.toLowerCase();
+            result = result.filter(o =>
+                o._id.toLowerCase().includes(lower) ||
+                getCustomerName(o.user).toLowerCase().includes(lower) ||
+                (o.user?.email || '').toLowerCase().includes(lower)
             );
         }
 
-        // Search filter
-        if (!searchTerm.trim()) return filtered;
+        // Date range
+        if (dateFrom) {
+            const from = new Date(dateFrom);
+            result = result.filter(o => new Date(o.createdAt) >= from);
+        }
+        if (dateTo) {
+            const to = new Date(dateTo);
+            to.setHours(23, 59, 59, 999);
+            result = result.filter(o => new Date(o.createdAt) <= to);
+        }
 
-        const lower = searchTerm.toLowerCase();
-        return filtered.filter(order =>
-            order._id.toLowerCase().includes(lower) ||
-            order.user?.name?.toLowerCase().includes(lower) ||
-            order.user?.email?.toLowerCase().includes(lower) ||
-            order.orderStatus.toLowerCase().includes(lower)
-        );
-    }, [orders, searchTerm, statusFilter]);
-
-    // Sort: Processing orders first, then by date descending
-    const sortedOrders = useMemo(() => {
-        return [...filteredOrders].sort((a, b) => {
-            if (a.orderStatus === 'Processing' && b.orderStatus !== 'Processing') return -1;
-            if (a.orderStatus !== 'Processing' && b.orderStatus === 'Processing') return 1;
-            return new Date(b.createdAt) - new Date(a.createdAt);
+        // Sort
+        result.sort((a, b) => {
+            switch (sortBy) {
+                case 'newest':    return new Date(b.createdAt) - new Date(a.createdAt);
+                case 'oldest':    return new Date(a.createdAt) - new Date(b.createdAt);
+                case 'amount_hi': return (b.totalPrice || 0) - (a.totalPrice || 0);
+                case 'amount_lo': return (a.totalPrice || 0) - (b.totalPrice || 0);
+                case 'status_az': return a.orderStatus.localeCompare(b.orderStatus);
+                case 'status_za': return b.orderStatus.localeCompare(a.orderStatus);
+                default:          return new Date(b.createdAt) - new Date(a.createdAt);
+            }
         });
-    }, [filteredOrders]);
 
-    // Count unread messages per order (only count customer messages)
-    const getUnreadCount = (order) => {
-        if (!order.messages || !Array.isArray(order.messages)) return 0;
-        return order.messages.filter(msg => 
-            !msg.isRead && (msg.sender === 'customer' || msg.senderType === 'customer')
-        ).length;
-    };
+        return result;
+    }, [orders, activeTab, searchTerm, dateFrom, dateTo, sortBy]);
 
-    // Total unread messages across all orders (only customer messages)
-    const totalUnreadMessages = useMemo(() => {
-        return orders.reduce((total, order) => total + getUnreadCount(order), 0);
-    }, [orders]);
-
-    const handleAction = (type, order) => {
+    // ── Actions ───────────────────────────────────────────────
+    const handleAction = useCallback((type, order) => {
         if (type === 'messages') {
-            // Open MessagesModal instead of regular modal
             setMessagesModal({ open: true, order });
             dispatch(getOrderMessages(order._id));
         } else {
+            // Fix #8: seed controlled status select from the order's current status
+            if (type === 'update') setSelectedStatus(order.orderStatus);
             setModal({ type, open: true, order, loading: false });
-            
-            // Load additional data for specific modals
-            if (type === 'audit') {
-                dispatch(getOrderAuditLog(order._id));
-            }
+            if (type === 'audit') dispatch(getOrderAuditLog(order._id));
         }
-    };
+    }, [dispatch]);
 
-    const handleSendMessage = async (content) => {
+    const handleSendMessage = useCallback(async (content) => {
         if (!messagesModal.order) return;
-        
-        await dispatch(addOrderMessage({
-            orderId: messagesModal.order._id,
-            content,
-            sender: 'admin'
-        })).unwrap();
-        
-        // Refresh messages
-        dispatch(getOrderMessages(messagesModal.order._id));
-    };
+        try {
+            await dispatch(addOrderMessage({
+                orderId: messagesModal.order._id,
+                content,
+                sender: 'admin'
+            })).unwrap();
+            dispatch(getOrderMessages(messagesModal.order._id));
+        } catch (err) {
+            toast.error(err?.message || 'Failed to send message', { position: 'top-center', autoClose: 3000 });
+        }
+    }, [dispatch, messagesModal.order]);
 
-    const handleCloseMessagesModal = () => {
+    const handleCloseMessagesModal = useCallback(() => {
         setMessagesModal({ open: false, order: null });
-        // Refresh orders to update unread counts
         dispatch(fetchAllOrders());
-    };
+    }, [dispatch]);
 
-    const executeAction = () => {
+    const executeAction = useCallback(() => {
         if (!modal.order) return;
         setModal(prev => ({ ...prev, loading: true }));
-
         switch (modal.type) {
-            case 'update':
-                const status = document.getElementById('status-select').value;
-                dispatch(updateOrder({ id: modal.order._id, status }));
+            case 'update': {
+                // Fix #2 & #3: block scope + controlled state instead of getElementById
+                dispatch(updateOrder({ id: modal.order._id, status: selectedStatus }));
                 break;
-                
-            case 'delete':
+            }
+            case 'delete': {
                 dispatch(deleteOrder(modal.order._id));
                 break;
-                
-            case 'cancel':
+            }
+            case 'cancel': {
                 dispatch(cancelOrderWithRefund({
                     orderId: modal.order._id,
                     reason: cancelForm.reason,
                     skipRefund: cancelForm.skipRefund
                 }));
                 break;
-                
-            case 'tracking':
-                dispatch(addTrackingInfo({
-                    orderId: modal.order._id,
-                    ...trackingForm
-                }));
+            }
+            case 'tracking': {
+                dispatch(addTrackingInfo({ orderId: modal.order._id, ...trackingForm }));
                 break;
-                
-            default:
+            }
+            default: {
                 setModal(prev => ({ ...prev, loading: false }));
+            }
         }
-    };
+    }, [modal.order, modal.type, selectedStatus, cancelForm, trackingForm, dispatch]);
 
-    const getStatusCounts = () => {
-        return {
-            all: orders.length,
-            processing: orders.filter(o => o.orderStatus === 'Processing').length,
-            shipped: orders.filter(o => o.orderStatus === 'Shipped').length,
-            delivered: orders.filter(o => o.orderStatus === 'Delivered').length,
-            cancelled: orders.filter(o => o.orderStatus === 'Cancelled').length,
-        };
-    };
+    const closeModal = useCallback(() => {
+        if (!modal.loading) {
+            setModal({ type: '', open: false, order: null, loading: false });
+        }
+    }, [modal.loading]);
 
-    const statusCounts = getStatusCounts();
-
-    if (loading && orders.length === 0) 
+    // ── Loading state ─────────────────────────────────────────
+    if (loading && orders.length === 0)
         return (
             <>
-            <Navbar />
-            <Loader type="snake" size="md"/>
-            <Footer />
+                <Navbar />
+                <Loader type="snake" size="md" />
+                <Footer />
             </>
-            );
+        );
 
+    // ─────────────────────────────────────────────────────────
     return (
         <>
             <PageTitle title="All Orders - Admin" />
             <Navbar />
 
-            <div className="all-orders-container">
-                <div className="orders-header">
-                    <div className="orders-header-top">
-                        <h1 className="all-orders-title">All Orders ({orders.length})</h1>
-                        {totalUnreadMessages > 0 && (
-                            <div className="unread-messages-badge">
-                                <Message fontSize="small" />
-                                <span>{totalUnreadMessages} unread message{totalUnreadMessages > 1 ? 's' : ''}</span>
-                            </div>
-                        )}
-                    </div>
-                    
-                    {/* Status Filter Pills */}
-                    <div className="status-filters">
-                        <button 
-                            className={`filter-pill ${statusFilter === 'all' ? 'active' : ''}`}
-                            onClick={() => setStatusFilter('all')}
-                        >
-                            All ({statusCounts.all})
-                        </button>
-                        <button 
-                            className={`filter-pill ${statusFilter === 'processing' ? 'active' : ''}`}
-                            onClick={() => setStatusFilter('processing')}
-                        >
-                            Processing ({statusCounts.processing})
-                        </button>
-                        <button 
-                            className={`filter-pill ${statusFilter === 'shipped' ? 'active' : ''}`}
-                            onClick={() => setStatusFilter('shipped')}
-                        >
-                            Shipped ({statusCounts.shipped})
-                        </button>
-                        <button 
-                            className={`filter-pill ${statusFilter === 'delivered' ? 'active' : ''}`}
-                            onClick={() => setStatusFilter('delivered')}
-                        >
-                            Delivered ({statusCounts.delivered})
-                        </button>
-                        <button 
-                            className={`filter-pill ${statusFilter === 'cancelled' ? 'active' : ''}`}
-                            onClick={() => setStatusFilter('cancelled')}
-                        >
-                            Cancelled ({statusCounts.cancelled})
-                        </button>
-                    </div>
-                </div>
+            <div className="ao-page">
+                <div className="ao-container">
 
-                {/* Search Bar */}
-                <div className="search-bar">
-                    <input
-                        type="text"
-                        placeholder="Search by Order ID, Name, Email, or Status..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="search-input"
-                    />
-                </div>
+                    {/* ── Back Button ────────────────────────── */}
+                    <button className="ao-back-btn" onClick={() => navigate('/admin/dashboard')}>
+                        <ArrowBack style={{ fontSize: 15 }} />
+                        Back to Dashboard
+                    </button>
 
-                {/* Orders Table */}
-                <div className="table-section">
-                    <div className="table-container">
-                        <table className="orders-table">
-                            <thead>
-                                <tr>
-                                    <th>Order ID</th>
-                                    <th>Customer</th>
-                                    <th>Items</th>
-                                    <th>Amount</th>
-                                    <th>Status</th>
-                                    <th>Date & Time</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {sortedOrders.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="7" className="no-results">
-                                            No orders found matching your criteria.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    sortedOrders.map(order => {
-                                        const unreadCount = getUnreadCount(order);
-                                        
-                                        // Get customer name properly
-                                        const customerFirstName = order.user?.firstName || '';
-                                        const customerLastName = order.user?.lastName || '';
-                                        const customerName = customerFirstName && customerLastName 
-                                            ? `${customerFirstName} ${customerLastName}`
-                                            : order.user?.name || 'N/A';
-                                        
-                                        return (
-                                            <tr 
-                                                key={order._id} 
-                                                className={order.orderStatus === 'Processing' ? 'processing-row' : ''}
-                                            >
-                                                <td>#{order._id.slice(-8)}</td>
-                                                <td>
-                                                    <div>
-                                                        <strong>{customerName}</strong>
-                                                        <br />
-                                                        <small>{order.user?.email || ''}</small>
-                                                    </div>
-                                                </td>
-                                                <td>{order.orderItems?.length || 0}</td>
-                                                <td>${order.totalPrice?.toFixed(2) || '0.00'}</td>
-                                                <td>
-                                                    <span className={`status-badge ${order.orderStatus.toLowerCase()}`}>
-                                                        {order.orderStatus}
-                                                    </span>
-                                                </td>
-                                                <td>{new Date(order.createdAt).toLocaleString()}</td>
-                                                <td className="actions">
-                                                    <button 
-                                                        onClick={() => handleAction('view', order)} 
-                                                        className="action-btn view"
-                                                        title="View Details"
-                                                    >
-                                                        <Visibility fontSize="small" />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleAction('update', order)} 
-                                                        className="action-btn update"
-                                                        title="Update Status"
-                                                    >
-                                                        <Edit fontSize="small" />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleAction('messages', order)} 
-                                                        className="action-btn message"
-                                                        title="Messages"
-                                                        style={{ position: 'relative' }}
-                                                    >
-                                                        <Message fontSize="small" />
-                                                        {unreadCount > 0 && (
-                                                            <span className="message-badge">{unreadCount}</span>
-                                                        )}
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleAction('tracking', order)} 
-                                                        className="action-btn tracking"
-                                                        title="Add Tracking"
-                                                    >
-                                                        <LocalShipping fontSize="small" />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleAction('cancel', order)} 
-                                                        className="action-btn cancel"
-                                                        title="Cancel Order"
-                                                        disabled={order.orderStatus === 'Cancelled' || order.orderStatus === 'Delivered'}
-                                                    >
-                                                        <Cancel fontSize="small" />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleAction('audit', order)} 
-                                                        className="action-btn audit"
-                                                        title="Audit Log"
-                                                    >
-                                                        <History fontSize="small" />
-                                                    </button>
-                                                    <button 
-                                                        onClick={() => handleAction('delete', order)} 
-                                                        className="action-btn delete"
-                                                        title="Delete Order"
-                                                    >
-                                                        <Delete fontSize="small" />
-                                                    </button>
-                                                </td>
-                                            </tr>
-                                        );
-                                    })
+                    {/* ── Page Header ────────────────────────── */}
+                    <div className="ao-header">
+                        <h1 className="ao-header-title">All Orders ({orders.length})</h1>
+                        <p className="ao-header-sub">Manage, filter and track all customer orders</p>
+                    </div>
+
+                    {/* ── Status Tabs ────────────────────────── */}
+                    <div className="ao-tabs-wrap">
+                        {TABS.map(tab => (
+                            <button
+                                key={tab.key}
+                                className={`ao-tab${activeTab === tab.key ? ' ao-tab--active' : ''}`}
+                                onClick={() => setActiveTab(tab.key)}
+                            >
+                                {tab.label}
+                                <span className="ao-tab-count">
+                                    ({tabCounts[tab.key] ?? 0})
+                                </span>
+                                {tabHasUnread[tab.key] && (
+                                    <span className="ao-tab-dot" title="Unread messages" />
                                 )}
-                            </tbody>
-                        </table>
+                            </button>
+                        ))}
                     </div>
+
+                    {/* ── Stats Bar ──────────────────────────── */}
+                    <div className="ao-stats-bar">
+                        <div className="ao-stat-card">
+                            <div className="ao-stat-label">Total Orders</div>
+                            <div className="ao-stat-value">{orders.length}</div>
+                        </div>
+                        <div className="ao-stat-card">
+                            <div className="ao-stat-label">Processing</div>
+                            <div className="ao-stat-value">{tabCounts.Processing}</div>
+                        </div>
+                        <div className="ao-stat-card">
+                            <div className="ao-stat-label">Delivered</div>
+                            <div className="ao-stat-value">{tabCounts.Delivered}</div>
+                        </div>
+                        <div className="ao-stat-card">
+                            <div className="ao-stat-label">Total Revenue</div>
+                            <div className="ao-stat-value">
+                                ${totalRevenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* ── Filters ────────────────────────────── */}
+                    <div className="ao-filters">
+                        {/* Search */}
+                        <div className="ao-search-wrap">
+                            <span className="ao-search-icon">
+                                <Search style={{ fontSize: 16 }} />
+                            </span>
+                            <input
+                                type="text"
+                                className="ao-search-input"
+                                placeholder="Search by Order ID, customer name, or email..."
+                                value={searchRaw}
+                                onChange={e => setSearchRaw(e.target.value)}
+                            />
+                        </div>
+
+                        {/* Date range */}
+                        <div className="ao-date-wrap">
+                            <span className="ao-date-label">From</span>
+                            <input
+                                type="date"
+                                className="ao-date-input"
+                                value={dateFrom}
+                                onChange={e => setDateFrom(e.target.value)}
+                            />
+                            <span className="ao-date-sep">—</span>
+                            <span className="ao-date-label">To</span>
+                            <input
+                                type="date"
+                                className="ao-date-input"
+                                value={dateTo}
+                                onChange={e => setDateTo(e.target.value)}
+                            />
+                        </div>
+
+                        {/* Sort */}
+                        <select
+                            className="ao-sort-select"
+                            value={sortBy}
+                            onChange={e => setSortBy(e.target.value)}
+                        >
+                            {SORT_OPTIONS.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                        </select>
+                    </div>
+
+                    {/* ── Orders Table ───────────────────────── */}
+                    <div className="ao-table-card">
+                        <div className="ao-table-header">
+                            <h2 className="ao-table-title">Orders</h2>
+                            <span className="ao-results-count">
+                                {processedOrders.length} result{processedOrders.length !== 1 ? 's' : ''}
+                            </span>
+                        </div>
+
+                        <div className="ao-table-scroll">
+                            <table className="ao-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order ID</th>
+                                        <th>Customer</th>
+                                        <th>Items</th>
+                                        <th>Amount</th>
+                                        <th>Status</th>
+                                        <th>Date & Time</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {processedOrders.length === 0 ? (
+                                        <tr>
+                                            <td colSpan="7">
+                                                <div className="ao-no-results">
+                                                    <div className="ao-no-results-icon">📦</div>
+                                                    <div className="ao-no-results-text">No orders found</div>
+                                                    <div className="ao-no-results-sub">
+                                                        Try adjusting your search or filters
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    ) : (
+                                        processedOrders.map(order => {
+                                            const unread = getUnreadCount(order);
+                                            const name   = getCustomerName(order.user);
+                                            return (
+                                                <tr
+                                                    key={order._id}
+                                                    className={order.orderStatus === 'Processing' ? 'ao-row--processing' : ''}
+                                                >
+                                                    <td>
+                                                        <span
+                                                            className="ao-order-id"
+                                                            onClick={() => handleAction('view', order)}
+                                                            title="View order details"
+                                                        >
+                                                            #{order._id.slice(-8).toUpperCase()}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <div className="ao-customer-name">{name}</div>
+                                                        <div className="ao-customer-email">{order.user?.email || '—'}</div>
+                                                    </td>
+                                                    <td>{order.orderItems?.length || 0}</td>
+                                                    <td>
+                                                        <span className="ao-amount">
+                                                            ${(order.totalPrice || 0).toFixed(2)}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <span className={`ao-status-badge ${order.orderStatus.toLowerCase()}`}>
+                                                            {order.orderStatus}
+                                                        </span>
+                                                    </td>
+                                                    <td>
+                                                        <div className="ao-date-cell">
+                                                            {new Date(order.createdAt).toLocaleString()}
+                                                        </div>
+                                                    </td>
+                                                    <td>
+                                                        <div className="ao-actions">
+                                                            <button
+                                                                className="ao-action-btn view"
+                                                                onClick={() => handleAction('view', order)}
+                                                                title="View Details"
+                                                            >
+                                                                <Visibility style={{ fontSize: 15 }} />
+                                                            </button>
+                                                            <button
+                                                                className="ao-action-btn update"
+                                                                onClick={() => handleAction('update', order)}
+                                                                title="Update Status"
+                                                            >
+                                                                <Edit style={{ fontSize: 15 }} />
+                                                            </button>
+                                                            <button
+                                                                className="ao-action-btn message"
+                                                                onClick={() => handleAction('messages', order)}
+                                                                title="Messages"
+                                                            >
+                                                                <Message style={{ fontSize: 15 }} />
+                                                                {unread > 0 && (
+                                                                    <span className="ao-msg-badge">{unread}</span>
+                                                                )}
+                                                            </button>
+                                                            <button
+                                                                className="ao-action-btn tracking"
+                                                                onClick={() => handleAction('tracking', order)}
+                                                                title="Add Tracking"
+                                                            >
+                                                                <LocalShipping style={{ fontSize: 15 }} />
+                                                            </button>
+                                                            <button
+                                                                className="ao-action-btn cancel"
+                                                                onClick={() => handleAction('cancel', order)}
+                                                                title="Cancel Order"
+                                                                disabled={
+                                                                    order.orderStatus === 'Cancelled' ||
+                                                                    order.orderStatus === 'Delivered'
+                                                                }
+                                                            >
+                                                                <Cancel style={{ fontSize: 15 }} />
+                                                            </button>
+                                                            <button
+                                                                className="ao-action-btn audit"
+                                                                onClick={() => handleAction('audit', order)}
+                                                                title="Audit Log"
+                                                            >
+                                                                <History style={{ fontSize: 15 }} />
+                                                            </button>
+                                                            <button
+                                                                className="ao-action-btn delete"
+                                                                onClick={() => handleAction('delete', order)}
+                                                                title="Delete Order"
+                                                            >
+                                                                <Delete style={{ fontSize: 15 }} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                 </div>
             </div>
 
             <Footer />
 
-            {/* Messages Modal */}
+            {/* ── Messages Modal ────────────────────────────── */}
             <MessagesModal
                 isOpen={messagesModal.open}
                 onClose={handleCloseMessagesModal}
@@ -401,51 +536,58 @@ function AllOrders() {
                 onSendMessage={handleSendMessage}
             />
 
-            {/* Unified Modal System */}
+            {/* ── Unified Modal ─────────────────────────────── */}
             {modal.open && modal.order && (
-                <div className="modal-overlay" onClick={() => !modal.loading && setModal({ type: '', open: false, order: null })}>
-                    <div className="enterprise-modal" onClick={(e) => e.stopPropagation()}>
-                        <div className="modal-header">
-                            <h2 className="modal-title">
-                                {modal.type === 'view' && 'Order Details'}
-                                {modal.type === 'update' && 'Update Order Status'}
-                                {modal.type === 'delete' && 'Delete Order'}
-                                {modal.type === 'cancel' && 'Cancel Order'}
+                <div className="ao-modal-overlay" onClick={closeModal}>
+                    <div className="ao-modal" onClick={e => e.stopPropagation()}>
+
+                        <div className="ao-modal-header">
+                            <h2 className="ao-modal-title">
+                                {modal.type === 'view'     && 'Order Details'}
+                                {modal.type === 'update'   && 'Update Order Status'}
+                                {modal.type === 'delete'   && 'Delete Order'}
+                                {modal.type === 'cancel'   && 'Cancel Order'}
                                 {modal.type === 'tracking' && 'Add Tracking Information'}
-                                {modal.type === 'audit' && 'Order Audit Log'}
+                                {modal.type === 'audit'    && 'Order Audit Log'}
                             </h2>
+                            <button className="ao-modal-close" onClick={closeModal}>✕</button>
                         </div>
 
-                        <div className="modal-body">
-                            {/* VIEW MODAL */}
+                        <div className="ao-modal-body">
+
+                            {/* VIEW */}
                             {modal.type === 'view' && (
-                                <div className="view-content">
-                                    <div className="info-grid">
+                                <>
+                                    <div className="ao-info-grid">
                                         <div>
                                             <strong>Order ID</strong>
                                             <p>#{modal.order._id}</p>
                                         </div>
                                         <div>
+                                            <strong>Status</strong>
+                                            <p>
+                                                <span className={`ao-status-badge ${modal.order.orderStatus.toLowerCase()}`}>
+                                                    {modal.order.orderStatus}
+                                                </span>
+                                            </p>
+                                        </div>
+                                        <div>
                                             <strong>Customer</strong>
-                                            <p>{modal.order.user?.firstName} {modal.order.user?.lastName}</p>
-                                            <p>{modal.order.user?.email}</p>
+                                            <p>{getCustomerName(modal.order.user)}</p>
+                                            <p style={{ fontSize: 12, color: 'var(--ao-text-muted)', marginTop: 2 }}>
+                                                {modal.order.user?.email || ''}
+                                            </p>
                                         </div>
                                         <div>
                                             <strong>Total</strong>
-                                            <p className="amount">${modal.order.totalPrice?.toFixed(2)}</p>
-                                        </div>
-                                        <div>
-                                            <strong>Status</strong>
-                                            <span className={`status-badge ${modal.order.orderStatus.toLowerCase()}`}>
-                                                {modal.order.orderStatus}
-                                            </span>
+                                            <p style={{ fontWeight: 700 }}>${modal.order.totalPrice?.toFixed(2)}</p>
                                         </div>
                                     </div>
 
                                     {modal.order.shippingInfo && (
                                         <>
-                                            <h3>Shipping Address</h3>
-                                            <div className="shipping-info">
+                                            <h3 className="ao-modal-section-title">Shipping Address</h3>
+                                            <div className="ao-shipping-info" style={{ marginBottom: 20 }}>
                                                 <p>{modal.order.shippingInfo.address}</p>
                                                 <p>{modal.order.shippingInfo.city}, {modal.order.shippingInfo.state} {modal.order.shippingInfo.postalCode}</p>
                                                 <p>{modal.order.shippingInfo.country}</p>
@@ -454,134 +596,119 @@ function AllOrders() {
                                         </>
                                     )}
 
-                                    <h3>Order Items</h3>
-                                    <div className="items-table">
-                                        <div className="table-header-row">
-                                            <span>Product</span>
-                                            <span>Qty</span>
-                                            <span>Price</span>
-                                            <span>Total</span>
+                                    <h3 className="ao-modal-section-title">Order Items</h3>
+                                    <div className="ao-items-table">
+                                        <div className="ao-items-head">
+                                            <span>Product</span><span>Qty</span><span>Price</span><span>Total</span>
                                         </div>
                                         {modal.order.orderItems?.map(item => (
-                                            <div key={item.product} className="table-row">
+                                            <div key={item.product} className="ao-items-row">
                                                 <span>{item.name}</span>
                                                 <span>{item.quantity}</span>
                                                 <span>${item.price?.toFixed(2)}</span>
                                                 <span>${(item.price * item.quantity).toFixed(2)}</span>
                                             </div>
                                         ))}
-                                        <div className="table-footer">
-                                            <span><strong>Grand Total</strong></span>
-                                            <span></span>
-                                            <span></span>
-                                            <span><strong>${modal.order.totalPrice?.toFixed(2)}</strong></span>
+                                        <div className="ao-items-footer">
+                                            <span>Grand Total</span><span></span><span></span>
+                                            <span>${modal.order.totalPrice?.toFixed(2)}</span>
                                         </div>
                                     </div>
 
                                     {modal.order.tracking && (
                                         <>
-                                            <h3>Tracking Information</h3>
-                                            <div className="tracking-info">
+                                            <h3 className="ao-modal-section-title">Tracking</h3>
+                                            <div className="ao-tracking-display">
                                                 <p><strong>Carrier:</strong> {modal.order.tracking.carrier}</p>
-                                                <p><strong>Tracking Number:</strong> {modal.order.tracking.trackingNumber}</p>
+                                                <p><strong>Tracking #:</strong> {modal.order.tracking.trackingNumber}</p>
                                                 {modal.order.tracking.estimatedDelivery && (
-                                                    <p><strong>Estimated Delivery:</strong> {new Date(modal.order.tracking.estimatedDelivery).toLocaleDateString()}</p>
+                                                    <p><strong>Est. Delivery:</strong> {new Date(modal.order.tracking.estimatedDelivery).toLocaleDateString()}</p>
                                                 )}
                                             </div>
                                         </>
                                     )}
-                                </div>
+                                </>
                             )}
 
-                            {/* UPDATE STATUS MODAL */}
+                            {/* UPDATE STATUS */}
                             {modal.type === 'update' && (
-                                <div className="update-content">
-                                    <p className="order-summary">
-                                        Order: <strong>#{modal.order._id.slice(-8)}</strong>
-                                    </p>
-                                    <p className="current-status">
-                                        Current Status: 
-                                        <span className={`status-badge ${modal.order.orderStatus.toLowerCase()}`}>
+                                <>
+                                    <div className="ao-current-status">
+                                        <span>Current:</span>
+                                        <span className={`ao-status-badge ${modal.order.orderStatus.toLowerCase()}`}>
                                             {modal.order.orderStatus}
                                         </span>
-                                    </p>
-
-                                    <label className="status-label">Select New Status</label>
-                                    <select id="status-select" className="status-select" defaultValue={modal.order.orderStatus}>
+                                    </div>
+                                    <label className="ao-form-label">Select New Status</label>
+                                    <select
+                                        id="ao-status-select"
+                                        className="ao-form-select"
+                                        value={selectedStatus}
+                                        onChange={e => setSelectedStatus(e.target.value)}
+                                    >
                                         <option value="Processing">Processing</option>
                                         <option value="Shipped">Shipped</option>
                                         <option value="Delivered">Delivered</option>
                                         <option value="Cancelled">Cancelled</option>
                                     </select>
-
-                                    {document.getElementById('status-select')?.value === 'Cancelled' && (
-                                        <p className="warning-text">
-                                            Stock will be restored to inventory.
-                                        </p>
-                                    )}
-                                </div>
+                                </>
                             )}
 
-                            {/* DELETE MODAL */}
+                            {/* DELETE */}
                             {modal.type === 'delete' && (
-                                <div className="delete-content">
-                                    <p className="warning-text">
-                                        This action is permanent and cannot be undone.
-                                    </p>
-                                    <div className="order-summary-box">
-                                        <p><strong>ID:</strong> #{modal.order._id.slice(-8)}</p>
-                                        <p><strong>Customer:</strong> {modal.order.user?.firstName} {modal.order.user?.lastName}</p>
+                                <>
+                                    <div className="ao-warning-text">
+                                        ⚠️ This action is permanent and cannot be undone.
+                                    </div>
+                                    <div className="ao-order-summary-box">
+                                        <p><strong>ID:</strong> #{modal.order._id.slice(-8).toUpperCase()}</p>
+                                        <p><strong>Customer:</strong> {getCustomerName(modal.order.user)}</p>
                                         <p><strong>Total:</strong> ${modal.order.totalPrice?.toFixed(2)}</p>
                                     </div>
-                                </div>
+                                </>
                             )}
 
-                            {/* CANCEL ORDER MODAL */}
+                            {/* CANCEL */}
                             {modal.type === 'cancel' && (
-                                <div className="cancel-content">
-                                    <p className="order-summary">
-                                        Order: <strong>#{modal.order._id.slice(-8)}</strong>
-                                    </p>
-                                    
-                                    <label className="form-label">Cancellation Reason</label>
+                                <>
+                                    <div className="ao-order-summary-box" style={{ marginBottom: 14 }}>
+                                        <p><strong>Order:</strong> #{modal.order._id.slice(-8).toUpperCase()}</p>
+                                        <p><strong>Customer:</strong> {getCustomerName(modal.order.user)}</p>
+                                    </div>
+                                    <label className="ao-form-label">Cancellation Reason</label>
                                     <textarea
-                                        className="form-textarea"
-                                        rows="4"
+                                        className="ao-form-textarea"
                                         placeholder="Enter reason for cancellation..."
                                         value={cancelForm.reason}
-                                        onChange={(e) => setCancelForm(prev => ({ ...prev, reason: e.target.value }))}
+                                        onChange={e => setCancelForm(prev => ({ ...prev, reason: e.target.value }))}
                                     />
-
-                                    <div className="form-checkbox">
+                                    <label className="ao-form-checkbox">
                                         <input
                                             type="checkbox"
-                                            id="skip-refund"
                                             checked={cancelForm.skipRefund}
-                                            onChange={(e) => setCancelForm(prev => ({ ...prev, skipRefund: e.target.checked }))}
+                                            onChange={e => setCancelForm(prev => ({ ...prev, skipRefund: e.target.checked }))}
                                         />
-                                        <label htmlFor="skip-refund">Skip automatic refund initiation</label>
-                                    </div>
-
+                                        Skip automatic refund initiation
+                                    </label>
                                     {!cancelForm.skipRefund && (
-                                        <p className="info-text">
+                                        <div className="ao-info-text">
                                             A refund will be automatically initiated for this order.
-                                        </p>
+                                        </div>
                                     )}
-                                </div>
+                                </>
                             )}
 
-                            {/* TRACKING MODAL */}
+                            {/* TRACKING */}
                             {modal.type === 'tracking' && (
-                                <div className="tracking-content">
-                                    <p className="order-summary">
-                                        Order: <strong>#{modal.order._id.slice(-8)}</strong>
-                                    </p>
-
-                                    <label className="form-label">Carrier</label>
-                                    <select 
-                                        className="form-select"
+                                <>
+                                    <div className="ao-order-summary-box" style={{ marginBottom: 6 }}>
+                                        <p><strong>Order:</strong> #{modal.order._id.slice(-8).toUpperCase()}</p>
+                                    </div>
+                                    <label className="ao-form-label">Carrier</label>
+                                    <select
+                                        className="ao-form-select"
                                         value={trackingForm.carrier}
-                                        onChange={(e) => setTrackingForm(prev => ({ ...prev, carrier: e.target.value }))}
+                                        onChange={e => setTrackingForm(prev => ({ ...prev, carrier: e.target.value }))}
                                     >
                                         <option value="">Select Carrier</option>
                                         <option value="FedEx">FedEx</option>
@@ -590,72 +717,74 @@ function AllOrders() {
                                         <option value="DHL">DHL</option>
                                         <option value="Other">Other</option>
                                     </select>
-
-                                    <label className="form-label">Tracking Number</label>
+                                    <label className="ao-form-label">Tracking Number</label>
                                     <input
                                         type="text"
-                                        className="form-input"
+                                        className="ao-form-input"
                                         placeholder="Enter tracking number"
                                         value={trackingForm.trackingNumber}
-                                        onChange={(e) => setTrackingForm(prev => ({ ...prev, trackingNumber: e.target.value }))}
+                                        onChange={e => setTrackingForm(prev => ({ ...prev, trackingNumber: e.target.value }))}
                                     />
-
-                                    <label className="form-label">Estimated Delivery (Optional)</label>
+                                    <label className="ao-form-label">Estimated Delivery (Optional)</label>
                                     <input
                                         type="date"
-                                        className="form-input"
+                                        className="ao-form-input"
                                         value={trackingForm.estimatedDelivery}
-                                        onChange={(e) => setTrackingForm(prev => ({ ...prev, estimatedDelivery: e.target.value }))}
+                                        onChange={e => setTrackingForm(prev => ({ ...prev, estimatedDelivery: e.target.value }))}
                                     />
-                                </div>
+                                </>
                             )}
 
-                            {/* AUDIT LOG MODAL */}
+                            {/* AUDIT LOG */}
                             {modal.type === 'audit' && (
-                                <div className="audit-content">
-                                    {auditLog.length === 0 ? (
-                                        <p className="no-audit">No audit log available</p>
+                                <div className="ao-audit-log">
+                                    {!auditLog || auditLog.length === 0 ? (
+                                        <p style={{ color: 'var(--ao-text-muted)', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>
+                                            No audit log entries available.
+                                        </p>
                                     ) : (
-                                        <div className="audit-log">
-                                            {auditLog.map((log, idx) => (
-                                                <div key={idx} className="audit-item">
-                                                    <div className="audit-header">
-                                                        <strong>{log.action}</strong>
-                                                        <small>{new Date(log.timestamp).toLocaleString()}</small>
-                                                    </div>
-                                                    <p>By: {log.performedBy?.name || 'System'}</p>
-                                                    {log.details && <p className="audit-details">{log.details}</p>}
+                                        auditLog.map((log, idx) => (
+                                            <div key={log._id || log.timestamp || idx} className="ao-audit-item">
+                                                <div className="ao-audit-header">
+                                                    <strong>{log.action}</strong>
+                                                    <small>{new Date(log.timestamp).toLocaleString()}</small>
                                                 </div>
-                                            ))}
-                                        </div>
+                                                <p>By: {log.performedBy?.name || 'System'}</p>
+                                                {log.details && (
+                                                    <p className="ao-audit-details">{log.details}</p>
+                                                )}
+                                            </div>
+                                        ))
                                     )}
                                 </div>
                             )}
+
                         </div>
 
-                        <div className="modal-footer">
+                        <div className="ao-modal-footer">
                             <button
-                                onClick={() => setModal({ type: '', open: false, order: null, loading: false })}
-                                className="modal-btn cancel"
+                                className="ao-btn ao-btn--cancel"
+                                onClick={closeModal}
                                 disabled={modal.loading}
                             >
-                                {modal.type === 'view' || modal.type === 'audit' ? 'Close' : 'Cancel'}
+                                {['view', 'audit'].includes(modal.type) ? 'Close' : 'Cancel'}
                             </button>
                             {!['view', 'audit'].includes(modal.type) && (
                                 <button
+                                    className={`ao-btn ${modal.type === 'delete' ? 'ao-btn--danger' : 'ao-btn--confirm'}`}
                                     onClick={executeAction}
-                                    className={`modal-btn confirm ${modal.type === 'delete' ? 'danger' : ''}`}
                                     disabled={modal.loading}
                                 >
-                                    {modal.loading ? 'Processing...' :
-                                        modal.type === 'update' ? 'Update Status' :
-                                        modal.type === 'delete' ? 'Delete Order' :
-                                        modal.type === 'cancel' ? 'Cancel Order' :
-                                        modal.type === 'tracking' ? 'Add Tracking' :
+                                    {modal.loading ? 'Processing…' :
+                                        modal.type === 'update'   ? 'Update Status'  :
+                                        modal.type === 'delete'   ? 'Delete Order'   :
+                                        modal.type === 'cancel'   ? 'Cancel Order'   :
+                                        modal.type === 'tracking' ? 'Add Tracking'   :
                                         'Confirm'}
                                 </button>
                             )}
                         </div>
+
                     </div>
                 </div>
             )}
