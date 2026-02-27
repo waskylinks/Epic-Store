@@ -196,7 +196,14 @@ function AllOrders() {
 
     const statusCounts = getStatusCounts();
 
-    if (loading && orders.length === 0) return <Loader />;
+    if (loading && orders.length === 0) 
+        return (
+            <>
+            <Navbar />
+            <Loader type="snake" size="md"/>
+            <Footer />
+            </>
+            );
 
     return (
         <>

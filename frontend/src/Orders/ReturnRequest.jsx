@@ -388,7 +388,7 @@ function ReturnRequest() {
   if (orderLoading) return (
     <>
       <Navbar />
-      <Loader />
+      <Loader type="snake" size="md"/>
       <Footer />
     </>
   );

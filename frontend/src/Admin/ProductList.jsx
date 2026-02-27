@@ -197,7 +197,7 @@ export default function ProductList() {
     return( 
           <>  
           <Navbar />
-          <Loader />
+          <Loader type="snake" size="md"/>
           <Footer />
           </>
     );
