@@ -23,22 +23,17 @@ import {
   FiChevronDown,
   FiChevronUp,
 } from "react-icons/fi";
-
 import PageTitle from "../components/PageTitle";
 import Navbar from "../components/Navbar";
 import Footer from "../components/footer";
 import MessagesModal from "../components/MessagesModal";
-
 import { getAllMyOrders, getCustomerOrderAnalytics } from "../features/cart/orderSlice";
-import { downloadReceiptPdf } from "../features/cart/receiptSlice";
-
 import "../OrderStyles/MyOrders.css";
 
 function MyOrders() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { orders, loading, error, customerAnalytics } = useSelector((state) => state.order);
-  const { downloadLoading } = useSelector((state) => state.receipt);
   const authState = useSelector((state) => state.auth);
   const user = authState?.user || null;
 
