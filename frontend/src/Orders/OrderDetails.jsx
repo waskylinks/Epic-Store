@@ -42,7 +42,7 @@ function OrderDetails() {
   if (loading) return (
     <>
       <Navbar />
-      <Loader />
+      <Loader type="snake" size="md"/>
       <Footer />
     </>
   );

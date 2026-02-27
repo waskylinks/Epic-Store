@@ -1,457 +1,524 @@
+/* ============================================================
+   REFUND REQUEST PAGE — RefundRequest.css
+   Prefix: rr-   (mirrors adm- / mo- / od- convention)
+   Matches Admin Dashboard aesthetic exactly
+   Coral-red accent throughout
+   Fully responsive on all devices
+   ============================================================ */
 
-/* ===========================
-   REFUND REQUEST CONTAINER
-   =========================== */
+/* ── Variables ─────────────────────────────────────────────── */
+:root {
+  --rr-radius:        12px;
+  --rr-radius-sm:     8px;
+  --rr-radius-xs:     5px;
+  --rr-transition:    all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+
+  --rr-bg:            #F0F2F5;
+  --rr-card:          #FFFFFF;
+  --rr-border:        #D1D5DB;
+  --rr-border-md:     #9CA3AF;
+  --rr-text:          #111827;
+  --rr-text-sec:      #374151;
+  --rr-text-muted:    #6B7280;
+  --rr-shadow-sm:     0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --rr-shadow:        0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.06);
+  --rr-shadow-lg:     0 10px 24px rgba(0,0,0,0.13);
+
+  --rr-coral:         #FF4D4D;
+  --rr-coral-dark:    #E03535;
+  --rr-coral-pale:    rgba(255, 77, 77, 0.08);
+  --rr-coral-border:  rgba(255, 77, 77, 0.35);
+
+  --rr-success:       #10B981;
+  --rr-success-bg:    #D1FAE5;
+  --rr-success-text:  #065F46;
+  --rr-warning:       #F59E0B;
+  --rr-warning-bg:    #FEF3C7;
+  --rr-warning-text:  #92400E;
+  --rr-info:          #3B82F6;
+  --rr-info-bg:       #DBEAFE;
+  --rr-info-text:     #1E40AF;
+  --rr-danger:        #EF4444;
+  --rr-danger-bg:     #FEE2E2;
+  --rr-danger-text:   #991B1B;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ── Page Container ─────────────────────────────────────────── */
 .rr-refund-request-container {
   max-width: 1000px;
   margin: 0 auto;
-  padding: 2rem 1.5rem 4rem;
-  min-height: calc(100vh - 200px);
+  padding: 28px 28px 60px;
+  min-height: calc(100vh - 180px);
+  background: var(--rr-bg);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Back Navigation Button */
+/* ── Back Button ────────────────────────────────────────────── */
 .rr-btn-back-nav {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.25rem;
-  background: white;
-  border: 2px solid #e0e0e0;
-  border-radius: 10px;
-  color: #495057;
-  font-size: 0.95rem;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 7px 14px;
+  background: var(--rr-card);
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius-xs);
+  color: var(--rr-text-sec);
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
-  margin-bottom: 1.5rem;
-}
-
-.rr-btn-back-nav:hover {
-  border-color: #495057;
-  background: #f8f9fa;
+  transition: var(--rr-transition);
+  font-family: inherit;
+  box-shadow: var(--rr-shadow-sm);
+  min-height: 38px;
 }
 
 .rr-btn-back-nav svg {
-  font-size: 1.1rem !important;
+  font-size: 14px !important;
+  transition: transform var(--rr-transition);
 }
 
-/* ===========================
-   ERROR CONTAINER
-   =========================== */
+.rr-btn-back-nav:hover {
+  background: #F3F4F6;
+  color: var(--rr-text);
+  border-color: var(--rr-border-md);
+}
+
+.rr-btn-back-nav:hover svg { transform: translateX(-3px); }
+
+/* ── Error Container ────────────────────────────────────────── */
 .rr-refund-error-container {
-  max-width: 600px;
-  margin: 4rem auto;
-  padding: 2rem 1.5rem;
+  max-width: 560px;
+  margin: 40px auto;
+  padding: 28px;
 }
 
 .rr-error-card {
-  background: white;
-  border-radius: 16px;
-  padding: 3rem 2rem;
+  background: var(--rr-card);
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius);
+  padding: 48px 32px;
   text-align: center;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--rr-shadow-sm);
 }
 
 .rr-error-icon {
-  font-size: 4rem !important;
-  color: #f59e0b;
-  margin-bottom: 1.5rem;
+  font-size: 36px !important;
+  color: var(--rr-warning);
+  margin-bottom: 16px;
 }
 
 .rr-error-card h2 {
-  font-size: 1.75rem;
-  color: #1a1a1a;
-  margin-bottom: 1rem;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--rr-text);
+  margin: 0 0 8px 0;
 }
 
 .rr-error-card p {
-  color: #666;
-  font-size: 1rem;
+  font-size: 13px;
+  color: var(--rr-text-muted);
   line-height: 1.6;
-  margin-bottom: 2rem;
+  margin: 0 0 24px 0;
+  font-weight: 500;
 }
 
-/* ===========================
-   HEADER
-   =========================== */
+/* ── Page Header ────────────────────────────────────────────── */
 .rr-refund-header {
-  margin-bottom: 2rem;
-  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-  border-radius: 16px;
-  padding: 2rem;
-  border: 1px solid #e0e0e0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  background: var(--rr-card);
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius);
+  padding: 18px 20px;
+  box-shadow: var(--rr-shadow-sm);
+  flex-wrap: wrap;
+  transition: var(--rr-transition);
+}
+
+.rr-refund-header:hover {
+  box-shadow: var(--rr-shadow);
+  border-color: var(--rr-border-md);
 }
 
 .rr-header-content {
   display: flex;
   align-items: center;
-  gap: 1.25rem;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
 }
 
 .rr-header-icon {
-  font-size: 2.5rem !important;
-  color: #495057;
+  width: 38px;
+  height: 38px;
+  background: var(--rr-coral-pale);
+  border: 1px solid var(--rr-coral-border);
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--rr-coral);
+  font-size: 18px !important;
   flex-shrink: 0;
 }
 
 .rr-refund-header h1 {
-  font-size: 2rem;
+  font-size: 18px;
   font-weight: 700;
-  color: #1a1a1a;
-  margin: 0 0 0.25rem 0;
+  color: var(--rr-text);
+  margin: 0 0 2px 0;
+  letter-spacing: -0.2px;
 }
 
 .rr-order-reference {
-  font-size: 0.95rem;
-  color: #666;
+  font-size: 11.5px;
+  color: var(--rr-text-muted);
   margin: 0;
   font-family: 'Courier New', monospace;
+  font-weight: 600;
+  letter-spacing: 0.03em;
 }
 
-/* ===========================
-   CONTENT LAYOUT
-   =========================== */
+/* Messages button */
+.rr-btn-messages {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  background: var(--rr-card);
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius-xs);
+  color: var(--rr-text-sec);
+  font-size: 12.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--rr-transition);
+  white-space: nowrap;
+  font-family: inherit;
+  box-shadow: var(--rr-shadow-sm);
+  flex-shrink: 0;
+}
+
+.rr-btn-messages:hover {
+  background: #F3F4F6;
+  color: var(--rr-text);
+  border-color: var(--rr-border-md);
+}
+
+.rr-btn-messages svg { font-size: 14px !important; }
+
+.rr-message-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--rr-coral);
+  color: #fff;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  border: 2px solid var(--rr-card);
+}
+
+/* ── Content Layout ─────────────────────────────────────────── */
 .rr-refund-content {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  gap: 14px;
 }
 
-/* ===========================
-   CARD COMPONENTS
-   =========================== */
+/* ── Cards ──────────────────────────────────────────────────── */
 .rr-summary-card,
 .rr-refund-form-card,
-.rr-messaging-card,
 .rr-refund-status-card {
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  background: var(--rr-card);
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius);
   overflow: hidden;
-  border: 1px solid #e9ecef;
+  box-shadow: var(--rr-shadow-sm);
+  transition: var(--rr-transition);
+}
+
+.rr-summary-card:hover,
+.rr-refund-form-card:hover,
+.rr-refund-status-card:hover {
+  box-shadow: var(--rr-shadow);
+  border-color: var(--rr-border-md);
 }
 
 .rr-card-header {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 1.5rem;
-  border-bottom: 1px solid #e9ecef;
-  background: #f8f9fa;
+  gap: 10px;
+  padding: 14px 18px 13px;
+  border-bottom: 1px solid var(--rr-border);
+  background: #F9FAFB;
+}
+
+.rr-card-header::before {
+  content: '';
+  display: block;
+  width: 3px;
+  height: 16px;
+  background: var(--rr-coral);
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .rr-card-icon {
-  font-size: 1.5rem !important;
-  color: #495057;
+  font-size: 16px !important;
+  color: var(--rr-text-muted);
+  flex-shrink: 0;
 }
 
 .rr-card-header h2 {
-  font-size: 1.25rem;
+  font-size: 13.5px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--rr-text);
   margin: 0;
   flex: 1;
 }
 
-/* ===========================
-   REFUND STATUS BADGE
-   =========================== */
+/* ── Refund Status Badge ────────────────────────────────────── */
 .rr-refund-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0.4rem 0.85rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  border-radius: 999px;
-  letter-spacing: 0.3px;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.rr-refund-badge-icon {
-  font-size: 0.9rem;
-}
+.rr-refund-badge-none       { background: #F3F4F6;              color: var(--rr-text-muted); }
+.rr-refund-badge-requested  { background: var(--rr-warning-bg); color: var(--rr-warning-text); }
+.rr-refund-badge-approved   { background: var(--rr-info-bg);    color: var(--rr-info-text); }
+.rr-refund-badge-rejected   { background: var(--rr-danger-bg);  color: var(--rr-danger-text); }
+.rr-refund-badge-processing { background: #EDE9FE;              color: #5B21B6; }
+.rr-refund-badge-completed  { background: var(--rr-success-bg); color: var(--rr-success-text); }
+.rr-refund-badge-failed     { background: var(--rr-danger-bg);  color: var(--rr-danger-text); }
 
-.rr-refund-badge-label {
-  text-transform: uppercase;
-}
+/* ── Status Details ─────────────────────────────────────────── */
+.rr-status-details { padding: 18px; }
 
-.rr-refund-badge-none {
-  color: #64748b;
-  background: rgba(100, 116, 139, 0.12);
-}
-
-.rr-refund-badge-requested {
-  color: #f59e0b;
-  background: rgba(245, 158, 11, 0.12);
-}
-
-.rr-refund-badge-approved {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.12);
-}
-
-.rr-refund-badge-rejected {
-  color: #dc2626;
-  background: rgba(220, 38, 38, 0.12);
-}
-
-.rr-refund-badge-processing {
-  color: #8b5cf6;
-  background: rgba(139, 92, 246, 0.12);
-}
-
-.rr-refund-badge-completed {
-  color: #16a34a;
-  background: rgba(22, 163, 74, 0.12);
-}
-
-.rr-refund-badge-failed {
-  color: #dc2626;
-  background: rgba(220, 38, 38, 0.12);
-}
-
-/* ===========================
-   REFUND STATUS CARD
-   =========================== */
-.rr-refund-status-card {
-  margin-bottom: 1.5rem;
-}
-
-.rr-status-details {
-  padding: 1.5rem;
-}
-
-/* Status Timeline */
 .rr-status-timeline {
   display: flex;
   flex-direction: column;
-  gap: 0;
-  margin-bottom: 2rem;
+  margin-bottom: 18px;
   position: relative;
 }
 
 .rr-timeline-item {
   display: flex;
-  gap: 1rem;
-  padding: 1rem 0;
+  gap: 12px;
+  padding: 8px 0;
   position: relative;
 }
 
 .rr-timeline-item:not(:last-child)::after {
   content: '';
   position: absolute;
-  left: 11px;
-  top: 40px;
-  bottom: -15px;
+  left: 10px;
+  top: 36px;
+  bottom: -8px;
   width: 2px;
-  background: #e0e0e0;
+  background: var(--rr-border);
 }
 
 .rr-timeline-dot {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
-  background: #e0e0e0;
-  border: 3px solid white;
-  box-shadow: 0 0 0 2px #e0e0e0;
+  background: var(--rr-border);
+  border: 3px solid var(--rr-card);
+  box-shadow: 0 0 0 1px var(--rr-border);
   flex-shrink: 0;
   z-index: 1;
+  margin-top: 2px;
 }
 
-.rr-timeline-dot.rr-active {
-  background: #495057;
-  box-shadow: 0 0 0 2px #495057;
-}
-
-.rr-timeline-dot.rr-rejected {
-  background: #dc2626;
-  box-shadow: 0 0 0 2px #dc2626;
-}
+.rr-timeline-dot.rr-active   { background: var(--rr-text);   box-shadow: 0 0 0 1px var(--rr-text); }
+.rr-timeline-dot.rr-rejected { background: var(--rr-danger); box-shadow: 0 0 0 1px var(--rr-danger); }
 
 .rr-timeline-content {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
-  padding-top: 0.125rem;
+  gap: 2px;
+  padding-top: 1px;
 }
 
 .rr-timeline-label {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--rr-text);
 }
 
 .rr-timeline-date {
-  font-size: 0.85rem;
-  color: #666;
+  font-size: 11.5px;
+  color: var(--rr-text-muted);
+  font-weight: 500;
 }
 
-/* Refund Info Grid */
 .rr-refund-info-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 1.25rem;
-  background: #f8f9fa;
-  padding: 1.5rem;
-  border-radius: 12px;
+  gap: 10px;
+  background: #F9FAFB;
+  padding: 14px;
+  border-radius: var(--rr-radius-sm);
+  border: 1px solid var(--rr-border);
 }
 
 .rr-info-item {
   display: flex;
   flex-direction: column;
-  gap: 0.375rem;
+  gap: 3px;
 }
 
-.rr-info-item.rr-full-width {
-  grid-column: 1 / -1;
-}
+.rr-info-item.rr-full-width { grid-column: 1 / -1; }
 
 .rr-info-item.rr-admin-note {
-  background: #fff3cd;
-  padding: 1rem;
-  border-radius: 8px;
-  border-left: 3px solid #f59e0b;
+  background: var(--rr-warning-bg);
+  padding: 10px 12px;
+  border-radius: var(--rr-radius-xs);
+  border-left: 3px solid var(--rr-warning);
 }
 
 .rr-info-label {
-  font-size: 0.85rem;
-  color: #666;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--rr-text-muted);
 }
 
 .rr-info-value {
-  font-size: 0.95rem;
-  color: #1a1a1a;
+  font-size: 13px;
+  color: var(--rr-text);
   font-weight: 600;
   text-transform: capitalize;
 }
 
 .rr-info-value.rr-strong {
-  font-size: 1.15rem;
-  color: #495057;
+  font-size: 15px;
+  color: var(--rr-coral);
 }
 
-/* ===========================
-   SUMMARY DETAILS
-   =========================== */
+/* ── Summary Card ───────────────────────────────────────────── */
 .rr-summary-details {
-  padding: 1.5rem;
+  padding: 16px 18px;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 2px;
 }
 
 .rr-summary-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.75rem 0;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--rr-border);
+  gap: 16px;
 }
 
-.rr-summary-row:last-child {
-  border-bottom: none;
-}
+.rr-summary-row:last-child { border-bottom: none; }
 
-.rr-summary-row .rr-label {
-  font-size: 0.95rem;
-  color: #666;
+.rr-label {
+  font-size: 13px;
+  color: var(--rr-text-sec);
   font-weight: 500;
 }
 
-.rr-summary-row .rr-value {
-  font-size: 1rem;
-  color: #333;
-  font-weight: 600;
+.rr-value {
+  font-size: 13px;
+  color: var(--rr-text);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
-.rr-summary-row .rr-value.rr-strong {
-  font-size: 1.15rem;
-  color: #1a1a1a;
+.rr-value.rr-strong {
+  font-size: 15px;
+  color: var(--rr-coral);
 }
 
-/* Status Badges */
 .rr-status-badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.35rem 0.85rem;
+  padding: 3px 10px;
   border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 11.5px;
+  font-weight: 700;
   text-transform: capitalize;
+  white-space: nowrap;
 }
 
 .rr-status-badge.rr-status-success,
-.rr-status-badge.rr-status-delivered {
-  background-color: #d1fae5;
-  color: #065f46;
-}
-
-.rr-status-badge.rr-status-processing {
-  background-color: #fef3c7;
-  color: #92400e;
-}
-
-.rr-status-badge.rr-status-shipped {
-  background-color: #dbeafe;
-  color: #1e40af;
-}
-
+.rr-status-badge.rr-status-delivered  { background: var(--rr-success-bg); color: var(--rr-success-text); }
+.rr-status-badge.rr-status-processing { background: var(--rr-warning-bg); color: var(--rr-warning-text); }
+.rr-status-badge.rr-status-shipped    { background: var(--rr-info-bg);    color: var(--rr-info-text); }
 .rr-status-badge.rr-status-cancelled,
-.rr-status-badge.rr-status-danger {
-  background-color: #fee2e2;
-  color: #991b1b;
-}
+.rr-status-badge.rr-status-danger     { background: var(--rr-danger-bg);  color: var(--rr-danger-text); }
 
-/* ===========================
-   FORM STYLES
-   =========================== */
-.rr-refund-form {
-  padding: 1.5rem;
-}
+/* ── Form ───────────────────────────────────────────────────── */
+.rr-refund-form { padding: 18px; }
 
-.rr-form-section {
-  margin-bottom: 2rem;
-}
+.rr-form-section { margin-bottom: 20px; }
 
 .rr-section-label {
   display: block;
-  font-size: 1rem;
-  font-weight: 600;
-  color: #1a1a1a;
-  margin-bottom: 1rem;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--rr-text-muted);
+  margin-bottom: 10px;
 }
 
-.rr-form-group {
-  margin-bottom: 1.75rem;
-}
+.rr-form-group { margin-bottom: 18px; }
 
 .rr-form-label {
   display: block;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 0.5rem;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--rr-text-muted);
+  margin-bottom: 7px;
 }
 
 /* Radio Group */
 .rr-radio-group {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
 }
 
 .rr-radio-option {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 1rem;
-  padding: 1.25rem;
-  border: 2px solid #e0e0e0;
-  border-radius: 12px;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius-sm);
   cursor: pointer;
-  transition: all 0.3s ease;
-  background: #fafafa;
+  transition: var(--rr-transition);
+  background: #F9FAFB;
 }
 
 .rr-radio-option input[type="radio"] {
@@ -461,206 +528,194 @@
 }
 
 .rr-radio-option:hover {
-  border-color: #adb5bd;
-  background: white;
+  border-color: var(--rr-border-md);
+  background: var(--rr-card);
 }
 
 .rr-radio-option.rr-selected {
-  border-color: #495057;
-  background: white;
-  box-shadow: 0 4px 12px rgba(73, 80, 87, 0.15);
+  border-color: var(--rr-coral);
+  background: var(--rr-coral-pale);
+  box-shadow: 0 0 0 3px var(--rr-coral-pale);
 }
 
 .rr-radio-content {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 2px;
   flex: 1;
 }
 
 .rr-radio-title {
-  font-size: 1rem;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--rr-text);
 }
 
 .rr-radio-subtitle {
-  font-size: 0.9rem;
-  color: #666;
+  font-size: 12px;
+  color: var(--rr-text-muted);
+  font-weight: 500;
 }
 
 .rr-radio-check {
-  font-size: 1.5rem !important;
-  color: #e0e0e0;
-  transition: color 0.3s ease;
+  font-size: 16px !important;
+  color: var(--rr-border);
+  transition: color var(--rr-transition);
+  flex-shrink: 0;
 }
 
-.rr-radio-option.rr-selected .rr-radio-check {
-  color: #495057;
-}
+.rr-radio-option.rr-selected .rr-radio-check { color: var(--rr-coral); }
 
-/* Input Wrapper */
-.rr-input-wrapper {
-  position: relative;
-}
+/* Input */
+.rr-input-wrapper { position: relative; }
 
 .rr-input-icon {
   position: absolute;
-  left: 1rem;
+  left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: #999;
-  font-size: 1.1rem !important;
+  color: var(--rr-text-muted);
+  font-size: 13px !important;
   pointer-events: none;
 }
 
-/* Form Inputs */
 .rr-form-input,
 .rr-form-select,
 .rr-form-textarea {
   width: 100%;
-  padding: 0.875rem 1rem;
-  border: 2px solid #e0e0e0;
-  border-radius: 10px;
-  font-size: 0.95rem;
-  color: #333;
-  background-color: white;
-  transition: all 0.3s ease;
+  padding: 9px 12px;
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius-xs);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--rr-text);
+  background: var(--rr-card);
+  transition: var(--rr-transition);
   outline: none;
   font-family: inherit;
 }
 
-.rr-form-input.rr-has-icon {
-  padding-left: 3rem;
-}
+.rr-form-input.rr-has-icon { padding-left: 34px; }
 
 .rr-form-input:focus,
 .rr-form-select:focus,
 .rr-form-textarea:focus {
-  border-color: #495057;
-  box-shadow: 0 0 0 3px rgba(73, 80, 87, 0.1);
+  border-color: var(--rr-coral);
+  box-shadow: 0 0 0 3px var(--rr-coral-pale);
 }
 
 .rr-form-input.rr-error,
 .rr-form-select.rr-error,
-.rr-form-textarea.rr-error {
-  border-color: #dc2626;
-}
+.rr-form-textarea.rr-error { border-color: var(--rr-danger); }
 
 .rr-form-select {
   cursor: pointer;
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23666' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236B7280' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 1rem center;
-  padding-right: 3rem;
+  background-position: right 12px center;
+  padding-right: 32px;
 }
 
 .rr-form-textarea {
   resize: vertical;
-  min-height: 120px;
+  min-height: 110px;
   line-height: 1.6;
 }
 
-/* Helper Text */
 .rr-helper-text {
   display: block;
-  font-size: 0.85rem;
-  color: #666;
-  margin-top: 0.5rem;
+  font-size: 11.5px;
+  color: var(--rr-text-muted);
+  margin-top: 5px;
+  font-weight: 500;
 }
 
-/* Error Message */
 .rr-error-message {
   display: flex;
   align-items: center;
-  gap: 0.375rem;
-  color: #dc2626;
-  font-size: 0.85rem;
-  margin-top: 0.5rem;
+  gap: 5px;
+  color: var(--rr-danger);
+  font-size: 11.5px;
+  margin-top: 5px;
+  font-weight: 600;
 }
 
-.rr-error-message svg {
-  font-size: 1rem !important;
-}
+.rr-error-message svg { font-size: 12px !important; }
 
-/* Textarea Footer */
 .rr-textarea-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 0.5rem;
+  margin-top: 5px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .rr-char-count {
-  font-size: 0.85rem;
-  color: #999;
+  font-size: 11.5px;
+  color: var(--rr-text-muted);
+  font-weight: 500;
 }
 
-/* ===========================
-   FILE UPLOAD
-   =========================== */
+/* ── File Upload ────────────────────────────────────────────── */
 .rr-file-upload-area {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 12px;
 }
 
 .rr-btn-upload {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1.5rem;
-  background: white;
-  border: 2px dashed #adb5bd;
-  border-radius: 10px;
-  color: #495057;
-  font-size: 0.95rem;
+  gap: 7px;
+  padding: 9px 16px;
+  background: var(--rr-card);
+  border: 1px dashed var(--rr-border-md);
+  border-radius: var(--rr-radius-xs);
+  color: var(--rr-text-sec);
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--rr-transition);
+  font-family: inherit;
 }
 
 .rr-btn-upload:hover:not(:disabled) {
-  border-color: #495057;
-  background: #f8f9fa;
+  border-color: var(--rr-coral);
+  color: var(--rr-coral);
+  background: var(--rr-coral-pale);
 }
 
-.rr-btn-upload:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.rr-btn-upload:disabled { opacity: 0.5; cursor: not-allowed; }
+.rr-btn-upload svg { font-size: 14px !important; }
 
-.rr-btn-upload svg {
-  font-size: 1.2rem !important;
-}
-
-/* File Previews */
 .rr-file-previews {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
 }
 
 .rr-file-preview-item {
   position: relative;
   display: flex;
   flex-direction: column;
-  background: #f8f9fa;
-  border: 1px solid #e0e0e0;
-  border-radius: 10px;
+  background: #F9FAFB;
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius-sm);
   overflow: hidden;
-  transition: all 0.3s ease;
+  transition: var(--rr-transition);
 }
 
 .rr-file-preview-item:hover {
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--rr-shadow);
+  border-color: var(--rr-border-md);
 }
 
 .rr-preview-image,
 .rr-preview-placeholder {
   width: 100%;
-  height: 120px;
+  height: 100px;
   object-fit: cover;
 }
 
@@ -668,483 +723,217 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #e9ecef;
-  color: #6c757d;
+  background: #F3F4F6;
+  color: var(--rr-text-muted);
 }
 
-.rr-preview-placeholder svg {
-  font-size: 2.5rem !important;
-}
+.rr-preview-placeholder svg { font-size: 24px !important; }
 
 .rr-file-info {
-  padding: 0.75rem;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 2px;
 }
 
 .rr-file-name {
-  font-size: 0.85rem;
+  font-size: 12px;
   font-weight: 600;
-  color: #333;
+  color: var(--rr-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .rr-file-size {
-  font-size: 0.75rem;
-  color: #666;
+  font-size: 11px;
+  color: var(--rr-text-muted);
+  font-weight: 500;
 }
 
 .rr-btn-remove-file {
   position: absolute;
-  top: 0.5rem;
-  right: 0.5rem;
-  width: 28px;
-  height: 28px;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid #e0e0e0;
+  background: rgba(255,255,255,0.9);
+  border: 1px solid var(--rr-border);
   border-radius: 50%;
-  color: #666;
+  color: var(--rr-text-muted);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--rr-transition);
+  padding: 0;
 }
 
 .rr-btn-remove-file:hover {
-  background: #dc2626;
-  border-color: #dc2626;
-  color: white;
+  background: var(--rr-coral);
+  border-color: var(--rr-coral);
+  color: #fff;
 }
 
-.rr-btn-remove-file svg {
-  font-size: 1rem !important;
-}
+.rr-btn-remove-file svg { font-size: 10px !important; }
 
-/* ===========================
-   FORM ACTIONS
-   =========================== */
+/* ── Form Actions ───────────────────────────────────────────── */
 .rr-form-actions {
   display: flex;
-  gap: 1rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid #e9ecef;
-  margin-top: 1.5rem;
-}
-
-.rr-btn-primary,
-.rr-btn-secondary {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  padding: 0.875rem 1.5rem;
-  border-radius: 10px;
-  font-size: 1rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  border: none;
-  outline: none;
+  gap: 10px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rr-border);
+  margin-top: 18px;
 }
 
 .rr-btn-primary {
-  background: #1a1a1a;
-  color: white;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 16px;
+  background: var(--rr-coral);
+  color: #fff;
+  border: 1px solid transparent;
+  border-radius: var(--rr-radius-sm);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--rr-transition);
+  font-family: inherit;
+  box-shadow: var(--rr-shadow-sm);
+  min-height: 42px;
 }
 
 .rr-btn-primary:hover:not(:disabled) {
-  background: #333;
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+  background: var(--rr-coral-dark);
+  transform: translateY(-1px);
+  box-shadow: var(--rr-shadow);
 }
 
-.rr-btn-primary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.rr-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.rr-btn-primary svg { font-size: 14px !important; }
+.rr-btn-primary svg.rr-spin { animation: rr-spin 1s linear infinite; }
 
-.rr-btn-primary svg {
-  font-size: 1.1rem !important;
-}
-
-.rr-btn-primary svg.rr-spin {
-  animation: rr-spin 1s linear infinite;
-}
-
-@keyframes rr-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
+@keyframes rr-spin { to { transform: rotate(360deg); } }
 
 .rr-btn-secondary {
-  background: white;
-  color: #495057;
-  border: 2px solid #adb5bd;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--rr-card);
+  color: var(--rr-text-sec);
+  border: 1px solid var(--rr-border);
+  border-radius: var(--rr-radius-sm);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--rr-transition);
+  font-family: inherit;
+  box-shadow: var(--rr-shadow-sm);
+ 
 }
 
 .rr-btn-secondary:hover:not(:disabled) {
-  background: #f8f9fa;
-  border-color: #495057;
+  background: #F3F4F6;
+  color: var(--rr-text);
+  border-color: var(--rr-border-md);
 }
 
-.rr-btn-secondary:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.rr-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ===========================
-   MESSAGING SECTION
-   =========================== */
-.rr-messaging-card {
-  margin-top: 1.5rem;
-}
-
-.rr-messages-container {
-  display: flex;
-  flex-direction: column;
-  height: 500px;
-}
-
-.rr-empty-messages {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 3rem 1.5rem;
-  color: #999;
-}
-
-.rr-empty-icon {
-  font-size: 3.5rem !important;
-  margin-bottom: 1rem;
-  color: #d1d5db;
-}
-
-.rr-empty-messages p {
-  font-size: 1rem;
-  color: #6c757d;
-}
-
-.rr-messages-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.rr-message {
-  display: flex;
-  flex-direction: column;
-  max-width: 70%;
-  animation: rr-slideUp 0.3s ease;
-}
-
-@keyframes rr-slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.rr-message-sent {
-  align-self: flex-end;
-  align-items: flex-end;
-}
-
-.rr-message-received {
-  align-self: flex-start;
-  align-items: flex-start;
-}
-
-.rr-message-content {
-  background: #f8f9fa;
-  padding: 0.875rem 1.125rem;
-  border-radius: 12px;
-  word-wrap: break-word;
-}
-
-.rr-message-sent .rr-message-content {
-  background: #495057;
-  color: white;
-  border-bottom-right-radius: 4px;
-}
-
-.rr-message-received .rr-message-content {
-  background: #e9ecef;
-  color: #1a1a1a;
-  border-bottom-left-radius: 4px;
-}
-
-.rr-message-content p {
-  margin: 0;
-  font-size: 0.95rem;
-  line-height: 1.5;
-}
-
-.rr-message-attachment {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
-  padding: 0.5rem;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  font-size: 0.85rem;
-}
-
-.rr-message-attachment svg {
-  font-size: 1rem !important;
-}
-
-.rr-message-attachment a {
-  color: inherit;
-  text-decoration: none;
-}
-
-.rr-message-attachment a:hover {
-  text-decoration: underline;
-}
-
-.rr-message-footer {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.375rem;
-  font-size: 0.75rem;
-  color: #999;
-}
-
-.rr-message-time {
-  font-size: 0.75rem;
-  color: #999;
-}
-
-.rr-read-receipt {
-  font-size: 0.75rem;
-  color: #999;
-  font-weight: 500;
-}
-
-.rr-read-receipt.rr-read {
-  color: #495057;
-}
-
-/* Message Input */
-.rr-message-input-area {
-  display: flex;
-  gap: 0.75rem;
-  padding: 1.25rem;
-  border-top: 1px solid #e9ecef;
-  background: #fafafa;
-}
-
-.rr-message-input {
-  flex: 1;
-  padding: 0.875rem 1rem;
-  border: 2px solid #e0e0e0;
-  border-radius: 25px;
-  font-size: 0.95rem;
-  outline: none;
-  transition: all 0.3s ease;
-}
-
-.rr-message-input:focus {
-  border-color: #495057;
-  box-shadow: 0 0 0 3px rgba(73, 80, 87, 0.1);
-}
-
-.rr-btn-send {
-  width: 44px;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #495057;
-  color: white;
-  border: none;
-  border-radius: 50%;
-  cursor: pointer;
-  transition: all 0.3s ease;
-  flex-shrink: 0;
-}
-
-.rr-btn-send:hover:not(:disabled) {
-  background: #333;
-  transform: scale(1.05);
-}
-
-.rr-btn-send:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.rr-btn-send svg {
-  font-size: 1.1rem !important;
-}
-
-/* ===========================
-   RESPONSIVE - TABLET
-   =========================== */
-@media (max-width: 768px) {
-  .rr-refund-request-container {
-    padding: 1.5rem 1rem 3rem;
-  }
-
-  .rr-refund-header {
-    padding: 1.5rem;
-  }
-
-  .rr-header-icon {
-    font-size: 2rem !important;
-  }
-
-  .rr-refund-header h1 {
-    font-size: 1.75rem;
-  }
-
-  .rr-radio-group {
-    grid-template-columns: 1fr;
-  }
-
-  .rr-form-actions {
-    flex-direction: column;
-  }
-
-  .rr-btn-primary,
-  .rr-btn-secondary {
-    width: 100%;
-  }
-
-  .rr-message {
-    max-width: 85%;
-  }
-
-  .rr-messages-container {
-    height: 400px;
-  }
-
-  .rr-refund-info-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .rr-timeline-item {
-    padding: 0.75rem 0;
-  }
-}
-
-/* ===========================
-   RESPONSIVE - MOBILE
-   =========================== */
-@media (max-width: 480px) {
-  .rr-refund-request-container {
-    padding: 1rem 0.75rem 2.5rem;
-  }
-
-  .rr-refund-header {
-    padding: 1.25rem;
-    border-radius: 12px;
-  }
-
-  .rr-header-content {
-    gap: 1rem;
-  }
-
-  .rr-header-icon {
-    font-size: 1.75rem !important;
-  }
-
-  .rr-refund-header h1 {
-    font-size: 1.5rem;
-  }
-
-  .rr-order-reference {
-    font-size: 0.85rem;
-  }
-
-  .rr-card-header {
-    padding: 1.25rem;
-  }
-
-  .rr-card-header h2 {
-    font-size: 1.1rem;
-  }
-
-  .rr-summary-details,
-  .rr-refund-form {
-    padding: 1.25rem;
-  }
-
-  .rr-file-previews {
-    grid-template-columns: 1fr;
-  }
-
-  .rr-message {
-    max-width: 90%;
-  }
-
-  .rr-messages-container {
-    height: 350px;
-  }
-
-  .rr-message-input-area {
-    padding: 1rem;
-  }
-}
-
-/* ===========================
-   ACCESSIBILITY
-   =========================== */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-/* Focus styles for keyboard navigation */
+/* ── Focus / Accessibility ──────────────────────────────────── */
 .rr-form-input:focus-visible,
 .rr-form-select:focus-visible,
 .rr-form-textarea:focus-visible,
 .rr-btn-primary:focus-visible,
 .rr-btn-secondary:focus-visible,
 .rr-btn-upload:focus-visible,
-.rr-message-input:focus-visible,
-.rr-btn-send:focus-visible {
-  outline: 2px solid #495057;
+.rr-btn-back-nav:focus-visible,
+.rr-btn-messages:focus-visible {
+  outline: 2px solid var(--rr-coral);
   outline-offset: 2px;
 }
 
-/* Scrollbar Styling */
-.rr-messages-list::-webkit-scrollbar {
-  width: 6px;
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE
+════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1100px) {
+  .rr-refund-request-container { padding: 20px 20px 48px; }
 }
 
-.rr-messages-list::-webkit-scrollbar-track {
-  background: #f1f1f1;
-  border-radius: 3px;
+@media (max-width: 900px) {
+  .rr-refund-request-container { padding: 16px 16px 40px; }
 }
 
-.rr-messages-list::-webkit-scrollbar-thumb {
-  background: #adb5bd;
-  border-radius: 3px;
+@media (max-width: 640px) {
+  .rr-refund-request-container { padding: 12px 12px 36px; }
+
+  .rr-refund-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .rr-btn-messages { width: 100%; justify-content: center; }
+
+  .rr-radio-group { grid-template-columns: 1fr; }
+
+  .rr-refund-info-grid { grid-template-columns: 1fr; }
+
+  .rr-form-actions { flex-direction: column; }
+
+  .rr-btn-primary,
+  .rr-btn-secondary { width: 100%; }
+
+  .rr-file-previews { grid-template-columns: repeat(2, 1fr); }
+
+  .rr-status-details { padding: 14px; }
+
+  .rr-summary-details { padding: 12px 14px; }
+
+  .rr-refund-form { padding: 14px; }
+
+  .rr-card-header { padding: 12px 14px; }
 }
 
-.rr-messages-list::-webkit-scrollbar-thumb:hover {
-  background: #6c757d;
+@media (max-width: 400px) {
+  .rr-refund-request-container { padding: 10px 10px 32px; }
+  .rr-file-previews { grid-template-columns: 1fr; }
+  .rr-refund-header h1 { font-size: 15px; }
+  .rr-radio-option { padding: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-contrast: high) {
+  .rr-summary-card,
+  .rr-refund-form-card,
+  .rr-refund-status-card { border: 2px solid var(--rr-text); }
+}
+
+@media print {
+  .rr-form-actions,
+  .rr-btn-back-nav,
+  .rr-btn-messages { display: none !important; }
+
+  .rr-refund-request-container { background: #fff; padding: 0; }
+
+  .rr-summary-card,
+  .rr-refund-status-card {
+    box-shadow: none;
+    border: 1px solid #000;
+    break-inside: avoid;
+  }
 }

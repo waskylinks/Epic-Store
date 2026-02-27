@@ -90,7 +90,6 @@ function MessagesModal({
           {loading ? (
             <div className="mm-messages-loading">
                <Loader type="snake" size="md" />
-              <p>Loading messages...</p>
             </div>
           ) : messages.length === 0 ? (
             <div className="mm-no-messages">

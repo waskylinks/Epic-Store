@@ -331,7 +331,7 @@ function RefundRequest() {
   if (orderLoading) return (
     <>
       <Navbar />
-      <Loader />
+      <Loader type="snake" size="md"/>
       <Footer />
     </>
   );
