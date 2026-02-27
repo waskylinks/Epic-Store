@@ -101,7 +101,7 @@ function OrderDetails() {
       <Navbar />
 
       <div className="od-order-box">
-      <button onClick={() => navigate('/orders')} className="od-back-btn">
+      <button onClick={() => navigate('/orders/user')} className="od-back-btn">
         <FiChevronLeft /> Back to Orders
       </button>
         <div className="od-table-block">

@@ -6,6 +6,7 @@ import {
   FiMessageCircle,
 } from "react-icons/fi";
 import "../componentStyles/MessagesModal.css";
+import Loader from "./Loader";
 
 function MessagesModal({
   isOpen,
@@ -88,7 +89,7 @@ function MessagesModal({
         <div className="mm-modal-body">
           {loading ? (
             <div className="mm-messages-loading">
-              <div className="mm-loading-spinner" />
+               <Loader type="snake" size="md" />
               <p>Loading messages...</p>
             </div>
           ) : messages.length === 0 ? (
