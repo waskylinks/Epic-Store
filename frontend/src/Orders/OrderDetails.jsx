@@ -16,6 +16,7 @@ import {
   FiDollarSign,
   FiRotateCcw,
   FiDownload,
+  FiChevronLeft
 } from 'react-icons/fi';
 
 function OrderDetails() {
@@ -100,6 +101,9 @@ function OrderDetails() {
       <Navbar />
 
       <div className="od-order-box">
+      <button onClick={() => navigate('/orders')} className="od-back-btn">
+        <FiChevronLeft /> Back to Orders
+      </button>
         <div className="od-table-block">
           <h2 className="od-table-title">Order Items</h2>
           <div className="od-table-wrapper">
