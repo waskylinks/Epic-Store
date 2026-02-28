@@ -259,6 +259,8 @@ const initialState = {
   orders:        [],
   currentOrder:  null,
   totalOrders:   0,
+  totalPages:    1,
+  currentPage:   1,
   stats:         null,
 
   // Messages
@@ -323,6 +325,9 @@ const adminSlice = createSlice({
     },
     clearCurrentUser(state) {
       state.currentUser = null;
+    },
+    setPage(state, action) {
+      state.currentPage = action.payload;
     }
   },
   extraReducers: (builder) => {
@@ -337,9 +342,11 @@ const adminSlice = createSlice({
       })
       .addCase(fetchAllOrders.fulfilled, (state, action) => {
         state.loading     = false;
-        // FIX #1: Controller returns { success, orders, totalOrders, stats, ... }
+        // Controller returns { success, orders, totalOrders, currentPage, totalPages, stats }
         state.orders      = action.payload.orders      ?? [];
         state.totalOrders = action.payload.totalOrders ?? 0;
+        state.totalPages  = action.payload.totalPages  ?? 1;
+        state.currentPage = action.payload.currentPage ?? 1;
         state.stats       = action.payload.stats       ?? null;
       })
       .addCase(fetchAllOrders.rejected, (state, action) => {
@@ -692,6 +699,6 @@ const adminSlice = createSlice({
   }
 });
 
-export const { removeErrors, removeSuccess, clearCurrentOrder, clearCurrentUser } = adminSlice.actions;
+export const { removeErrors, removeSuccess, clearCurrentOrder, clearCurrentUser, setPage } = adminSlice.actions;
 
 export default adminSlice.reducer;

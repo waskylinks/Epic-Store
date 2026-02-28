@@ -1,18 +1,12 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
-// ============================================
-// BASE URL
-// ============================================
 const API_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
 // ============================================
 // ASYNC THUNKS
 // ============================================
 
-// GET /admin/products
-// Controller res: { success, products, total, totalPages, currentPage, resultPerPage }
-// Accepts optional params: { page, limit, search }
 export const fetchAdminProducts = createAsyncThunk(
   'adminProducts/fetchAll',
   async (params = {}, { rejectWithValue }) => {
@@ -30,9 +24,24 @@ export const fetchAdminProducts = createAsyncThunk(
   }
 );
 
-// GET /product/:id
-// Controller res: { success, product }
-// Populates: relatedProducts, crossSells, upsells
+// NEW: Fetch accurate aggregate counts for stat cards
+// GET /admin/products/stats
+export const fetchAdminProductStats = createAsyncThunk(
+  'adminProducts/fetchStats',
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get(`${API_URL}/admin/products/stats`, {
+        withCredentials: true,
+      });
+      return data.stats;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || 'Failed to fetch product stats'
+      );
+    }
+  }
+);
+
 export const fetchAdminProductDetails = createAsyncThunk(
   'adminProducts/fetchDetails',
   async (id, { rejectWithValue }) => {
@@ -49,9 +58,6 @@ export const fetchAdminProductDetails = createAsyncThunk(
   }
 );
 
-// POST /admin/products/create
-// Body: multipart/form-data (req.files + req.body JSON-stringified fields)
-// Controller res: { success, product }
 export const createProduct = createAsyncThunk(
   'adminProducts/create',
   async (formData, { rejectWithValue }) => {
@@ -73,9 +79,6 @@ export const createProduct = createAsyncThunk(
   }
 );
 
-// PUT /admin/product/:id
-// Body: multipart/form-data (same field rules as create)
-// Controller res: { success, product }
 export const updateProduct = createAsyncThunk(
   'adminProducts/update',
   async ({ id, formData }, { rejectWithValue }) => {
@@ -97,8 +100,6 @@ export const updateProduct = createAsyncThunk(
   }
 );
 
-// DELETE /admin/product/:id
-// Controller res: { success, message, deletedProduct: { id, name, imagesDeleted } }
 export const deleteProduct = createAsyncThunk(
   'adminProducts/delete',
   async (id, { rejectWithValue }) => {
@@ -106,11 +107,7 @@ export const deleteProduct = createAsyncThunk(
       const { data } = await axios.delete(`${API_URL}/admin/product/${id}`, {
         withCredentials: true,
       });
-      return {
-        id,
-        message: data.message,
-        deletedProduct: data.deletedProduct,
-      };
+      return { id, message: data.message, deletedProduct: data.deletedProduct };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || 'Failed to delete product'
@@ -119,23 +116,15 @@ export const deleteProduct = createAsyncThunk(
   }
 );
 
-// DELETE /admin/products/batch-delete
-// Body: { productIds: string[] }
-// Controller res: { success, message, results: { successful: [{id, name}], failed: [{id, reason}] } }
 export const deleteMultipleProducts = createAsyncThunk(
   'adminProducts/batchDelete',
   async (productIds, { rejectWithValue }) => {
     try {
       const { data } = await axios.delete(
         `${API_URL}/admin/products/batch-delete`,
-        {
-          data: { productIds },
-          withCredentials: true,
-        }
+        { data: { productIds }, withCredentials: true }
       );
-      return {
-        results: data.results,
-      };
+      return { results: data.results };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || 'Failed to batch-delete products'
@@ -144,8 +133,6 @@ export const deleteMultipleProducts = createAsyncThunk(
   }
 );
 
-// GET /admin/product/:id/structured-data
-// Controller res: { success, structuredData }
 export const fetchProductStructuredData = createAsyncThunk(
   'adminProducts/fetchStructuredData',
   async (id, { rejectWithValue }) => {
@@ -163,12 +150,6 @@ export const fetchProductStructuredData = createAsyncThunk(
   }
 );
 
-// ============================================
-// REVIEW THUNKS
-// ============================================
-
-// GET /reviews?id=:productId
-// Controller res: { success, reviews }
 export const fetchProductReviews = createAsyncThunk(
   'adminProducts/fetchReviews',
   async (productId, { rejectWithValue }) => {
@@ -186,18 +167,12 @@ export const fetchProductReviews = createAsyncThunk(
   }
 );
 
-// DELETE /reviews?productID=:productId&id=:reviewId
-// Controller uses req.query.productID and req.query.id
-// Controller res: { success, message }
 export const deleteProductReview = createAsyncThunk(
   'adminProducts/deleteReview',
   async ({ productId, reviewId }, { rejectWithValue }) => {
     try {
       await axios.delete(`${API_URL}/reviews`, {
-        params: {
-          productID: productId,
-          id: reviewId,
-        },
+        params: { productID: productId, id: reviewId },
         withCredentials: true,
       });
       return { productId, reviewId };
@@ -214,7 +189,7 @@ export const deleteProductReview = createAsyncThunk(
 // ============================================
 
 const initialState = {
-  // Full product list — all statuses (admin view)
+  // Product list
   products: [],
   productsLoading: false,
   productsError: null,
@@ -225,17 +200,24 @@ const initialState = {
   currentPage: 1,
   resultPerPage: 20,
 
-  // Single product with populated relatedProducts / crossSells / upsells
+  // Accurate aggregate stats (from /admin/products/stats endpoint)
+  // Shape: { total, published, draft, archived, inStock, lowStock,
+  //          outOfStock, discontinued, featured, onSale, bestseller, newArrival }
+  stats: null,
+  statsLoading: false,
+  statsError: null,
+
+  // Single product
   selectedProduct: null,
   selectedProductLoading: false,
   selectedProductError: null,
 
-  // JSON-LD structured data for the selected product
+  // Structured data
   structuredData: null,
   structuredDataLoading: false,
   structuredDataError: null,
 
-  // Reviews for the currently viewed product
+  // Reviews
   reviews: [],
   reviewsLoading: false,
   reviewsError: null,
@@ -255,7 +237,7 @@ const initialState = {
   deleteError: null,
   deleteSuccess: false,
 
-  // Batch delete — results shape: { successful: [{id, name}], failed: [{id, reason}] }
+  // Batch delete
   batchDeleteLoading: false,
   batchDeleteError: null,
   batchDeleteResults: null,
@@ -300,7 +282,6 @@ const adminProductSlice = createSlice({
       state.deleteReviewError   = null;
       state.deleteReviewSuccess = false;
     },
-    // Call this when navigating away from a product detail page
     clearSelectedProduct(state) {
       state.selectedProduct      = null;
       state.selectedProductError = null;
@@ -317,12 +298,31 @@ const adminProductSlice = createSlice({
       state.deleteError          = null;
       state.batchDeleteError     = null;
       state.deleteReviewError    = null;
+      state.statsError           = null;
+    },
+    // Optimistically bump stats after a create/delete (optional, avoids a re-fetch)
+    adjustStats(state, { payload }) {
+      if (!state.stats) return;
+      // payload: { delta: 1 | -1, status, inventoryStatus, isFeatured, isOnSale, ... }
+      const { delta, status, inventoryStatus, isFeatured, isOnSale, isBestseller, isNewArrival } = payload;
+      state.stats.total        += delta;
+      if (status === 'published')  state.stats.published  += delta;
+      if (status === 'draft')      state.stats.draft      += delta;
+      if (status === 'archived')   state.stats.archived   += delta;
+      if (inventoryStatus === 'InStock')      state.stats.inStock      += delta;
+      if (inventoryStatus === 'LowStock')     state.stats.lowStock     += delta;
+      if (inventoryStatus === 'OutOfStock')   state.stats.outOfStock   += delta;
+      if (inventoryStatus === 'Discontinued') state.stats.discontinued += delta;
+      if (isFeatured)   state.stats.featured   += delta;
+      if (isOnSale)     state.stats.onSale     += delta;
+      if (isBestseller) state.stats.bestseller += delta;
+      if (isNewArrival) state.stats.newArrival += delta;
     },
   },
 
   extraReducers: (builder) => {
 
-    // ── GET /admin/products ───────────────────────────────────────────────
+    // ── fetchAdminProducts ────────────────────────────────────────────────
     builder
       .addCase(fetchAdminProducts.pending, (state) => {
         state.productsLoading = true;
@@ -341,7 +341,22 @@ const adminProductSlice = createSlice({
         state.productsError   = payload;
       });
 
-    // ── GET /product/:id ──────────────────────────────────────────────────
+    // ── fetchAdminProductStats (NEW) ──────────────────────────────────────
+    builder
+      .addCase(fetchAdminProductStats.pending, (state) => {
+        state.statsLoading = true;
+        state.statsError   = null;
+      })
+      .addCase(fetchAdminProductStats.fulfilled, (state, { payload }) => {
+        state.statsLoading = false;
+        state.stats        = payload;
+      })
+      .addCase(fetchAdminProductStats.rejected, (state, { payload }) => {
+        state.statsLoading = false;
+        state.statsError   = payload;
+      });
+
+    // ── fetchAdminProductDetails ──────────────────────────────────────────
     builder
       .addCase(fetchAdminProductDetails.pending, (state) => {
         state.selectedProductLoading = true;
@@ -357,7 +372,7 @@ const adminProductSlice = createSlice({
         state.selectedProductError   = payload;
       });
 
-    // ── POST /admin/products/create ───────────────────────────────────────
+    // ── createProduct ─────────────────────────────────────────────────────
     builder
       .addCase(createProduct.pending, (state) => {
         state.createLoading = true;
@@ -369,13 +384,15 @@ const adminProductSlice = createSlice({
         state.createSuccess = true;
         state.products.unshift(payload);
         state.total += 1;
+        // Invalidate stats so next visit re-fetches accurate counts
+        state.stats = null;
       })
       .addCase(createProduct.rejected, (state, { payload }) => {
         state.createLoading = false;
         state.createError   = payload;
       });
 
-    // ── PUT /admin/product/:id ────────────────────────────────────────────
+    // ── updateProduct ─────────────────────────────────────────────────────
     builder
       .addCase(updateProduct.pending, (state) => {
         state.updateLoading = true;
@@ -391,13 +408,15 @@ const adminProductSlice = createSlice({
           state.selectedProduct = payload;
           state.structuredData  = null;
         }
+        // Status/flags may have changed — invalidate stats
+        state.stats = null;
       })
       .addCase(updateProduct.rejected, (state, { payload }) => {
         state.updateLoading = false;
         state.updateError   = payload;
       });
 
-    // ── DELETE /admin/product/:id ─────────────────────────────────────────
+    // ── deleteProduct ─────────────────────────────────────────────────────
     builder
       .addCase(deleteProduct.pending, (state) => {
         state.deleteLoading = true;
@@ -412,13 +431,14 @@ const adminProductSlice = createSlice({
         if (state.selectedProduct?._id === payload.id) {
           state.selectedProduct = null;
         }
+        state.stats = null;
       })
       .addCase(deleteProduct.rejected, (state, { payload }) => {
         state.deleteLoading = false;
         state.deleteError   = payload;
       });
 
-    // ── DELETE /admin/products/batch-delete ───────────────────────────────
+    // ── deleteMultipleProducts ────────────────────────────────────────────
     builder
       .addCase(deleteMultipleProducts.pending, (state) => {
         state.batchDeleteLoading = true;
@@ -434,13 +454,14 @@ const adminProductSlice = createSlice({
         if (state.selectedProduct && deletedIds.has(state.selectedProduct._id)) {
           state.selectedProduct = null;
         }
+        state.stats = null;
       })
       .addCase(deleteMultipleProducts.rejected, (state, { payload }) => {
         state.batchDeleteLoading = false;
         state.batchDeleteError   = payload;
       });
 
-    // ── GET /admin/product/:id/structured-data ────────────────────────────
+    // ── fetchProductStructuredData ────────────────────────────────────────
     builder
       .addCase(fetchProductStructuredData.pending, (state) => {
         state.structuredDataLoading = true;
@@ -455,7 +476,7 @@ const adminProductSlice = createSlice({
         state.structuredDataError   = payload;
       });
 
-    // ── GET /reviews?id=:productId ────────────────────────────────────────
+    // ── fetchProductReviews ───────────────────────────────────────────────
     builder
       .addCase(fetchProductReviews.pending, (state) => {
         state.reviewsLoading = true;
@@ -470,7 +491,7 @@ const adminProductSlice = createSlice({
         state.reviewsError   = payload;
       });
 
-    // ── DELETE /reviews?productID=&id= ────────────────────────────────────
+    // ── deleteProductReview ───────────────────────────────────────────────
     builder
       .addCase(deleteProductReview.pending, (state) => {
         state.deleteReviewLoading = true;
@@ -512,18 +533,17 @@ export const {
   clearDeleteReviewStatus,
   clearSelectedProduct,
   clearAllErrors,
+  adjustStats,
 } = adminProductSlice.actions;
 
 // ============================================
 // SELECTORS
 // ============================================
 
-// Product list
 export const selectAdminProducts        = (state) => state.adminProducts.products;
 export const selectAdminProductsLoading = (state) => state.adminProducts.productsLoading;
 export const selectAdminProductsError   = (state) => state.adminProducts.productsError;
 
-// Pagination
 export const selectPaginationMeta = (state) => ({
   total:         state.adminProducts.total,
   totalPages:    state.adminProducts.totalPages,
@@ -531,90 +551,64 @@ export const selectPaginationMeta = (state) => ({
   resultPerPage: state.adminProducts.resultPerPage,
 });
 
-// Selected product (fully populated)
+// Accurate aggregate stats from the /stats endpoint
+export const selectAdminProductStats        = (state) => state.adminProducts.stats;
+export const selectAdminProductStatsLoading = (state) => state.adminProducts.statsLoading;
+export const selectAdminProductStatsError   = (state) => state.adminProducts.statsError;
+
 export const selectSelectedProduct        = (state) => state.adminProducts.selectedProduct;
 export const selectSelectedProductLoading = (state) => state.adminProducts.selectedProductLoading;
 export const selectSelectedProductError   = (state) => state.adminProducts.selectedProductError;
 
-// Structured data (JSON-LD)
 export const selectStructuredData        = (state) => state.adminProducts.structuredData;
 export const selectStructuredDataLoading = (state) => state.adminProducts.structuredDataLoading;
 export const selectStructuredDataError   = (state) => state.adminProducts.structuredDataError;
 
-// Reviews
 export const selectReviews        = (state) => state.adminProducts.reviews;
 export const selectReviewsLoading = (state) => state.adminProducts.reviewsLoading;
 export const selectReviewsError   = (state) => state.adminProducts.reviewsError;
 
-// CRUD status bundles (loading + error + success)
 export const selectCreateStatus = (state) => ({
   loading: state.adminProducts.createLoading,
   error:   state.adminProducts.createError,
   success: state.adminProducts.createSuccess,
 });
-
 export const selectUpdateStatus = (state) => ({
   loading: state.adminProducts.updateLoading,
   error:   state.adminProducts.updateError,
   success: state.adminProducts.updateSuccess,
 });
-
 export const selectDeleteStatus = (state) => ({
   loading: state.adminProducts.deleteLoading,
   error:   state.adminProducts.deleteError,
   success: state.adminProducts.deleteSuccess,
 });
-
 export const selectBatchDeleteStatus = (state) => ({
   loading: state.adminProducts.batchDeleteLoading,
   error:   state.adminProducts.batchDeleteError,
   results: state.adminProducts.batchDeleteResults,
 });
-
 export const selectDeleteReviewStatus = (state) => ({
   loading: state.adminProducts.deleteReviewLoading,
   error:   state.adminProducts.deleteReviewError,
   success: state.adminProducts.deleteReviewSuccess,
 });
 
-// ── Derived selectors ──────────────────────────────────────────────────────
-
+// Derived selectors — these still work on the current page slice for
+// things like highlighting rows, but stat cards should use selectAdminProductStats.
 export const selectProductById = (id) => (state) =>
   state.adminProducts.products.find((p) => p._id === id) ?? null;
 
-export const selectPublishedProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.status === 'published');
+// DEPRECATED for stat cards — kept for backwards compat / row-level use
+export const selectPublishedProducts  = (state) => state.adminProducts.products.filter((p) => p.status === 'published');
+export const selectDraftProducts      = (state) => state.adminProducts.products.filter((p) => p.status === 'draft');
+export const selectArchivedProducts   = (state) => state.adminProducts.products.filter((p) => p.status === 'archived');
+export const selectLowStockProducts   = (state) => state.adminProducts.products.filter((p) => p.inventory?.status === 'LowStock');
+export const selectOutOfStockProducts = (state) => state.adminProducts.products.filter((p) => p.inventory?.status === 'OutOfStock');
+export const selectFeaturedProducts   = (state) => state.adminProducts.products.filter((p) => p.isFeatured);
+export const selectOnSaleProducts     = (state) => state.adminProducts.products.filter((p) => p.isOnSale);
+export const selectBestsellerProducts = (state) => state.adminProducts.products.filter((p) => p.isBestseller);
+export const selectNewArrivalProducts = (state) => state.adminProducts.products.filter((p) => p.isNewArrival);
+export const selectProductsCount      = (state) => state.adminProducts.total;
 
-export const selectDraftProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.status === 'draft');
-
-export const selectArchivedProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.status === 'archived');
-
-export const selectLowStockProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.inventory?.status === 'LowStock');
-
-export const selectOutOfStockProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.inventory?.status === 'OutOfStock');
-
-export const selectDiscontinuedProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.inventory?.status === 'Discontinued');
-
-export const selectFeaturedProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.isFeatured);
-
-export const selectBestsellerProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.isBestseller);
-
-export const selectNewArrivalProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.isNewArrival);
-
-export const selectOnSaleProducts = (state) =>
-  state.adminProducts.products.filter((p) => p.isOnSale);
-
-export const selectProductsCount = (state) => state.adminProducts.total;
-
-// ============================================
-// REDUCER
-// ============================================
 export default adminProductSlice.reducer;
