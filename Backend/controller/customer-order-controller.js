@@ -328,50 +328,6 @@ export const getTrackingInfo = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({ success: true, tracking: order.tracking });
 });
 
-// ============================================
-// RETURNS (customer-initiated)
-// ============================================
-export const requestReturn = handleAsyncError(async (req, res, next) => {
-  const { id }                       = req.params;
-  const { reason, itemsToReturn }    = req.body;
-  const userId                       = req.user._id;
-
-  if (!reason || !itemsToReturn || itemsToReturn.length === 0) {
-    return next(new HandleError('Reason and items to return are required', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (order.user.toString() !== userId.toString()) {
-    return next(new HandleError('Unauthorized', 403));
-  }
-
-  if (order.orderStatus !== 'Delivered') {
-    return next(new HandleError('Can only return delivered orders', 400));
-  }
-
-  if (order.returnInfo && order.returnInfo.status !== 'none') {
-    return next(new HandleError('Return request already exists for this order', 400));
-  }
-
-  order.returnInfo = {
-    status:      'requested',
-    reason,
-    itemsToReturn,
-    requestedAt: new Date(),
-    requestedBy: userId
-  };
-
-  await order.save();
-  await deleteCachePattern('admin_stats*');
-
-  return res.status(200).json({
-    success:    true,
-    message:    'Return request submitted successfully',
-    returnInfo: order.returnInfo
-  });
-});
 
 // ============================================
 // MESSAGES (customer side)

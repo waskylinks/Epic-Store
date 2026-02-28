@@ -20,7 +20,10 @@ import { webhookLimiter } from './middleware/rateLimiter.js';
 
 import userRoutes from './routes/user-route.js';
 import productRoutes from './routes/products-route.js';
-import orderRoutes from './routes/order-routes.js';
+import customerOrderRoutes from './routes/customer-order-routes.js';
+import adminOrderRoutes from './routes/admin-order-routes.js';
+import refundRoutes from './routes/refund-routes.js';
+import returnRoutes from './routes/return-routes.js';;
 import oauthRoutes from './routes/oauth-routes.js';
 import paymentRoutes from './routes/payment-routes.js';
 import receiptRoutes from './routes/receipts-routes.js';
@@ -170,9 +173,14 @@ app.use(trackAttribution);
 /* ================= ROUTES ================= */
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
-app.use('/api/v1', orderRoutes);
 app.use('/api/v1/oauth', oauthRoutes);
 app.use('/api/v1/payment', paymentRoutes);
+
+app.use('/api/v1', customerOrderRoutes);
+app.use('/api/v1', adminOrderRoutes);
+app.use('/api/v1', refundRoutes);
+app.use('/api/v1', returnRoutes);
+
 app.use('/api/v1/receipts', receiptRoutes);
 app.use('/api/v1/wishlist', wishlistRoutes);
 app.use('/api/v1/cart', cartRoutes);

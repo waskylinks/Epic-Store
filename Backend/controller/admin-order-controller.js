@@ -722,51 +722,6 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({ success: true, message: 'Shipment updated successfully', shipment });
 });
 
-// ============================================
-// RETURNS (admin review)
-// ============================================
-export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
-  const { id }                              = req.params;
-  const { action, restockFee = 0, adminNote = '' } = req.body;
-
-  if (!['approve', 'reject'].includes(action)) {
-    return next(new HandleError('Action must be approve or reject', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (!order.returnInfo || order.returnInfo.status !== 'requested') {
-    return next(new HandleError('No pending return request found', 400));
-  }
-
-  if (action === 'approve') {
-    order.returnInfo.status      = 'approved';
-    order.returnInfo.approvedAt  = new Date();
-    order.returnInfo.approvedBy  = req.user._id;
-    order.returnInfo.restockFee  = restockFee;
-    order.returnInfo.rmaNumber   = `RMA-${Date.now()}`;
-    if (adminNote) order.returnInfo.adminNote = adminNote;
-    await order.save();
-    return res.status(200).json({
-      success:    true,
-      message:    'Return approved. RMA number generated.',
-      returnInfo: order.returnInfo
-    });
-  } else {
-    order.returnInfo.status     = 'rejected';
-    order.returnInfo.approvedAt = new Date();
-    order.returnInfo.approvedBy = req.user._id;
-    if (adminNote) order.returnInfo.adminNote = adminNote;
-    await order.save();
-    return res.status(200).json({
-      success:    true,
-      message:    'Return request rejected',
-      returnInfo: order.returnInfo
-    });
-  }
-});
-
 export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   const { id }                        = req.params;
   const { status, inspectionNotes }   = req.body;
