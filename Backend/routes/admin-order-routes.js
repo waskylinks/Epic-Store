@@ -30,70 +30,32 @@ import {
 import upload from '../middleware/multer.js';
 
 const router = express.Router();
-
-// Shorthand — every admin route requires these two middlewares
 const adminAuth = [verifyUserAuth, roleBaseAccess('admin')];
 
-/* ======================================================
-   ORDER LISTING & DETAIL
-====================================================== */
-
-// NOTE: specific paths (/fraud-review, /unread-messages) must come BEFORE /:id
-// to prevent Express matching the literal strings as a mongo :id
-
+// Specific paths BEFORE /:id wildcard
 router.get('/admin/orders/fraud-review',     ...adminAuth, getPendingFraudReviews);
 router.get('/admin/orders/unread-messages',  ...adminAuth, getOrdersWithUnreadMessages);
+
+// Orders — all plural, consistent
 router.get('/admin/orders',                  ...adminAuth, getAllOrders);
-router.get('/admin/order/:id',               ...adminAuth, getSingleOrder);
-
-/* ======================================================
-   ORDER STATUS, UPDATE, DELETE
-====================================================== */
-
-router.put('/admin/order/:id',               ...adminAuth, updateOrder);
-router.delete('/admin/order/:id',            ...adminAuth, deleteOrder);
+router.get('/admin/orders/:id',              ...adminAuth, getSingleOrder);
+router.put('/admin/orders/:id',              ...adminAuth, updateOrder);
+router.delete('/admin/orders/:id',           ...adminAuth, deleteOrder);
 router.put('/admin/orders/:id/cancel',       ...adminAuth, cancelOrderWithRefund);
-router.put('/admin/order/:id/cancel-simple', ...adminAuth, cancelOrderWithRefund);
 
-/* ======================================================
-   ADMIN NOTES
-====================================================== */
+// Notes
+router.post('/admin/orders/:id/notes',       ...adminAuth, upload.array('attachments', 5), validateOrderNote, addAdminOrderNote);
+router.get('/admin/orders/:id/notes',        ...adminAuth, getAdminOrderNotes);
+router.put('/admin/orders/:id/notes/:noteId',...adminAuth, validateOrderNote, editAdminOrderNote);
+router.delete('/admin/orders/:id/notes/:noteId', ...adminAuth, deleteAdminOrderNote);
 
-router.post(
-  '/admin/orders/:id/notes',
-  ...adminAuth,
-  upload.array('attachments', 5),
-  validateOrderNote,
-  addAdminOrderNote
-);
-router.get('/admin/orders/:id/notes',              ...adminAuth, getAdminOrderNotes);
-router.put('/admin/orders/:id/notes/:noteId',      ...adminAuth, validateOrderNote, editAdminOrderNote);
-router.delete('/admin/orders/:id/notes/:noteId',   ...adminAuth, deleteAdminOrderNote);
+// Tracking & Shipments — PUT not POST
+router.put('/admin/orders/:id/tracking',     ...adminAuth, sanitizeInput, validateTrackingInfo, addTrackingInfo);
+router.post('/admin/orders/:id/shipments',   ...adminAuth, createShipment);
+router.put('/admin/orders/:id/shipments/:shipmentId', ...adminAuth, updateShipmentStatus);
 
-/* ======================================================
-   TRACKING & SHIPMENTS
-====================================================== */
-
-router.post(
-  '/admin/orders/:id/tracking',
-  ...adminAuth,
-  sanitizeInput,
-  validateTrackingInfo,
-  addTrackingInfo
-);
-router.post('/admin/orders/:id/shipments',                     ...adminAuth, createShipment);
-router.put('/admin/orders/:id/shipments/:shipmentId',          ...adminAuth, updateShipmentStatus);
-
-/* ======================================================
-   FRAUD REVIEW
-====================================================== */
-
+// Fraud & Audit
 router.put('/admin/orders/:id/fraud-review', ...adminAuth, validateFraudReview, reviewFraudCheck);
-
-/* ======================================================
-   AUDIT LOG
-====================================================== */
-
 router.get('/admin/orders/:id/audit',        ...adminAuth, getAuditLog);
 
 export default router;

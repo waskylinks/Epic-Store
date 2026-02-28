@@ -3,7 +3,7 @@ import HandleError from '../utils/handleError.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import APIFunctionality from '../utils/apiFunctionality.js';
 import { deleteMultipleFromCloudinary } from '../utils/cloudinaryUpload.js';
-import { deleteCachePattern } from '../utils/redis.js';
+import { deleteCachePattern, getCache, setCache } from '../utils/redis.js';
 import seoService from '../Services/seo.service.js';
 import { RESERVED_SLUGS } from '../utils/reserved-slugs.js';
 import { slugify } from '../utils/slugify.js';
@@ -55,6 +55,62 @@ const withProductPopulate = (query) =>
     .populate('relatedProducts', 'name pricing images slug ratings')
     .populate('crossSells', 'name pricing images slug')
     .populate('upsells', 'name pricing images slug');
+
+    const ADMIN_LIST_SELECT = [
+  'name',
+  'slug',
+  'brand',
+  'category',
+  'status',
+  'pricing',
+  'images',           // only isPrimary + url + alt are used — but lean keeps it small
+  'inventory.stock',
+  'inventory.sku',
+  'inventory.status',
+  'inventory.lowStockThreshold',
+  'ratings',
+  'numOfReviews',
+  'isFeatured',
+  'isBestseller',
+  'isNewArrival',
+  'isOnSale',
+  'createdAt',
+].join(' ');
+
+
+const SORT_MAP = {
+  createdAt_desc:           { createdAt: -1 },
+  createdAt_asc:            { createdAt:  1 },
+  name_asc:                 { name:  1 },
+  name_desc:                { name: -1 },
+  'pricing.regular_asc':    { 'pricing.regular':  1 },
+  'pricing.regular_desc':   { 'pricing.regular': -1 },
+  ratings_desc:             { ratings: -1 },
+  'inventory.stock_asc':    { 'inventory.stock':  1 },
+};
+
+
+const VALID_STATUSES   = new Set(['draft', 'published', 'archived']);
+const VALID_INV_STATUS = new Set(['InStock', 'LowStock', 'OutOfStock', 'Discontinued']);
+const VALID_CATEGORIES = new Set([
+  'Electronics', 'Clothing & Apparel', 'Home & Living',
+  'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'
+]);
+
+// ── Cache TTL config ─────────────────────────────────────────────────────────
+// Short TTL because admins expect near-real-time data.
+// Set to 0 to disable caching entirely (e.g. during heavy write periods).
+const ADMIN_PRODUCTS_CACHE_TTL = 30; // seconds
+
+// ── Build a deterministic cache key from the request params ─────────────────
+const buildCacheKey = (query) => {
+  const { page = 1, limit = 20, search = '', status = '', inventoryStatus = '', category = '', sort = 'createdAt_desc' } = query;
+  return `admin_products_list:p${page}:l${limit}:s${encodeURIComponent(search)}:st${status}:inv${inventoryStatus}:cat${encodeURIComponent(category)}:srt${sort}`;
+};
+
+const STATS_CACHE_KEY = 'admin_products_stats';
+const STATS_CACHE_TTL = 60; // seconds — slightly longer, counts change less often
+
 
 // ============================================
 // GET ALL PRODUCTS
@@ -453,59 +509,132 @@ export const deleteReview = handleAsyncError(async (req, res, next) => {
   res.status(200).json({ success: true, message: 'Review deleted successfully' });
 });
 
-// ============================================
-// ADMIN — GET ALL PRODUCTS
-// ============================================
 
-const SORT_MAP = {
-  createdAt_desc:           { createdAt: -1 },
-  createdAt_asc:            { createdAt:  1 },
-  name_asc:                 { name:  1 },
-  name_desc:                { name: -1 },
-  'pricing.regular_asc':    { 'pricing.regular':  1 },
-  'pricing.regular_desc':   { 'pricing.regular': -1 },
-  ratings_desc:             { ratings: -1 },
-  'inventory.stock_asc':    { 'inventory.stock':  1 },
-};
 
-const VALID_STATUSES   = new Set(['draft', 'published', 'archived']);
-const VALID_INV_STATUS = new Set(['InStock', 'LowStock', 'OutOfStock', 'Discontinued']);
-const VALID_CATEGORIES = new Set([
-  'Electronics', 'Clothing & Apparel', 'Home & Living',
-  'Sports & Outdoors', 'Beauty & Personal Care', 'Books & Media', 'Food & Beverages'
-]);
+// ============================================
+// ADMIN — GET ALL PRODUCTS (OPTIMIZED)
+// ============================================
 
 export const getAdminProducts = handleAsyncError(async (req, res, next) => {
   const page  = Math.max(Number(req.query.page)  || 1,  1);
   const limit = Math.min(Number(req.query.limit) || 20, 100);
   const skip  = (page - 1) * limit;
 
+  // ── Try cache first ──────────────────────────────────────────────────────
+  const cacheKey = buildCacheKey(req.query);
+  try {
+    const cached = await getCache(cacheKey);
+    if (cached) {
+      return res.status(200).json({ ...cached, fromCache: true });
+    }
+  } catch {
+    // Cache miss / Redis unavailable — continue to DB
+  }
+
+  // ── Build filter ─────────────────────────────────────────────────────────
   const filter = {};
 
   const search = req.query.search?.trim();
   if (search) filter.$text = { $search: search };
 
   const { status, inventoryStatus, category } = req.query;
-
-  if (status          && VALID_STATUSES.has(status))             filter.status               = status;
-  if (inventoryStatus && VALID_INV_STATUS.has(inventoryStatus))  filter['inventory.status']  = inventoryStatus;
-  if (category        && VALID_CATEGORIES.has(category))         filter.category             = category;
+  if (status          && VALID_STATUSES.has(status))            filter.status              = status;
+  if (inventoryStatus && VALID_INV_STATUS.has(inventoryStatus)) filter['inventory.status'] = inventoryStatus;
+  if (category        && VALID_CATEGORIES.has(category))        filter.category            = category;
 
   const sort = SORT_MAP[req.query.sort] || SORT_MAP.createdAt_desc;
 
+  // ── Query DB ─────────────────────────────────────────────────────────────
+  // .lean() returns plain JS objects instead of Mongoose documents → ~3× faster,
+  // much less memory. Safe here because we're only reading, not calling methods.
   const [products, total] = await Promise.all([
-    Product.find(filter).sort(sort).skip(skip).limit(limit),
+    Product
+      .find(filter)
+      .select(ADMIN_LIST_SELECT)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean(),
     Product.countDocuments(filter),
   ]);
 
-  res.status(200).json({
+  const payload = {
     success:       true,
     products,
     total,
     totalPages:    Math.ceil(total / limit),
     currentPage:   page,
     resultPerPage: limit,
-  });
+  };
+
+  // ── Populate cache (fire-and-forget) ─────────────────────────────────────
+  // Only cache unfiltered/simple queries; skip text-search results (they're
+  // rarely repeated and the TTL is short anyway, so caching everything is fine).
+  try {
+    await setCache(cacheKey, payload, ADMIN_PRODUCTS_CACHE_TTL);
+  } catch {
+    // Redis write failure must never break the response
+  }
+
+  res.status(200).json(payload);
+});
+
+// ============================================
+// ADMIN — GET PRODUCT STATS 
+// ============================================
+
+export const getAdminProductStats = handleAsyncError(async (req, res) => {
+  // ── Try cache ─────────────────────────────────────────────────────────────
+  try {
+    const cached = await getCache(STATS_CACHE_KEY);
+    if (cached) return res.status(200).json({ ...cached, fromCache: true });
+  } catch { /* continue */ }
+
+  // ── Single aggregation — one round-trip for all counts ────────────────────
+  const [result] = await Product.aggregate([
+    {
+      $facet: {
+        total:        [{ $count: 'n' }],
+        published:    [{ $match: { status: 'published' }    }, { $count: 'n' }],
+        draft:        [{ $match: { status: 'draft' }        }, { $count: 'n' }],
+        archived:     [{ $match: { status: 'archived' }     }, { $count: 'n' }],
+        inStock:      [{ $match: { 'inventory.status': 'InStock' }      }, { $count: 'n' }],
+        lowStock:     [{ $match: { 'inventory.status': 'LowStock' }     }, { $count: 'n' }],
+        outOfStock:   [{ $match: { 'inventory.status': 'OutOfStock' }   }, { $count: 'n' }],
+        discontinued: [{ $match: { 'inventory.status': 'Discontinued' } }, { $count: 'n' }],
+        featured:     [{ $match: { isFeatured: true }    }, { $count: 'n' }],
+        onSale:       [{ $match: { isOnSale: true }      }, { $count: 'n' }],
+        bestseller:   [{ $match: { isBestseller: true }  }, { $count: 'n' }],
+        newArrival:   [{ $match: { isNewArrival: true }  }, { $count: 'n' }],
+      },
+    },
+  ]);
+
+  // $facet returns arrays; extract the first element's count (or 0)
+  const extract = (arr) => arr?.[0]?.n ?? 0;
+
+  const stats = {
+    total:        extract(result.total),
+    published:    extract(result.published),
+    draft:        extract(result.draft),
+    archived:     extract(result.archived),
+    inStock:      extract(result.inStock),
+    lowStock:     extract(result.lowStock),
+    outOfStock:   extract(result.outOfStock),
+    discontinued: extract(result.discontinued),
+    featured:     extract(result.featured),
+    onSale:       extract(result.onSale),
+    bestseller:   extract(result.bestseller),
+    newArrival:   extract(result.newArrival),
+  };
+
+  const payload = { success: true, stats };
+
+  try {
+    await setCache(STATS_CACHE_KEY, payload, STATS_CACHE_TTL);
+  } catch { /* continue */ }
+
+  res.status(200).json(payload);
 });
 
 // ============================================

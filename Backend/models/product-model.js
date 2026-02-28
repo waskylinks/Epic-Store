@@ -455,6 +455,18 @@ productSchema.index({
 productSchema.index({ category: 1, status: 1, createdAt: -1 });
 productSchema.index({ status: 1, isFeatured: 1, ratings: -1 });
 productSchema.index({ brand: 1, status: 1, ratings: -1 });
+productSchema.index({ createdAt: -1, _id: -1 });
+productSchema.index({ status: 1, createdAt: -1 });
+productSchema.index({ 'inventory.status': 1, createdAt: -1 });
+productSchema.index({ status: 1, 'inventory.status': 1, createdAt: -1 });
+productSchema.index({ status: 1, 'pricing.regular': 1 });
+productSchema.index({ status: 1, ratings: -1 });
+productSchema.index({ status: 1, 'inventory.stock': 1 });
+productSchema.index({ isFeatured: 1 });
+productSchema.index({ isOnSale: 1 });
+productSchema.index({ isBestseller: 1 });
+productSchema.index({ isNewArrival: 1 });
+
 
 // ============================================
 // PRE-SAVE MIDDLEWARE

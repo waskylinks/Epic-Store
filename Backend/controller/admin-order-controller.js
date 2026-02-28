@@ -290,12 +290,13 @@ export const updateOrder = handleAsyncError(async (req, res, next) => {
     newValue: status
   }, { note });
 
+  console.log(`[Order Update] Order ${order._id} status changed from ${oldStatus} to ${status} by admin ${req.user._id}`);
   await order.save();
-  await Promise.all([
-    deleteCachePattern('admin_stats*'),
-    deleteCachePattern('fulfillment_analytics*'),
-    deleteCachePattern('customer_analytics*')
-  ]);
+  Promise.all([
+  deleteCachePattern('admin_stats*'),
+  deleteCachePattern('fulfillment_analytics*'),
+  deleteCachePattern('customer_analytics*')
+]).catch(err => console.error('[Cache] Order cache invalidation failed:', err.message));
 
   // Repopulate so frontend receives full order with user/product fields intact
   await order.populate('user',               'firstName lastName email phone');
@@ -326,7 +327,8 @@ export const deleteOrder = handleAsyncError(async (req, res, next) => {
   }
 
   await order.deleteOne();
-  await deleteCachePattern('admin_stats*');
+  deleteCachePattern('admin_stats*')
+  .catch(err => console.error('[Cache] Order cache invalidation failed:', err.message));
 
   return res.status(200).json({ success: true, message: 'Order deleted successfully' });
 });
@@ -479,10 +481,10 @@ export const cancelOrderWithRefund = handleAsyncError(async (req, res, next) => 
   });
 
   await order.save();
-  await Promise.all([
+    Promise.all([
     deleteCachePattern('admin_stats*'),
     deleteCachePattern('cancellation_analytics*')
-  ]);
+  ]).catch(err => console.error('[Cache] Order cache invalidation failed:', err.message));
 
   // Build a meaningful response message
   let message = 'Order cancelled successfully';
@@ -677,11 +679,11 @@ export const addTrackingInfo = handleAsyncError(async (req, res, next) => {
   }
 
   await order.save();
-  await Promise.all([
+  Promise.all([
     deleteCachePattern('admin_stats*'),
     deleteCachePattern('fulfillment_analytics*'),
     deleteCachePattern('shipping_carriers*')
-  ]);
+  ]).catch(err => console.error('[Cache] Order cache invalidation failed:', err.message));
 
   // Repopulate for consistent response shape
   await order.populate('user',               'firstName lastName email phone');
@@ -749,10 +751,10 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   if (status === 'Delivered') shipment.deliveredAt = new Date();
 
   await order.save();
-  await Promise.all([
+  Promise.all([
     deleteCachePattern('fulfillment_analytics*'),
     deleteCachePattern('shipping_carriers*')
-  ]);
+  ]).catch(err => console.error('[Cache] Order cache invalidation failed:', err.message));
 
   return res.status(200).json({ success: true, message: 'Shipment updated successfully', shipment });
 });
@@ -921,10 +923,10 @@ export const reviewFraudCheck = handleAsyncError(async (req, res, next) => {
   }
 
   await order.save();
-  await Promise.all([
+  Promise.all([
     deleteCachePattern('admin_stats*'),
     deleteCachePattern('fraud_analytics*')
-  ]);
+  ]).catch(err => console.error('[Cache] Order cache invalidation failed:', err.message));
 
   return res.status(200).json({ success: true, message: `Order ${decision}`, order });
 });
