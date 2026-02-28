@@ -148,9 +148,12 @@ export const getOrdersWithUnreadMessages = createAsyncThunk(
 
 export const fetchAllUsers = createAsyncThunk(
   'admin/getAllUsers',
-  async (_, { rejectWithValue }) => {
+  async (params = {}, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${BASE}/admin/users`);
+      const query = new URLSearchParams(
+        Object.fromEntries(Object.entries(params).filter(([, v]) => v !== '' && v != null))
+      ).toString();
+      const { data } = await axios.get(`${BASE}/admin/users${query ? `?${query}` : ''}`);
       return data;
     } catch (err) {
       return rejectWithValue(err.response?.data?.message || 'Failed to fetch users');
@@ -270,6 +273,11 @@ const initialState = {
   // Users
   users:          [],
   currentUser:    null,
+  userTotal:      0,
+  userTotalPages: 1,
+  userCurrentPage:1,
+  userResultPerPage: 20,
+  userStats:      null,
 
   // Reviews
   reviews:        [],
@@ -284,6 +292,8 @@ const initialState = {
   loading:        false,
   messageLoading: false,
   userLoading:    false,
+  userSuccess:    false,  
+  userError:      null,
 
   // Flags
   success:        false,
@@ -328,7 +338,14 @@ const adminSlice = createSlice({
     },
     setPage(state, action) {
       state.currentPage = action.payload;
-    }
+    },
+    clearUserStatus(state) {
+      state.userSuccess = false;
+      state.userError   = null;
+    },
+    clearUserStats(state) {
+      state.userStats = null;
+    },
   },
   extraReducers: (builder) => {
 
@@ -536,21 +553,30 @@ const adminSlice = createSlice({
       });
 
     // ─────────────────────────────────────────────────────────────
-    // getAllUsers
+    // fetchAllUsers
     // ─────────────────────────────────────────────────────────────
-    builder
-      .addCase(fetchAllUsers.pending, (state) => {
-        state.userLoading = true;
-        state.error       = null;
-      })
-      .addCase(fetchAllUsers.fulfilled, (state, action) => {
-        state.userLoading = false;
-        state.users       = action.payload.users ?? [];
-      })
-      .addCase(fetchAllUsers.rejected, (state, action) => {
-        state.userLoading = false;
-        state.error       = action.payload;
-      });
+
+   builder
+    .addCase(fetchAllUsers.pending, (state) => {
+      state.userLoading = true;
+      state.userError   = null;
+    })
+    .addCase(fetchAllUsers.fulfilled, (state, action) => {
+      state.userLoading       = false;
+      state.users             = action.payload.users        ?? [];
+      state.userTotal         = action.payload.total        ?? 0;
+      state.userTotalPages    = action.payload.totalPages   ?? 1;
+      state.userCurrentPage   = action.payload.currentPage  ?? 1;
+      state.userResultPerPage = action.payload.resultPerPage ?? 20;
+      // stats only returned on base query page 1 — preserve existing if null
+      if (action.payload.stats) {
+        state.userStats = action.payload.stats;
+      }
+    })
+    .addCase(fetchAllUsers.rejected, (state, action) => {
+      state.userLoading = false;
+      state.userError   = action.payload;
+    });
 
     // ─────────────────────────────────────────────────────────────
     // getSingleUser
@@ -574,15 +600,16 @@ const adminSlice = createSlice({
     // ─────────────────────────────────────────────────────────────
     // updateUserRole
     // ─────────────────────────────────────────────────────────────
+
     builder
       .addCase(updateUserRole.pending, (state) => {
         state.userLoading = true;
-        state.error       = null;
+        state.userError   = null;
+        state.userSuccess = false;
       })
       .addCase(updateUserRole.fulfilled, (state, action) => {
         state.userLoading = false;
-        state.success     = true;
-        // FIX #7: Controller returns { success, user } — not user at top level
+        state.userSuccess = true;            // ← dedicated flag, not shared state.success
         const updated = action.payload.user;
         if (updated?._id) {
           const index = state.users.findIndex(u => u._id === updated._id);
@@ -595,11 +622,14 @@ const adminSlice = createSlice({
           }
           state.currentUser = updated;
         }
+        // Invalidate stats so they re-fetch on next base query
+        state.userStats = null;
       })
       .addCase(updateUserRole.rejected, (state, action) => {
         state.userLoading = false;
-        state.error       = action.payload;
+        state.userError   = action.payload;
       });
+
 
     // ─────────────────────────────────────────────────────────────
     // deleteUser
@@ -607,16 +637,19 @@ const adminSlice = createSlice({
     builder
       .addCase(deleteUser.pending, (state) => {
         state.userLoading = true;
-        state.error       = null;
+        state.userError   = null;
+        state.userSuccess = false;
       })
       .addCase(deleteUser.fulfilled, (state, action) => {
         state.userLoading = false;
-        state.success     = true;
+        state.userSuccess = true;           // ← dedicated flag
         state.users       = state.users.filter(u => u._id !== action.payload.id);
+        state.userTotal   = Math.max(0, state.userTotal - 1);
+        state.userStats   = null;
       })
       .addCase(deleteUser.rejected, (state, action) => {
         state.userLoading = false;
-        state.error       = action.payload;
+        state.userError   = action.payload;
       });
 
     // ─────────────────────────────────────────────────────────────
@@ -699,6 +732,6 @@ const adminSlice = createSlice({
   }
 });
 
-export const { removeErrors, removeSuccess, clearCurrentOrder, clearCurrentUser, setPage } = adminSlice.actions;
+export const { removeErrors, removeSuccess, clearCurrentOrder, clearCurrentUser, setPage, clearUserStatus, clearUserStats  } = adminSlice.actions;
 
 export default adminSlice.reducer;
