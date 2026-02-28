@@ -11,6 +11,7 @@ import {
     getProductReviews, 
     deleteReview,
     getProductBySlug,
+    getAdminProductStats,
     getProductStructuredData
 } from '../controller/product-controller.js';
 import {
@@ -113,6 +114,9 @@ router.route('/product/:id')
   .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getProductDetails);
 
 router.route('/admin/products')
+  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProducts);
+
+router.route('/admin/products/stats')
   .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProducts);
 
 router.route('/admin/products/create')
