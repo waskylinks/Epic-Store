@@ -117,7 +117,7 @@ router.route('/admin/products')
   .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProducts);
 
 router.route('/admin/products/stats')
-  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProducts);
+  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProductStats);
 
 router.route('/admin/products/create')
   .post(

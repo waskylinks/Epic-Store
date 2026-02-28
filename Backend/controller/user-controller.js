@@ -23,6 +23,8 @@ const invalidateCaches = async () => {
   }
 };
 
+const USER_LIST_SELECT = 'firstName lastName email role avatar.url authProvider emailVerified createdAt';
+
 // ============================================
 // REGISTER NEW USER (WITH EMAIL VERIFICATION)
 // ============================================
@@ -457,8 +459,80 @@ export const updateProfile = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 export const getUsersList = handleAsyncError(async (req, res, next) => {
-  const users = await User.find();
-  res.status(200).json({ success: true, users });
+  const page  = Math.max(Number(req.query.page)  || 1, 1);
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+  const skip  = (page - 1) * limit;
+
+  const filter = {};
+
+  const search = req.query.search?.trim();
+  if (search) {
+    filter.$or = [
+      { firstName: { $regex: search, $options: 'i' } },
+      { lastName:  { $regex: search, $options: 'i' } },
+      { email:     { $regex: search, $options: 'i' } },
+    ];
+  }
+
+  const { role, emailVerified, authProvider } = req.query;
+  if (role          && ['user', 'admin', 'superAdmin'].includes(role)) filter.role          = role;
+  if (authProvider  && ['local', 'google', 'facebook'].includes(authProvider))  filter.authProvider  = authProvider;
+  if (emailVerified !== undefined) filter.emailVerified = emailVerified === 'true';
+
+  const sortOptions = {
+    newest:    { createdAt: -1 },
+    oldest:    { createdAt:  1 },
+    name_asc:  { firstName:  1 },
+    name_desc: { firstName: -1 },
+  };
+  const sort = sortOptions[req.query.sort] || sortOptions.newest;
+
+  const [users, total] = await Promise.all([
+    User.find(filter)
+      .select(USER_LIST_SELECT)
+      .sort(sort)
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    User.countDocuments(filter),
+  ]);
+
+  // Aggregate stats in one pass — only on unfiltered first page load
+  // (page === 1 && no filters applied) to avoid extra DB round-trips on every page change
+  let stats = null;
+  const isBaseQuery = !search && !role && !emailVerified && !authProvider;
+  if (isBaseQuery && page === 1) {
+    const [result] = await User.aggregate([
+      {
+        $facet: {
+          total:      [{ $count: 'n' }],
+          admins:     [{ $match: { role: 'admin' } },      { $count: 'n' }],
+          superAdmins:[{ $match: { role: 'superAdmin' } }, { $count: 'n' }],
+          verified:   [{ $match: { emailVerified: true } },{ $count: 'n' }],
+          google:     [{ $match: { authProvider: 'google' } }, { $count: 'n' }],
+        }
+      }
+    ]);
+    const ex = (arr) => arr?.[0]?.n ?? 0;
+    stats = {
+      total:       ex(result.total),
+      admins:      ex(result.admins),
+      superAdmins: ex(result.superAdmins),
+      verified:    ex(result.verified),
+      google:      ex(result.google),
+    };
+    stats.regularUsers = stats.total - stats.admins - stats.superAdmins;
+  }
+
+  res.status(200).json({
+    success: true,
+    users,
+    total,
+    totalPages: Math.ceil(total / limit),
+    currentPage: page,
+    resultPerPage: limit,
+    stats,
+  });
 });
 
 // ============================================
@@ -480,15 +554,39 @@ export const getSingleUser = handleAsyncError(async (req, res, next) => {
 export const updateUserRole = handleAsyncError(async (req, res, next) => {
   const { role } = req.body;
   const targetUserId = req.params.id;
+  const requestingUser = req.user; // set by verifyUserAuth middleware
 
-  if (role === 'user') {
-    const adminCount = await User.countDocuments({ role: 'admin' });
-    const targetUser = await User.findById(targetUserId);
+  const VALID_ROLES = ['user', 'admin', 'superAdmin'];
+  if (!VALID_ROLES.includes(role)) {
+    return next(new HandleError(`Invalid role. Must be one of: ${VALID_ROLES.join(', ')}`, 400));
+  }
 
-    if (!targetUser) return next(new HandleError("User not found", 404));
+  const targetUser = await User.findById(targetUserId);
+  if (!targetUser) return next(new HandleError('User not found', 404));
 
-    if (targetUser.role === 'admin' && adminCount === 1) {
-      return next(new HandleError("Cannot downgrade the last admin", 403));
+  // Prevent self-demotion by a superAdmin
+  if (
+    String(targetUser._id) === String(requestingUser._id) &&
+    requestingUser.role === 'superAdmin' &&
+    role !== 'superAdmin'
+  ) {
+    return next(new HandleError('A superAdmin cannot change their own role', 403));
+  }
+
+  // Only superAdmin can touch admin or superAdmin accounts
+  const isElevatedTarget = ['admin', 'superAdmin'].includes(targetUser.role);
+  const isElevatedRole   = ['admin', 'superAdmin'].includes(role);
+  if ((isElevatedTarget || isElevatedRole) && requestingUser.role !== 'superAdmin') {
+    return next(new HandleError('Only a superAdmin can manage admin and superAdmin roles', 403));
+  }
+
+  // Guard: cannot remove the last privileged user
+  if (isElevatedTarget && role === 'user') {
+    const privilegedCount = await User.countDocuments({
+      role: { $in: ['admin', 'superAdmin'] },
+    });
+    if (privilegedCount <= 1) {
+      return next(new HandleError('Cannot demote the last admin/superAdmin account', 403));
     }
   }
 
@@ -496,14 +594,15 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
     targetUserId,
     { role },
     { new: true, runValidators: true }
-  );
+  ).select(USER_LIST_SELECT);
 
-  if (!updatedUser) return next(new HandleError("User not found", 404));
+  if (!updatedUser) return next(new HandleError('User not found', 404));
 
   await invalidateCaches();
 
   res.status(200).json({ success: true, user: updatedUser });
 });
+
 
 // ============================================
 // ADMIN — DELETE USER

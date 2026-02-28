@@ -91,14 +91,12 @@ router.route("/profile/update")
 
 // Get all users
 router.route("/admin/users")
-  .get(verifyUserAuth, roleBaseAccess('admin'), getUsersList);
-
-
+  .get(verifyUserAuth, roleBaseAccess('admin', 'superAdmin'), getUsersList);
 
 // Manage specific user
 router.route("/admin/user/:id")
-  .get(verifyUserAuth, roleBaseAccess('admin'), getSingleUser)
-  .put(verifyUserAuth, roleBaseAccess('admin'), updateUserRole)
-  .delete(verifyUserAuth, roleBaseAccess('admin'), deleteUser);
+  .get(verifyUserAuth,    roleBaseAccess('admin', 'superAdmin'), getSingleUser)
+  .put(verifyUserAuth,    roleBaseAccess('admin', 'superAdmin'), updateUserRole)
+  .delete(verifyUserAuth, roleBaseAccess('admin', 'superAdmin'), deleteUser);
 
 export default router;

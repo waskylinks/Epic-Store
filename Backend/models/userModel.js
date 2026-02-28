@@ -59,7 +59,7 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["user", "admin"],
+      enum: ["user", "admin", "superAdmin"],
       default: "user"
     },
 
@@ -124,6 +124,8 @@ userSchema.index({ authProvider: 1 });
 userSchema.index({ createdAt: 1 });
 userSchema.index({ firstName: 1, lastName: 1 });
 userSchema.index({ "wishlist.product": 1 });
+userSchema.index({ role: 1 });
+userSchema.index({ emailVerified: 1 });
 
 /* ================= MIDDLEWARE ================= */
 
