@@ -522,7 +522,6 @@ export default {
   getOrderNotes,
   editOrderNote,
   getTrackingInfo,
-  requestReturn,
   addOrderMessage,
   getOrderMessages,
   markOrderMessagesRead,

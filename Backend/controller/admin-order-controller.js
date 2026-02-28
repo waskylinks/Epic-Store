@@ -722,51 +722,6 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({ success: true, message: 'Shipment updated successfully', shipment });
 });
 
-export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
-  const { id }                        = req.params;
-  const { status, inspectionNotes }   = req.body;
-
-  const validStatuses = ['in_transit', 'received', 'inspected', 'completed'];
-  if (!validStatuses.includes(status)) {
-    return next(new HandleError('Invalid return status', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (!order.returnInfo || order.returnInfo.status === 'none') {
-    return next(new HandleError('No return request found', 400));
-  }
-
-  order.returnInfo.status = status;
-  if (status === 'received') order.returnInfo.receivedAt = new Date();
-
-  if (status === 'inspected') {
-    order.returnInfo.inspectedAt  = new Date();
-    order.returnInfo.inspectedBy  = req.user._id;
-    if (inspectionNotes) order.returnInfo.inspectionNotes = inspectionNotes;
-  }
-
-  if (status === 'completed') {
-    order.returnInfo.completedAt = new Date();
-    for (const item of order.returnInfo.itemsToReturn) {
-      const product = await Product.findById(item.product);
-      if (product && item.condition !== 'damaged') {
-        if (product.inventory?.stock !== undefined) {
-          product.inventory.stock += item.quantity;
-        }
-        await product.save({ validateBeforeSave: false });
-      }
-    }
-  }
-
-  await order.save();
-  return res.status(200).json({
-    success:    true,
-    message:    `Return status updated to ${status}`,
-    returnInfo: order.returnInfo
-  });
-});
 
 // ============================================
 // MESSAGES (admin side)
@@ -881,8 +836,6 @@ export default {
   addTrackingInfo,
   createShipment,
   updateShipmentStatus,
-  reviewReturnRequest,
-  updateReturnStatus,
   getOrdersWithUnreadMessages,
   getPendingFraudReviews,
   reviewFraudCheck,
