@@ -146,7 +146,7 @@ export const getOrdersWithUnreadMessages = createAsyncThunk(
 // ASYNC THUNKS — USERS (admin)
 // ============================================
 
-export const getAllUsers = createAsyncThunk(
+export const fetchAllUsers = createAsyncThunk(
   'admin/getAllUsers',
   async (_, { rejectWithValue }) => {
     try {
@@ -532,15 +532,15 @@ const adminSlice = createSlice({
     // getAllUsers
     // ─────────────────────────────────────────────────────────────
     builder
-      .addCase(getAllUsers.pending, (state) => {
+      .addCase(fetchAllUsers.pending, (state) => {
         state.userLoading = true;
         state.error       = null;
       })
-      .addCase(getAllUsers.fulfilled, (state, action) => {
+      .addCase(fetchAllUsers.fulfilled, (state, action) => {
         state.userLoading = false;
         state.users       = action.payload.users ?? [];
       })
-      .addCase(getAllUsers.rejected, (state, action) => {
+      .addCase(fetchAllUsers.rejected, (state, action) => {
         state.userLoading = false;
         state.error       = action.payload;
       });

@@ -1,4 +1,4 @@
-// analyticsSlice.js — FIXED: operational metrics transformations corrected
+// analyticsSlice.js — FIXED: all race conditions, payload shape, abort handling, loading states
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -6,17 +6,27 @@ import axios from "axios";
 const API_BASE = "/api/v1";
 
 // ============================================
+// ABORT HELPER
+// Distinguishes intentional cancellation from real errors.
+// Prevents spurious error banners when timeframe switches abort in-flight requests.
+// ============================================
+const isAbortError = (error) =>
+    error?.code === "ERR_CANCELED" ||
+    error?.name === "AbortError" ||
+    error?.name === "CanceledError";
+
+// ============================================
 // BASIC STATS THUNKS
 // ============================================
 
 export const fetchAdminStats = createAsyncThunk(
     'analytics/fetchAdminStats',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/admin/stats`);
-            console.log('API response /admin/stats:', data);
+            const { data } = await axios.get(`${API_BASE}/admin/stats`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch dashboard stats');
         }
     }
@@ -24,11 +34,12 @@ export const fetchAdminStats = createAsyncThunk(
 
 export const fetchOrderStatusBreakdown = createAsyncThunk(
     'analytics/fetchOrderStatusBreakdown',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/admin/order-status-breakdown`);
+            const { data } = await axios.get(`${API_BASE}/admin/order-status-breakdown`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch order status breakdown');
         }
     }
@@ -36,11 +47,12 @@ export const fetchOrderStatusBreakdown = createAsyncThunk(
 
 export const fetchInventoryBreakdown = createAsyncThunk(
     'analytics/fetchInventoryBreakdown',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/admin/inventory-breakdown`);
+            const { data } = await axios.get(`${API_BASE}/admin/inventory-breakdown`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch inventory breakdown');
         }
     }
@@ -48,11 +60,12 @@ export const fetchInventoryBreakdown = createAsyncThunk(
 
 export const fetchBasicAnalytics = createAsyncThunk(
     'analytics/fetchBasicAnalytics',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/admin/analytics?timeframe=${timeframe}`);
+            const { data } = await axios.get(`${API_BASE}/admin/analytics?timeframe=${timeframe}`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch analytics');
         }
     }
@@ -60,17 +73,22 @@ export const fetchBasicAnalytics = createAsyncThunk(
 
 // ============================================
 // DASHBOARD THUNKS
+// All timeframe-dependent thunks now:
+// 1. Accept signal from RTK and pass to axios (real cancellation)
+// 2. Return timeframe in payload so slice can reject stale responses
 // ============================================
 
 export const fetchDashboardOverview = createAsyncThunk(
     'analytics/fetchDashboardOverview',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/dashboard?timeframe=${timeframe}`
+                `${API_BASE}/analytics/dashboard?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch dashboard overview');
         }
     }
@@ -78,13 +96,15 @@ export const fetchDashboardOverview = createAsyncThunk(
 
 export const fetchDashboardKPIs = createAsyncThunk(
     'analytics/fetchDashboardKPIs',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/dashboard/kpis?timeframe=${timeframe}`
+                `${API_BASE}/analytics/dashboard/kpis?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch KPIs');
         }
     }
@@ -92,13 +112,15 @@ export const fetchDashboardKPIs = createAsyncThunk(
 
 export const fetchRevenueTrends = createAsyncThunk(
     'analytics/fetchRevenueTrends',
-    async ({ timeframe = 'month', groupBy = 'day' }, { rejectWithValue }) => {
+    async ({ timeframe = 'month', groupBy = 'day' }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/dashboard/revenue-trends?timeframe=${timeframe}&groupBy=${groupBy}`
+                `${API_BASE}/analytics/dashboard/revenue-trends?timeframe=${timeframe}&groupBy=${groupBy}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch revenue trends');
         }
     }
@@ -106,13 +128,15 @@ export const fetchRevenueTrends = createAsyncThunk(
 
 export const fetchTopPerformers = createAsyncThunk(
     'analytics/fetchTopPerformers',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/dashboard/top-performers?timeframe=${timeframe}`
+                `${API_BASE}/analytics/dashboard/top-performers?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch top performers');
         }
     }
@@ -120,11 +144,12 @@ export const fetchTopPerformers = createAsyncThunk(
 
 export const fetchDashboardAlerts = createAsyncThunk(
     'analytics/fetchDashboardAlerts',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/dashboard/alerts`);
+            const { data } = await axios.get(`${API_BASE}/analytics/dashboard/alerts`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch alerts');
         }
     }
@@ -136,18 +161,19 @@ export const fetchDashboardAlerts = createAsyncThunk(
 
 export const generateBusinessReport = createAsyncThunk(
     'analytics/generateBusinessReport',
-    async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
+    async ({ timeframe, startDate, endDate }, { rejectWithValue, signal }) => {
         try {
             const params = new URLSearchParams();
             if (timeframe) params.append('timeframe', timeframe);
             if (startDate) params.append('startDate', startDate);
             if (endDate)   params.append('endDate', endDate);
-
             const { data } = await axios.get(
-                `${API_BASE}/analytics/reports/business-performance?${params.toString()}`
+                `${API_BASE}/analytics/reports/business-performance?${params.toString()}`,
+                { signal }
             );
             return data.report;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to generate business report');
         }
     }
@@ -155,19 +181,20 @@ export const generateBusinessReport = createAsyncThunk(
 
 export const generateSalesReport = createAsyncThunk(
     'analytics/generateSalesReport',
-    async ({ timeframe, startDate, endDate, groupBy = 'day' }, { rejectWithValue }) => {
+    async ({ timeframe, startDate, endDate, groupBy = 'day' }, { rejectWithValue, signal }) => {
         try {
             const params = new URLSearchParams();
             if (timeframe) params.append('timeframe', timeframe);
             if (startDate) params.append('startDate', startDate);
             if (endDate)   params.append('endDate', endDate);
             params.append('groupBy', groupBy);
-
             const { data } = await axios.get(
-                `${API_BASE}/analytics/reports/sales?${params.toString()}`
+                `${API_BASE}/analytics/reports/sales?${params.toString()}`,
+                { signal }
             );
             return data.report;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to generate sales report');
         }
     }
@@ -175,13 +202,15 @@ export const generateSalesReport = createAsyncThunk(
 
 export const generateCustomerReport = createAsyncThunk(
     'analytics/generateCustomerReport',
-    async (includeDetails = false, { rejectWithValue }) => {
+    async (includeDetails = false, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/reports/customers?includeDetails=${includeDetails}`
+                `${API_BASE}/analytics/reports/customers?includeDetails=${includeDetails}`,
+                { signal }
             );
             return data.report;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to generate customer report');
         }
     }
@@ -189,18 +218,19 @@ export const generateCustomerReport = createAsyncThunk(
 
 export const generateProductReport = createAsyncThunk(
     'analytics/generateProductReport',
-    async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
+    async ({ timeframe, startDate, endDate }, { rejectWithValue, signal }) => {
         try {
             const params = new URLSearchParams();
             if (timeframe) params.append('timeframe', timeframe);
             if (startDate) params.append('startDate', startDate);
             if (endDate)   params.append('endDate', endDate);
-
             const { data } = await axios.get(
-                `${API_BASE}/analytics/reports/products?${params.toString()}`
+                `${API_BASE}/analytics/reports/products?${params.toString()}`,
+                { signal }
             );
             return data.report;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to generate product report');
         }
     }
@@ -208,18 +238,19 @@ export const generateProductReport = createAsyncThunk(
 
 export const generateFinancialReport = createAsyncThunk(
     'analytics/generateFinancialReport',
-    async ({ timeframe, startDate, endDate }, { rejectWithValue }) => {
+    async ({ timeframe, startDate, endDate }, { rejectWithValue, signal }) => {
         try {
             const params = new URLSearchParams();
             if (timeframe) params.append('timeframe', timeframe);
             if (startDate) params.append('startDate', startDate);
             if (endDate)   params.append('endDate', endDate);
-
             const { data } = await axios.get(
-                `${API_BASE}/analytics/reports/financial?${params.toString()}`
+                `${API_BASE}/analytics/reports/financial?${params.toString()}`,
+                { signal }
             );
             return data.report;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to generate financial report');
         }
     }
@@ -262,11 +293,12 @@ export const exportReportCSV = createAsyncThunk(
 
 export const fetchCustomerOverview = createAsyncThunk(
     'analytics/fetchCustomerOverview',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/overview`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/overview`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch customer overview');
         }
     }
@@ -274,11 +306,12 @@ export const fetchCustomerOverview = createAsyncThunk(
 
 export const fetchSegmentDistribution = createAsyncThunk(
     'analytics/fetchSegmentDistribution',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/segments`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/segments`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch segment distribution');
         }
     }
@@ -286,13 +319,15 @@ export const fetchSegmentDistribution = createAsyncThunk(
 
 export const fetchCustomersBySegment = createAsyncThunk(
     'analytics/fetchCustomersBySegment',
-    async ({ segment, limit = 100, page = 1 }, { rejectWithValue }) => {
+    async ({ segment, limit = 100, page = 1 }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/customers/segments/${segment}?limit=${limit}&page=${page}`
+                `${API_BASE}/analytics/customers/segments/${segment}?limit=${limit}&page=${page}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch customers by segment');
         }
     }
@@ -300,13 +335,15 @@ export const fetchCustomersBySegment = createAsyncThunk(
 
 export const fetchHighValueCustomers = createAsyncThunk(
     'analytics/fetchHighValueCustomers',
-    async ({ minRevenue = 1000, limit = 50 }, { rejectWithValue }) => {
+    async ({ minRevenue = 1000, limit = 50 }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/customers/high-value?minRevenue=${minRevenue}&limit=${limit}`
+                `${API_BASE}/analytics/customers/high-value?minRevenue=${minRevenue}&limit=${limit}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch high-value customers');
         }
     }
@@ -314,16 +351,17 @@ export const fetchHighValueCustomers = createAsyncThunk(
 
 export const fetchAtRiskCustomers = createAsyncThunk(
     'analytics/fetchAtRiskCustomers',
-    async ({ limit = 100, riskLevel }, { rejectWithValue }) => {
+    async ({ limit = 100, riskLevel }, { rejectWithValue, signal }) => {
         try {
             const params = new URLSearchParams({ limit: limit.toString() });
             if (riskLevel) params.append('riskLevel', riskLevel);
-
             const { data } = await axios.get(
-                `${API_BASE}/analytics/customers/at-risk?${params.toString()}`
+                `${API_BASE}/analytics/customers/at-risk?${params.toString()}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch at-risk customers');
         }
     }
@@ -331,13 +369,15 @@ export const fetchAtRiskCustomers = createAsyncThunk(
 
 export const fetchVIPCustomers = createAsyncThunk(
     'analytics/fetchVIPCustomers',
-    async (limit = 50, { rejectWithValue }) => {
+    async (limit = 50, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/customers/vip?limit=${limit}`
+                `${API_BASE}/analytics/customers/vip?limit=${limit}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch VIP customers');
         }
     }
@@ -345,11 +385,12 @@ export const fetchVIPCustomers = createAsyncThunk(
 
 export const fetchCLVDistribution = createAsyncThunk(
     'analytics/fetchCLVDistribution',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/clv-distribution`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/clv-distribution`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch CLV distribution');
         }
     }
@@ -357,11 +398,12 @@ export const fetchCLVDistribution = createAsyncThunk(
 
 export const fetchCustomersNeedingAttention = createAsyncThunk(
     'analytics/fetchCustomersNeedingAttention',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/needs-attention`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/needs-attention`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch customers needing attention');
         }
     }
@@ -369,13 +411,15 @@ export const fetchCustomersNeedingAttention = createAsyncThunk(
 
 export const fetchCustomerCohorts = createAsyncThunk(
     'analytics/fetchCustomerCohorts',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/customers/cohorts?timeframe=${timeframe}`
+                `${API_BASE}/analytics/customers/cohorts?timeframe=${timeframe}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch customer cohorts');
         }
     }
@@ -383,11 +427,12 @@ export const fetchCustomerCohorts = createAsyncThunk(
 
 export const fetchRepeatPurchaseAnalytics = createAsyncThunk(
     'analytics/fetchRepeatPurchaseAnalytics',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/repeat-purchase`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/repeat-purchase`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch repeat purchase analytics');
         }
     }
@@ -395,11 +440,12 @@ export const fetchRepeatPurchaseAnalytics = createAsyncThunk(
 
 export const fetchPurchaseFrequencyAnalytics = createAsyncThunk(
     'analytics/fetchPurchaseFrequencyAnalytics',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/purchase-frequency`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/purchase-frequency`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch purchase frequency');
         }
     }
@@ -407,11 +453,12 @@ export const fetchPurchaseFrequencyAnalytics = createAsyncThunk(
 
 export const fetchAcquisitionSourceAnalytics = createAsyncThunk(
     'analytics/fetchAcquisitionSourceAnalytics',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/customers/acquisition-sources`);
+            const { data } = await axios.get(`${API_BASE}/analytics/customers/acquisition-sources`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch acquisition sources');
         }
     }
@@ -423,13 +470,15 @@ export const fetchAcquisitionSourceAnalytics = createAsyncThunk(
 
 export const fetchChannelPerformance = createAsyncThunk(
     'analytics/fetchChannelPerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/channels?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/channels?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch channel performance');
         }
     }
@@ -437,13 +486,15 @@ export const fetchChannelPerformance = createAsyncThunk(
 
 export const fetchCampaignPerformance = createAsyncThunk(
     'analytics/fetchCampaignPerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/campaigns?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/campaigns?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch campaign performance');
         }
     }
@@ -451,13 +502,15 @@ export const fetchCampaignPerformance = createAsyncThunk(
 
 export const fetchDevicePerformance = createAsyncThunk(
     'analytics/fetchDevicePerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/devices?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/devices?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch device performance');
         }
     }
@@ -465,13 +518,15 @@ export const fetchDevicePerformance = createAsyncThunk(
 
 export const fetchBrowserPerformance = createAsyncThunk(
     'analytics/fetchBrowserPerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/browsers?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/browsers?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch browser performance');
         }
     }
@@ -479,13 +534,15 @@ export const fetchBrowserPerformance = createAsyncThunk(
 
 export const fetchReferrerPerformance = createAsyncThunk(
     'analytics/fetchReferrerPerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/referrers?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/referrers?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch referrer performance');
         }
     }
@@ -493,13 +550,15 @@ export const fetchReferrerPerformance = createAsyncThunk(
 
 export const fetchLandingPagePerformance = createAsyncThunk(
     'analytics/fetchLandingPagePerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/landing-pages?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/landing-pages?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch landing page performance');
         }
     }
@@ -507,13 +566,15 @@ export const fetchLandingPagePerformance = createAsyncThunk(
 
 export const fetchAttributionModels = createAsyncThunk(
     'analytics/fetchAttributionModels',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/attribution/models?timeframe=${timeframe}`
+                `${API_BASE}/analytics/attribution/models?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch attribution models');
         }
     }
@@ -525,13 +586,15 @@ export const fetchAttributionModels = createAsyncThunk(
 
 export const fetchCheckoutAbandonmentStats = createAsyncThunk(
     'analytics/fetchCheckoutAbandonmentStats',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/checkout/abandonment?timeframe=${timeframe}`
+                `${API_BASE}/analytics/checkout/abandonment?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch abandonment stats');
         }
     }
@@ -539,7 +602,7 @@ export const fetchCheckoutAbandonmentStats = createAsyncThunk(
 
 export const fetchAbandonedCheckouts = createAsyncThunk(
     'analytics/fetchAbandonedCheckouts',
-    async ({ hours = 24, minValue = 0, limit = 50, page = 1, sortBy = 'priority' }, { rejectWithValue }) => {
+    async ({ hours = 24, minValue = 0, limit = 50, page = 1, sortBy = 'priority' }, { rejectWithValue, signal }) => {
         try {
             const params = new URLSearchParams({
                 hours:    hours.toString(),
@@ -548,12 +611,13 @@ export const fetchAbandonedCheckouts = createAsyncThunk(
                 page:     page.toString(),
                 sortBy,
             });
-
             const { data } = await axios.get(
-                `${API_BASE}/analytics/checkout/abandoned-list?${params.toString()}`
+                `${API_BASE}/analytics/checkout/abandoned-list?${params.toString()}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch abandoned checkouts');
         }
     }
@@ -561,13 +625,15 @@ export const fetchAbandonedCheckouts = createAsyncThunk(
 
 export const fetchRecoveryOpportunities = createAsyncThunk(
     'analytics/fetchRecoveryOpportunities',
-    async (limit = 50, { rejectWithValue }) => {
+    async (limit = 50, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/checkout/recovery-opportunities?limit=${limit}`
+                `${API_BASE}/analytics/checkout/recovery-opportunities?limit=${limit}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch recovery opportunities');
         }
     }
@@ -582,12 +648,9 @@ export const markRecoveryEmailSent = createAsyncThunk(
                 {},
                 { withCredentials: true }
             );
-            // Controller returns: { success, message, result: {
-            //   checkoutId, recipient, attemptNumber, sentAt,
-            //   nextAvailableAt, attemptsRemaining, canSendAnother, cooldownReason
-            // }}
             return { checkoutId, result: data.result };
         } catch (error) {
+            // Always return a consistent object shape to prevent destructure crash
             return rejectWithValue({
                 checkoutId,
                 message: error.response?.data?.message || 'Failed to send recovery email'
@@ -602,13 +665,15 @@ export const markRecoveryEmailSent = createAsyncThunk(
 
 export const fetchProductPerformanceOverview = createAsyncThunk(
     'analytics/fetchProductPerformanceOverview',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/products/overview?timeframe=${timeframe}`
+                `${API_BASE}/analytics/products/overview?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch product performance');
         }
     }
@@ -616,13 +681,15 @@ export const fetchProductPerformanceOverview = createAsyncThunk(
 
 export const fetchProductConversionMetrics = createAsyncThunk(
     'analytics/fetchProductConversionMetrics',
-    async ({ limit = 20, sortBy = 'conversionRate' }, { rejectWithValue }) => {
+    async ({ limit = 20, sortBy = 'conversionRate' }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/products/conversion?limit=${limit}&sortBy=${sortBy}`
+                `${API_BASE}/analytics/products/conversion?limit=${limit}&sortBy=${sortBy}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch conversion metrics');
         }
     }
@@ -630,13 +697,15 @@ export const fetchProductConversionMetrics = createAsyncThunk(
 
 export const fetchInventoryTurnover = createAsyncThunk(
     'analytics/fetchInventoryTurnover',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/products/inventory-turnover?timeframe=${timeframe}`
+                `${API_BASE}/analytics/products/inventory-turnover?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch inventory turnover');
         }
     }
@@ -644,11 +713,12 @@ export const fetchInventoryTurnover = createAsyncThunk(
 
 export const fetchLowStockAlerts = createAsyncThunk(
     'analytics/fetchLowStockAlerts',
-    async (_, { rejectWithValue }) => {
+    async (_, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(`${API_BASE}/analytics/products/low-stock-alerts`);
+            const { data } = await axios.get(`${API_BASE}/analytics/products/low-stock-alerts`, { signal });
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch low stock alerts');
         }
     }
@@ -656,13 +726,15 @@ export const fetchLowStockAlerts = createAsyncThunk(
 
 export const fetchCategoryPerformance = createAsyncThunk(
     'analytics/fetchCategoryPerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/products/category-performance?timeframe=${timeframe}`
+                `${API_BASE}/analytics/products/category-performance?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch category performance');
         }
     }
@@ -670,13 +742,15 @@ export const fetchCategoryPerformance = createAsyncThunk(
 
 export const fetchProductProfitMargins = createAsyncThunk(
     'analytics/fetchProductProfitMargins',
-    async ({ limit = 20, sortBy = 'margin' }, { rejectWithValue }) => {
+    async ({ limit = 20, sortBy = 'margin' }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/products/profit-margins?limit=${limit}&sortBy=${sortBy}`
+                `${API_BASE}/analytics/products/profit-margins?limit=${limit}&sortBy=${sortBy}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch profit margins');
         }
     }
@@ -684,13 +758,15 @@ export const fetchProductProfitMargins = createAsyncThunk(
 
 export const fetchProductsBoughtTogether = createAsyncThunk(
     'analytics/fetchProductsBoughtTogether',
-    async ({ productId, limit = 10 }, { rejectWithValue }) => {
+    async ({ productId, limit = 10 }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/products/bought-together?productId=${productId}&limit=${limit}`
+                `${API_BASE}/analytics/products/bought-together?productId=${productId}&limit=${limit}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch products bought together');
         }
     }
@@ -702,13 +778,15 @@ export const fetchProductsBoughtTogether = createAsyncThunk(
 
 export const fetchFulfillmentAnalytics = createAsyncThunk(
     'analytics/fetchFulfillmentAnalytics',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/fulfillment?timeframe=${timeframe}`
+                `${API_BASE}/analytics/operations/fulfillment?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch fulfillment analytics');
         }
     }
@@ -716,13 +794,15 @@ export const fetchFulfillmentAnalytics = createAsyncThunk(
 
 export const fetchSLABreaches = createAsyncThunk(
     'analytics/fetchSLABreaches',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/sla-breaches?timeframe=${timeframe}`
+                `${API_BASE}/analytics/operations/sla-breaches?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch SLA breaches');
         }
     }
@@ -730,13 +810,15 @@ export const fetchSLABreaches = createAsyncThunk(
 
 export const fetchFraudAnalytics = createAsyncThunk(
     'analytics/fetchFraudAnalytics',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/fraud?timeframe=${timeframe}`
+                `${API_BASE}/analytics/operations/fraud?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch fraud analytics');
         }
     }
@@ -744,13 +826,15 @@ export const fetchFraudAnalytics = createAsyncThunk(
 
 export const fetchShippingCarrierPerformance = createAsyncThunk(
     'analytics/fetchShippingCarrierPerformance',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/shipping-carriers?timeframe=${timeframe}`
+                `${API_BASE}/analytics/operations/shipping-carriers?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch shipping carriers');
         }
     }
@@ -758,13 +842,15 @@ export const fetchShippingCarrierPerformance = createAsyncThunk(
 
 export const fetchShipmentTrackingAnalytics = createAsyncThunk(
     'analytics/fetchShipmentTrackingAnalytics',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/shipment-tracking?timeframe=${timeframe}`
+                `${API_BASE}/analytics/operations/shipment-tracking?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch shipment tracking');
         }
     }
@@ -772,13 +858,15 @@ export const fetchShipmentTrackingAnalytics = createAsyncThunk(
 
 export const fetchCancellationAnalytics = createAsyncThunk(
     'analytics/fetchCancellationAnalytics',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/cancellations?timeframe=${timeframe}`
+                `${API_BASE}/analytics/operations/cancellations?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch cancellations');
         }
     }
@@ -786,13 +874,15 @@ export const fetchCancellationAnalytics = createAsyncThunk(
 
 export const fetchHighRiskOrders = createAsyncThunk(
     'analytics/fetchHighRiskOrders',
-    async (limit = 50, { rejectWithValue }) => {
+    async (limit = 50, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/operations/high-risk-orders?limit=${limit}`
+                `${API_BASE}/analytics/operations/high-risk-orders?limit=${limit}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch high risk orders');
         }
     }
@@ -804,13 +894,15 @@ export const fetchHighRiskOrders = createAsyncThunk(
 
 export const fetchReturnOverview = createAsyncThunk(
     'analytics/fetchReturnOverview',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/returns/overview?timeframe=${timeframe}`
+                `${API_BASE}/analytics/returns/overview?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch return overview');
         }
     }
@@ -818,13 +910,15 @@ export const fetchReturnOverview = createAsyncThunk(
 
 export const fetchRefundOverview = createAsyncThunk(
     'analytics/fetchRefundOverview',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/refunds/overview?timeframe=${timeframe}`
+                `${API_BASE}/analytics/refunds/overview?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch refund overview');
         }
     }
@@ -832,13 +926,15 @@ export const fetchRefundOverview = createAsyncThunk(
 
 export const fetchReturnsByProduct = createAsyncThunk(
     'analytics/fetchReturnsByProduct',
-    async ({ limit = 20, sortBy = 'returnRate' }, { rejectWithValue }) => {
+    async ({ limit = 20, sortBy = 'returnRate' }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/returns/by-product?limit=${limit}&sortBy=${sortBy}`
+                `${API_BASE}/analytics/returns/by-product?limit=${limit}&sortBy=${sortBy}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch returns by product');
         }
     }
@@ -846,13 +942,15 @@ export const fetchReturnsByProduct = createAsyncThunk(
 
 export const fetchReturnsByCategory = createAsyncThunk(
     'analytics/fetchReturnsByCategory',
-    async ({ limit = 20, sortBy = 'returnRate' }, { rejectWithValue }) => {
+    async ({ limit = 20, sortBy = 'returnRate' }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/returns/by-category?limit=${limit}&sortBy=${sortBy}`
+                `${API_BASE}/analytics/returns/by-category?limit=${limit}&sortBy=${sortBy}`,
+                { signal }
             );
             return data;
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch returns by category');
         }
     }
@@ -860,13 +958,15 @@ export const fetchReturnsByCategory = createAsyncThunk(
 
 export const fetchRefundsByPaymentMethod = createAsyncThunk(
     'analytics/fetchRefundsByPaymentMethod',
-    async (timeframe = 'month', { rejectWithValue }) => {
+    async (timeframe = 'month', { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/refunds/by-payment-method?timeframe=${timeframe}`
+                `${API_BASE}/analytics/refunds/by-payment-method?timeframe=${timeframe}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch refunds by payment method');
         }
     }
@@ -874,13 +974,15 @@ export const fetchRefundsByPaymentMethod = createAsyncThunk(
 
 export const fetchRefundTimeline = createAsyncThunk(
     'analytics/fetchRefundTimeline',
-    async ({ timeframe = 'month', groupBy = 'day' }, { rejectWithValue }) => {
+    async ({ timeframe = 'month', groupBy = 'day' }, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
-                `${API_BASE}/analytics/refunds/timeline?timeframe=${timeframe}&groupBy=${groupBy}`
+                `${API_BASE}/analytics/refunds/timeline?timeframe=${timeframe}&groupBy=${groupBy}`,
+                { signal }
             );
-            return data;
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(error.response?.data?.message || 'Failed to fetch refund timeline');
         }
     }
@@ -891,20 +993,29 @@ export const fetchRefundTimeline = createAsyncThunk(
 // ============================================
 
 const EMPTY_CUSTOMER_OVERVIEW = {
-    totalCustomers:   0,
-    newCustomers:     0,
+    totalCustomers:     0,
+    newCustomers:       0,
     newCustomersGrowth: 0,
-    activeCustomers:  0,
-    avgOrderValue:    0,
-    avgLifetimeValue: 0,
-    totalRevenue:     0,
-    avgOrders:        0,
-    vipCount:         0,
-    atRiskCount:      0,
-    segments:         [],
-    valueTiers:       [],
-    churnRisk:        [],
+    activeCustomers:    0,
+    avgOrderValue:      0,
+    avgLifetimeValue:   0,
+    totalRevenue:       0,
+    avgOrders:          0,
+    vipCount:           0,
+    atRiskCount:        0,
+    segments:           [],
+    valueTiers:         [],
+    churnRisk:          [],
 };
+
+// Validates that a KPI payload has the expected shape before writing to state.
+// Prevents setting kpis to undefined/error objects when API shape varies.
+const isValidKpiPayload = (kpis) =>
+    kpis !== null &&
+    kpis !== undefined &&
+    typeof kpis === 'object' &&
+    !Array.isArray(kpis) &&
+    ('revenue' in kpis || 'orders' in kpis || 'customers' in kpis);
 
 const analyticsSlice = createSlice({
     name: 'analytics',
@@ -917,9 +1028,9 @@ const analyticsSlice = createSlice({
             users:      0,
             adminCount: 0,
         },
-        basicStatsFetched: false, 
-        ordersByStatus:  null,
-        inventoryStatus: null,
+        basicStatsFetched: false,
+        ordersByStatus:    null,
+        inventoryStatus:   null,
         basicAnalytics: {
             trends: { revenue: 0, orders: 0, users: 0, products: 0 },
             orderStatusBreakdown: {},
@@ -930,18 +1041,22 @@ const analyticsSlice = createSlice({
         },
 
         // Dashboard
+        // activeTimeframe: tracks what timeframe is currently selected in Redux
+        // so fulfilled cases can reject stale out-of-order responses
+        activeTimeframe:  'month',
         dashboardOverview: null,
-        kpis:          null,
-        revenueTrends: null,
-        topPerformers: null,
-        alerts:        [],
+        kpis:              null,
+        kpisLoading:       false, // dedicated loading flag — never clears kpis to null
+        revenueTrends:     null,
+        topPerformers:     null,
+        alerts:            [],
 
         // Reports
         currentReport: null,
         reportType:    null,
 
         // Customer Analytics
-        customerOverview: { ...EMPTY_CUSTOMER_OVERVIEW },
+        customerOverview:           { ...EMPTY_CUSTOMER_OVERVIEW },
         segmentDistribution:        null,
         customersBySegment:         [],
         highValueCustomers:         [],
@@ -964,47 +1079,46 @@ const analyticsSlice = createSlice({
         attributionModels:      null,
 
         // Checkout
-        checkoutAbandonment:  null,
-        abandonedCheckouts:   [],
+        checkoutAbandonment:   null,
+        abandonedCheckouts:    [],
         recoveryOpportunities: [],
-        // Recovery email send state — keyed by checkoutId for per-row UI
-        emailSendLoading: {},  
-        emailSendResults: {},  
-        emailSendError:   {},  
+        emailSendLoading:      {},
+        emailSendResults:      {},
+        emailSendError:        {},
 
         // Products
-        productPerformance:    null,
-        productConversion:     null,
-        inventoryTurnover:     null,
-        lowStockAlerts:        null,
-        categoryPerformance:   null,
-        productProfitMargins:  null,
+        productPerformance:     null,
+        productConversion:      null,
+        inventoryTurnover:      null,
+        lowStockAlerts:         null,
+        categoryPerformance:    null,
+        productProfitMargins:   null,
         productsBoughtTogether: null,
 
         // Operations
-        fulfillmentAnalytics: null,
-        slaBreaches:          null,
-        fraudAnalytics:       null,
-        shippingCarriers:     null,
-        shipmentTracking:     null,
+        fulfillmentAnalytics:  null,
+        slaBreaches:           null,
+        fraudAnalytics:        null,
+        shippingCarriers:      null,
+        shipmentTracking:      null,
         cancellationAnalytics: null,
-        highRiskOrders:       null,
+        highRiskOrders:        null,
 
         // Returns & Refunds
-        returnOverview:          null,
-        refundOverview:          null,
-        returnsByProduct:        [],
-        returnsByCategory:       [],
-        refundsByPaymentMethod:  null,
-        refundTimeline:          null,
+        returnOverview:         null,
+        refundOverview:         null,
+        returnsByProduct:       [],
+        returnsByCategory:      [],
+        refundsByPaymentMethod: null,
+        refundTimeline:         null,
 
         // UI States
-        loading:       false,
+        loading:          false,
         dashboardLoading: false,
-        reportLoading: false,
-        error:         null,
-        success:       false,
-        message:       null,
+        reportLoading:    false,
+        error:            null,
+        success:          false,
+        message:          null,
     },
     reducers: {
         removeErrors: (state) => {
@@ -1021,6 +1135,11 @@ const analyticsSlice = createSlice({
         setDashboardLoading: (state, action) => {
             state.dashboardLoading = action.payload;
         },
+        // Called before dispatching timeframe thunks so fulfilled
+        // cases can compare against the correct active timeframe
+        setActiveTimeframe: (state, action) => {
+            state.activeTimeframe = action.payload;
+        },
     },
     extraReducers: (builder) => {
 
@@ -1034,9 +1153,6 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchAdminStats.fulfilled, (state, action) => {
                 state.loading = false;
-
-                 console.log('fetchAdminStats payload:', action.payload);
-
                 const { success, ...data } = action.payload;
                 state.basicStats = {
                     products:   data.products   || 0,
@@ -1045,11 +1161,16 @@ const analyticsSlice = createSlice({
                     users:      data.users      || 0,
                     adminCount: data.adminCount || 0,
                 };
-                 state.basicStatsFetched = true; 
+                state.basicStatsFetched = true;
             })
             .addCase(fetchAdminStats.rejected, (state, action) => {
                 state.loading = false;
-                state.error   = action.payload;
+                // Don't set error for intentional aborts
+                if (!action.payload?.aborted) {
+                    state.error = typeof action.payload === 'string'
+                        ? action.payload
+                        : action.payload?.message || 'Failed to fetch stats';
+                }
             })
 
             .addCase(fetchBasicAnalytics.pending, (state) => {
@@ -1057,12 +1178,12 @@ const analyticsSlice = createSlice({
                 state.error   = null;
             })
             .addCase(fetchBasicAnalytics.fulfilled, (state, action) => {
-                state.loading       = false;
+                state.loading        = false;
                 state.basicAnalytics = action.payload;
             })
             .addCase(fetchBasicAnalytics.rejected, (state, action) => {
                 state.loading = false;
-                state.error   = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(fetchOrderStatusBreakdown.pending, (state) => {
@@ -1080,7 +1201,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchOrderStatusBreakdown.rejected, (state, action) => {
                 state.loading = false;
-                state.error   = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(fetchInventoryBreakdown.pending, (state) => {
@@ -1099,11 +1220,15 @@ const analyticsSlice = createSlice({
             })
             .addCase(fetchInventoryBreakdown.rejected, (state, action) => {
                 state.loading = false;
-                state.error   = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             });
 
         // ============================================
         // DASHBOARD
+        // fetchDashboardKPIs:
+        //   pending  → kpisLoading: true (never nulls out kpis — preserves existing data)
+        //   fulfilled → validates payload shape before writing, checks activeTimeframe
+        //   rejected → kpisLoading: false, no error banner for aborts
         // ============================================
         builder
             .addCase(fetchDashboardOverview.pending, (state) => {
@@ -1111,25 +1236,57 @@ const analyticsSlice = createSlice({
                 state.error            = null;
             })
             .addCase(fetchDashboardOverview.fulfilled, (state, action) => {
-                state.dashboardLoading  = false;
-                state.dashboardOverview = action.payload;
+                state.dashboardLoading = false;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.dashboardOverview = data;
+                }
             })
             .addCase(fetchDashboardOverview.rejected, (state, action) => {
                 state.dashboardLoading = false;
-                state.error            = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
-            .addCase(fetchDashboardKPIs.fulfilled, (state, action) => {
-                state.kpis = action.payload.kpis;
+            .addCase(fetchDashboardKPIs.pending, (state) => {
+                // Set loading flag but preserve existing kpis data
+                // so the UI shows stale-but-valid data while refreshing
+                state.kpisLoading = true;
             })
+            .addCase(fetchDashboardKPIs.fulfilled, (state, action) => {
+                state.kpisLoading = false;
+                // Reject stale responses from previous timeframe switches
+                if (action.payload._timeframe !== state.activeTimeframe) return;
+                // Support both { kpis: {...} } and flat { revenue: {...}, ... } API shapes
+                const kpisData = action.payload.kpis ?? action.payload;
+                const { _timeframe, success, ...rest } = kpisData;
+                if (isValidKpiPayload(rest)) {
+                    state.kpis = rest;
+                }
+            })
+            .addCase(fetchDashboardKPIs.rejected, (state, action) => {
+                state.kpisLoading = false;
+                // No error banner for aborts — these are intentional from timeframe switches
+                if (!action.payload?.aborted) {
+                    state.error = typeof action.payload === 'string'
+                        ? action.payload
+                        : action.payload?.message || 'Failed to fetch KPIs';
+                }
+            })
+
             .addCase(fetchRevenueTrends.fulfilled, (state, action) => {
-                state.revenueTrends = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.revenueTrends = data;
+                }
             })
             .addCase(fetchTopPerformers.fulfilled, (state, action) => {
-                state.topPerformers = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.topPerformers = data;
+                }
             })
             .addCase(fetchDashboardAlerts.fulfilled, (state, action) => {
-                state.alerts = action.payload.alerts;
+                state.alerts = action.payload.alerts || [];
             });
 
         // ============================================
@@ -1147,7 +1304,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(generateBusinessReport.rejected, (state, action) => {
                 state.reportLoading = false;
-                state.error         = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(generateSalesReport.pending, (state) => {
@@ -1161,7 +1318,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(generateSalesReport.rejected, (state, action) => {
                 state.reportLoading = false;
-                state.error         = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(generateCustomerReport.pending, (state) => {
@@ -1175,7 +1332,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(generateCustomerReport.rejected, (state, action) => {
                 state.reportLoading = false;
-                state.error         = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(generateProductReport.pending, (state) => {
@@ -1189,7 +1346,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(generateProductReport.rejected, (state, action) => {
                 state.reportLoading = false;
-                state.error         = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(generateFinancialReport.pending, (state) => {
@@ -1203,7 +1360,7 @@ const analyticsSlice = createSlice({
             })
             .addCase(generateFinancialReport.rejected, (state, action) => {
                 state.reportLoading = false;
-                state.error         = action.payload;
+                if (!action.payload?.aborted) state.error = action.payload;
             })
 
             .addCase(exportReportCSV.pending, (state) => {
@@ -1248,9 +1405,14 @@ const analyticsSlice = createSlice({
                 };
             })
             .addCase(fetchCustomerOverview.rejected, (state, action) => {
-                state.loading         = false;
-                state.error           = action.payload;
+                state.loading          = false;
                 state.customerOverview = { ...EMPTY_CUSTOMER_OVERVIEW };
+                // Don't overwrite existing errors with abort noise
+                if (!action.payload?.aborted) {
+                    state.error = typeof action.payload === 'string'
+                        ? action.payload
+                        : action.payload?.message || 'Failed to fetch customer overview';
+                }
             })
 
             .addCase(fetchSegmentDistribution.fulfilled, (state, action) => {
@@ -1292,25 +1454,46 @@ const analyticsSlice = createSlice({
         // ============================================
         builder
             .addCase(fetchChannelPerformance.fulfilled, (state, action) => {
-                state.channelPerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.channelPerformance = data;
+                }
             })
             .addCase(fetchCampaignPerformance.fulfilled, (state, action) => {
-                state.campaignPerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.campaignPerformance = data;
+                }
             })
             .addCase(fetchDevicePerformance.fulfilled, (state, action) => {
-                state.devicePerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.devicePerformance = data;
+                }
             })
             .addCase(fetchBrowserPerformance.fulfilled, (state, action) => {
-                state.browserPerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.browserPerformance = data;
+                }
             })
             .addCase(fetchReferrerPerformance.fulfilled, (state, action) => {
-                state.referrerPerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.referrerPerformance = data;
+                }
             })
             .addCase(fetchLandingPagePerformance.fulfilled, (state, action) => {
-                state.landingPagePerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.landingPagePerformance = data;
+                }
             })
             .addCase(fetchAttributionModels.fulfilled, (state, action) => {
-                state.attributionModels = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.attributionModels = data;
+                }
             });
 
         // ============================================
@@ -1318,7 +1501,10 @@ const analyticsSlice = createSlice({
         // ============================================
         builder
             .addCase(fetchCheckoutAbandonmentStats.fulfilled, (state, action) => {
-                state.checkoutAbandonment = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.checkoutAbandonment = data;
+                }
             })
             .addCase(fetchAbandonedCheckouts.fulfilled, (state, action) => {
                 state.abandonedCheckouts = action.payload;
@@ -1328,7 +1514,6 @@ const analyticsSlice = createSlice({
             })
 
             .addCase(markRecoveryEmailSent.pending, (state, action) => {
-                // action.meta.arg is the checkoutId passed to the thunk
                 state.emailSendLoading[action.meta.arg] = true;
                 delete state.emailSendError[action.meta.arg];
             })
@@ -1339,9 +1524,6 @@ const analyticsSlice = createSlice({
                 state.success = true;
                 state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
 
-                // Optimistically update the abandonedCheckouts list so the
-                // send button reflects the new attempt count + cooldown immediately
-                // without needing a refetch.
                 const list = state.abandonedCheckouts?.abandonedCheckouts;
                 if (Array.isArray(list)) {
                     const idx = list.findIndex(c => c._id === checkoutId);
@@ -1350,14 +1532,13 @@ const analyticsSlice = createSlice({
                             ...list[idx],
                             abandonment: {
                                 ...list[idx].abandonment,
-                                recoveryEmailSent:    true,
-                                recoveryEmailSentAt:  result.sentAt,
-                                recoveryEmailCount:   result.attemptNumber,
+                                recoveryEmailSent:   true,
+                                recoveryEmailSentAt: result.sentAt,
+                                recoveryEmailCount:  result.attemptNumber,
                             }
                         };
                     }
                 }
-                // Same for recoveryOpportunities list
                 const opps = state.recoveryOpportunities?.opportunities;
                 if (Array.isArray(opps)) {
                     const idx = opps.findIndex(c => c._id === checkoutId);
@@ -1375,6 +1556,7 @@ const analyticsSlice = createSlice({
                 }
             })
             .addCase(markRecoveryEmailSent.rejected, (state, action) => {
+                // action.payload is always { checkoutId, message } — safe to destructure
                 const { checkoutId, message } = action.payload;
                 state.emailSendLoading[checkoutId] = false;
                 state.emailSendError[checkoutId]   = message;
@@ -1386,19 +1568,28 @@ const analyticsSlice = createSlice({
         // ============================================
         builder
             .addCase(fetchProductPerformanceOverview.fulfilled, (state, action) => {
-                state.productPerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.productPerformance = data;
+                }
             })
             .addCase(fetchProductConversionMetrics.fulfilled, (state, action) => {
                 state.productConversion = action.payload;
             })
             .addCase(fetchInventoryTurnover.fulfilled, (state, action) => {
-                state.inventoryTurnover = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.inventoryTurnover = data;
+                }
             })
             .addCase(fetchLowStockAlerts.fulfilled, (state, action) => {
                 state.lowStockAlerts = action.payload;
             })
             .addCase(fetchCategoryPerformance.fulfilled, (state, action) => {
-                state.categoryPerformance = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.categoryPerformance = data;
+                }
             })
             .addCase(fetchProductProfitMargins.fulfilled, (state, action) => {
                 state.productProfitMargins = action.payload;
@@ -1408,59 +1599,38 @@ const analyticsSlice = createSlice({
             });
 
         // ============================================
-        // OPERATIONS — FIXED: Transform nested backend
-        // responses into the flat shape Dashboard.jsx expects
+        // OPERATIONS
         // ============================================
         builder
             .addCase(fetchFulfillmentAnalytics.fulfilled, (state, action) => {
-                /**
-                 * Backend now returns pre-computed onTimeRate and deliveredToday directly.
-                 *
-                 * onTimeRate:     Was Delivered/(Processing+Shipped+Delivered) — a delivery
-                 *                 completion ratio, not an on-time rate. Fixed: backend now
-                 *                 queries fulfillmentSLA.slaBreached=false / total SLA records.
-                 *
-                 * deliveredToday: Was statusBreakdown.Delivered — counted ALL delivered orders
-                 *                 in the entire period, not just those delivered today.
-                 *                 Fixed: backend queries { deliveredAt: { $gte: startOfToday } }.
-                 */
+                if (action.payload._timeframe !== state.activeTimeframe) return;
                 const fm = action.payload.fulfillmentMetrics || {};
                 const dm = action.payload.deliveryMetrics    || {};
                 const sb = action.payload.statusBreakdown    || {};
-
                 state.fulfillmentAnalytics = {
-                    onTimeRate:        action.payload.onTimeRate    ?? 0,
-                    deliveredToday:    action.payload.deliveredToday ?? 0,
-                    avgProcessingTime: fm.avgFulfillmentHours        || 0,
-                    avgShippingTime:   dm.avgDeliveryDays            || 0,
+                    onTimeRate:        action.payload.onTimeRate     ?? 0,
+                    deliveredToday:    action.payload.deliveredToday  ?? 0,
+                    avgProcessingTime: fm.avgFulfillmentHours         || 0,
+                    avgShippingTime:   dm.avgDeliveryDays             || 0,
                     pendingShipments:  (sb.Processing || 0) + (sb.Shipped || 0),
                     _raw:              action.payload,
                 };
             })
 
             .addCase(fetchSLABreaches.fulfilled, (state, action) => {
-                /**
-                 * avgResolutionTime: Was averaging delayInDays across ALL orders in the period,
-                 *                    including non-breached ones where delayInDays = 0.
-                 *                    Fixed: backend now averages only across breached orders.
-                 */
+                if (action.payload._timeframe !== state.activeTimeframe) return;
                 const summary      = action.payload.summary  || {};
                 const breachesList = action.payload.breaches || [];
-
                 const complianceRate =
                     typeof summary.breachRate === 'number'
                         ? Math.round((100 - summary.breachRate) * 100) / 100
                         : 0;
-
-                // Prefer backend-computed value; fall back to client-side count
-                // for backwards compatibility with un-patched backends.
                 const criticalBreaches =
                     typeof summary.criticalBreaches === 'number'
                         ? summary.criticalBreaches
                         : breachesList.filter(
                               (b) => (b.fulfillmentSLA?.delayInDays || 0) >= 2
                           ).length;
-
                 state.slaBreaches = {
                     complianceRate,
                     totalBreaches:     summary.breachedOrders || 0,
@@ -1474,42 +1644,47 @@ const analyticsSlice = createSlice({
             })
 
             .addCase(fetchFraudAnalytics.fulfilled, (state, action) => {
+                if (action.payload._timeframe !== state.activeTimeframe) return;
                 const riskDist   = action.payload.riskDistribution || [];
                 const reviewDecs = action.payload.reviewDecisions  || [];
                 const fraudPrev  = action.payload.fraudPrevention  || {};
-
                 const totalRiskOrders = riskDist.reduce((sum, r) => sum + (r.count || 0), 0);
-
                 const flaggedOrders = riskDist
                     .filter((r) => r._id === 'high' || r._id === 'critical')
                     .reduce((sum, r) => sum + (r.count || 0), 0);
-
                 const fraudRate =
                     totalRiskOrders > 0
                         ? Math.round((flaggedOrders / totalRiskOrders) * 100 * 100) / 100
                         : 0;
-
                 const rejectedEntry  = reviewDecs.find((d) => d._id === 'Rejected');
                 const confirmedFraud = rejectedEntry ? rejectedEntry.count || 0 : 0;
-
                 state.fraudAnalytics = {
                     fraudRate,
                     flaggedOrders,
                     confirmedFraud,
-                    revenueSaved:  fraudPrev.totalValue              || 0,
+                    revenueSaved:  fraudPrev.totalValue          || 0,
                     pendingReview: action.payload.pendingReviews || 0,
                     _raw:          action.payload,
                 };
             })
 
             .addCase(fetchShippingCarrierPerformance.fulfilled, (state, action) => {
-                state.shippingCarriers = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.shippingCarriers = data;
+                }
             })
             .addCase(fetchShipmentTrackingAnalytics.fulfilled, (state, action) => {
-                state.shipmentTracking = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.shipmentTracking = data;
+                }
             })
             .addCase(fetchCancellationAnalytics.fulfilled, (state, action) => {
-                state.cancellationAnalytics = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.cancellationAnalytics = data;
+                }
             })
             .addCase(fetchHighRiskOrders.fulfilled, (state, action) => {
                 state.highRiskOrders = action.payload;
@@ -1520,10 +1695,16 @@ const analyticsSlice = createSlice({
         // ============================================
         builder
             .addCase(fetchReturnOverview.fulfilled, (state, action) => {
-                state.returnOverview = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.returnOverview = data;
+                }
             })
             .addCase(fetchRefundOverview.fulfilled, (state, action) => {
-                state.refundOverview = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.refundOverview = data;
+                }
             })
             .addCase(fetchReturnsByProduct.fulfilled, (state, action) => {
                 state.returnsByProduct = action.payload;
@@ -1532,13 +1713,26 @@ const analyticsSlice = createSlice({
                 state.returnsByCategory = action.payload;
             })
             .addCase(fetchRefundsByPaymentMethod.fulfilled, (state, action) => {
-                state.refundsByPaymentMethod = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.refundsByPaymentMethod = data;
+                }
             })
             .addCase(fetchRefundTimeline.fulfilled, (state, action) => {
-                state.refundTimeline = action.payload;
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.refundTimeline = data;
+                }
             });
     },
 });
 
-export const { removeErrors, removeSuccess, clearReport, setDashboardLoading } = analyticsSlice.actions;
+export const {
+    removeErrors,
+    removeSuccess,
+    clearReport,
+    setDashboardLoading,
+    setActiveTimeframe,
+} = analyticsSlice.actions;
+
 export default analyticsSlice.reducer;
