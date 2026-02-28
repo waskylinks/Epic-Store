@@ -123,7 +123,7 @@ const orderSchema = new mongoose.Schema(
     },
 
     // ============================================
-    // ORDER MESSAGES (Customer ↔ Admin Chat)
+    // ORDER MESSAGES (Customer <-> Admin Chat)
     // ============================================
     orderMessages: [{
       sender: {
@@ -489,16 +489,41 @@ const orderSchema = new mongoose.Schema(
 // ============================================
 // INDEXES
 // ============================================
-orderSchema.index({ user: 1, createdAt: -1 });
+
+// Core pagination indexes — required for Option A server-side pagination
+// These two cover: (1) unfiltered list sorted by date, (2) status-filtered list sorted by date
+orderSchema.index({ createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
+orderSchema.index({ user: 1, createdAt: -1 });
+
+// Amount sort index — covers ?sort=amount_hi and ?sort=amount_lo
+orderSchema.index({ totalPrice: -1 });
+
+// Payment indexes
 orderSchema.index({ 'paymentInfo.status': 1 });
 orderSchema.index({ 'paymentInfo.method': 1 });
+// Revenue-by-period reporting (e.g. "revenue in March 2025")
+orderSchema.index({ 'paymentInfo.paidAt': -1 });
+
+// Refund / return indexes
 orderSchema.index({ 'refundInfo.status': 1 });
 orderSchema.index({ 'returnInfo.status': 1 });
+
+// Cancellation analytics (e.g. "cancellations this month")
+orderSchema.index({ cancelledAt: -1 });
+
+// Fulfillment SLA reporting
+orderSchema.index({ deliveredAt: -1 });
+
+// Fraud indexes
 orderSchema.index({ 'fraudCheck.riskLevel': 1 });
 orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
+
+// Analytics indexes
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
+
+// Message unread indexes (multikey on array sub-docs)
 orderSchema.index({ 'refundInfo.messages.isRead': 1 });
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
 orderSchema.index({ 'orderMessages.isRead': 1 });
@@ -510,7 +535,6 @@ orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 // VIRTUALS
 // ============================================
 
-// FIX O1: Use optional chaining to prevent TypeError on malformed documents
 orderSchema.virtual('isRefundable').get(function () {
   return (
     this.paymentInfo?.status === 'success' &&
@@ -541,7 +565,6 @@ orderSchema.virtual('hasActiveReturn').get(function () {
   );
 });
 
-// FIX O2: Use correct Pascal case enum value 'Pending' (not 'pending')
 orderSchema.virtual('needsFraudReview').get(function () {
   return (
     this.fraudCheck &&
@@ -563,8 +586,6 @@ orderSchema.virtual('isFullyFulfilled').get(function () {
   );
 });
 
-// FIX O3: Split unread message counts by sender type instead of trying to check
-// unpopulated user.role (which is always undefined on an ObjectId reference)
 orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
@@ -630,24 +651,20 @@ orderSchema.set('strictQuery', true);
 // PRE-SAVE MIDDLEWARE
 // ============================================
 orderSchema.pre('save', function (next) {
-  // FIX O5: Use timestamp + process ID for better entropy in high-concurrency scenarios
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    // Combine timestamp with process ID for better uniqueness under load
+    const year    = new Date().getFullYear();
+    const month   = String(new Date().getMonth() + 1).padStart(2, '0');
     const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
-    this.invoiceInfo = this.invoiceInfo || {};
+    this.invoiceInfo         = this.invoiceInfo || {};
     this.invoiceInfo.invoiceNumber = `INV-${year}${month}-${entropy}`;
-    this.invoiceInfo.invoiceDate = new Date();
+    this.invoiceInfo.invoiceDate   = new Date();
   }
 
-  // FIX O6: Use timestamp + process ID for RMA numbers
   if (this.returnInfo?.status === 'approved' && !this.returnInfo.rmaNumber) {
     const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
     this.returnInfo.rmaNumber = `RMA-${entropy}`;
   }
 
-  // FIX O7: Use explicit null check instead of falsy check (0 is valid quantity)
   if (this.orderItems) {
     this.orderItems.forEach(item => {
       if (item.quantityOrdered == null) {
@@ -663,14 +680,12 @@ orderSchema.pre('save', function (next) {
 // STATIC METHODS
 // ============================================
 
-// FIX O8: Use 'firstName lastName' instead of 'name' (User model has no 'name' field)
 orderSchema.statics.getOrdersByStatus = async function (status) {
   return this.find({ orderStatus: status })
     .populate('user', 'firstName lastName email')
     .sort({ createdAt: -1 });
 };
 
-// FIX O9: Use 'Pending' (Pascal case) to match enum definition
 orderSchema.statics.getPendingFraudReviews = async function () {
   return this.find({
     'fraudCheck.reviewRequired': true,

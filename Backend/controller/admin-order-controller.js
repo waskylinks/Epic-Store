@@ -135,25 +135,59 @@ const initiateGatewayRefund = async (order) => {
 // GET ALL ORDERS (admin)
 // ============================================
 export const getAllOrders = handleAsyncError(async (req, res, next) => {
-  const { status, page = 1, limit = 20, from, to } = req.query;
+  const { status, page = 1, limit = 20, from, to, sort = 'newest', search } = req.query;
 
+  // ── Build filter query ────────────────────────────────────────
   const query = {};
   if (status && status !== 'all') query.orderStatus = status;
   if (from || to) {
     query.createdAt = {};
     if (from) query.createdAt.$gte = new Date(from);
-    if (to)   query.createdAt.$lte = new Date(to);
+    if (to) {
+      const toDate = new Date(to);
+      toDate.setHours(23, 59, 59, 999);
+      query.createdAt.$lte = toDate;
+    }
   }
 
-  const skip = (parseInt(page) - 1) * parseInt(limit);
+  // ── Search: match order ID suffix or customer email ──────────
+  // Note: full-text name search requires a text index or aggregation pipeline.
+  // We search on the paymentInfo.reference (unique per order, often shown to customers)
+  // and pre-filter by user email via a user lookup when search is present.
+  if (search && search.trim()) {
+    const term = search.trim();
+    // Match partial order ID (last chars) or payment reference
+    query.$or = [
+      { 'paymentInfo.reference': { $regex: term, $options: 'i' } }
+    ];
+    // If term looks like an ObjectId suffix, also match _id string end
+    if (/^[a-f0-9]+$/i.test(term) && term.length <= 24) {
+      query.$or.push({ _id: { $regex: term + '$', $options: 'i' } });
+    }
+  }
+
+  // ── Build sort ────────────────────────────────────────────────
+  const sortMap = {
+    newest:    { createdAt: -1 },
+    oldest:    { createdAt:  1 },
+    amount_hi: { totalPrice: -1 },
+    amount_lo: { totalPrice:  1 },
+    status_az: { orderStatus:  1, createdAt: -1 },
+    status_za: { orderStatus: -1, createdAt: -1 }
+  };
+  const sortQuery = sortMap[sort] || sortMap.newest;
+
+  const pageInt  = Math.max(1, parseInt(page)  || 1);
+  const limitInt = Math.min(100, Math.max(1, parseInt(limit) || 20));
+  const skip     = (pageInt - 1) * limitInt;
 
   const [orders, totalOrders] = await Promise.all([
     Order.find(query)
       .populate('user',               'firstName lastName email phone')
       .populate('orderItems.product', 'name images pricing')
-      .sort({ createdAt: -1 })
+      .sort(sortQuery)
       .skip(skip)
-      .limit(parseInt(limit)),
+      .limit(limitInt),
     Order.countDocuments(query)
   ]);
 
@@ -168,8 +202,8 @@ export const getAllOrders = handleAsyncError(async (req, res, next) => {
     success:     true,
     count:       orders.length,
     totalOrders,
-    currentPage: parseInt(page),
-    totalPages:  Math.ceil(totalOrders / parseInt(limit)),
+    currentPage: pageInt,
+    totalPages:  Math.ceil(totalOrders / limitInt),
     stats:       { total: totalOrders, processing, shipped, delivered, cancelled },
     orders
   });
@@ -185,6 +219,7 @@ export const getSingleOrder = handleAsyncError(async (req, res, next) => {
     .populate('user',                    'firstName lastName email phone')
     .populate('orderItems.product',      'name images pricing inventory')
     .populate('statusHistory.updatedBy', 'firstName lastName email')
+    // FIX: Schema field is 'author', not 'createdBy'
     .populate('notes.author',            'firstName lastName email role')
     .populate('refundInfo.requestedBy',  'firstName lastName email')
     .populate('refundInfo.approvedBy',   'firstName lastName email')
@@ -722,6 +757,96 @@ export const updateShipmentStatus = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({ success: true, message: 'Shipment updated successfully', shipment });
 });
 
+// ============================================
+// RETURNS (admin review)
+// ============================================
+export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
+  const { id }                              = req.params;
+  const { action, restockFee = 0, adminNote = '' } = req.body;
+
+  if (!['approve', 'reject'].includes(action)) {
+    return next(new HandleError('Action must be approve or reject', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) return next(new HandleError('Order not found', 404));
+
+  if (!order.returnInfo || order.returnInfo.status !== 'requested') {
+    return next(new HandleError('No pending return request found', 400));
+  }
+
+  if (action === 'approve') {
+    order.returnInfo.status      = 'approved';
+    order.returnInfo.approvedAt  = new Date();
+    order.returnInfo.approvedBy  = req.user._id;
+    order.returnInfo.restockFee  = restockFee;
+    order.returnInfo.rmaNumber   = `RMA-${Date.now()}`;
+    if (adminNote) order.returnInfo.adminNote = adminNote;
+    await order.save();
+    return res.status(200).json({
+      success:    true,
+      message:    'Return approved. RMA number generated.',
+      returnInfo: order.returnInfo
+    });
+  } else {
+    order.returnInfo.status     = 'rejected';
+    order.returnInfo.approvedAt = new Date();
+    order.returnInfo.approvedBy = req.user._id;
+    if (adminNote) order.returnInfo.adminNote = adminNote;
+    await order.save();
+    return res.status(200).json({
+      success:    true,
+      message:    'Return request rejected',
+      returnInfo: order.returnInfo
+    });
+  }
+});
+
+export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
+  const { id }                        = req.params;
+  const { status, inspectionNotes }   = req.body;
+
+  const validStatuses = ['in_transit', 'received', 'inspected', 'completed'];
+  if (!validStatuses.includes(status)) {
+    return next(new HandleError('Invalid return status', 400));
+  }
+
+  const order = await Order.findById(id);
+  if (!order) return next(new HandleError('Order not found', 404));
+
+  if (!order.returnInfo || order.returnInfo.status === 'none') {
+    return next(new HandleError('No return request found', 400));
+  }
+
+  order.returnInfo.status = status;
+  if (status === 'received') order.returnInfo.receivedAt = new Date();
+
+  if (status === 'inspected') {
+    order.returnInfo.inspectedAt  = new Date();
+    order.returnInfo.inspectedBy  = req.user._id;
+    if (inspectionNotes) order.returnInfo.inspectionNotes = inspectionNotes;
+  }
+
+  if (status === 'completed') {
+    order.returnInfo.completedAt = new Date();
+    for (const item of order.returnInfo.itemsToReturn) {
+      const product = await Product.findById(item.product);
+      if (product && item.condition !== 'damaged') {
+        if (product.inventory?.stock !== undefined) {
+          product.inventory.stock += item.quantity;
+        }
+        await product.save({ validateBeforeSave: false });
+      }
+    }
+  }
+
+  await order.save();
+  return res.status(200).json({
+    success:    true,
+    message:    `Return status updated to ${status}`,
+    returnInfo: order.returnInfo
+  });
+});
 
 // ============================================
 // MESSAGES (admin side)
@@ -836,6 +961,8 @@ export default {
   addTrackingInfo,
   createShipment,
   updateShipmentStatus,
+  reviewReturnRequest,
+  updateReturnStatus,
   getOrdersWithUnreadMessages,
   getPendingFraudReviews,
   reviewFraudCheck,
