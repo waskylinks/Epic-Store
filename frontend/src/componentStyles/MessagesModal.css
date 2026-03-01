@@ -1,10 +1,8 @@
 /* ============================================================
    MESSAGES MODAL — MessagesModal.css
-   Prefix: mm-   (mirrors adm- / mo- / od- convention)
-   Matches Admin Dashboard aesthetic exactly
-   Coral-red replaces all blue accents
-   Snake spinner replaces built-in loader
-   Fully responsive on all devices
+   Prefix: mm-
+   Coral-red accent — matches full design system
+   Fixed min-height so loading / empty / messages never jump
    ============================================================ */
 
 /* ── Variables ─────────────────────────────────────────────── */
@@ -23,101 +21,124 @@
   --mm-text-muted:    #6B7280;
   --mm-shadow-sm:     0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
   --mm-shadow:        0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.06);
-  --mm-shadow-xl:     0 25px 50px rgba(0,0,0,0.25);
+  --mm-shadow-xl:     0 25px 50px rgba(0,0,0,0.22);
 
   --mm-coral:         #FF4D4D;
   --mm-coral-dark:    #E03535;
   --mm-coral-pale:    rgba(255, 77, 77, 0.08);
-  --mm-coral-border:  rgba(255, 77, 77, 0.35);
+  --mm-coral-border:  rgba(255, 77, 77, 0.3);
 
   --mm-danger:        #EF4444;
   --mm-danger-bg:     #FEE2E2;
 
-  --mm-bubble-out:    #111827;
-  --mm-bubble-in:     #F3F4F6;
-  --mm-bubble-in-text:#1F2937;
+  /* Chat bubbles */
+  --mm-out-bg:        #1a1f2e;
+  --mm-out-text:      #F9FAFB;
+  --mm-in-bg:         #F3F4F6;
+  --mm-in-text:       #1F2937;
+  --mm-in-border:     #E5E7EB;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
 
 /* ── Overlay ────────────────────────────────────────────────── */
-.mm-modal-overlay {
+.mm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.45);
-  backdrop-filter: blur(3px);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10000;
   padding: 16px;
-  animation: mm-fadeIn 0.18s ease;
+  animation: mm-fade 0.18s ease;
 }
 
-@keyframes mm-fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mm-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 
-/* ── Modal ──────────────────────────────────────────────────── */
+/* ── Modal shell ────────────────────────────────────────────── */
 .mm-modal {
   background: var(--mm-card);
   border: 1px solid var(--mm-border);
   border-radius: var(--mm-radius);
   width: 100%;
   max-width: 680px;
+
+  /*
+   * KEY FIX: fixed height so loading / empty / messages
+   * all occupy the same space — zero layout jump.
+   * max-height caps it on small screens.
+   */
+  height: 580px;
   max-height: 88vh;
+
   box-shadow: var(--mm-shadow-xl);
-  animation: mm-modalUp 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: mm-up 0.26s cubic-bezier(0.34, 1.56, 0.64, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-@keyframes mm-modalUp {
-  from { opacity: 0; transform: translateY(20px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
+@keyframes mm-up {
+  from { opacity: 0; transform: translateY(22px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1);    }
 }
 
-/* ── Header — mirrors adm-section-card-hd ───────────────────── */
-.mm-modal-header {
+/* ── Header ─────────────────────────────────────────────────── */
+.mm-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 18px 13px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--mm-border);
-  background: #F9FAFB;
+  background: #FAFAFA;
   flex-shrink: 0;
 }
 
-.mm-modal-header h2 {
-  font-size: 13.5px;
-  font-weight: 700;
-  color: var(--mm-text);
-  margin: 0;
+.mm-header-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 11px;
+  min-width: 0;
 }
 
-.mm-modal-header h2::before {
-  content: '';
-  display: block;
-  width: 3px;
-  height: 16px;
-  background: var(--mm-coral);
-  border-radius: 2px;
+.mm-header-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--mm-coral-pale);
+  border: 1px solid var(--mm-coral-border);
+  color: var(--mm-coral);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
   flex-shrink: 0;
 }
 
-.mm-modal-subtitle {
-  margin: 3px 0 0 11px;
+.mm-header h2 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--mm-text);
+  margin: 0 0 2px;
+  line-height: 1.2;
+}
+
+.mm-header-sub {
   font-size: 11.5px;
   color: var(--mm-text-muted);
   font-weight: 600;
   font-family: 'Courier New', monospace;
   letter-spacing: 0.03em;
+  margin: 0;
 }
 
-.mm-modal-close {
+.mm-close {
   width: 30px;
   height: 30px;
   background: var(--mm-card);
@@ -128,13 +149,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px !important;
+  font-size: 14px;
   transition: var(--mm-transition);
   flex-shrink: 0;
   padding: 0;
 }
 
-.mm-modal-close:hover {
+.mm-close:hover {
   background: var(--mm-danger-bg);
   border-color: var(--mm-danger);
   color: var(--mm-danger);
@@ -142,248 +163,350 @@
 }
 
 /* ── Body ───────────────────────────────────────────────────── */
-.mm-modal-body {
+.mm-body {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;
-  max-height: calc(88vh - 62px);
+  min-height: 0;   /* critical — allows children to shrink */
   overflow: hidden;
 }
 
-/* ── Loading State — snake spinner ─────────────────────────── */
-.mm-messages-loading {
+/* ── Loading state ──────────────────────────────────────────── */
+/*
+ * flex: 1 fills the same space the message list would —
+ * so the modal stays exactly the same height.
+ */
+.mm-loading {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 48px 24px;
   gap: 14px;
-  flex: 1;
+  background: var(--mm-bg);
 }
 
-/* Snake spinner — matches Loader.css snake-loader */
-.mm-snake-loader {
-  display: block;
-  width: 48px;
-  height: 48px;
-  animation: mm-sk-rotate 1.6s linear infinite;
-  flex-shrink: 0;
-}
-
-.mm-snake-loader__track {
-  stroke: rgba(255, 77, 77, 0.15);
-}
-
-.mm-snake-loader__arc {
-  stroke: #FF4D4D;
-  animation: mm-sk-dash 1.6s ease-in-out infinite;
-  transform-origin: center;
-  filter: drop-shadow(0 0 4px rgba(255, 77, 77, 0.4));
-}
-
-@keyframes mm-sk-rotate {
-  100% { transform: rotate(360deg); }
-}
-
-@keyframes mm-sk-dash {
-  0%   { stroke-dasharray: 2, 150;  stroke-dashoffset: 0;    }
-  50%  { stroke-dasharray: 90, 150; stroke-dashoffset: -35;  }
-  100% { stroke-dasharray: 90, 150; stroke-dashoffset: -124; }
-}
-
-.mm-messages-loading p {
+.mm-loading p {
   font-size: 13px;
   font-weight: 500;
   color: var(--mm-text-muted);
   margin: 0;
 }
 
-/* ── Empty State ────────────────────────────────────────────── */
-.mm-no-messages {
+/* Inline snake SVG — no loader-container wrapper */
+.mm-snake-svg {
+  width: 40px;
+  height: 40px;
+  animation: mm-rotate 1.6s linear infinite;
+  flex-shrink: 0;
+}
+
+.mm-snake-track {
+  stroke: rgba(255, 77, 77, 0.15);
+}
+
+.mm-snake-arc {
+  stroke: var(--mm-coral);
+  animation: mm-dash 1.6s ease-in-out infinite;
+  transform-origin: center;
+  filter: drop-shadow(0 0 4px rgba(255, 77, 77, 0.4));
+}
+
+@keyframes mm-rotate { 100% { transform: rotate(360deg); } }
+
+@keyframes mm-dash {
+  0%   { stroke-dasharray:  2, 150; stroke-dashoffset:   0; }
+  50%  { stroke-dasharray: 90, 150; stroke-dashoffset: -35; }
+  100% { stroke-dasharray: 90, 150; stroke-dashoffset: -124; }
+}
+
+/* ── Empty state ────────────────────────────────────────────── */
+.mm-empty {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 56px 24px;
+  gap: 8px;
   text-align: center;
-  flex: 1;
+  padding: 24px;
+  background: var(--mm-bg);
 }
 
-.mm-no-messages-icon {
-  font-size: 32px !important;
+.mm-empty-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--mm-card);
+  border: 1px solid var(--mm-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
   color: var(--mm-text-muted);
-  opacity: 0.3;
-  margin-bottom: 12px;
+  opacity: 0.5;
+  margin-bottom: 4px;
 }
 
-.mm-no-messages p {
+.mm-empty p {
   font-size: 14px;
   font-weight: 700;
   color: var(--mm-text);
-  margin: 0 0 4px 0;
+  margin: 0;
 }
 
-.mm-no-messages small {
+.mm-empty small {
   font-size: 12.5px;
   color: var(--mm-text-muted);
   font-weight: 500;
 }
 
-/* ── Messages List ──────────────────────────────────────────── */
-.mm-messages-list {
+/* ── Messages list ──────────────────────────────────────────── */
+.mm-list {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 18px;
+  padding: 16px 18px 8px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 4px;
   background: var(--mm-bg);
   min-height: 0;
   scrollbar-width: thin;
   scrollbar-color: var(--mm-border) transparent;
 }
 
-.mm-messages-list::-webkit-scrollbar { width: 4px; }
-.mm-messages-list::-webkit-scrollbar-thumb { background: var(--mm-border); border-radius: 4px; }
-.mm-messages-list::-webkit-scrollbar-thumb:hover { background: var(--mm-border-md); }
+.mm-list::-webkit-scrollbar       { width: 4px; }
+.mm-list::-webkit-scrollbar-thumb { background: var(--mm-border); border-radius: 4px; }
+.mm-list::-webkit-scrollbar-thumb:hover { background: var(--mm-border-md); }
 
-/* ── Message ────────────────────────────────────────────────── */
-.mm-message {
+/* ── Date separator ─────────────────────────────────────────── */
+.mm-date-separator {
   display: flex;
-  gap: 6px;
-  align-items: flex-end;
-  animation: mm-fadeIn 0.2s ease;
+  align-items: center;
+  justify-content: center;
+  margin: 12px 0 8px;
+  gap: 10px;
 }
 
+.mm-date-separator::before,
+.mm-date-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--mm-border);
+}
+
+.mm-date-separator span {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--mm-text-muted);
+  background: var(--mm-bg);
+  padding: 3px 10px;
+  border: 1px solid var(--mm-border);
+  border-radius: 20px;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+/* ── Message row ────────────────────────────────────────────── */
+.mm-message {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  animation: mm-fade 0.18s ease;
+  /* Small vertical gap between consecutive messages */
+  margin-bottom: 6px;
+}
+
+/* Send animation for newest message */
+.mm-message--new {
+  animation: mm-slideUp 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes mm-slideUp {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+/* ── Avatar circle ──────────────────────────────────────────── */
+.mm-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6366F1, #8B5CF6);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1.5px solid var(--mm-card);
+  box-shadow: var(--mm-shadow-sm);
+  /* Align to bottom of bubble */
+  align-self: flex-end;
+  margin-bottom: 18px; /* clears the footer */
+}
+
+.mm-avatar-out {
+  background: linear-gradient(135deg, #FF4D4D, #FF7A7A);
+}
+
+/* ── Message content wrapper ────────────────────────────────── */
 .mm-message-content {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-width: 72%;
+  max-width: 68%;
   min-width: 0;
+  gap: 3px;
 }
 
-.mm-message-sender {
+.mm-sender-name {
   font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: var(--mm-text-muted);
-  padding: 0 10px 2px;
-  line-height: 1;
+  padding: 0 4px;
 }
 
 /* ── Bubble ─────────────────────────────────────────────────── */
 .mm-message-bubble {
-  padding: 10px 14px;
+  padding: 9px 13px;
   word-wrap: break-word;
   overflow-wrap: break-word;
   max-width: 100%;
   box-shadow: var(--mm-shadow-sm);
+  line-height: 1;
 }
 
 .mm-message-bubble p {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
   line-height: 1.55;
-  word-wrap: break-word;
   font-weight: 500;
+  word-break: break-word;
 }
 
-/* ── Footer ─────────────────────────────────────────────────── */
+/* ── Footer (time + read receipt) ───────────────────────────── */
 .mm-message-footer {
   display: flex;
-  gap: 6px;
   align-items: center;
-  font-size: 10.5px;
-  color: var(--mm-text-muted);
-  padding: 0 10px;
-  font-weight: 500;
+  gap: 5px;
+  padding: 0 4px;
 }
 
-.mm-message-time { }
+.mm-footer-right { justify-content: flex-end; }
+.mm-footer-left  { justify-content: flex-start; }
 
-.mm-message-status {
+.mm-message-time {
+  font-size: 10.5px;
+  color: var(--mm-text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mm-read-receipt {
   display: flex;
   align-items: center;
   gap: 1px;
   color: var(--mm-text-muted);
 }
 
-/* Coral read receipts */
-.mm-message-status.mm-read { color: var(--mm-coral); }
+.mm-read-receipt.mm-read { color: var(--mm-coral); }
 
-.mm-check { font-size: 11px !important; }
-.mm-check-double { margin-left: -5px; }
+.mm-check   { font-size: 11px; }
+.mm-check-2 { margin-left: -5px; }
 
 /* ── Outgoing ───────────────────────────────────────────────── */
-.mm-message-outgoing { justify-content: flex-end; }
-.mm-message-outgoing .mm-message-content { align-items: flex-end; }
-.mm-message-outgoing .mm-message-sender  { text-align: right; }
+.mm-message-outgoing {
+  justify-content: flex-end;
+}
+
+.mm-message-outgoing .mm-message-content {
+  align-items: flex-end;
+}
 
 .mm-message-outgoing .mm-message-bubble {
-  background: var(--mm-bubble-out);
-  color: #fff;
-  border-radius: 12px 12px 3px 12px;
+  background: var(--mm-out-bg);
+  color: var(--mm-out-text);
+  border-radius: 14px 14px 3px 14px;
 }
-
-.mm-message-outgoing .mm-message-footer { justify-content: flex-end; }
 
 /* ── Incoming ───────────────────────────────────────────────── */
-.mm-message-incoming { justify-content: flex-start; }
-.mm-message-incoming .mm-message-content { align-items: flex-start; }
-.mm-message-incoming .mm-message-sender  { text-align: left; }
-
-.mm-message-incoming .mm-message-bubble {
-  background: var(--mm-bubble-in);
-  color: var(--mm-bubble-in-text);
-  border-radius: 12px 12px 12px 3px;
-  border: 1px solid var(--mm-border);
+.mm-message-incoming {
+  justify-content: flex-start;
 }
 
-.mm-message-incoming .mm-message-footer { justify-content: flex-start; }
+.mm-message-incoming .mm-message-content {
+  align-items: flex-start;
+}
 
-/* ── Input ──────────────────────────────────────────────────── */
-.mm-message-input-container {
+.mm-message-incoming .mm-message-bubble {
+  background: var(--mm-in-bg);
+  color: var(--mm-in-text);
+  border: 1px solid var(--mm-in-border);
+  border-radius: 14px 14px 14px 3px;
+}
+
+/* Tighten gap between consecutive same-sender messages */
+.mm-message-outgoing + .mm-message-outgoing,
+.mm-message-incoming + .mm-message-incoming {
+  margin-bottom: 2px;
+}
+
+/* ── Input bar ──────────────────────────────────────────────── */
+/*
+ * Always rendered — never replaced by a spinner.
+ * Subtle top shadow lifts it from the message list.
+ */
+.mm-input-bar {
   display: flex;
   gap: 8px;
-  padding: 14px 18px;
+  padding: 12px 18px 14px;
+  /* iOS Safari: lifts input bar above the virtual keyboard */
+  padding-bottom: max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--mm-border);
   background: var(--mm-card);
   flex-shrink: 0;
   align-items: center;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
 }
 
-.mm-message-input {
+.mm-input {
   flex: 1;
   padding: 9px 14px;
   border: 1px solid var(--mm-border);
-  border-radius: var(--mm-radius-xs);
-  font-size: 13px;
+  border-radius: 20px;
+  font-size: 13.5px;
   font-weight: 500;
   outline: none;
-  background: var(--mm-card);
+  background: #F9FAFB;
   color: var(--mm-text);
   font-family: inherit;
   transition: var(--mm-transition);
   min-width: 0;
+  resize: none;
 }
 
-.mm-message-input::placeholder { color: var(--mm-text-muted); font-weight: 400; }
+.mm-input::placeholder {
+  color: var(--mm-text-muted);
+  font-weight: 400;
+}
 
-.mm-message-input:focus {
+.mm-input:focus {
   border-color: var(--mm-coral);
+  background: var(--mm-card);
   box-shadow: 0 0 0 3px var(--mm-coral-pale);
 }
 
-.mm-message-input:disabled {
-  background: #F9FAFB;
+.mm-input:disabled {
+  opacity: 0.6;
   cursor: not-allowed;
 }
 
-/* Send button — coral */
-.mm-send-btn {
+/* Send button */
+.mm-send {
   width: 38px;
   height: 38px;
   display: flex;
@@ -391,28 +514,38 @@
   justify-content: center;
   background: var(--mm-coral);
   color: #fff;
-  border: 1px solid transparent;
-  border-radius: var(--mm-radius-xs);
+  border: none;
+  border-radius: 50%;
   cursor: pointer;
   transition: var(--mm-transition);
   flex-shrink: 0;
   padding: 0;
-  box-shadow: var(--mm-shadow-sm);
+  box-shadow: 0 2px 8px rgba(255, 77, 77, 0.35);
 }
 
-.mm-send-btn:hover:not(:disabled) {
+.mm-send:hover:not(:disabled) {
   background: var(--mm-coral-dark);
-  transform: translateY(-1px);
-  box-shadow: var(--mm-shadow);
+  transform: scale(1.08);
+  box-shadow: 0 4px 12px rgba(255, 77, 77, 0.4);
 }
 
-.mm-send-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-.mm-send-btn svg { font-size: 14px !important; }
+.mm-send:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.mm-send:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.mm-send svg { font-size: 14px; }
 
 /* ── Focus / Accessibility ──────────────────────────────────── */
-.mm-modal-close:focus-visible,
-.mm-message-input:focus-visible,
-.mm-send-btn:focus-visible {
+.mm-close:focus-visible,
+.mm-input:focus-visible,
+.mm-send:focus-visible {
   outline: 2px solid var(--mm-coral);
   outline-offset: 2px;
 }
@@ -421,66 +554,60 @@
    RESPONSIVE
 ════════════════════════════════════════════════════════════ */
 
-@media (max-width: 1024px) {
-  .mm-modal { max-width: 90vw; }
-}
-
 /* Tablet — bottom sheet */
 @media (max-width: 768px) {
-  .mm-modal-overlay { align-items: flex-end; padding: 0; }
+  .mm-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
 
   .mm-modal {
     max-width: 100%;
+    height: auto;
+    /* Takes up most of screen from bottom */
+    min-height: 65vh;
     max-height: 92vh;
     border-radius: var(--mm-radius) var(--mm-radius) 0 0;
     border-bottom: none;
   }
 
-  .mm-modal-body { max-height: calc(92vh - 62px); }
-
-  .mm-message-content { max-width: 82%; }
-
-  .mm-messages-list { padding: 14px; }
-
-  .mm-message-input-container { padding: 12px 14px; }
+  .mm-message-content { max-width: 78%; }
+  .mm-list { padding: 14px 14px 8px; }
+  .mm-input-bar { padding: 10px 14px 12px; }
 }
 
 @media (max-width: 480px) {
   .mm-modal {
-    border-radius: var(--mm-radius-sm) var(--mm-radius-sm) 0 0;
+    min-height: 70vh;
     max-height: 95vh;
+    border-radius: 10px 10px 0 0;
   }
 
-  .mm-modal-body { max-height: calc(95vh - 58px); }
+  .mm-header          { padding: 12px 14px; }
+  .mm-header h2       { font-size: 13px; }
+  .mm-header-sub      { font-size: 11px; }
+  .mm-header-icon     { width: 30px; height: 30px; font-size: 14px; }
 
-  .mm-modal-header { padding: 12px 14px; }
-  .mm-modal-header h2 { font-size: 12.5px; }
+  .mm-list            { padding: 12px 12px 6px; gap: 2px; }
+  .mm-message-content { max-width: 84%; }
+  .mm-message-bubble  { padding: 8px 11px; }
+  .mm-message-bubble p { font-size: 13px; }
 
-  .mm-messages-list { padding: 12px; gap: 10px; }
+  .mm-avatar          { width: 24px; height: 24px; font-size: 10px; margin-bottom: 16px; }
 
-  .mm-message-content { max-width: 88%; }
+  .mm-snake-svg       { width: 34px; height: 34px; }
 
-  .mm-message-bubble { padding: 9px 12px; }
-  .mm-message-bubble p { font-size: 12.5px; }
-
-  .mm-message-sender { font-size: 10px; padding: 0 8px 2px; }
-
-  .mm-message-input-container { padding: 10px 12px; }
-
-  .mm-send-btn { width: 36px; height: 36px; }
-
-  .mm-message-input { font-size: 13px; }
-
-  /* Scale snake spinner down on mobile */
-  .mm-snake-loader { width: 36px; height: 36px; }
+  .mm-input-bar       { padding: 10px 12px 12px; gap: 7px; }
+  .mm-send            { width: 34px; height: 34px; }
+  .mm-input           { font-size: 13px; padding: 8px 12px; }
 }
 
 @media (max-width: 360px) {
-  .mm-message-content { max-width: 92%; }
-  .mm-modal-header h2 { font-size: 12px; }
-  .mm-message-bubble p { font-size: 12px; }
-  .mm-send-btn { width: 34px; height: 34px; }
-  .mm-snake-loader { width: 30px; height: 30px; }
+  .mm-message-content { max-width: 90%; }
+  .mm-header h2       { font-size: 12.5px; }
+  .mm-message-bubble p { font-size: 12.5px; }
+  .mm-send            { width: 32px; height: 32px; }
+  .mm-snake-svg       { width: 28px; height: 28px; }
 }
 
 /* Reduced motion */
@@ -491,7 +618,8 @@
   }
 }
 
+/* High contrast */
 @media (prefers-contrast: high) {
-  .mm-modal { border: 2px solid var(--mm-text); }
-  .mm-message-bubble { border: 1px solid var(--mm-text); }
+  .mm-modal           { border: 2px solid var(--mm-text); }
+  .mm-message-bubble  { border: 1px solid var(--mm-text); }
 }

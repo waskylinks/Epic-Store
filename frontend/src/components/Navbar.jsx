@@ -150,7 +150,7 @@ function Navbar() {
   ];
 
   const profileMenuOptions = [
-    ...(user?.role === 'admin' ? [{
+    ...(user?.role === 'admin' || user?.role === 'superAdmin' ? [{
       name: 'Admin Dashboard',
       icon: <DashboardIcon />,
       action: () => navigate('/admin/dashboard')

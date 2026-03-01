@@ -105,9 +105,11 @@ function AllOrders() {
         loading,
         error,
         success,
-        orderMessages,
+        // FIX #1: We no longer pass `orderMessages` or `messageLoading` from
+        // Redux into MessagesModal. Instead we manage messages locally so that
+        // dispatching addOrderMessage never flips `messageLoading: true` inside
+        // an already-open modal (which caused the spinner-flash bug).
         auditLog,
-        messageLoading,
         totalOrders,
         totalPages,
         currentPage,
@@ -129,7 +131,16 @@ function AllOrders() {
 
     // Modal state — stores orderId, not the order object, to avoid stale snapshots
     const [modal,         setModal]         = useState({ type: '', open: false, orderId: null, loading: false });
-    const [messagesModal, setMessagesModal] = useState({ open: false, order: null });
+
+    // FIX #1: MessagesModal owns its own local message list and loading flag.
+    // We seed it once on open and append to it ourselves on send — Redux is
+    // only used to persist, never to control the modal's render state.
+    const [messagesModal, setMessagesModal] = useState({
+        open: false,
+        order: null,
+        messages: [],      // local copy — not from Redux
+        loading: false,    // local loading — not from Redux messageLoading
+    });
 
     // Derive the live order from state on every render — never stale
     const modalOrder = useMemo(
@@ -219,10 +230,25 @@ function AllOrders() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }, [dispatch, totalPages]);
 
+    // FIX #1: Open messages modal by fetching directly — no Redux messageLoading
     const handleAction = useCallback((type, order) => {
         if (type === 'messages') {
-            setMessagesModal({ open: true, order });
-            dispatch(getOrderMessages(order._id));
+            setMessagesModal({ open: true, order, messages: [], loading: true });
+
+            // Fetch messages directly; never touch Redux messageLoading
+            fetch(`/api/v1/orders/${order._id}/messages`, { credentials: 'include' })
+                .then(res => (res.ok ? res.json() : Promise.reject()))
+                .then(data => {
+                    setMessagesModal(prev => ({
+                        ...prev,
+                        messages: data.messages || [],
+                        loading: false,
+                    }));
+                })
+                .catch(() => {
+                    setMessagesModal(prev => ({ ...prev, loading: false }));
+                    toast.error('Failed to load messages', { position: 'top-center', autoClose: 3000 });
+                });
         } else {
             if (type === 'update') {
                 const nextStatuses = VALID_NEXT_STATUSES[order.orderStatus] || [];
@@ -233,24 +259,24 @@ function AllOrders() {
         }
     }, [dispatch]);
 
+    // FIX #1 + #2: Send appends to LOCAL state only; Redux persists in background.
+    // MessagesModal will show the optimistic bubble via its own internal state,
+    // and we keep localMessages in sync so re-opening shows the full history.
     const handleSendMessage = useCallback(async (content) => {
         if (!messagesModal.order) return;
-        try {
-            await dispatch(addOrderMessage({
-                orderId: messagesModal.order._id,
-                content
-            })).unwrap();
-            dispatch(getOrderMessages(messagesModal.order._id));
-        } catch (err) {
-            toast.error(
-                (err && err.message) ? err.message : 'Failed to send message',
-                { position: 'top-center', autoClose: 3000 }
-            );
-        }
+
+        // Persist via Redux and return the real message so MessagesModal can
+        // upgrade its optimistic bubble to the canonical server record.
+        const result = await dispatch(addOrderMessage({
+            orderId: messagesModal.order._id,
+            content
+        })).unwrap(); // throws on failure — MessagesModal catches and rolls back
+
+        return result?.orderMessage || result;
     }, [dispatch, messagesModal.order]);
 
     const handleCloseMessagesModal = useCallback(() => {
-        setMessagesModal({ open: false, order: null });
+        setMessagesModal({ open: false, order: null, messages: [], loading: false });
         // Refresh page to update unread badge counts in the table
         const params = { page: currentPage, limit: PAGE_LIMIT, sort: sortBy };
         if (activeTab !== 'all') params.status = activeTab;
@@ -636,13 +662,13 @@ function AllOrders() {
 
             <Footer />
 
-            {/* Messages Modal */}
+            {/* Messages Modal — FIX #1: passes local messages + local loading */}
             <MessagesModal
                 isOpen={messagesModal.open}
                 onClose={handleCloseMessagesModal}
                 order={messagesModal.order}
-                messages={orderMessages}
-                loading={messageLoading}
+                messages={messagesModal.messages}
+                loading={messagesModal.loading}
                 userType="admin"
                 onSendMessage={handleSendMessage}
             />
@@ -727,7 +753,6 @@ function AllOrders() {
                                             <span>Total</span>
                                         </div>
                                         {modalOrder.orderItems?.map((item, idx) => (
-                                            // product ObjectId is stable; idx fallback for safety
                                             <div key={item.product ? String(item.product) : idx} className="ao-items-row">
                                                 <span>{item.name}</span>
                                                 <span>{item.quantity}</span>

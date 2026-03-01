@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -30,71 +30,64 @@ import MessagesModal from "../components/MessagesModal";
 import { getAllMyOrders, getCustomerOrderAnalytics } from "../features/cart/orderSlice";
 import "../OrderStyles/MyOrders.css";
 
+// ─── Helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Count unread messages from admin for a single order's message array.
+ * Handles both `senderType` and legacy `sender` field.
+ */
+const countAdminUnread = (messages = []) =>
+  messages.filter(
+    (msg) => !msg.isRead && (msg.senderType === "admin" || msg.sender === "admin")
+  ).length;
+
+// ─── Component ───────────────────────────────────────────────────────────────
+
 function MyOrders() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
-  const { orders, loading, error, customerAnalytics } = useSelector((state) => state.order);
+  const { orders, loading, error, customerAnalytics } = useSelector(
+    (state) => state.order
+  );
   const authState = useSelector((state) => state.auth);
   const user = authState?.user || null;
 
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [sortBy, setSortBy] = useState("newest");
-  const [unreadCounts, setUnreadCounts] = useState({});
+
   const [trackingModal, setTrackingModal] = useState({ open: false, order: null });
-  const [messagesModal, setMessagesModal] = useState({ 
-    open: false, 
-    order: null, 
-    messages: [], 
-    loading: false 
+
+  // FIX #2: messagesModal no longer maintains its own `messages` array.
+  // MessagesModal itself owns the local message list (via its internal state).
+  // We only hold the seed messages here (fetched on open) and pass them as
+  // the initial `messages` prop — after that the component is self-contained.
+  const [messagesModal, setMessagesModal] = useState({
+    open: false,
+    order: null,
+    messages: [],   // seed only — MessagesModal takes ownership after mount
+    loading: false,
   });
+
   const [refreshing, setRefreshing] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
 
+  // ── Initial load ────────────────────────────────────────────────────────
   useEffect(() => {
     dispatch(getAllMyOrders());
-    
-    // Fetch customer analytics if user is available
     if (user?._id) {
       dispatch(getCustomerOrderAnalytics(user._id));
     }
   }, [dispatch, user?._id]);
 
+  // ── Error toast ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (error) {
       toast.error(error, { position: "top-center" });
     }
   }, [error]);
 
-  // Fetch unread message counts for each order (ONLY ADMIN MESSAGES)
-  useEffect(() => {
-    const fetchUnreadCounts = async () => {
-      const counts = {};
-      for (const order of orders) {
-        try {
-          const response = await fetch(`/api/v1/orders/${order._id}/messages`, {
-            credentials: 'include'
-          });
-          if (response.ok) {
-            const data = await response.json();
-            // Only count unread messages from admin
-            const unread = data.messages?.filter(msg => 
-              !msg.isRead && (msg.sender === 'admin' || msg.senderType === 'admin')
-            ).length || 0;
-            counts[order._id] = unread;
-          }
-        } catch (err) {
-          console.error('Failed to fetch messages:', err);
-        }
-      }
-      setUnreadCounts(counts);
-    };
-
-    if (orders && orders.length > 0) {
-      fetchUnreadCounts();
-    }
-  }, [orders]);
-
+  // ── Refresh ─────────────────────────────────────────────────────────────
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
@@ -103,183 +96,181 @@ function MyOrders() {
         await dispatch(getCustomerOrderAnalytics(user._id)).unwrap();
       }
       toast.success("Orders refreshed", { position: "top-center" });
-    } catch (err) {
+    } catch {
       toast.error("Failed to refresh orders", { position: "top-center" });
     } finally {
       setRefreshing(false);
     }
   };
 
-  const openTrackingModal = (order) => {
-    setTrackingModal({ open: true, order });
-  };
+  // ── Tracking modal ──────────────────────────────────────────────────────
+  const openTrackingModal = (order) => setTrackingModal({ open: true, order });
+  const closeTrackingModal = () => setTrackingModal({ open: false, order: null });
 
-  const closeTrackingModal = () => {
-    setTrackingModal({ open: false, order: null });
-  };
-
-  const openMessagesModal = async (order) => {
+  // ── Messages modal ──────────────────────────────────────────────────────
+  const openMessagesModal = useCallback(async (order) => {
     setMessagesModal({ open: true, order, messages: [], loading: true });
-    
-    // Immediately mark as read in UI
-    setUnreadCounts(prev => ({ ...prev, [order._id]: 0 }));
-    
+
     try {
-      const response = await fetch(`/api/v1/orders/${order._id}/messages`, {
-        credentials: 'include'
+      const res = await fetch(`/api/v1/orders/${order._id}/messages`, {
+        credentials: "include",
       });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setMessagesModal(prev => ({ 
-          ...prev, 
-          messages: data.messages || [], 
-          loading: false 
-        }));
-        
-        // Mark messages as read on server
-        await fetch(`/api/v1/orders/${order._id}/messages/read`, {
-          method: 'PUT',
-          credentials: 'include'
-        });
-      } else {
-        throw new Error('Failed to fetch messages');
-      }
-    } catch (err) {
-      console.error('Failed to fetch messages:', err);
-      setMessagesModal(prev => ({ ...prev, loading: false }));
-      toast.error('Failed to load messages', { position: 'top-center' });
-    }
-  };
+      if (!res.ok) throw new Error("Failed to fetch messages");
+      const data = await res.json();
 
-  const closeMessagesModal = () => {
-    setMessagesModal({ open: false, order: null, messages: [], loading: false });
-  };
-
-  const handleSendMessage = async (content) => {
-    if (!messagesModal.order) return;
-
-    const response = await fetch(`/api/v1/orders/${messagesModal.order._id}/messages`, {
-      method: 'POST',
-      credentials: 'include',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        content: content,
-        sender: 'customer',
-        attachments: []
-      })
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      setMessagesModal(prev => ({
+      // Seed MessagesModal with the fetched messages.
+      // After this point, MessagesModal owns its local copy — we do NOT
+      // append to messagesModal.messages on send (that was the double-render bug).
+      setMessagesModal((prev) => ({
         ...prev,
-        messages: [...prev.messages, data.orderMessage]
+        messages: data.messages || [],
+        loading: false,
       }));
-      toast.success('Message sent', { position: 'top-center' });
-    } else {
-      throw new Error('Failed to send message');
-    }
-  };
 
+      // Mark as read on server (fire-and-forget; badge is already cleared)
+      fetch(`/api/v1/orders/${order._id}/messages/read`, {
+        method: "PUT",
+        credentials: "include",
+      }).catch(() => {});
+    } catch {
+      setMessagesModal((prev) => ({ ...prev, loading: false }));
+      toast.error("Failed to load messages", { position: "top-center" });
+    }
+  }, []);
+
+  const closeMessagesModal = useCallback(() => {
+    setMessagesModal({ open: false, order: null, messages: [], loading: false });
+  }, []);
+
+  // ── Send message ────────────────────────────────────────────────────────
+  // FIX #2: We no longer append to messagesModal.messages here.
+  // MessagesModal adds an optimistic bubble internally and syncs when the
+  // promise resolves. We just POST and return the real message so the modal
+  // can replace its optimistic entry.
+  const handleSendMessage = useCallback(
+    async (content) => {
+      if (!messagesModal.order) return;
+
+      const res = await fetch(
+        `/api/v1/orders/${messagesModal.order._id}/messages`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            content,
+            sender: "customer",     // legacy field
+            senderType: "customer", // canonical field
+            attachments: [],
+          }),
+        }
+      );
+
+      if (!res.ok) {
+        throw new Error("Failed to send message");
+      }
+
+      // Return value is used by MessagesModal to replace the optimistic bubble
+      // with the real persisted message (correct _id, isRead, timestamps etc.)
+      // We intentionally do NOT call setMessagesModal here — that's the fix.
+      const data = await res.json();
+      return data.orderMessage;
+    },
+    [messagesModal.order]
+  );
+
+  // ── Status helpers ──────────────────────────────────────────────────────
   const getStatusIcon = (status) => {
-    const statusLower = status?.toLowerCase() || "";
-
-    if (statusLower.includes("delivered") || statusLower.includes("completed")) {
+    const s = status?.toLowerCase() || "";
+    if (s.includes("delivered") || s.includes("completed"))
       return <FiCheckCircle className="mo-status-icon mo-success" />;
-    } else if (statusLower.includes("cancelled") || statusLower.includes("failed")) {
+    if (s.includes("cancelled") || s.includes("failed"))
       return <FiXCircle className="mo-status-icon mo-danger" />;
-    } else if (statusLower.includes("processing") || statusLower.includes("pending")) {
+    if (s.includes("processing") || s.includes("pending"))
       return <FiClock className="mo-status-icon mo-warning" />;
-    } else if (statusLower.includes("shipped") || statusLower.includes("transit")) {
+    if (s.includes("shipped") || s.includes("transit"))
       return <FiTruck className="mo-status-icon mo-info" />;
-    }
     return <FiAlertCircle className="mo-status-icon" />;
   };
 
   const getStatusClass = (status) => {
-    const statusLower = status?.toLowerCase() || "";
-
-    if (statusLower.includes("delivered") || statusLower.includes("completed")) {
+    const s = status?.toLowerCase() || "";
+    if (s.includes("delivered") || s.includes("completed"))
       return "mo-status-badge mo-success";
-    } else if (statusLower.includes("cancelled") || statusLower.includes("failed")) {
+    if (s.includes("cancelled") || s.includes("failed"))
       return "mo-status-badge mo-danger";
-    } else if (statusLower.includes("processing") || statusLower.includes("pending")) {
+    if (s.includes("processing") || s.includes("pending"))
       return "mo-status-badge mo-warning";
-    } else if (statusLower.includes("shipped") || statusLower.includes("transit")) {
+    if (s.includes("shipped") || s.includes("transit"))
       return "mo-status-badge mo-info";
-    }
     return "mo-status-badge";
   };
 
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
+  // ── Formatting helpers ──────────────────────────────────────────────────
+  const formatCurrency = (amount) =>
+    new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
       minimumFractionDigits: 2,
     }).format(amount);
-  };
 
-  const formatDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
+  const formatDate = (dateString) =>
+    new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
       day: "numeric",
     });
-  };
 
-  const formatDateWithTime = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString("en-US", {
+  const formatDateWithTime = (dateString) =>
+    new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
       day: "numeric",
       hour: "2-digit",
       minute: "2-digit",
     });
-  };
 
+  // ── Filtering / sorting ─────────────────────────────────────────────────
   const filteredOrders = orders
     ?.filter((order) => {
       const matchesSearch =
         order._id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        order.paymentInfo?.reference?.toLowerCase().includes(searchTerm.toLowerCase());
-
+        order.paymentInfo?.reference
+          ?.toLowerCase()
+          .includes(searchTerm.toLowerCase());
       const matchesStatus =
         statusFilter === "all" ||
         order.orderStatus?.toLowerCase() === statusFilter.toLowerCase();
-
       return matchesSearch && matchesStatus;
     })
     .sort((a, b) => {
-      if (sortBy === "newest") {
-        return new Date(b.createdAt) - new Date(a.createdAt);
-      } else if (sortBy === "oldest") {
-        return new Date(a.createdAt) - new Date(b.createdAt);
-      } else if (sortBy === "highest") {
-        return b.totalPrice - a.totalPrice;
-      } else if (sortBy === "lowest") {
-        return a.totalPrice - b.totalPrice;
-      }
+      if (sortBy === "newest") return new Date(b.createdAt) - new Date(a.createdAt);
+      if (sortBy === "oldest") return new Date(a.createdAt) - new Date(b.createdAt);
+      if (sortBy === "highest") return b.totalPrice - a.totalPrice;
+      if (sortBy === "lowest") return a.totalPrice - b.totalPrice;
       return 0;
     });
 
+  // ── Quick stats ─────────────────────────────────────────────────────────
   const getOrderStats = () => {
-    if (!orders || orders.length === 0) return null;
-    
+    if (!orders?.length) return null;
     return {
       total: orders.length,
-      processing: orders.filter(o => o.orderStatus?.toLowerCase().includes('processing')).length,
-      shipped: orders.filter(o => o.orderStatus?.toLowerCase().includes('shipped')).length,
-      delivered: orders.filter(o => o.orderStatus?.toLowerCase().includes('delivered')).length,
+      processing: orders.filter((o) =>
+        o.orderStatus?.toLowerCase().includes("processing")
+      ).length,
+      shipped: orders.filter((o) =>
+        o.orderStatus?.toLowerCase().includes("shipped")
+      ).length,
+      delivered: orders.filter((o) =>
+        o.orderStatus?.toLowerCase().includes("delivered")
+      ).length,
     };
   };
 
   const stats = getOrderStats();
 
+  // ── Loading state ───────────────────────────────────────────────────────
   if (loading && !orders?.length) {
     return (
       <>
@@ -296,12 +287,14 @@ function MyOrders() {
     );
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle title="My Orders" />
       <Navbar />
 
       <div className="mo-orders-container">
+        {/* Header */}
         <div className="mo-orders-header">
           <div className="mo-header-content">
             <div className="mo-header-title-section">
@@ -313,7 +306,7 @@ function MyOrders() {
                 Track and manage all your orders in one place
               </p>
             </div>
-            <button 
+            <button
               className="mo-refresh-btn"
               onClick={handleRefresh}
               disabled={refreshing}
@@ -323,6 +316,7 @@ function MyOrders() {
             </button>
           </div>
 
+          {/* Stats grid */}
           {stats && (
             <div className="mo-stats-grid">
               <div className="mo-stat-card">
@@ -364,10 +358,10 @@ function MyOrders() {
             </div>
           )}
 
-          {/* Customer Analytics - Collapsible */}
+          {/* Analytics – collapsible */}
           {customerAnalytics && (
             <div className="mo-analytics-section">
-              <button 
+              <button
                 className="mo-analytics-toggle"
                 onClick={() => setShowAnalytics(!showAnalytics)}
               >
@@ -375,7 +369,7 @@ function MyOrders() {
                 <span>Your Order Analytics</span>
                 {showAnalytics ? <FiChevronUp /> : <FiChevronDown />}
               </button>
-              
+
               {showAnalytics && (
                 <div className="mo-analytics-content">
                   <div className="mo-analytics-grid">
@@ -394,23 +388,23 @@ function MyOrders() {
                     <div className="mo-analytics-card">
                       <span className="mo-analytics-label">First Order</span>
                       <span className="mo-analytics-value">
-                        {customerAnalytics.firstOrderDate 
+                        {customerAnalytics.firstOrderDate
                           ? formatDate(customerAnalytics.firstOrderDate)
-                          : 'N/A'}
+                          : "N/A"}
                       </span>
                     </div>
                     <div className="mo-analytics-card">
                       <span className="mo-analytics-label">Last Order</span>
                       <span className="mo-analytics-value">
-                        {customerAnalytics.lastOrderDate 
+                        {customerAnalytics.lastOrderDate
                           ? formatDate(customerAnalytics.lastOrderDate)
-                          : 'N/A'}
+                          : "N/A"}
                       </span>
                     </div>
                   </div>
-                  
-                  {(customerAnalytics.returnedOrders > 0 || 
-                    customerAnalytics.refundedOrders > 0 || 
+
+                  {(customerAnalytics.returnedOrders > 0 ||
+                    customerAnalytics.refundedOrders > 0 ||
                     customerAnalytics.cancelledOrders > 0) && (
                     <div className="mo-analytics-additional">
                       <h4>Additional Stats</h4>
@@ -442,6 +436,7 @@ function MyOrders() {
           )}
         </div>
 
+        {/* Controls */}
         <div className="mo-orders-controls">
           <div className="mo-search-box">
             <FiSearch className="mo-search-icon" />
@@ -494,6 +489,7 @@ function MyOrders() {
           </div>
         </div>
 
+        {/* Orders list */}
         {!filteredOrders || filteredOrders.length === 0 ? (
           <div className="mo-empty-orders">
             <div className="mo-empty-icon-wrapper">
@@ -511,105 +507,110 @@ function MyOrders() {
           </div>
         ) : (
           <div className="mo-orders-list">
-            {filteredOrders.map((order) => (
-              <div key={order._id} className="mo-order-card">
-                <div className="mo-order-card-header">
-                  <div className="mo-order-meta">
-                    <div className="mo-order-id-section">
-                      <span className="mo-order-label">Order</span>
-                      <span className="mo-order-id">
-                        #{order._id.slice(-8).toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="mo-order-date">
-                      <FiCalendar className="mo-date-icon" />
-                      {formatDate(order.createdAt)}
-                    </div>
-                  </div>
-
-                  <div className={getStatusClass(order.orderStatus)}>
-                    {getStatusIcon(order.orderStatus)}
-                    {order.orderStatus}
-                  </div>
-                </div>
-
-                <div className="mo-order-card-body">
-                  <div className="mo-order-items-preview">
-                    {order.orderItems?.slice(0, 2).map((item, index) => (
-                      <div key={index} className="mo-order-item-mini">
-                        <div className="mo-item-mini-img-wrapper">
-                          <img
-                            src={item.image}
-                            alt={item.name}
-                            className="mo-item-mini-img"
-                          />
-                        </div>
-                        <div className="mo-item-mini-info">
-                          <p className="mo-item-mini-name">{item.name}</p>
-                          <p className="mo-item-mini-qty">Qty: {item.quantity}</p>
-                        </div>
-                      </div>
-                    ))}
-                    {order.orderItems?.length > 2 && (
-                      <div className="mo-more-items">
-                        <FiBox className="mo-more-icon" />
-                        <span>+{order.orderItems.length - 2} more item(s)</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="mo-order-summary-section">
-                    <div className="mo-summary-item">
-                      <FiBox className="mo-summary-icon" />
-                      <div className="mo-summary-details">
-                        <span className="mo-summary-label">Items</span>
-                        <span className="mo-summary-value">
-                          {order.orderItems?.length}
+            {filteredOrders.map((order) => {
+              // Derive unread count directly from order data — same approach as admin.
+              // orderMessages is populated by getAllMyOrders; no separate fetch needed.
+              const unread = countAdminUnread(order.orderMessages || []);
+              return (
+                <div key={order._id} className="mo-order-card">
+                  <div className="mo-order-card-header">
+                    <div className="mo-order-meta">
+                      <div className="mo-order-id-section">
+                        <span className="mo-order-label">Order</span>
+                        <span className="mo-order-id">
+                          #{order._id.slice(-8).toUpperCase()}
                         </span>
                       </div>
+                      <div className="mo-order-date">
+                        <FiCalendar className="mo-date-icon" />
+                        {formatDate(order.createdAt)}
+                      </div>
                     </div>
-                    <div className="mo-summary-item mo-summary-total">
-                      <div className="mo-summary-details">
-                        <span className="mo-summary-label">Total</span>
-                        <span className="mo-summary-value mo-total-amount">
-                          {formatCurrency(order.totalPrice)}
-                        </span>
+
+                    <div className={getStatusClass(order.orderStatus)}>
+                      {getStatusIcon(order.orderStatus)}
+                      {order.orderStatus}
+                    </div>
+                  </div>
+
+                  <div className="mo-order-card-body">
+                    <div className="mo-order-items-preview">
+                      {order.orderItems?.slice(0, 2).map((item, index) => (
+                        <div key={index} className="mo-order-item-mini">
+                          <div className="mo-item-mini-img-wrapper">
+                            <img
+                              src={item.image}
+                              alt={item.name}
+                              className="mo-item-mini-img"
+                            />
+                          </div>
+                          <div className="mo-item-mini-info">
+                            <p className="mo-item-mini-name">{item.name}</p>
+                            <p className="mo-item-mini-qty">Qty: {item.quantity}</p>
+                          </div>
+                        </div>
+                      ))}
+                      {order.orderItems?.length > 2 && (
+                        <div className="mo-more-items">
+                          <FiBox className="mo-more-icon" />
+                          <span>+{order.orderItems.length - 2} more item(s)</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="mo-order-summary-section">
+                      <div className="mo-summary-item">
+                        <FiBox className="mo-summary-icon" />
+                        <div className="mo-summary-details">
+                          <span className="mo-summary-label">Items</span>
+                          <span className="mo-summary-value">
+                            {order.orderItems?.length}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mo-summary-item mo-summary-total">
+                        <div className="mo-summary-details">
+                          <span className="mo-summary-label">Total</span>
+                          <span className="mo-summary-value mo-total-amount">
+                            {formatCurrency(order.totalPrice)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  <div className="mo-order-card-actions">
+                    <Link
+                      to={`/order/${order._id}`}
+                      className="mo-action-btn mo-view-details-btn"
+                    >
+                      <FiEye />
+                      <span>View Details</span>
+                      <FiChevronRight className="mo-chevron-icon" />
+                    </Link>
+
+                    <button
+                      onClick={() => openMessagesModal(order)}
+                      className="mo-action-btn mo-secondary-btn mo-messages-btn"
+                    >
+                      <FiMessageCircle />
+                      <span>Messages</span>
+                      {unread > 0 && (
+                        <span className="mo-unread-badge">{unread}</span>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => openTrackingModal(order)}
+                      className="mo-action-btn mo-secondary-btn"
+                    >
+                      <FiTruck />
+                      <span>Track</span>
+                    </button>
+                  </div>
                 </div>
-
-                <div className="mo-order-card-actions">
-                  <Link
-                    to={`/order/${order._id}`}
-                    className="mo-action-btn mo-view-details-btn"
-                  >
-                    <FiEye />
-                    <span>View Details</span>
-                    <FiChevronRight className="mo-chevron-icon" />
-                  </Link>
-
-                  <button
-                    onClick={() => openMessagesModal(order)}
-                    className="mo-action-btn mo-secondary-btn mo-messages-btn"
-                  >
-                    <FiMessageCircle />
-                    <span>Messages</span>
-                    {unreadCounts[order._id] > 0 && (
-                      <span className="mo-unread-badge">{unreadCounts[order._id]}</span>
-                    )}
-                  </button>
-
-                  <button
-                    onClick={() => openTrackingModal(order)}
-                    className="mo-action-btn mo-secondary-btn"
-                  >
-                    <FiTruck />
-                    <span>Track</span>
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -617,10 +618,13 @@ function MyOrders() {
       {/* Tracking Modal */}
       {trackingModal.open && trackingModal.order && (
         <div className="mo-modal-overlay" onClick={closeTrackingModal}>
-          <div className="mo-tracking-modal" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="mo-tracking-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mo-modal-header">
               <h2>Order Tracking</h2>
-              <button 
+              <button
                 className="mo-modal-close"
                 onClick={closeTrackingModal}
                 aria-label="Close modal"
@@ -628,7 +632,7 @@ function MyOrders() {
                 <FiX />
               </button>
             </div>
-            
+
             <div className="mo-modal-body">
               <div className="mo-tracking-info">
                 <div className="mo-tracking-info-item">
@@ -678,7 +682,7 @@ function MyOrders() {
                     )}
                   </div>
                   {trackingModal.order.tracking.trackingUrl && (
-                    <a 
+                    <a
                       href={trackingModal.order.tracking.trackingUrl}
                       target="_blank"
                       rel="noopener noreferrer"
