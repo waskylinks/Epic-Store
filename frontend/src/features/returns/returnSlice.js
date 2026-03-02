@@ -5,11 +5,7 @@ import axios from "axios";
 
 /**
  * User requests return for their order.
- * FIX BUG-2 & BUG-8: Files can no longer be uploaded before the return exists.
- * The initial request now sends `items` (matches backend) and any attachment
- * URLs are included directly in returnData after a separate upload call that
- * the COMPONENT handles post-return-creation if needed.  The slice itself stays
- * thin — field naming is the only change here.
+ * Sends `items` — the canonical field name the backend schema and controller expect.
  */
 export const requestReturn = createAsyncThunk(
   "return/requestReturn",
@@ -31,7 +27,6 @@ export const requestReturn = createAsyncThunk(
 
 /**
  * Get return status for an order.
- * FIX BUG-15: Route now exists in the backend (GET /orders/:id/return/status).
  */
 export const getReturnStatus = createAsyncThunk(
   "return/getReturnStatus",
@@ -154,10 +149,8 @@ export const getReturnDocuments = createAsyncThunk(
 
 /**
  * Upload return files (customer).
- * FIX BUG-8: This thunk is now only called AFTER a return already exists
- * (i.e. from the messages modal, not from the initial submit flow).
- * FIX BUG-10: uploadLoading is a dedicated flag; `success` is NOT set here so
- * the component-level success-toast useEffect never fires for an upload.
+ * Only called AFTER a return already exists (e.g. from the messages modal
+ * or as a second step after requestReturn succeeds).
  */
 export const uploadReturnFiles = createAsyncThunk(
   "return/uploadReturnFiles",
@@ -287,9 +280,8 @@ const returnSlice = createSlice({
       });
 
     // ── Add Return Message (Customer) ───────────────────────────────────────
-    // FIX BUG-9: Don't optimistically push the new message — the component
-    // immediately re-fetches the full list via getReturnMessages, so the push
-    // only causes a duplicate/flicker.  Remove the optimistic update entirely.
+    // success flag intentionally NOT set — the component shows its own toast
+    // and re-fetches messages itself.
     builder
       .addCase(addReturnMessage.pending, (state) => {
         state.loading = true;
@@ -297,8 +289,6 @@ const returnSlice = createSlice({
       })
       .addCase(addReturnMessage.fulfilled, (state) => {
         state.loading = false;
-        // NOTE: success flag intentionally NOT set here; the component shows
-        // its own "Message sent" toast and re-fetches messages itself.
       })
       .addCase(addReturnMessage.rejected, (state, action) => {
         state.loading = false;
@@ -336,9 +326,7 @@ const returnSlice = createSlice({
       });
 
     // ── Upload Return Files ─────────────────────────────────────────────────
-    // FIX BUG-10: Do NOT set state.success = true here.  Doing so triggers the
-    // component's success-toast useEffect mid-form with a misleading
-    // "Action completed successfully!" message every time a file is picked.
+    // success flag intentionally NOT set — callers handle their own feedback.
     builder
       .addCase(uploadReturnFiles.pending, (state) => {
         state.uploadLoading = true;
@@ -346,7 +334,6 @@ const returnSlice = createSlice({
       })
       .addCase(uploadReturnFiles.fulfilled, (state) => {
         state.uploadLoading = false;
-        // Intentionally no success=true — callers handle their own feedback
       })
       .addCase(uploadReturnFiles.rejected, (state, action) => {
         state.uploadLoading = false;

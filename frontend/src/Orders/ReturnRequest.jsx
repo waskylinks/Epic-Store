@@ -50,8 +50,8 @@ const RETURN_REASONS = [
   { value: 'other',             label: 'Other' }
 ];
 
-// FIX BUG-16: keep in sync with router UPLOAD_LIMIT (both now 8)
-const MAX_FILES = 8;
+const MAX_FILES        = 8;
+const MAX_DESC_CHARS   = 2000;
 
 const ALLOWED_FILE_TYPES = {
   images:    ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'],
@@ -64,15 +64,15 @@ const ALLOWED_FILE_TYPES = {
 // ─────────────────────────────────────────────
 const ReturnStatusBadge = ({ status }) => {
   const configs = {
-    none:       { label: 'No Return',        className: 'rtr-return-badge-none',      icon: '○'  },
-    requested:  { label: 'Return Requested', className: 'rtr-return-badge-requested', icon: '⏳' },
-    approved:   { label: 'Approved',         className: 'rtr-return-badge-approved',  icon: '✓'  },
-    rejected:   { label: 'Rejected',         className: 'rtr-return-badge-rejected',  icon: '✗'  },
-    in_transit: { label: 'In Transit',       className: 'rtr-return-badge-transit',   icon: '🚚' },
-    received:   { label: 'Received',         className: 'rtr-return-badge-received',  icon: '📦' },
-    inspected:  { label: 'Inspecting',       className: 'rtr-return-badge-inspecting',icon: '🔍' },
-    completed:  { label: 'Completed',        className: 'rtr-return-badge-completed', icon: '✓'  },
-    cancelled:  { label: 'Cancelled',        className: 'rtr-return-badge-cancelled', icon: '✗'  }
+    none:       { label: 'No Return',        className: 'rtr-return-badge-none',       icon: '○'  },
+    requested:  { label: 'Return Requested', className: 'rtr-return-badge-requested',  icon: '⏳' },
+    approved:   { label: 'Approved',         className: 'rtr-return-badge-approved',   icon: '✓'  },
+    rejected:   { label: 'Rejected',         className: 'rtr-return-badge-rejected',   icon: '✗'  },
+    in_transit: { label: 'In Transit',       className: 'rtr-return-badge-transit',    icon: '🚚' },
+    received:   { label: 'Received',         className: 'rtr-return-badge-received',   icon: '📦' },
+    inspected:  { label: 'Inspecting',       className: 'rtr-return-badge-inspecting', icon: '🔍' },
+    completed:  { label: 'Completed',        className: 'rtr-return-badge-completed',  icon: '✓'  },
+    cancelled:  { label: 'Cancelled',        className: 'rtr-return-badge-cancelled',  icon: '✗'  }
   };
   const config = configs[status] ?? configs.none;
 
@@ -104,17 +104,19 @@ function ReturnRequest() {
     success
   } = useSelector((s) => s.return);
 
-  const [formData, setFormData] = useState({ reason: '', itemsToReturn: [] });
-  const [formErrors, setFormErrors]           = useState({});
-  const [selectedFiles, setSelectedFiles]     = useState([]);
-  const [filePreviews, setFilePreviews]       = useState([]);
-  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [formData, setFormData] = useState({
+    reason:        '',
+    description:   '',
+    itemsToReturn: []
+  });
+  const [formErrors, setFormErrors]               = useState({});
+  const [selectedFiles, setSelectedFiles]         = useState([]);
+  const [filePreviews, setFilePreviews]           = useState([]);
+  const [showCancelModal, setShowCancelModal]     = useState(false);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
-  const [unreadCount, setUnreadCount]         = useState(0);
+  const [unreadCount, setUnreadCount]             = useState(0);
 
-  // FIX BUG-11: backend stores items under `itemsToReturn`, not `items`
-  const returnItems = order?.returnInfo?.itemsToReturn ?? order?.returnInfo?.items ?? [];
-
+  const returnItems     = order?.returnInfo?.itemsToReturn ?? [];
   const hasActiveReturn = order?.returnInfo?.status && order.returnInfo.status !== 'none';
   const isTracking      = hasActiveReturn;
 
@@ -139,9 +141,6 @@ function ReturnRequest() {
   }, [messages]);
 
   // ── Pre-populate form items (new return only) ────────────────────────────
-  // FIX BUG-12: remove `formData.itemsToReturn.length` from deps — it caused
-  // this effect to re-run every time items were mutated (e.g. checkboxes).
-  // Use a ref-guard instead so items are set exactly once after the order loads.
   const itemsPopulated = useRef(false);
   useEffect(() => {
     if (order?.orderItems && !isTracking && !itemsPopulated.current) {
@@ -153,6 +152,7 @@ function ReturnRequest() {
         image:          item.image || '',
         quantity:       parseInt(item.quantity) || 1,
         returnQuantity: parseInt(item.quantity) || 1,
+        reason:         '',
         selected:       true
       }));
       setFormData(prev => ({ ...prev, itemsToReturn: items }));
@@ -163,23 +163,22 @@ function ReturnRequest() {
   useEffect(() => {
     if (isTracking && order?.returnInfo && !formData.reason) {
       setFormData({
-        reason:        order.returnInfo.reason || '',
-        // FIX BUG-11: canonical field is `itemsToReturn`; fall back gracefully
-        itemsToReturn: order.returnInfo.itemsToReturn ?? order.returnInfo.items ?? []
+        reason:        order.returnInfo.reason      || '',
+        description:   order.returnInfo.description || '',
+        itemsToReturn: order.returnInfo.itemsToReturn ?? []
       });
     }
   }, [isTracking, order?.returnInfo, formData.reason]);
 
-  // ── Global success / error toasts ────────────────────────────────────────
-  // FIX BUG-10: uploadReturnFiles no longer sets success=true in the slice, so
-  // this effect only fires for real user-facing actions (requestReturn, cancelReturn).
+  // ── Global error toast only — success is handled inline ─────────────────
+  // FIX: removed generic toast.success here; submission stays on page and
+  // lets the re-fetched order flip isTracking to true naturally.
   useEffect(() => {
-    if (success) {
-      toast.success('Action completed successfully!', { position: 'top-center' });
-      dispatch(clearReturnState());
-    }
     if (error) {
       toast.error(error, { position: 'top-center' });
+      dispatch(clearReturnState());
+    }
+    if (success) {
       dispatch(clearReturnState());
     }
   }, [success, error, dispatch]);
@@ -209,6 +208,18 @@ function ReturnRequest() {
         i === index ? { ...it, returnQuantity: newQuantity } : it
       )
     }));
+  };
+
+  const handleItemReasonChange = (index, value) => {
+    setFormData(prev => ({
+      ...prev,
+      itemsToReturn: prev.itemsToReturn.map((it, i) =>
+        i === index ? { ...it, reason: value } : it
+      )
+    }));
+    if (formErrors[`itemReason_${index}`]) {
+      setFormErrors(prev => ({ ...prev, [`itemReason_${index}`]: '' }));
+    }
   };
 
   // ── File handling ────────────────────────────────────────────────────────
@@ -244,37 +255,56 @@ function ReturnRequest() {
     setSelectedFiles(prev => [...prev, ...validFiles]);
 
     validFiles.forEach(file => {
-      const reader    = new FileReader();
+      const reader     = new FileReader();
       reader.onloadend = () => {
         setFilePreviews(prev => [...prev, { file, preview: reader.result, type: file.type }]);
       };
       reader.readAsDataURL(file);
     });
 
-    // Reset the input so the same file can be re-selected after removal
     e.target.value = '';
   };
 
   const removeFile = (index) => {
-    setSelectedFiles(prev  => prev.filter((_, i) => i !== index));
-    setFilePreviews(prev   => prev.filter((_, i) => i !== index));
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
+    setFilePreviews(prev => prev.filter((_, i) => i !== index));
   };
 
   // ── Validation ───────────────────────────────────────────────────────────
   const validateForm = () => {
     const errors = {};
-    if (!formData.reason) errors.reason = 'Please select a return reason';
-    if (!formData.itemsToReturn.some(i => i.selected))
+
+    if (!formData.reason) {
+      errors.reason = 'Please select a return reason';
+    }
+
+    if (!formData.description || formData.description.trim().length < 5) {
+      errors.description = 'Please provide a description of at least 5 characters';
+    }
+    if (formData.description && formData.description.length > MAX_DESC_CHARS) {
+      errors.description = `Description cannot exceed ${MAX_DESC_CHARS} characters`;
+    }
+
+    const selectedItems = formData.itemsToReturn.filter(i => i.selected);
+    if (selectedItems.length === 0) {
       errors.items = 'Please select at least one item to return';
+    }
+
+    selectedItems.forEach((item) => {
+      const originalIndex = formData.itemsToReturn.indexOf(item);
+      if (!item.reason || item.reason.trim().length < 5) {
+        errors[`itemReason_${originalIndex}`] = 'Please select a reason for this item';
+      }
+    });
+
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
   // ── Submit ───────────────────────────────────────────────────────────────
-  // FIX BUG-2 & BUG-8: Files can only be uploaded after the return exists.
-  // Strategy: create the return first (no files), then — if there are files —
-  // upload them in a second request. This eliminates the 404 from the upload
-  // endpoint guard `if (!order.returnInfo || status === 'none')`.
+  // FIX: no toast.success, no navigate after success.
+  // Re-fetching the order causes returnInfo.status to be set, which flips
+  // isTracking to true and renders the tracking view automatically.
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) {
@@ -283,21 +313,26 @@ function ReturnRequest() {
     }
 
     try {
-      // FIX BUG-1: send field as `items` to match the updated controller
       const selectedItems = formData.itemsToReturn
         .filter(item => item.selected)
-        .map(({ product, returnQuantity, name, price, image }) => ({
+        .map(({ product, returnQuantity, name, price, image, reason }) => ({
           product,
           quantity: returnQuantity,
           name,
           price,
-          image
+          image,
+          reason
         }));
 
-      // Step 1: create the return (no attachments yet)
+      // Step 1: create the return
       await dispatch(requestReturn({
         orderId,
-        returnData: { reason: formData.reason, items: selectedItems, attachments: [] }
+        returnData: {
+          reason:      formData.reason,
+          description: formData.description,
+          items:       selectedItems,
+          attachments: []
+        }
       })).unwrap();
 
       // Step 2: upload files now that the return exists
@@ -305,18 +340,17 @@ function ReturnRequest() {
         try {
           await dispatch(uploadReturnFiles({ orderId, files: selectedFiles })).unwrap();
         } catch {
-          // Non-fatal: return was created; file upload failure is a minor issue
-          toast.warn('Return submitted but file upload failed. You can retry from the messages panel.', {
-            position: 'top-center', autoClose: 5000
-          });
+          toast.warn(
+            'Return submitted but file upload failed. You can retry from the messages panel.',
+            { position: 'top-center', autoClose: 5000 }
+          );
         }
       }
 
-      toast.success('Return request submitted successfully!', {
-        position: 'top-center', autoClose: 3000
-      });
+      // Step 3: re-fetch order so returnInfo is populated → isTracking becomes
+      // true → tracking view renders in place, no navigation needed.
+      dispatch(getOrderDetails(orderId));
 
-      setTimeout(() => navigate(`/order/${orderId}`), 2000);
     } catch (err) {
       toast.error(err || 'Failed to submit return request', {
         position: 'top-center', autoClose: 3000
@@ -337,7 +371,6 @@ function ReturnRequest() {
 
       await dispatch(addReturnMessage({ orderId, content, attachments: uploadedFiles })).unwrap();
 
-      // FIX BUG-9: slice no longer optimistically pushes; re-fetch is canonical
       dispatch(getReturnMessages(orderId));
       toast.success('Message sent', { position: 'top-center', autoClose: 2000 });
     } catch (err) {
@@ -351,11 +384,15 @@ function ReturnRequest() {
   };
 
   // ── Cancel return ────────────────────────────────────────────────────────
+  // FIX: removed setTimeout(navigate). After cancel the order is re-fetched;
+  // returnInfo.status becomes 'none' → isTracking becomes false → form
+  // reappears in place on the same page.
   const handleCancelReturn = async () => {
     try {
       await dispatch(cancelReturn(orderId)).unwrap();
       toast.success('Return request cancelled', { position: 'top-center', autoClose: 2000 });
-      setTimeout(() => navigate(`/order/${orderId}`), 1500);
+      // Re-fetch so isTracking → false and the form reappears
+      dispatch(getOrderDetails(orderId));
     } catch (err) {
       toast.error(err || 'Failed to cancel return', { position: 'top-center' });
     } finally {
@@ -371,6 +408,9 @@ function ReturnRequest() {
 
   const fmtDate = (d, opts = { month: 'short', day: 'numeric', year: 'numeric' }) =>
     d ? new Date(d).toLocaleDateString('en-US', opts) : 'N/A';
+
+  const reasonLabel = (value) =>
+    RETURN_REASONS.find(r => r.value === value)?.label ?? value?.replace(/_/g, ' ') ?? '—';
 
   // ── Render guards ────────────────────────────────────────────────────────
   if (orderLoading) return (
@@ -503,15 +543,24 @@ function ReturnRequest() {
                 <div className="rtr-return-info-grid">
                   <div className="rtr-info-item">
                     <span className="rtr-info-label">Return Reason:</span>
-                    <span className="rtr-info-value">
-                      {order.returnInfo.reason?.replace(/_/g, ' ')}
-                    </span>
+                    <span className="rtr-info-value">{reasonLabel(order.returnInfo.reason)}</span>
                   </div>
                   <div className="rtr-info-item">
                     <span className="rtr-info-label">Items to Return:</span>
-                    {/* FIX BUG-11: use resolved returnItems (itemsToReturn || items) */}
                     <span className="rtr-info-value">{returnItems.length} item(s)</span>
                   </div>
+                  {order.returnInfo.description && (
+                    <div className="rtr-info-item rtr-full-width">
+                      <span className="rtr-info-label">Description:</span>
+                      <span className="rtr-info-value">{order.returnInfo.description}</span>
+                    </div>
+                  )}
+                  {order.returnInfo.rmaNumber && (
+                    <div className="rtr-info-item rtr-full-width">
+                      <span className="rtr-info-label">RMA Number:</span>
+                      <span className="rtr-info-value rtr-tracking">{order.returnInfo.rmaNumber}</span>
+                    </div>
+                  )}
                   {order.returnInfo.trackingNumber && (
                     <div className="rtr-info-item rtr-full-width">
                       <span className="rtr-info-label">Tracking Number:</span>
@@ -534,7 +583,7 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* FIX BUG-11: render returnItems (resolved array) */}
+                {/* Items being returned — show per-item reason */}
                 {returnItems.length > 0 && (
                   <div className="rtr-return-items">
                     <h3>Items Being Returned</h3>
@@ -547,6 +596,11 @@ function ReturnRequest() {
                           <div className="rtr-item-details">
                             <span className="rtr-item-name">{item.name}</span>
                             <span className="rtr-item-quantity">Quantity: {item.quantity}</span>
+                            {item.reason && (
+                              <span className="rtr-item-reason">
+                                Reason: {reasonLabel(item.reason)}
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -606,7 +660,8 @@ function ReturnRequest() {
               </div>
 
               <form onSubmit={handleSubmit} className="rtr-return-form">
-                {/* Item selection */}
+
+                {/* ── Item selection ── */}
                 <div className="rtr-form-section">
                   <label className="rtr-section-label">Items in Your Order</label>
                   <div className="rtr-items-grid">
@@ -637,23 +692,53 @@ function ReturnRequest() {
                         </div>
 
                         {item.selected && (
-                          <div className="rtr-quantity-selector">
-                            <label>Quantity:</label>
-                            <div className="rtr-quantity-controls">
-                              <button
-                                type="button"
-                                onClick={() => handleQuantityChange(index, item.returnQuantity - 1)}
-                                disabled={item.returnQuantity <= 1}
-                              >-</button>
-                              <span>{item.returnQuantity}</span>
-                              <button
-                                type="button"
-                                onClick={() => handleQuantityChange(index, item.returnQuantity + 1)}
-                                disabled={item.returnQuantity >= item.quantity}
-                              >+</button>
+                          <>
+                            <div className="rtr-quantity-selector">
+                              <label>Quantity:</label>
+                              <div className="rtr-quantity-controls">
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuantityChange(index, item.returnQuantity - 1)}
+                                  disabled={item.returnQuantity <= 1}
+                                >-</button>
+                                <span>{item.returnQuantity}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleQuantityChange(index, item.returnQuantity + 1)}
+                                  disabled={item.returnQuantity >= item.quantity}
+                                >+</button>
+                              </div>
+                              <span className="rtr-max-qty">Max: {item.quantity}</span>
                             </div>
-                            <span className="rtr-max-qty">Max: {item.quantity}</span>
-                          </div>
+
+                            {/* Per-item reason dropdown */}
+                            <div className="rtr-item-reason-selector">
+                              <label
+                                htmlFor={`item-reason-${index}`}
+                                className="rtr-item-reason-label"
+                              >
+                                Reason for this item *
+                              </label>
+                              <select
+                                id={`item-reason-${index}`}
+                                className={`rtr-form-select rtr-item-reason-select ${
+                                  formErrors[`itemReason_${index}`] ? 'rtr-error' : ''
+                                }`}
+                                value={item.reason}
+                                onChange={(e) => handleItemReasonChange(index, e.target.value)}
+                              >
+                                <option value="">Select a reason</option>
+                                {RETURN_REASONS.map(r => (
+                                  <option key={r.value} value={r.value}>{r.label}</option>
+                                ))}
+                              </select>
+                              {formErrors[`itemReason_${index}`] && (
+                                <span className="rtr-error-message">
+                                  <FiAlertCircle /> {formErrors[`itemReason_${index}`]}
+                                </span>
+                              )}
+                            </div>
+                          </>
                         )}
                       </div>
                     ))}
@@ -665,10 +750,10 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* Reason */}
+                {/* ── Overall return reason ── */}
                 <div className="rtr-form-group">
                   <label htmlFor="reason" className="rtr-form-label">
-                    Reason for Return *
+                    Overall Return Category *
                   </label>
                   <select
                     id="reason"
@@ -689,7 +774,38 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* File upload */}
+                {/* ── Description ── */}
+                <div className="rtr-form-group">
+                  <label htmlFor="description" className="rtr-form-label">
+                    Description *
+                  </label>
+                  <p className="rtr-helper-text">
+                    Provide a general description covering all items in this return.
+                  </p>
+                  <textarea
+                    id="description"
+                    name="description"
+                    className={`rtr-form-textarea ${formErrors.description ? 'rtr-error' : ''}`}
+                    value={formData.description}
+                    onChange={handleChange}
+                    rows={4}
+                    maxLength={MAX_DESC_CHARS}
+                    placeholder="Describe the issue(s) with your order..."
+                  />
+                  <div className="rtr-char-counter">
+                    <span className={formData.description.length > MAX_DESC_CHARS - 100 ? 'rtr-char-warn' : ''}>
+                      {formData.description.length}
+                    </span>
+                    /{MAX_DESC_CHARS}
+                  </div>
+                  {formErrors.description && (
+                    <span className="rtr-error-message">
+                      <FiAlertCircle /> {formErrors.description}
+                    </span>
+                  )}
+                </div>
+
+                {/* ── File upload ── */}
                 <div className="rtr-form-group">
                   <label className="rtr-form-label">Supporting Documents (Optional)</label>
                   <p className="rtr-helper-text">
@@ -750,7 +866,7 @@ function ReturnRequest() {
                   </div>
                 </div>
 
-                {/* Policy notice */}
+                {/* ── Policy notice ── */}
                 <div className="rtr-notice-box">
                   <FiInfo className="rtr-notice-icon" />
                   <div className="rtr-notice-content">
@@ -764,7 +880,7 @@ function ReturnRequest() {
                   </div>
                 </div>
 
-                {/* Actions */}
+                {/* ── Actions ── */}
                 <div className="rtr-form-actions">
                   <button
                     type="button"
