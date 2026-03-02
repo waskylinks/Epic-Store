@@ -57,41 +57,28 @@ const getAnalyticsData = (isFirstPurchase = false) => {
   const utmParams = getUTMParams();
   const deviceInfo = getDeviceInfo();
   
-  // Get stored session data if available
   const sessionId = sessionStorage.getItem('sessionId') || 
     `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
   const landingPage = sessionStorage.getItem('landingPage') || window.location.pathname;
   
-  // Store session ID if new
   if (!sessionStorage.getItem('sessionId')) {
     sessionStorage.setItem('sessionId', sessionId);
     sessionStorage.setItem('landingPage', window.location.pathname);
   }
   
   return {
-    // UTM tracking
     source: utmParams.utm_source || 'direct',
     medium: utmParams.utm_medium,
     campaign: utmParams.utm_campaign,
     term: utmParams.utm_term,
     content: utmParams.utm_content,
-    
-    // Device & browser
     device: deviceInfo.device,
     browser: deviceInfo.browser,
-    
-    // Referrer & landing page
     referrer: document.referrer || null,
     landingPage,
-    
-    // Session tracking
     sessionId,
-    
-    // First purchase flag
     isFirstPurchase,
-    
-    // Timestamp
     capturedAt: new Date().toISOString()
   };
 };
@@ -182,22 +169,13 @@ export const createOrder = createAsyncThunk(
   "order/createOrder",
   async (orderData, { rejectWithValue, getState }) => {
     try {
-      // Get existing orders to determine if this is first purchase
       const existingOrders = getState().order.orders || [];
       const isFirstPurchase = checkIsFirstPurchase(existingOrders);
-      
-      // Capture complete analytics data
       const analytics = getAnalyticsData(isFirstPurchase);
-      
-      // Merge order data with analytics
-      const orderWithAnalytics = {
-        ...orderData,
-        analytics
-      };
       
       const { data } = await axios.post(
         `${API_BASE}/order/new`, 
-        orderWithAnalytics, 
+        { ...orderData, analytics }, 
         { withCredentials: true }
       );
       
@@ -238,19 +216,14 @@ export const addOrderNote = createAsyncThunk(
   "order/addOrderNote",
   async ({ orderId, content, type = "customer", attachments = [] }, { rejectWithValue }) => {
     try {
-      const formData = createFormDataWithFiles(
-        { content, type },
-        attachments
-      );
+      const formData = createFormDataWithFiles({ content, type }, attachments);
 
       const { data } = await axios.post(
         `${API_BASE}/orders/${orderId}/notes`,
         formData,
         {
           withCredentials: true,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
+          headers: { 'Content-Type': 'multipart/form-data' },
         }
       );
       return { orderId, note: data.note };
@@ -374,314 +347,6 @@ export const markOrderMessagesRead = createAsyncThunk(
 );
 
 // ============================================
-// RETURN MANAGEMENT (Customer)
-// ============================================
-
-export const requestReturn = createAsyncThunk(
-  "order/requestReturn",
-  async ({ orderId, reason, itemsToReturn, images = [] }, { rejectWithValue }) => {
-    try {
-      const formData = createFormDataWithFiles(
-        { reason, itemsToReturn: JSON.stringify(itemsToReturn) },
-        images
-      );
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/return/request`,
-        formData,
-        {
-          withCredentials: true,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-      return { orderId, returnInfo: data.returnInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to request return"
-      );
-    }
-  }
-);
-
-export const addReturnMessage = createAsyncThunk(
-  "order/addReturnMessage",
-  async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/return/messages`,
-        { content, attachments },
-        { withCredentials: true }
-      );
-      return { orderId, message: data.data.message };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to send message"
-      );
-    }
-  }
-);
-
-export const getReturnMessages = createAsyncThunk(
-  "order/getReturnMessages",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/return/messages`,
-        { withCredentials: true }
-      );
-      return { orderId, messages: data.messages };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch messages"
-      );
-    }
-  }
-);
-
-export const getReturnTimeline = createAsyncThunk(
-  "order/getReturnTimeline",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/return/timeline`,
-        { withCredentials: true }
-      );
-      return { orderId, timeline: data.timeline };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch timeline"
-      );
-    }
-  }
-);
-
-export const getReturnDocuments = createAsyncThunk(
-  "order/getReturnDocuments",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/return/documents`,
-        { withCredentials: true }
-      );
-      return { orderId, documents: data.documents };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch documents"
-      );
-    }
-  }
-);
-
-export const uploadReturnFiles = createAsyncThunk(
-  "order/uploadReturnFiles",
-  async ({ orderId, files }, { rejectWithValue, dispatch }) => {
-    try {
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append('attachments', file);
-      });
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/return/upload`,
-        formData,
-        {
-          withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' },
-          onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round(
-              (progressEvent.loaded * 100) / progressEvent.total
-            );
-            dispatch(setUploadProgress(percentCompleted));
-          }
-        }
-      );
-      
-      dispatch(setUploadProgress(0));
-      return { orderId, files: data.files };
-    } catch (error) {
-      dispatch(setUploadProgress(0));
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to upload files"
-      );
-    }
-  }
-);
-
-export const cancelReturnRequest = createAsyncThunk(
-  "order/cancelReturnRequest",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      await axios.put(
-        `${API_BASE}/orders/${orderId}/return/cancel`,
-        {},
-        { withCredentials: true }
-      );
-      return { orderId };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to cancel return"
-      );
-    }
-  }
-);
-
-// ============================================
-// REFUND MANAGEMENT (Customer)
-// ============================================
-
-export const requestRefund = createAsyncThunk(
-  "order/requestRefund",
-  async ({ orderId, reason, description, refundType = 'full', requestedAmount, images = [] }, { rejectWithValue }) => {
-    try {
-      const formData = createFormDataWithFiles(
-        { reason, description, refundType, requestedAmount },
-        images
-      );
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/refund/request`,
-        formData,
-        {
-          withCredentials: true,
-          headers: {
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-      return { orderId, refundInfo: data.refundInfo };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to request refund"
-      );
-    }
-  }
-);
-
-export const getRefundMessages = createAsyncThunk(
-  "order/getRefundMessages",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/refund/messages`,
-        { withCredentials: true }
-      );
-      return { orderId, messages: data.messages };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch messages"
-      );
-    }
-  }
-);
-
-export const addRefundMessage = createAsyncThunk(
-  "order/addRefundMessage",
-  async ({ orderId, message, attachments = [] }, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/refund/messages`,
-        { message, attachments },
-        { withCredentials: true }
-      );
-      return { orderId, message: data.data.message };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to send message"
-      );
-    }
-  }
-);
-
-export const uploadRefundFiles = createAsyncThunk(
-  "order/uploadRefundFiles",
-  async ({ orderId, files }, { rejectWithValue, dispatch }) => {
-    try {
-      const formData = new FormData();
-      files.forEach((file) => {
-        formData.append('attachments', file);
-      });
-
-      const { data } = await axios.post(
-        `${API_BASE}/orders/${orderId}/refund/upload`,
-        formData,
-        {
-          withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' },
-          onUploadProgress: (progressEvent) => {
-            const percentCompleted = Math.round(
-              (progressEvent.loaded * 100) / progressEvent.total
-            );
-            dispatch(setUploadProgress(percentCompleted));
-          }
-        }
-      );
-      
-      dispatch(setUploadProgress(0));
-      return { orderId, files: data.files };
-    } catch (error) {
-      dispatch(setUploadProgress(0));
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to upload files"
-      );
-    }
-  }
-);
-
-export const cancelRefundRequest = createAsyncThunk(
-  "order/cancelRefundRequest",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      await axios.put(
-        `${API_BASE}/orders/${orderId}/refund/cancel`,
-        {},
-        { withCredentials: true }
-      );
-      return { orderId };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to cancel refund"
-      );
-    }
-  }
-);
-
-export const getRefundTimeline = createAsyncThunk(
-  "order/getRefundTimeline",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/refund/timeline`,
-        { withCredentials: true }
-      );
-      return { orderId, timeline: data.timeline };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch timeline"
-      );
-    }
-  }
-);
-
-export const getRefundDocuments = createAsyncThunk(
-  "order/getRefundDocuments",
-  async (orderId, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `${API_BASE}/orders/${orderId}/refund/documents`,
-        { withCredentials: true }
-      );
-      return { orderId, documents: data.documents };
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch documents"
-      );
-    }
-  }
-);
-
-// ============================================
 // INVOICE MANAGEMENT
 // ============================================
 
@@ -709,10 +374,7 @@ export const downloadInvoice = createAsyncThunk(
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
 
-      return { 
-        success: true, 
-        message: 'Invoice downloaded successfully' 
-      };
+      return { success: true, message: 'Invoice downloaded successfully' };
     } catch (error) {
       if (error.response?.data instanceof Blob) {
         const text = await error.response.data.text();
@@ -763,17 +425,7 @@ const orderSlice = createSlice({
     timeline: [],
     notes: [],
     tracking: null,
-    refundMessages: [],
-    refundTimeline: [],
-    refundDocuments: [],
-    uploadProgress: 0,
-    returnInfo: null,
-    refundInfo: null,
-    invoice: null,
     orderMessages: [],
-    returnMessages: [],
-    returnTimeline: [],
-    returnDocuments: [],
     customerAnalytics: null,
     
     loading: false,
@@ -795,13 +447,9 @@ const orderSlice = createSlice({
       state.timeline = [];
       state.notes = [];
       state.tracking = null;
-      state.invoice = null;
     },
     setActionLoading: (state, action) => {
       state.actionLoading = action.payload;
-    },
-    setUploadProgress: (state, action) => {
-      state.uploadProgress = action.payload;
     },
   },
   extraReducers: (builder) => {
@@ -987,124 +635,6 @@ const orderSlice = createSlice({
       });
 
     builder
-      .addCase(requestReturn.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(requestReturn.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.returnInfo = action.payload.returnInfo;
-        if (state.order) {
-          state.order.returnInfo = action.payload.returnInfo;
-        }
-        state.message = "Return request submitted successfully";
-        state.success = true;
-      })
-      .addCase(requestReturn.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(addReturnMessage.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(addReturnMessage.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.returnMessages.push(action.payload.message);
-        state.message = "Message sent successfully";
-      })
-      .addCase(addReturnMessage.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(getReturnMessages.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(getReturnMessages.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.returnMessages = action.payload.messages;
-      })
-      .addCase(getReturnMessages.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(getReturnTimeline.fulfilled, (state, action) => {
-        state.returnTimeline = action.payload.timeline;
-      });
-
-    builder
-      .addCase(getReturnDocuments.fulfilled, (state, action) => {
-        state.returnDocuments = action.payload.documents;
-      });
-
-    builder
-      .addCase(uploadReturnFiles.fulfilled, (state, action) => {
-        state.returnDocuments.push(...action.payload.files);
-      });
-
-    builder
-      .addCase(cancelReturnRequest.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(cancelReturnRequest.fulfilled, (state) => {
-        state.actionLoading = false;
-        state.returnInfo = null;
-        state.message = "Return request cancelled successfully";
-      })
-      .addCase(cancelReturnRequest.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(requestRefund.pending, (state) => {
-        state.actionLoading = true;
-        state.error = null;
-      })
-      .addCase(requestRefund.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.refundInfo = action.payload.refundInfo;
-        if (state.order) {
-          state.order.refundInfo = action.payload.refundInfo;
-        }
-        state.message = "Refund request submitted successfully";
-        state.success = true;
-      })
-      .addCase(requestRefund.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error = action.payload;
-      });
-
-    builder
-      .addCase(getRefundMessages.fulfilled, (state, action) => {
-        state.refundMessages = action.payload.messages;
-      })
-      .addCase(addRefundMessage.fulfilled, (state, action) => {
-        state.refundMessages.push(action.payload.message);
-      })
-      .addCase(uploadRefundFiles.fulfilled, (state, action) => {
-        state.refundDocuments.push(...action.payload.files);
-      })
-      .addCase(cancelRefundRequest.fulfilled, (state) => {
-        state.refundInfo = null;
-        state.message = "Refund request cancelled";
-      })
-      .addCase(getRefundTimeline.fulfilled, (state, action) => {
-        state.refundTimeline = action.payload.timeline;
-      })
-      .addCase(getRefundDocuments.fulfilled, (state, action) => {
-        state.refundDocuments = action.payload.documents;
-      });
-
-    builder
       .addCase(downloadInvoice.pending, (state) => {
         state.actionLoading = true;
         state.error = null;
@@ -1132,7 +662,6 @@ const orderSlice = createSlice({
         state.actionLoading = false;
         state.error = action.payload;
       });
-
   },
 });
 
@@ -1140,8 +669,7 @@ export const {
   removeErrors, 
   clearMessage, 
   clearOrder, 
-  setActionLoading, 
-  setUploadProgress 
+  setActionLoading,
 } = orderSlice.actions;
 
 export default orderSlice.reducer;

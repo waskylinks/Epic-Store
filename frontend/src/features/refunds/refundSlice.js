@@ -5,15 +5,36 @@ import axios from "axios";
 
 /**
  * User requests refund for their order
+ * Files are now sent as multipart/form-data together with refund data
+ * to avoid the upload-before-refund-exists race condition.
  */
 export const requestRefund = createAsyncThunk(
   "refund/requestRefund",
-  async ({ orderId, refundData }, { rejectWithValue }) => {
+  async ({ orderId, refundData, files = [] }, { rejectWithValue }) => {
     try {
+      let payload;
+      let headers = {};
+
+      if (files.length > 0) {
+        // Send as multipart so backend can persist files atomically with the refund
+        const formData = new FormData();
+        formData.append("reason", refundData.reason);
+        formData.append("description", refundData.description);
+        formData.append("refundType", refundData.refundType);
+        if (refundData.requestedAmount !== undefined) {
+          formData.append("requestedAmount", String(refundData.requestedAmount));
+        }
+        files.forEach((file) => formData.append("attachments", file));
+        payload = formData;
+        headers["Content-Type"] = "multipart/form-data";
+      } else {
+        payload = refundData;
+      }
+
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/refund/request`,
-        refundData,
-        { withCredentials: true }
+        payload,
+        { withCredentials: true, headers }
       );
       return data;
     } catch (error) {
@@ -67,14 +88,15 @@ export const cancelRefund = createAsyncThunk(
 
 /**
  * Add refund message (customer)
+ * Field name corrected: backend expects "message", not "content"
  */
 export const addRefundMessage = createAsyncThunk(
   "refund/addRefundMessage",
-  async ({ orderId, content, attachments }, { rejectWithValue }) => {
+  async ({ orderId, message, attachments }, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/refund/messages`,
-        { content, attachments },
+        { message, attachments },
         { withCredentials: true }
       );
       return data;
@@ -147,21 +169,23 @@ export const getRefundDocuments = createAsyncThunk(
 );
 
 /**
- * Upload refund files (customer)
+ * Upload refund files (customer) — kept for post-submission follow-up uploads
+ * (e.g. attaching more evidence after the refund is already created).
+ * Do NOT call this before requestRefund.
  */
 export const uploadRefundFiles = createAsyncThunk(
   "refund/uploadRefundFiles",
   async ({ orderId, files }, { rejectWithValue }) => {
     try {
       const formData = new FormData();
-      files.forEach(file => formData.append('attachments', file));
-      
+      files.forEach((file) => formData.append("attachments", file));
+
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/refund/upload`,
         formData,
-        { 
+        {
           withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' }
+          headers: { "Content-Type": "multipart/form-data" },
         }
       );
       return data;
@@ -176,18 +200,18 @@ export const uploadRefundFiles = createAsyncThunk(
 const refundSlice = createSlice({
   name: "refund",
   initialState: {
-    refundStatus: { status: 'none', hasRefund: false },
+    refundStatus: { status: "none", hasRefund: false },
     messages: [],
     timeline: [],
     documents: [],
-    
+
     loading: false,
     statusLoading: false,
     messagesLoading: false,
     timelineLoading: false,
     documentsLoading: false,
     uploadLoading: false,
-    
+
     error: null,
     success: false,
     message: null,
@@ -199,11 +223,11 @@ const refundSlice = createSlice({
       state.message = null;
     },
     resetRefundStatus: (state) => {
-      state.refundStatus = { status: 'none', hasRefund: false };
-    }
+      state.refundStatus = { status: "none", hasRefund: false };
+    },
   },
   extraReducers: (builder) => {
-    // Request Refund
+    // ── Request Refund ──────────────────────────────────────────────────────
     builder
       .addCase(requestRefund.pending, (state) => {
         state.loading = true;
@@ -214,7 +238,10 @@ const refundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
-        state.refundStatus = action.payload.refundInfo || { status: 'requested', hasRefund: true };
+        state.refundStatus = action.payload.refundInfo || {
+          status: "requested",
+          hasRefund: true,
+        };
       })
       .addCase(requestRefund.rejected, (state, action) => {
         state.loading = false;
@@ -222,7 +249,7 @@ const refundSlice = createSlice({
         state.success = false;
       });
 
-    // Get Refund Status
+    // ── Get Refund Status ───────────────────────────────────────────────────
     builder
       .addCase(getRefundStatus.pending, (state) => {
         state.statusLoading = true;
@@ -230,17 +257,20 @@ const refundSlice = createSlice({
       })
       .addCase(getRefundStatus.fulfilled, (state, action) => {
         state.statusLoading = false;
-        state.refundStatus = action.payload.refundInfo || { status: 'none', hasRefund: false };
+        state.refundStatus = action.payload.refundInfo || {
+          status: "none",
+          hasRefund: false,
+        };
       })
       .addCase(getRefundStatus.rejected, (state, action) => {
         state.statusLoading = false;
-        state.refundStatus = { status: 'none', hasRefund: false };
-        if (!action.payload?.includes('not found')) {
+        state.refundStatus = { status: "none", hasRefund: false };
+        if (!action.payload?.includes("not found")) {
           state.error = action.payload;
         }
       });
 
-    // Cancel Refund
+    // ── Cancel Refund ───────────────────────────────────────────────────────
     builder
       .addCase(cancelRefund.pending, (state) => {
         state.loading = true;
@@ -250,14 +280,14 @@ const refundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
-        state.refundStatus = { status: 'none', hasRefund: false };
+        state.refundStatus = { status: "cancelled", hasRefund: false };
       })
       .addCase(cancelRefund.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Add Refund Message
+    // ── Add Refund Message ──────────────────────────────────────────────────
     builder
       .addCase(addRefundMessage.pending, (state) => {
         state.loading = true;
@@ -266,14 +296,18 @@ const refundSlice = createSlice({
       .addCase(addRefundMessage.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        state.messages.push(action.payload.data.message);
+        // Fix: payload structure is { data: { message: {...} } }
+        const newMsg = action.payload?.data?.message;
+        if (newMsg) {
+          state.messages.push(newMsg);
+        }
       })
       .addCase(addRefundMessage.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Get Refund Messages
+    // ── Get Refund Messages ─────────────────────────────────────────────────
     builder
       .addCase(getRefundMessages.pending, (state) => {
         state.messagesLoading = true;
@@ -288,7 +322,7 @@ const refundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Refund Timeline
+    // ── Get Refund Timeline ─────────────────────────────────────────────────
     builder
       .addCase(getRefundTimeline.pending, (state) => {
         state.timelineLoading = true;
@@ -303,7 +337,7 @@ const refundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Refund Documents
+    // ── Get Refund Documents ────────────────────────────────────────────────
     builder
       .addCase(getRefundDocuments.pending, (state) => {
         state.documentsLoading = true;
@@ -318,7 +352,7 @@ const refundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Upload Refund Files
+    // ── Upload Refund Files ─────────────────────────────────────────────────
     builder
       .addCase(uploadRefundFiles.pending, (state) => {
         state.uploadLoading = true;

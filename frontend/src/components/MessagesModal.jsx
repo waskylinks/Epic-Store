@@ -294,6 +294,19 @@ function MessagesModal({
 
     try {
       const realMsg = await onSendMessage(text);
+
+      // ── CRITICAL: register the real server ID BEFORE any setState call ──
+      // If we register after setLocalMessages, React can flush the state
+      // update and re-run the unified seed/merge effect before this line
+      // executes. The effect would see the real _id as unknown and append
+      // a second bubble — the visible duplicate glitch.
+      // Registering here (synchronously, before any setState) means the
+      // ref is updated in the same JS microtask as the await resolution,
+      // so the effect can never race ahead of it.
+      if (realMsg?._id) {
+        seenIdsRef.current.add(realMsg._id);
+      }
+
       // Patch the optimistic entry with server fields.
       // We keep the optimistic _id as the React key — replacing it would
       // cause an unmount/remount flash. The real _id from the server is
@@ -313,10 +326,6 @@ function MessagesModal({
             : m
         )
       );
-      // Also register the real server ID so polling doesn't re-add it
-      if (realMsg?._id) {
-        seenIdsRef.current.add(realMsg._id);
-      }
     } catch {
       // Mark the bubble as failed — don't silently remove it.
       // The user sees an error indicator + Retry button directly on the bubble.
@@ -377,6 +386,8 @@ function MessagesModal({
 
       try {
         const realMsg = await onSendMessage(text);
+        // Register before setState — same reason as handleSend
+        if (realMsg?._id) seenIdsRef.current.add(realMsg._id);
         setLocalMessages((prev) =>
           prev.map((m) =>
             m._id === optimisticKey
@@ -392,7 +403,6 @@ function MessagesModal({
               : m
           )
         );
-        if (realMsg?._id) seenIdsRef.current.add(realMsg._id);
       } catch {
         setLocalMessages((prev) =>
           prev.map((m) =>

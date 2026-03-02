@@ -14,7 +14,7 @@ import {
   Timeline as TimelineIcon,
   Description,
   Warning,
-  Schedule
+  Schedule,
 } from '@mui/icons-material';
 import {
   getAllRefunds,
@@ -27,7 +27,8 @@ import {
   getRefundDocuments,
   uploadRefundFiles,
   getRefundsWithUnreadMessages,
-  clearCurrentRefund
+  clearCurrentRefund,
+  clearAdminRefundState,
 } from '../features/admin/adminRefundSlice';
 import MessageModal from '../Orders/RefundReturnMessagesModal';
 import '../AdminStyles/AdminRefunds.css';
@@ -35,7 +36,6 @@ import '../AdminStyles/AdminRefunds.css';
 const AdminRefunds = () => {
   const dispatch = useDispatch();
 
-  // Redux state
   const {
     refunds,
     stats,
@@ -45,33 +45,30 @@ const AdminRefunds = () => {
     documents,
     loading,
     refundsLoading,
+    unreadLoading,
     messagesLoading,
     timelineLoading,
     documentsLoading,
     uploadLoading,
     error,
     success,
-    message: successMessage
-  } = useSelector(state => state.adminRefund);
+    message: successMessage,
+  } = useSelector((state) => state.adminRefund);
 
-  // Local state
+  // ── Local state ────────────────────────────────────────────────────────────
   const [searchQuery, setSearchQuery] = useState('');
-  const [filters, setFilters] = useState({
-    status: '',
-    startDate: '',
-    endDate: ''
-  });
+  const [filters, setFilters] = useState({ status: '', startDate: '', endDate: '' });
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
-  const [selectedRefund, setSelectedRefund] = useState(null);
+  const [selectedRefundId, setSelectedRefundId] = useState(null);
   const [showDetailPanel, setShowDetailPanel] = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
 
-  // Review form state
+  // Review form
   const [reviewAction, setReviewAction] = useState('');
   const [adminNote, setAdminNote] = useState('');
 
-  // Process refund state
+  // Process form
   const [refundAmount, setRefundAmount] = useState(0);
   const [merchantNote, setMerchantNote] = useState('');
 
@@ -79,135 +76,157 @@ const AdminRefunds = () => {
   const [currentPage] = useState(1);
   const itemsPerPage = 20;
 
-  // Fetch refunds — stable reference via useCallback
+  // ── Data fetching ──────────────────────────────────────────────────────────
   const handleFetchRefunds = useCallback(() => {
-    const queryFilters = {
-      ...filters,
-      search: searchQuery,
-      page: currentPage,
-      limit: itemsPerPage
-    };
-
     if (showUnreadOnly) {
       dispatch(getRefundsWithUnreadMessages());
     } else {
-      dispatch(getAllRefunds(queryFilters));
+      dispatch(
+        getAllRefunds({
+          ...filters,
+          search: searchQuery,
+          page: currentPage,
+          limit: itemsPerPage,
+        })
+      );
     }
   }, [filters, searchQuery, showUnreadOnly, currentPage, dispatch]);
 
-  // Fetch on mount
   useEffect(() => {
     handleFetchRefunds();
   }, [handleFetchRefunds]);
 
-  // Handle view refund details
-  const handleViewRefund = async (orderId) => {
-    setSelectedRefund(orderId);
-    setShowDetailPanel(true);
+  // ── Auto-dismiss success toast ─────────────────────────────────────────────
+  // Fix: clearAdminRefundState was never called, so the toast stayed permanently.
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => dispatch(clearAdminRefundState()), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [success, dispatch]);
 
-    await dispatch(getSingleRefund(orderId));
-    dispatch(getRefundTimeline(orderId));
-    dispatch(getRefundDocuments(orderId));
-    dispatch(getRefundMessages(orderId));
+  // Clear error after display
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => dispatch(clearAdminRefundState()), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error, dispatch]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  // Fix: separated fetching sub-resources from opening the panel so the
+  // modal open path can await getSingleRefund before showing MessageModal,
+  // preventing a null currentRefund crash.
+  const fetchRefundDetails = useCallback(
+    async (orderId) => {
+      await dispatch(getSingleRefund(orderId));
+      dispatch(getRefundTimeline(orderId));
+      dispatch(getRefundDocuments(orderId));
+      dispatch(getRefundMessages(orderId));
+    },
+    [dispatch]
+  );
+
+  const handleViewRefund = async (orderId) => {
+    setSelectedRefundId(orderId);
+    setShowDetailPanel(true);
+    await fetchRefundDetails(orderId);
   };
 
-  // Handle review refund
+  // Fix: await getSingleRefund before opening the modal so currentRefund is
+  // populated and the modal does not receive null props and crash.
+  const handleOpenMessageModalFromRow = async (orderId) => {
+    setSelectedRefundId(orderId);
+    // Ensure the detail panel is also open so panel close works correctly
+    setShowDetailPanel(true);
+    await dispatch(getSingleRefund(orderId));
+    dispatch(getRefundMessages(orderId));
+    dispatch(getRefundTimeline(orderId));
+    dispatch(getRefundDocuments(orderId));
+    setShowMessageModal(true);
+  };
+
   const handleReviewRefund = async () => {
     if (!reviewAction) return;
-
     try {
-      await dispatch(reviewRefund({
-        orderId: selectedRefund,
-        action: reviewAction,
-        adminNote
-      })).unwrap();
-
+      await dispatch(
+        reviewRefund({ orderId: selectedRefundId, action: reviewAction, adminNote })
+      ).unwrap();
       setReviewAction('');
       setAdminNote('');
-
+      // Fix: currentRefund is now updated in the slice from the response payload,
+      // so we only need to refresh the table — not all 4 sub-resources.
       handleFetchRefunds();
-      handleViewRefund(selectedRefund);
     } catch (err) {
       console.error('Failed to review refund:', err);
     }
   };
 
-  // Handle process refund
   const handleProcessRefund = async () => {
     if (!refundAmount) return;
-
     try {
-      await dispatch(processRefund({
-        orderId: selectedRefund,
-        refundAmount,
-        merchantNote
-      })).unwrap();
-
+      await dispatch(
+        processRefund({ orderId: selectedRefundId, refundAmount, merchantNote })
+      ).unwrap();
       setRefundAmount(0);
       setMerchantNote('');
-
       handleFetchRefunds();
-      handleViewRefund(selectedRefund);
     } catch (err) {
       console.error('Failed to process refund:', err);
     }
   };
 
-  // Handle send message
+  // Fix: field renamed from "content" to "message" to match backend controller
   const handleSendMessage = async (content, attachments) => {
     try {
-      await dispatch(addRefundMessage({
-        orderId: selectedRefund,
-        content,
-        attachments
-      })).unwrap();
-
-      dispatch(getRefundMessages(selectedRefund));
+      await dispatch(
+        addRefundMessage({ orderId: selectedRefundId, message: content, attachments })
+      ).unwrap();
+      dispatch(getRefundMessages(selectedRefundId));
     } catch (err) {
       console.error('Failed to send message:', err);
     }
   };
 
-  // Handle file upload
   const handleFileUpload = async (files) => {
     try {
-      await dispatch(uploadRefundFiles({
-        orderId: selectedRefund,
-        files
-      })).unwrap();
-
-      dispatch(getRefundDocuments(selectedRefund));
+      await dispatch(uploadRefundFiles({ orderId: selectedRefundId, files })).unwrap();
+      dispatch(getRefundDocuments(selectedRefundId));
     } catch (err) {
       console.error('Failed to upload files:', err);
     }
   };
 
-  // Close detail panel
   const handleClosePanel = () => {
     setShowDetailPanel(false);
-    setSelectedRefund(null);
+    setShowMessageModal(false);
+    setSelectedRefundId(null);
     setActiveTab('overview');
     dispatch(clearCurrentRefund());
   };
 
-  // ─── Render KPI Cards ──────────────────────────────────────────────────────
+  // ── KPI Cards ──────────────────────────────────────────────────────────────
   const renderKPICards = () => {
     if (!stats) {
       return [...Array(5)].map((_, i) => (
         <div key={i} className="ar-kpi-card ar-kpi-skeleton">
-          <div className="ar-skeleton-icon"></div>
-          <div className="ar-skeleton-text" style={{ width: '60%' }}></div>
-          <div className="ar-skeleton-value"></div>
+          <div className="ar-skeleton-icon" />
+          <div className="ar-skeleton-text" style={{ width: '60%' }} />
+          <div className="ar-skeleton-value" />
         </div>
       ));
     }
 
+    // Fix: corrected key names to match controller response:
+    //   stats.totalRequests → stats.total
+    //   stats.pendingReview → stats.requested
     const kpiData = [
-      { label: 'Total Requests', value: stats.totalRequests || 0, icon: Assessment, color: 'neutral' },
-      { label: 'Pending Review', value: stats.pendingReview || 0, icon: Schedule, color: 'warning' },
-      { label: 'Approved', value: stats.approved || 0, icon: CheckCircle, color: 'positive' },
-      { label: 'Rejected', value: stats.rejected || 0, icon: Cancel, color: 'neutral' },
-      { label: 'Completed', value: stats.completed || 0, icon: Inventory, color: 'positive' }
+      { label: 'Total Requests', value: stats.total || 0,      icon: Assessment, color: 'neutral'  },
+      { label: 'Pending Review', value: stats.requested || 0,  icon: Schedule,   color: 'warning'  },
+      { label: 'Approved',       value: stats.approved || 0,   icon: CheckCircle, color: 'positive' },
+      { label: 'Rejected',       value: stats.rejected || 0,   icon: Cancel,     color: 'neutral'  },
+      { label: 'Completed',      value: stats.completed || 0,  icon: Inventory,  color: 'positive' },
     ];
 
     return kpiData.map((kpi, index) => (
@@ -223,15 +242,19 @@ const AdminRefunds = () => {
     ));
   };
 
-  // ─── Render Table ──────────────────────────────────────────────────────────
+  // ── Table ──────────────────────────────────────────────────────────────────
   const renderTable = () => {
-    if (refundsLoading) {
+    // Fix: use unreadLoading for the unread fetch path so the table skeleton
+    // only shows when the table data itself is loading.
+    const tableIsLoading = showUnreadOnly ? unreadLoading : refundsLoading;
+
+    if (tableIsLoading) {
       return (
         <div className="ar-table-skeleton">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="ar-skeleton-row">
               {[...Array(4)].map((__, j) => (
-                <div key={j} className="ar-skeleton-cell"></div>
+                <div key={j} className="ar-skeleton-cell" />
               ))}
             </div>
           ))}
@@ -269,74 +292,120 @@ const AdminRefunds = () => {
             </tr>
           </thead>
           <tbody>
-            {refunds.map((refundItem) => (
-              <tr key={refundItem._id}>
-                <td className="ar-td-bold">
-                  #{refundItem.orderInfo?.orderNumber || refundItem._id.slice(-6)}
-                </td>
-                <td>{refundItem.user?.name || 'N/A'}</td>
-                <td>${refundItem.refundInfo?.requestedAmount?.toFixed(2) || '0.00'}</td>
-                <td>{refundItem.refundInfo?.reason || 'N/A'}</td>
-                <td>{new Date(refundItem.refundInfo?.requestedAt).toLocaleDateString()}</td>
-                <td>
-                  <span className={`ar-badge ar-badge--${refundItem.refundStatus?.toLowerCase()}`}>
-                    <span className="ar-badge-dot"></span>
-                    {refundItem.refundStatus}
-                  </span>
-                </td>
-                <td>
-                  <div className="ar-unread-wrap">
-                    <Message style={{ fontSize: 18 }} />
-                    {refundItem.hasUnreadMessages && <span className="ar-unread-dot"></span>}
-                  </div>
-                </td>
-                <td>
-                  <div className="ar-row-actions">
-                    <button
-                      className="ar-icon-btn"
-                      onClick={() => handleViewRefund(refundItem._id)}
-                      title="View Details"
-                    >
-                      <Visibility style={{ fontSize: 18 }} />
-                    </button>
-                    <button
-                      className="ar-icon-btn"
-                      onClick={() => {
-                        handleViewRefund(refundItem._id);
-                        setShowMessageModal(true);
-                      }}
-                      title="Open Messages"
-                    >
+            {refunds.map((refundItem) => {
+              // Fix: status lives at refundItem.refundInfo.status, not
+              // refundItem.refundStatus (which doesn't exist in the response).
+              const refundStatus = refundItem.refundInfo?.status || 'unknown';
+
+              // Fix: no orderInfo object in response — use _id for the order ref.
+              const orderRef = refundItem._id
+                ? refundItem._id.toString().slice(-6).toUpperCase()
+                : 'N/A';
+
+              // Fix: response has unreadMessages (number), not hasUnreadMessages (bool).
+              const hasUnread = (refundItem.unreadMessages || 0) > 0;
+
+              return (
+                <tr key={refundItem._id}>
+                  <td className="ar-td-bold">#{orderRef}</td>
+                  <td>{refundItem.user?.name || 'N/A'}</td>
+                  <td>
+                    ${refundItem.refundInfo?.requestedAmount?.toFixed(2) || '0.00'}
+                  </td>
+                  <td>
+                    {refundItem.refundInfo?.reason?.replace(/_/g, ' ') || 'N/A'}
+                  </td>
+                  <td>
+                    {refundItem.refundInfo?.requestedAt
+                      ? new Date(refundItem.refundInfo.requestedAt).toLocaleDateString()
+                      : 'N/A'}
+                  </td>
+                  <td>
+                    <span className={`ar-badge ar-badge--${refundStatus.toLowerCase()}`}>
+                      <span className="ar-badge-dot" />
+                      {refundStatus}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="ar-unread-wrap">
                       <Message style={{ fontSize: 18 }} />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                      {hasUnread && <span className="ar-unread-dot" />}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="ar-row-actions">
+                      <button
+                        className="ar-icon-btn"
+                        onClick={() => handleViewRefund(refundItem._id)}
+                        title="View Details"
+                      >
+                        <Visibility style={{ fontSize: 18 }} />
+                      </button>
+                      {/* Fix: await getSingleRefund before opening modal
+                          so currentRefund is not null when MessageModal renders */}
+                      <button
+                        className="ar-icon-btn"
+                        onClick={() => handleOpenMessageModalFromRow(refundItem._id)}
+                        title="Open Messages"
+                      >
+                        <Message style={{ fontSize: 18 }} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
     );
   };
 
-  // ─── Render Detail Panel ───────────────────────────────────────────────────
+  // ── Detail Panel ───────────────────────────────────────────────────────────
   const renderDetailPanel = () => {
-    if (!showDetailPanel || !currentRefund) return null;
+    if (!showDetailPanel) return null;
+
+    // While the initial getSingleRefund is still loading, show a panel skeleton
+    // rather than crashing on null currentRefund accesses.
+    if (!currentRefund) {
+      return (
+        <div className="ar-drawer-overlay" onClick={handleClosePanel}>
+          <div className="ar-drawer-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="ar-panel-header">
+              <h2 className="ar-panel-title">Loading refund details…</h2>
+              <button className="ar-panel-close" onClick={handleClosePanel}>×</button>
+            </div>
+            <div className="ar-panel-body">
+              <div className="ar-loading">
+                <div className="ar-spinner" />
+                <span>Fetching refund…</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // Fix: currentRefund is the raw order object from getSingleRefund.
+    // Fields are: _id, user, totalPrice, amountPaid, refundInfo, orderStatus, etc.
+    // There is no orderInfo wrapper — use the fields directly.
+    const orderRef = currentRefund._id
+      ? currentRefund._id.toString().slice(-6).toUpperCase()
+      : 'N/A';
+    const refundStatus = currentRefund.refundInfo?.status || 'unknown';
 
     return (
       <div className="ar-drawer-overlay" onClick={handleClosePanel}>
         <div className="ar-drawer-panel" onClick={(e) => e.stopPropagation()}>
           <div className="ar-panel-header">
-            <h2 className="ar-panel-title">
-              Refund Details — #{currentRefund.orderInfo?.orderNumber}
-            </h2>
+            <h2 className="ar-panel-title">Refund Details — #{orderRef}</h2>
             <button className="ar-panel-close" onClick={handleClosePanel}>×</button>
           </div>
 
           <div className="ar-panel-body">
             {/* Tab Nav */}
             <div className="ar-tab-nav">
-              {['overview', 'review', 'process', 'timeline', 'documents'].map(tab => (
+              {['overview', 'review', 'process', 'timeline', 'documents'].map((tab) => (
                 <button
                   key={tab}
                   className={`ar-tab-btn${activeTab === tab ? ' active' : ''}`}
@@ -355,40 +424,67 @@ const AdminRefunds = () => {
                   <div className="ar-info-grid">
                     <div className="ar-info-item">
                       <span className="ar-info-label">Customer</span>
-                      <span className="ar-info-value">{currentRefund.user?.name}</span>
+                      <span className="ar-info-value">{currentRefund.user?.name || 'N/A'}</span>
                     </div>
                     <div className="ar-info-item">
                       <span className="ar-info-label">Email</span>
-                      <span className="ar-info-value">{currentRefund.user?.email}</span>
+                      <span className="ar-info-value">{currentRefund.user?.email || 'N/A'}</span>
                     </div>
+                    {/* Fix: use currentRefund.totalPrice, not orderInfo.totalAmount */}
                     <div className="ar-info-item">
                       <span className="ar-info-label">Order Total</span>
                       <span className="ar-info-value">
-                        ${currentRefund.orderInfo?.totalAmount?.toFixed(2)}
+                        ${currentRefund.totalPrice?.toFixed(2) ?? 'N/A'}
+                      </span>
+                    </div>
+                    <div className="ar-info-item">
+                      <span className="ar-info-label">Amount Paid</span>
+                      <span className="ar-info-value">
+                        ${currentRefund.amountPaid?.toFixed(2) ?? 'N/A'}
                       </span>
                     </div>
                     <div className="ar-info-item">
                       <span className="ar-info-label">Requested Amount</span>
                       <span className="ar-info-value">
-                        ${currentRefund.refundInfo?.requestedAmount?.toFixed(2)}
+                        ${currentRefund.refundInfo?.requestedAmount?.toFixed(2) ?? 'N/A'}
+                      </span>
+                    </div>
+                    <div className="ar-info-item">
+                      <span className="ar-info-label">Refund Type</span>
+                      <span className="ar-info-value">
+                        {currentRefund.refundInfo?.refundType === 'full'
+                          ? 'Full Refund'
+                          : 'Partial Refund'}
                       </span>
                     </div>
                     <div className="ar-info-item">
                       <span className="ar-info-label">Reason</span>
-                      <span className="ar-info-value">{currentRefund.refundInfo?.reason}</span>
+                      <span className="ar-info-value">
+                        {currentRefund.refundInfo?.reason?.replace(/_/g, ' ') || 'N/A'}
+                      </span>
                     </div>
                     <div className="ar-info-item">
                       <span className="ar-info-label">Status</span>
-                      <span className={`ar-badge ar-badge--${currentRefund.refundStatus?.toLowerCase()}`}>
-                        {currentRefund.refundStatus}
+                      <span className={`ar-badge ar-badge--${refundStatus.toLowerCase()}`}>
+                        {refundStatus}
                       </span>
                     </div>
                     <div className="ar-info-item">
                       <span className="ar-info-label">Requested On</span>
                       <span className="ar-info-value">
-                        {new Date(currentRefund.refundInfo?.requestedAt).toLocaleString()}
+                        {currentRefund.refundInfo?.requestedAt
+                          ? new Date(currentRefund.refundInfo.requestedAt).toLocaleString()
+                          : 'N/A'}
                       </span>
                     </div>
+                    {currentRefund.refundInfo?.adminNote && (
+                      <div className="ar-info-item" style={{ gridColumn: '1 / -1' }}>
+                        <span className="ar-info-label">Admin Note</span>
+                        <span className="ar-info-value">
+                          {currentRefund.refundInfo.adminNote}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -405,12 +501,21 @@ const AdminRefunds = () => {
             {activeTab === 'review' && (
               <div className="ar-section">
                 <h3 className="ar-section-title">Review Refund Request</h3>
+
+                {refundStatus !== 'requested' && (
+                  <div className="ar-info-banner">
+                    This refund is currently <strong>{refundStatus}</strong> and cannot
+                    be re-reviewed.
+                  </div>
+                )}
+
                 <div className="ar-form-group">
                   <label className="ar-form-label">Decision *</label>
                   <select
                     className="ar-form-select"
                     value={reviewAction}
                     onChange={(e) => setReviewAction(e.target.value)}
+                    disabled={refundStatus !== 'requested'}
                   >
                     <option value="">Select action</option>
                     <option value="approve">Approve Refund</option>
@@ -425,15 +530,20 @@ const AdminRefunds = () => {
                     value={adminNote}
                     onChange={(e) => setAdminNote(e.target.value)}
                     placeholder="Add a note for the customer..."
+                    disabled={refundStatus !== 'requested'}
                   />
                 </div>
 
                 <button
-                  className={`ar-btn ${reviewAction === 'approve' ? 'ar-btn--success' : 'ar-btn--danger'}`}
+                  className={`ar-btn ${
+                    reviewAction === 'approve' ? 'ar-btn--success' : 'ar-btn--danger'
+                  }`}
                   onClick={handleReviewRefund}
-                  disabled={!reviewAction || loading}
+                  disabled={!reviewAction || loading || refundStatus !== 'requested'}
                 >
-                  {loading ? 'Processing...' : `${reviewAction === 'approve' ? 'Approve' : 'Reject'} Refund`}
+                  {loading
+                    ? 'Processing...'
+                    : `${reviewAction === 'approve' ? 'Approve' : 'Reject'} Refund`}
                 </button>
               </div>
             )}
@@ -442,6 +552,14 @@ const AdminRefunds = () => {
             {activeTab === 'process' && (
               <div className="ar-section">
                 <h3 className="ar-section-title">Process Refund Payment</h3>
+
+                {refundStatus !== 'approved' && (
+                  <div className="ar-info-banner">
+                    Refund must be <strong>approved</strong> before processing.
+                    Current status: <strong>{refundStatus}</strong>.
+                  </div>
+                )}
+
                 <div className="ar-form-group">
                   <label className="ar-form-label">Refund Amount ($) *</label>
                   <input
@@ -451,7 +569,12 @@ const AdminRefunds = () => {
                     onChange={(e) => setRefundAmount(Number(e.target.value))}
                     min="0"
                     step="0.01"
+                    max={currentRefund.amountPaid}
+                    disabled={refundStatus !== 'approved'}
                   />
+                  <span className="ar-helper-text">
+                    Max refundable: ${currentRefund.amountPaid?.toFixed(2) ?? 'N/A'}
+                  </span>
                 </div>
 
                 <div className="ar-form-group">
@@ -461,13 +584,14 @@ const AdminRefunds = () => {
                     value={merchantNote}
                     onChange={(e) => setMerchantNote(e.target.value)}
                     placeholder="Internal note about this refund..."
+                    disabled={refundStatus !== 'approved'}
                   />
                 </div>
 
                 <button
                   className="ar-btn ar-btn--primary"
                   onClick={handleProcessRefund}
-                  disabled={!refundAmount || loading}
+                  disabled={!refundAmount || loading || refundStatus !== 'approved'}
                 >
                   {loading ? 'Processing...' : 'Process Refund'}
                 </button>
@@ -483,14 +607,16 @@ const AdminRefunds = () => {
                 </h3>
                 {timelineLoading ? (
                   <div className="ar-loading">
-                    <div className="ar-spinner"></div>
+                    <div className="ar-spinner" />
                     <span>Loading timeline...</span>
                   </div>
                 ) : timeline && timeline.length > 0 ? (
                   <div className="ar-timeline">
                     {timeline.map((event, idx) => (
                       <div key={idx} className="ar-timeline-item">
-                        <div className={`ar-timeline-dot${event.completed ? ' completed' : ''}`}></div>
+                        <div
+                          className={`ar-timeline-dot${event.completed ? ' completed' : ''}`}
+                        />
                         <div className="ar-timeline-content">
                           <h4 className="ar-timeline-title">{event.title}</h4>
                           {event.description && (
@@ -535,14 +661,14 @@ const AdminRefunds = () => {
 
                 {uploadLoading && (
                   <div className="ar-loading" style={{ padding: '1rem' }}>
-                    <div className="ar-spinner"></div>
+                    <div className="ar-spinner" />
                     <span>Uploading...</span>
                   </div>
                 )}
 
                 {documentsLoading ? (
                   <div className="ar-loading">
-                    <div className="ar-spinner"></div>
+                    <div className="ar-spinner" />
                     <span>Loading documents...</span>
                   </div>
                 ) : documents && documents.length > 0 ? (
@@ -569,7 +695,10 @@ const AdminRefunds = () => {
           </div>
 
           <div className="ar-panel-footer">
-            <button className="ar-btn ar-btn--primary" onClick={() => setShowMessageModal(true)}>
+            <button
+              className="ar-btn ar-btn--primary"
+              onClick={() => setShowMessageModal(true)}
+            >
               <Message style={{ marginRight: 8, fontSize: 18 }} />
               Open Messages
             </button>
@@ -582,7 +711,7 @@ const AdminRefunds = () => {
     );
   };
 
-  // ─── Main Render ───────────────────────────────────────────────────────────
+  // ── Main Render ────────────────────────────────────────────────────────────
   return (
     <div className="ar-container">
       {/* Header */}
@@ -612,6 +741,7 @@ const AdminRefunds = () => {
             </div>
 
             {/* Status Filter */}
+            {/* Fix: added 'cancelled' option to match updated controller statuses */}
             <select
               className="ar-filter-select"
               value={filters.status}
@@ -623,6 +753,8 @@ const AdminRefunds = () => {
               <option value="rejected">Rejected</option>
               <option value="processing">Processing</option>
               <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="cancelled">Cancelled</option>
             </select>
 
             {/* Date Range */}
@@ -648,7 +780,7 @@ const AdminRefunds = () => {
                 className={`ar-toggle${showUnreadOnly ? ' active' : ''}`}
                 onClick={() => setShowUnreadOnly(!showUnreadOnly)}
               >
-                <div className="ar-toggle-knob"></div>
+                <div className="ar-toggle-knob" />
               </div>
               <span className="ar-toggle-label">Unread Only</span>
             </div>
@@ -676,16 +808,19 @@ const AdminRefunds = () => {
       {/* Detail Panel */}
       {renderDetailPanel()}
 
-      {/* Message Modal */}
+      {/* Message Modal — only render when currentRefund is populated */}
       {showMessageModal && currentRefund && (
         <MessageModal
           isOpen={showMessageModal}
           onClose={() => setShowMessageModal(false)}
-          orderId={selectedRefund}
+          orderId={selectedRefundId}
           orderInfo={{
-            orderNumber: currentRefund.orderInfo?.orderNumber,
+            // Fix: use _id directly since there is no orderInfo wrapper
+            orderNumber: currentRefund._id?.toString().slice(-6).toUpperCase(),
             customerName: currentRefund.user?.name,
-            date: new Date(currentRefund.refundInfo?.requestedAt).toLocaleDateString()
+            date: currentRefund.refundInfo?.requestedAt
+              ? new Date(currentRefund.refundInfo.requestedAt).toLocaleDateString()
+              : 'N/A',
           }}
           messages={messages}
           onSendMessage={handleSendMessage}
@@ -694,7 +829,7 @@ const AdminRefunds = () => {
         />
       )}
 
-      {/* Success Toast */}
+      {/* Success Toast — auto-dismissed after 3 s via the useEffect above */}
       {success && successMessage && (
         <div className="ar-toast-container">
           <div className="ar-toast ar-toast--success">

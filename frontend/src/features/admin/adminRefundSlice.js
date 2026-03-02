@@ -1,4 +1,4 @@
-// Frontend/src/features/refunds/adminRefundSlice.js
+// Frontend/src/features/admin/adminRefundSlice.js
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -12,7 +12,7 @@ export const getAllRefunds = createAsyncThunk(
     try {
       const params = new URLSearchParams(filters).toString();
       const { data } = await axios.get(
-        `/api/v1/admin/refunds${params ? `?${params}` : ''}`,
+        `/api/v1/admin/refunds${params ? `?${params}` : ""}`,
         { withCredentials: true }
       );
       return data;
@@ -31,10 +31,9 @@ export const getSingleRefund = createAsyncThunk(
   "adminRefund/getSingleRefund",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(
-        `/api/v1/admin/refunds/${orderId}`,
-        { withCredentials: true }
-      );
+      const { data } = await axios.get(`/api/v1/admin/refunds/${orderId}`, {
+        withCredentials: true,
+      });
       return data;
     } catch (error) {
       return rejectWithValue(
@@ -88,14 +87,15 @@ export const processRefund = createAsyncThunk(
 
 /**
  * Add refund message (Admin)
+ * Fix: field renamed from "content" to "message" to match backend controller
  */
 export const addRefundMessage = createAsyncThunk(
   "adminRefund/addRefundMessage",
-  async ({ orderId, content, attachments }, { rejectWithValue }) => {
+  async ({ orderId, message, attachments = [] }, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
         `/api/v1/admin/refunds/${orderId}/messages`,
-        { content, attachments },
+        { message, attachments },
         { withCredentials: true }
       );
       return data;
@@ -175,14 +175,14 @@ export const uploadRefundFiles = createAsyncThunk(
   async ({ orderId, files }, { rejectWithValue }) => {
     try {
       const formData = new FormData();
-      files.forEach(file => formData.append('attachments', file));
-      
+      files.forEach((file) => formData.append("attachments", file));
+
       const { data } = await axios.post(
         `/api/v1/admin/refunds/${orderId}/upload`,
         formData,
-        { 
+        {
           withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' }
+          headers: { "Content-Type": "multipart/form-data" },
         }
       );
       return data;
@@ -201,10 +201,9 @@ export const getRefundsWithUnreadMessages = createAsyncThunk(
   "adminRefund/getRefundsWithUnreadMessages",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(
-        `/api/v1/admin/refunds/unread`,
-        { withCredentials: true }
-      );
+      const { data } = await axios.get(`/api/v1/admin/refunds/unread`, {
+        withCredentials: true,
+      });
       return data;
     } catch (error) {
       return rejectWithValue(
@@ -223,14 +222,18 @@ const adminRefundSlice = createSlice({
     messages: [],
     timeline: [],
     documents: [],
-    
+
     loading: false,
     refundsLoading: false,
+    // Fix: dedicated loading flag for unread fetch so it doesn't share
+    // state.loading with getSingleRefund/reviewRefund/processRefund and
+    // cause the detail panel spinner to fire while fetching the table.
+    unreadLoading: false,
     messagesLoading: false,
     timelineLoading: false,
     documentsLoading: false,
     uploadLoading: false,
-    
+
     error: null,
     success: false,
     message: null,
@@ -246,10 +249,10 @@ const adminRefundSlice = createSlice({
       state.messages = [];
       state.timeline = [];
       state.documents = [];
-    }
+    },
   },
   extraReducers: (builder) => {
-    // Get All Refunds
+    // ── Get All Refunds ─────────────────────────────────────────────────────
     builder
       .addCase(getAllRefunds.pending, (state) => {
         state.refundsLoading = true;
@@ -265,7 +268,7 @@ const adminRefundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Single Refund
+    // ── Get Single Refund ───────────────────────────────────────────────────
     builder
       .addCase(getSingleRefund.pending, (state) => {
         state.loading = true;
@@ -280,7 +283,7 @@ const adminRefundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Review Refund
+    // ── Review Refund ───────────────────────────────────────────────────────
     builder
       .addCase(reviewRefund.pending, (state) => {
         state.loading = true;
@@ -290,13 +293,17 @@ const adminRefundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
+        // Keep currentRefund in sync with the updated order from the response
+        if (action.payload.order) {
+          state.currentRefund = action.payload.order;
+        }
       })
       .addCase(reviewRefund.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Process Refund
+    // ── Process Refund ──────────────────────────────────────────────────────
     builder
       .addCase(processRefund.pending, (state) => {
         state.loading = true;
@@ -306,13 +313,17 @@ const adminRefundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
+        // Keep currentRefund in sync
+        if (action.payload.order) {
+          state.currentRefund = action.payload.order;
+        }
       })
       .addCase(processRefund.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Add Refund Message
+    // ── Add Refund Message ──────────────────────────────────────────────────
     builder
       .addCase(addRefundMessage.pending, (state) => {
         state.loading = true;
@@ -321,14 +332,18 @@ const adminRefundSlice = createSlice({
       .addCase(addRefundMessage.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
-        state.messages.push(action.payload.data.message);
+        // Fix: added null guard — silently dropping undefined prevents corrupt state
+        const newMsg = action.payload?.data?.message;
+        if (newMsg) {
+          state.messages.push(newMsg);
+        }
       })
       .addCase(addRefundMessage.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Get Refund Messages
+    // ── Get Refund Messages ─────────────────────────────────────────────────
     builder
       .addCase(getRefundMessages.pending, (state) => {
         state.messagesLoading = true;
@@ -343,7 +358,7 @@ const adminRefundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Refund Timeline
+    // ── Get Refund Timeline ─────────────────────────────────────────────────
     builder
       .addCase(getRefundTimeline.pending, (state) => {
         state.timelineLoading = true;
@@ -358,7 +373,7 @@ const adminRefundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Refund Documents
+    // ── Get Refund Documents ────────────────────────────────────────────────
     builder
       .addCase(getRefundDocuments.pending, (state) => {
         state.documentsLoading = true;
@@ -373,7 +388,7 @@ const adminRefundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Upload Refund Files
+    // ── Upload Refund Files ─────────────────────────────────────────────────
     builder
       .addCase(uploadRefundFiles.pending, (state) => {
         state.uploadLoading = true;
@@ -389,22 +404,28 @@ const adminRefundSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Refunds with Unread Messages
+    // ── Get Refunds With Unread Messages ────────────────────────────────────
+    // Fix: uses dedicated unreadLoading flag instead of shared loading so the
+    // detail panel spinner does not fire while the table is fetching.
     builder
       .addCase(getRefundsWithUnreadMessages.pending, (state) => {
-        state.loading = true;
+        state.unreadLoading = true;
         state.error = null;
       })
       .addCase(getRefundsWithUnreadMessages.fulfilled, (state, action) => {
-        state.loading = false;
+        state.unreadLoading = false;
         state.refunds = action.payload.orders;
+        // getRefundsWithUnreadMessages returns no stats — clear to avoid showing
+        // stale numbers from the previous getAllRefunds call.
+        state.stats = null;
       })
       .addCase(getRefundsWithUnreadMessages.rejected, (state, action) => {
-        state.loading = false;
+        state.unreadLoading = false;
         state.error = action.payload;
       });
   },
 });
 
-export const { clearAdminRefundState, clearCurrentRefund } = adminRefundSlice.actions;
+export const { clearAdminRefundState, clearCurrentRefund } =
+  adminRefundSlice.actions;
 export default adminRefundSlice.reducer;

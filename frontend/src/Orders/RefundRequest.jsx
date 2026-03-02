@@ -12,7 +12,6 @@ import {
   FiPaperclip,
   FiX,
   FiFile,
-  FiImage,
   FiVideo,
   FiMessageSquare,
   FiDollarSign,
@@ -45,28 +44,29 @@ const REFUND_REASONS = [
   { value: 'changed_mind', label: 'Changed My Mind' },
   { value: 'duplicate_order', label: 'Duplicate Order' },
   { value: 'unauthorized_purchase', label: 'Unauthorized Purchase' },
-  { value: 'other', label: 'Other' }
+  { value: 'other', label: 'Other' },
 ];
 
 const MAX_FILES = 5;
 const ALLOWED_FILE_TYPES = {
   images: ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'],
   videos: ['video/mp4', 'video/webm', 'video/quicktime'],
-  documents: ['application/pdf']
+  documents: ['application/pdf'],
 };
 
 const RefundStatusBadge = ({ status }) => {
-  const getStatusConfig = (status) => {
+  const getStatusConfig = (s) => {
     const configs = {
-      none: { label: 'No Refund', className: 'rr-refund-badge-none', icon: '○' },
-      requested: { label: 'Refund Requested', className: 'rr-refund-badge-requested', icon: '⏳' },
-      approved: { label: 'Approved', className: 'rr-refund-badge-approved', icon: '✓' },
-      rejected: { label: 'Rejected', className: 'rr-refund-badge-rejected', icon: '✗' },
-      processing: { label: 'Processing', className: 'rr-refund-badge-processing', icon: '⟳' },
-      completed: { label: 'Refunded', className: 'rr-refund-badge-completed', icon: '✓' },
-      failed: { label: 'Failed', className: 'rr-refund-badge-failed', icon: '✗' }
+      none:       { label: 'No Refund',          className: 'rr-refund-badge-none',       icon: '○' },
+      requested:  { label: 'Refund Requested',   className: 'rr-refund-badge-requested',  icon: '⏳' },
+      approved:   { label: 'Approved',           className: 'rr-refund-badge-approved',   icon: '✓' },
+      rejected:   { label: 'Rejected',           className: 'rr-refund-badge-rejected',   icon: '✗' },
+      processing: { label: 'Processing',         className: 'rr-refund-badge-processing', icon: '⟳' },
+      completed:  { label: 'Refunded',           className: 'rr-refund-badge-completed',  icon: '✓' },
+      failed:     { label: 'Failed',             className: 'rr-refund-badge-failed',     icon: '✗' },
+      cancelled:  { label: 'Cancelled',          className: 'rr-refund-badge-cancelled',  icon: '○' },
     };
-    return configs[status] || configs.none;
+    return configs[s] || configs.none;
   };
 
   const config = getStatusConfig(status);
@@ -86,32 +86,37 @@ function RefundRequest() {
   const fileInputRef = useRef(null);
 
   const { order, loading: orderLoading } = useSelector((state) => state.order);
-  
+
   const {
     messages,
     loading,
     messagesLoading,
     uploadLoading,
     error,
-    success
   } = useSelector((state) => state.refund);
 
   const [formData, setFormData] = useState({
     reason: '',
     description: '',
     refundType: 'full',
-    requestedAmount: ''
+    requestedAmount: '',
   });
 
   const [formErrors, setFormErrors] = useState({});
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [filePreviews, setFilePreviews] = useState([]);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
+  // Track which message IDs were unread when modal was last closed so the
+  // badge clears properly after messages are fetched post-open.
   const [unreadCount, setUnreadCount] = useState(0);
 
-  const hasActiveRefund = order?.refundInfo?.status && order.refundInfo.status !== 'none';
+  const hasActiveRefund =
+    order?.refundInfo?.status &&
+    order.refundInfo.status !== 'none' &&
+    order.refundInfo.status !== 'cancelled';
   const isTracking = hasActiveRefund;
 
+  // ── Initial data fetch ──────────────────────────────────────────────────
   useEffect(() => {
     if (orderId) {
       dispatch(getOrderDetails(orderId));
@@ -124,44 +129,50 @@ function RefundRequest() {
     }
   }, [dispatch, isTracking, orderId]);
 
-  // Check for unread messages
+  // ── Unread badge — recompute only when messages array changes ───────────
+  // After the modal is opened, getRefundMessages is called which returns
+  // server-side-marked-as-read data, clearing the badge on next render.
   useEffect(() => {
     if (messages && messages.length > 0) {
-      const unread = messages.filter(msg => 
-        msg.senderType === 'admin' && !msg.readBy?.includes('customer')
+      const unread = messages.filter(
+        (msg) =>
+          msg.senderType === 'admin' && !msg.readBy?.includes('customer')
       ).length;
       setUnreadCount(unread);
+    } else {
+      setUnreadCount(0);
     }
   }, [messages]);
 
+  // ── Pre-fill form when viewing an existing refund ───────────────────────
   useEffect(() => {
     if (isTracking && order?.refundInfo && !formData.reason) {
       setFormData({
         reason: order.refundInfo.reason || '',
         description: order.refundInfo.description || '',
         refundType: order.refundInfo.refundType || 'full',
-        requestedAmount: order.refundInfo.requestedAmount || ''
+        requestedAmount: order.refundInfo.requestedAmount || '',
       });
     }
   }, [isTracking, order?.refundInfo, formData.reason]);
 
+  // ── Global success/error toasts from OTHER slice actions (not submit) ───
+  // We deliberately only show these for non-submit actions (messages, uploads
+  // after submission). The submit flow manages its own toasts to avoid
+  // double-firing on requestRefund.fulfilled.
   useEffect(() => {
-    if (success) {
-      toast.success('Action completed successfully!', { position: 'top-center' });
-      dispatch(clearRefundState());
-    }
     if (error) {
       toast.error(error, { position: 'top-center' });
       dispatch(clearRefundState());
     }
-  }, [success, error, dispatch]);
+  }, [error, dispatch]);
 
+  // ── Handlers ─────────────────────────────────────────────────────────────
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({ ...prev, [name]: value }));
-    
+    setFormData((prev) => ({ ...prev, [name]: value }));
     if (formErrors[name]) {
-      setFormErrors(prev => ({ ...prev, [name]: '' }));
+      setFormErrors((prev) => ({ ...prev, [name]: '' }));
     }
   };
 
@@ -169,55 +180,54 @@ function RefundRequest() {
     const allAllowedTypes = [
       ...ALLOWED_FILE_TYPES.images,
       ...ALLOWED_FILE_TYPES.videos,
-      ...ALLOWED_FILE_TYPES.documents
+      ...ALLOWED_FILE_TYPES.documents,
     ];
     return allAllowedTypes.includes(file.type);
   };
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files);
-    
+
     if (selectedFiles.length + files.length > MAX_FILES) {
       toast.error(`You can only upload up to ${MAX_FILES} files`, {
-        position: 'top-center'
+        position: 'top-center',
       });
       return;
     }
 
-    const validFiles = files.filter(file => {
+    const validFiles = files.filter((file) => {
       if (!isFileTypeAllowed(file)) {
         toast.error(`${file.name} is not a supported file type`, {
-          position: 'top-center'
+          position: 'top-center',
         });
         return false;
       }
       if (file.size > 10 * 1024 * 1024) {
         toast.error(`${file.name} exceeds 10MB limit`, {
-          position: 'top-center'
+          position: 'top-center',
         });
         return false;
       }
       return true;
     });
 
-    setSelectedFiles(prev => [...prev, ...validFiles]);
+    setSelectedFiles((prev) => [...prev, ...validFiles]);
 
-    validFiles.forEach(file => {
+    validFiles.forEach((file) => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setFilePreviews(prev => [...prev, {
-          file,
-          preview: reader.result,
-          type: file.type
-        }]);
+        setFilePreviews((prev) => [
+          ...prev,
+          { file, preview: reader.result, type: file.type },
+        ]);
       };
       reader.readAsDataURL(file);
     });
   };
 
   const removeFile = (index) => {
-    setSelectedFiles(prev => prev.filter((_, i) => i !== index));
-    setFilePreviews(prev => prev.filter((_, i) => i !== index));
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+    setFilePreviews((prev) => prev.filter((_, i) => i !== index));
   };
 
   const validateForm = () => {
@@ -233,10 +243,13 @@ function RefundRequest() {
 
     if (formData.refundType === 'partial') {
       const amount = parseFloat(formData.requestedAmount);
+      // Fix: validate against amountPaid (what was actually charged),
+      // not totalPrice, to match backend guard.
+      const maxAllowed = order?.amountPaid ?? order?.totalPrice;
       if (!amount || amount <= 0) {
         errors.requestedAmount = 'Please enter a valid amount';
-      } else if (amount > order?.totalPrice) {
-        errors.requestedAmount = `Amount cannot exceed ${order.totalPrice}`;
+      } else if (amount > maxAllowed) {
+        errors.requestedAmount = `Amount cannot exceed ${maxAllowed}`;
       }
     }
 
@@ -252,39 +265,37 @@ function RefundRequest() {
       return;
     }
 
+    const refundData = {
+      reason: formData.reason,
+      description: formData.description,
+      refundType: formData.refundType,
+      requestedAmount:
+        formData.refundType === 'partial'
+          ? parseFloat(formData.requestedAmount)
+          : undefined,
+    };
+
     try {
-      let uploadedFiles = [];
-      if (selectedFiles.length > 0) {
-        const uploadResult = await dispatch(uploadRefundFiles({
-          orderId,
-          files: selectedFiles
-        })).unwrap();
-        uploadedFiles = uploadResult.files || [];
-      }
+      // Fix: pass files directly to requestRefund so the backend can persist
+      // them atomically AFTER creating the refund record — eliminates the
+      // upload-before-refund-exists 404.
+      await dispatch(
+        requestRefund({ orderId, refundData, files: selectedFiles })
+      ).unwrap();
 
-      const refundData = {
-        reason: formData.reason,
-        description: formData.description,
-        refundType: formData.refundType,
-        requestedAmount: formData.refundType === 'partial' ? parseFloat(formData.requestedAmount) : undefined,
-        attachments: uploadedFiles
-      };
-
-      await dispatch(requestRefund({
-        orderId,
-        refundData
-      })).unwrap();
-
+      // Single success toast — the useEffect watcher is NOT listening for
+      // success here so there is no double-toast.
       toast.success('Refund request submitted successfully!', {
         position: 'top-center',
-        autoClose: 3000
+        autoClose: 3000,
       });
 
+      dispatch(clearRefundState());
       setTimeout(() => navigate(`/order/${orderId}`), 2000);
-    } catch (error) {
-      toast.error(error || 'Failed to submit refund request', {
+    } catch (err) {
+      toast.error(err || 'Failed to submit refund request', {
         position: 'top-center',
-        autoClose: 3000
+        autoClose: 3000,
       });
     }
   };
@@ -293,24 +304,33 @@ function RefundRequest() {
     try {
       let uploadedFiles = [];
       if (files && files.length > 0) {
-        const uploadResult = await dispatch(uploadRefundFiles({
-          orderId,
-          files
-        })).unwrap();
+        // Post-submission upload is safe here because the refund already exists
+        const uploadResult = await dispatch(
+          uploadRefundFiles({ orderId, files })
+        ).unwrap();
         uploadedFiles = uploadResult.files || [];
       }
 
-      await dispatch(addRefundMessage({
-        orderId,
-        content,
-        attachments: uploadedFiles
-      })).unwrap();
+      // Fix: field renamed from "content" to "message" to match backend
+      await dispatch(
+        addRefundMessage({ orderId, message: content, attachments: uploadedFiles })
+      ).unwrap();
 
+      // Refresh to get server-populated sender data and updated readBy
       dispatch(getRefundMessages(orderId));
       toast.success('Message sent', { position: 'top-center', autoClose: 2000 });
-    } catch (error) {
-      toast.error(error || 'Failed to send message', { position: 'top-center' });
-      throw error;
+    } catch (err) {
+      toast.error(err || 'Failed to send message', { position: 'top-center' });
+      throw err;
+    }
+  };
+
+  const handleOpenMessagesModal = () => {
+    setShowMessagesModal(true);
+    // Refresh messages immediately on open so the badge clears after the
+    // server marks them read and the updated array flows back into state.
+    if (orderId) {
+      dispatch(getRefundMessages(orderId));
     }
   };
 
@@ -320,21 +340,23 @@ function RefundRequest() {
     }
   };
 
-  const formatCurrency = (amount, currency = 'USD') => {
-    return new Intl.NumberFormat('en-US', {
+  const formatCurrency = (amount, currency = 'USD') =>
+    new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
       minimumFractionDigits: 2,
     }).format(amount);
-  };
 
-  if (orderLoading) return (
-    <>
-      <Navbar />
-      <Loader type="snake" size="md"/>
-      <Footer />
-    </>
-  );
+  // ── Render guards ────────────────────────────────────────────────────────
+  if (orderLoading) {
+    return (
+      <>
+        <Navbar />
+        <Loader type="snake" size="md" />
+        <Footer />
+      </>
+    );
+  }
 
   if (!order?._id) {
     return (
@@ -345,8 +367,14 @@ function RefundRequest() {
           <div className="rr-error-card">
             <FiAlertCircle className="rr-error-icon" />
             <h2>Order not found</h2>
-            <p>The order you're looking for doesn't exist or you don't have permission to view it.</p>
-            <button onClick={() => navigate('/orders/user')} className="rr-btn-secondary">
+            <p>
+              The order you&apos;re looking for doesn&apos;t exist or you
+              don&apos;t have permission to view it.
+            </p>
+            <button
+              onClick={() => navigate('/orders/user')}
+              className="rr-btn-secondary"
+            >
               Back to My Orders
             </button>
           </div>
@@ -356,14 +384,21 @@ function RefundRequest() {
     );
   }
 
+  // ── Main render ──────────────────────────────────────────────────────────
   return (
     <>
-      <PageTitle title={isTracking ? `Refund Status - Order ${orderId}` : `Request Refund - Order ${orderId}`} />
+      <PageTitle
+        title={
+          isTracking
+            ? `Refund Status - Order ${orderId}`
+            : `Request Refund - Order ${orderId}`
+        }
+      />
       <Navbar />
 
       <div className="rr-refund-request-container">
-        <button 
-          onClick={() => navigate(`/order/${orderId}`)} 
+        <button
+          onClick={() => navigate(`/order/${orderId}`)}
           className="rr-btn-back-nav"
         >
           <FiArrowLeft />
@@ -375,14 +410,16 @@ function RefundRequest() {
             <FiDollarSign className="rr-header-icon" />
             <div>
               <h1>{isTracking ? 'Refund Status' : 'Request Refund'}</h1>
-              <p className="rr-order-reference">Order: #{orderId.slice(-8).toUpperCase()}</p>
+              <p className="rr-order-reference">
+                Order: #{orderId.slice(-8).toUpperCase()}
+              </p>
             </div>
           </div>
-          
+
           {isTracking && (
-            <button 
+            <button
               className="rr-btn-messages"
-              onClick={() => setShowMessagesModal(true)}
+              onClick={handleOpenMessagesModal}
             >
               <FiMessageSquare />
               <span>Messages</span>
@@ -394,6 +431,7 @@ function RefundRequest() {
         </div>
 
         <div className="rr-refund-content">
+          {/* ── Tracking view ─────────────────────────────────────────── */}
           {isTracking && (
             <div className="rr-refund-status-card">
               <div className="rr-card-header">
@@ -401,20 +439,19 @@ function RefundRequest() {
                 <h2>Refund Information</h2>
                 <RefundStatusBadge status={order.refundInfo.status} />
               </div>
-              
+
               <div className="rr-status-details">
                 <div className="rr-status-timeline">
                   <div className="rr-timeline-item">
-                    <div className="rr-timeline-dot rr-active"></div>
+                    <div className="rr-timeline-dot rr-active" />
                     <div className="rr-timeline-content">
                       <span className="rr-timeline-label">Requested</span>
                       <span className="rr-timeline-date">
-                        {order.refundInfo.requestedAt 
-                          ? new Date(order.refundInfo.requestedAt).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })
+                        {order.refundInfo.requestedAt
+                          ? new Date(order.refundInfo.requestedAt).toLocaleDateString(
+                              'en-US',
+                              { month: 'short', day: 'numeric', year: 'numeric' }
+                            )
                           : 'N/A'}
                       </span>
                     </div>
@@ -422,17 +459,28 @@ function RefundRequest() {
 
                   {order.refundInfo.reviewedAt && (
                     <div className="rr-timeline-item">
-                      <div className={`rr-timeline-dot ${order.refundInfo.status === 'approved' || order.refundInfo.status === 'processing' || order.refundInfo.status === 'completed' ? 'rr-active' : 'rr-rejected'}`}></div>
+                      <div
+                        className={`rr-timeline-dot ${
+                          ['approved', 'processing', 'completed'].includes(
+                            order.refundInfo.status
+                          )
+                            ? 'rr-active'
+                            : 'rr-rejected'
+                        }`}
+                      />
                       <div className="rr-timeline-content">
                         <span className="rr-timeline-label">
-                          {order.refundInfo.status === 'approved' ? 'Approved' : order.refundInfo.status === 'rejected' ? 'Rejected' : 'Reviewed'}
+                          {order.refundInfo.status === 'approved'
+                            ? 'Approved'
+                            : order.refundInfo.status === 'rejected'
+                            ? 'Rejected'
+                            : 'Reviewed'}
                         </span>
                         <span className="rr-timeline-date">
-                          {new Date(order.refundInfo.reviewedAt).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric'
-                          })}
+                          {new Date(order.refundInfo.reviewedAt).toLocaleDateString(
+                            'en-US',
+                            { month: 'short', day: 'numeric', year: 'numeric' }
+                          )}
                         </span>
                       </div>
                     </div>
@@ -440,17 +488,28 @@ function RefundRequest() {
 
                   {order.refundInfo.processedAt && (
                     <div className="rr-timeline-item">
-                      <div className={`rr-timeline-dot ${order.refundInfo.status === 'completed' ? 'rr-active' : order.refundInfo.status === 'failed' ? 'rr-rejected' : ''}`}></div>
+                      <div
+                        className={`rr-timeline-dot ${
+                          order.refundInfo.status === 'completed'
+                            ? 'rr-active'
+                            : order.refundInfo.status === 'failed'
+                            ? 'rr-rejected'
+                            : ''
+                        }`}
+                      />
                       <div className="rr-timeline-content">
                         <span className="rr-timeline-label">
-                          {order.refundInfo.status === 'completed' ? 'Completed' : order.refundInfo.status === 'failed' ? 'Failed' : 'Processing'}
+                          {order.refundInfo.status === 'completed'
+                            ? 'Completed'
+                            : order.refundInfo.status === 'failed'
+                            ? 'Failed'
+                            : 'Processing'}
                         </span>
                         <span className="rr-timeline-date">
-                          {new Date(order.refundInfo.processedAt).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            year: 'numeric'
-                          })}
+                          {new Date(order.refundInfo.processedAt).toLocaleDateString(
+                            'en-US',
+                            { month: 'short', day: 'numeric', year: 'numeric' }
+                          )}
                         </span>
                       </div>
                     </div>
@@ -460,7 +519,11 @@ function RefundRequest() {
                 <div className="rr-refund-info-grid">
                   <div className="rr-info-item">
                     <span className="rr-info-label">Refund Type:</span>
-                    <span className="rr-info-value">{order.refundInfo.refundType === 'full' ? 'Full Refund' : 'Partial Refund'}</span>
+                    <span className="rr-info-value">
+                      {order.refundInfo.refundType === 'full'
+                        ? 'Full Refund'
+                        : 'Partial Refund'}
+                    </span>
                   </div>
                   <div className="rr-info-item">
                     <span className="rr-info-label">Refund Amount:</span>
@@ -473,18 +536,24 @@ function RefundRequest() {
                   </div>
                   <div className="rr-info-item">
                     <span className="rr-info-label">Reason:</span>
-                    <span className="rr-info-value">{order.refundInfo.reason?.replace(/_/g, ' ')}</span>
+                    <span className="rr-info-value">
+                      {order.refundInfo.reason?.replace(/_/g, ' ')}
+                    </span>
                   </div>
                   {order.refundInfo.description && (
                     <div className="rr-info-item rr-full-width">
                       <span className="rr-info-label">Description:</span>
-                      <span className="rr-info-value">{order.refundInfo.description}</span>
+                      <span className="rr-info-value">
+                        {order.refundInfo.description}
+                      </span>
                     </div>
                   )}
                   {order.refundInfo.adminNote && (
                     <div className="rr-info-item rr-full-width rr-admin-note">
                       <span className="rr-info-label">Admin Response:</span>
-                      <span className="rr-info-value">{order.refundInfo.adminNote}</span>
+                      <span className="rr-info-value">
+                        {order.refundInfo.adminNote}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -492,6 +561,7 @@ function RefundRequest() {
             </div>
           )}
 
+          {/* ── Order summary ─────────────────────────────────────────── */}
           <div className="rr-summary-card">
             <div className="rr-card-header">
               <FiPackage className="rr-card-icon" />
@@ -500,12 +570,16 @@ function RefundRequest() {
             <div className="rr-summary-details">
               <div className="rr-summary-row">
                 <span className="rr-label">Total Amount:</span>
-                <span className="rr-value rr-strong">{formatCurrency(order.totalPrice, order.paymentInfo?.currency)}</span>
+                <span className="rr-value rr-strong">
+                  {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                </span>
               </div>
               <div className="rr-summary-row">
                 <span className="rr-label">Order Status:</span>
                 <span className="rr-value">
-                  <span className={`rr-status-badge rr-status-${order.orderStatus.toLowerCase()}`}>
+                  <span
+                    className={`rr-status-badge rr-status-${order.orderStatus.toLowerCase()}`}
+                  >
                     {order.orderStatus}
                   </span>
                 </span>
@@ -513,7 +587,13 @@ function RefundRequest() {
               <div className="rr-summary-row">
                 <span className="rr-label">Payment Status:</span>
                 <span className="rr-value">
-                  <span className={`rr-status-badge ${order.paymentInfo?.status === 'success' ? 'rr-status-success' : 'rr-status-danger'}`}>
+                  <span
+                    className={`rr-status-badge ${
+                      order.paymentInfo?.status === 'success'
+                        ? 'rr-status-success'
+                        : 'rr-status-danger'
+                    }`}
+                  >
                     {order.paymentInfo?.status === 'success' ? 'Paid' : 'Not Paid'}
                   </span>
                 </span>
@@ -521,6 +601,7 @@ function RefundRequest() {
             </div>
           </div>
 
+          {/* ── Request form (only when no active refund) ─────────────── */}
           {!isTracking && (
             <div className="rr-refund-form-card">
               <div className="rr-card-header">
@@ -529,10 +610,15 @@ function RefundRequest() {
               </div>
 
               <form onSubmit={handleSubmit} className="rr-refund-form">
+                {/* Refund type */}
                 <div className="rr-form-section">
                   <label className="rr-section-label">Refund Type</label>
                   <div className="rr-radio-group">
-                    <label className={`rr-radio-option ${formData.refundType === 'full' ? 'rr-selected' : ''}`}>
+                    <label
+                      className={`rr-radio-option ${
+                        formData.refundType === 'full' ? 'rr-selected' : ''
+                      }`}
+                    >
                       <input
                         type="radio"
                         name="refundType"
@@ -543,13 +629,20 @@ function RefundRequest() {
                       <div className="rr-radio-content">
                         <span className="rr-radio-title">Full Refund</span>
                         <span className="rr-radio-subtitle">
-                          {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                          {formatCurrency(
+                            order.totalPrice,
+                            order.paymentInfo?.currency
+                          )}
                         </span>
                       </div>
                       <FiCheckCircle className="rr-radio-check" />
                     </label>
 
-                    <label className={`rr-radio-option ${formData.refundType === 'partial' ? 'rr-selected' : ''}`}>
+                    <label
+                      className={`rr-radio-option ${
+                        formData.refundType === 'partial' ? 'rr-selected' : ''
+                      }`}
+                    >
                       <input
                         type="radio"
                         name="refundType"
@@ -559,13 +652,16 @@ function RefundRequest() {
                       />
                       <div className="rr-radio-content">
                         <span className="rr-radio-title">Partial Refund</span>
-                        <span className="rr-radio-subtitle">Specify custom amount</span>
+                        <span className="rr-radio-subtitle">
+                          Specify custom amount
+                        </span>
                       </div>
                       <FiCheckCircle className="rr-radio-check" />
                     </label>
                   </div>
                 </div>
 
+                {/* Partial amount */}
                 {formData.refundType === 'partial' && (
                   <div className="rr-form-group">
                     <label htmlFor="requestedAmount" className="rr-form-label">
@@ -577,13 +673,15 @@ function RefundRequest() {
                         type="number"
                         id="requestedAmount"
                         name="requestedAmount"
-                        className={`rr-form-input rr-has-icon ${formErrors.requestedAmount ? 'rr-error' : ''}`}
+                        className={`rr-form-input rr-has-icon ${
+                          formErrors.requestedAmount ? 'rr-error' : ''
+                        }`}
                         value={formData.requestedAmount}
                         onChange={handleChange}
                         placeholder="Enter amount"
                         step="0.01"
                         min="0"
-                        max={order.totalPrice}
+                        max={order.amountPaid ?? order.totalPrice}
                       />
                     </div>
                     {formErrors.requestedAmount && (
@@ -592,11 +690,16 @@ function RefundRequest() {
                       </span>
                     )}
                     <span className="rr-helper-text">
-                      Maximum: {formatCurrency(order.totalPrice, order.paymentInfo?.currency)}
+                      Maximum:{' '}
+                      {formatCurrency(
+                        order.amountPaid ?? order.totalPrice,
+                        order.paymentInfo?.currency
+                      )}
                     </span>
                   </div>
                 )}
 
+                {/* Reason */}
                 <div className="rr-form-group">
                   <label htmlFor="reason" className="rr-form-label">
                     Reason for Refund *
@@ -604,12 +707,14 @@ function RefundRequest() {
                   <select
                     id="reason"
                     name="reason"
-                    className={`rr-form-select ${formErrors.reason ? 'rr-error' : ''}`}
+                    className={`rr-form-select ${
+                      formErrors.reason ? 'rr-error' : ''
+                    }`}
                     value={formData.reason}
                     onChange={handleChange}
                   >
                     <option value="">Select a reason</option>
-                    {REFUND_REASONS.map(reason => (
+                    {REFUND_REASONS.map((reason) => (
                       <option key={reason.value} value={reason.value}>
                         {reason.label}
                       </option>
@@ -622,6 +727,7 @@ function RefundRequest() {
                   )}
                 </div>
 
+                {/* Description */}
                 <div className="rr-form-group">
                   <label htmlFor="description" className="rr-form-label">
                     Detailed Description *
@@ -629,7 +735,9 @@ function RefundRequest() {
                   <textarea
                     id="description"
                     name="description"
-                    className={`rr-form-textarea ${formErrors.description ? 'rr-error' : ''}`}
+                    className={`rr-form-textarea ${
+                      formErrors.description ? 'rr-error' : ''
+                    }`}
                     value={formData.description}
                     onChange={handleChange}
                     placeholder="Please provide details about why you're requesting a refund (minimum 10 characters)"
@@ -648,12 +756,14 @@ function RefundRequest() {
                   </div>
                 </div>
 
+                {/* File upload */}
                 <div className="rr-form-group">
                   <label className="rr-form-label">
                     Supporting Documents (Optional)
                   </label>
                   <p className="rr-helper-text">
-                    Upload up to {MAX_FILES} files (images, videos, or PDFs). Max 10MB each.
+                    Upload up to {MAX_FILES} files (images, videos, or PDFs).
+                    Max 10MB each.
                   </p>
 
                   <div className="rr-file-upload-area">
@@ -665,7 +775,7 @@ function RefundRequest() {
                       onChange={handleFileSelect}
                       style={{ display: 'none' }}
                     />
-                    
+
                     <button
                       type="button"
                       className="rr-btn-upload"
@@ -681,7 +791,11 @@ function RefundRequest() {
                         {filePreviews.map((item, index) => (
                           <div key={index} className="rr-file-preview-item">
                             {ALLOWED_FILE_TYPES.images.includes(item.type) ? (
-                              <img src={item.preview} alt={item.file.name} className="rr-preview-image" />
+                              <img
+                                src={item.preview}
+                                alt={item.file.name}
+                                className="rr-preview-image"
+                              />
                             ) : ALLOWED_FILE_TYPES.videos.includes(item.type) ? (
                               <div className="rr-preview-placeholder">
                                 <FiVideo />
@@ -692,7 +806,9 @@ function RefundRequest() {
                               </div>
                             )}
                             <div className="rr-file-info">
-                              <span className="rr-file-name">{item.file.name}</span>
+                              <span className="rr-file-name">
+                                {item.file.name}
+                              </span>
                               <span className="rr-file-size">
                                 {(item.file.size / 1024 / 1024).toFixed(2)} MB
                               </span>
@@ -711,6 +827,7 @@ function RefundRequest() {
                   </div>
                 </div>
 
+                {/* Actions */}
                 <div className="rr-form-actions">
                   <button
                     type="button"
