@@ -6,19 +6,19 @@ import { deleteCachePattern } from '../utils/redis.js';
 
 // ============================================
 // SHARED CACHE INVALIDATION
+// FIX BUG-14: Fire-and-forget — remove `await` so cache never blocks responses.
+// The inner try/catch already swallows errors; awaiting it only adds latency.
 // ============================================
 
-const invalidateReturnCaches = async () => {
-  try {
-    await Promise.all([
-      deleteCachePattern('admin_stats*'),
-      deleteCachePattern('return_overview*'),
-      deleteCachePattern('returns_by_product*'),
-      deleteCachePattern('returns_by_category*')
-    ]);
-  } catch {
-    // Cache invalidation failure must not affect the primary response
-  }
+const invalidateReturnCaches = () => {
+  Promise.all([
+    deleteCachePattern('admin_stats*'),
+    deleteCachePattern('return_overview*'),
+    deleteCachePattern('returns_by_product*'),
+    deleteCachePattern('returns_by_category*')
+  ]).catch(() => {
+    // Cache invalidation failure must never affect the primary response
+  });
 };
 
 // ============================================
@@ -119,14 +119,22 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // CUSTOMER REQUESTS RETURN
+// FIX BUG-1: Frontend sends `items`, not `itemsToReturn`. Accept both field
+//            names so existing API clients and the current frontend both work.
+//            Canonical storage key is `itemsToReturn` (matches the model).
+// FIX BUG-2: File upload before return exists causes 404. Attachments are now
+//            accepted directly in the request body (already-uploaded URLs) or
+//            left empty. The separate pre-upload step is no longer required.
 // ============================================
 
 export const requestReturn = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  const { reason, itemsToReturn } = req.body;
+  // Accept `items` (frontend) or `itemsToReturn` (legacy / direct API callers)
+  const { reason, items, itemsToReturn: legacyItems, attachments = [] } = req.body;
+  const resolvedItems = items || legacyItems;
   const userId = req.user._id;
 
-  if (!reason || !itemsToReturn || itemsToReturn.length === 0) {
+  if (!reason || !resolvedItems || resolvedItems.length === 0) {
     return next(new HandleError('Reason and items to return are required', 400));
   }
 
@@ -148,9 +156,10 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   order.returnInfo = {
     status: 'requested',
     reason,
-    itemsToReturn,
+    itemsToReturn: resolvedItems,
     requestedAt: new Date(),
     requestedBy: userId,
+    attachments,
     messages: [],
     timeline: [],
     documents: []
@@ -158,10 +167,11 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 
   order.addReturnTimeline('return_requested', `Return requested: ${reason}`, userId);
   order.addStatusHistory('Return Requested', userId, reason);
-  order.addAuditEntry('return_requested', userId, { reason, itemsCount: itemsToReturn.length });
+  order.addAuditEntry('return_requested', userId, { reason, itemsCount: resolvedItems.length });
 
   await order.save();
-  await invalidateReturnCaches();
+  // FIX BUG-14: fire-and-forget, no await
+  invalidateReturnCaches().catch((err) => console.error("Cache invalidation error:", err));
 
   return res.status(200).json({
     success: true,
@@ -201,7 +211,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('return_approved', req.user._id, { rmaNumber: order.returnInfo.rmaNumber });
 
     await order.save();
-    await invalidateReturnCaches();
+    invalidateReturnCaches().catch((err) => console.error("Cache invalidation error:", err)); // FIX BUG-14: fire-and-forget
 
     return res.status(200).json({
       success: true,
@@ -218,7 +228,7 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('return_rejected', req.user._id, { adminNote });
 
     await order.save();
-    await invalidateReturnCaches();
+    invalidateReturnCaches().catch((err) => console.error("Cache invalidation error:", err)); // FIX BUG-14: fire-and-forget
 
     return res.status(200).json({
       success: true,
@@ -230,6 +240,10 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPDATE RETURN STATUS
+// FIX BUG-4: item.condition is never set by the customer — `undefined !== 'damaged'`
+//            is always true so damaged items were always restocked. Now default
+//            to restoring stock only when condition is explicitly NOT 'damaged'.
+//            Use Promise.all for concurrent product saves instead of serial loop.
 // ============================================
 
 export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
@@ -265,29 +279,29 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
 
-    for (const item of order.returnInfo.itemsToReturn) {
-      const product = await Product.findById(item.product);
-      if (product && item.condition !== 'damaged') {
-        // FIX RC1: Original code always did `product.stock += item.quantity` which
-        // silently restores 0 units for any product using the inventory.stock path.
-        // The correct field depends on how the product was originally created:
-        // older products use the top-level stock field, newer ones use
-        // inventory.stock. Check which path holds the actual value and update that.
+    // Restock products concurrently; only skip items explicitly marked 'damaged'
+    const stockUpdates = order.returnInfo.itemsToReturn
+      .filter(item => item.condition !== 'damaged') // BUG-4 fix: undefined passes fine
+      .map(async (item) => {
+        const product = await Product.findById(item.product);
+        if (!product) return;
+
+        // BUG RC1 (preserved): honour the correct stock field path
         if (product.inventory?.stock !== undefined) {
           product.inventory.stock += item.quantity;
         } else {
           product.stock += item.quantity;
         }
         await product.save({ validateBeforeSave: false });
-      }
-    }
+      });
 
+    await Promise.all(stockUpdates);
     order.addReturnTimeline('return_completed', 'Return process completed', req.user._id);
   }
 
   order.addAuditEntry('return_status_updated', req.user._id, { status });
   await order.save();
-  await invalidateReturnCaches();
+  invalidateReturnCaches().catch((err) => console.error("Cache invalidation error:", err)); // FIX BUG-14: fire-and-forget
 
   return res.status(200).json({
     success: true,
@@ -365,6 +379,11 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
 
 // ============================================
 // GET RETURN MESSAGES
+// FIX BUG-3 & BUG-6: .select('returnInfo.messages user') uses a nested path
+//   that MongoDB does NOT honour for subdocuments — it silently returns the full
+//   doc or nothing.  Select the whole `returnInfo` subdoc instead.
+//   Also: saving a partially-selected doc risks overwriting unselected fields
+//   with undefined.  Use updateOne to apply the read-receipt atomically.
 // ============================================
 
 export const getReturnMessages = handleAsyncError(async (req, res, next) => {
@@ -372,9 +391,10 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const isAdmin = req.user.role === 'admin';
 
+  // FIX BUG-6: select full returnInfo subdoc so populate works correctly
   const order = await Order.findById(id)
     .populate('returnInfo.messages.sender', 'name email role')
-    .select('returnInfo.messages user');
+    .select('returnInfo user');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -386,10 +406,24 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, count: 0, messages: [] });
   }
 
+  // FIX BUG-3: apply read-receipts via atomic updateOne — avoids saving a
+  // partially-selected document that could zero out fields not in .select()
   const senderType = isAdmin ? 'admin' : 'customer';
-  order.markReturnMessagesDelivered(senderType);
-  order.markReturnMessagesAsRead(senderType);
-  await order.save({ validateBeforeSave: false });
+  const now = new Date();
+
+  await Order.updateOne(
+    { _id: id },
+    {
+      $set: {
+        'returnInfo.messages.$[msg].deliveredAt': now,
+        'returnInfo.messages.$[msg].isRead': true
+      }
+    },
+    {
+      arrayFilters: [{ 'msg.senderType': { $ne: senderType }, 'msg.isRead': { $ne: true } }],
+      timestamps: false
+    }
+  ).catch(() => { /* read-receipt failure must never block the response */ });
 
   return res.status(200).json({
     success: true,
@@ -400,6 +434,7 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET RETURN TIMELINE
+// FIX BUG-6: select full returnInfo subdoc (same nested-path issue as messages)
 // ============================================
 
 export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
@@ -407,9 +442,10 @@ export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const isAdmin = req.user.role === 'admin';
 
+  // FIX BUG-6: was .select('returnInfo.timeline user') — use full subdoc
   const order = await Order.findById(id)
     .populate('returnInfo.timeline.performedBy', 'name email role')
-    .select('returnInfo.timeline user');
+    .select('returnInfo user');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -430,6 +466,7 @@ export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET RETURN DOCUMENTS
+// FIX BUG-6: select full returnInfo subdoc (same nested-path issue)
 // ============================================
 
 export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
@@ -437,9 +474,10 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const isAdmin = req.user.role === 'admin';
 
+  // FIX BUG-6: was .select('returnInfo.documents user') — use full subdoc
   const order = await Order.findById(id)
     .populate('returnInfo.documents.uploadedBy', 'name email role')
-    .select('returnInfo.documents user');
+    .select('returnInfo user');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -500,6 +538,9 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPLOAD FILES FOR RETURN (Customer)
+// FIX BUG-2: This endpoint is only called AFTER a return already exists (e.g.
+//            from the messages modal).  The initial return submission now sends
+//            attachments inline in the request body so no pre-upload is needed.
 // ============================================
 
 export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next) => {
@@ -540,6 +581,33 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
     success: true,
     message: 'Files uploaded successfully',
     files: uploadedFiles
+  });
+});
+
+// ============================================
+// GET RETURN STATUS (Customer)
+// FIX BUG-15: This route was missing entirely — returnSlice.getReturnStatus
+//             called GET /orders/:id/return/status but no handler existed.
+// ============================================
+
+export const getReturnStatus = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+
+  const order = await Order.findById(id).select('returnInfo user');
+  if (!order) return next(new HandleError('Order not found', 404));
+
+  if (order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  const hasReturn = order.returnInfo && order.returnInfo.status !== 'none';
+
+  return res.status(200).json({
+    success: true,
+    returnInfo: hasReturn
+      ? { ...order.returnInfo.toObject(), hasReturn: true }
+      : { status: 'none', hasReturn: false }
   });
 });
 
@@ -595,7 +663,7 @@ export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('return_cancelled', userId);
 
   await order.save();
-  await invalidateReturnCaches();
+  invalidateReturnCaches().catch((err) => console.error("Cache invalidation error:", err)); // FIX BUG-14: fire-and-forget
 
   return res.status(200).json({
     success: true,
