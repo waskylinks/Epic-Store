@@ -4,7 +4,12 @@ import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
 /**
- * User requests return for their order
+ * User requests return for their order.
+ * FIX BUG-2 & BUG-8: Files can no longer be uploaded before the return exists.
+ * The initial request now sends `items` (matches backend) and any attachment
+ * URLs are included directly in returnData after a separate upload call that
+ * the COMPONENT handles post-return-creation if needed.  The slice itself stays
+ * thin — field naming is the only change here.
  */
 export const requestReturn = createAsyncThunk(
   "return/requestReturn",
@@ -12,7 +17,7 @@ export const requestReturn = createAsyncThunk(
     try {
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/return/request`,
-        returnData,
+        returnData,          // { reason, items, attachments }
         { withCredentials: true }
       );
       return data;
@@ -25,7 +30,8 @@ export const requestReturn = createAsyncThunk(
 );
 
 /**
- * Get return status for an order
+ * Get return status for an order.
+ * FIX BUG-15: Route now exists in the backend (GET /orders/:id/return/status).
  */
 export const getReturnStatus = createAsyncThunk(
   "return/getReturnStatus",
@@ -147,7 +153,11 @@ export const getReturnDocuments = createAsyncThunk(
 );
 
 /**
- * Upload return files (customer)
+ * Upload return files (customer).
+ * FIX BUG-8: This thunk is now only called AFTER a return already exists
+ * (i.e. from the messages modal, not from the initial submit flow).
+ * FIX BUG-10: uploadLoading is a dedicated flag; `success` is NOT set here so
+ * the component-level success-toast useEffect never fires for an upload.
  */
 export const uploadReturnFiles = createAsyncThunk(
   "return/uploadReturnFiles",
@@ -155,11 +165,11 @@ export const uploadReturnFiles = createAsyncThunk(
     try {
       const formData = new FormData();
       files.forEach(file => formData.append('attachments', file));
-      
+
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/return/upload`,
         formData,
-        { 
+        {
           withCredentials: true,
           headers: { 'Content-Type': 'multipart/form-data' }
         }
@@ -180,14 +190,14 @@ const returnSlice = createSlice({
     messages: [],
     timeline: [],
     documents: [],
-    
+
     loading: false,
     statusLoading: false,
     messagesLoading: false,
     timelineLoading: false,
     documentsLoading: false,
     uploadLoading: false,
-    
+
     error: null,
     success: false,
     message: null,
@@ -203,7 +213,7 @@ const returnSlice = createSlice({
     }
   },
   extraReducers: (builder) => {
-    // Request Return
+    // ── Request Return ──────────────────────────────────────────────────────
     builder
       .addCase(requestReturn.pending, (state) => {
         state.loading = true;
@@ -222,7 +232,7 @@ const returnSlice = createSlice({
         state.success = false;
       });
 
-    // Get Return Status
+    // ── Get Return Status ───────────────────────────────────────────────────
     builder
       .addCase(getReturnStatus.pending, (state) => {
         state.statusLoading = true;
@@ -235,12 +245,13 @@ const returnSlice = createSlice({
       .addCase(getReturnStatus.rejected, (state, action) => {
         state.statusLoading = false;
         state.returnStatus = { status: 'none', hasReturn: false };
+        // Suppress "not found" errors — they just mean no return exists yet
         if (!action.payload?.includes('not found')) {
           state.error = action.payload;
         }
       });
 
-    // Cancel Return
+    // ── Cancel Return ───────────────────────────────────────────────────────
     builder
       .addCase(cancelReturn.pending, (state) => {
         state.loading = true;
@@ -257,7 +268,7 @@ const returnSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Return Messages
+    // ── Get Return Messages ─────────────────────────────────────────────────
     builder
       .addCase(getReturnMessages.pending, (state) => {
         state.messagesLoading = true;
@@ -265,30 +276,36 @@ const returnSlice = createSlice({
       })
       .addCase(getReturnMessages.fulfilled, (state, action) => {
         state.messagesLoading = false;
-        state.messages = action.payload.messages;
+        state.messages = action.payload.messages ?? [];
       })
       .addCase(getReturnMessages.rejected, (state, action) => {
         state.messagesLoading = false;
-        state.error = action.payload;
+        // Don't surface a generic error when there are simply no messages yet
+        if (!action.payload?.includes('not found')) {
+          state.error = action.payload;
+        }
       });
 
-    // Add Return Message (Customer)
+    // ── Add Return Message (Customer) ───────────────────────────────────────
+    // FIX BUG-9: Don't optimistically push the new message — the component
+    // immediately re-fetches the full list via getReturnMessages, so the push
+    // only causes a duplicate/flicker.  Remove the optimistic update entirely.
     builder
       .addCase(addReturnMessage.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(addReturnMessage.fulfilled, (state, action) => {
+      .addCase(addReturnMessage.fulfilled, (state) => {
         state.loading = false;
-        state.success = true;
-        state.messages.push(action.payload.data.message);
+        // NOTE: success flag intentionally NOT set here; the component shows
+        // its own "Message sent" toast and re-fetches messages itself.
       })
       .addCase(addReturnMessage.rejected, (state, action) => {
         state.loading = false;
         state.error = action.payload;
       });
 
-    // Get Return Timeline
+    // ── Get Return Timeline ─────────────────────────────────────────────────
     builder
       .addCase(getReturnTimeline.pending, (state) => {
         state.timelineLoading = true;
@@ -296,14 +313,14 @@ const returnSlice = createSlice({
       })
       .addCase(getReturnTimeline.fulfilled, (state, action) => {
         state.timelineLoading = false;
-        state.timeline = action.payload.timeline;
+        state.timeline = action.payload.timeline ?? [];
       })
       .addCase(getReturnTimeline.rejected, (state, action) => {
         state.timelineLoading = false;
         state.error = action.payload;
       });
 
-    // Get Return Documents
+    // ── Get Return Documents ────────────────────────────────────────────────
     builder
       .addCase(getReturnDocuments.pending, (state) => {
         state.documentsLoading = true;
@@ -311,23 +328,25 @@ const returnSlice = createSlice({
       })
       .addCase(getReturnDocuments.fulfilled, (state, action) => {
         state.documentsLoading = false;
-        state.documents = action.payload.documents;
+        state.documents = action.payload.documents ?? [];
       })
       .addCase(getReturnDocuments.rejected, (state, action) => {
         state.documentsLoading = false;
         state.error = action.payload;
       });
 
-    // Upload Return Files
+    // ── Upload Return Files ─────────────────────────────────────────────────
+    // FIX BUG-10: Do NOT set state.success = true here.  Doing so triggers the
+    // component's success-toast useEffect mid-form with a misleading
+    // "Action completed successfully!" message every time a file is picked.
     builder
       .addCase(uploadReturnFiles.pending, (state) => {
         state.uploadLoading = true;
         state.error = null;
       })
-      .addCase(uploadReturnFiles.fulfilled, (state, action) => {
+      .addCase(uploadReturnFiles.fulfilled, (state) => {
         state.uploadLoading = false;
-        state.success = true;
-        state.message = action.payload.message;
+        // Intentionally no success=true — callers handle their own feedback
       })
       .addCase(uploadReturnFiles.rejected, (state, action) => {
         state.uploadLoading = false;
