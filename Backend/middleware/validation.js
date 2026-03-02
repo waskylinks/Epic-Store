@@ -21,7 +21,6 @@ export const validateRegistration = (req, res, next) => {
     const { firstName, lastName, email, password } = req.body;
     const errors = [];
 
-    // Validate first name
     if (!firstName || firstName.trim().length < 2) {
         errors.push('First name must be at least 2 characters long');
     }
@@ -32,7 +31,6 @@ export const validateRegistration = (req, res, next) => {
         errors.push('First name can only contain letters, spaces, hyphens, and apostrophes');
     }
 
-    // Validate last name
     if (!lastName || lastName.trim().length < 2) {
         errors.push('Last name must be at least 2 characters long');
     }
@@ -43,12 +41,10 @@ export const validateRegistration = (req, res, next) => {
         errors.push('Last name can only contain letters, spaces, hyphens, and apostrophes');
     }
 
-    // Validate email
     if (!email || !validator.isEmail(email)) {
         errors.push('Please provide a valid email address');
     }
 
-    // Validate password
     if (!password) {
         errors.push('Password is required');
     } else {
@@ -94,7 +90,7 @@ export const validateLogin = (req, res, next) => {
 };
 
 /**
- * ✅ FIXED: Validate profile update (with avatar)
+ * Validate profile update (with avatar)
  */
 export const validateProfileUpdate = (req, res, next) => {
     if (!req.body || Object.keys(req.body).length === 0) {
@@ -104,7 +100,6 @@ export const validateProfileUpdate = (req, res, next) => {
     const { firstName, lastName, email } = req.body;
     const errors = [];
 
-    // Validate first name if provided
     if (firstName !== undefined) {
         if (firstName === null || firstName === '') {
             errors.push('First name cannot be empty');
@@ -117,7 +112,6 @@ export const validateProfileUpdate = (req, res, next) => {
         }
     }
 
-    // Validate last name if provided
     if (lastName !== undefined) {
         if (lastName === null || lastName === '') {
             errors.push('Last name cannot be empty');
@@ -130,7 +124,6 @@ export const validateProfileUpdate = (req, res, next) => {
         }
     }
 
-    // Validate email if provided
     if (email !== undefined && (!email || !validator.isEmail(email))) {
         errors.push('Please provide a valid email address');
     }
@@ -191,17 +184,14 @@ export const validatePasswordReset = (req, res, next) => {
     const { email, code, password, confirmPassword } = req.body;
     const errors = [];
 
-    // Validate email
     if (!email || !validator.isEmail(email)) {
         errors.push('Please provide a valid email address');
     }
 
-    // Validate code
     if (!code || !/^\d{6}$/.test(code)) {
         errors.push('Verification code must be 6 digits');
     }
 
-    // Validate password
     if (!password) {
         errors.push('Password is required');
     } else {
@@ -352,7 +342,6 @@ export const validateProcessRefund = (req, res, next) => {
     const { refundAmount, merchantNote } = req.body;
     const errors = [];
 
-    // refundAmount is optional - if not provided, use approved amount
     if (refundAmount !== undefined) {
         if (isNaN(refundAmount) || refundAmount <= 0) {
             errors.push('Refund amount must be a positive number');
@@ -435,25 +424,45 @@ export const validateTrackingInfo = (req, res, next) => {
 };
 
 /**
- * Validate return request
+ * Validate return request.
+ * - reason: required enum (overall return category)
+ * - description: required, min 5, max 2000 chars (general description for all items)
+ * - items: required array, each item must have product, quantity, and its own reason
  */
 export const validateReturnRequest = (req, res, next) => {
-    const { reason, itemsToReturn } = req.body;
+    const { reason, description, items } = req.body;
     const errors = [];
 
-    if (!reason || reason.trim().length < 10) {
-        errors.push('Return reason must be at least 10 characters');
-    }
-    if (reason && reason.length > 500) {
-        errors.push('Return reason cannot exceed 500 characters');
+    const validReasons = [
+        'defective_product',
+        'wrong_item',
+        'wrong_size',
+        'not_as_described',
+        'quality_issues',
+        'changed_mind',
+        'better_price',
+        'duplicate_order',
+        'no_longer_needed',
+        'other'
+    ];
+
+    if (!reason || !validReasons.includes(reason)) {
+        errors.push('Please provide a valid return reason');
     }
 
-    if (!itemsToReturn || !Array.isArray(itemsToReturn) || itemsToReturn.length === 0) {
+    if (!description || description.trim().length < 5) {
+        errors.push('Please provide a description of at least 5 characters');
+    }
+    if (description && description.length > 2000) {
+        errors.push('Description cannot exceed 2000 characters');
+    }
+
+    if (!items || !Array.isArray(items) || items.length === 0) {
         errors.push('At least one item must be selected for return');
     }
 
-    if (itemsToReturn && Array.isArray(itemsToReturn)) {
-        itemsToReturn.forEach((item, index) => {
+    if (items && Array.isArray(items)) {
+        items.forEach((item, index) => {
             if (!item.product) {
                 errors.push(`Item ${index + 1}: Product ID is required`);
             }
@@ -461,7 +470,7 @@ export const validateReturnRequest = (req, res, next) => {
                 errors.push(`Item ${index + 1}: Valid quantity is required`);
             }
             if (!item.reason || item.reason.trim().length < 5) {
-                errors.push(`Item ${index + 1}: Reason must be at least 5 characters`);
+                errors.push(`Item ${index + 1}: Please select a reason`);
             }
         });
     }
@@ -496,7 +505,7 @@ export const validateFraudReview = (req, res, next) => {
 // ============================================
 
 /**
- * Safe input sanitization with logging
+ * Safe input sanitization
  */
 export const sanitizeInput = (req, res, next) => {
     if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
@@ -508,8 +517,6 @@ export const sanitizeInput = (req, res, next) => {
     }
     next();
 };
-
-// ADD THESE TO validation.js
 
 /**
  * Validate order message
