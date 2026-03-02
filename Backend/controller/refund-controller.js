@@ -32,10 +32,11 @@ const invalidateRefundCaches = async () => {
 export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   const { status, page = 1, limit = 20 } = req.query;
 
+  // Exclude statuses that have no meaningful refund history
   const query = {
-    'refundInfo.status': { 
-      $nin: ['none'] 
-    }
+    'refundInfo.status': {
+      $nin: ['none'],
+    },
   };
 
   if (status) {
@@ -58,12 +59,13 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
 
   const stats = {
     total: totalRefunds,
-    requested: await Order.countDocuments({ 'refundInfo.status': 'requested' }),
-    approved: await Order.countDocuments({ 'refundInfo.status': 'approved' }),
+    requested:  await Order.countDocuments({ 'refundInfo.status': 'requested' }),
+    approved:   await Order.countDocuments({ 'refundInfo.status': 'approved' }),
     processing: await Order.countDocuments({ 'refundInfo.status': 'processing' }),
-    completed: await Order.countDocuments({ 'refundInfo.status': 'completed' }),
-    rejected: await Order.countDocuments({ 'refundInfo.status': 'rejected' }),
-    failed: await Order.countDocuments({ 'refundInfo.status': 'failed' }),
+    completed:  await Order.countDocuments({ 'refundInfo.status': 'completed' }),
+    rejected:   await Order.countDocuments({ 'refundInfo.status': 'rejected' }),
+    failed:     await Order.countDocuments({ 'refundInfo.status': 'failed' }),
+    cancelled:  await Order.countDocuments({ 'refundInfo.status': 'cancelled' }),
   };
 
   return res.status(200).json({
@@ -83,11 +85,11 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
       refundableAmount: order.refundableAmount,
       paymentInfo: {
         method: order.paymentInfo.method,
-        reference: order.paymentInfo.reference
+        reference: order.paymentInfo.reference,
       },
       unreadMessages: order.unreadRefundMessages,
-      createdAt: order.createdAt
-    }))
+      createdAt: order.createdAt,
+    })),
   });
 });
 
@@ -134,8 +136,8 @@ export const getSingleRefund = handleAsyncError(async (req, res, next) => {
       amountPaid: order.amountPaid,
       refundableAmount: order.refundableAmount,
       createdAt: order.createdAt,
-      deliveredAt: order.deliveredAt
-    }
+      deliveredAt: order.deliveredAt,
+    },
   });
 });
 
@@ -143,6 +145,10 @@ export const getSingleRefund = handleAsyncError(async (req, res, next) => {
  * Customer requests refund
  * @route POST /api/v1/orders/:id/refund/request
  * @access Private (User who owns the order)
+ *
+ * Accepts multipart/form-data (when files are attached) or JSON.
+ * Files are processed AFTER the refund record is created so the upload
+ * guard (`refundInfo.status === 'none'`) is never hit on first submission.
  */
 export const requestRefund = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
@@ -176,10 +182,11 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
 
   let refundAmount = order.amountPaid;
   if (refundType === 'partial') {
-    if (!requestedAmount || requestedAmount <= 0 || requestedAmount > order.amountPaid) {
+    const parsedAmount = parseFloat(requestedAmount);
+    if (!parsedAmount || parsedAmount <= 0 || parsedAmount > order.amountPaid) {
       return next(new HandleError('Invalid refund amount', 400));
     }
-    refundAmount = requestedAmount;
+    refundAmount = parsedAmount;
   }
 
   order.refundInfo = {
@@ -192,7 +199,7 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
     requestedBy: userId,
     messages: [],
     documents: [],
-    timeline: []
+    timeline: [],
   };
 
   order.addRefundTimeline(
@@ -203,11 +210,20 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
   );
 
   order.addStatusHistory('Refund Requested', userId, reason);
-  order.addAuditEntry('refund_requested', userId, { 
-    reason, 
-    refundType, 
-    requestedAmount: refundAmount 
+  order.addAuditEntry('refund_requested', userId, {
+    reason,
+    refundType,
+    requestedAmount: refundAmount,
   });
+
+  // Persist files atomically with the refund record (req.files is populated
+  // by the multer middleware on this route when multipart data is sent).
+  if (req.files && req.files.length > 0) {
+    for (const file of req.files) {
+      const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
+      order.addRefundDocument('photo', fileUrl, file.originalname, userId, '');
+    }
+  }
 
   await order.save();
   await invalidateRefundCaches();
@@ -215,7 +231,32 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Refund request submitted successfully. Our team will review your request.',
-    refundInfo: order.refundInfo
+    refundInfo: order.refundInfo,
+  });
+});
+
+/**
+ * Get refund status for an order
+ * @route GET /api/v1/orders/:id/refund/status
+ * @access Private (User who owns the order)
+ */
+export const getRefundStatus = handleAsyncError(async (req, res, next) => {
+  const { id } = req.params;
+  const userId = req.user._id;
+
+  const order = await Order.findById(id).select('user refundInfo');
+
+  if (!order) {
+    return next(new HandleError('Order not found', 404));
+  }
+
+  if (order.user.toString() !== userId.toString()) {
+    return next(new HandleError('Unauthorized', 403));
+  }
+
+  return res.status(200).json({
+    success: true,
+    refundInfo: order.refundInfo || { status: 'none', hasRefund: false },
   });
 });
 
@@ -245,6 +286,8 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     order.refundInfo.status = 'approved';
     order.refundInfo.approvedAt = new Date();
     order.refundInfo.approvedBy = req.user._id;
+    // Store reviewedAt so the frontend timeline renders the reviewed step
+    order.refundInfo.reviewedAt = new Date();
     if (adminNote) order.refundInfo.adminNote = adminNote;
 
     order.addRefundTimeline('refund_approved', 'Refund approved by admin', req.user._id);
@@ -256,12 +299,13 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Refund approved. Proceed to process payment.',
-      order
+      order,
     });
   } else {
     order.refundInfo.status = 'rejected';
     order.refundInfo.rejectedAt = new Date();
     order.refundInfo.rejectedBy = req.user._id;
+    order.refundInfo.reviewedAt = new Date();
     if (adminNote) order.refundInfo.adminNote = adminNote;
 
     order.addRefundTimeline('refund_rejected', 'Refund rejected by admin', req.user._id, { reason: adminNote });
@@ -273,7 +317,7 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Refund request rejected',
-      order
+      order,
     });
   }
 });
@@ -319,7 +363,7 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
       refundId: `rfnd_${Date.now()}`,
       amount: refundAmount,
       currency: order.paymentInfo.currency,
-      status: 'succeeded'
+      status: 'succeeded',
     };
 
     order.refundInfo.status = 'completed';
@@ -327,9 +371,9 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
     order.refundInfo.refundId = gatewayResponse.refundId;
     order.refundInfo.gatewayResponse = gatewayResponse;
 
-    order.addRefundTimeline('refund_completed', 'Refund successfully processed', req.user._id, { 
+    order.addRefundTimeline('refund_completed', 'Refund successfully processed', req.user._id, {
       refundId: gatewayResponse.refundId,
-      refundAmount 
+      refundAmount,
     });
     order.addAuditEntry('refund_completed', req.user._id, { refundAmount });
 
@@ -337,8 +381,8 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
     order.refundInfo.status = 'failed';
     order.refundInfo.failureReason = error.message;
 
-    order.addRefundTimeline('refund_failed', 'Refund processing failed', req.user._id, { 
-      error: error.message 
+    order.addRefundTimeline('refund_failed', 'Refund processing failed', req.user._id, {
+      error: error.message,
     });
 
     await order.save();
@@ -353,7 +397,7 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Refund processed successfully',
-    order
+    order,
   });
 });
 
@@ -390,8 +434,8 @@ export const addRefundMessage = handleAsyncError(async (req, res, next) => {
     message: 'Message sent successfully',
     data: {
       orderId: order._id,
-      message: newMessage
-    }
+      message: newMessage,
+    },
   });
 });
 
@@ -402,6 +446,7 @@ export const addRefundMessage = handleAsyncError(async (req, res, next) => {
  */
 export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
+  // Fix: frontend now sends "message" (was incorrectly "content" before)
   const { message, attachments = [] } = req.body;
   const userId = req.user._id;
 
@@ -433,8 +478,8 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
     message: 'Message sent successfully',
     data: {
       orderId: order._id,
-      message: newMessage
-    }
+      message: newMessage,
+    },
   });
 });
 
@@ -464,18 +509,22 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       count: 0,
-      messages: []
+      messages: [],
     });
   }
 
-  const senderType = isAdmin ? 'admin' : 'customer';
-  order.markRefundMessagesAsRead(senderType);
+  // Fix: invert senderType so we mark messages RECEIVED by this viewer as read,
+  // not messages sent by them.
+  // A customer reading the thread should mark 'admin' messages as read.
+  // An admin reading the thread should mark 'customer' messages as read.
+  const readerType = isAdmin ? 'customer' : 'admin';
+  order.markRefundMessagesAsRead(readerType);
   await order.save({ validateBeforeSave: false });
 
   return res.status(200).json({
     success: true,
     count: order.refundInfo.messages.length,
-    messages: order.refundInfo.messages
+    messages: order.refundInfo.messages,
   });
 });
 
@@ -501,23 +550,17 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
   }
 
   const uploadedFiles = [];
-  
+
   for (const file of req.files) {
     const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
-    
-    order.addRefundDocument(
-      'other',
-      fileUrl,
-      file.originalname,
-      req.user._id,
-      ''
-    );
+
+    order.addRefundDocument('other', fileUrl, file.originalname, req.user._id, '');
 
     uploadedFiles.push({
       url: fileUrl,
       filename: file.originalname,
       fileType: file.mimetype,
-      fileSize: file.size
+      fileSize: file.size,
     });
   }
 
@@ -526,7 +569,7 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Files uploaded successfully',
-    files: uploadedFiles
+    files: uploadedFiles,
   });
 });
 
@@ -534,6 +577,10 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
  * Customer uploads files/documents for refund
  * @route POST /api/v1/orders/:id/refund/upload
  * @access Private (User who owns the order)
+ *
+ * NOTE: This route is for post-submission uploads only (adding more evidence
+ * after the refund record exists). Initial files should be sent with
+ * POST /orders/:id/refund/request as multipart/form-data.
  */
 export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
@@ -557,23 +604,17 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
   }
 
   const uploadedFiles = [];
-  
+
   for (const file of req.files) {
     const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
-    
-    order.addRefundDocument(
-      'photo',
-      fileUrl,
-      file.originalname,
-      userId,
-      ''
-    );
+
+    order.addRefundDocument('photo', fileUrl, file.originalname, userId, '');
 
     uploadedFiles.push({
       url: fileUrl,
       filename: file.originalname,
       fileType: file.mimetype,
-      fileSize: file.size
+      fileSize: file.size,
     });
   }
 
@@ -582,7 +623,7 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
   return res.status(200).json({
     success: true,
     message: 'Files uploaded successfully',
-    files: uploadedFiles
+    files: uploadedFiles,
   });
 });
 
@@ -612,14 +653,14 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       count: 0,
-      timeline: []
+      timeline: [],
     });
   }
 
   return res.status(200).json({
     success: true,
     count: order.refundInfo.timeline.length,
-    timeline: order.refundInfo.timeline
+    timeline: order.refundInfo.timeline,
   });
 });
 
@@ -649,14 +690,14 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       count: 0,
-      documents: []
+      documents: [],
     });
   }
 
   return res.status(200).json({
     success: true,
     count: order.refundInfo.documents.length,
-    documents: order.refundInfo.documents
+    documents: order.refundInfo.documents,
   });
 });
 
@@ -678,10 +719,10 @@ export const getRefundsWithUnreadMessages = handleAsyncError(async (req, res, ne
         status: order.refundInfo.status,
         reason: order.refundInfo.reason,
         requestedAmount: order.refundInfo.requestedAmount,
-        unreadCount: order.unreadRefundMessages
+        unreadCount: order.unreadRefundMessages,
       },
-      latestMessage: order.latestRefundMessage
-    }))
+      latestMessage: order.latestRefundMessage,
+    })),
   });
 });
 
@@ -711,7 +752,9 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Cannot cancel refund at this stage', 400));
   }
 
-  order.refundInfo.status = 'none';
+  // Fix: use 'cancelled' status instead of 'none' so audit history is preserved
+  // and the record remains visible to admins in the refunds list.
+  order.refundInfo.status = 'cancelled';
   order.addRefundTimeline('refund_cancelled', 'Refund cancelled by customer', userId);
   order.addAuditEntry('refund_cancelled', userId);
 
@@ -720,6 +763,6 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success: true,
-    message: 'Refund request cancelled successfully'
+    message: 'Refund request cancelled successfully',
   });
 });
