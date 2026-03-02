@@ -1,5 +1,5 @@
 // Updated RefundRequest.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
@@ -276,22 +276,20 @@ function RefundRequest() {
     };
 
     try {
-      // Fix: pass files directly to requestRefund so the backend can persist
-      // them atomically AFTER creating the refund record — eliminates the
-      // upload-before-refund-exists 404.
       await dispatch(
         requestRefund({ orderId, refundData, files: selectedFiles })
       ).unwrap();
 
-      // Single success toast — the useEffect watcher is NOT listening for
-      // success here so there is no double-toast.
+      // Re-fetch the order so isTracking flips to true, hiding the form
+      // and revealing the refund status tracking view on this same page.
+      dispatch(getOrderDetails(orderId));
+
       toast.success('Refund request submitted successfully!', {
         position: 'top-center',
         autoClose: 3000,
       });
 
       dispatch(clearRefundState());
-      setTimeout(() => navigate(`/order/${orderId}`), 2000);
     } catch (err) {
       toast.error(err || 'Failed to submit refund request', {
         position: 'top-center',
@@ -327,18 +325,23 @@ function RefundRequest() {
 
   const handleOpenMessagesModal = () => {
     setShowMessagesModal(true);
-    // Refresh messages immediately on open so the badge clears after the
-    // server marks them read and the updated array flows back into state.
-    if (orderId) {
-      dispatch(getRefundMessages(orderId));
-    }
+    // Do NOT dispatch getRefundMessages here. The modal's internal
+    // useEffect calls onRefresh (handleRefreshMessages) when isOpen
+    // becomes true. Dispatching here as well would fire two simultaneous
+    // requests, causing a messagesLoading=true flicker after the first
+    // one resolves.
   };
 
-  const handleRefreshMessages = () => {
+  // useCallback gives this a stable reference across renders.
+  // Without it, every render creates a new function → the modal's
+  // useEffect([isOpen, onRefresh]) fires again → getRefundMessages
+  // dispatched again → state.messages changes → re-render → new function
+  // → infinite loop of loading spinners.
+  const handleRefreshMessages = useCallback(() => {
     if (orderId) {
       dispatch(getRefundMessages(orderId));
     }
-  };
+  }, [dispatch, orderId]);
 
   const formatCurrency = (amount, currency = 'USD') =>
     new Intl.NumberFormat('en-US', {

@@ -13,10 +13,14 @@ export const requestRefund = createAsyncThunk(
   async ({ orderId, refundData, files = [] }, { rejectWithValue }) => {
     try {
       let payload;
-      let headers = {};
 
       if (files.length > 0) {
-        // Send as multipart so backend can persist files atomically with the refund
+        // Send as multipart so backend can persist files atomically with the refund.
+        // IMPORTANT: do NOT manually set Content-Type here. When the body is a
+        // FormData instance, axios sets Content-Type: multipart/form-data AND
+        // appends the correct boundary automatically. Setting it manually strips
+        // the boundary, causing the server's multer parser to reject the body and
+        // the request to never resolve — which permanently locks loading=true.
         const formData = new FormData();
         formData.append("reason", refundData.reason);
         formData.append("description", refundData.description);
@@ -26,7 +30,6 @@ export const requestRefund = createAsyncThunk(
         }
         files.forEach((file) => formData.append("attachments", file));
         payload = formData;
-        headers["Content-Type"] = "multipart/form-data";
       } else {
         payload = refundData;
       }
@@ -34,7 +37,7 @@ export const requestRefund = createAsyncThunk(
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/refund/request`,
         payload,
-        { withCredentials: true, headers }
+        { withCredentials: true }
       );
       return data;
     } catch (error) {
@@ -185,7 +188,8 @@ export const uploadRefundFiles = createAsyncThunk(
         formData,
         {
           withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
+          // Do NOT set Content-Type manually — axios sets multipart/form-data
+          // with the correct boundary automatically when body is FormData.
         }
       );
       return data;

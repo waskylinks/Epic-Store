@@ -182,7 +182,8 @@ export const uploadRefundFiles = createAsyncThunk(
         formData,
         {
           withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
+          // Do NOT set Content-Type manually — axios sets multipart/form-data
+          // with the correct boundary automatically when body is FormData.
         }
       );
       return data;
