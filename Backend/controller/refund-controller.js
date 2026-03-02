@@ -2,6 +2,7 @@ import Order from '../models/order-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
+import { uploadToCloudinary } from '../utils/cloudinaryUpload.js';
 
 // ============================================
 // SHARED CACHE INVALIDATION
@@ -218,26 +219,31 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
 
   // Persist files atomically with the refund record.
   // multer is configured with memoryStorage — files are in file.buffer.
-  // file.filename is ONLY set by diskStorage; it is UNDEFINED with memoryStorage.
-  // We write the buffer to disk ourselves using a sanitised originalname slug.
-  if (req.files && req.files.length > 0) {
-    const { promises: fs } = await import('fs');
-    const uploadDir = `./uploads/refunds/${order._id}`;
-    await fs.mkdir(uploadDir, { recursive: true });
+  // Persist files atomically with the refund record.
+// Files are streamed to Cloudinary instead of written to disk.
+if (req.files && req.files.length > 0) {
+  const folder = `ecommerce/refunds/${order._id}/customer`;
 
-    for (const file of req.files) {
-      // Sanitise: strip path separators, spaces → underscores, keep extension
-      const safeName = file.originalname.replace(/[/\\]/g, '').replace(/\s+/g, '_');
-      const filePath = `${uploadDir}/${safeName}`;
-      await fs.writeFile(filePath, file.buffer);
+  for (const file of req.files) {
+    const result = await uploadToCloudinary(file.buffer, {
+      folder,
+      resource_type: 'auto',
+    });
 
-      const fileUrl = `/uploads/refunds/${order._id}/${safeName}`;
-      const docType = file.mimetype.startsWith('image/') ? 'photo'
-                    : file.mimetype.startsWith('video/') ? 'video'
-                    : 'document';
-      order.addRefundDocument(docType, fileUrl, file.originalname, userId, '');
-    }
+    const docType =
+      result.resource_type === 'image' ? 'photo' :
+      result.resource_type === 'video' ? 'video' :
+      'document';
+
+    order.addRefundDocument(
+      docType,
+      result.secure_url,
+      file.originalname,
+      userId,
+      ''
+    );
   }
+}
 
   await order.save();
   invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
@@ -563,26 +569,30 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found', 404));
   }
 
-  const uploadedFiles = [];
-  const { promises: fs } = await import('fs');
-  const uploadDir = `./uploads/refunds/${order._id}`;
-  await fs.mkdir(uploadDir, { recursive: true });
+const uploadedFiles = [];
+const folder = `ecommerce/refunds/${order._id}/admin`;
 
-  for (const file of req.files) {
-    const safeName = file.originalname.replace(/[/\\]/g, '').replace(/\s+/g, '_');
-    const filePath = `${uploadDir}/${safeName}`;
-    await fs.writeFile(filePath, file.buffer);
+for (const file of req.files) {
+  const result = await uploadToCloudinary(file.buffer, {
+    folder,
+    resource_type: 'auto',
+  });
 
-    const fileUrl = `/uploads/refunds/${order._id}/${safeName}`;
-    order.addRefundDocument('other', fileUrl, file.originalname, req.user._id, '');
+  order.addRefundDocument(
+    'other',
+    result.secure_url,
+    file.originalname,
+    req.user._id,
+    ''
+  );
 
-    uploadedFiles.push({
-      url: fileUrl,
-      filename: file.originalname,
-      fileType: file.mimetype,
-      fileSize: file.size,
-    });
-  }
+  uploadedFiles.push({
+    url: result.secure_url,
+    filename: file.originalname,
+    fileType: result.resource_type,
+    fileSize: result.bytes,
+  });
+}
 
   await order.save();
 
@@ -624,26 +634,32 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
   }
 
   const uploadedFiles = [];
-  const { promises: fs } = await import('fs');
-  const uploadDir = `./uploads/refunds/${order._id}`;
-  await fs.mkdir(uploadDir, { recursive: true });
+const folder = `ecommerce/refunds/${order._id}/customer`;
 
-  for (const file of req.files) {
-    const safeName = file.originalname.replace(/[/\\]/g, '').replace(/\s+/g, '_');
-    const filePath = `${uploadDir}/${safeName}`;
-    await fs.writeFile(filePath, file.buffer);
+for (const file of req.files) {
+  const result = await uploadToCloudinary(file.buffer, {
+    folder,
+    resource_type: 'auto',
+  });
 
-    const fileUrl = `/uploads/refunds/${order._id}/${safeName}`;
-    const docType = file.mimetype.startsWith('image/') ? 'photo'
-                  : file.mimetype.startsWith('video/') ? 'video'
-                  : 'document';
-    order.addRefundDocument(docType, fileUrl, file.originalname, userId, '');
+  const docType =
+    result.resource_type === 'image' ? 'photo' :
+    result.resource_type === 'video' ? 'video' :
+    'document';
+
+  order.addRefundDocument(
+    docType,
+    result.secure_url,
+    file.originalname,
+    userId,
+    ''
+  );
 
     uploadedFiles.push({
-      url: fileUrl,
+      url: result.secure_url,
       filename: file.originalname,
-      fileType: file.mimetype,
-      fileSize: file.size,
+      fileType: result.resource_type,
+      fileSize: result.bytes,
     });
   }
 
