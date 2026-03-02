@@ -216,17 +216,31 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
     requestedAmount: refundAmount,
   });
 
-  // Persist files atomically with the refund record (req.files is populated
-  // by the multer middleware on this route when multipart data is sent).
+  // Persist files atomically with the refund record.
+  // multer is configured with memoryStorage — files are in file.buffer.
+  // file.filename is ONLY set by diskStorage; it is UNDEFINED with memoryStorage.
+  // We write the buffer to disk ourselves using a sanitised originalname slug.
   if (req.files && req.files.length > 0) {
+    const { promises: fs } = await import('fs');
+    const uploadDir = `./uploads/refunds/${order._id}`;
+    await fs.mkdir(uploadDir, { recursive: true });
+
     for (const file of req.files) {
-      const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
-      order.addRefundDocument('photo', fileUrl, file.originalname, userId, '');
+      // Sanitise: strip path separators, spaces → underscores, keep extension
+      const safeName = file.originalname.replace(/[/\\]/g, '').replace(/\s+/g, '_');
+      const filePath = `${uploadDir}/${safeName}`;
+      await fs.writeFile(filePath, file.buffer);
+
+      const fileUrl = `/uploads/refunds/${order._id}/${safeName}`;
+      const docType = file.mimetype.startsWith('image/') ? 'photo'
+                    : file.mimetype.startsWith('video/') ? 'video'
+                    : 'document';
+      order.addRefundDocument(docType, fileUrl, file.originalname, userId, '');
     }
   }
 
   await order.save();
-  await invalidateRefundCaches();
+  invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
 
   return res.status(200).json({
     success: true,
@@ -294,7 +308,7 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('refund_approved', req.user._id, { adminNote });
 
     await order.save();
-    await invalidateRefundCaches();
+    invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
 
     return res.status(200).json({
       success: true,
@@ -312,7 +326,7 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     order.addAuditEntry('refund_rejected', req.user._id, { adminNote });
 
     await order.save();
-    await invalidateRefundCaches();
+    invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
 
     return res.status(200).json({
       success: true,
@@ -386,13 +400,13 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
     });
 
     await order.save();
-    await invalidateRefundCaches();
+    invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
 
     return next(new HandleError(`Refund processing failed: ${error.message}`, 500));
   }
 
   await order.save();
-  await invalidateRefundCaches();
+  invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
 
   return res.status(200).json({
     success: true,
@@ -550,10 +564,16 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
   }
 
   const uploadedFiles = [];
+  const { promises: fs } = await import('fs');
+  const uploadDir = `./uploads/refunds/${order._id}`;
+  await fs.mkdir(uploadDir, { recursive: true });
 
   for (const file of req.files) {
-    const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
+    const safeName = file.originalname.replace(/[/\\]/g, '').replace(/\s+/g, '_');
+    const filePath = `${uploadDir}/${safeName}`;
+    await fs.writeFile(filePath, file.buffer);
 
+    const fileUrl = `/uploads/refunds/${order._id}/${safeName}`;
     order.addRefundDocument('other', fileUrl, file.originalname, req.user._id, '');
 
     uploadedFiles.push({
@@ -604,11 +624,20 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
   }
 
   const uploadedFiles = [];
+  const { promises: fs } = await import('fs');
+  const uploadDir = `./uploads/refunds/${order._id}`;
+  await fs.mkdir(uploadDir, { recursive: true });
 
   for (const file of req.files) {
-    const fileUrl = `/uploads/refunds/${order._id}/${file.filename}`;
+    const safeName = file.originalname.replace(/[/\\]/g, '').replace(/\s+/g, '_');
+    const filePath = `${uploadDir}/${safeName}`;
+    await fs.writeFile(filePath, file.buffer);
 
-    order.addRefundDocument('photo', fileUrl, file.originalname, userId, '');
+    const fileUrl = `/uploads/refunds/${order._id}/${safeName}`;
+    const docType = file.mimetype.startsWith('image/') ? 'photo'
+                  : file.mimetype.startsWith('video/') ? 'video'
+                  : 'document';
+    order.addRefundDocument(docType, fileUrl, file.originalname, userId, '');
 
     uploadedFiles.push({
       url: fileUrl,
@@ -759,7 +788,7 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('refund_cancelled', userId);
 
   await order.save();
-  await invalidateRefundCaches();
+  invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
 
   return res.status(200).json({
     success: true,
