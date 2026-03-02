@@ -1,8 +1,9 @@
 /* ============================================================
    MESSAGES MODAL — MessagesModal.css
    Prefix: mm-
-   Coral-red accent — matches full design system
-   Fixed min-height so loading / empty / messages never jump
+   Matches MyOrders.css aesthetic exactly
+   Coral-red primary accent throughout
+   White background at all times — fully responsive
    ============================================================ */
 
 /* ── Variables ─────────────────────────────────────────────── */
@@ -12,7 +13,9 @@
   --mm-radius-xs:     5px;
   --mm-transition:    all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* Matches mo- palette exactly */
   --mm-bg:            #F0F2F5;
+  --mm-surface:       #FFFFFF;
   --mm-card:          #FFFFFF;
   --mm-border:        #D1D5DB;
   --mm-border-md:     #9CA3AF;
@@ -21,15 +24,25 @@
   --mm-text-muted:    #6B7280;
   --mm-shadow-sm:     0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
   --mm-shadow:        0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.06);
+  --mm-shadow-lg:     0 10px 24px rgba(0,0,0,0.13);
   --mm-shadow-xl:     0 25px 50px rgba(0,0,0,0.22);
 
+  /* Coral-red brand */
   --mm-coral:         #FF4D4D;
   --mm-coral-dark:    #E03535;
+  --mm-coral-light:   #FF7A7A;
   --mm-coral-pale:    rgba(255, 77, 77, 0.08);
-  --mm-coral-border:  rgba(255, 77, 77, 0.3);
+  --mm-coral-border:  rgba(255, 77, 77, 0.35);
 
+  /* Status */
   --mm-danger:        #EF4444;
   --mm-danger-bg:     #FEE2E2;
+  --mm-danger-text:   #991B1B;
+
+  /* Failed send */
+  --mm-fail:          #EF4444;
+  --mm-fail-bg:       #FEF2F2;
+  --mm-fail-border:   #FECACA;
 
   /* Chat bubbles */
   --mm-out-bg:        #1a1f2e;
@@ -39,6 +52,7 @@
   --mm-in-border:     #E5E7EB;
 }
 
+/* ── Base ───────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
 
 /* ── Overlay ────────────────────────────────────────────────── */
@@ -46,57 +60,47 @@
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10000;
   padding: 16px;
-  animation: mm-fade 0.18s ease;
+  animation: mm-fadeIn 0.18s ease;
 }
 
-@keyframes mm-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
+@keyframes mm-fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
-/* ── Modal shell ────────────────────────────────────────────── */
+/* ── Modal Shell ────────────────────────────────────────────── */
 .mm-modal {
   background: var(--mm-card);
   border: 1px solid var(--mm-border);
   border-radius: var(--mm-radius);
   width: 100%;
   max-width: 680px;
-
-  /*
-   * KEY FIX: fixed height so loading / empty / messages
-   * all occupy the same space — zero layout jump.
-   * max-height caps it on small screens.
-   */
   height: 580px;
   max-height: 88vh;
-
   box-shadow: var(--mm-shadow-xl);
-  animation: mm-up 0.26s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: mm-modalUp 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-@keyframes mm-up {
-  from { opacity: 0; transform: translateY(22px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0)    scale(1);    }
+@keyframes mm-modalUp {
+  from { opacity: 0; transform: translateY(20px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* ── Header ─────────────────────────────────────────────────── */
+/* ── Modal Header ───────────────────────────────────────────── */
 .mm-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 14px 18px;
+  padding: 16px 18px 14px;
   border-bottom: 1px solid var(--mm-border);
-  background: #FAFAFA;
+  background: #F9FAFB;
+  gap: 12px;
   flex-shrink: 0;
 }
 
@@ -117,12 +121,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 16px !important;
   flex-shrink: 0;
 }
 
 .mm-header h2 {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--mm-text);
   margin: 0 0 2px;
@@ -149,7 +153,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 15px !important;
   transition: var(--mm-transition);
   flex-shrink: 0;
   padding: 0;
@@ -167,15 +171,11 @@
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;   /* critical — allows children to shrink */
+  min-height: 0;
   overflow: hidden;
 }
 
-/* ── Loading state ──────────────────────────────────────────── */
-/*
- * flex: 1 fills the same space the message list would —
- * so the modal stays exactly the same height.
- */
+/* ── Loading State ──────────────────────────────────────────── */
 .mm-loading {
   flex: 1;
   display: flex;
@@ -193,7 +193,6 @@
   margin: 0;
 }
 
-/* Inline snake SVG — no loader-container wrapper */
 .mm-snake-svg {
   width: 40px;
   height: 40px;
@@ -201,9 +200,7 @@
   flex-shrink: 0;
 }
 
-.mm-snake-track {
-  stroke: rgba(255, 77, 77, 0.15);
-}
+.mm-snake-track { stroke: rgba(255, 77, 77, 0.15); }
 
 .mm-snake-arc {
   stroke: var(--mm-coral);
@@ -212,6 +209,11 @@
   filter: drop-shadow(0 0 4px rgba(255, 77, 77, 0.4));
 }
 
+/*
+ * mm-rotate is shared with the inline send-button spinner in JSX:
+ *   style={{ animation: "mm-rotate 0.8s linear infinite" }}
+ * Do not rename without updating the JSX too.
+ */
 @keyframes mm-rotate { 100% { transform: rotate(360deg); } }
 
 @keyframes mm-dash {
@@ -220,7 +222,7 @@
   100% { stroke-dasharray: 90, 150; stroke-dashoffset: -124; }
 }
 
-/* ── Empty state ────────────────────────────────────────────── */
+/* ── Empty State ────────────────────────────────────────────── */
 .mm-empty {
   flex: 1;
   display: flex;
@@ -229,30 +231,30 @@
   justify-content: center;
   gap: 8px;
   text-align: center;
-  padding: 24px;
+  padding: 60px 20px;
   background: var(--mm-bg);
 }
 
 .mm-empty-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
-  background: var(--mm-card);
-  border: 1px solid var(--mm-border);
+  width: 64px;
+  height: 64px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  background: var(--mm-card);
+  border: 1px solid var(--mm-border);
+  border-radius: 16px;
+  font-size: 28px !important;
   color: var(--mm-text-muted);
   opacity: 0.5;
-  margin-bottom: 4px;
+  margin-bottom: 16px;
 }
 
 .mm-empty p {
   font-size: 14px;
   font-weight: 700;
   color: var(--mm-text);
-  margin: 0;
+  margin: 0 0 6px 0;
 }
 
 .mm-empty small {
@@ -261,7 +263,7 @@
   font-weight: 500;
 }
 
-/* ── Messages list ──────────────────────────────────────────── */
+/* ── Messages List ──────────────────────────────────────────── */
 .mm-list {
   flex: 1;
   overflow-y: auto;
@@ -279,7 +281,7 @@
 .mm-list::-webkit-scrollbar-thumb { background: var(--mm-border); border-radius: 4px; }
 .mm-list::-webkit-scrollbar-thumb:hover { background: var(--mm-border-md); }
 
-/* ── Date separator ─────────────────────────────────────────── */
+/* ── Date Separator ─────────────────────────────────────────── */
 .mm-date-separator {
   display: flex;
   align-items: center;
@@ -308,17 +310,15 @@
   letter-spacing: 0.3px;
 }
 
-/* ── Message row ────────────────────────────────────────────── */
+/* ── Message Row ────────────────────────────────────────────── */
 .mm-message {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  animation: mm-fade 0.18s ease;
-  /* Small vertical gap between consecutive messages */
+  animation: mm-fadeIn 0.18s ease;
   margin-bottom: 6px;
 }
 
-/* Send animation for newest message */
 .mm-message--new {
   animation: mm-slideUp 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
@@ -328,7 +328,7 @@
   to   { opacity: 1; transform: translateY(0)    scale(1); }
 }
 
-/* ── Avatar circle ──────────────────────────────────────────── */
+/* ── Avatar ─────────────────────────────────────────────────── */
 .mm-avatar {
   width: 28px;
   height: 28px;
@@ -343,16 +343,12 @@
   flex-shrink: 0;
   border: 1.5px solid var(--mm-card);
   box-shadow: var(--mm-shadow-sm);
-  /* Align to bottom of bubble */
   align-self: flex-end;
-  margin-bottom: 18px; /* clears the footer */
 }
 
-.mm-avatar-out {
-  background: linear-gradient(135deg, #FF4D4D, #FF7A7A);
-}
+.mm-avatar-out { background: linear-gradient(135deg, #FF4D4D, #FF7A7A); }
 
-/* ── Message content wrapper ────────────────────────────────── */
+/* ── Message Content Wrapper ────────────────────────────────── */
 .mm-message-content {
   display: flex;
   flex-direction: column;
@@ -377,7 +373,6 @@
   overflow-wrap: break-word;
   max-width: 100%;
   box-shadow: var(--mm-shadow-sm);
-  line-height: 1;
 }
 
 .mm-message-bubble p {
@@ -388,12 +383,13 @@
   word-break: break-word;
 }
 
-/* ── Footer (time + read receipt) ───────────────────────────── */
+/* ── Message Footer ─────────────────────────────────────────── */
 .mm-message-footer {
   display: flex;
   align-items: center;
   gap: 5px;
   padding: 0 4px;
+  min-height: 18px;
 }
 
 .mm-footer-right { justify-content: flex-end; }
@@ -418,14 +414,50 @@
 .mm-check   { font-size: 11px; }
 .mm-check-2 { margin-left: -5px; }
 
-/* ── Outgoing ───────────────────────────────────────────────── */
-.mm-message-outgoing {
-  justify-content: flex-end;
+/* ── Failed Send State ──────────────────────────────────────── */
+.mm-message--failed .mm-message-bubble { opacity: 0.7; }
+
+.mm-message--failed.mm-message-outgoing .mm-message-bubble {
+  background: var(--mm-fail-bg);
+  color: var(--mm-fail);
+  border: 1px solid var(--mm-fail-border);
 }
 
-.mm-message-outgoing .mm-message-content {
-  align-items: flex-end;
+.mm-failed-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--mm-fail);
+  white-space: nowrap;
 }
+
+.mm-fail-icon { font-size: 11px !important; flex-shrink: 0; }
+
+.mm-retry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: none;
+  border: 1px solid var(--mm-fail);
+  border-radius: 10px;
+  color: var(--mm-fail);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 7px;
+  cursor: pointer;
+  transition: var(--mm-transition);
+  line-height: 1.6;
+  font-family: inherit;
+}
+
+.mm-retry-btn:hover { background: var(--mm-fail); color: #fff; }
+
+/* ── Outgoing Message ───────────────────────────────────────── */
+.mm-message-outgoing { justify-content: flex-end; }
+
+.mm-message-outgoing .mm-message-content { align-items: flex-end; }
 
 .mm-message-outgoing .mm-message-bubble {
   background: var(--mm-out-bg);
@@ -433,14 +465,10 @@
   border-radius: 14px 14px 3px 14px;
 }
 
-/* ── Incoming ───────────────────────────────────────────────── */
-.mm-message-incoming {
-  justify-content: flex-start;
-}
+/* ── Incoming Message ───────────────────────────────────────── */
+.mm-message-incoming { justify-content: flex-start; }
 
-.mm-message-incoming .mm-message-content {
-  align-items: flex-start;
-}
+.mm-message-incoming .mm-message-content { align-items: flex-start; }
 
 .mm-message-incoming .mm-message-bubble {
   background: var(--mm-in-bg);
@@ -455,16 +483,11 @@
   margin-bottom: 2px;
 }
 
-/* ── Input bar ──────────────────────────────────────────────── */
-/*
- * Always rendered — never replaced by a spinner.
- * Subtle top shadow lifts it from the message list.
- */
+/* ── Input Bar ──────────────────────────────────────────────── */
 .mm-input-bar {
   display: flex;
   gap: 8px;
   padding: 12px 18px 14px;
-  /* iOS Safari: lifts input bar above the virtual keyboard */
   padding-bottom: max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--mm-border);
   background: var(--mm-card);
@@ -476,9 +499,9 @@
 .mm-input {
   flex: 1;
   padding: 9px 14px;
-  border: 1px solid var(--mm-border);
+  border: 1px solid;
   border-radius: 20px;
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 500;
   outline: none;
   background: #F9FAFB;
@@ -489,23 +512,16 @@
   resize: none;
 }
 
-.mm-input::placeholder {
-  color: var(--mm-text-muted);
-  font-weight: 400;
-}
+.mm-input::placeholder { color: var(--mm-text-muted); font-weight: 400; }
 
 .mm-input:focus {
   border-color: var(--mm-coral);
-  background: var(--mm-card);
   box-shadow: 0 0 0 3px var(--mm-coral-pale);
 }
 
-.mm-input:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.mm-input:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* Send button */
+/* Send Button */
 .mm-send {
   width: 38px;
   height: 38px;
@@ -529,9 +545,7 @@
   box-shadow: 0 4px 12px rgba(255, 77, 77, 0.4);
 }
 
-.mm-send:active:not(:disabled) {
-  transform: scale(0.95);
-}
+.mm-send:active:not(:disabled) { transform: scale(0.95); }
 
 .mm-send:disabled {
   opacity: 0.35;
@@ -540,18 +554,19 @@
   box-shadow: none;
 }
 
-.mm-send svg { font-size: 14px; }
+.mm-send svg { font-size: 14px !important; }
 
 /* ── Focus / Accessibility ──────────────────────────────────── */
 .mm-close:focus-visible,
 .mm-input:focus-visible,
-.mm-send:focus-visible {
+.mm-send:focus-visible,
+.mm-retry-btn:focus-visible {
   outline: 2px solid var(--mm-coral);
   outline-offset: 2px;
 }
 
 /* ════════════════════════════════════════════════════════════
-   RESPONSIVE
+   RESPONSIVE — all features visible at every breakpoint
 ════════════════════════════════════════════════════════════ */
 
 /* Tablet — bottom sheet */
@@ -564,7 +579,6 @@
   .mm-modal {
     max-width: 100%;
     height: auto;
-    /* Takes up most of screen from bottom */
     min-height: 65vh;
     max-height: 92vh;
     border-radius: var(--mm-radius) var(--mm-radius) 0 0;
@@ -572,11 +586,12 @@
   }
 
   .mm-message-content { max-width: 78%; }
-  .mm-list { padding: 14px 14px 8px; }
-  .mm-input-bar { padding: 10px 14px 12px; }
+  .mm-list            { padding: 14px 14px 8px; }
+  .mm-input-bar       { padding: 10px 14px 12px; }
 }
 
-@media (max-width: 480px) {
+/* Mobile */
+@media (max-width: 640px) {
   .mm-modal {
     min-height: 70vh;
     max-height: 95vh;
@@ -586,14 +601,14 @@
   .mm-header          { padding: 12px 14px; }
   .mm-header h2       { font-size: 13px; }
   .mm-header-sub      { font-size: 11px; }
-  .mm-header-icon     { width: 30px; height: 30px; font-size: 14px; }
+  .mm-header-icon     { width: 30px; height: 30px; font-size: 14px !important; }
 
   .mm-list            { padding: 12px 12px 6px; gap: 2px; }
   .mm-message-content { max-width: 84%; }
   .mm-message-bubble  { padding: 8px 11px; }
   .mm-message-bubble p { font-size: 13px; }
 
-  .mm-avatar          { width: 24px; height: 24px; font-size: 10px; margin-bottom: 16px; }
+  .mm-avatar          { width: 24px; height: 24px; font-size: 10px; }
 
   .mm-snake-svg       { width: 34px; height: 34px; }
 
@@ -602,12 +617,13 @@
   .mm-input           { font-size: 13px; padding: 8px 12px; }
 }
 
-@media (max-width: 360px) {
-  .mm-message-content { max-width: 90%; }
-  .mm-header h2       { font-size: 12.5px; }
+/* Small mobile */
+@media (max-width: 400px) {
+  .mm-message-content  { max-width: 90%; }
+  .mm-header h2        { font-size: 12.5px; }
   .mm-message-bubble p { font-size: 12.5px; }
-  .mm-send            { width: 32px; height: 32px; }
-  .mm-snake-svg       { width: 28px; height: 28px; }
+  .mm-send             { width: 32px; height: 32px; }
+  .mm-snake-svg        { width: 28px; height: 28px; }
 }
 
 /* Reduced motion */
@@ -622,4 +638,5 @@
 @media (prefers-contrast: high) {
   .mm-modal           { border: 2px solid var(--mm-text); }
   .mm-message-bubble  { border: 1px solid var(--mm-text); }
+  .mm-retry-btn       { border-width: 2px; }
 }

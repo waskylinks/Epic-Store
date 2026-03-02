@@ -58,19 +58,28 @@ function MyOrders() {
 
   const [trackingModal, setTrackingModal] = useState({ open: false, order: null });
 
-  // FIX #2: messagesModal no longer maintains its own `messages` array.
-  // MessagesModal itself owns the local message list (via its internal state).
-  // We only hold the seed messages here (fetched on open) and pass them as
-  // the initial `messages` prop — after that the component is self-contained.
   const [messagesModal, setMessagesModal] = useState({
     open: false,
     order: null,
-    messages: [],   // seed only — MessagesModal takes ownership after mount
+    messages: [],
     loading: false,
   });
 
   const [refreshing, setRefreshing] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+
+  // ── FIX: unread badge clears immediately on open ─────────────────────────
+  // Problem: the badge count is derived directly from order.orderMessages in
+  // Redux. After opening the modal the server marks messages as read, but the
+  // Redux store isn't updated — it only refreshes on a full page reload or a
+  // manual Refresh. So the badge persists until the user manually refreshes.
+  //
+  // Fix: maintain a local Set of order IDs whose messages have been opened.
+  // When calculating the unread count in the render loop, orders in this Set
+  // are treated as fully read — their badge disappears instantly on open,
+  // matching WhatsApp / iMessage behaviour where the badge clears as soon as
+  // you enter the conversation.
+  const [readOrderIds, setReadOrderIds] = useState(new Set());
 
   // ── Initial load ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -95,6 +104,9 @@ function MyOrders() {
       if (user?._id) {
         await dispatch(getCustomerOrderAnalytics(user._id)).unwrap();
       }
+      // After a real refresh the server data is fresh — clear the local
+      // read-override set so the badge reflects the new Redux state accurately
+      setReadOrderIds(new Set());
       toast.success("Orders refreshed", { position: "top-center" });
     } catch {
       toast.error("Failed to refresh orders", { position: "top-center" });
@@ -109,6 +121,12 @@ function MyOrders() {
 
   // ── Messages modal ──────────────────────────────────────────────────────
   const openMessagesModal = useCallback(async (order) => {
+    // FIX: mark this order as read locally BEFORE the fetch completes so
+    // the badge disappears the instant the user taps "Messages" — not after
+    // the server round-trip. If the fetch fails, the badge stays cleared
+    // (acceptable: the user did intend to read the messages).
+    setReadOrderIds((prev) => new Set([...prev, order._id]));
+
     setMessagesModal({ open: true, order, messages: [], loading: true });
 
     try {
@@ -119,19 +137,13 @@ function MyOrders() {
       const data = await res.json();
 
       // Seed MessagesModal with the fetched messages.
-      // After this point, MessagesModal owns its local copy — we do NOT
-      // append to messagesModal.messages on send (that was the double-render bug).
+      // MessagesModal owns its local copy after this — we do NOT append to
+      // messagesModal.messages on send (that was the double-render / glitch bug).
       setMessagesModal((prev) => ({
         ...prev,
         messages: data.messages || [],
         loading: false,
       }));
-
-      // Mark as read on server (fire-and-forget; badge is already cleared)
-      fetch(`/api/v1/orders/${order._id}/messages/read`, {
-        method: "PUT",
-        credentials: "include",
-      }).catch(() => {});
     } catch {
       setMessagesModal((prev) => ({ ...prev, loading: false }));
       toast.error("Failed to load messages", { position: "top-center" });
@@ -143,10 +155,8 @@ function MyOrders() {
   }, []);
 
   // ── Send message ────────────────────────────────────────────────────────
-  // FIX #2: We no longer append to messagesModal.messages here.
-  // MessagesModal adds an optimistic bubble internally and syncs when the
-  // promise resolves. We just POST and return the real message so the modal
-  // can replace its optimistic entry.
+  // We only POST and return the real message so MessagesModal can replace
+  // its optimistic entry. We intentionally do NOT call setMessagesModal here.
   const handleSendMessage = useCallback(
     async (content) => {
       if (!messagesModal.order) return;
@@ -159,8 +169,8 @@ function MyOrders() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             content,
-            sender: "customer",     // legacy field
-            senderType: "customer", // canonical field
+            sender: "customer",
+            senderType: "customer",
             attachments: [],
           }),
         }
@@ -170,9 +180,6 @@ function MyOrders() {
         throw new Error("Failed to send message");
       }
 
-      // Return value is used by MessagesModal to replace the optimistic bubble
-      // with the real persisted message (correct _id, isRead, timestamps etc.)
-      // We intentionally do NOT call setMessagesModal here — that's the fix.
       const data = await res.json();
       return data.orderMessage;
     },
@@ -508,9 +515,13 @@ function MyOrders() {
         ) : (
           <div className="mo-orders-list">
             {filteredOrders.map((order) => {
-              // Derive unread count directly from order data — same approach as admin.
-              // orderMessages is populated by getAllMyOrders; no separate fetch needed.
-              const unread = countAdminUnread(order.orderMessages || []);
+              // FIX: if the user has already opened this order's messages in
+              // the current session, treat it as fully read — badge = 0.
+              // Otherwise derive count from Redux as before.
+              const unread = readOrderIds.has(order._id)
+                ? 0
+                : countAdminUnread(order.orderMessages || []);
+
               return (
                 <div key={order._id} className="mo-order-card">
                   <div className="mo-order-card-header">
