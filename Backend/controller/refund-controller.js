@@ -218,8 +218,8 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   }
 
   await Order.populate(orders, [
-    { path: 'user', select: 'name email' },
-    { path: 'refundInfo.requestedBy', select: 'name email' },
+    { path: 'user', select: 'firstName lastName email' },
+    { path: 'refundInfo.requestedBy', select: 'firstName lastName email' },
   ]);
 
   return res.status(200).json({
@@ -243,13 +243,13 @@ export const getSingleRefund = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id)
-    .populate('user', 'name email phone')
-    .populate('refundInfo.requestedBy', 'name email')
-    .populate('refundInfo.approvedBy', 'name email')
-    .populate('refundInfo.rejectedBy', 'name email')
-    .populate('refundInfo.processedBy', 'name email')
-    .populate('refundInfo.messages.sender', 'name email role')
-    .populate('refundInfo.documents.uploadedBy', 'name email')
+    .populate('user', 'firstName lastName email phone')
+    .populate('refundInfo.requestedBy', 'firstName lastName email')
+    .populate('refundInfo.approvedBy', 'firstName lastName email')
+    .populate('refundInfo.rejectedBy', 'firstName lastName email')
+    .populate('refundInfo.processedBy', 'firstName lastName email')
+    .populate('refundInfo.messages.sender', 'firstName lastName email role')
+    .populate('refundInfo.documents.uploadedBy', 'firstName lastName email')
     .populate('orderItems.product', 'name images');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -581,11 +581,24 @@ export const addRefundMessage = handleAsyncError(async (req, res, next) => {
   await order.save();
 
   const newMessage = order.refundInfo.messages[order.refundInfo.messages.length - 1];
+  // Manually populate sender from req.user — avoids an extra DB round-trip
+  // and ensures the slice receives { _id, firstName, lastName, email, role }
+  // rather than a raw ObjectId that breaks sender name display in the UI.
+  const populatedMessage = {
+    ...newMessage.toObject(),
+    sender: {
+      _id: req.user._id,
+      firstName: req.user.firstName,
+      lastName: req.user.lastName,
+      email: req.user.email,
+      role: req.user.role,
+    },
+  };
 
   return res.status(200).json({
     success: true,
     message: 'Message sent successfully',
-    data: { orderId: order._id, message: newMessage },
+    data: { orderId: order._id, message: populatedMessage },
   });
 });
 
@@ -608,11 +621,22 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
   await order.save();
 
   const newMessage = order.refundInfo.messages[order.refundInfo.messages.length - 1];
+  // Manually populate sender from req.user — same approach as addRefundMessage.
+  const populatedMessage = {
+    ...newMessage.toObject(),
+    sender: {
+      _id: req.user._id,
+      firstName: req.user.firstName,
+      lastName: req.user.lastName,
+      email: req.user.email,
+      role: req.user.role,
+    },
+  };
 
   return res.status(200).json({
     success: true,
     message: 'Message sent successfully',
-    data: { orderId: order._id, message: newMessage },
+    data: { orderId: order._id, message: populatedMessage },
   });
 });
 
@@ -647,7 +671,7 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     user: 1,
     'refundInfo.status': 1,
     'refundInfo.messages': { $slice: [skip, parseInt(limit)] },
-  }).populate('refundInfo.messages.sender', 'name email role');
+  }).populate('refundInfo.messages.sender', 'firstName lastName email role');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -825,7 +849,7 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('refundInfo.timeline.performedBy', 'name email role')
+    .populate('refundInfo.timeline.performedBy', 'firstName lastName email role')
     // FIX: object projection is reliable for nested subdocument paths
     .select({ 'refundInfo.timeline': 1, user: 1 });
 
@@ -859,7 +883,7 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('refundInfo.documents.uploadedBy', 'name email role')
+    .populate('refundInfo.documents.uploadedBy', 'firstName lastName email role')
     // FIX: object projection is reliable for nested subdocument paths
     .select({ 'refundInfo.documents': 1, user: 1 });
 
