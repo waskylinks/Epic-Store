@@ -1,5 +1,4 @@
 // Frontend/src/features/admin/adminRefundSlice.js
-
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -25,6 +24,15 @@ const uploadFiles = async (orderId, files) => {
   }));
 };
 
+// FIX: normalise unreadRefunds shape to match getAllRefunds shape.
+// getRefundsWithUnreadMessages nests count at refundInfo.unreadCount;
+// getAllRefunds puts it at top-level unreadMessages. After this both arrays
+// share one accessor so the table renderer never needs to branch.
+const normaliseUnreadOrder = (order) => ({
+  ...order,
+  unreadMessages: order.refundInfo?.unreadCount ?? 0,
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // THUNKS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,9 +48,7 @@ export const getAllRefunds = createAsyncThunk(
       );
       return data;
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch refunds"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch refunds");
     }
   }
 );
@@ -51,14 +57,13 @@ export const getSingleRefund = createAsyncThunk(
   "adminRefund/getSingleRefund",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`/api/v1/admin/refunds/${orderId}`, {
-        withCredentials: true,
-      });
+      const { data } = await axios.get(
+        `/api/v1/admin/refunds/${orderId}`,
+        { withCredentials: true }
+      );
       return data;
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch refund details"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch refund details");
     }
   }
 );
@@ -72,11 +77,10 @@ export const reviewRefund = createAsyncThunk(
         { action, adminNote },
         { withCredentials: true }
       );
-      return data;
+      // FIX: include orderId so the list row can be updated without a refetch.
+      return { ...data, orderId };
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to review refund"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to review refund");
     }
   }
 );
@@ -90,21 +94,17 @@ export const processRefund = createAsyncThunk(
         { refundAmount, merchantNote },
         { withCredentials: true }
       );
-      return data;
+      // FIX: include orderId so the list row can be updated without a refetch.
+      return { ...data, orderId };
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to process refund"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to process refund");
     }
   }
 );
 
 export const sendRefundMessage = createAsyncThunk(
   "adminRefund/sendRefundMessage",
-  async (
-    { orderId, message, files = [], pendingUrls = [] },
-    { rejectWithValue }
-  ) => {
+  async ({ orderId, message, files = [], pendingUrls = [] }, { rejectWithValue }) => {
     let attachmentUrls = [...pendingUrls];
 
     if (files.length > 0 && pendingUrls.length === 0) {
@@ -112,8 +112,8 @@ export const sendRefundMessage = createAsyncThunk(
         attachmentUrls = await uploadFiles(orderId, files);
       } catch (err) {
         return rejectWithValue({
-          stage: "upload",
-          message: err.response?.data?.message ?? "Failed to upload files",
+          stage:       "upload",
+          message:     err.response?.data?.message ?? "Failed to upload files",
           pendingUrls: [],
         });
       }
@@ -128,8 +128,8 @@ export const sendRefundMessage = createAsyncThunk(
       return { ...data, attachmentUrls };
     } catch (err) {
       return rejectWithValue({
-        stage: "send",
-        message: err.response?.data?.message ?? "Failed to send message",
+        stage:       "send",
+        message:     err.response?.data?.message ?? "Failed to send message",
         pendingUrls: attachmentUrls,
       });
     }
@@ -146,9 +146,7 @@ export const getRefundMessages = createAsyncThunk(
       );
       return { ...data, page, limit };
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch refund messages"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch refund messages");
     }
   }
 );
@@ -163,9 +161,7 @@ export const getRefundTimeline = createAsyncThunk(
       );
       return data;
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch refund timeline"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch refund timeline");
     }
   }
 );
@@ -180,9 +176,7 @@ export const getRefundDocuments = createAsyncThunk(
       );
       return data;
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch refund documents"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch refund documents");
     }
   }
 );
@@ -191,12 +185,9 @@ export const uploadRefundFiles = createAsyncThunk(
   "adminRefund/uploadRefundFiles",
   async ({ orderId, files }, { rejectWithValue }) => {
     try {
-      const urls = await uploadFiles(orderId, files);
-      return { files: urls };
+      return { files: await uploadFiles(orderId, files) };
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to upload files"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to upload files");
     }
   }
 );
@@ -205,17 +196,57 @@ export const getRefundsWithUnreadMessages = createAsyncThunk(
   "adminRefund/getRefundsWithUnreadMessages",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`/api/v1/admin/refunds/unread`, {
-        withCredentials: true,
-      });
+      const { data } = await axios.get(
+        `/api/v1/admin/refunds/unread`,
+        { withCredentials: true }
+      );
       return data;
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message ?? "Failed to fetch unread refunds"
-      );
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch unread refunds");
     }
   }
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INITIAL STATE
+// ─────────────────────────────────────────────────────────────────────────────
+
+const initialState = {
+  refunds:            [],
+  unreadRefunds:      [],
+  stats:              null,
+  currentRefund:      null,
+
+  messages:           [],
+  messagesPage:       1,
+  hasMoreMessages:    false,
+  pendingAttachments: [],
+
+  timeline:           [],
+  documents:          [],
+
+  pagination: {
+    totalRefunds: 0,
+    currentPage:  1,
+    totalPages:   1,
+  },
+
+  // Granular loading flags — each async operation has its own flag so
+  // unrelated UI sections don't show a spinner during unrelated requests.
+  loading:            false,
+  refundsLoading:     false,
+  unreadLoading:      false,
+  messageSendLoading: false,
+  messagesLoading:    false,
+  timelineLoading:    false,
+  documentsLoading:   false,
+  uploadLoading:      false,
+
+  error:      null,
+  errorStage: null,
+  success:    false,
+  message:    null,
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SLICE
@@ -223,284 +254,291 @@ export const getRefundsWithUnreadMessages = createAsyncThunk(
 
 const adminRefundSlice = createSlice({
   name: "adminRefund",
-  initialState: {
-    refunds: [],
-    unreadRefunds: [],
-    stats: null,
-    currentRefund: null,
-
-    messages: [],
-    messagesPage: 1,
-    hasMoreMessages: false,
-    pendingAttachments: [],
-
-    timeline: [],
-    documents: [],
-
-    pagination: {
-      totalRefunds: 0,
-      currentPage: 1,
-      totalPages: 1,
-    },
-
-    loading: false,
-    refundsLoading: false,
-    unreadLoading: false,
-    messageSendLoading: false,
-    messagesLoading: false,
-    timelineLoading: false,
-    documentsLoading: false,
-    uploadLoading: false,
-
-    error: null,
-    errorStage: null,
-
-    success: false,
-    message: null,
-  },
+  initialState,
 
   reducers: {
     clearAdminRefundState: (state) => {
-      state.error = null;
+      state.error      = null;
       state.errorStage = null;
-      state.success = false;
-      state.message = null;
+      state.success    = false;
+      state.message    = null;
     },
+
     clearCurrentRefund: (state) => {
-      state.currentRefund = null;
-      state.messages = [];
-      state.messagesPage = 1;
-      state.hasMoreMessages = false;
+      state.currentRefund      = null;
+      state.messages           = [];
+      state.messagesPage       = 1;
+      state.hasMoreMessages    = false;
       state.pendingAttachments = [];
-      state.timeline = [];
-      state.documents = [];
+      state.timeline           = [];
+      state.documents          = [];
     },
+
     clearRefundMessages: (state) => {
-      state.messages = [];
-      state.messagesPage = 1;
-      state.hasMoreMessages = false;
+      state.messages           = [];
+      state.messagesPage       = 1;
+      state.hasMoreMessages    = false;
       state.pendingAttachments = [];
     },
+
     clearPendingAttachments: (state) => {
       state.pendingAttachments = [];
-      state.errorStage = null;
-      state.error = null;
+      state.errorStage         = null;
+      state.error              = null;
+    },
+
+    // FIX: setPage — UI drives pagination through Redux, not a frozen local useState.
+    setPage: (state, { payload }) => {
+      state.pagination.currentPage = payload;
     },
   },
 
   extraReducers: (builder) => {
-    // ── getAllRefunds ─────────────────────────────────────────────────────────
+
+    // ── getAllRefunds ───────────────────────────────────────────────────────
     builder
       .addCase(getAllRefunds.pending, (state) => {
         state.refundsLoading = true;
-        state.error = null;
+        state.error          = null;
       })
       .addCase(getAllRefunds.fulfilled, (state, { payload }) => {
         state.refundsLoading = false;
-        state.refunds = payload.orders;
-        state.stats = payload.stats;
-        state.pagination = {
+        state.refunds        = payload.orders;
+        state.stats          = payload.stats;
+        state.pagination     = {
           totalRefunds: payload.totalRefunds,
-          currentPage: payload.currentPage,
-          totalPages: payload.totalPages,
+          currentPage:  payload.currentPage,
+          totalPages:   payload.totalPages,
         };
       })
       .addCase(getAllRefunds.rejected, (state, { payload }) => {
         state.refundsLoading = false;
-        state.error = payload;
+        state.error          = payload;
       });
 
-    // ── getSingleRefund ──────────────────────────────────────────────────────
+    // ── getSingleRefund ────────────────────────────────────────────────────
     builder
       .addCase(getSingleRefund.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(getSingleRefund.fulfilled, (state, { payload }) => {
-        state.loading = false;
+        state.loading       = false;
         state.currentRefund = payload.order;
+
+        // FIX: clear unread badge on the matching list rows immediately.
+        const id = payload.order?._id;
+        if (id) {
+          const ri = state.refunds.findIndex((r) => r._id === id);
+          if (ri !== -1) state.refunds[ri].unreadMessages = 0;
+
+          const ui = state.unreadRefunds.findIndex((r) => r._id === id);
+          if (ui !== -1) state.unreadRefunds[ui].unreadMessages = 0;
+        }
       })
       .addCase(getSingleRefund.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = payload;
+        state.error   = payload;
       });
 
-    // ── reviewRefund ─────────────────────────────────────────────────────────
+    // ── reviewRefund ───────────────────────────────────────────────────────
     builder
       .addCase(reviewRefund.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(reviewRefund.fulfilled, (state, { payload }) => {
-        state.loading = false;
-        state.success = true;
-        state.message = payload.message;
-        // FIX 2: targeted merge — safeRefundResponse strips paymentInfo down to
-        // {method, currency} and omits refundInfo.messages/documents/requestedBy.
-        // A shallow spread ({ ...currentRefund, ...payload.order }) would
-        // overwrite paymentInfo and refundInfo wholesale, destroying those fields.
-        // Instead: preserve everything on currentRefund, update only orderStatus
-        // and refundableAmount at the top level, and deep-merge refundInfo so
-        // the new status/timestamps land without evicting messages or documents.
+        state.loading  = false;
+        state.success  = true;
+        state.message  = payload.message;
+
         if (payload.order) {
+          // FIX: targeted merge — avoids destroying messages/documents fields
+          // stripped by safeRefundResponse on the server.
           state.currentRefund = {
             ...state.currentRefund,
-            orderStatus: payload.order.orderStatus,
+            orderStatus:      payload.order.orderStatus,
             refundableAmount: payload.order.refundableAmount,
             refundInfo: {
               ...state.currentRefund?.refundInfo,
               ...payload.order.refundInfo,
             },
           };
+
+          // FIX: sync list row status badge without a full refetch.
+          const idx = state.refunds.findIndex((r) => r._id === payload.orderId);
+          if (idx !== -1 && payload.order.refundInfo?.status) {
+            state.refunds[idx].refundInfo = {
+              ...state.refunds[idx].refundInfo,
+              status: payload.order.refundInfo.status,
+            };
+          }
         }
       })
       .addCase(reviewRefund.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = payload;
+        state.error   = payload;
       });
 
-    // ── processRefund ────────────────────────────────────────────────────────
+    // ── processRefund ──────────────────────────────────────────────────────
     builder
       .addCase(processRefund.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(processRefund.fulfilled, (state, { payload }) => {
         state.loading = false;
         state.success = true;
         state.message = payload.message;
-        // FIX 2: same targeted merge as reviewRefund — safeRefundResponse
-        // paymentInfo is stripped, refundInfo.messages/documents are absent.
-        // Shallow spread would silently destroy those fields on currentRefund.
+
         if (payload.order) {
           state.currentRefund = {
             ...state.currentRefund,
-            orderStatus: payload.order.orderStatus,
+            orderStatus:      payload.order.orderStatus,
             refundableAmount: payload.order.refundableAmount,
             refundInfo: {
               ...state.currentRefund?.refundInfo,
               ...payload.order.refundInfo,
             },
           };
+
+          const idx = state.refunds.findIndex((r) => r._id === payload.orderId);
+          if (idx !== -1 && payload.order.refundInfo?.status) {
+            state.refunds[idx].refundInfo = {
+              ...state.refunds[idx].refundInfo,
+              status: payload.order.refundInfo.status,
+            };
+          }
         }
       })
       .addCase(processRefund.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = payload;
+        state.error   = payload;
       });
 
-    // ── sendRefundMessage ────────────────────────────────────────────────────
+    // ── sendRefundMessage ──────────────────────────────────────────────────
     builder
       .addCase(sendRefundMessage.pending, (state) => {
         state.messageSendLoading = true;
-        state.error = null;
-        state.errorStage = null;
+        state.error              = null;
+        state.errorStage         = null;
       })
       .addCase(sendRefundMessage.fulfilled, (state, { payload }) => {
         state.messageSendLoading = false;
         state.pendingAttachments = [];
+
         const newMsg = payload?.data?.message;
         if (newMsg) state.messages.push(newMsg);
       })
       .addCase(sendRefundMessage.rejected, (state, { payload }) => {
         state.messageSendLoading = false;
-        state.error = payload?.message ?? "Failed to send message";
-        state.errorStage = payload?.stage ?? null;
+        state.error              = payload?.message ?? "Failed to send message";
+        state.errorStage         = payload?.stage   ?? null;
+
+        // If upload succeeded but send failed, preserve the uploaded URLs so
+        // the UI can retry sending without re-uploading the files.
         if (payload?.stage === "send" && payload.pendingUrls?.length) {
           state.pendingAttachments = payload.pendingUrls;
         }
       });
 
-    // ── getRefundMessages ────────────────────────────────────────────────────
+    // ── getRefundMessages ──────────────────────────────────────────────────
     builder
       .addCase(getRefundMessages.pending, (state) => {
         state.messagesLoading = true;
-        state.error = null;
+        state.error           = null;
       })
       .addCase(getRefundMessages.fulfilled, (state, { payload }) => {
         state.messagesLoading = false;
+
         const { messages = [], page, limit } = payload;
-        if (page === 1) {
-          state.messages = messages;
-        } else {
-          state.messages = [...messages, ...state.messages];
-        }
-        state.messagesPage = page;
+
+        // Page 1 replaces the array; subsequent pages prepend (older messages).
+        state.messages        = page === 1 ? messages : [...messages, ...state.messages];
+        state.messagesPage    = page;
         state.hasMoreMessages = messages.length === limit;
       })
       .addCase(getRefundMessages.rejected, (state, { payload }) => {
         state.messagesLoading = false;
-        if (!payload?.includes?.("not found")) state.error = payload;
+        // Suppress "not found" errors — order may simply have no messages yet.
+        if (typeof payload !== "string" || !payload.includes("not found")) {
+          state.error = payload;
+        }
       });
 
-    // ── getRefundTimeline ────────────────────────────────────────────────────
+    // ── getRefundTimeline ──────────────────────────────────────────────────
     builder
       .addCase(getRefundTimeline.pending, (state) => {
         state.timelineLoading = true;
-        state.error = null;
+        state.error           = null;
       })
       .addCase(getRefundTimeline.fulfilled, (state, { payload }) => {
         state.timelineLoading = false;
-        state.timeline = payload.timeline ?? [];
+        state.timeline        = payload.timeline ?? [];
       })
       .addCase(getRefundTimeline.rejected, (state, { payload }) => {
         state.timelineLoading = false;
-        state.error = payload;
+        state.error           = payload;
       });
 
-    // ── getRefundDocuments ───────────────────────────────────────────────────
+    // ── getRefundDocuments ─────────────────────────────────────────────────
     builder
       .addCase(getRefundDocuments.pending, (state) => {
         state.documentsLoading = true;
-        state.error = null;
+        state.error            = null;
       })
       .addCase(getRefundDocuments.fulfilled, (state, { payload }) => {
         state.documentsLoading = false;
-        state.documents = payload.documents ?? [];
+        state.documents        = payload.documents ?? [];
       })
       .addCase(getRefundDocuments.rejected, (state, { payload }) => {
         state.documentsLoading = false;
-        state.error = payload;
+        state.error            = payload;
       });
 
-    // ── uploadRefundFiles (standalone) ───────────────────────────────────────
+    // ── uploadRefundFiles ──────────────────────────────────────────────────
     builder
       .addCase(uploadRefundFiles.pending, (state) => {
         state.uploadLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(uploadRefundFiles.fulfilled, (state) => {
         state.uploadLoading = false;
-        state.success = true;
+        state.success       = true;
       })
       .addCase(uploadRefundFiles.rejected, (state, { payload }) => {
         state.uploadLoading = false;
-        state.error = payload;
+        state.error         = payload;
       });
 
-    // ── getRefundsWithUnreadMessages ─────────────────────────────────────────
+    // ── getRefundsWithUnreadMessages ───────────────────────────────────────
     builder
       .addCase(getRefundsWithUnreadMessages.pending, (state) => {
         state.unreadLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(getRefundsWithUnreadMessages.fulfilled, (state, { payload }) => {
         state.unreadLoading = false;
-        // FIX 5: guard against undefined if payload.orders is missing
-        state.unreadRefunds = payload.orders ?? [];
+        // FIX: normalise so unreadRefunds always has top-level unreadMessages.
+        state.unreadRefunds = (payload.orders ?? []).map(normaliseUnreadOrder);
       })
       .addCase(getRefundsWithUnreadMessages.rejected, (state, { payload }) => {
         state.unreadLoading = false;
-        state.error = payload;
+        state.error         = payload;
       });
   },
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORTS
+// ─────────────────────────────────────────────────────────────────────────────
 
 export const {
   clearAdminRefundState,
   clearCurrentRefund,
   clearRefundMessages,
   clearPendingAttachments,
+  setPage,
 } = adminRefundSlice.actions;
 
 export default adminRefundSlice.reducer;
