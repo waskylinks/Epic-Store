@@ -568,11 +568,6 @@ const orderSchema = new mongoose.Schema(
 // INDEXES
 // ============================================
 
-orderSchema.index(
-  { orderNumber: 1 },
-  { sparse: true, collation: { locale: 'en', strength: 2 } }
-);
-
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
 orderSchema.index({ user: 1, createdAt: -1 });

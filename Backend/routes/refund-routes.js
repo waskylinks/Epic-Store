@@ -6,10 +6,10 @@ import {
   getSingleRefund,
   requestRefund,
   getRefundStatus,
-  reviewRefundRequest,
-  processRefundPayment,
+  reviewRefund,
+  processRefund,
   cancelRefundRequest,
-  addRefundMessage,
+  sendRefundMessage,
   addCustomerRefundMessage,
   getRefundMessages,
   getRefundTimeline,
@@ -68,7 +68,7 @@ const adminAuth = [verifyUserAuth, roleBaseAccess('admin')];
  * occurred when files were pre-uploaded via a separate call.
  */
 router.post(
-  '/orders/:id/refund/request',
+  '/orders/:orderId/refund/request',
   verifyUserAuth,
   upload.array('attachments', 5),
   sanitizeInput,
@@ -86,7 +86,7 @@ router.post(
  * It attaches req.order for the controller.
  */
 router.post(
-  '/orders/:id/refund/messages',
+  '/orders/:orderId/refund/messages',
   verifyUserAuth,
   sanitizeInput,
   validateRefundMessage,
@@ -96,10 +96,10 @@ router.post(
 
 // Read-only customer routes — no middleware attaches req.order; each
 // controller performs its own minimal targeted fetch.
-router.get('/orders/:id/refund/status',    verifyUserAuth, getRefundStatus);
-router.get('/orders/:id/refund/messages',  verifyUserAuth, getRefundMessages);
-router.get('/orders/:id/refund/timeline',  verifyUserAuth, getRefundTimeline);
-router.get('/orders/:id/refund/documents', verifyUserAuth, getRefundDocuments);
+router.get('/orders/:orderId/refund/status',    verifyUserAuth, getRefundStatus);
+router.get('/orders/:orderId/refund/messages',  verifyUserAuth, getRefundMessages);
+router.get('/orders/:orderId/refund/timeline',  verifyUserAuth, getRefundTimeline);
+router.get('/orders/:orderId/refund/documents', verifyUserAuth, getRefundDocuments);
 
 /**
  * Customer uploads supporting files for an existing refund.
@@ -109,7 +109,7 @@ router.get('/orders/:id/refund/documents', verifyUserAuth, getRefundDocuments);
  * no policy middleware attaches req.order on this route).
  */
 router.post(
-  '/orders/:id/refund/upload',
+  '/orders/:orderId/refund/upload',
   verifyUserAuth,
   upload.array('attachments', 5),
   validateRefundFileUpload,
@@ -120,32 +120,32 @@ router.post(
  * canCancelRefund fetches the order, checks ownership, confirms the
  * refund is in 'requested' status, and attaches req.order.
  */
-router.put('/orders/:id/refund/cancel', verifyUserAuth, canCancelRefund, cancelRefundRequest);
+router.put('/orders/:orderId/refund/cancel', verifyUserAuth, canCancelRefund, cancelRefundRequest);
 
 /* ======================================================
    ADMIN REFUND ROUTES
 
    IMPORTANT — route ordering:
-   /admin/refunds/unread MUST be declared before /admin/refunds/:id
+   /admin/refunds/unread MUST be declared before /admin/refunds/:orderId
    to prevent Express matching the literal string "unread" as a
-   dynamic :id segment.
+   dynamic :orderId segment.
 ====================================================== */
 
-router.get('/admin/refunds/unread', ...adminAuth, getRefundsWithUnreadMessages);
-router.get('/admin/refunds',        ...adminAuth, getAllRefunds);
-router.get('/admin/refunds/:id',    ...adminAuth, getSingleRefund);
+router.get('/admin/refunds/unread',         ...adminAuth, getRefundsWithUnreadMessages);
+router.get('/admin/refunds',                ...adminAuth, getAllRefunds);
+router.get('/admin/refunds/:orderId',       ...adminAuth, getSingleRefund);
 
 /**
  * canReviewRefund fetches the order, confirms refundInfo.status === 'requested',
  * and attaches req.order. The controller uses req.order directly.
  */
 router.put(
-  '/admin/orders/:id/refund/review',
+  '/admin/orders/:orderId/refund/review',
   ...adminAuth,
   sanitizeInput,
   validateRefundReview,
   canReviewRefund,
-  reviewRefundRequest
+  reviewRefund
 );
 
 /**
@@ -155,12 +155,12 @@ router.put(
  * concurrent requests.
  */
 router.post(
-  '/admin/orders/:id/refund/process',
+  '/admin/orders/:orderId/refund/process',
   ...adminAuth,
   sanitizeInput,
   validateProcessRefund,
   canProcessRefund,
-  processRefundPayment
+  processRefund
 );
 
 /**
@@ -169,12 +169,12 @@ router.post(
  * already), and attaches req.order.
  */
 router.post(
-  '/admin/refunds/:id/messages',
+  '/admin/refunds/:orderId/messages',
   ...adminAuth,
   sanitizeInput,
   validateRefundMessage,
   canAddRefundMessage,
-  addRefundMessage
+  sendRefundMessage
 );
 
 /**
@@ -182,7 +182,7 @@ router.post(
  * No policy middleware attaches req.order; the controller fetches directly.
  */
 router.post(
-  '/admin/refunds/:id/upload',
+  '/admin/refunds/:orderId/upload',
   ...adminAuth,
   upload.array('attachments', 5),
   validateRefundFileUpload,

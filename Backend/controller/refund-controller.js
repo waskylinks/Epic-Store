@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
-import Order from '../models/Order.js';
-import catchAsyncErrors from '../middleware/catchAsyncErrors.js';
-import ErrorHandler from '../utils/errorHandler.js';
-import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js';
+import Order from '../models/order-model.js';
+import handleAsyncError from "../middleware/handleAsyncError.js";
+import HandleError from "../utils/handleError.js";
+import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern, getCache, setCache } from '../utils/redis.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,7 +125,7 @@ const getRefundStats = async () => {
 // Supports: status filter, date range, search (orderNumber or customer name),
 //           pagination. Stats are always computed from the full dataset
 //           independent of the ?status filter.
-export const getAllRefunds = catchAsyncErrors(async (req, res, next) => {
+export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   const {
     status,
     startDate,
@@ -290,7 +290,7 @@ export const getAllRefunds = catchAsyncErrors(async (req, res, next) => {
 
 // ── GET /api/v1/admin/refunds/unread ─────────────────────────────────────
 // Returns orders with unread customer refund messages.
-export const getRefundsWithUnreadMessages = catchAsyncErrors(async (req, res) => {
+export const getRefundsWithUnreadMessages = handleAsyncError(async (req, res) => {
   const orders = await Order.getRefundsWithUnreadMessages();
 
   return res.status(200).json({
@@ -312,7 +312,7 @@ export const getRefundsWithUnreadMessages = catchAsyncErrors(async (req, res) =>
 
 // ── GET /api/v1/admin/refunds/:orderId ────────────────────────────────────
 // Returns a single refund order. Also marks all customer messages as read.
-export const getSingleRefund = catchAsyncErrors(async (req, res, next) => {
+export const getSingleRefund = handleAsyncError(async (req, res, next) => {
   const order = await Order.findById(req.params.orderId)
     .populate('user',                               'firstName lastName email phone')
     .populate('refundInfo.requestedBy',             'firstName lastName email')
@@ -325,11 +325,11 @@ export const getSingleRefund = catchAsyncErrors(async (req, res, next) => {
     .populate('orderItems.product',                 'name images');
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (!order.refundInfo || order.refundInfo?.status === 'none') {
-    return next(new ErrorHandler('This order has no refund request', 400));
+    return next(new HandleError('This order has no refund request', 400));
   }
 
   // Mark all unread customer messages as read now that admin is viewing.
@@ -365,7 +365,7 @@ export const getSingleRefund = catchAsyncErrors(async (req, res, next) => {
 // ── POST /api/v1/orders/:orderId/refund/request ───────────────────────────
 // Customer submits a refund request.
 // Uses req.order attached by checkRefundEligibility middleware.
-export const requestRefund = catchAsyncErrors(async (req, res, next) => {
+export const requestRefund = handleAsyncError(async (req, res, next) => {
   const { reason, description, refundType = 'full', requestedAmount } = req.body;
   const userId = req.user._id;
 
@@ -433,15 +433,15 @@ export const requestRefund = catchAsyncErrors(async (req, res, next) => {
 
 // ── GET /api/v1/orders/:orderId/refund/status ─────────────────────────────
 // Customer checks their own refund status.
-export const getRefundStatus = catchAsyncErrors(async (req, res, next) => {
+export const getRefundStatus = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
 
   const order = await Order.findById(orderId).select('user refundInfo orderNumber');
-  if (!order) return next(new ErrorHandler('Order not found', 404));
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   return res.status(200).json({
@@ -453,11 +453,11 @@ export const getRefundStatus = catchAsyncErrors(async (req, res, next) => {
 // ── PUT /api/v1/admin/orders/:orderId/refund/review ───────────────────────
 // Approves or rejects a refund request.
 // Uses req.order attached by canReviewRefund middleware.
-export const reviewRefund = catchAsyncErrors(async (req, res, next) => {
+export const reviewRefund = handleAsyncError(async (req, res, next) => {
   const { action, adminNote } = req.body;
 
   if (!action || !['approve', 'reject'].includes(action)) {
-    return next(new ErrorHandler('action must be "approve" or "reject"', 400));
+    return next(new HandleError('action must be "approve" or "reject"', 400));
   }
 
   // Use the order already fetched and validated by canReviewRefund middleware
@@ -465,12 +465,12 @@ export const reviewRefund = catchAsyncErrors(async (req, res, next) => {
   const order = req.order ?? await Order.findById(req.params.orderId);
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (order.refundInfo?.status !== 'requested') {
     return next(
-      new ErrorHandler(
+      new HandleError(
         `Cannot review a refund with status "${order.refundInfo?.status}"`,
         400
       )
@@ -531,12 +531,12 @@ export const reviewRefund = catchAsyncErrors(async (req, res, next) => {
 // Processes the actual payment transfer for an approved refund.
 // Uses req.order from canProcessRefund middleware. Applies an atomic
 // compare-and-swap to prevent duplicate gateway calls under concurrency.
-export const processRefund = catchAsyncErrors(async (req, res, next) => {
+export const processRefund = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const { refundAmount, merchantNote } = req.body;
 
   if (!refundAmount || isNaN(Number(refundAmount)) || Number(refundAmount) <= 0) {
-    return next(new ErrorHandler('A valid refundAmount is required', 400));
+    return next(new HandleError('A valid refundAmount is required', 400));
   }
 
   // Use the order already fetched and validated by canProcessRefund middleware
@@ -544,12 +544,12 @@ export const processRefund = catchAsyncErrors(async (req, res, next) => {
   const order = req.order ?? await Order.findById(orderId);
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (order.refundInfo?.status !== 'approved') {
     return next(
-      new ErrorHandler(
+      new HandleError(
         `Cannot process a refund with status "${order.refundInfo?.status}". Must be "approved".`,
         400
       )
@@ -562,7 +562,7 @@ export const processRefund = catchAsyncErrors(async (req, res, next) => {
 
   if (Number(refundAmount) > maxRefund) {
     return next(
-      new ErrorHandler(
+      new HandleError(
         `Refund amount $${refundAmount} exceeds the maximum refundable amount of $${maxRefund.toFixed(2)}`,
         400
       )
@@ -581,7 +581,7 @@ export const processRefund = catchAsyncErrors(async (req, res, next) => {
 
   if (!transitioned) {
     return next(
-      new ErrorHandler(
+      new HandleError(
         'Refund is no longer in an approved state. It may have already been processed.',
         409
       )
@@ -660,7 +660,7 @@ export const processRefund = catchAsyncErrors(async (req, res, next) => {
     await freshOrder.save();
     invalidateRefundCaches();
 
-    return next(new ErrorHandler(`Refund processing failed: ${gatewayErr?.message ?? 'Gateway error'}`, 500));
+    return next(new HandleError(`Refund processing failed: ${gatewayErr?.message ?? 'Gateway error'}`, 500));
   }
 
   await freshOrder.save();
@@ -681,7 +681,7 @@ export const processRefund = catchAsyncErrors(async (req, res, next) => {
 // Paginated refund message history. Accessible by both customer and admin.
 // Bulk-updates all unread messages as read via arrayFilters (fire-and-forget)
 // so messages across all pages are marked, not just the current slice.
-export const getRefundMessages = catchAsyncErrors(async (req, res, next) => {
+export const getRefundMessages = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const page        = Math.max(1, Number(req.query.page  ?? 1));
   const limit       = Math.min(100, Math.max(1, Number(req.query.limit ?? 50)));
@@ -696,11 +696,11 @@ export const getRefundMessages = catchAsyncErrors(async (req, res, next) => {
   }).populate('refundInfo.messages.sender', 'firstName lastName email role');
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   if (!order.refundInfo?.messages) {
@@ -737,21 +737,21 @@ export const getRefundMessages = catchAsyncErrors(async (req, res, next) => {
 // ── POST /api/v1/admin/refunds/:orderId/messages ──────────────────────────
 // Admin sends a message on a refund thread.
 // Uses req.order from canAddRefundMessage middleware when available.
-export const sendRefundMessage = catchAsyncErrors(async (req, res, next) => {
+export const sendRefundMessage = handleAsyncError(async (req, res, next) => {
   const { message, attachments = [] } = req.body;
 
   if (!message?.trim() && attachments.length === 0) {
-    return next(new ErrorHandler('Message content or attachments are required', 400));
+    return next(new HandleError('Message content or attachments are required', 400));
   }
 
   const order = req.order ?? await Order.findById(req.params.orderId);
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (order.refundInfo?.status === 'none') {
-    return next(new ErrorHandler('This order has no refund request', 400));
+    return next(new HandleError('This order has no refund request', 400));
   }
 
   order.addRefundMessage(req.user._id, 'admin', message?.trim() ?? '', attachments);
@@ -782,22 +782,22 @@ export const sendRefundMessage = catchAsyncErrors(async (req, res, next) => {
 // ── POST /api/v1/orders/:orderId/refund/messages ──────────────────────────
 // Customer sends a message on a refund thread.
 // Uses req.order from canAddRefundMessage middleware when available.
-export const addCustomerRefundMessage = catchAsyncErrors(async (req, res, next) => {
+export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) => {
   const { message, attachments = [] } = req.body;
   const userId = req.user._id;
 
   const order = req.order ?? await Order.findById(req.params.orderId);
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   if (order.refundInfo?.status === 'none') {
-    return next(new ErrorHandler('This order has no refund request', 400));
+    return next(new HandleError('This order has no refund request', 400));
   }
 
   order.addRefundMessage(userId, 'customer', message?.trim() ?? '', attachments);
@@ -826,7 +826,7 @@ export const addCustomerRefundMessage = catchAsyncErrors(async (req, res, next) 
 
 // ── GET /api/v1/orders/:orderId/refund/timeline ───────────────────────────
 // Accessible by both customer and admin.
-export const getRefundTimeline = catchAsyncErrors(async (req, res, next) => {
+export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
   const isAdmin     = req.user.role === 'admin';
@@ -837,11 +837,11 @@ export const getRefundTimeline = catchAsyncErrors(async (req, res, next) => {
     .select({ 'refundInfo.timeline': 1, user: 1 });
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   res.status(200).json({
@@ -853,7 +853,7 @@ export const getRefundTimeline = catchAsyncErrors(async (req, res, next) => {
 
 // ── GET /api/v1/orders/:orderId/refund/documents ──────────────────────────
 // Accessible by both customer and admin.
-export const getRefundDocuments = catchAsyncErrors(async (req, res, next) => {
+export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
   const isAdmin     = req.user.role === 'admin';
@@ -864,11 +864,11 @@ export const getRefundDocuments = catchAsyncErrors(async (req, res, next) => {
     .select({ 'refundInfo.documents': 1, user: 1 });
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   res.status(200).json({
@@ -880,19 +880,19 @@ export const getRefundDocuments = catchAsyncErrors(async (req, res, next) => {
 
 // ── POST /api/v1/admin/refunds/:orderId/upload ────────────────────────────
 // Admin uploads files to Cloudinary and attaches them as refund documents.
-export const uploadRefundFiles = catchAsyncErrors(async (req, res, next) => {
+export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
   if (!req.files?.length) {
-    return next(new ErrorHandler('No files provided', 400));
+    return next(new HandleError('No files provided', 400));
   }
 
   const order = await Order.findById(req.params.orderId);
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (!order.refundInfo || order.refundInfo.status === 'none') {
-    return next(new ErrorHandler('No refund request found for this order', 400));
+    return next(new HandleError('No refund request found for this order', 400));
   }
 
   const folder  = `ecommerce/refunds/${order._id}/admin`;
@@ -934,23 +934,23 @@ export const uploadRefundFiles = catchAsyncErrors(async (req, res, next) => {
 
 // ── POST /api/v1/orders/:orderId/refund/upload ────────────────────────────
 // Customer uploads files for their own refund.
-export const uploadCustomerRefundFiles = catchAsyncErrors(async (req, res, next) => {
+export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
 
   if (!req.files?.length) {
-    return next(new ErrorHandler('No files provided', 400));
+    return next(new HandleError('No files provided', 400));
   }
 
   const order = await Order.findById(orderId);
-  if (!order) return next(new ErrorHandler('Order not found', 404));
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   if (!order.refundInfo || order.refundInfo.status === 'none') {
-    return next(new ErrorHandler('No refund request found for this order', 400));
+    return next(new HandleError('No refund request found for this order', 400));
   }
 
   const folder = `ecommerce/refunds/${order._id}/customer`;
@@ -992,22 +992,22 @@ export const uploadCustomerRefundFiles = catchAsyncErrors(async (req, res, next)
 // ── PUT /api/v1/orders/:orderId/refund/cancel ─────────────────────────────
 // Customer cancels their own refund request.
 // Uses req.order from canCancelRefund middleware when available.
-export const cancelRefundRequest = catchAsyncErrors(async (req, res, next) => {
+export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
 
   const order = req.order ?? await Order.findById(req.params.orderId);
 
   if (!order) {
-    return next(new ErrorHandler('Order not found', 404));
+    return next(new HandleError('Order not found', 404));
   }
 
   if (order.user.toString() !== userId.toString()) {
-    return next(new ErrorHandler('Unauthorized', 403));
+    return next(new HandleError('Unauthorized', 403));
   }
 
   if (!['requested', 'approved'].includes(order.refundInfo?.status)) {
     return next(
-      new ErrorHandler(
+      new HandleError(
         `Cannot cancel a refund with status "${order.refundInfo?.status}"`,
         400
       )

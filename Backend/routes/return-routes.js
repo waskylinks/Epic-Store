@@ -39,7 +39,7 @@ import {
 import upload from '../middleware/multer.js';
 
 // FIX S-02 — rate limiting on all customer write endpoints
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 const router = express.Router();
 
@@ -61,30 +61,32 @@ router.param('id', validateObjectId);
 // FIX S-02 — per-user rate limiters
 // Keyed on req.user._id (set by verifyUserAuth before these routes are hit)
 // so limits apply per-user, not per-IP (which is easy to rotate).
+// FIX IPv6 — ipKeyGenerator wraps the IP fallback so IPv6 users cannot
+// bypass limits via address expansion.
 // ============================================
 const returnRequestLimiter = rateLimit({
-  windowMs:    60 * 1000,
-  max:         5,
-  keyGenerator: (req) => req.user?._id?.toString() || req.ip,
-  message:     { success: false, message: 'Too many return requests. Please wait a moment.' },
+  windowMs:        60 * 1000,
+  max:             5,
+  keyGenerator:    (req) => req.user?._id?.toString() || ipKeyGenerator(req),
+  message:         { success: false, message: 'Too many return requests. Please wait a moment.' },
   standardHeaders: true,
   legacyHeaders:   false,
 });
 
 const messageLimiter = rateLimit({
-  windowMs:    60 * 1000,
-  max:         30,
-  keyGenerator: (req) => req.user?._id?.toString() || req.ip,
-  message:     { success: false, message: 'Too many messages. Please slow down.' },
+  windowMs:        60 * 1000,
+  max:             30,
+  keyGenerator:    (req) => req.user?._id?.toString() || ipKeyGenerator(req),
+  message:         { success: false, message: 'Too many messages. Please slow down.' },
   standardHeaders: true,
   legacyHeaders:   false,
 });
 
 const uploadLimiter = rateLimit({
-  windowMs:    60 * 1000,
-  max:         10,
-  keyGenerator: (req) => req.user?._id?.toString() || req.ip,
-  message:     { success: false, message: 'Too many upload requests. Please wait a moment.' },
+  windowMs:        60 * 1000,
+  max:             10,
+  keyGenerator:    (req) => req.user?._id?.toString() || ipKeyGenerator(req),
+  message:         { success: false, message: 'Too many upload requests. Please wait a moment.' },
   standardHeaders: true,
   legacyHeaders:   false,
 });
