@@ -242,14 +242,11 @@ const orderSchema = new mongoose.Schema(
     returnInfo: {
       status: {
         type: String,
-        // FIX: added 'cancelled' so cancelReturnRequest can set it without
-        // silently failing against strict schema validation.
         enum: ['none', 'requested', 'approved', 'rejected', 'in_transit', 'received', 'inspected', 'completed', 'cancelled'],
         default: 'none'
       },
       rmaNumber: String,
       reason: String,
-      // FIX: added description — was silently dropped by strict:true before.
       description: String,
       itemsToReturn: [{
         product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
@@ -493,6 +490,9 @@ const orderSchema = new mongoose.Schema(
 
 // ============================================
 // INDEXES
+// FIX: Compound indexes on (status, requestedAt) cover both the $nin/$eq
+// filter AND the sort in a single index scan, eliminating the separate
+// blocking sort pass that single-field status indexes would require.
 // ============================================
 
 // Core pagination indexes
@@ -508,9 +508,8 @@ orderSchema.index({ 'paymentInfo.status': 1 });
 orderSchema.index({ 'paymentInfo.method': 1 });
 orderSchema.index({ 'paymentInfo.paidAt': -1 });
 
-// FIX: Replaced single-field refund/return status indexes with compound indexes
-// that cover both the $nin filter AND the requestedAt sort in one index scan.
-// Single-field indexes on status alone would still require a separate sort pass.
+// FIX: Compound indexes covering status filter + requestedAt sort in one scan.
+// The $nin filter on status uses these as a range scan on the leading key.
 orderSchema.index({ 'refundInfo.status': 1, 'refundInfo.requestedAt': -1 });
 orderSchema.index({ 'returnInfo.status': 1, 'returnInfo.requestedAt': -1 });
 
@@ -526,12 +525,23 @@ orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
 
-// Message unread indexes
-orderSchema.index({ 'refundInfo.messages.isRead': 1 });
+// FIX: Compound message unread indexes — (isRead, senderType) together
+// cover the $elemMatch used in getRefundsWithUnreadMessages /
+// getReturnsWithUnreadMessages without a collection scan.
+orderSchema.index({
+  'refundInfo.messages.isRead': 1,
+  'refundInfo.messages.senderType': 1,
+});
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
-orderSchema.index({ 'orderMessages.isRead': 1 });
+orderSchema.index({
+  'orderMessages.isRead': 1,
+  'orderMessages.senderType': 1,
+});
 orderSchema.index({ 'orderMessages.createdAt': -1 });
-orderSchema.index({ 'returnInfo.messages.isRead': 1 });
+orderSchema.index({
+  'returnInfo.messages.isRead': 1,
+  'returnInfo.messages.senderType': 1,
+});
 orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 
 // ============================================
@@ -604,9 +614,8 @@ orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
   ).length;
 });
 
-// FIX: Added alias virtuals so controllers can reference `unreadRefundMessages`
-// and `unreadReturnMessages` without breaking. These return the count of unread
-// customer messages — the number an admin dashboard cares about most.
+// Alias virtual — controllers reference unreadRefundMessages for unread
+// customer messages (the count an admin dashboard cares about most).
 orderSchema.virtual('unreadRefundMessages').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
@@ -642,7 +651,7 @@ orderSchema.virtual('unreadReturnMessagesFromAdmin').get(function () {
   ).length;
 });
 
-// FIX: Added alias virtual so controllers can reference `unreadReturnMessages`.
+// Alias virtual — consistent with unreadRefundMessages naming convention.
 orderSchema.virtual('unreadReturnMessages').get(function () {
   if (!this.returnInfo?.messages) return 0;
   return this.returnInfo.messages.filter(
@@ -700,6 +709,9 @@ orderSchema.pre('save', function (next) {
 
 // ============================================
 // STATIC METHODS
+// FIX: getRefundsWithUnreadMessages and getReturnsWithUnreadMessages now
+// use the compound (isRead, senderType) index via the $elemMatch query,
+// avoiding a full messages-array scan per document.
 // ============================================
 
 orderSchema.statics.getOrdersByStatus = async function (status) {
@@ -728,6 +740,7 @@ orderSchema.statics.getActiveReturns = async function () {
     .sort({ 'returnInfo.requestedAt': -1 });
 };
 
+// FIX: $elemMatch uses the compound (isRead, senderType) index directly.
 orderSchema.statics.getRefundsWithUnreadMessages = async function () {
   return this.find({
     'refundInfo.status': { $nin: ['none', 'completed', 'rejected'] },
@@ -751,6 +764,7 @@ orderSchema.statics.getOrdersWithUnreadMessages = async function () {
     .sort({ 'orderMessages.createdAt': -1 });
 };
 
+// FIX: $elemMatch uses the compound (isRead, senderType) index directly.
 orderSchema.statics.getReturnsWithUnreadMessages = async function () {
   return this.find({
     'returnInfo.status': { $nin: ['none', 'completed', 'rejected'] },

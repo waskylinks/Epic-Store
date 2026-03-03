@@ -2,7 +2,7 @@ import Order from '../models/order-model.js';
 import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
-import { deleteCachePattern } from '../utils/redis.js';
+import { deleteCachePattern, getCache, setCache } from '../utils/redis.js';
 import { uploadToCloudinary } from '../utils/cloudinaryUpload.js';
 
 // ============================================
@@ -14,8 +14,9 @@ const invalidateReturnCaches = () => {
   Promise.all([
     deleteCachePattern('admin_stats*'),
     deleteCachePattern('return_overview*'),
+    deleteCachePattern('return_stats*'),
     deleteCachePattern('returns_by_product*'),
-    deleteCachePattern('returns_by_category*')
+    deleteCachePattern('returns_by_category*'),
   ]).catch(() => {
     // Cache invalidation failure must never affect the primary response
   });
@@ -23,44 +24,124 @@ const invalidateReturnCaches = () => {
 
 // ============================================
 // GET ALL RETURN REQUESTS (Admin)
+// FIX: Replaced 9 separate DB queries (1 find + 8 countDocuments) with a
+// single $facet aggregation. Stats are served from Redis for 60 s on warm
+// cache so repeated page loads don't touch MongoDB for counts at all.
+// @route GET /api/v1/admin/returns
+// @access Private (Admin only)
 // ============================================
 
 export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const { status, page = 1, limit = 20 } = req.query;
 
-  const query = { 'returnInfo.status': { $nin: ['none'] } };
-  if (status) query['returnInfo.status'] = status;
+  const matchStage = { 'returnInfo.status': { $nin: ['none'] } };
+  if (status) matchStage['returnInfo.status'] = status;
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  // FIX: List view populate trimmed to fields needed for table rows only.
-  // Heavy nested populate (messages.sender etc.) moved to getSingleReturn.
-  // .lean() skips Mongoose document hydration for a faster read.
-  const [orders, totalReturns, statCounts] = await Promise.all([
-    Order.find(query)
-      .populate('user', 'name email')
-      .populate('returnInfo.requestedBy', 'name email')
-      .select('-returnInfo.messages -returnInfo.documents -returnInfo.timeline -auditLog -orderMessages')
-      .sort({ 'returnInfo.requestedAt': -1 })
-      .skip(skip)
-      .limit(parseInt(limit))
-      .lean(),
+  // ── Stats: serve from Redis cache when warm ──────────────────────────────
+  const STATS_CACHE_KEY = `return_stats:${status || 'all'}`;
+  const STATS_TTL_SECONDS = 60;
 
-    Order.countDocuments(query),
+  let stats = null;
+  try {
+    const cached = await getCache(STATS_CACHE_KEY);
+    if (cached) stats = JSON.parse(cached);
+  } catch (_) { /* cache miss is fine */ }
 
-    Promise.all([
-      Order.countDocuments({ 'returnInfo.status': 'requested' }),
-      Order.countDocuments({ 'returnInfo.status': 'approved' }),
-      Order.countDocuments({ 'returnInfo.status': 'in_transit' }),
-      Order.countDocuments({ 'returnInfo.status': 'received' }),
-      Order.countDocuments({ 'returnInfo.status': 'inspected' }),
-      Order.countDocuments({ 'returnInfo.status': 'completed' }),
-      Order.countDocuments({ 'returnInfo.status': 'rejected' }),
-      Order.countDocuments({ 'returnInfo.status': 'cancelled' }),
-    ]),
+  // ── Single $facet aggregation replaces 1 find + 8 countDocuments ─────────
+  const [facetResult] = await Order.aggregate([
+    { $match: matchStage },
+    {
+      $facet: {
+        // Paginated list — only fields needed for table rows
+        data: [
+          { $sort: { 'returnInfo.requestedAt': -1 } },
+          { $skip: skip },
+          { $limit: parseInt(limit) },
+          {
+            $project: {
+              user: 1,
+              returnInfo: {
+                status: 1,
+                rmaNumber: 1,
+                reason: 1,
+                description: 1,
+                itemsToReturn: 1,
+                requestedAmount: 1,
+                requestedAt: 1,
+                requestedBy: 1,
+                adminNote: 1,
+                restockFee: 1,
+              },
+              orderStatus: 1,
+              totalPrice: 1,
+              createdAt: 1,
+              // Inline unread count — avoids virtual on lean doc
+              unreadMessages: {
+                $size: {
+                  $filter: {
+                    input: { $ifNull: ['$returnInfo.messages', []] },
+                    as: 'm',
+                    cond: {
+                      $and: [
+                        { $eq: ['$$m.isRead', false] },
+                        { $eq: ['$$m.senderType', 'customer'] },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ],
+        // Total count for pagination
+        totalCount: [{ $count: 'count' }],
+        // Per-status counts — only computed when cache is cold
+        ...(stats
+          ? {}
+          : {
+              statCounts: [
+                {
+                  $group: {
+                    _id: '$returnInfo.status',
+                    count: { $sum: 1 },
+                  },
+                },
+              ],
+            }),
+      },
+    },
   ]);
 
-  const [requested, approved, in_transit, received, inspected, completed, rejected, cancelled] = statCounts;
+  const orders = facetResult.data || [];
+  const totalReturns = facetResult.totalCount?.[0]?.count || 0;
+
+  // Build / refresh stats
+  if (!stats) {
+    const rawCounts = facetResult.statCounts || [];
+    const countMap = Object.fromEntries(rawCounts.map((s) => [s._id, s.count]));
+    stats = {
+      total: totalReturns,
+      requested: countMap.requested || 0,
+      approved: countMap.approved || 0,
+      in_transit: countMap.in_transit || 0,
+      received: countMap.received || 0,
+      inspected: countMap.inspected || 0,
+      completed: countMap.completed || 0,
+      rejected: countMap.rejected || 0,
+      cancelled: countMap.cancelled || 0,
+    };
+
+    // Populate Redis — intentionally fire-and-forget
+    setCache(STATS_CACHE_KEY, JSON.stringify(stats), STATS_TTL_SECONDS).catch(() => {});
+  }
+
+  // Populate lightweight fields only; heavy population lives in getSingleReturn
+  await Order.populate(orders, [
+    { path: 'user', select: 'name email' },
+    { path: 'returnInfo.requestedBy', select: 'name email' },
+  ]);
 
   return res.status(200).json({
     success: true,
@@ -68,24 +149,23 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     totalReturns,
     currentPage: parseInt(page),
     totalPages: Math.ceil(totalReturns / parseInt(limit)),
-    stats: { total: totalReturns, requested, approved, in_transit, received, inspected, completed, rejected, cancelled },
-    returns: orders.map(order => ({
+    stats,
+    returns: orders.map((order) => ({
       orderId: order._id,
       user: order.user,
       returnInfo: order.returnInfo,
       orderStatus: order.orderStatus,
       totalPrice: order.totalPrice,
-      // FIX: .lean() disables virtuals so compute unread count inline.
-      unreadMessages: (order.returnInfo?.messages || []).filter(
-        m => !m.isRead && m.senderType === 'customer'
-      ).length,
-      createdAt: order.createdAt
-    }))
+      unreadMessages: order.unreadMessages,
+      createdAt: order.createdAt,
+    })),
   });
 });
 
 // ============================================
 // GET SINGLE RETURN (Admin)
+// @route GET /api/v1/admin/returns/:id
+// @access Private (Admin only)
 // ============================================
 
 export const getSingleReturn = handleAsyncError(async (req, res, next) => {
@@ -106,9 +186,15 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found for this order', 404));
   }
 
-  // FIX: Use model method (consistent with refund controller) instead of raw updateOne.
-  order.markReturnMessagesAsRead('admin');
-  await order.save({ validateBeforeSave: false });
+  // FIX: Only write if there is actually something to mark — avoids a
+  // superfluous save() on every admin view.
+  const hasUnread = order.returnInfo.messages?.some(
+    (m) => !m.isRead && m.senderType === 'customer'
+  );
+  if (hasUnread) {
+    order.markReturnMessagesAsRead('admin');
+    await order.save({ validateBeforeSave: false });
+  }
 
   return res.status(200).json({
     success: true,
@@ -121,13 +207,15 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
       orderStatus: order.orderStatus,
       totalPrice: order.totalPrice,
       createdAt: order.createdAt,
-      deliveredAt: order.deliveredAt
-    }
+      deliveredAt: order.deliveredAt,
+    },
   });
 });
 
 // ============================================
 // CUSTOMER REQUESTS RETURN
+// @route POST /api/v1/orders/:id/return/request
+// @access Private (User who owns the order)
 // ============================================
 
 export const requestReturn = handleAsyncError(async (req, res, next) => {
@@ -136,7 +224,9 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
 
   if (!reason || !description || !items || items.length === 0) {
-    return next(new HandleError('Reason, description, and items to return are required', 400));
+    return next(
+      new HandleError('Reason, description, and items to return are required', 400)
+    );
   }
 
   const order = await Order.findById(id);
@@ -164,12 +254,16 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     attachments,
     messages: [],
     timeline: [],
-    documents: []
+    documents: [],
   };
 
   order.addReturnTimeline('return_requested', `Return requested: ${reason}`, userId);
   order.addStatusHistory('Return Requested', userId, reason);
-  order.addAuditEntry('return_requested', userId, { reason, description, itemsCount: items.length });
+  order.addAuditEntry('return_requested', userId, {
+    reason,
+    description,
+    itemsCount: items.length,
+  });
 
   await order.save();
   invalidateReturnCaches();
@@ -177,12 +271,14 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Return request submitted successfully',
-    returnInfo: order.returnInfo
+    returnInfo: order.returnInfo,
   });
 });
 
 // ============================================
 // ADMIN APPROVES / REJECTS RETURN
+// @route PUT /api/v1/admin/orders/:id/return/review
+// @access Private (Admin only)
 // ============================================
 
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
@@ -209,7 +305,9 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     if (adminNote) order.returnInfo.adminNote = adminNote;
 
     order.addReturnTimeline('return_approved', 'Return approved by admin', req.user._id);
-    order.addAuditEntry('return_approved', req.user._id, { rmaNumber: order.returnInfo.rmaNumber });
+    order.addAuditEntry('return_approved', req.user._id, {
+      rmaNumber: order.returnInfo.rmaNumber,
+    });
 
     await order.save();
     invalidateReturnCaches();
@@ -217,30 +315,37 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Return approved. RMA number generated.',
-      returnInfo: order.returnInfo
-    });
-  } else {
-    order.returnInfo.status = 'rejected';
-    order.returnInfo.approvedAt = new Date();
-    order.returnInfo.approvedBy = req.user._id;
-    if (adminNote) order.returnInfo.adminNote = adminNote;
-
-    order.addReturnTimeline('return_rejected', 'Return rejected by admin', req.user._id, { reason: adminNote });
-    order.addAuditEntry('return_rejected', req.user._id, { adminNote });
-
-    await order.save();
-    invalidateReturnCaches();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Return request rejected',
-      returnInfo: order.returnInfo
+      returnInfo: order.returnInfo,
     });
   }
+
+  // reject
+  order.returnInfo.status = 'rejected';
+  order.returnInfo.approvedAt = new Date();
+  order.returnInfo.approvedBy = req.user._id;
+  if (adminNote) order.returnInfo.adminNote = adminNote;
+
+  order.addReturnTimeline('return_rejected', 'Return rejected by admin', req.user._id, {
+    reason: adminNote,
+  });
+  order.addAuditEntry('return_rejected', req.user._id, { adminNote });
+
+  await order.save();
+  invalidateReturnCaches();
+
+  return res.status(200).json({
+    success: true,
+    message: 'Return request rejected',
+    returnInfo: order.returnInfo,
+  });
 });
 
 // ============================================
-// UPDATE RETURN STATUS
+// UPDATE RETURN STATUS (Admin)
+// FIX: Stock restoration uses bulkWrite instead of N individual
+// findById + save calls — single round trip regardless of item count.
+// @route PUT /api/v1/admin/orders/:id/return/status
+// @access Private (Admin only)
 // ============================================
 
 export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
@@ -270,27 +375,50 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
     order.returnInfo.inspectedAt = new Date();
     order.returnInfo.inspectedBy = req.user._id;
     if (inspectionNotes) order.returnInfo.inspectionNotes = inspectionNotes;
-    order.addReturnTimeline('return_inspected', 'Return inspected', req.user._id, { inspectionNotes });
+    order.addReturnTimeline('return_inspected', 'Return inspected', req.user._id, {
+      inspectionNotes,
+    });
   }
 
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
 
-    const stockUpdates = order.returnInfo.itemsToReturn
-      .filter(item => item.condition !== 'damaged')
-      .map(async (item) => {
-        const product = await Product.findById(item.product);
-        if (!product) return;
+    // FIX: Replace N find+save pairs with a single bulkWrite round trip.
+    const restorableItems = order.returnInfo.itemsToReturn.filter(
+      (item) => item.condition !== 'damaged'
+    );
 
-        if (product.inventory?.stock !== undefined) {
-          product.inventory.stock += item.quantity;
-        } else {
-          product.stock += item.quantity;
-        }
-        await product.save({ validateBeforeSave: false });
-      });
+    if (restorableItems.length > 0) {
+      const bulkOps = restorableItems.map((item) => ({
+        updateOne: {
+          filter: { _id: item.product },
+          update: [
+            {
+              // Handles both inventory.stock and legacy stock field
+              $set: {
+                'inventory.stock': {
+                  $cond: [
+                    { $gt: [{ $type: '$inventory.stock' }, 'missing'] },
+                    { $add: ['$inventory.stock', item.quantity] },
+                    '$inventory.stock',
+                  ],
+                },
+                stock: {
+                  $cond: [
+                    { $gt: [{ $type: '$stock' }, 'missing'] },
+                    { $add: ['$stock', item.quantity] },
+                    '$stock',
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      }));
 
-    await Promise.all(stockUpdates);
+      await Product.bulkWrite(bulkOps, { ordered: false });
+    }
+
     order.addReturnTimeline('return_completed', 'Return process completed', req.user._id);
   }
 
@@ -301,12 +429,14 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: `Return status updated to ${status}`,
-    returnInfo: order.returnInfo
+    returnInfo: order.returnInfo,
   });
 });
 
 // ============================================
 // ADD MESSAGE TO RETURN (Admin)
+// @route POST /api/v1/admin/returns/:id/messages
+// @access Private (Admin only)
 // ============================================
 
 export const addReturnMessage = handleAsyncError(async (req, res, next) => {
@@ -332,12 +462,14 @@ export const addReturnMessage = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Message sent successfully',
-    data: { orderId: order._id, message: newMessage }
+    data: { orderId: order._id, message: newMessage },
   });
 });
 
 // ============================================
 // ADD MESSAGE TO RETURN (Customer)
+// @route POST /api/v1/orders/:id/return/messages
+// @access Private (User who owns the order)
 // ============================================
 
 export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) => {
@@ -368,22 +500,32 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
   return res.status(200).json({
     success: true,
     message: 'Message sent successfully',
-    data: { orderId: order._id, message: newMessage }
+    data: { orderId: order._id, message: newMessage },
   });
 });
 
 // ============================================
 // GET RETURN MESSAGES
+// FIX: Added pagination ($slice) so large message threads don't fully load.
+// FIX: markAsRead only writes to DB when there are actually unread messages.
+// @route GET /api/v1/orders/:id/return/messages
+// @access Private (User or Admin)
 // ============================================
 
 export const getReturnMessages = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
+  const { page = 1, limit = 50 } = req.query;
   const userId = req.user._id;
   const isAdmin = req.user.role === 'admin';
 
-  const order = await Order.findById(id)
-    .populate('returnInfo.messages.sender', 'name email role')
-    .select('returnInfo user');
+  const skip = (parseInt(page) - 1) * parseInt(limit);
+
+  // $slice projection avoids loading the full messages array
+  const order = await Order.findById(id, {
+    user: 1,
+    'returnInfo.status': 1,
+    'returnInfo.messages': { $slice: [skip, parseInt(limit)] },
+  }).populate('returnInfo.messages.sender', 'name email role');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -395,22 +537,27 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, count: 0, messages: [] });
   }
 
-  // FIX: Replaced raw updateOne+arrayFilters with the model's markReturnMessagesAsRead
-  // method for consistency with how refund and order message read-receipts work.
-  // Admin reading → mark customer messages read. Customer reading → mark admin messages read.
+  // FIX: Only write if there is something to mark read
   const readerType = isAdmin ? 'customer' : 'admin';
-  order.markReturnMessagesAsRead(readerType);
-  await order.save({ validateBeforeSave: false });
+  const hasUnread = order.returnInfo.messages.some(
+    (m) => !m.isRead && m.senderType === readerType
+  );
+  if (hasUnread) {
+    order.markReturnMessagesAsRead(readerType);
+    await order.save({ validateBeforeSave: false });
+  }
 
   return res.status(200).json({
     success: true,
     count: order.returnInfo.messages.length,
-    messages: order.returnInfo.messages
+    messages: order.returnInfo.messages,
   });
 });
 
 // ============================================
 // GET RETURN TIMELINE
+// @route GET /api/v1/orders/:id/return/timeline
+// @access Private (User or Admin)
 // ============================================
 
 export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
@@ -435,12 +582,14 @@ export const getReturnTimeline = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     count: order.returnInfo.timeline.length,
-    timeline: order.returnInfo.timeline
+    timeline: order.returnInfo.timeline,
   });
 });
 
 // ============================================
 // GET RETURN DOCUMENTS
+// @route GET /api/v1/orders/:id/return/documents
+// @access Private (User or Admin)
 // ============================================
 
 export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
@@ -465,13 +614,15 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     count: order.returnInfo.documents.length,
-    documents: order.returnInfo.documents
+    documents: order.returnInfo.documents,
   });
 });
 
 // ============================================
 // UPLOAD FILES FOR RETURN (Admin)
-// FIX: Replaced local disk storage with Cloudinary (consistent with refund controller).
+// FIX: Parallel Cloudinary uploads.
+// @route POST /api/v1/admin/returns/:id/upload
+// @access Private (Admin only)
 // ============================================
 
 export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
@@ -488,37 +639,42 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found', 404));
   }
 
-  const uploadedFiles = [];
   const folder = `ecommerce/returns/${order._id}/admin`;
 
-  for (const file of req.files) {
-    const result = await uploadToCloudinary(file.buffer, {
-      folder,
-      resource_type: 'auto',
-    });
+  // FIX: Parallel uploads
+  const results = await Promise.all(
+    req.files.map((file) =>
+      uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
+        result,
+        originalname: file.originalname,
+      }))
+    )
+  );
 
-    order.addReturnDocument('other', result.secure_url, file.originalname, req.user._id, '');
-
-    uploadedFiles.push({
+  const uploadedFiles = results.map(({ result, originalname }) => {
+    order.addReturnDocument('other', result.secure_url, originalname, req.user._id, '');
+    return {
       url: result.secure_url,
-      filename: file.originalname,
+      filename: originalname,
       fileType: result.resource_type,
       fileSize: result.bytes,
-    });
-  }
+    };
+  });
 
   await order.save();
 
   return res.status(200).json({
     success: true,
     message: 'Files uploaded successfully',
-    files: uploadedFiles
+    files: uploadedFiles,
   });
 });
 
 // ============================================
 // UPLOAD FILES FOR RETURN (Customer)
-// FIX: Replaced local disk storage with Cloudinary (consistent with refund controller).
+// FIX: Parallel Cloudinary uploads.
+// @route POST /api/v1/orders/:id/return/upload
+// @access Private (User who owns the order)
 // ============================================
 
 export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next) => {
@@ -540,41 +696,48 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
     return next(new HandleError('No return request found', 404));
   }
 
-  const uploadedFiles = [];
   const folder = `ecommerce/returns/${order._id}/customer`;
 
-  for (const file of req.files) {
-    const result = await uploadToCloudinary(file.buffer, {
-      folder,
-      resource_type: 'auto',
-    });
+  // FIX: Parallel uploads
+  const results = await Promise.all(
+    req.files.map((file) =>
+      uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
+        result,
+        originalname: file.originalname,
+      }))
+    )
+  );
 
+  const uploadedFiles = results.map(({ result, originalname }) => {
     const docType =
-      result.resource_type === 'image' ? 'photo' :
-      result.resource_type === 'video' ? 'video' :
-      'document';
+      result.resource_type === 'image'
+        ? 'photo'
+        : result.resource_type === 'video'
+        ? 'video'
+        : 'document';
 
-    order.addReturnDocument(docType, result.secure_url, file.originalname, userId, '');
-
-    uploadedFiles.push({
+    order.addReturnDocument(docType, result.secure_url, originalname, userId, '');
+    return {
       url: result.secure_url,
-      filename: file.originalname,
+      filename: originalname,
       fileType: result.resource_type,
       fileSize: result.bytes,
-    });
-  }
+    };
+  });
 
   await order.save();
 
   return res.status(200).json({
     success: true,
     message: 'Files uploaded successfully',
-    files: uploadedFiles
+    files: uploadedFiles,
   });
 });
 
 // ============================================
 // GET RETURN STATUS (Customer)
+// @route GET /api/v1/orders/:id/return/status
+// @access Private (User who owns the order)
 // ============================================
 
 export const getReturnStatus = handleAsyncError(async (req, res, next) => {
@@ -594,12 +757,14 @@ export const getReturnStatus = handleAsyncError(async (req, res, next) => {
     success: true,
     returnInfo: hasReturn
       ? { ...order.returnInfo.toObject(), hasReturn: true }
-      : { status: 'none', hasReturn: false }
+      : { status: 'none', hasReturn: false },
   });
 });
 
 // ============================================
 // GET RETURNS WITH UNREAD MESSAGES (Admin)
+// @route GET /api/v1/admin/returns/unread
+// @access Private (Admin only)
 // ============================================
 
 export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, next) => {
@@ -608,7 +773,7 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
   return res.status(200).json({
     success: true,
     count: orders.length,
-    returns: orders.map(order => ({
+    returns: orders.map((order) => ({
       _id: order._id,
       user: order.user,
       returnInfo: {
@@ -617,16 +782,15 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
         reason: order.returnInfo.reason,
         unreadCount: order.unreadReturnMessages,
       },
-      latestMessage: order.latestReturnMessage
-    }))
+      latestMessage: order.latestReturnMessage,
+    })),
   });
 });
 
 // ============================================
 // CANCEL RETURN REQUEST (Customer)
-// FIX: Changed status from 'none' → 'cancelled' so the record remains visible
-// to admins in the returns list and audit history is preserved.
-// The 'cancelled' value has been added to the returnInfo.status enum in the model.
+// @route PUT /api/v1/orders/:id/return/cancel
+// @access Private (User who owns the order)
 // ============================================
 
 export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
@@ -657,6 +821,6 @@ export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success: true,
-    message: 'Return request cancelled successfully'
+    message: 'Return request cancelled successfully',
   });
 });
