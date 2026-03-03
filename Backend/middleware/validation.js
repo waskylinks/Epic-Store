@@ -10,11 +10,7 @@ import HandleError from '../utils/handleError.js';
  * Validate registration data (firstName, lastName)
  */
 export const validateRegistration = (req, res, next) => {
-    console.log('🔍 validateRegistration called');
-    console.log('📦 req.body:', req.body);
-    
     if (!req.body || Object.keys(req.body).length === 0) {
-        console.error('❌ Request body is empty!');
         return next(new HandleError('Request body is empty. Please provide registration data.', 400));
     }
 
@@ -55,11 +51,9 @@ export const validateRegistration = (req, res, next) => {
     }
 
     if (errors.length > 0) {
-        console.log('❌ Validation errors:', errors);
         return next(new HandleError(errors.join('. '), 400));
     }
 
-    console.log('✅ Validation passed');
     next();
 };
 
@@ -437,57 +431,66 @@ export const validateTrackingInfo = (req, res, next) => {
  * - description: required, min 5, max 2000 chars (general description for all items)
  * - items: required array, each item must have product, quantity, and its own reason
  */
+const VALID_RETURN_REASONS = [
+  'defective_product', 'wrong_item', 'wrong_size', 'not_as_described',
+  'quality_issues', 'changed_mind', 'better_price', 'duplicate_order',
+  'no_longer_needed', 'other',
+];
+
 export const validateReturnRequest = (req, res, next) => {
-    const { reason, description, items } = req.body;
-    const errors = [];
+  const { reason, description, items } = req.body;
+  const errors = [];
 
-    const validReasons = [
-        'defective_product',
-        'wrong_item',
-        'wrong_size',
-        'not_as_described',
-        'quality_issues',
-        'changed_mind',
-        'better_price',
-        'duplicate_order',
-        'no_longer_needed',
-        'other'
-    ];
+  if (!reason || !VALID_RETURN_REASONS.includes(reason)) {
+    errors.push('Please provide a valid return reason');
+  }
 
-    if (!reason || !validReasons.includes(reason)) {
-        errors.push('Please provide a valid return reason');
-    }
+  if (!description || description.trim().length < 5) {
+    errors.push('Please provide a description of at least 5 characters');
+  }
+  if (description && description.length > 2000) {
+    errors.push('Description cannot exceed 2000 characters');
+  }
 
-    if (!description || description.trim().length < 5) {
-        errors.push('Please provide a description of at least 5 characters');
-    }
-    if (description && description.length > 2000) {
-        errors.push('Description cannot exceed 2000 characters');
-    }
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    errors.push('At least one item must be selected for return');
+  }
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-        errors.push('At least one item must be selected for return');
-    }
+  // FIX S-04 — cap the array itself
+  if (Array.isArray(items) && items.length > 20) {
+    errors.push('Cannot return more than 20 items in a single request');
+  }
 
-    if (items && Array.isArray(items)) {
-        items.forEach((item, index) => {
-            if (!item.product) {
-                errors.push(`Item ${index + 1}: Product ID is required`);
-            }
-            if (!item.quantity || item.quantity <= 0) {
-                errors.push(`Item ${index + 1}: Valid quantity is required`);
-            }
-            if (!item.reason || item.reason.trim().length < 5) {
-                errors.push(`Item ${index + 1}: Please select a reason`);
-            }
-        });
-    }
+  if (Array.isArray(items)) {
+    items.forEach((item, index) => {
+      const n = index + 1;
+      if (!item.product) {
+        errors.push(`Item ${n}: Product ID is required`);
+      }
+      if (!item.quantity || item.quantity <= 0) {
+        errors.push(`Item ${n}: Valid quantity is required`);
+      }
 
-    if (errors.length > 0) {
-        return next(new HandleError(errors.join('. '), 400));
-    }
+      // FIX V-03 — trim before checking length
+      const trimmedReason = item.reason?.trim() ?? '';
 
-    next();
+      // FIX V-02 — validate against enum for data quality
+      if (!trimmedReason || !VALID_RETURN_REASONS.includes(trimmedReason)) {
+        errors.push(`Item ${n}: Please select a valid reason`);
+      }
+
+      // FIX S-04 — cap item reason length
+      if (trimmedReason.length > 500) {
+        errors.push(`Item ${n}: Reason cannot exceed 500 characters`);
+      }
+
+      // Write the trimmed value back so downstream code works with clean data
+      item.reason = trimmedReason;
+    });
+  }
+
+  if (errors.length > 0) return next(new HandleError(errors.join('. '), 400));
+  next();
 };
 
 /**

@@ -1,4 +1,5 @@
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
+import crypto from 'crypto';
 
 const orderSchema = new mongoose.Schema(
   {
@@ -8,14 +9,9 @@ const orderSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true
+      required: true,
     },
 
-    // Short human-readable order reference — last 8 hex chars of _id, uppercased.
-    // Generated once in pre('save'), never mutated after that.
-    // Used for customer-facing display, support lookups, and admin search.
-    // sparse: true so legacy documents without this field don't collide on
-    // the unique index during a rolling deploy.
     orderNumber: {
       type: String,
       unique: true,
@@ -28,7 +24,7 @@ const orderSchema = new mongoose.Schema(
       state: String,
       country: String,
       pinCode: String,
-      phoneNo: String
+      phoneNo: String,
     },
 
     // ============================================
@@ -39,7 +35,7 @@ const orderSchema = new mongoose.Schema(
         product: {
           type: mongoose.Schema.Types.ObjectId,
           ref: 'Product',
-          required: true
+          required: true,
         },
         name: String,
         price: Number,
@@ -51,9 +47,9 @@ const orderSchema = new mongoose.Schema(
         fulfillmentStatus: {
           type: String,
           enum: ['pending', 'partial', 'complete'],
-          default: 'pending'
-        }
-      }
+          default: 'pending',
+        },
+      },
     ],
 
     // ============================================
@@ -66,27 +62,31 @@ const orderSchema = new mongoose.Schema(
     amountPaid: Number,
 
     discounts: {
-      codes: [{
-        code: String,
-        amount: Number,
-        type: { type: String, enum: ['percentage', 'fixed'] }
-      }],
-      totalDiscount: { type: Number, default: 0 }
+      codes: [
+        {
+          code: String,
+          amount: Number,
+          type: { type: String, enum: ['percentage', 'fixed'] },
+        },
+      ],
+      totalDiscount: { type: Number, default: 0 },
     },
 
     taxDetails: {
-      breakdown: [{
-        type: { type: String, enum: ['VAT', 'Sales Tax', 'GST', 'Custom Duty'] },
-        rate: Number,
-        amount: Number,
-        jurisdiction: String,
-        taxId: String
-      }],
+      breakdown: [
+        {
+          type: { type: String, enum: ['VAT', 'Sales Tax', 'GST', 'Custom Duty'] },
+          rate: Number,
+          amount: Number,
+          jurisdiction: String,
+          taxId: String,
+        },
+      ],
       totalTax: Number,
       isTaxExempt: { type: Boolean, default: false },
       exemptionCertificate: String,
       calculationMethod: String,
-      calculatedAt: Date
+      calculatedAt: Date,
     },
 
     profitAnalysis: {
@@ -94,7 +94,7 @@ const orderSchema = new mongoose.Schema(
       shippingCost: Number,
       gatewayFees: Number,
       netProfit: Number,
-      marginPercentage: Number
+      marginPercentage: Number,
     },
 
     // ============================================
@@ -107,16 +107,16 @@ const orderSchema = new mongoose.Schema(
       status: {
         type: String,
         enum: ['pending', 'success', 'failed'],
-        default: 'pending'
+        default: 'pending',
       },
       method: {
         type: String,
         enum: ['paystack', 'flutterwave', 'stripe', 'manual'],
-        required: true
+        required: true,
       },
       currency: { type: String, default: 'USD', uppercase: true },
       amount: Number,
-      paidAt: Date
+      paidAt: Date,
     },
 
     paymentMeta: {
@@ -128,41 +128,45 @@ const orderSchema = new mongoose.Schema(
         last4: String,
         brand: String,
         expMonth: Number,
-        expYear: Number
+        expYear: Number,
       },
-      raw: { type: mongoose.Schema.Types.Mixed }
+      raw: { type: mongoose.Schema.Types.Mixed },
     },
 
     // ============================================
     // ORDER MESSAGES (Customer <-> Admin Chat)
     // ============================================
-    orderMessages: [{
-      sender: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: true
+    orderMessages: [
+      {
+        sender: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          required: true,
+        },
+        senderType: {
+          type: String,
+          enum: ['customer', 'admin', 'system'],
+          required: true,
+        },
+        content: { type: String, required: true },
+        attachments: [
+          {
+            url: String,
+            filename: String,
+            fileType: String,
+            fileSize: Number,
+            uploadedAt: { type: Date, default: Date.now },
+          },
+        ],
+        isRead: { type: Boolean, default: false },
+        readAt: Date,
+        deliveredAt: Date,
+        createdAt: { type: Date, default: Date.now },
+        isEdited: Boolean,
+        editedAt: Date,
+        metadata: mongoose.Schema.Types.Mixed,
       },
-      senderType: {
-        type: String,
-        enum: ['customer', 'admin', 'system'],
-        required: true
-      },
-      content: { type: String, required: true },
-      attachments: [{
-        url: String,
-        filename: String,
-        fileType: String,
-        fileSize: Number,
-        uploadedAt: { type: Date, default: Date.now }
-      }],
-      isRead: { type: Boolean, default: false },
-      readAt: Date,
-      deliveredAt: Date,
-      createdAt: { type: Date, default: Date.now },
-      isEdited: Boolean,
-      editedAt: Date,
-      metadata: mongoose.Schema.Types.Mixed
-    }],
+    ],
 
     // ============================================
     // REFUND INFORMATION
@@ -170,15 +174,18 @@ const orderSchema = new mongoose.Schema(
     refundInfo: {
       status: {
         type: String,
-        enum: ['none', 'requested', 'approved', 'rejected', 'processing', 'completed', 'failed', 'cancelled'],
-        default: 'none'
+        enum: [
+          'none', 'requested', 'approved', 'rejected',
+          'processing', 'completed', 'failed', 'cancelled',
+        ],
+        default: 'none',
       },
       reason: String,
       description: String,
       refundType: {
         type: String,
         enum: ['full', 'partial'],
-        default: 'full'
+        default: 'full',
       },
       requestedAmount: Number,
       requestedAt: Date,
@@ -198,143 +205,173 @@ const orderSchema = new mongoose.Schema(
       gatewayResponse: { type: mongoose.Schema.Types.Mixed },
       failureReason: String,
       // NOTE: 'amount' preserved for backwards compatibility with existing
-      // documents. It is never written to by new code — refundAmount is the
-      // canonical field. Do not use in new code.
+      // documents. Never written to by new code — refundAmount is canonical.
       amount: { type: Number, default: 0 },
       notes: String,
       refundReference: String,
-      messages: [{
-        sender: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
-          required: true
+      messages: [
+        {
+          sender: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+          },
+          senderType: {
+            type: String,
+            enum: ['customer', 'admin', 'system'],
+            required: true,
+          },
+          // NOTE: field is intentionally named 'message' (not 'content') to
+          // match existing stored documents. Renaming without a migration would
+          // silently orphan all existing refund message data.
+          message: { type: String, required: true },
+          attachments: [
+            {
+              url: String,
+              filename: String,
+              fileType: String,
+              fileSize: Number,
+              uploadedAt: { type: Date, default: Date.now },
+            },
+          ],
+          isRead: { type: Boolean, default: false },
+          readAt: Date,
+          createdAt: { type: Date, default: Date.now },
+          metadata: mongoose.Schema.Types.Mixed,
         },
-        senderType: {
-          type: String,
-          enum: ['customer', 'admin', 'system'],
-          required: true
-        },
-        // NOTE: field is intentionally named 'message' (not 'content') to
-        // match existing stored documents. Renaming without a migration would
-        // silently orphan all existing refund message data. This is known
-        // technical debt — do not rename without a migration script.
-        message: { type: String, required: true },
-        attachments: [{
-          url: String,
+      ],
+      documents: [
+        {
+          type: {
+            type: String,
+            enum: ['receipt', 'photo', 'video', 'screenshot', 'other'],
+            required: true,
+          },
+          url: { type: String, required: true },
           filename: String,
-          fileType: String,
+          description: String,
+          uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+          uploadedAt: { type: Date, default: Date.now },
           fileSize: Number,
-          uploadedAt: { type: Date, default: Date.now }
-        }],
-        isRead: { type: Boolean, default: false },
-        readAt: Date,
-        createdAt: { type: Date, default: Date.now },
-        metadata: mongoose.Schema.Types.Mixed
-      }],
-      documents: [{
-        type: {
-          type: String,
-          enum: ['receipt', 'photo', 'video', 'screenshot', 'other'],
-          required: true
+          mimeType: String,
         },
-        url: { type: String, required: true },
-        filename: String,
-        description: String,
-        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-        uploadedAt: { type: Date, default: Date.now },
-        fileSize: Number,
-        mimeType: String
-      }],
-      timeline: [{
-        event: { type: String, required: true },
-        description: String,
-        performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-        timestamp: { type: Date, default: Date.now },
-        metadata: mongoose.Schema.Types.Mixed
-      }],
+      ],
+      timeline: [
+        {
+          event: { type: String, required: true },
+          description: String,
+          performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+          timestamp: { type: Date, default: Date.now },
+          metadata: mongoose.Schema.Types.Mixed,
+        },
+      ],
     },
 
     // ============================================
     // RETURN INFORMATION (RMA)
+    // FIX M-02: returnInfo now has a top-level default so order.returnInfo
+    // is never undefined on new documents. Previously the parent object had
+    // no default, meaning order.returnInfo was undefined (not { status:'none' })
+    // for any order that had never had a return — causing TypeErrors on any
+    // direct property access without optional chaining.
     // ============================================
     returnInfo: {
-      status: {
-        type: String,
-        enum: ['none', 'requested', 'approved', 'rejected', 'in_transit', 'received', 'inspected', 'completed', 'cancelled'],
-        default: 'none'
-      },
-      rmaNumber: String,
-      reason: String,
-      description: String,
-      itemsToReturn: [{
-        product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
-        quantity: Number,
-        condition: String,
-        reason: String
-      }],
-      returnLabel: {
-        url: String,
-        carrier: String,
-        trackingNumber: String
-      },
-      inspectionNotes: String,
-      inspectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      inspectedAt: Date,
-      restockFee: { type: Number, default: 0 },
-      requestedAt: Date,
-      requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      approvedAt: Date,
-      approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      receivedAt: Date,
-      completedAt: Date,
-      adminNote: String,
-      messages: [{
-        sender: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: 'User',
-          required: true
-        },
-        senderType: {
+      type: {
+        status: {
           type: String,
-          enum: ['customer', 'admin', 'system'],
-          required: true
+          enum: [
+            'none', 'requested', 'approved', 'rejected',
+            'in_transit', 'received', 'inspected', 'completed', 'cancelled',
+          ],
+          default: 'none',
         },
-        content: { type: String, required: true },
-        attachments: [{
+        rmaNumber: String,
+        reason: String,
+        description: String,
+        itemsToReturn: [
+          {
+            product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+            quantity: Number,
+            condition: String,
+            reason: String,
+          },
+        ],
+        returnLabel: {
           url: String,
-          filename: String,
-          fileType: String,
-          fileSize: Number,
-          uploadedAt: { type: Date, default: Date.now }
-        }],
-        isRead: { type: Boolean, default: false },
-        readAt: Date,
-        deliveredAt: Date,
-        createdAt: { type: Date, default: Date.now },
-        isEdited: Boolean,
-        editedAt: Date
-      }],
-      timeline: [{
-        event: { type: String, required: true },
-        description: String,
-        performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-        timestamp: { type: Date, default: Date.now },
-        metadata: mongoose.Schema.Types.Mixed
-      }],
-      documents: [{
-        type: {
-          type: String,
-          enum: ['photo', 'video', 'receipt', 'other'],
-          required: true
+          carrier: String,
+          trackingNumber: String,
         },
-        url: { type: String, required: true },
-        filename: String,
-        description: String,
-        uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-        uploadedAt: { type: Date, default: Date.now },
-        fileSize: Number,
-        mimeType: String
-      }]
+        inspectionNotes: String,
+        inspectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        inspectedAt: Date,
+        restockFee: { type: Number, default: 0 },
+        requestedAmount: Number,
+        requestedAt: Date,
+        requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        approvedAt: Date,
+        approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        receivedAt: Date,
+        completedAt: Date,
+        adminNote: String,
+        messages: [
+          {
+            sender: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: 'User',
+              required: true,
+            },
+            senderType: {
+              type: String,
+              enum: ['customer', 'admin', 'system'],
+              required: true,
+            },
+            content: { type: String, required: true },
+            attachments: [
+              {
+                url: String,
+                filename: String,
+                fileType: String,
+                fileSize: Number,
+                uploadedAt: { type: Date, default: Date.now },
+              },
+            ],
+            isRead: { type: Boolean, default: false },
+            readAt: Date,
+            deliveredAt: Date,
+            createdAt: { type: Date, default: Date.now },
+            isEdited: Boolean,
+            editedAt: Date,
+          },
+        ],
+        timeline: [
+          {
+            event: { type: String, required: true },
+            description: String,
+            performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+            timestamp: { type: Date, default: Date.now },
+            metadata: mongoose.Schema.Types.Mixed,
+          },
+        ],
+        documents: [
+          {
+            type: {
+              type: String,
+              enum: ['photo', 'video', 'receipt', 'other'],
+              required: true,
+            },
+            url: { type: String, required: true },
+            filename: String,
+            description: String,
+            uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+            uploadedAt: { type: Date, default: Date.now },
+            fileSize: Number,
+            mimeType: String,
+          },
+        ],
+      },
+      // FIX M-02: guarantees order.returnInfo is always { status: 'none' }
+      // on new documents, never undefined.
+      default: () => ({ status: 'none' }),
     },
 
     // ============================================
@@ -343,17 +380,19 @@ const orderSchema = new mongoose.Schema(
     orderStatus: {
       type: String,
       enum: ['Processing', 'Shipped', 'Delivered', 'Cancelled'],
-      default: 'Processing'
+      default: 'Processing',
     },
 
-    statusHistory: [{
-      status: String,
-      timestamp: { type: Date, default: Date.now },
-      updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-      note: String,
-      location: String,
-      metadata: mongoose.Schema.Types.Mixed
-    }],
+    statusHistory: [
+      {
+        status: String,
+        timestamp: { type: Date, default: Date.now },
+        updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+        note: String,
+        location: String,
+        metadata: mongoose.Schema.Types.Mixed,
+      },
+    ],
 
     deliveredAt: Date,
     cancelledAt: Date,
@@ -362,31 +401,35 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // SHIPMENT & TRACKING
     // ============================================
-    shipments: [{
-      shipmentId: String,
-      warehouse: { type: mongoose.Schema.Types.ObjectId, ref: 'Warehouse' },
-      items: [{
-        product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
-        quantity: Number,
-        name: String
-      }],
-      carrier: String,
-      trackingNumber: String,
-      status: {
-        type: String,
-        enum: ['Processing', 'Shipped', 'Delivered', 'Cancelled'],
-        default: 'Processing'
+    shipments: [
+      {
+        shipmentId: String,
+        warehouse: { type: mongoose.Schema.Types.ObjectId, ref: 'Warehouse' },
+        items: [
+          {
+            product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
+            quantity: Number,
+            name: String,
+          },
+        ],
+        carrier: String,
+        trackingNumber: String,
+        status: {
+          type: String,
+          enum: ['Processing', 'Shipped', 'Delivered', 'Cancelled'],
+          default: 'Processing',
+        },
+        shippedAt: Date,
+        deliveredAt: Date,
+        weight: Number,
+        dimensions: {
+          length: Number,
+          width: Number,
+          height: Number,
+          unit: { type: String, default: 'cm' },
+        },
       },
-      shippedAt: Date,
-      deliveredAt: Date,
-      weight: Number,
-      dimensions: {
-        length: Number,
-        width: Number,
-        height: Number,
-        unit: { type: String, default: 'cm' }
-      }
-    }],
+    ],
 
     tracking: {
       carrier: { type: String, enum: ['DHL', 'FedEx', 'UPS', 'USPS', 'Other'] },
@@ -394,13 +437,15 @@ const orderSchema = new mongoose.Schema(
       trackingUrl: String,
       estimatedDelivery: Date,
       currentLocation: String,
-      trackingHistory: [{
-        status: String,
-        location: String,
-        timestamp: Date,
-        description: String
-      }],
-      lastUpdated: Date
+      trackingHistory: [
+        {
+          status: String,
+          location: String,
+          timestamp: Date,
+          description: String,
+        },
+      ],
+      lastUpdated: Date,
     },
 
     // ============================================
@@ -413,38 +458,45 @@ const orderSchema = new mongoose.Schema(
       pdfData: String,
       generatedAt: Date,
       version: { type: Number, default: 1 },
-      history: [{
-        version: Number,
-        pdfData: String,
-        generatedAt: Date,
-        reason: String
-      }],
+      history: [
+        {
+          version: Number,
+          pdfData: String,
+          generatedAt: Date,
+          reason: String,
+        },
+      ],
       billingAddress: mongoose.Schema.Types.Mixed,
       companyInfo: {
         name: String,
         taxId: String,
-        registrationNumber: String
-      }
+        registrationNumber: String,
+      },
     },
 
     // ============================================
     // NOTES & COMMUNICATION
     // ============================================
-    notes: [{
-      content: { type: String, required: true },
-      type: { type: String, enum: ['internal', 'customer'], default: 'internal' },
-      author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-      createdAt: { type: Date, default: Date.now },
-      attachments: [String],
-      isEdited: Boolean,
-      editedAt: Date
-    }],
+    notes: [
+      {
+        content: { type: String, required: true },
+        type: { type: String, enum: ['internal', 'customer'], default: 'internal' },
+        author: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+        createdAt: { type: Date, default: Date.now },
+        attachments: [String],
+        isEdited: Boolean,
+        editedAt: Date,
+      },
+    ],
 
     // ============================================
     // ANALYTICS & ATTRIBUTION
     // ============================================
     analytics: {
-      source: { type: String, enum: ['organic', 'paid', 'referral', 'email', 'social', 'direct'] },
+      source: {
+        type: String,
+        enum: ['organic', 'paid', 'referral', 'email', 'social', 'direct'],
+      },
       medium: String,
       campaign: String,
       referrer: String,
@@ -453,14 +505,14 @@ const orderSchema = new mongoose.Schema(
       browser: String,
       customerSegment: String,
       isFirstPurchase: Boolean,
-      purchaseNumber: Number
+      purchaseNumber: Number,
     },
 
     fulfillmentSLA: {
       promisedDelivery: Date,
       actualDelivery: Date,
       slaBreached: Boolean,
-      delayInDays: Number
+      delayInDays: Number,
     },
 
     // ============================================
@@ -480,29 +532,35 @@ const orderSchema = new mongoose.Schema(
         addressMatch: Boolean,
         cvvMatch: Boolean,
         velocityCheck: Boolean,
-        geoCheck: Boolean
-      }
+        geoCheck: Boolean,
+      },
     },
 
-    auditLog: [{
-      action: { type: String, required: true },
-      performedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-      timestamp: { type: Date, default: Date.now },
-      ipAddress: String,
-      userAgent: String,
-      changes: {
-        field: String,
-        oldValue: mongoose.Schema.Types.Mixed,
-        newValue: mongoose.Schema.Types.Mixed
+    auditLog: [
+      {
+        action: { type: String, required: true },
+        performedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+          required: true,
+        },
+        timestamp: { type: Date, default: Date.now },
+        ipAddress: String,
+        userAgent: String,
+        changes: {
+          field: String,
+          oldValue: mongoose.Schema.Types.Mixed,
+          newValue: mongoose.Schema.Types.Mixed,
+        },
+        metadata: mongoose.Schema.Types.Mixed,
       },
-      metadata: mongoose.Schema.Types.Mixed
-    }]
+    ],
   },
   {
     timestamps: true,
     strict: true,
     toJSON: { virtuals: true },
-    toObject: { virtuals: true }
+    toObject: { virtuals: true },
   }
 );
 
@@ -510,48 +568,35 @@ const orderSchema = new mongoose.Schema(
 // INDEXES
 // ============================================
 
-// Human-readable order reference — sparse because legacy documents won't
-// have this field. The collation makes regex search case-insensitive at the
-// index level without needing the 'i' flag at query time.
 orderSchema.index(
   { orderNumber: 1 },
   { sparse: true, collation: { locale: 'en', strength: 2 } }
 );
 
-// Core pagination indexes
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
 orderSchema.index({ user: 1, createdAt: -1 });
-
-// Amount sort index
 orderSchema.index({ totalPrice: -1 });
 
-// Payment indexes
 orderSchema.index({ 'paymentInfo.status': 1 });
 orderSchema.index({ 'paymentInfo.method': 1 });
 orderSchema.index({ 'paymentInfo.paidAt': -1 });
 
-// Compound indexes covering status filter + requestedAt sort in one scan.
-// Also used by getAllRefunds date range queries.
 orderSchema.index({ 'refundInfo.status': 1, 'refundInfo.requestedAt': -1 });
 orderSchema.index({ 'returnInfo.status': 1, 'returnInfo.requestedAt': -1 });
 
-// Cancellation & fulfilment analytics
 orderSchema.index({ cancelledAt: -1 });
 orderSchema.index({ deliveredAt: -1 });
 
-// Fraud indexes
 orderSchema.index({ 'fraudCheck.riskLevel': 1 });
 orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
 
-// Analytics indexes
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
 
 // NOTE: MongoDB cannot use a compound multikey index when both fields come
-// from the same array. The indexes below are separate single-field indexes.
-// The $elemMatch queries use the isRead index for initial scan and apply
-// senderType as an in-memory filter.
+// from the same array. These are separate single-field indexes; senderType
+// is applied as an in-memory filter after the isRead index scan.
 orderSchema.index({ 'refundInfo.messages.isRead': 1 });
 orderSchema.index({ 'refundInfo.messages.senderType': 1 });
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
@@ -617,7 +662,6 @@ orderSchema.virtual('isFullyFulfilled').get(function () {
   );
 });
 
-// Granular unread virtuals — named from the reader's perspective.
 orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
   return (this.refundInfo?.messages ?? []).filter(
     (m) => !m.isRead && m.senderType === 'customer'
@@ -631,8 +675,7 @@ orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
 });
 
 // Alias — admin dashboard unread count (customer→admin direction).
-// NOTE: directionally asymmetric by design — counts only unread customer
-// messages. Do not rename without updating all callers.
+// Directionally asymmetric by design. Do not rename without updating callers.
 orderSchema.virtual('unreadRefundMessages').get(function () {
   return (this.refundInfo?.messages ?? []).filter(
     (m) => !m.isRead && m.senderType === 'customer'
@@ -694,29 +737,36 @@ orderSchema.set('strictQuery', true);
 // ============================================
 orderSchema.pre('save', function (next) {
   // Generate orderNumber once on first save from the tail of the ObjectId.
-  // _id is always assigned by Mongoose before pre('save') fires so this
-  // is always safe. slice(-8) uses the high-entropy counter/random portion
-  // of the ObjectId rather than the timestamp prefix.
+  // _id is always assigned before pre('save') fires so this is always safe.
   if (!this.orderNumber) {
     this.orderNumber = this._id.toString().slice(-8).toUpperCase();
   }
 
   // Generate invoice number when payment succeeds, if not already set.
   // NOTE: Date.now() + process.pid entropy can collide under concurrent saves
-  // at millisecond resolution across multiple instances. The unique index will
-  // catch it. For production at scale replace with an atomic counter or UUID.
+  // at millisecond resolution. The unique index will catch it. For production
+  // at scale replace with an atomic counter or UUID.
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
-    const year    = new Date().getFullYear();
-    const month   = String(new Date().getMonth() + 1).padStart(2, '0');
+    const now     = new Date();
+    const year    = now.getFullYear();
+    const month   = String(now.getMonth() + 1).padStart(2, '0');
     const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
     this.invoiceInfo               = this.invoiceInfo || {};
     this.invoiceInfo.invoiceNumber = `INV-${year}${month}-${entropy}`;
-    this.invoiceInfo.invoiceDate   = new Date();
+    this.invoiceInfo.invoiceDate   = now;
   }
 
+  // FIX M-01: this is now the ONLY place rmaNumber is generated.
+  // The controller (reviewReturnRequest) previously also generated it with a
+  // different format (`RMA-${Date.now()}`), creating two divergent formats.
+  // That assignment has been removed from the controller.
+  // Format: RMA-YYYYMM-<8 uppercase hex chars> — human-readable and consistent.
   if (this.returnInfo?.status === 'approved' && !this.returnInfo.rmaNumber) {
-    const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
-    this.returnInfo.rmaNumber = `RMA-${entropy}`;
+    const now     = new Date();
+    const year    = now.getFullYear();
+    const month   = String(now.getMonth() + 1).padStart(2, '0');
+    const entropy = crypto.randomBytes(4).toString('hex').toUpperCase();
+    this.returnInfo.rmaNumber = `RMA-${year}${month}-${entropy}`;
   }
 
   if (this.orderItems) {
@@ -792,16 +842,62 @@ orderSchema.statics.getOrdersWithUnreadMessages = async function () {
     .sort({ 'orderMessages.createdAt': -1 });
 };
 
+// FIX P-03: rewritten as an aggregation so full message arrays are never
+// loaded into memory. The previous .find() implementation hydrated every
+// message for every matching order — for a 500-message order that was
+// 500 objects loaded just to extract one count and one preview.
+// This aggregation computes the unread count and extracts the latest
+// message entirely within MongoDB, sending only what the controller needs.
 orderSchema.statics.getReturnsWithUnreadMessages = async function () {
-  return this.find({
-    'returnInfo.status': { $nin: ['none', 'completed', 'rejected'] },
-    'returnInfo.messages': {
-      $elemMatch: { isRead: false, senderType: 'customer' },
+  return this.aggregate([
+    {
+      $match: {
+        // FIX V-04 (model side): consistent with the middleware change —
+        // rejected and cancelled returns are excluded since messaging is
+        // closed on those statuses (canAddReturnMessage blocks them too).
+        'returnInfo.status':   { $nin: ['none', 'completed', 'rejected', 'cancelled'] },
+        'returnInfo.messages': { $elemMatch: { isRead: false, senderType: 'customer' } },
+      },
     },
-  })
-    .populate('user', 'firstName lastName email')
-    .populate('returnInfo.messages.sender', 'firstName lastName email')
-    .sort({ 'returnInfo.messages.createdAt': -1 });
+    {
+      $lookup: {
+        from:         'users',
+        localField:   'user',
+        foreignField: '_id',
+        pipeline:     [{ $project: { firstName: 1, lastName: 1, email: 1 } }],
+        as:           'user',
+      },
+    },
+    { $unwind: { path: '$user', preserveNullAndEmpty: true } },
+    {
+      $project: {
+        user:        1,
+        orderNumber: 1,
+        'returnInfo.status':    1,
+        'returnInfo.rmaNumber': 1,
+        'returnInfo.reason':    1,
+        // Compute unread count without loading the full messages array
+        unreadReturnMessages: {
+          $size: {
+            $filter: {
+              input: { $ifNull: ['$returnInfo.messages', []] },
+              as:    'm',
+              cond: {
+                $and: [
+                  { $eq: ['$$m.isRead',     false] },
+                  { $eq: ['$$m.senderType', 'customer'] },
+                ],
+              },
+            },
+          },
+        },
+        // Latest message preview only — never loads the full array
+        latestReturnMessage: { $arrayElemAt: ['$returnInfo.messages', -1] },
+      },
+    },
+    { $sort: { 'latestReturnMessage.createdAt': -1 } },
+    { $limit: 50 },
+  ]);
 };
 
 // ============================================
@@ -853,8 +949,9 @@ orderSchema.methods.addRefundMessage = function (sender, senderType, message, at
   if (!this.refundInfo) this.refundInfo = { status: 'none' };
   if (!this.refundInfo.messages) this.refundInfo.messages = [];
   this.refundInfo.messages.push({
-    sender, senderType,
-    message,   // stored field name is 'message' — see schema comment above
+    sender,
+    senderType,
+    message, // stored field name is 'message' — see schema comment above
     attachments,
     isRead: false,
     createdAt: new Date(),
@@ -862,8 +959,8 @@ orderSchema.methods.addRefundMessage = function (sender, senderType, message, at
   this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
 };
 
-// Parameter name is 'senderType' but semantics are: pass the READER's role.
-// Marks messages from the OTHER party as read.
+// Semantics: pass the READER's role.
+// Marks messages FROM the other party as read.
 // e.g. markRefundMessagesAsRead('admin') marks customer messages as read.
 orderSchema.methods.markRefundMessagesAsRead = function (senderType) {
   (this.refundInfo?.messages ?? []).forEach((msg) => {
@@ -910,6 +1007,9 @@ orderSchema.methods.markReturnMessagesDelivered = function (senderType) {
   });
 };
 
+// Semantics: pass the READER's role (same convention as markRefundMessagesAsRead).
+// Marks messages FROM the other party as read.
+// e.g. markReturnMessagesAsRead('admin') marks customer messages as read.
 orderSchema.methods.markReturnMessagesAsRead = function (senderType) {
   (this.returnInfo?.messages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.isRead) {
