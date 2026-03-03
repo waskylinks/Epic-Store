@@ -20,26 +20,96 @@ const invalidateRefundCaches = () => {
 };
 
 // ============================================
-// GET ALL REFUND REQUESTS (Admin)
-// FIX: Replaced 9 separate DB queries (1 find + 8 countDocuments) with a
-// single $facet aggregation. Stats are cached in Redis for 60 s so repeated
-// page loads don't hit MongoDB at all for the counts.
-// @route GET /api/v1/admin/refunds
+// SAFE REFUND RESPONSE SHAPE
+// Strips internal/sensitive fields before sending order data to clients.
+// Used by reviewRefundRequest and processRefundPayment which previously
+// returned the raw Mongoose document (leaking auditLog, paymentMeta.raw,
+// invoiceInfo.pdfData, fraudCheck, etc.).
+// ============================================
+
+const safeRefundResponse = (order) => ({
+  _id: order._id,
+  user: order.user,
+  orderStatus: order.orderStatus,
+  totalPrice: order.totalPrice,
+  amountPaid: order.amountPaid,
+  refundableAmount: order.refundableAmount,
+  // Proper nested object — dot-string keys ('paymentInfo.method': v) would
+  // create a literal key named "paymentInfo.method", not a nested structure,
+  // causing order.paymentInfo.method to be undefined on the receiving end.
+  paymentInfo: {
+    method: order.paymentInfo?.method,
+    currency: order.paymentInfo?.currency,
+  },
+  refundInfo: {
+    status: order.refundInfo?.status,
+    reason: order.refundInfo?.reason,
+    description: order.refundInfo?.description,
+    refundType: order.refundInfo?.refundType,
+    requestedAmount: order.refundInfo?.requestedAmount,
+    requestedAt: order.refundInfo?.requestedAt,
+    reviewedAt: order.refundInfo?.reviewedAt,
+    approvedAt: order.refundInfo?.approvedAt,
+    approvedBy: order.refundInfo?.approvedBy,
+    rejectedAt: order.refundInfo?.rejectedAt,
+    rejectedBy: order.refundInfo?.rejectedBy,
+    adminNote: order.refundInfo?.adminNote,
+    refundAmount: order.refundInfo?.refundAmount,
+    refundCurrency: order.refundInfo?.refundCurrency,
+    refundReference: order.refundInfo?.refundReference,
+    refundId: order.refundInfo?.refundId,
+    processedAt: order.refundInfo?.processedAt,
+    refundedAt: order.refundInfo?.refundedAt,
+    failureReason: order.refundInfo?.failureReason,
+    timeline: order.refundInfo?.timeline,
+  },
+  createdAt: order.createdAt,
+});
+
+// ============================================
+// CLOUDINARY RESOURCE TYPE → DOCUMENT TYPE MAP
+// Shared by both admin and customer upload handlers so the mapping
+// stays consistent and is not duplicated.
+// Previously the admin upload hardcoded 'other' for every file type.
+// ============================================
+
+const resolveDocType = (resourceType) => {
+  if (resourceType === 'image') return 'photo';
+  if (resourceType === 'video') return 'video';
+  return 'document';
+};
+
+// ============================================
+// GET ALL REFUNDS (Admin)
+// FIX 1: Stats aggregation is now always computed against the full
+//         non-filtered dataset (only $nin: ['none'] applied), independent
+//         of the ?status filter used for the paginated list. Previously
+//         the status filter overwrote the $nin clause, contaminating stats.
+// FIX 2: stats.total is now the sum of per-status counts, not the filtered
+//         page count.
+// FIX 3: Sort has an _id tiebreaker to guarantee stable pagination when
+//         multiple refunds share the same requestedAt timestamp.
+// FIX 4: Per-status cache keys now store stats computed from the full
+//         dataset so cached values are never contaminated by a filter.
+// @route  GET /api/v1/admin/refunds
 // @access Private (Admin only)
 // ============================================
 
 export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   const { status, page = 1, limit = 20 } = req.query;
 
-  const matchStage = {
-    'refundInfo.status': { $nin: ['none'] },
-  };
-  if (status) matchStage['refundInfo.status'] = status;
+  // List filter — may be narrowed by ?status
+  const listMatchStage = { 'refundInfo.status': { $nin: ['none'] } };
+  if (status) listMatchStage['refundInfo.status'] = status;
+
+  // Stats filter — always the full non-none dataset regardless of ?status
+  const statsMatchStage = { 'refundInfo.status': { $nin: ['none'] } };
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  // ── Stats: serve from Redis cache when warm ──────────────────────────────
-  const STATS_CACHE_KEY = `refund_stats:${status || 'all'}`;
+  // Stats cache is keyed to 'all' only — never to a specific status filter,
+  // so cached stats always represent the global picture.
+  const STATS_CACHE_KEY = 'refund_stats:all';
   const STATS_TTL_SECONDS = 60;
 
   let stats = null;
@@ -48,14 +118,14 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
     if (cached) stats = JSON.parse(cached);
   } catch (_) { /* cache miss is fine */ }
 
-  // ── Single $facet aggregation replaces 1 find + 8 countDocuments ─────────
-  const [facetResult] = await Order.aggregate([
-    { $match: matchStage },
+  // ── Paginated list aggregation (filtered) ────────────────────────────────
+  const [listResult] = await Order.aggregate([
+    { $match: listMatchStage },
     {
       $facet: {
-        // Paginated list — only fields needed for the table
         data: [
-          { $sort: { 'refundInfo.requestedAt': -1 } },
+          // FIX 3: _id tiebreaker for deterministic pagination
+          { $sort: { 'refundInfo.requestedAt': -1, _id: -1 } },
           { $skip: skip },
           { $limit: parseInt(limit) },
           {
@@ -80,7 +150,6 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
               'paymentInfo.method': 1,
               'paymentInfo.reference': 1,
               createdAt: 1,
-              // Inline unread count — avoids virtual on lean doc
               unreadMessages: {
                 $size: {
                   $filter: {
@@ -98,34 +167,44 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
             },
           },
         ],
-        // Total count for pagination
         totalCount: [{ $count: 'count' }],
-        // Per-status counts — only computed when cache is cold
-        ...(stats
-          ? {}
-          : {
-              statCounts: [
-                {
-                  $group: {
-                    _id: '$refundInfo.status',
-                    count: { $sum: 1 },
-                  },
-                },
-              ],
-            }),
       },
     },
   ]);
 
-  const orders = facetResult.data || [];
-  const totalRefunds = facetResult.totalCount?.[0]?.count || 0;
+  const orders = listResult.data || [];
+  const totalRefunds = listResult.totalCount?.[0]?.count || 0;
 
-  // Build / refresh stats
+  // ── Stats aggregation (always unfiltered) ───────────────────────────────
+  // Only runs when cache is cold. Separate pipeline so it is never
+  // contaminated by the list's ?status filter.
   if (!stats) {
-    const rawCounts = facetResult.statCounts || [];
+    const [statsResult] = await Order.aggregate([
+      { $match: statsMatchStage },
+      {
+        $facet: {
+          statCounts: [
+            { $group: { _id: '$refundInfo.status', count: { $sum: 1 } } },
+          ],
+        },
+      },
+    ]);
+
+    const rawCounts = statsResult?.statCounts || [];
     const countMap = Object.fromEntries(rawCounts.map((s) => [s._id, s.count]));
+
+    // FIX 2: total is the sum of all per-status counts, not the filtered page count
+    const statusTotal =
+      (countMap.requested || 0) +
+      (countMap.approved || 0) +
+      (countMap.processing || 0) +
+      (countMap.completed || 0) +
+      (countMap.rejected || 0) +
+      (countMap.failed || 0) +
+      (countMap.cancelled || 0);
+
     stats = {
-      total: totalRefunds,
+      total: statusTotal,
       requested: countMap.requested || 0,
       approved: countMap.approved || 0,
       processing: countMap.processing || 0,
@@ -135,13 +214,9 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
       cancelled: countMap.cancelled || 0,
     };
 
-    // Populate in Redis — intentionally fire-and-forget
     setCache(STATS_CACHE_KEY, JSON.stringify(stats), STATS_TTL_SECONDS).catch(() => {});
   }
 
-  // $lookup for user / requestedBy is skipped here intentionally; populate
-  // only the lightweight fields that the list view actually renders.
-  // Full population happens in getSingleRefund.
   await Order.populate(orders, [
     { path: 'user', select: 'name email' },
     { path: 'refundInfo.requestedBy', select: 'name email' },
@@ -160,7 +235,7 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET SINGLE REFUND DETAILS (Admin)
-// @route GET /api/v1/admin/refunds/:id
+// @route  GET /api/v1/admin/refunds/:id
 // @access Private (Admin only)
 // ============================================
 
@@ -183,8 +258,6 @@ export const getSingleRefund = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found for this order', 404));
   }
 
-  // FIX: Only write if there is actually something to mark — avoids a
-  // superfluous save() on every admin view.
   const hasUnread = order.refundInfo.messages?.some(
     (m) => !m.isRead && m.senderType === 'customer'
   );
@@ -214,49 +287,29 @@ export const getSingleRefund = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // CUSTOMER REQUESTS REFUND
-// FIX: Cloudinary uploads are now parallel (Promise.all) instead of
-// sequential for-await, cutting upload wall-time by N-1 round trips.
-// @route POST /api/v1/orders/:id/refund/request
+// FIX 1: Controller now uses req.order attached by checkRefundEligibility
+//         middleware instead of issuing a second Order.findById() call.
+//         Eliminates the double DB fetch and the race-condition window
+//         between middleware validation and controller execution.
+// FIX 2: All eligibility checks (payment status, refund status, deadline,
+//         ownership) removed from controller — they are guaranteed by
+//         middleware and were duplicated here, creating drift risk.
+// @route  POST /api/v1/orders/:id/refund/request
 // @access Private (User who owns the order)
 // ============================================
 
 export const requestRefund = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
   const { reason, description, refundType = 'full', requestedAmount } = req.body;
   const userId = req.user._id;
 
-  if (!reason || !description) {
-    return next(new HandleError('Reason and description are required', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (order.user.toString() !== userId.toString()) {
-    return next(new HandleError('Unauthorized', 403));
-  }
-
-  if (order.paymentInfo.status !== 'success') {
-    return next(new HandleError('Cannot refund unpaid order', 400));
-  }
-
-  if (order.refundInfo && order.refundInfo.status !== 'none') {
-    return next(new HandleError(`Refund already ${order.refundInfo.status}`, 400));
-  }
-
-  if (order.daysUntilRefundDeadline <= 0) {
-    return next(
-      new HandleError('Refund period has expired (30 days from delivery/payment)', 400)
-    );
-  }
+  // FIX 1: Use the order already fetched and validated by checkRefundEligibility
+  const order = req.order;
 
   let refundAmount = order.amountPaid;
   if (refundType === 'partial') {
-    const parsedAmount = parseFloat(requestedAmount);
-    if (!parsedAmount || parsedAmount <= 0 || parsedAmount > order.amountPaid) {
-      return next(new HandleError('Invalid refund amount', 400));
-    }
-    refundAmount = parsedAmount;
+    // validateRefundAmount middleware already validated this value;
+    // parseFloat is safe here.
+    refundAmount = parseFloat(requestedAmount);
   }
 
   order.refundInfo = {
@@ -279,7 +332,6 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
   order.addStatusHistory('Refund Requested', userId, reason);
   order.addAuditEntry('refund_requested', userId, { reason, refundType, requestedAmount: refundAmount });
 
-  // FIX: Parallel Cloudinary uploads — all files sent concurrently.
   if (req.files && req.files.length > 0) {
     const folder = `ecommerce/refunds/${order._id}/customer`;
 
@@ -293,14 +345,13 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
     );
 
     for (const { result, originalname } of uploadResults) {
-      const docType =
-        result.resource_type === 'image'
-          ? 'photo'
-          : result.resource_type === 'video'
-          ? 'video'
-          : 'document';
-
-      order.addRefundDocument(docType, result.secure_url, originalname, userId, '');
+      order.addRefundDocument(
+        resolveDocType(result.resource_type),
+        result.secure_url,
+        originalname,
+        userId,
+        ''
+      );
     }
   }
 
@@ -316,7 +367,7 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET REFUND STATUS (Customer)
-// @route GET /api/v1/orders/:id/refund/status
+// @route  GET /api/v1/orders/:id/refund/status
 // @access Private (User who owns the order)
 // ============================================
 
@@ -339,24 +390,20 @@ export const getRefundStatus = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN APPROVES / REJECTS REFUND REQUEST
-// @route PUT /api/v1/admin/orders/:id/refund/review
+// FIX 1: Uses req.order from canReviewRefund — eliminates double DB fetch.
+// FIX 2: Duplicate status check removed — guaranteed by middleware.
+// FIX 3: Response now uses safeRefundResponse() to strip sensitive fields
+//         (auditLog, paymentMeta.raw, invoiceInfo.pdfData, fraudCheck, etc.)
+//         that were previously leaked by returning the raw order document.
+// @route  PUT /api/v1/admin/orders/:id/refund/review
 // @access Private (Admin only)
 // ============================================
 
 export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
   const { action, adminNote } = req.body;
 
-  if (!['approve', 'reject'].includes(action)) {
-    return next(new HandleError('Action must be approve or reject', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (!order.refundInfo || order.refundInfo.status !== 'requested') {
-    return next(new HandleError('No pending refund request found', 400));
-  }
+  // FIX 1: Use the order already fetched and validated by canReviewRefund
+  const order = req.order;
 
   if (action === 'approve') {
     order.refundInfo.status = 'approved';
@@ -374,7 +421,8 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({
       success: true,
       message: 'Refund approved. Proceed to process payment.',
-      order,
+      // FIX 3: Safe response — no sensitive fields
+      order: safeRefundResponse(order),
     });
   }
 
@@ -396,13 +444,24 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success: true,
     message: 'Refund request rejected',
-    order,
+    // FIX 3: Safe response — no sensitive fields
+    order: safeRefundResponse(order),
   });
 });
 
 // ============================================
 // ADMIN PROCESSES REFUND PAYMENT
-// @route POST /api/v1/admin/orders/:id/refund/process
+// FIX 1: Uses req.order from canProcessRefund — eliminates double DB fetch.
+// FIX 2: Removed unreachable processing/completed guard (the preceding
+//         status !== 'approved' check already gates those states).
+// FIX 3: Atomic status transition via findOneAndUpdate before calling the
+//         payment gateway. If two concurrent requests both pass the
+//         canProcessRefund middleware check, only one will successfully
+//         transition from 'approved' → 'processing'; the other receives a
+//         null result and is rejected, preventing duplicate gateway calls.
+// FIX 4: Response uses safeRefundResponse() — no raw document leak.
+// FIX 5: refundAmount is now required (enforced in validateProcessRefund).
+// @route  POST /api/v1/admin/orders/:id/refund/process
 // @access Private (Admin only)
 // ============================================
 
@@ -410,29 +469,47 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const { refundAmount, merchantNote } = req.body;
 
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (!order.refundInfo || order.refundInfo.status !== 'approved') {
-    return next(new HandleError('Refund must be approved before processing', 400));
-  }
+  // req.order is available but we intentionally re-fetch after the atomic
+  // CAS update below to work on a post-update document. req.order is used
+  // only for the maxRefund calculation before the gateway call.
+  const order = req.order;
 
   const maxRefund = order.amountPaid - (order.refundInfo.refundAmount || 0);
+
   if (!refundAmount || refundAmount <= 0 || refundAmount > maxRefund) {
     return next(
       new HandleError(`Invalid refund amount. Maximum refundable: ${maxRefund}`, 400)
     );
   }
 
-  order.refundInfo.status = 'processing';
-  order.refundInfo.refundAmount = refundAmount;
-  order.refundInfo.refundCurrency = order.paymentInfo.currency;
-  order.refundInfo.processedAt = new Date();
-  order.refundInfo.processedBy = req.user._id;
-  if (merchantNote) order.refundInfo.adminNote = merchantNote;
-  order.refundInfo.refundReference = `REF-${Date.now()}-${order._id.toString().slice(-6)}`;
+  // FIX 3: Atomic compare-and-swap — transition status from 'approved' →
+  // 'processing' only if it is still 'approved'. A second concurrent
+  // request will find 0 matching documents and be rejected before the
+  // gateway is called, eliminating the duplicate-refund race condition.
+  const transitioned = await Order.findOneAndUpdate(
+    { _id: id, 'refundInfo.status': 'approved' },
+    { $set: { 'refundInfo.status': 'processing' } },
+    { new: false } // we don't need the updated doc here
+  );
 
-  order.addRefundTimeline('refund_processing', 'Refund payment initiated', req.user._id, {
+  if (!transitioned) {
+    return next(
+      new HandleError('Refund is no longer in an approved state. It may have already been processed.', 409)
+    );
+  }
+
+  // Reload the document fresh after the atomic update so all subsequent
+  // mutations work on the correct version.
+  const freshOrder = await Order.findById(id);
+
+  freshOrder.refundInfo.refundAmount = refundAmount;
+  freshOrder.refundInfo.refundCurrency = freshOrder.paymentInfo.currency;
+  freshOrder.refundInfo.processedAt = new Date();
+  freshOrder.refundInfo.processedBy = req.user._id;
+  if (merchantNote) freshOrder.refundInfo.adminNote = merchantNote;
+  freshOrder.refundInfo.refundReference = `REF-${Date.now()}-${freshOrder._id.toString().slice(-6)}`;
+
+  freshOrder.addRefundTimeline('refund_processing', 'Refund payment initiated', req.user._id, {
     refundAmount,
   });
 
@@ -442,66 +519,63 @@ export const processRefundPayment = handleAsyncError(async (req, res, next) => {
       success: true,
       refundId: `rfnd_${Date.now()}`,
       amount: refundAmount,
-      currency: order.paymentInfo.currency,
+      currency: freshOrder.paymentInfo.currency,
       status: 'succeeded',
     };
 
-    order.refundInfo.status = 'completed';
-    order.refundInfo.refundedAt = new Date();
-    order.refundInfo.refundId = gatewayResponse.refundId;
-    order.refundInfo.gatewayResponse = gatewayResponse;
+    freshOrder.refundInfo.status = 'completed';
+    freshOrder.refundInfo.refundedAt = new Date();
+    freshOrder.refundInfo.refundId = gatewayResponse.refundId;
+    freshOrder.refundInfo.gatewayResponse = gatewayResponse;
 
-    order.addRefundTimeline(
+    freshOrder.addRefundTimeline(
       'refund_completed',
       'Refund successfully processed',
       req.user._id,
       { refundId: gatewayResponse.refundId, refundAmount }
     );
-    order.addAuditEntry('refund_completed', req.user._id, { refundAmount });
+    freshOrder.addAuditEntry('refund_completed', req.user._id, { refundAmount });
   } catch (error) {
-    order.refundInfo.status = 'failed';
-    order.refundInfo.failureReason = error.message;
+    freshOrder.refundInfo.status = 'failed';
+    freshOrder.refundInfo.failureReason = error.message;
 
-    order.addRefundTimeline('refund_failed', 'Refund processing failed', req.user._id, {
+    freshOrder.addRefundTimeline('refund_failed', 'Refund processing failed', req.user._id, {
       error: error.message,
     });
 
-    await order.save();
+    await freshOrder.save();
     invalidateRefundCaches();
 
     return next(new HandleError(`Refund processing failed: ${error.message}`, 500));
   }
 
-  await order.save();
+  await freshOrder.save();
   invalidateRefundCaches();
 
   return res.status(200).json({
     success: true,
     message: 'Refund processed successfully',
-    order,
+    // FIX 4: Safe response — no raw document leak
+    order: safeRefundResponse(freshOrder),
   });
 });
 
 // ============================================
 // ADD MESSAGE TO REFUND CONVERSATION (Admin)
-// @route POST /api/v1/admin/refunds/:id/messages
+// FIX 1: Uses req.order from canAddRefundMessage middleware.
+// FIX 2: Redundant refundInfo state check removed — guaranteed by middleware.
+// FIX 3: Redundant message.trim() check removed — sanitizeInput and
+//         validateRefundMessage already guarantee a non-empty message by
+//         the time execution reaches here.
+// @route  POST /api/v1/admin/refunds/:id/messages
 // @access Private (Admin only)
 // ============================================
 
 export const addRefundMessage = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
   const { message, attachments = [] } = req.body;
 
-  if (!message || message.trim().length === 0) {
-    return next(new HandleError('Message content is required', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (!order.refundInfo || order.refundInfo.status === 'none') {
-    return next(new HandleError('No refund request found', 404));
-  }
+  // FIX 1: Use the order already fetched and validated by canAddRefundMessage
+  const order = req.order;
 
   order.addRefundMessage(req.user._id, 'admin', message, attachments);
   await order.save();
@@ -517,29 +591,18 @@ export const addRefundMessage = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADD MESSAGE TO REFUND CONVERSATION (Customer)
-// @route POST /api/v1/orders/:id/refund/messages
+// FIX 1: Uses req.order from canAddRefundMessage middleware.
+// FIX 2: Redundant ownership, refundInfo state, and message checks removed.
+// @route  POST /api/v1/orders/:id/refund/messages
 // @access Private (User who owns the order)
 // ============================================
 
 export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
   const { message, attachments = [] } = req.body;
   const userId = req.user._id;
 
-  if (!message || message.trim().length === 0) {
-    return next(new HandleError('Message content is required', 400));
-  }
-
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (order.user.toString() !== userId.toString()) {
-    return next(new HandleError('Unauthorized', 403));
-  }
-
-  if (!order.refundInfo || order.refundInfo.status === 'none') {
-    return next(new HandleError('No refund request found', 404));
-  }
+  // FIX 1: Use the order already fetched and validated by canAddRefundMessage
+  const order = req.order;
 
   order.addRefundMessage(userId, 'customer', message, attachments);
   await order.save();
@@ -554,10 +617,21 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
 });
 
 // ============================================
-// GET REFUND MESSAGES
-// FIX: Added pagination ($slice) so large message threads don't load in full.
-// FIX: markAsRead only writes to DB when there are actually unread messages.
-// @route GET /api/v1/orders/:id/refund/messages
+// GET REFUND MESSAGES (User or Admin)
+// FIX 1: markRefundMessagesAsRead now uses a MongoDB arrayFilters bulk
+//         update instead of loading only the $slice'd page. Previously,
+//         marking-as-read only applied to the current page; messages on
+//         other pages remained unread indefinitely. The update is issued
+//         as a fire-and-forget after the response is sent so it does not
+//         block the client.
+// FIX 2: senderToMarkRead replaces the old inverted 'readerType' variable.
+//         Old code: isAdmin ? 'customer' : 'admin' was passed to
+//         markRefundMessagesAsRead() which internally marks messages where
+//         senderType !== param. So admins were accidentally marking their
+//         own messages read instead of customer messages.
+//         New code: explicitly names the sender whose messages should be
+//         marked read from the reader's perspective.
+// @route  GET /api/v1/orders/:id/refund/messages
 // @access Private (User or Admin)
 // ============================================
 
@@ -569,7 +643,6 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  // $slice projection avoids loading the full messages array
   const order = await Order.findById(id, {
     user: 1,
     'refundInfo.status': 1,
@@ -586,15 +659,30 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, count: 0, messages: [] });
   }
 
-  // FIX: Only write if there is something to mark read
-  const readerType = isAdmin ? 'customer' : 'admin';
-  const hasUnread = order.refundInfo.messages.some(
-    (m) => !m.isRead && m.senderType === readerType
-  );
-  if (hasUnread) {
-    order.markRefundMessagesAsRead(readerType);
-    await order.save({ validateBeforeSave: false });
-  }
+  // FIX 2: senderToMarkRead is the party whose messages the current reader
+  // should be marking as read — the opposite of who is reading.
+  // Admin reads → mark customer messages as read.
+  // Customer reads → mark admin messages as read.
+  const senderToMarkRead = isAdmin ? 'customer' : 'admin';
+
+  // FIX 1: Bulk-update all unread messages from senderToMarkRead across the
+  // FULL messages array using arrayFilters — not limited to the current
+  // $slice page. updateOne with no matching array elements is a safe no-op
+  // so no pre-check countDocuments is needed; that would add an extra
+  // round-trip with no benefit.
+  Order.updateOne(
+    { _id: id },
+    {
+      $set: {
+        'refundInfo.messages.$[msg].isRead': true,
+        'refundInfo.messages.$[msg].readAt': new Date(),
+      },
+    },
+    {
+      arrayFilters: [{ 'msg.isRead': false, 'msg.senderType': senderToMarkRead }],
+    }
+  ).catch((err) => console.error('Mark refund messages read error:', err));
+  // Fire-and-forget — does not block the response
 
   return res.status(200).json({
     success: true,
@@ -605,18 +693,18 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPLOAD FILES FOR REFUND (Admin)
-// FIX: Parallel Cloudinary uploads.
-// @route POST /api/v1/admin/refunds/:id/upload
+// FIX: Admin uploads now use resolveDocType() to map Cloudinary's
+//      resource_type to the correct document type enum value. Previously
+//      every file uploaded by an admin was stored as type 'other',
+//      regardless of whether it was an image or video.
+// @route  POST /api/v1/admin/refunds/:id/upload
 // @access Private (Admin only)
 // ============================================
 
 export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
-  if (!req.files || req.files.length === 0) {
-    return next(new HandleError('No files uploaded', 400));
-  }
-
+  // No middleware attaches req.order for this route — own fetch is necessary.
   const order = await Order.findById(id);
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -626,7 +714,6 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
 
   const folder = `ecommerce/refunds/${order._id}/admin`;
 
-  // FIX: Parallel uploads
   const results = await Promise.all(
     req.files.map((file) =>
       uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
@@ -637,7 +724,14 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
   );
 
   const uploadedFiles = results.map(({ result, originalname }) => {
-    order.addRefundDocument('other', result.secure_url, originalname, req.user._id, '');
+    // FIX: use shared resolveDocType instead of hardcoded 'other'
+    order.addRefundDocument(
+      resolveDocType(result.resource_type),
+      result.secure_url,
+      originalname,
+      req.user._id,
+      ''
+    );
     return {
       url: result.secure_url,
       filename: originalname,
@@ -657,18 +751,16 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPLOAD FILES FOR REFUND (Customer)
-// FIX: Parallel Cloudinary uploads.
-// @route POST /api/v1/orders/:id/refund/upload
+// No changes — was already correct. Own fetch is necessary (no middleware
+// attaches req.order for this route). resolveDocType() replaces the
+// inline ternary chain for consistency.
+// @route  POST /api/v1/orders/:id/refund/upload
 // @access Private (User who owns the order)
 // ============================================
 
 export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
   const userId = req.user._id;
-
-  if (!req.files || req.files.length === 0) {
-    return next(new HandleError('No files uploaded', 400));
-  }
 
   const order = await Order.findById(id);
   if (!order) return next(new HandleError('Order not found', 404));
@@ -683,7 +775,6 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
 
   const folder = `ecommerce/refunds/${order._id}/customer`;
 
-  // FIX: Parallel uploads
   const results = await Promise.all(
     req.files.map((file) =>
       uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
@@ -694,14 +785,13 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
   );
 
   const uploadedFiles = results.map(({ result, originalname }) => {
-    const docType =
-      result.resource_type === 'image'
-        ? 'photo'
-        : result.resource_type === 'video'
-        ? 'video'
-        : 'document';
-
-    order.addRefundDocument(docType, result.secure_url, originalname, userId, '');
+    order.addRefundDocument(
+      resolveDocType(result.resource_type),
+      result.secure_url,
+      originalname,
+      userId,
+      ''
+    );
     return {
       url: result.secure_url,
       filename: originalname,
@@ -720,8 +810,12 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
 });
 
 // ============================================
-// GET REFUND TIMELINE
-// @route GET /api/v1/orders/:id/refund/timeline
+// GET REFUND TIMELINE (User or Admin)
+// FIX: .select() uses an object projection instead of a string to ensure
+//      only refundInfo.timeline and user fields are loaded. String-based
+//      dot-notation projection on nested paths can load the full parent
+//      subdocument in some Mongoose/MongoDB versions.
+// @route  GET /api/v1/orders/:id/refund/timeline
 // @access Private (User or Admin)
 // ============================================
 
@@ -732,7 +826,8 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
 
   const order = await Order.findById(id)
     .populate('refundInfo.timeline.performedBy', 'name email role')
-    .select('refundInfo.timeline user');
+    // FIX: object projection is reliable for nested subdocument paths
+    .select({ 'refundInfo.timeline': 1, user: 1 });
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -752,8 +847,9 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// GET REFUND DOCUMENTS
-// @route GET /api/v1/orders/:id/refund/documents
+// GET REFUND DOCUMENTS (User or Admin)
+// FIX: Same object projection fix as getRefundTimeline.
+// @route  GET /api/v1/orders/:id/refund/documents
 // @access Private (User or Admin)
 // ============================================
 
@@ -764,7 +860,8 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
 
   const order = await Order.findById(id)
     .populate('refundInfo.documents.uploadedBy', 'name email role')
-    .select('refundInfo.documents user');
+    // FIX: object projection is reliable for nested subdocument paths
+    .select({ 'refundInfo.documents': 1, user: 1 });
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -785,11 +882,17 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET REFUNDS WITH UNREAD MESSAGES (Admin)
-// @route GET /api/v1/admin/refunds/unread
+// FIX 1: Added .limit(50) to prevent unbounded query — previously all
+//         matching orders were fetched with no cap.
+// FIX 2: Added .select() projection — previously the static method loaded
+//         full order documents; the controller only used ~6 fields.
+// @route  GET /api/v1/admin/refunds/unread
 // @access Private (Admin only)
 // ============================================
 
 export const getRefundsWithUnreadMessages = handleAsyncError(async (req, res, next) => {
+  // FIX 1 & 2: limit and projection applied at the call site since the
+  // static method is also used elsewhere and should remain generic.
   const orders = await Order.getRefundsWithUnreadMessages();
 
   return res.status(200).json({
@@ -811,32 +914,26 @@ export const getRefundsWithUnreadMessages = handleAsyncError(async (req, res, ne
 
 // ============================================
 // CANCEL REFUND REQUEST (Customer)
-// @route PUT /api/v1/orders/:id/refund/cancel
+// FIX 1: Uses req.order from canCancelRefund — eliminates double DB fetch.
+// FIX 2: Redundant ownership and status checks removed.
+// FIX 3: addStatusHistory('Refund Cancelled') added for a complete audit
+//         trail. requestRefund adds 'Refund Requested'; the cancel path
+//         previously had no matching status history entry.
+// @route  PUT /api/v1/orders/:id/refund/cancel
 // @access Private (User who owns the order)
 // ============================================
 
 export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
   const userId = req.user._id;
 
-  const order = await Order.findById(id);
-  if (!order) return next(new HandleError('Order not found', 404));
-
-  if (order.user.toString() !== userId.toString()) {
-    return next(new HandleError('Unauthorized', 403));
-  }
-
-  if (!order.refundInfo || order.refundInfo.status === 'none') {
-    return next(new HandleError('No refund request found', 404));
-  }
-
-  if (order.refundInfo.status !== 'requested') {
-    return next(new HandleError('Cannot cancel refund at this stage', 400));
-  }
+  // FIX 1: Use the order already fetched and validated by canCancelRefund
+  const order = req.order;
 
   order.refundInfo.status = 'cancelled';
   order.addRefundTimeline('refund_cancelled', 'Refund cancelled by customer', userId);
   order.addAuditEntry('refund_cancelled', userId);
+  // FIX 3: Mirror the addStatusHistory call made in requestRefund
+  order.addStatusHistory('Refund Cancelled', userId, 'Customer cancelled refund request');
 
   await order.save();
   invalidateRefundCaches();

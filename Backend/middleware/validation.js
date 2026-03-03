@@ -336,16 +336,24 @@ export const validateRefundReview = (req, res, next) => {
 };
 
 /**
- * Validate process refund payment
+ * Validate process refund payment.
+ *
+ * FIX: refundAmount is now required. Previously it was validated only
+ * "if present" (optional), meaning a request without refundAmount would
+ * reach the controller and produce a misleading "Invalid refund amount.
+ * Maximum refundable: X" error instead of a clear "refundAmount is required"
+ * message. The controller's own guard (!refundAmount) caught the case but
+ * error messaging was wrong and validation responsibility belonged here.
  */
 export const validateProcessRefund = (req, res, next) => {
     const { refundAmount, merchantNote } = req.body;
     const errors = [];
 
-    if (refundAmount !== undefined) {
-        if (isNaN(refundAmount) || refundAmount <= 0) {
-            errors.push('Refund amount must be a positive number');
-        }
+    // FIX: refundAmount is required, not optional
+    if (refundAmount === undefined || refundAmount === null || refundAmount === '') {
+        errors.push('Refund amount is required');
+    } else if (isNaN(refundAmount) || Number(refundAmount) <= 0) {
+        errors.push('Refund amount must be a positive number');
     }
 
     if (merchantNote && merchantNote.length > 1000) {
@@ -505,7 +513,10 @@ export const validateFraudReview = (req, res, next) => {
 // ============================================
 
 /**
- * Safe input sanitization
+ * Safe input sanitization — trims top-level string fields.
+ * Note: nested object fields (e.g. items[0].reason in return requests)
+ * are not trimmed here; validators for those routes handle their own
+ * nested sanitization where needed.
  */
 export const sanitizeInput = (req, res, next) => {
     if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {

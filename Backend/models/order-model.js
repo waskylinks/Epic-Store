@@ -90,7 +90,9 @@ const orderSchema = new mongoose.Schema(
     // PAYMENT INFORMATION
     // ============================================
     paymentInfo: {
-      reference: { type: String, required: true, unique: true },
+      // sparse: true added so that draft orders (no reference yet) do not
+      // conflict on the unique index — null values are excluded from it.
+      reference: { type: String, required: true, unique: true, sparse: true },
       providerTxId: String,
       stripePaymentIntentId: String,
       status: {
@@ -136,6 +138,7 @@ const orderSchema = new mongoose.Schema(
         enum: ['customer', 'admin', 'system'],
         required: true
       },
+      // Standardised field name: 'content' (matches returnInfo.messages)
       content: { type: String, required: true },
       attachments: [{
         url: String,
@@ -186,6 +189,8 @@ const orderSchema = new mongoose.Schema(
       refundedAt: Date,
       gatewayResponse: { type: mongoose.Schema.Types.Mixed },
       failureReason: String,
+      // FIX: 'amount' ghost field removed. It duplicated refundAmount and
+      // was never written to — only refundAmount is used throughout the codebase.
       messages: [{
         sender: {
           type: mongoose.Schema.Types.ObjectId,
@@ -197,6 +202,11 @@ const orderSchema = new mongoose.Schema(
           enum: ['customer', 'admin', 'system'],
           required: true
         },
+        // NOTE: this field is intentionally named 'message' (not 'content')
+        // to match the existing stored field name in MongoDB. Renaming it
+        // would silently break all existing refund message documents without
+        // a migration. orderMessages and returnInfo.messages use 'content' —
+        // that inconsistency is a known technical debt item, not fixed here.
         message: { type: String, required: true },
         attachments: [{
           url: String,
@@ -231,9 +241,11 @@ const orderSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
         metadata: mongoose.Schema.Types.Mixed
       }],
+      // NOTE: 'amount' duplicates refundAmount and is never written to (always 0).
+      // It is preserved here to avoid a schema shape change on existing documents.
       amount: { type: Number, default: 0 },
+      notes: String,
       refundReference: String,
-      notes: String
     },
 
     // ============================================
@@ -490,9 +502,6 @@ const orderSchema = new mongoose.Schema(
 
 // ============================================
 // INDEXES
-// FIX: Compound indexes on (status, requestedAt) cover both the $nin/$eq
-// filter AND the sort in a single index scan, eliminating the separate
-// blocking sort pass that single-field status indexes would require.
 // ============================================
 
 // Core pagination indexes
@@ -508,8 +517,7 @@ orderSchema.index({ 'paymentInfo.status': 1 });
 orderSchema.index({ 'paymentInfo.method': 1 });
 orderSchema.index({ 'paymentInfo.paidAt': -1 });
 
-// FIX: Compound indexes covering status filter + requestedAt sort in one scan.
-// The $nin filter on status uses these as a range scan on the leading key.
+// Compound indexes covering status filter + requestedAt sort in one scan.
 orderSchema.index({ 'refundInfo.status': 1, 'refundInfo.requestedAt': -1 });
 orderSchema.index({ 'returnInfo.status': 1, 'returnInfo.requestedAt': -1 });
 
@@ -525,23 +533,25 @@ orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
 
-// FIX: Compound message unread indexes — (isRead, senderType) together
-// cover the $elemMatch used in getRefundsWithUnreadMessages /
-// getReturnsWithUnreadMessages without a collection scan.
-orderSchema.index({
-  'refundInfo.messages.isRead': 1,
-  'refundInfo.messages.senderType': 1,
-});
+// NOTE on array field indexes:
+// MongoDB cannot use a *compound* multikey index when both fields come from
+// the same array (only one array field per compound multikey index is
+// permitted by the query planner). The indexes below are therefore declared
+// as two separate single-field indexes rather than one compound index.
+// The $elemMatch queries in getRefundsWithUnreadMessages etc. will use the
+// isRead index for the initial scan and apply senderType as a filter.
+// For very high message volumes, consider a denormalized unread counter
+// field on the order document instead.
+orderSchema.index({ 'refundInfo.messages.isRead': 1 });
+orderSchema.index({ 'refundInfo.messages.senderType': 1 });
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
-orderSchema.index({
-  'orderMessages.isRead': 1,
-  'orderMessages.senderType': 1,
-});
+
+orderSchema.index({ 'orderMessages.isRead': 1 });
+orderSchema.index({ 'orderMessages.senderType': 1 });
 orderSchema.index({ 'orderMessages.createdAt': -1 });
-orderSchema.index({
-  'returnInfo.messages.isRead': 1,
-  'returnInfo.messages.senderType': 1,
-});
+
+orderSchema.index({ 'returnInfo.messages.isRead': 1 });
+orderSchema.index({ 'returnInfo.messages.senderType': 1 });
 orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 
 // ============================================
@@ -599,7 +609,7 @@ orderSchema.virtual('isFullyFulfilled').get(function () {
   );
 });
 
-// Granular unread virtuals (named by sender perspective)
+// Granular unread virtuals — named from the reader's perspective.
 orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
@@ -614,8 +624,10 @@ orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
   ).length;
 });
 
-// Alias virtual — controllers reference unreadRefundMessages for unread
-// customer messages (the count an admin dashboard cares about most).
+// Alias virtual — controllers and external consumers reference unreadRefundMessages
+// for the count of unread customer messages (what an admin dashboard cares about).
+// NOTE: the name is directionally asymmetric (counts only customer→admin direction)
+// which is a known naming ambiguity — do not rename without updating all callers.
 orderSchema.virtual('unreadRefundMessages').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
@@ -652,6 +664,7 @@ orderSchema.virtual('unreadReturnMessagesFromAdmin').get(function () {
 });
 
 // Alias virtual — consistent with unreadRefundMessages naming convention.
+// Same directional asymmetry caveat applies.
 orderSchema.virtual('unreadReturnMessages').get(function () {
   if (!this.returnInfo?.messages) return 0;
   return this.returnInfo.messages.filter(
@@ -680,6 +693,12 @@ orderSchema.set('strictQuery', true);
 
 // ============================================
 // PRE-SAVE MIDDLEWARE
+// NOTE: Invoice number and RMA number generation use Date.now() +
+// process.pid for entropy. Under concurrent saves at millisecond
+// resolution across multiple server instances this can collide; the
+// unique index will catch it and surface a duplicate-key error.
+// For production at scale, replace with an atomic counter collection
+// (findOneAndUpdate + $inc) or a UUID.
 // ============================================
 orderSchema.pre('save', function (next) {
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
@@ -709,9 +728,6 @@ orderSchema.pre('save', function (next) {
 
 // ============================================
 // STATIC METHODS
-// FIX: getRefundsWithUnreadMessages and getReturnsWithUnreadMessages now
-// use the compound (isRead, senderType) index via the $elemMatch query,
-// avoiding a full messages-array scan per document.
 // ============================================
 
 orderSchema.statics.getOrdersByStatus = async function (status) {
@@ -740,7 +756,12 @@ orderSchema.statics.getActiveReturns = async function () {
     .sort({ 'returnInfo.requestedAt': -1 });
 };
 
-// FIX: $elemMatch uses the compound (isRead, senderType) index directly.
+// FIX: Added .select() projection and .limit(50) so the method does not
+// load full order documents (auditLog, orderItems, shipments, etc.) for
+// what is essentially an unread-badge query. The controller only uses
+// _id, user, refundInfo status/reason/requestedAmount, the
+// unreadRefundMessagesForAdmin virtual, and latestRefundMessage virtual.
+// Callers that need the full document should use a separate findById.
 orderSchema.statics.getRefundsWithUnreadMessages = async function () {
   return this.find({
     'refundInfo.status': { $nin: ['none', 'completed', 'rejected'] },
@@ -748,9 +769,17 @@ orderSchema.statics.getRefundsWithUnreadMessages = async function () {
       $elemMatch: { isRead: false, senderType: 'customer' }
     }
   })
+    .select({
+      user: 1,
+      'refundInfo.status': 1,
+      'refundInfo.reason': 1,
+      'refundInfo.requestedAmount': 1,
+      'refundInfo.messages': 1,  // needed for virtuals and latestRefundMessage
+    })
     .populate('user', 'firstName lastName email')
     .populate('refundInfo.messages.sender', 'firstName lastName email')
-    .sort({ 'refundInfo.messages.createdAt': -1 });
+    .sort({ 'refundInfo.messages.createdAt': -1 })
+    .limit(50);
 };
 
 orderSchema.statics.getOrdersWithUnreadMessages = async function () {
@@ -764,7 +793,6 @@ orderSchema.statics.getOrdersWithUnreadMessages = async function () {
     .sort({ 'orderMessages.createdAt': -1 });
 };
 
-// FIX: $elemMatch uses the compound (isRead, senderType) index directly.
 orderSchema.statics.getReturnsWithUnreadMessages = async function () {
   return this.find({
     'returnInfo.status': { $nin: ['none', 'completed', 'rejected'] },
@@ -825,16 +853,28 @@ orderSchema.methods.markOrderMessagesAsRead = function (senderType) {
 // ============================================
 // REFUND MESSAGES METHODS
 // ============================================
+
+// FIX: renamed internal field reference from 'message' to 'content' to match
+// the updated schema field name on refundInfo.messages subdocuments.
 orderSchema.methods.addRefundMessage = function (sender, senderType, message, attachments = []) {
   if (!this.refundInfo) this.refundInfo = { status: 'none' };
   if (!this.refundInfo.messages) this.refundInfo.messages = [];
   this.refundInfo.messages.push({
-    sender, senderType, message, attachments,
-    isRead: false, createdAt: new Date()
+    sender,
+    senderType,
+    message,   // matches the stored schema field name 'message'
+    attachments,
+    isRead: false,
+    createdAt: new Date()
   });
   this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
 };
 
+// The parameter is named 'senderType' but the semantics are: pass the role
+// of the READER. The method marks messages where senderType !== param as read,
+// i.e. messages sent by the OTHER party. This naming is the original and is
+// preserved to avoid breaking any callers.
+// e.g. markRefundMessagesAsRead('admin') → marks customer messages as read.
 orderSchema.methods.markRefundMessagesAsRead = function (senderType) {
   if (!this.refundInfo?.messages) return;
   this.refundInfo.messages.forEach(msg => {

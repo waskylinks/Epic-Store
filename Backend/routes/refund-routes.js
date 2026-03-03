@@ -49,11 +49,23 @@ const adminAuth = [verifyUserAuth, roleBaseAccess('admin')];
 
 /**
  * Submit a new refund request.
- * Accepts multipart/form-data (when files are attached) OR application/json.
- * multer is applied here so the controller can process initial file uploads
- * atomically — files arrive AFTER order.refundInfo is set, bypassing the
- * "No refund request found" guard that previously caused a 404 when files
- * were pre-uploaded via a separate call.
+ *
+ * Middleware chain:
+ *   1. verifyUserAuth        — authenticate the user
+ *   2. upload.array()        — parse multipart form-data (files + body fields)
+ *   3. sanitizeInput         — trim all string body fields
+ *   4. validateRefundRequest — validate body shape (reason, description, refundType, requestedAmount)
+ *   5. checkRefundEligibility — fetch the order, validate ownership, payment status,
+ *                               existing refund status, refund window, gateway support;
+ *                               attaches req.order for the controller to reuse.
+ *   6. validateRefundAmount  — validate partial refund amount bounds using req.order
+ *   7. requestRefund         — uses req.order directly; no second DB fetch
+ *
+ * NOTE: upload runs before sanitizeInput and validation so that multer
+ * populates req.body from multipart form-data before validators read it.
+ * This also allows initial file uploads to be processed atomically with
+ * the refund creation, avoiding the "No refund request found" 404 that
+ * occurred when files were pre-uploaded via a separate call.
  */
 router.post(
   '/orders/:id/refund/request',
@@ -66,6 +78,13 @@ router.post(
   requestRefund
 );
 
+/**
+ * Customer sends a message on a refund thread.
+ *
+ * canAddRefundMessage fetches the order, checks ownership, confirms a
+ * refund exists, and verifies the refund is not in a closed state.
+ * It attaches req.order for the controller.
+ */
 router.post(
   '/orders/:id/refund/messages',
   verifyUserAuth,
@@ -75,12 +94,20 @@ router.post(
   addCustomerRefundMessage
 );
 
-// Fix: added missing /status route that the refundSlice getRefundStatus thunk calls
+// Read-only customer routes — no middleware attaches req.order; each
+// controller performs its own minimal targeted fetch.
 router.get('/orders/:id/refund/status',    verifyUserAuth, getRefundStatus);
 router.get('/orders/:id/refund/messages',  verifyUserAuth, getRefundMessages);
 router.get('/orders/:id/refund/timeline',  verifyUserAuth, getRefundTimeline);
 router.get('/orders/:id/refund/documents', verifyUserAuth, getRefundDocuments);
 
+/**
+ * Customer uploads supporting files for an existing refund.
+ *
+ * validateRefundFileUpload is a pure body/file validator — it does not
+ * fetch the order. The controller performs its own fetch (necessary since
+ * no policy middleware attaches req.order on this route).
+ */
 router.post(
   '/orders/:id/refund/upload',
   verifyUserAuth,
@@ -89,18 +116,29 @@ router.post(
   uploadCustomerRefundFiles
 );
 
+/**
+ * canCancelRefund fetches the order, checks ownership, confirms the
+ * refund is in 'requested' status, and attaches req.order.
+ */
 router.put('/orders/:id/refund/cancel', verifyUserAuth, canCancelRefund, cancelRefundRequest);
 
 /* ======================================================
    ADMIN REFUND ROUTES
+
+   IMPORTANT — route ordering:
+   /admin/refunds/unread MUST be declared before /admin/refunds/:id
+   to prevent Express matching the literal string "unread" as a
+   dynamic :id segment.
 ====================================================== */
 
-// NOTE: /admin/refunds/unread must come BEFORE /admin/refunds/:id
-// to prevent Express matching "unread" as a dynamic :id segment.
-router.get('/admin/refunds/unread',        ...adminAuth, getRefundsWithUnreadMessages);
-router.get('/admin/refunds',               ...adminAuth, getAllRefunds);
-router.get('/admin/refunds/:id',           ...adminAuth, getSingleRefund);
+router.get('/admin/refunds/unread', ...adminAuth, getRefundsWithUnreadMessages);
+router.get('/admin/refunds',        ...adminAuth, getAllRefunds);
+router.get('/admin/refunds/:id',    ...adminAuth, getSingleRefund);
 
+/**
+ * canReviewRefund fetches the order, confirms refundInfo.status === 'requested',
+ * and attaches req.order. The controller uses req.order directly.
+ */
 router.put(
   '/admin/orders/:id/refund/review',
   ...adminAuth,
@@ -110,6 +148,12 @@ router.put(
   reviewRefundRequest
 );
 
+/**
+ * canProcessRefund fetches the order, confirms refundInfo.status === 'approved',
+ * and attaches req.order. The controller still performs a findOneAndUpdate
+ * CAS before calling the payment gateway to prevent duplicate charges from
+ * concurrent requests.
+ */
 router.post(
   '/admin/orders/:id/refund/process',
   ...adminAuth,
@@ -119,6 +163,11 @@ router.post(
   processRefundPayment
 );
 
+/**
+ * canAddRefundMessage fetches the order, confirms a refund exists and is
+ * not in a closed state, checks admin role (role checked by adminAuth
+ * already), and attaches req.order.
+ */
 router.post(
   '/admin/refunds/:id/messages',
   ...adminAuth,
@@ -128,6 +177,10 @@ router.post(
   addRefundMessage
 );
 
+/**
+ * Admin file upload — validateRefundFileUpload is a pure validator.
+ * No policy middleware attaches req.order; the controller fetches directly.
+ */
 router.post(
   '/admin/refunds/:id/upload',
   ...adminAuth,
