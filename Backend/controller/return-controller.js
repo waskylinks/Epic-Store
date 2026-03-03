@@ -3,6 +3,7 @@ import Product from '../models/product-model.js';
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import { deleteCachePattern } from '../utils/redis.js';
+import { uploadToCloudinary } from '../utils/cloudinaryUpload.js';
 
 // ============================================
 // SHARED CACHE INVALIDATION
@@ -32,17 +33,21 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [orders, totalReturns, stats] = await Promise.all([
+  // FIX: List view populate trimmed to fields needed for table rows only.
+  // Heavy nested populate (messages.sender etc.) moved to getSingleReturn.
+  // .lean() skips Mongoose document hydration for a faster read.
+  const [orders, totalReturns, statCounts] = await Promise.all([
     Order.find(query)
       .populate('user', 'name email')
       .populate('returnInfo.requestedBy', 'name email')
-      .populate('returnInfo.approvedBy', 'name email')
-      .populate('returnInfo.inspectedBy', 'name email')
-      .populate('returnInfo.messages.sender', 'name email')
+      .select('-returnInfo.messages -returnInfo.documents -returnInfo.timeline -auditLog -orderMessages')
       .sort({ 'returnInfo.requestedAt': -1 })
       .skip(skip)
-      .limit(parseInt(limit)),
+      .limit(parseInt(limit))
+      .lean(),
+
     Order.countDocuments(query),
+
     Promise.all([
       Order.countDocuments({ 'returnInfo.status': 'requested' }),
       Order.countDocuments({ 'returnInfo.status': 'approved' }),
@@ -50,11 +55,12 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
       Order.countDocuments({ 'returnInfo.status': 'received' }),
       Order.countDocuments({ 'returnInfo.status': 'inspected' }),
       Order.countDocuments({ 'returnInfo.status': 'completed' }),
-      Order.countDocuments({ 'returnInfo.status': 'rejected' })
-    ])
+      Order.countDocuments({ 'returnInfo.status': 'rejected' }),
+      Order.countDocuments({ 'returnInfo.status': 'cancelled' }),
+    ]),
   ]);
 
-  const [requested, approved, in_transit, received, inspected, completed, rejected] = stats;
+  const [requested, approved, in_transit, received, inspected, completed, rejected, cancelled] = statCounts;
 
   return res.status(200).json({
     success: true,
@@ -62,14 +68,17 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     totalReturns,
     currentPage: parseInt(page),
     totalPages: Math.ceil(totalReturns / parseInt(limit)),
-    stats: { total: totalReturns, requested, approved, in_transit, received, inspected, completed, rejected },
+    stats: { total: totalReturns, requested, approved, in_transit, received, inspected, completed, rejected, cancelled },
     returns: orders.map(order => ({
       orderId: order._id,
       user: order.user,
       returnInfo: order.returnInfo,
       orderStatus: order.orderStatus,
       totalPrice: order.totalPrice,
-      unreadMessages: order.unreadReturnMessages,
+      // FIX: .lean() disables virtuals so compute unread count inline.
+      unreadMessages: (order.returnInfo?.messages || []).filter(
+        m => !m.isRead && m.senderType === 'customer'
+      ).length,
       createdAt: order.createdAt
     }))
   });
@@ -97,6 +106,7 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found for this order', 404));
   }
 
+  // FIX: Use model method (consistent with refund controller) instead of raw updateOne.
   order.markReturnMessagesAsRead('admin');
   await order.save({ validateBeforeSave: false });
 
@@ -118,9 +128,6 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // CUSTOMER REQUESTS RETURN
-// - `reason`      : overall return category (enum)
-// - `description` : general free-text description covering all items (max 2000)
-// - `items`       : array, each item carries its own `reason`
 // ============================================
 
 export const requestReturn = handleAsyncError(async (req, res, next) => {
@@ -388,22 +395,12 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, count: 0, messages: [] });
   }
 
-  const senderType = isAdmin ? 'admin' : 'customer';
-  const now = new Date();
-
-  await Order.updateOne(
-    { _id: id },
-    {
-      $set: {
-        'returnInfo.messages.$[msg].deliveredAt': now,
-        'returnInfo.messages.$[msg].isRead': true
-      }
-    },
-    {
-      arrayFilters: [{ 'msg.senderType': { $ne: senderType }, 'msg.isRead': { $ne: true } }],
-      timestamps: false
-    }
-  ).catch(() => { /* read-receipt failure must never block the response */ });
+  // FIX: Replaced raw updateOne+arrayFilters with the model's markReturnMessagesAsRead
+  // method for consistency with how refund and order message read-receipts work.
+  // Admin reading → mark customer messages read. Customer reading → mark admin messages read.
+  const readerType = isAdmin ? 'customer' : 'admin';
+  order.markReturnMessagesAsRead(readerType);
+  await order.save({ validateBeforeSave: false });
 
   return res.status(200).json({
     success: true,
@@ -474,6 +471,7 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPLOAD FILES FOR RETURN (Admin)
+// FIX: Replaced local disk storage with Cloudinary (consistent with refund controller).
 // ============================================
 
 export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
@@ -491,15 +489,21 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
   }
 
   const uploadedFiles = [];
+  const folder = `ecommerce/returns/${order._id}/admin`;
 
   for (const file of req.files) {
-    const fileUrl = `/uploads/returns/${order._id}/${file.filename}`;
-    order.addReturnDocument('other', fileUrl, file.originalname, req.user._id, '');
+    const result = await uploadToCloudinary(file.buffer, {
+      folder,
+      resource_type: 'auto',
+    });
+
+    order.addReturnDocument('other', result.secure_url, file.originalname, req.user._id, '');
+
     uploadedFiles.push({
-      url: fileUrl,
+      url: result.secure_url,
       filename: file.originalname,
-      fileType: file.mimetype,
-      fileSize: file.size
+      fileType: result.resource_type,
+      fileSize: result.bytes,
     });
   }
 
@@ -514,6 +518,7 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPLOAD FILES FOR RETURN (Customer)
+// FIX: Replaced local disk storage with Cloudinary (consistent with refund controller).
 // ============================================
 
 export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next) => {
@@ -536,15 +541,26 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
   }
 
   const uploadedFiles = [];
+  const folder = `ecommerce/returns/${order._id}/customer`;
 
   for (const file of req.files) {
-    const fileUrl = `/uploads/returns/${order._id}/${file.filename}`;
-    order.addReturnDocument('photo', fileUrl, file.originalname, userId, '');
+    const result = await uploadToCloudinary(file.buffer, {
+      folder,
+      resource_type: 'auto',
+    });
+
+    const docType =
+      result.resource_type === 'image' ? 'photo' :
+      result.resource_type === 'video' ? 'video' :
+      'document';
+
+    order.addReturnDocument(docType, result.secure_url, file.originalname, userId, '');
+
     uploadedFiles.push({
-      url: fileUrl,
+      url: result.secure_url,
       filename: file.originalname,
-      fileType: file.mimetype,
-      fileSize: file.size
+      fileType: result.resource_type,
+      fileSize: result.bytes,
     });
   }
 
@@ -599,7 +615,7 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
         status: order.returnInfo.status,
         rmaNumber: order.returnInfo.rmaNumber,
         reason: order.returnInfo.reason,
-        unreadCount: order.unreadReturnMessages
+        unreadCount: order.unreadReturnMessages,
       },
       latestMessage: order.latestReturnMessage
     }))
@@ -608,6 +624,9 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
 
 // ============================================
 // CANCEL RETURN REQUEST (Customer)
+// FIX: Changed status from 'none' → 'cancelled' so the record remains visible
+// to admins in the returns list and audit history is preserved.
+// The 'cancelled' value has been added to the returnInfo.status enum in the model.
 // ============================================
 
 export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
@@ -629,7 +648,7 @@ export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Cannot cancel return at this stage', 400));
   }
 
-  order.returnInfo.status = 'none';
+  order.returnInfo.status = 'cancelled';
   order.addReturnTimeline('return_cancelled', 'Return cancelled by customer', userId);
   order.addAuditEntry('return_cancelled', userId);
 

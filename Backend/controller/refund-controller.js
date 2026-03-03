@@ -46,27 +46,46 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const orders = await Order.find(query)
-    .populate('user', 'name email')
-    .populate('refundInfo.requestedBy', 'name email')
-    .populate('refundInfo.approvedBy', 'name email')
-    .populate('refundInfo.processedBy', 'name email')
-    .populate('refundInfo.messages.sender', 'name email')
-    .sort({ 'refundInfo.requestedAt': -1 })
-    .skip(skip)
-    .limit(parseInt(limit));
+  // FIX: Run all DB operations in parallel instead of sequentially.
+  // Previously the 7 stat countDocuments calls ran one-after-another after the
+  // main find — now everything resolves in a single round-trip.
+  // FIX: List view populate is limited to fields needed for the table (user,
+  // requestedBy). Heavy nested fields like messages.sender are only populated
+  // in getSingleRefund where the full detail view needs them.
+  const [orders, totalRefunds, statCounts] = await Promise.all([
+    Order.find(query)
+      .populate('user', 'name email')
+      .populate('refundInfo.requestedBy', 'name email')
+      .select('-refundInfo.messages -refundInfo.documents -refundInfo.timeline -auditLog -orderMessages')
+      .sort({ 'refundInfo.requestedAt': -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean(),
 
-  const totalRefunds = await Order.countDocuments(query);
+    Order.countDocuments(query),
+
+    Promise.all([
+      Order.countDocuments({ 'refundInfo.status': 'requested' }),
+      Order.countDocuments({ 'refundInfo.status': 'approved' }),
+      Order.countDocuments({ 'refundInfo.status': 'processing' }),
+      Order.countDocuments({ 'refundInfo.status': 'completed' }),
+      Order.countDocuments({ 'refundInfo.status': 'rejected' }),
+      Order.countDocuments({ 'refundInfo.status': 'failed' }),
+      Order.countDocuments({ 'refundInfo.status': 'cancelled' }),
+    ]),
+  ]);
+
+  const [requested, approved, processing, completed, rejected, failed, cancelled] = statCounts;
 
   const stats = {
     total: totalRefunds,
-    requested:  await Order.countDocuments({ 'refundInfo.status': 'requested' }),
-    approved:   await Order.countDocuments({ 'refundInfo.status': 'approved' }),
-    processing: await Order.countDocuments({ 'refundInfo.status': 'processing' }),
-    completed:  await Order.countDocuments({ 'refundInfo.status': 'completed' }),
-    rejected:   await Order.countDocuments({ 'refundInfo.status': 'rejected' }),
-    failed:     await Order.countDocuments({ 'refundInfo.status': 'failed' }),
-    cancelled:  await Order.countDocuments({ 'refundInfo.status': 'cancelled' }),
+    requested,
+    approved,
+    processing,
+    completed,
+    rejected,
+    failed,
+    cancelled,
   };
 
   return res.status(200).json({
@@ -83,12 +102,15 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
       orderStatus: order.orderStatus,
       totalPrice: order.totalPrice,
       amountPaid: order.amountPaid,
-      refundableAmount: order.refundableAmount,
+      // NOTE: unreadMessages from virtual won't be available after .lean().
+      // We compute it inline here instead.
+      unreadMessages: (order.refundInfo?.messages || []).filter(
+        m => !m.isRead && m.senderType === 'customer'
+      ).length,
       paymentInfo: {
         method: order.paymentInfo.method,
         reference: order.paymentInfo.reference,
       },
-      unreadMessages: order.unreadRefundMessages,
       createdAt: order.createdAt,
     })),
   });
@@ -219,31 +241,29 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
 
   // Persist files atomically with the refund record.
   // multer is configured with memoryStorage — files are in file.buffer.
-  // Persist files atomically with the refund record.
-// Files are streamed to Cloudinary instead of written to disk.
-if (req.files && req.files.length > 0) {
-  const folder = `ecommerce/refunds/${order._id}/customer`;
+  if (req.files && req.files.length > 0) {
+    const folder = `ecommerce/refunds/${order._id}/customer`;
 
-  for (const file of req.files) {
-    const result = await uploadToCloudinary(file.buffer, {
-      folder,
-      resource_type: 'auto',
-    });
+    for (const file of req.files) {
+      const result = await uploadToCloudinary(file.buffer, {
+        folder,
+        resource_type: 'auto',
+      });
 
-    const docType =
-      result.resource_type === 'image' ? 'photo' :
-      result.resource_type === 'video' ? 'video' :
-      'document';
+      const docType =
+        result.resource_type === 'image' ? 'photo' :
+        result.resource_type === 'video' ? 'video' :
+        'document';
 
-    order.addRefundDocument(
-      docType,
-      result.secure_url,
-      file.originalname,
-      userId,
-      ''
-    );
+      order.addRefundDocument(
+        docType,
+        result.secure_url,
+        file.originalname,
+        userId,
+        ''
+      );
+    }
   }
-}
 
   await order.save();
   invalidateRefundCaches().catch((err) => console.error("Cache invalidation error:", err));
@@ -306,7 +326,6 @@ export const reviewRefundRequest = handleAsyncError(async (req, res, next) => {
     order.refundInfo.status = 'approved';
     order.refundInfo.approvedAt = new Date();
     order.refundInfo.approvedBy = req.user._id;
-    // Store reviewedAt so the frontend timeline renders the reviewed step
     order.refundInfo.reviewedAt = new Date();
     if (adminNote) order.refundInfo.adminNote = adminNote;
 
@@ -466,7 +485,6 @@ export const addRefundMessage = handleAsyncError(async (req, res, next) => {
  */
 export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
-  // Fix: frontend now sends "message" (was incorrectly "content" before)
   const { message, attachments = [] } = req.body;
   const userId = req.user._id;
 
@@ -533,10 +551,9 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // Fix: invert senderType so we mark messages RECEIVED by this viewer as read,
-  // not messages sent by them.
-  // A customer reading the thread should mark 'admin' messages as read.
-  // An admin reading the thread should mark 'customer' messages as read.
+  // Mark messages from the OTHER party as read.
+  // Admin reading → mark customer messages read.
+  // Customer reading → mark admin messages read.
   const readerType = isAdmin ? 'customer' : 'admin';
   order.markRefundMessagesAsRead(readerType);
   await order.save({ validateBeforeSave: false });
@@ -569,30 +586,30 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No refund request found', 404));
   }
 
-const uploadedFiles = [];
-const folder = `ecommerce/refunds/${order._id}/admin`;
+  const uploadedFiles = [];
+  const folder = `ecommerce/refunds/${order._id}/admin`;
 
-for (const file of req.files) {
-  const result = await uploadToCloudinary(file.buffer, {
-    folder,
-    resource_type: 'auto',
-  });
+  for (const file of req.files) {
+    const result = await uploadToCloudinary(file.buffer, {
+      folder,
+      resource_type: 'auto',
+    });
 
-  order.addRefundDocument(
-    'other',
-    result.secure_url,
-    file.originalname,
-    req.user._id,
-    ''
-  );
+    order.addRefundDocument(
+      'other',
+      result.secure_url,
+      file.originalname,
+      req.user._id,
+      ''
+    );
 
-  uploadedFiles.push({
-    url: result.secure_url,
-    filename: file.originalname,
-    fileType: result.resource_type,
-    fileSize: result.bytes,
-  });
-}
+    uploadedFiles.push({
+      url: result.secure_url,
+      filename: file.originalname,
+      fileType: result.resource_type,
+      fileSize: result.bytes,
+    });
+  }
 
   await order.save();
 
@@ -634,26 +651,26 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
   }
 
   const uploadedFiles = [];
-const folder = `ecommerce/refunds/${order._id}/customer`;
+  const folder = `ecommerce/refunds/${order._id}/customer`;
 
-for (const file of req.files) {
-  const result = await uploadToCloudinary(file.buffer, {
-    folder,
-    resource_type: 'auto',
-  });
+  for (const file of req.files) {
+    const result = await uploadToCloudinary(file.buffer, {
+      folder,
+      resource_type: 'auto',
+    });
 
-  const docType =
-    result.resource_type === 'image' ? 'photo' :
-    result.resource_type === 'video' ? 'video' :
-    'document';
+    const docType =
+      result.resource_type === 'image' ? 'photo' :
+      result.resource_type === 'video' ? 'video' :
+      'document';
 
-  order.addRefundDocument(
-    docType,
-    result.secure_url,
-    file.originalname,
-    userId,
-    ''
-  );
+    order.addRefundDocument(
+      docType,
+      result.secure_url,
+      file.originalname,
+      userId,
+      ''
+    );
 
     uploadedFiles.push({
       url: result.secure_url,
@@ -797,8 +814,8 @@ export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Cannot cancel refund at this stage', 400));
   }
 
-  // Fix: use 'cancelled' status instead of 'none' so audit history is preserved
-  // and the record remains visible to admins in the refunds list.
+  // Use 'cancelled' so the record stays visible in the admin refunds list
+  // and audit history is preserved. Setting to 'none' would hide it.
   order.refundInfo.status = 'cancelled';
   order.addRefundTimeline('refund_cancelled', 'Refund cancelled by customer', userId);
   order.addAuditEntry('refund_cancelled', userId);

@@ -159,7 +159,7 @@ const orderSchema = new mongoose.Schema(
     refundInfo: {
       status: {
         type: String,
-        enum: ['none', 'requested', 'approved', 'rejected', 'processing', 'completed', 'failed'],
+        enum: ['none', 'requested', 'approved', 'rejected', 'processing', 'completed', 'failed', 'cancelled'],
         default: 'none'
       },
       reason: String,
@@ -172,6 +172,7 @@ const orderSchema = new mongoose.Schema(
       requestedAmount: Number,
       requestedAt: Date,
       requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+      reviewedAt: Date,
       approvedAt: Date,
       approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
       rejectedAt: Date,
@@ -241,11 +242,15 @@ const orderSchema = new mongoose.Schema(
     returnInfo: {
       status: {
         type: String,
-        enum: ['none', 'requested', 'approved', 'rejected', 'in_transit', 'received', 'inspected', 'completed'],
+        // FIX: added 'cancelled' so cancelReturnRequest can set it without
+        // silently failing against strict schema validation.
+        enum: ['none', 'requested', 'approved', 'rejected', 'in_transit', 'received', 'inspected', 'completed', 'cancelled'],
         default: 'none'
       },
       rmaNumber: String,
       reason: String,
+      // FIX: added description — was silently dropped by strict:true before.
+      description: String,
       itemsToReturn: [{
         product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
         quantity: Number,
@@ -490,29 +495,27 @@ const orderSchema = new mongoose.Schema(
 // INDEXES
 // ============================================
 
-// Core pagination indexes — required for Option A server-side pagination
-// These two cover: (1) unfiltered list sorted by date, (2) status-filtered list sorted by date
+// Core pagination indexes
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
 orderSchema.index({ user: 1, createdAt: -1 });
 
-// Amount sort index — covers ?sort=amount_hi and ?sort=amount_lo
+// Amount sort index
 orderSchema.index({ totalPrice: -1 });
 
 // Payment indexes
 orderSchema.index({ 'paymentInfo.status': 1 });
 orderSchema.index({ 'paymentInfo.method': 1 });
-// Revenue-by-period reporting (e.g. "revenue in March 2025")
 orderSchema.index({ 'paymentInfo.paidAt': -1 });
 
-// Refund / return indexes
-orderSchema.index({ 'refundInfo.status': 1 });
-orderSchema.index({ 'returnInfo.status': 1 });
+// FIX: Replaced single-field refund/return status indexes with compound indexes
+// that cover both the $nin filter AND the requestedAt sort in one index scan.
+// Single-field indexes on status alone would still require a separate sort pass.
+orderSchema.index({ 'refundInfo.status': 1, 'refundInfo.requestedAt': -1 });
+orderSchema.index({ 'returnInfo.status': 1, 'returnInfo.requestedAt': -1 });
 
-// Cancellation analytics (e.g. "cancellations this month")
+// Cancellation & fulfilment analytics
 orderSchema.index({ cancelledAt: -1 });
-
-// Fulfillment SLA reporting
 orderSchema.index({ deliveredAt: -1 });
 
 // Fraud indexes
@@ -523,7 +526,7 @@ orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
 
-// Message unread indexes (multikey on array sub-docs)
+// Message unread indexes
 orderSchema.index({ 'refundInfo.messages.isRead': 1 });
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
 orderSchema.index({ 'orderMessages.isRead': 1 });
@@ -586,6 +589,7 @@ orderSchema.virtual('isFullyFulfilled').get(function () {
   );
 });
 
+// Granular unread virtuals (named by sender perspective)
 orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
@@ -597,6 +601,16 @@ orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
   if (!this.refundInfo?.messages) return 0;
   return this.refundInfo.messages.filter(
     msg => !msg.isRead && msg.senderType === 'admin'
+  ).length;
+});
+
+// FIX: Added alias virtuals so controllers can reference `unreadRefundMessages`
+// and `unreadReturnMessages` without breaking. These return the count of unread
+// customer messages — the number an admin dashboard cares about most.
+orderSchema.virtual('unreadRefundMessages').get(function () {
+  if (!this.refundInfo?.messages) return 0;
+  return this.refundInfo.messages.filter(
+    msg => !msg.isRead && msg.senderType === 'customer'
   ).length;
 });
 
@@ -625,6 +639,14 @@ orderSchema.virtual('unreadReturnMessagesFromAdmin').get(function () {
   if (!this.returnInfo?.messages) return 0;
   return this.returnInfo.messages.filter(
     msg => !msg.isRead && msg.senderType === 'admin'
+  ).length;
+});
+
+// FIX: Added alias virtual so controllers can reference `unreadReturnMessages`.
+orderSchema.virtual('unreadReturnMessages').get(function () {
+  if (!this.returnInfo?.messages) return 0;
+  return this.returnInfo.messages.filter(
+    msg => !msg.isRead && msg.senderType === 'customer'
   ).length;
 });
 
