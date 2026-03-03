@@ -3,10 +3,47 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
- * Get all return requests (Admin)
- * Supports pagination + status filter via filters object:
- *   { page: 1, limit: 20, status: 'requested' }
+ * Upload files to Cloudinary via the admin backend endpoint and return a
+ * normalised URL array. Shared internally by sendReturnMessage — not exported.
+ *
+ * Do NOT set Content-Type manually on a FormData body. axios injects
+ * "multipart/form-data; boundary=…" automatically. A manual header strips the
+ * boundary string, causing multer to reject the body on the server.
+ *
+ * @param {string} orderId
+ * @param {File[]} files
+ * @returns {Promise<Array<{ url, filename, fileType, fileSize }>>}
+ */
+const uploadFiles = async (orderId, files) => {
+  const formData = new FormData();
+  files.forEach((f) => formData.append("attachments", f));
+
+  const { data } = await axios.post(
+    `/api/v1/admin/returns/${orderId}/upload`,
+    formData,
+    { withCredentials: true }
+  );
+
+  return (data.files ?? []).map(({ url, filename, fileType, fileSize }) => ({
+    url,
+    filename,
+    fileType,
+    fileSize,
+  }));
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THUNKS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all return requests with pagination and optional status filter.
+ *   filters: { page, limit, status }
  */
 export const getAllReturns = createAsyncThunk(
   "adminReturn/getAllReturns",
@@ -18,17 +55,15 @@ export const getAllReturns = createAsyncThunk(
         { withCredentials: true }
       );
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch returns"
+        err.response?.data?.message ?? "Failed to fetch returns"
       );
     }
   }
 );
 
-/**
- * Get single return details (Admin)
- */
+/** Fetch full details for a single return (populates messages, documents, timeline). */
 export const getSingleReturn = createAsyncThunk(
   "adminReturn/getSingleReturn",
   async (orderId, { rejectWithValue }) => {
@@ -37,17 +72,15 @@ export const getSingleReturn = createAsyncThunk(
         withCredentials: true,
       });
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch return details"
+        err.response?.data?.message ?? "Failed to fetch return details"
       );
     }
   }
 );
 
-/**
- * Review return request (approve/reject)
- */
+/** Approve or reject a pending return request. */
 export const reviewReturn = createAsyncThunk(
   "adminReturn/reviewReturn",
   async ({ orderId, action, restockFee, adminNote }, { rejectWithValue }) => {
@@ -58,17 +91,15 @@ export const reviewReturn = createAsyncThunk(
         { withCredentials: true }
       );
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to review return"
+        err.response?.data?.message ?? "Failed to review return"
       );
     }
   }
 );
 
-/**
- * Update return status
- */
+/** Update return status (in_transit → received → inspected → completed). */
 export const updateReturnStatus = createAsyncThunk(
   "adminReturn/updateReturnStatus",
   async ({ orderId, status, inspectionNotes }, { rejectWithValue }) => {
@@ -79,39 +110,90 @@ export const updateReturnStatus = createAsyncThunk(
         { withCredentials: true }
       );
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to update return status"
+        err.response?.data?.message ?? "Failed to update return status"
       );
     }
   }
 );
 
 /**
- * Add return message (Admin)
+ * Send a return message (admin), optionally with file attachments.
+ *
+ * ─── WHY ONE THUNK ───────────────────────────────────────────────────────────
+ * The backend exposes two separate endpoints:
+ *   POST /admin/returns/:id/upload    — raw files → Cloudinary URLs
+ *   POST /admin/returns/:id/messages  — { content, attachments: URL[] }
+ *
+ * This thunk owns the full flow behind one flag (messageSendLoading):
+ *
+ *   Step 1 — upload (skipped when retrying with pendingUrls)
+ *   Step 2 — send message with the collected URLs
+ *
+ * ─── PARTIAL FAILURE / RETRY ─────────────────────────────────────────────────
+ * If step 1 fails  → rejectWithValue({ stage:'upload' })
+ *   Files never reached Cloudinary — admin re-selects and retries normally.
+ *
+ * If step 2 fails  → rejectWithValue({ stage:'send', pendingUrls:[…] })
+ *   Files ARE on Cloudinary. URLs go into state.pendingAttachments.
+ *   UI retries with { pendingUrls: state.pendingAttachments } — skips step 1.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────────────────
+ *   // text only
+ *   dispatch(sendReturnMessage({ orderId, content: 'Hello' }))
+ *
+ *   // with files
+ *   dispatch(sendReturnMessage({ orderId, content: 'See attached', files }))
+ *
+ *   // retry after partial failure
+ *   dispatch(sendReturnMessage({ orderId, content, pendingUrls: pendingAttachments }))
+ *
+ * NOTE: field name is "content" (return schema) — refund messages use "message".
  */
-export const addReturnMessage = createAsyncThunk(
-  "adminReturn/addReturnMessage",
-  async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
+export const sendReturnMessage = createAsyncThunk(
+  "adminReturn/sendReturnMessage",
+  async (
+    { orderId, content, files = [], pendingUrls = [] },
+    { rejectWithValue }
+  ) => {
+    // ── Step 1: upload ───────────────────────────────────────────────────────
+    let attachmentUrls = [...pendingUrls];
+
+    if (files.length > 0 && pendingUrls.length === 0) {
+      try {
+        attachmentUrls = await uploadFiles(orderId, files);
+      } catch (err) {
+        return rejectWithValue({
+          stage: "upload",
+          message: err.response?.data?.message ?? "Failed to upload files",
+          pendingUrls: [],
+        });
+      }
+    }
+
+    // ── Step 2: send ─────────────────────────────────────────────────────────
     try {
       const { data } = await axios.post(
         `/api/v1/admin/returns/${orderId}/messages`,
-        { content, attachments },
+        { content, attachments: attachmentUrls },
         { withCredentials: true }
       );
-      return data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to send message"
-      );
+      return { ...data, attachmentUrls };
+    } catch (err) {
+      return rejectWithValue({
+        stage: "send",
+        message: err.response?.data?.message ?? "Failed to send message",
+        pendingUrls: attachmentUrls,
+      });
     }
   }
 );
 
 /**
- * Get return messages
- * FIX: Now accepts { orderId, page, limit } so the UI can paginate the
- * message thread — backend supports $slice pagination since the perf update.
+ * Fetch return messages (paginated).
+ *   page 1  → replaces the array (fresh open / re-open)
+ *   page 2+ → prepends older messages (load earlier / scroll-up)
  */
 export const getReturnMessages = createAsyncThunk(
   "adminReturn/getReturnMessages",
@@ -122,17 +204,15 @@ export const getReturnMessages = createAsyncThunk(
         { withCredentials: true }
       );
       return { ...data, page };
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch return messages"
+        err.response?.data?.message ?? "Failed to fetch return messages"
       );
     }
   }
 );
 
-/**
- * Get return timeline
- */
+/** Fetch the full return activity timeline. */
 export const getReturnTimeline = createAsyncThunk(
   "adminReturn/getReturnTimeline",
   async (orderId, { rejectWithValue }) => {
@@ -142,17 +222,15 @@ export const getReturnTimeline = createAsyncThunk(
         { withCredentials: true }
       );
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch return timeline"
+        err.response?.data?.message ?? "Failed to fetch return timeline"
       );
     }
   }
 );
 
-/**
- * Get return documents
- */
+/** Fetch all documents attached to a return. */
 export const getReturnDocuments = createAsyncThunk(
   "adminReturn/getReturnDocuments",
   async (orderId, { rejectWithValue }) => {
@@ -162,44 +240,36 @@ export const getReturnDocuments = createAsyncThunk(
         { withCredentials: true }
       );
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch return documents"
+        err.response?.data?.message ?? "Failed to fetch return documents"
       );
     }
   }
 );
 
 /**
- * Upload return files (Admin)
- * Do NOT set Content-Type manually — axios sets multipart/form-data
- * with the correct boundary automatically when body is FormData.
+ * Standalone document upload — for the "Upload documents" panel separate from
+ * the message thread. For files inside a message use sendReturnMessage instead.
  */
 export const uploadReturnFiles = createAsyncThunk(
   "adminReturn/uploadReturnFiles",
   async ({ orderId, files }, { rejectWithValue }) => {
     try {
-      const formData = new FormData();
-      files.forEach((file) => formData.append("attachments", file));
-
-      const { data } = await axios.post(
-        `/api/v1/admin/returns/${orderId}/upload`,
-        formData,
-        { withCredentials: true }
-      );
-      return data;
-    } catch (error) {
+      const urls = await uploadFiles(orderId, files);
+      return { files: urls };
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to upload files"
+        err.response?.data?.message ?? "Failed to upload files"
       );
     }
   }
 );
 
 /**
- * Get returns with unread messages
- * FIX: Result is stored in state.unreadReturns (not state.returns) so a
- * background badge poll never overwrites the admin's paginated list view.
+ * Fetch returns that have unread customer messages.
+ * Result is stored in state.unreadReturns — never overwrites state.returns —
+ * so a background badge poll cannot silently replace the admin's paginated list.
  */
 export const getReturnsWithUnreadMessages = createAsyncThunk(
   "adminReturn/getReturnsWithUnreadMessages",
@@ -209,59 +279,71 @@ export const getReturnsWithUnreadMessages = createAsyncThunk(
         withCredentials: true,
       });
       return data;
-    } catch (error) {
+    } catch (err) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch unread returns"
+        err.response?.data?.message ?? "Failed to fetch unread returns"
       );
     }
   }
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SLICE
+// ─────────────────────────────────────────────────────────────────────────────
+
 const adminReturnSlice = createSlice({
   name: "adminReturn",
   initialState: {
     returns: [],
-    // FIX: Unread results live here — isolated from the paginated list so a
-    // background poll never silently replaces what the admin is looking at.
+    // Unread results are isolated here — a background poll never touches returns
     unreadReturns: [],
     stats: null,
     currentReturn: null,
+
     messages: [],
-    // FIX: Track which message page is currently loaded so the UI can
-    // implement "load more" without re-fetching from page 1 every time.
     messagesPage: 1,
     hasMoreMessages: false,
+    /**
+     * Cloudinary URLs saved when upload succeeded but the message send failed.
+     * Pass as `pendingUrls` to sendReturnMessage to retry only the send step.
+     */
+    pendingAttachments: [],
+
     timeline: [],
     documents: [],
 
-    // Pagination — populated by getAllReturns, untouched by unread fetch
     pagination: {
       totalReturns: 0,
       currentPage: 1,
       totalPages: 1,
     },
 
-    loading: false,
-    returnsLoading: false,
-    // FIX: dedicated flag so the unread badge fetch does not trigger the
-    // detail panel spinner that reads state.loading.
-    unreadLoading: false,
-    // FIX: dedicated flag for message send — was incorrectly sharing
-    // state.loading with reviewReturn and updateReturnStatus, causing the wrong
-    // UI element to show a spinner when a message was being sent.
-    messageSendLoading: false,
-    messagesLoading: false,
+    // ── Loading flags ────────────────────────────────────────────────────────
+    loading: false,            // getSingleReturn, reviewReturn, updateReturnStatus
+    returnsLoading: false,     // getAllReturns
+    unreadLoading: false,      // getReturnsWithUnreadMessages
+    messageSendLoading: false, // sendReturnMessage (upload + send combined)
+    messagesLoading: false,    // getReturnMessages
     timelineLoading: false,
     documentsLoading: false,
-    uploadLoading: false,
+    uploadLoading: false,      // standalone uploadReturnFiles
 
+    // ── Error state ──────────────────────────────────────────────────────────
     error: null,
+    /**
+     * 'upload' | 'send' | null
+     * Lets the UI show the right retry prompt without string-matching error.message.
+     */
+    errorStage: null,
+
     success: false,
     message: null,
   },
+
   reducers: {
     clearAdminReturnState: (state) => {
       state.error = null;
+      state.errorStage = null;
       state.success = false;
       state.message = null;
     },
@@ -270,216 +352,231 @@ const adminReturnSlice = createSlice({
       state.messages = [];
       state.messagesPage = 1;
       state.hasMoreMessages = false;
+      state.pendingAttachments = [];
       state.timeline = [];
       state.documents = [];
     },
+    /** Call on chat panel unmount to prevent stale messages on next open. */
+    clearReturnMessages: (state) => {
+      state.messages = [];
+      state.messagesPage = 1;
+      state.hasMoreMessages = false;
+      state.pendingAttachments = [];
+    },
+    /**
+     * Call when the admin dismisses a partial-failure error without retrying,
+     * so the saved URLs are not silently attached to the next message.
+     */
+    clearPendingAttachments: (state) => {
+      state.pendingAttachments = [];
+      state.errorStage = null;
+      state.error = null;
+    },
   },
+
   extraReducers: (builder) => {
-    // ── Get All Returns ─────────────────────────────────────────────────────
+    // ── getAllReturns ─────────────────────────────────────────────────────────
     builder
       .addCase(getAllReturns.pending, (state) => {
         state.returnsLoading = true;
         state.error = null;
       })
-      .addCase(getAllReturns.fulfilled, (state, action) => {
+      .addCase(getAllReturns.fulfilled, (state, { payload }) => {
         state.returnsLoading = false;
-        state.returns = action.payload.returns;
-        state.stats = action.payload.stats;
+        state.returns = payload.returns;
+        state.stats = payload.stats;
         state.pagination = {
-          totalReturns: action.payload.totalReturns,
-          currentPage: action.payload.currentPage,
-          totalPages: action.payload.totalPages,
+          totalReturns: payload.totalReturns,
+          currentPage: payload.currentPage,
+          totalPages: payload.totalPages,
         };
       })
-      .addCase(getAllReturns.rejected, (state, action) => {
+      .addCase(getAllReturns.rejected, (state, { payload }) => {
         state.returnsLoading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Get Single Return ───────────────────────────────────────────────────
+    // ── getSingleReturn ──────────────────────────────────────────────────────
     builder
       .addCase(getSingleReturn.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(getSingleReturn.fulfilled, (state, action) => {
+      .addCase(getSingleReturn.fulfilled, (state, { payload }) => {
         state.loading = false;
-        state.currentReturn = action.payload.order;
+        state.currentReturn = payload.order;
       })
-      .addCase(getSingleReturn.rejected, (state, action) => {
+      .addCase(getSingleReturn.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Review Return ───────────────────────────────────────────────────────
+    // ── reviewReturn ─────────────────────────────────────────────────────────
     builder
       .addCase(reviewReturn.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(reviewReturn.fulfilled, (state, action) => {
+      .addCase(reviewReturn.fulfilled, (state, { payload }) => {
         state.loading = false;
         state.success = true;
-        state.message = action.payload.message;
-        // FIX: Defensive dual-shape patch — handles both the current backend
-        // response shape (returnInfo) and a hypothetical future full-order
-        // response (order), so this won't silently break if the backend changes.
+        state.message = payload.message;
+        // Dual-shape patch: handles both full order response and returnInfo-only
+        // response so this won't silently break if the backend shape changes.
         if (state.currentReturn) {
-          if (action.payload.order) {
-            state.currentReturn = action.payload.order;
-          } else if (action.payload.returnInfo) {
+          if (payload.order) {
+            state.currentReturn = payload.order;
+          } else if (payload.returnInfo) {
             state.currentReturn = {
               ...state.currentReturn,
-              returnInfo: action.payload.returnInfo,
+              returnInfo: payload.returnInfo,
             };
           }
         }
       })
-      .addCase(reviewReturn.rejected, (state, action) => {
+      .addCase(reviewReturn.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Update Return Status ────────────────────────────────────────────────
+    // ── updateReturnStatus ───────────────────────────────────────────────────
     builder
       .addCase(updateReturnStatus.pending, (state) => {
         state.loading = true;
         state.error = null;
       })
-      .addCase(updateReturnStatus.fulfilled, (state, action) => {
+      .addCase(updateReturnStatus.fulfilled, (state, { payload }) => {
         state.loading = false;
         state.success = true;
-        state.message = action.payload.message;
-        // FIX: Same dual-shape defensive patch as reviewReturn.
+        state.message = payload.message;
         if (state.currentReturn) {
-          if (action.payload.order) {
-            state.currentReturn = action.payload.order;
-          } else if (action.payload.returnInfo) {
+          if (payload.order) {
+            state.currentReturn = payload.order;
+          } else if (payload.returnInfo) {
             state.currentReturn = {
               ...state.currentReturn,
-              returnInfo: action.payload.returnInfo,
+              returnInfo: payload.returnInfo,
             };
           }
         }
       })
-      .addCase(updateReturnStatus.rejected, (state, action) => {
+      .addCase(updateReturnStatus.rejected, (state, { payload }) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Add Return Message ──────────────────────────────────────────────────
-    // FIX: Uses messageSendLoading instead of loading so sending a message
-    // doesn't accidentally trigger the review/status-update action spinner.
+    // ── sendReturnMessage ────────────────────────────────────────────────────
     builder
-      .addCase(addReturnMessage.pending, (state) => {
+      .addCase(sendReturnMessage.pending, (state) => {
         state.messageSendLoading = true;
         state.error = null;
+        state.errorStage = null;
       })
-      .addCase(addReturnMessage.fulfilled, (state, action) => {
+      .addCase(sendReturnMessage.fulfilled, (state, { payload }) => {
         state.messageSendLoading = false;
-        state.success = true;
-        const newMsg = action.payload?.data?.message;
-        if (newMsg) {
-          state.messages.push(newMsg);
+        state.pendingAttachments = [];
+        const newMsg = payload?.data?.message;
+        if (newMsg) state.messages.push(newMsg);
+      })
+      .addCase(sendReturnMessage.rejected, (state, { payload }) => {
+        state.messageSendLoading = false;
+        state.error = payload?.message ?? "Failed to send message";
+        state.errorStage = payload?.stage ?? null;
+        if (payload?.stage === "send" && payload.pendingUrls?.length) {
+          state.pendingAttachments = payload.pendingUrls;
         }
-      })
-      .addCase(addReturnMessage.rejected, (state, action) => {
-        state.messageSendLoading = false;
-        state.error = action.payload;
       });
 
-    // ── Get Return Messages ─────────────────────────────────────────────────
-    // FIX: Page 1 replaces messages (fresh load); subsequent pages prepend
-    // older messages so newest stays at the bottom (load more / scroll up).
-    // hasMoreMessages signals whether another page exists.
+    // ── getReturnMessages ────────────────────────────────────────────────────
     builder
       .addCase(getReturnMessages.pending, (state) => {
         state.messagesLoading = true;
         state.error = null;
       })
-      .addCase(getReturnMessages.fulfilled, (state, action) => {
+      .addCase(getReturnMessages.fulfilled, (state, { payload }) => {
         state.messagesLoading = false;
-        const { messages, count, page } = action.payload;
-        const PAGE_LIMIT = 50;
+        const { messages = [], count, page } = payload;
         if (page === 1) {
           state.messages = messages;
         } else {
-          // Prepend older messages so newest stays at the bottom
           state.messages = [...messages, ...state.messages];
         }
         state.messagesPage = page;
-        state.hasMoreMessages = count === PAGE_LIMIT;
+        state.hasMoreMessages = count === 50;
       })
-      .addCase(getReturnMessages.rejected, (state, action) => {
+      .addCase(getReturnMessages.rejected, (state, { payload }) => {
         state.messagesLoading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Get Return Timeline ─────────────────────────────────────────────────
+    // ── getReturnTimeline ────────────────────────────────────────────────────
     builder
       .addCase(getReturnTimeline.pending, (state) => {
         state.timelineLoading = true;
         state.error = null;
       })
-      .addCase(getReturnTimeline.fulfilled, (state, action) => {
+      .addCase(getReturnTimeline.fulfilled, (state, { payload }) => {
         state.timelineLoading = false;
-        state.timeline = action.payload.timeline;
+        state.timeline = payload.timeline ?? [];
       })
-      .addCase(getReturnTimeline.rejected, (state, action) => {
+      .addCase(getReturnTimeline.rejected, (state, { payload }) => {
         state.timelineLoading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Get Return Documents ────────────────────────────────────────────────
+    // ── getReturnDocuments ───────────────────────────────────────────────────
     builder
       .addCase(getReturnDocuments.pending, (state) => {
         state.documentsLoading = true;
         state.error = null;
       })
-      .addCase(getReturnDocuments.fulfilled, (state, action) => {
+      .addCase(getReturnDocuments.fulfilled, (state, { payload }) => {
         state.documentsLoading = false;
-        state.documents = action.payload.documents;
+        state.documents = payload.documents ?? [];
       })
-      .addCase(getReturnDocuments.rejected, (state, action) => {
+      .addCase(getReturnDocuments.rejected, (state, { payload }) => {
         state.documentsLoading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Upload Return Files ─────────────────────────────────────────────────
+    // ── uploadReturnFiles (standalone) ───────────────────────────────────────
     builder
       .addCase(uploadReturnFiles.pending, (state) => {
         state.uploadLoading = true;
         state.error = null;
       })
-      .addCase(uploadReturnFiles.fulfilled, (state, action) => {
+      .addCase(uploadReturnFiles.fulfilled, (state) => {
         state.uploadLoading = false;
         state.success = true;
-        state.message = action.payload.message;
       })
-      .addCase(uploadReturnFiles.rejected, (state, action) => {
+      .addCase(uploadReturnFiles.rejected, (state, { payload }) => {
         state.uploadLoading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
 
-    // ── Get Returns With Unread Messages ────────────────────────────────────
-    // FIX: Writes to state.unreadReturns — not state.returns — so a
-    // background badge poll never replaces the admin's paginated list.
+    // ── getReturnsWithUnreadMessages ─────────────────────────────────────────
     builder
       .addCase(getReturnsWithUnreadMessages.pending, (state) => {
         state.unreadLoading = true;
         state.error = null;
       })
-      .addCase(getReturnsWithUnreadMessages.fulfilled, (state, action) => {
+      .addCase(getReturnsWithUnreadMessages.fulfilled, (state, { payload }) => {
         state.unreadLoading = false;
-        state.unreadReturns = action.payload.returns;
+        // Isolated from state.returns — background poll never corrupts list view
+        state.unreadReturns = payload.returns;
       })
-      .addCase(getReturnsWithUnreadMessages.rejected, (state, action) => {
+      .addCase(getReturnsWithUnreadMessages.rejected, (state, { payload }) => {
         state.unreadLoading = false;
-        state.error = action.payload;
+        state.error = payload;
       });
   },
 });
 
-export const { clearAdminReturnState, clearCurrentReturn } =
-  adminReturnSlice.actions;
+export const {
+  clearAdminReturnState,
+  clearCurrentReturn,
+  clearReturnMessages,
+  clearPendingAttachments,
+} = adminReturnSlice.actions;
+
 export default adminReturnSlice.reducer;
