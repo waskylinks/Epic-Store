@@ -15,6 +15,8 @@ import {
   Receipt as ReceiptIcon,
 } from '@mui/icons-material';
 import { getAllMyOrders } from '../features/cart/orderSlice';
+import { cancelRefundRequest } from '../features/refunds/refundSlice';
+import { cancelReturnRequest } from '../features/returns/returnSlice';
 import Navbar from '../components/Navbar';
 import '../pageStyles/MyRefundsReturns.css';
 
@@ -144,8 +146,7 @@ function RequestCard({ order, type, onCancel, cancelling }) {
       ? info.requestedAmount || info.refundAmount
       : null;
 
-  const timeline =
-    type === 'refund' ? info.timeline : info.timeline;
+  const timeline = info.timeline;
 
   return (
     <div className="mrr-card">
@@ -167,9 +168,7 @@ function RequestCard({ order, type, onCancel, cancelling }) {
 
         <div className="mrr-card-main">
           <div className="mrr-card-row1">
-            <span
-              className={`mrr-type-chip mrr-type-chip--${type}`}
-            >
+            <span className={`mrr-type-chip mrr-type-chip--${type}`}>
               {type === 'refund' ? (
                 <RefundIcon style={{ fontSize: 11 }} />
               ) : (
@@ -243,7 +242,6 @@ function RequestCard({ order, type, onCancel, cancelling }) {
         </div>
 
         <div className="mrr-card-footer-actions">
-          
           <Link
             to={type === 'refund' ? `/order/${order._id}/refund` : `/order/${order._id}/return`}
             state={{ from: 'my-refunds-returns' }}
@@ -334,12 +332,10 @@ export default function MyRefundsReturns() {
   const [cancelling, setCancelling] = useState(null);
   const [toast, setToast] = useState(null);
 
-  // Load orders on mount if not already loaded
+  // Always fetch fresh on mount so cancellations from other pages are reflected
   useEffect(() => {
-    if (!orders || orders.length === 0) {
-      dispatch(getAllMyOrders());
-    }
-  }, [dispatch, orders]);
+    dispatch(getAllMyOrders());
+  }, [dispatch]);
 
   // Auto-dismiss toast
   useEffect(() => {
@@ -434,7 +430,7 @@ export default function MyRefundsReturns() {
     return list;
   }, [allRequests, activeTab, search]);
 
-  // Cancel handler
+  // Cancel handlers
   const handleCancelClick = useCallback((orderId, type) => {
     setCancelTarget({ orderId, type });
   }, []);
@@ -446,24 +442,16 @@ export default function MyRefundsReturns() {
     setCancelling(key);
 
     try {
-      const endpoint =
-        type === 'refund'
-          ? `/api/v1/orders/${orderId}/refund/cancel`
-          : `/api/v1/orders/${orderId}/return/cancel`;
-
-      const res = await fetch(endpoint, {
-        method: 'PUT',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.message || 'Failed to cancel');
+      if (type === 'refund') {
+        await dispatch(cancelRefundRequest(orderId)).unwrap();
+      } else {
+        await dispatch(cancelReturnRequest(orderId)).unwrap();
+      }
 
       showToast('Request cancelled successfully', 'success');
       dispatch(getAllMyOrders());
     } catch (err) {
-      showToast(err.message || 'Something went wrong', 'error');
+      showToast(err?.message || err || 'Something went wrong', 'error');
     } finally {
       setCancelling(null);
       setCancelTarget(null);

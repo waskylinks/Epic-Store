@@ -5,6 +5,8 @@ import axios from "axios";
 
 /**
  * Get all refund requests (Admin)
+ * Supports pagination + status filter via filters object:
+ *   { page: 1, limit: 20, status: 'requested' }
  */
 export const getAllRefunds = createAsyncThunk(
   "adminRefund/getAllRefunds",
@@ -87,7 +89,7 @@ export const processRefund = createAsyncThunk(
 
 /**
  * Add refund message (Admin)
- * Fix: field renamed from "content" to "message" to match backend controller
+ * Field is "message" (not "content") to match backend controller.
  */
 export const addRefundMessage = createAsyncThunk(
   "adminRefund/addRefundMessage",
@@ -109,16 +111,18 @@ export const addRefundMessage = createAsyncThunk(
 
 /**
  * Get refund messages
+ * FIX: Now accepts { orderId, page, limit } so the UI can paginate the
+ * message thread — backend supports $slice pagination since the perf update.
  */
 export const getRefundMessages = createAsyncThunk(
   "adminRefund/getRefundMessages",
-  async (orderId, { rejectWithValue }) => {
+  async ({ orderId, page = 1, limit = 50 }, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
-        `/api/v1/orders/${orderId}/refund/messages`,
+        `/api/v1/orders/${orderId}/refund/messages?page=${page}&limit=${limit}`,
         { withCredentials: true }
       );
-      return data;
+      return { ...data, page };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch refund messages"
@@ -169,6 +173,8 @@ export const getRefundDocuments = createAsyncThunk(
 
 /**
  * Upload refund files (Admin)
+ * Do NOT set Content-Type manually — axios sets multipart/form-data
+ * with the correct boundary automatically when body is FormData.
  */
 export const uploadRefundFiles = createAsyncThunk(
   "adminRefund/uploadRefundFiles",
@@ -180,11 +186,7 @@ export const uploadRefundFiles = createAsyncThunk(
       const { data } = await axios.post(
         `/api/v1/admin/refunds/${orderId}/upload`,
         formData,
-        {
-          withCredentials: true,
-          // Do NOT set Content-Type manually — axios sets multipart/form-data
-          // with the correct boundary automatically when body is FormData.
-        }
+        { withCredentials: true }
       );
       return data;
     } catch (error) {
@@ -197,6 +199,8 @@ export const uploadRefundFiles = createAsyncThunk(
 
 /**
  * Get refunds with unread messages
+ * FIX: Result is stored in state.unreadRefunds (not state.refunds) so a
+ * background badge poll never overwrites the admin's paginated list view.
  */
 export const getRefundsWithUnreadMessages = createAsyncThunk(
   "adminRefund/getRefundsWithUnreadMessages",
@@ -218,18 +222,35 @@ const adminRefundSlice = createSlice({
   name: "adminRefund",
   initialState: {
     refunds: [],
+    // FIX: Unread results live here — isolated from the paginated list so a
+    // background poll never silently replaces what the admin is looking at.
+    unreadRefunds: [],
     stats: null,
     currentRefund: null,
     messages: [],
+    // FIX: Track which message page is currently loaded so the UI can
+    // implement "load more" without re-fetching from page 1 every time.
+    messagesPage: 1,
+    hasMoreMessages: false,
     timeline: [],
     documents: [],
 
+    // Pagination — populated by getAllRefunds, untouched by unread fetch
+    pagination: {
+      totalRefunds: 0,
+      currentPage: 1,
+      totalPages: 1,
+    },
+
     loading: false,
     refundsLoading: false,
-    // Fix: dedicated loading flag for unread fetch so it doesn't share
-    // state.loading with getSingleRefund/reviewRefund/processRefund and
-    // cause the detail panel spinner to fire while fetching the table.
+    // FIX: dedicated flag so the unread badge fetch does not trigger the
+    // detail panel spinner that reads state.loading.
     unreadLoading: false,
+    // FIX: dedicated flag for message send — was incorrectly sharing
+    // state.loading with reviewRefund and processRefund, causing the wrong
+    // UI element to show a spinner when a message was being sent.
+    messageSendLoading: false,
     messagesLoading: false,
     timelineLoading: false,
     documentsLoading: false,
@@ -248,6 +269,8 @@ const adminRefundSlice = createSlice({
     clearCurrentRefund: (state) => {
       state.currentRefund = null;
       state.messages = [];
+      state.messagesPage = 1;
+      state.hasMoreMessages = false;
       state.timeline = [];
       state.documents = [];
     },
@@ -263,6 +286,11 @@ const adminRefundSlice = createSlice({
         state.refundsLoading = false;
         state.refunds = action.payload.orders;
         state.stats = action.payload.stats;
+        state.pagination = {
+          totalRefunds: action.payload.totalRefunds,
+          currentPage: action.payload.currentPage,
+          totalPages: action.payload.totalPages,
+        };
       })
       .addCase(getAllRefunds.rejected, (state, action) => {
         state.refundsLoading = false;
@@ -294,7 +322,6 @@ const adminRefundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
-        // Keep currentRefund in sync with the updated order from the response
         if (action.payload.order) {
           state.currentRefund = action.payload.order;
         }
@@ -314,7 +341,6 @@ const adminRefundSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = action.payload.message;
-        // Keep currentRefund in sync
         if (action.payload.order) {
           state.currentRefund = action.payload.order;
         }
@@ -325,26 +351,29 @@ const adminRefundSlice = createSlice({
       });
 
     // ── Add Refund Message ──────────────────────────────────────────────────
+    // FIX: Uses messageSendLoading instead of loading so sending a message
+    // doesn't accidentally trigger the review/process action spinner.
     builder
       .addCase(addRefundMessage.pending, (state) => {
-        state.loading = true;
+        state.messageSendLoading = true;
         state.error = null;
       })
       .addCase(addRefundMessage.fulfilled, (state, action) => {
-        state.loading = false;
+        state.messageSendLoading = false;
         state.success = true;
-        // Fix: added null guard — silently dropping undefined prevents corrupt state
         const newMsg = action.payload?.data?.message;
         if (newMsg) {
           state.messages.push(newMsg);
         }
       })
       .addCase(addRefundMessage.rejected, (state, action) => {
-        state.loading = false;
+        state.messageSendLoading = false;
         state.error = action.payload;
       });
 
     // ── Get Refund Messages ─────────────────────────────────────────────────
+    // FIX: Page 1 replaces messages (fresh load); subsequent pages append
+    // (load more). hasMoreMessages lets the UI know if another page exists.
     builder
       .addCase(getRefundMessages.pending, (state) => {
         state.messagesLoading = true;
@@ -352,7 +381,16 @@ const adminRefundSlice = createSlice({
       })
       .addCase(getRefundMessages.fulfilled, (state, action) => {
         state.messagesLoading = false;
-        state.messages = action.payload.messages;
+        const { messages, count, page } = action.payload;
+        const PAGE_LIMIT = 50;
+        if (page === 1) {
+          state.messages = messages;
+        } else {
+          // Prepend older messages so newest stays at the bottom
+          state.messages = [...messages, ...state.messages];
+        }
+        state.messagesPage = page;
+        state.hasMoreMessages = count === PAGE_LIMIT;
       })
       .addCase(getRefundMessages.rejected, (state, action) => {
         state.messagesLoading = false;
@@ -406,8 +444,8 @@ const adminRefundSlice = createSlice({
       });
 
     // ── Get Refunds With Unread Messages ────────────────────────────────────
-    // Fix: uses dedicated unreadLoading flag instead of shared loading so the
-    // detail panel spinner does not fire while the table is fetching.
+    // FIX: Writes to state.unreadRefunds — not state.refunds — so a
+    // background badge poll never replaces the admin's paginated list.
     builder
       .addCase(getRefundsWithUnreadMessages.pending, (state) => {
         state.unreadLoading = true;
@@ -415,10 +453,7 @@ const adminRefundSlice = createSlice({
       })
       .addCase(getRefundsWithUnreadMessages.fulfilled, (state, action) => {
         state.unreadLoading = false;
-        state.refunds = action.payload.orders;
-        // getRefundsWithUnreadMessages returns no stats — clear to avoid showing
-        // stale numbers from the previous getAllRefunds call.
-        state.stats = null;
+        state.unreadRefunds = action.payload.orders;
       })
       .addCase(getRefundsWithUnreadMessages.rejected, (state, action) => {
         state.unreadLoading = false;
