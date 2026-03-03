@@ -1,6 +1,6 @@
 // Updated RefundRequest.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
 import {
@@ -81,9 +81,10 @@ const RefundStatusBadge = ({ status }) => {
 
 function RefundRequest() {
   const { id: orderId } = useParams();
-  const navigate = useNavigate();
-  const dispatch = useDispatch();
-  const fileInputRef = useRef(null);
+  const navigate        = useNavigate();
+  const dispatch        = useDispatch();
+  const fileInputRef    = useRef(null);
+  const location        = useLocation();
 
   const { order, loading: orderLoading } = useSelector((state) => state.order);
 
@@ -106,8 +107,6 @@ function RefundRequest() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [filePreviews, setFilePreviews] = useState([]);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
-  // Track which message IDs were unread when modal was last closed so the
-  // badge clears properly after messages are fetched post-open.
   const [unreadCount, setUnreadCount] = useState(0);
 
   const hasActiveRefund =
@@ -115,6 +114,11 @@ function RefundRequest() {
     order.refundInfo.status !== 'none' &&
     order.refundInfo.status !== 'cancelled';
   const isTracking = hasActiveRefund;
+
+  // Determine where the user came from
+  const fromMyRefunds = location.state?.from === 'my-refunds-returns';
+  const backPath      = fromMyRefunds ? '/my-refunds-returns' : `/order/${orderId}`;
+  const backLabel     = fromMyRefunds ? 'Back' : 'Back to Order Details';
 
   // ── Initial data fetch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -129,14 +133,11 @@ function RefundRequest() {
     }
   }, [dispatch, isTracking, orderId]);
 
-  // ── Unread badge — recompute only when messages array changes ───────────
-  // After the modal is opened, getRefundMessages is called which returns
-  // server-side-marked-as-read data, clearing the badge on next render.
+  // ── Unread badge ────────────────────────────────────────────────────────
   useEffect(() => {
     if (messages && messages.length > 0) {
       const unread = messages.filter(
-        (msg) =>
-          msg.senderType === 'admin' && !msg.readBy?.includes('customer')
+        (msg) => msg.senderType === 'admin' && !msg.readBy?.includes('customer')
       ).length;
       setUnreadCount(unread);
     } else {
@@ -156,10 +157,7 @@ function RefundRequest() {
     }
   }, [isTracking, order?.refundInfo, formData.reason]);
 
-  // ── Global success/error toasts from OTHER slice actions (not submit) ───
-  // We deliberately only show these for non-submit actions (messages, uploads
-  // after submission). The submit flow manages its own toasts to avoid
-  // double-firing on requestRefund.fulfilled.
+  // ── Global error toasts ─────────────────────────────────────────────────
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center' });
@@ -243,8 +241,6 @@ function RefundRequest() {
 
     if (formData.refundType === 'partial') {
       const amount = parseFloat(formData.requestedAmount);
-      // Fix: validate against amountPaid (what was actually charged),
-      // not totalPrice, to match backend guard.
       const maxAllowed = order?.amountPaid ?? order?.totalPrice;
       if (!amount || amount <= 0) {
         errors.requestedAmount = 'Please enter a valid amount';
@@ -280,8 +276,6 @@ function RefundRequest() {
         requestRefund({ orderId, refundData, files: selectedFiles })
       ).unwrap();
 
-      // Re-fetch the order so isTracking flips to true, hiding the form
-      // and revealing the refund status tracking view on this same page.
       dispatch(getOrderDetails(orderId));
 
       toast.success('Refund request submitted successfully!', {
@@ -302,19 +296,16 @@ function RefundRequest() {
     try {
       let uploadedFiles = [];
       if (files && files.length > 0) {
-        // Post-submission upload is safe here because the refund already exists
         const uploadResult = await dispatch(
           uploadRefundFiles({ orderId, files })
         ).unwrap();
         uploadedFiles = uploadResult.files || [];
       }
 
-      // Fix: field renamed from "content" to "message" to match backend
       await dispatch(
         addRefundMessage({ orderId, message: content, attachments: uploadedFiles })
       ).unwrap();
 
-      // Refresh to get server-populated sender data and updated readBy
       dispatch(getRefundMessages(orderId));
       toast.success('Message sent', { position: 'top-center', autoClose: 2000 });
     } catch (err) {
@@ -325,18 +316,8 @@ function RefundRequest() {
 
   const handleOpenMessagesModal = () => {
     setShowMessagesModal(true);
-    // Do NOT dispatch getRefundMessages here. The modal's internal
-    // useEffect calls onRefresh (handleRefreshMessages) when isOpen
-    // becomes true. Dispatching here as well would fire two simultaneous
-    // requests, causing a messagesLoading=true flicker after the first
-    // one resolves.
   };
 
-  // useCallback gives this a stable reference across renders.
-  // Without it, every render creates a new function → the modal's
-  // useEffect([isOpen, onRefresh]) fires again → getRefundMessages
-  // dispatched again → state.messages changes → re-render → new function
-  // → infinite loop of loading spinners.
   const handleRefreshMessages = useCallback(() => {
     if (orderId) {
       dispatch(getRefundMessages(orderId));
@@ -375,10 +356,11 @@ function RefundRequest() {
               don&apos;t have permission to view it.
             </p>
             <button
-              onClick={() => navigate('/orders/user')}
-              className="rr-btn-secondary"
+              onClick={() => navigate(backPath)}
+              className="rr-btn-back-nav"
             >
-              Back to My Orders
+              <FiArrowLeft />
+              {backLabel}
             </button>
           </div>
         </div>
@@ -400,12 +382,13 @@ function RefundRequest() {
       <Navbar />
 
       <div className="rr-refund-request-container">
+        {/* ── Back button ── */}
         <button
-          onClick={() => navigate(`/order/${orderId}`)}
+          onClick={() => navigate(backPath)}
           className="rr-btn-back-nav"
         >
           <FiArrowLeft />
-          Back to Order Details
+          {backLabel}
         </button>
 
         <div className="rr-refund-header">
@@ -834,7 +817,7 @@ function RefundRequest() {
                 <div className="rr-form-actions">
                   <button
                     type="button"
-                    onClick={() => navigate(`/order/${orderId}`)}
+                    onClick={() => navigate(backPath)}
                     className="rr-btn-secondary"
                     disabled={loading || uploadLoading}
                   >

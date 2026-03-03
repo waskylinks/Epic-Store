@@ -1,6 +1,6 @@
 // ReturnRequest.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
 import {
@@ -92,6 +92,7 @@ function ReturnRequest() {
   const navigate        = useNavigate();
   const dispatch        = useDispatch();
   const fileInputRef    = useRef(null);
+  const location        = useLocation();
 
   const { order, loading: orderLoading } = useSelector((s) => s.order);
 
@@ -119,6 +120,11 @@ function ReturnRequest() {
   const returnItems     = order?.returnInfo?.itemsToReturn ?? [];
   const hasActiveReturn = order?.returnInfo?.status && order.returnInfo.status !== 'none';
   const isTracking      = hasActiveReturn;
+
+  // Determine where the user came from
+  const fromMyRefunds = location.state?.from === 'my-refunds-returns';
+  const backPath      = fromMyRefunds ? '/my-refunds-returns' : `/order/${orderId}`;
+  const backLabel     = fromMyRefunds ? 'Back' : 'Back to Order Details';
 
   // ── Fetch order on mount ─────────────────────────────────────────────────
   useEffect(() => {
@@ -171,8 +177,6 @@ function ReturnRequest() {
   }, [isTracking, order?.returnInfo, formData.reason]);
 
   // ── Global error toast only — success is handled inline ─────────────────
-  // FIX: removed generic toast.success here; submission stays on page and
-  // lets the re-fetched order flip isTracking to true naturally.
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center' });
@@ -302,9 +306,6 @@ function ReturnRequest() {
   };
 
   // ── Submit ───────────────────────────────────────────────────────────────
-  // FIX: no toast.success, no navigate after success.
-  // Re-fetching the order causes returnInfo.status to be set, which flips
-  // isTracking to true and renders the tracking view automatically.
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) {
@@ -324,7 +325,6 @@ function ReturnRequest() {
           reason
         }));
 
-      // Step 1: create the return
       await dispatch(requestReturn({
         orderId,
         returnData: {
@@ -335,7 +335,6 @@ function ReturnRequest() {
         }
       })).unwrap();
 
-      // Step 2: upload files now that the return exists
       if (selectedFiles.length > 0) {
         try {
           await dispatch(uploadReturnFiles({ orderId, files: selectedFiles })).unwrap();
@@ -347,8 +346,6 @@ function ReturnRequest() {
         }
       }
 
-      // Step 3: re-fetch order so returnInfo is populated → isTracking becomes
-      // true → tracking view renders in place, no navigation needed.
       dispatch(getOrderDetails(orderId));
 
     } catch (err) {
@@ -384,14 +381,10 @@ function ReturnRequest() {
   };
 
   // ── Cancel return ────────────────────────────────────────────────────────
-  // FIX: removed setTimeout(navigate). After cancel the order is re-fetched;
-  // returnInfo.status becomes 'none' → isTracking becomes false → form
-  // reappears in place on the same page.
   const handleCancelReturn = async () => {
     try {
       await dispatch(cancelReturn(orderId)).unwrap();
       toast.success('Return request cancelled', { position: 'top-center', autoClose: 2000 });
-      // Re-fetch so isTracking → false and the form reappears
       dispatch(getOrderDetails(orderId));
     } catch (err) {
       toast.error(err || 'Failed to cancel return', { position: 'top-center' });
@@ -426,8 +419,12 @@ function ReturnRequest() {
           <FiAlertCircle className="rtr-error-icon" />
           <h2>Order not found</h2>
           <p>The order you're looking for doesn't exist or you don't have permission to view it.</p>
-          <button onClick={() => navigate('/orders/user')} className="rtr-btn-secondary">
-            Back to My Orders
+          <button
+            onClick={() => navigate(backPath)}
+            className="rtr-btn-back-nav"
+          >
+            <FiArrowLeft />
+            {backLabel}
           </button>
         </div>
       </div>
@@ -445,8 +442,12 @@ function ReturnRequest() {
       <Navbar />
 
       <div className="rtr-return-request-container">
-        <button onClick={() => navigate(`/order/${orderId}`)} className="rtr-btn-back-nav">
-          <FiArrowLeft /> Back to Order Details
+        {/* ── Back button ── */}
+        <button
+          onClick={() => navigate(backPath)}
+          className="rtr-btn-back-nav"
+        >
+          <FiArrowLeft /> {backLabel}
         </button>
 
         {/* ── Header ── */}
@@ -583,7 +584,7 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* Items being returned — show per-item reason */}
+                {/* Items being returned */}
                 {returnItems.length > 0 && (
                   <div className="rtr-return-items">
                     <h3>Items Being Returned</h3>
@@ -711,7 +712,6 @@ function ReturnRequest() {
                               <span className="rtr-max-qty">Max: {item.quantity}</span>
                             </div>
 
-                            {/* Per-item reason dropdown */}
                             <div className="rtr-item-reason-selector">
                               <label
                                 htmlFor={`item-reason-${index}`}
@@ -884,7 +884,7 @@ function ReturnRequest() {
                 <div className="rtr-form-actions">
                   <button
                     type="button"
-                    onClick={() => navigate(`/order/${orderId}`)}
+                    onClick={() => navigate(backPath)}
                     className="rtr-btn-secondary"
                     disabled={loading || uploadLoading}
                   >

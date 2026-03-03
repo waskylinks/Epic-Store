@@ -15,6 +15,7 @@ import {
   Dashboard as DashboardIcon,
   Logout as LogoutIcon,
   KeyboardArrowDown as ArrowDownIcon,
+  AssignmentReturn as ReturnsIcon,
 } from '@mui/icons-material';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout, removeSuccess } from '../features/products/userSlice';
@@ -155,9 +156,10 @@ function Navbar() {
       icon: <DashboardIcon />,
       action: () => navigate('/admin/dashboard')
     }] : []),
-    { name: 'My Orders', icon: <OrdersIcon />, action: () => navigate('/orders/user') },
     { name: 'My Account', icon: <PersonIcon />, action: () => navigate('/profile') },
     { name: `Cart (${cartItems.length})`, icon: <ShoppingCartIcon />, action: () => navigate('/cart'), badge: cartItems.length },
+    { name: 'My Orders', icon: <OrdersIcon />, action: () => navigate('/orders/user') },
+    { name: 'My Refunds & Returns',  icon: <ReturnsIcon />,    action: () => navigate('/my-refunds-returns') },
     { name: 'Logout', icon: <LogoutIcon />, action: handleLogout, isDanger: true }
   ];
 

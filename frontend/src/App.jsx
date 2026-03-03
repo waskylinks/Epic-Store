@@ -48,6 +48,7 @@ import AttributionAnalytics from './Admin/AttributionAnalytics';
 import CheckoutAnalytics from './Admin/CheckoutAnalytics';
 import RecoverCart from './Cart/RecoverCart';
 import RecoveryEmailManager from './Admin/RecoveryEmailManager';
+import MyRefundsReturns from './pages/MyRefundReturns';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -119,6 +120,8 @@ function App() {
         <Route path='/order/:id' element={<ProtectedRoute element={<OrderDetails />} />} />
         <Route path="/order/:id/refund" element={<ProtectedRoute element={<RefundRequest />} />} />
         <Route path="/order/:id/return" element={<ProtectedRoute element={<ReturnRequest />} />} />
+        <Route path='/my-refunds-returns' element={<ProtectedRoute element={<MyRefundsReturns />} />} />
+
 
         {/* Admin Routes */}
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard />} adminOnly={true} />} />
