@@ -11,6 +11,17 @@ const orderSchema = new mongoose.Schema(
       required: true
     },
 
+    // Short human-readable order reference — last 8 hex chars of _id, uppercased.
+    // Generated once in pre('save'), never mutated after that.
+    // Used for customer-facing display, support lookups, and admin search.
+    // sparse: true so legacy documents without this field don't collide on
+    // the unique index during a rolling deploy.
+    orderNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
     shippingInfo: {
       address: String,
       city: String,
@@ -90,8 +101,6 @@ const orderSchema = new mongoose.Schema(
     // PAYMENT INFORMATION
     // ============================================
     paymentInfo: {
-      // sparse: true added so that draft orders (no reference yet) do not
-      // conflict on the unique index — null values are excluded from it.
       reference: { type: String, required: true, unique: true, sparse: true },
       providerTxId: String,
       stripePaymentIntentId: String,
@@ -138,7 +147,6 @@ const orderSchema = new mongoose.Schema(
         enum: ['customer', 'admin', 'system'],
         required: true
       },
-      // Standardised field name: 'content' (matches returnInfo.messages)
       content: { type: String, required: true },
       attachments: [{
         url: String,
@@ -189,8 +197,12 @@ const orderSchema = new mongoose.Schema(
       refundedAt: Date,
       gatewayResponse: { type: mongoose.Schema.Types.Mixed },
       failureReason: String,
-      // FIX: 'amount' ghost field removed. It duplicated refundAmount and
-      // was never written to — only refundAmount is used throughout the codebase.
+      // NOTE: 'amount' preserved for backwards compatibility with existing
+      // documents. It is never written to by new code — refundAmount is the
+      // canonical field. Do not use in new code.
+      amount: { type: Number, default: 0 },
+      notes: String,
+      refundReference: String,
       messages: [{
         sender: {
           type: mongoose.Schema.Types.ObjectId,
@@ -202,11 +214,10 @@ const orderSchema = new mongoose.Schema(
           enum: ['customer', 'admin', 'system'],
           required: true
         },
-        // NOTE: this field is intentionally named 'message' (not 'content')
-        // to match the existing stored field name in MongoDB. Renaming it
-        // would silently break all existing refund message documents without
-        // a migration. orderMessages and returnInfo.messages use 'content' —
-        // that inconsistency is a known technical debt item, not fixed here.
+        // NOTE: field is intentionally named 'message' (not 'content') to
+        // match existing stored documents. Renaming without a migration would
+        // silently orphan all existing refund message data. This is known
+        // technical debt — do not rename without a migration script.
         message: { type: String, required: true },
         attachments: [{
           url: String,
@@ -241,11 +252,6 @@ const orderSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
         metadata: mongoose.Schema.Types.Mixed
       }],
-      // NOTE: 'amount' duplicates refundAmount and is never written to (always 0).
-      // It is preserved here to avoid a schema shape change on existing documents.
-      amount: { type: Number, default: 0 },
-      notes: String,
-      refundReference: String,
     },
 
     // ============================================
@@ -504,6 +510,14 @@ const orderSchema = new mongoose.Schema(
 // INDEXES
 // ============================================
 
+// Human-readable order reference — sparse because legacy documents won't
+// have this field. The collation makes regex search case-insensitive at the
+// index level without needing the 'i' flag at query time.
+orderSchema.index(
+  { orderNumber: 1 },
+  { sparse: true, collation: { locale: 'en', strength: 2 } }
+);
+
 // Core pagination indexes
 orderSchema.index({ createdAt: -1 });
 orderSchema.index({ orderStatus: 1, createdAt: -1 });
@@ -518,6 +532,7 @@ orderSchema.index({ 'paymentInfo.method': 1 });
 orderSchema.index({ 'paymentInfo.paidAt': -1 });
 
 // Compound indexes covering status filter + requestedAt sort in one scan.
+// Also used by getAllRefunds date range queries.
 orderSchema.index({ 'refundInfo.status': 1, 'refundInfo.requestedAt': -1 });
 orderSchema.index({ 'returnInfo.status': 1, 'returnInfo.requestedAt': -1 });
 
@@ -533,15 +548,10 @@ orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
 
-// NOTE on array field indexes:
-// MongoDB cannot use a *compound* multikey index when both fields come from
-// the same array (only one array field per compound multikey index is
-// permitted by the query planner). The indexes below are therefore declared
-// as two separate single-field indexes rather than one compound index.
-// The $elemMatch queries in getRefundsWithUnreadMessages etc. will use the
-// isRead index for the initial scan and apply senderType as a filter.
-// For very high message volumes, consider a denormalized unread counter
-// field on the order document instead.
+// NOTE: MongoDB cannot use a compound multikey index when both fields come
+// from the same array. The indexes below are separate single-field indexes.
+// The $elemMatch queries use the isRead index for initial scan and apply
+// senderType as an in-memory filter.
 orderSchema.index({ 'refundInfo.messages.isRead': 1 });
 orderSchema.index({ 'refundInfo.messages.senderType': 1 });
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
@@ -567,7 +577,7 @@ orderSchema.virtual('isRefundable').get(function () {
 });
 
 orderSchema.virtual('refundableAmount').get(function () {
-  return this.amountPaid - (this.refundInfo?.refundAmount || 0);
+  return (this.amountPaid ?? 0) - (this.refundInfo?.refundAmount ?? 0);
 });
 
 orderSchema.virtual('daysUntilRefundDeadline').get(function () {
@@ -582,28 +592,26 @@ orderSchema.virtual('daysUntilRefundDeadline').get(function () {
 
 orderSchema.virtual('hasActiveReturn').get(function () {
   return (
-    this.returnInfo &&
-    this.returnInfo.status !== 'none' &&
-    this.returnInfo.status !== 'completed'
+    this.returnInfo?.status !== 'none' &&
+    this.returnInfo?.status !== 'completed'
   );
 });
 
 orderSchema.virtual('needsFraudReview').get(function () {
   return (
-    this.fraudCheck &&
-    this.fraudCheck.reviewRequired &&
-    this.fraudCheck.reviewDecision === 'Pending'
+    this.fraudCheck?.reviewRequired === true &&
+    this.fraudCheck?.reviewDecision === 'Pending'
   );
 });
 
 orderSchema.virtual('totalShipments').get(function () {
-  return this.shipments ? this.shipments.length : 0;
+  return this.shipments?.length ?? 0;
 });
 
 orderSchema.virtual('isFullyFulfilled').get(function () {
-  if (!this.orderItems || this.orderItems.length === 0) return false;
+  if (!this.orderItems?.length) return false;
   return this.orderItems.every(
-    item =>
+    (item) =>
       item.fulfillmentStatus === 'complete' ||
       item.quantityShipped === item.quantityOrdered
   );
@@ -611,80 +619,70 @@ orderSchema.virtual('isFullyFulfilled').get(function () {
 
 // Granular unread virtuals — named from the reader's perspective.
 orderSchema.virtual('unreadRefundMessagesFromCustomer').get(function () {
-  if (!this.refundInfo?.messages) return 0;
-  return this.refundInfo.messages.filter(
-    msg => !msg.isRead && msg.senderType === 'customer'
+  return (this.refundInfo?.messages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'customer'
   ).length;
 });
 
 orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
-  if (!this.refundInfo?.messages) return 0;
-  return this.refundInfo.messages.filter(
-    msg => !msg.isRead && msg.senderType === 'admin'
+  return (this.refundInfo?.messages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'admin'
   ).length;
 });
 
-// Alias virtual — controllers and external consumers reference unreadRefundMessages
-// for the count of unread customer messages (what an admin dashboard cares about).
-// NOTE: the name is directionally asymmetric (counts only customer→admin direction)
-// which is a known naming ambiguity — do not rename without updating all callers.
+// Alias — admin dashboard unread count (customer→admin direction).
+// NOTE: directionally asymmetric by design — counts only unread customer
+// messages. Do not rename without updating all callers.
 orderSchema.virtual('unreadRefundMessages').get(function () {
-  if (!this.refundInfo?.messages) return 0;
-  return this.refundInfo.messages.filter(
-    msg => !msg.isRead && msg.senderType === 'customer'
+  return (this.refundInfo?.messages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'customer'
   ).length;
 });
 
 orderSchema.virtual('unreadOrderMessagesFromCustomer').get(function () {
-  if (!this.orderMessages) return 0;
-  return this.orderMessages.filter(
-    msg => !msg.isRead && msg.senderType === 'customer'
+  return (this.orderMessages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'customer'
   ).length;
 });
 
 orderSchema.virtual('unreadOrderMessagesFromAdmin').get(function () {
-  if (!this.orderMessages) return 0;
-  return this.orderMessages.filter(
-    msg => !msg.isRead && msg.senderType === 'admin'
+  return (this.orderMessages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'admin'
   ).length;
 });
 
 orderSchema.virtual('unreadReturnMessagesFromCustomer').get(function () {
-  if (!this.returnInfo?.messages) return 0;
-  return this.returnInfo.messages.filter(
-    msg => !msg.isRead && msg.senderType === 'customer'
+  return (this.returnInfo?.messages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'customer'
   ).length;
 });
 
 orderSchema.virtual('unreadReturnMessagesFromAdmin').get(function () {
-  if (!this.returnInfo?.messages) return 0;
-  return this.returnInfo.messages.filter(
-    msg => !msg.isRead && msg.senderType === 'admin'
+  return (this.returnInfo?.messages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'admin'
   ).length;
 });
 
-// Alias virtual — consistent with unreadRefundMessages naming convention.
-// Same directional asymmetry caveat applies.
+// Alias — consistent with unreadRefundMessages naming convention.
 orderSchema.virtual('unreadReturnMessages').get(function () {
-  if (!this.returnInfo?.messages) return 0;
-  return this.returnInfo.messages.filter(
-    msg => !msg.isRead && msg.senderType === 'customer'
+  return (this.returnInfo?.messages ?? []).filter(
+    (m) => !m.isRead && m.senderType === 'customer'
   ).length;
 });
 
 orderSchema.virtual('latestRefundMessage').get(function () {
-  if (!this.refundInfo?.messages?.length) return null;
-  return this.refundInfo.messages[this.refundInfo.messages.length - 1];
+  const msgs = this.refundInfo?.messages;
+  return msgs?.length ? msgs[msgs.length - 1] : null;
 });
 
 orderSchema.virtual('latestOrderMessage').get(function () {
-  if (!this.orderMessages?.length) return null;
-  return this.orderMessages[this.orderMessages.length - 1];
+  const msgs = this.orderMessages;
+  return msgs?.length ? msgs[msgs.length - 1] : null;
 });
 
 orderSchema.virtual('latestReturnMessage').get(function () {
-  if (!this.returnInfo?.messages?.length) return null;
-  return this.returnInfo.messages[this.returnInfo.messages.length - 1];
+  const msgs = this.returnInfo?.messages;
+  return msgs?.length ? msgs[msgs.length - 1] : null;
 });
 
 orderSchema.set('toJSON', { virtuals: true });
@@ -693,19 +691,25 @@ orderSchema.set('strictQuery', true);
 
 // ============================================
 // PRE-SAVE MIDDLEWARE
-// NOTE: Invoice number and RMA number generation use Date.now() +
-// process.pid for entropy. Under concurrent saves at millisecond
-// resolution across multiple server instances this can collide; the
-// unique index will catch it and surface a duplicate-key error.
-// For production at scale, replace with an atomic counter collection
-// (findOneAndUpdate + $inc) or a UUID.
 // ============================================
 orderSchema.pre('save', function (next) {
+  // Generate orderNumber once on first save from the tail of the ObjectId.
+  // _id is always assigned by Mongoose before pre('save') fires so this
+  // is always safe. slice(-8) uses the high-entropy counter/random portion
+  // of the ObjectId rather than the timestamp prefix.
+  if (!this.orderNumber) {
+    this.orderNumber = this._id.toString().slice(-8).toUpperCase();
+  }
+
+  // Generate invoice number when payment succeeds, if not already set.
+  // NOTE: Date.now() + process.pid entropy can collide under concurrent saves
+  // at millisecond resolution across multiple instances. The unique index will
+  // catch it. For production at scale replace with an atomic counter or UUID.
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
     const year    = new Date().getFullYear();
     const month   = String(new Date().getMonth() + 1).padStart(2, '0');
     const entropy = Date.now().toString(36).toUpperCase() + process.pid.toString(36).toUpperCase();
-    this.invoiceInfo         = this.invoiceInfo || {};
+    this.invoiceInfo               = this.invoiceInfo || {};
     this.invoiceInfo.invoiceNumber = `INV-${year}${month}-${entropy}`;
     this.invoiceInfo.invoiceDate   = new Date();
   }
@@ -716,7 +720,7 @@ orderSchema.pre('save', function (next) {
   }
 
   if (this.orderItems) {
-    this.orderItems.forEach(item => {
+    this.orderItems.forEach((item) => {
       if (item.quantityOrdered == null) {
         item.quantityOrdered = item.quantity;
       }
@@ -739,7 +743,7 @@ orderSchema.statics.getOrdersByStatus = async function (status) {
 orderSchema.statics.getPendingFraudReviews = async function () {
   return this.find({
     'fraudCheck.reviewRequired': true,
-    'fraudCheck.reviewDecision': 'Pending'
+    'fraudCheck.reviewDecision': 'Pending',
   })
     .populate('user', 'firstName lastName email')
     .sort({ createdAt: -1 });
@@ -748,33 +752,28 @@ orderSchema.statics.getPendingFraudReviews = async function () {
 orderSchema.statics.getActiveReturns = async function () {
   return this.find({
     'returnInfo.status': {
-      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected']
-    }
+      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected'],
+    },
   })
     .populate('user', 'firstName lastName email')
     .populate('returnInfo.requestedBy', 'firstName lastName email')
     .sort({ 'returnInfo.requestedAt': -1 });
 };
 
-// FIX: Added .select() projection and .limit(50) so the method does not
-// load full order documents (auditLog, orderItems, shipments, etc.) for
-// what is essentially an unread-badge query. The controller only uses
-// _id, user, refundInfo status/reason/requestedAmount, the
-// unreadRefundMessagesForAdmin virtual, and latestRefundMessage virtual.
-// Callers that need the full document should use a separate findById.
 orderSchema.statics.getRefundsWithUnreadMessages = async function () {
   return this.find({
     'refundInfo.status': { $nin: ['none', 'completed', 'rejected'] },
     'refundInfo.messages': {
-      $elemMatch: { isRead: false, senderType: 'customer' }
-    }
+      $elemMatch: { isRead: false, senderType: 'customer' },
+    },
   })
     .select({
       user: 1,
+      orderNumber: 1,
       'refundInfo.status': 1,
       'refundInfo.reason': 1,
       'refundInfo.requestedAmount': 1,
-      'refundInfo.messages': 1,  // needed for virtuals and latestRefundMessage
+      'refundInfo.messages': 1,
     })
     .populate('user', 'firstName lastName email')
     .populate('refundInfo.messages.sender', 'firstName lastName email')
@@ -785,8 +784,8 @@ orderSchema.statics.getRefundsWithUnreadMessages = async function () {
 orderSchema.statics.getOrdersWithUnreadMessages = async function () {
   return this.find({
     orderMessages: {
-      $elemMatch: { isRead: false, senderType: 'customer' }
-    }
+      $elemMatch: { isRead: false, senderType: 'customer' },
+    },
   })
     .populate('user', 'firstName lastName email')
     .populate('orderMessages.sender', 'firstName lastName email')
@@ -797,8 +796,8 @@ orderSchema.statics.getReturnsWithUnreadMessages = async function () {
   return this.find({
     'returnInfo.status': { $nin: ['none', 'completed', 'rejected'] },
     'returnInfo.messages': {
-      $elemMatch: { isRead: false, senderType: 'customer' }
-    }
+      $elemMatch: { isRead: false, senderType: 'customer' },
+    },
   })
     .populate('user', 'firstName lastName email')
     .populate('returnInfo.messages.sender', 'firstName lastName email')
@@ -808,6 +807,7 @@ orderSchema.statics.getReturnsWithUnreadMessages = async function () {
 // ============================================
 // INSTANCE METHODS
 // ============================================
+
 orderSchema.methods.addStatusHistory = function (status, updatedBy, note = '', metadata = {}) {
   this.statusHistory.push({ status, timestamp: new Date(), updatedBy, note, metadata });
 };
@@ -820,20 +820,18 @@ orderSchema.methods.addNote = function (content, type, author) {
   this.notes.push({ content, type, author, createdAt: new Date() });
 };
 
-// ============================================
-// ORDER MESSAGES METHODS
-// ============================================
+// ── Order Messages ──────────────────────────────────────────────────────────
+
 orderSchema.methods.addOrderMessage = function (sender, senderType, content, attachments = []) {
   if (!this.orderMessages) this.orderMessages = [];
   this.orderMessages.push({
     sender, senderType, content, attachments,
-    isRead: false, deliveredAt: null, createdAt: new Date()
+    isRead: false, deliveredAt: null, createdAt: new Date(),
   });
 };
 
 orderSchema.methods.markOrderMessagesDelivered = function (senderType) {
-  if (!this.orderMessages) return;
-  this.orderMessages.forEach(msg => {
+  (this.orderMessages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.deliveredAt) {
       msg.deliveredAt = new Date();
     }
@@ -841,8 +839,7 @@ orderSchema.methods.markOrderMessagesDelivered = function (senderType) {
 };
 
 orderSchema.methods.markOrderMessagesAsRead = function (senderType) {
-  if (!this.orderMessages) return;
-  this.orderMessages.forEach(msg => {
+  (this.orderMessages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.isRead) {
       msg.isRead = true;
       msg.readAt = new Date();
@@ -850,34 +847,26 @@ orderSchema.methods.markOrderMessagesAsRead = function (senderType) {
   });
 };
 
-// ============================================
-// REFUND MESSAGES METHODS
-// ============================================
+// ── Refund Messages ─────────────────────────────────────────────────────────
 
-// FIX: renamed internal field reference from 'message' to 'content' to match
-// the updated schema field name on refundInfo.messages subdocuments.
 orderSchema.methods.addRefundMessage = function (sender, senderType, message, attachments = []) {
   if (!this.refundInfo) this.refundInfo = { status: 'none' };
   if (!this.refundInfo.messages) this.refundInfo.messages = [];
   this.refundInfo.messages.push({
-    sender,
-    senderType,
-    message,   // matches the stored schema field name 'message'
+    sender, senderType,
+    message,   // stored field name is 'message' — see schema comment above
     attachments,
     isRead: false,
-    createdAt: new Date()
+    createdAt: new Date(),
   });
   this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
 };
 
-// The parameter is named 'senderType' but the semantics are: pass the role
-// of the READER. The method marks messages where senderType !== param as read,
-// i.e. messages sent by the OTHER party. This naming is the original and is
-// preserved to avoid breaking any callers.
-// e.g. markRefundMessagesAsRead('admin') → marks customer messages as read.
+// Parameter name is 'senderType' but semantics are: pass the READER's role.
+// Marks messages from the OTHER party as read.
+// e.g. markRefundMessagesAsRead('admin') marks customer messages as read.
 orderSchema.methods.markRefundMessagesAsRead = function (senderType) {
-  if (!this.refundInfo?.messages) return;
-  this.refundInfo.messages.forEach(msg => {
+  (this.refundInfo?.messages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.isRead) {
       msg.isRead = true;
       msg.readAt = new Date();
@@ -889,7 +878,7 @@ orderSchema.methods.addRefundDocument = function (type, url, filename, uploadedB
   if (!this.refundInfo) this.refundInfo = { status: 'none' };
   if (!this.refundInfo.documents) this.refundInfo.documents = [];
   this.refundInfo.documents.push({
-    type, url, filename, description, uploadedBy, uploadedAt: new Date()
+    type, url, filename, description, uploadedBy, uploadedAt: new Date(),
   });
   this.addRefundTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
@@ -898,25 +887,23 @@ orderSchema.methods.addRefundTimeline = function (event, description, performedB
   if (!this.refundInfo) this.refundInfo = { status: 'none' };
   if (!this.refundInfo.timeline) this.refundInfo.timeline = [];
   this.refundInfo.timeline.push({
-    event, description, performedBy, timestamp: new Date(), metadata
+    event, description, performedBy, timestamp: new Date(), metadata,
   });
 };
 
-// ============================================
-// RETURN MESSAGES METHODS
-// ============================================
+// ── Return Messages ─────────────────────────────────────────────────────────
+
 orderSchema.methods.addReturnMessage = function (sender, senderType, content, attachments = []) {
   if (!this.returnInfo) this.returnInfo = { status: 'none' };
   if (!this.returnInfo.messages) this.returnInfo.messages = [];
   this.returnInfo.messages.push({
     sender, senderType, content, attachments,
-    isRead: false, deliveredAt: null, createdAt: new Date()
+    isRead: false, deliveredAt: null, createdAt: new Date(),
   });
 };
 
 orderSchema.methods.markReturnMessagesDelivered = function (senderType) {
-  if (!this.returnInfo?.messages) return;
-  this.returnInfo.messages.forEach(msg => {
+  (this.returnInfo?.messages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.deliveredAt) {
       msg.deliveredAt = new Date();
     }
@@ -924,8 +911,7 @@ orderSchema.methods.markReturnMessagesDelivered = function (senderType) {
 };
 
 orderSchema.methods.markReturnMessagesAsRead = function (senderType) {
-  if (!this.returnInfo?.messages) return;
-  this.returnInfo.messages.forEach(msg => {
+  (this.returnInfo?.messages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.isRead) {
       msg.isRead = true;
       msg.readAt = new Date();
@@ -937,7 +923,7 @@ orderSchema.methods.addReturnTimeline = function (event, description, performedB
   if (!this.returnInfo) this.returnInfo = { status: 'none' };
   if (!this.returnInfo.timeline) this.returnInfo.timeline = [];
   this.returnInfo.timeline.push({
-    event, description, performedBy, timestamp: new Date(), metadata
+    event, description, performedBy, timestamp: new Date(), metadata,
   });
 };
 
@@ -945,7 +931,7 @@ orderSchema.methods.addReturnDocument = function (type, url, filename, uploadedB
   if (!this.returnInfo) this.returnInfo = { status: 'none' };
   if (!this.returnInfo.documents) this.returnInfo.documents = [];
   this.returnInfo.documents.push({
-    type, url, filename, description, uploadedBy, uploadedAt: new Date()
+    type, url, filename, description, uploadedBy, uploadedAt: new Date(),
   });
   this.addReturnTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
