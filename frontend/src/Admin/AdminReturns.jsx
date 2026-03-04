@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
@@ -54,16 +54,13 @@ function useDebounce(value, delay) {
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
-// Backend populates user.name (single field) for returns
 const getCustomerName = (user) => {
   if (!user) return 'N/A';
   return user.name?.trim() || user.email || 'N/A';
 };
 
-// Format currency safely
 const fmt = (n) => (typeof n === 'number' ? n.toFixed(2) : '0.00');
 
-// Return-specific status colours
 const STATUS_COLOR = {
   requested:  'requested',
   approved:   'approved',
@@ -76,11 +73,8 @@ const STATUS_COLOR = {
 };
 
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled']);
-
-// Statuses that can receive an updateReturnStatus call (post-approval lifecycle)
 const LIFECYCLE_STATUSES = ['in_transit', 'received', 'inspected', 'completed'];
 
-// Which lifecycle statuses are valid next steps for a given current status
 const NEXT_STATUS_MAP = {
   approved:   ['in_transit'],
   in_transit: ['received'],
@@ -144,7 +138,6 @@ const AdminReturns = () => {
   const { currentPage, totalPages, totalReturns } = pagination;
 
   // ── Filter / sort / page state ────────────────────────────────────────────
-  // No setPage action in adminReturnSlice; page is passed as a filter param
   const [localPage,      setLocalPage]      = useState(1);
   const [searchRaw,      setSearchRaw]      = useState('');
   const [filterStatus,   setFilterStatus]   = useState('');
@@ -168,48 +161,77 @@ const AdminReturns = () => {
   const [newStatus,        setNewStatus]        = useState('');
   const [inspectionNotes,  setInspectionNotes]  = useState('');
 
-  const searchTerm = useDebounce(searchRaw, 400);
-  // RMA search also debounced — it's a regex query on backend
   const rmaDebounced = useDebounce(rmaSearch, 400);
 
-  // ── Build filter params ───────────────────────────────────────────────────
-  // These params go directly to getAllReturns which passes them through
-  // sanitiseFilters → URLSearchParams on the backend
-  const buildListParams = useCallback(() => {
-    const p = { page: localPage, limit: LIMIT, sortBy, order: sortOrder };
-    if (filterStatus)         p.status = filterStatus;
-    if (fromDate)             p.from   = fromDate;
-    if (toDate)               p.to     = toDate;
-    if (rmaDebounced.trim())  p.rma    = rmaDebounced.trim();
-    // Backend doesn't have a "search" filter; rma covers the RMA lookup.
-    // searchTerm is kept for frontend reference but rma is the backend filter.
+  // ── FIX: Use a ref to track which filters were last fetched ──────────────
+  // This breaks the circular dependency:
+  // buildListParams → useCallback → handleFetchReturns → useCallback → useEffect → fetch
+  // The ref approach lets us read current filter values at fetch time
+  // without making them reactive dependencies of the fetch effect itself.
+  const filtersRef = useRef({});
+  filtersRef.current = {
+    localPage,
+    filterStatus,
+    fromDate,
+    toDate,
+    rmaDebounced,
+    sortBy,
+    sortOrder,
+    showUnreadOnly,
+  };
+
+  // ── Build filter params (pure function, no useCallback needed) ────────────
+  const buildListParams = () => {
+    const f = filtersRef.current;
+    const p = { page: f.localPage, limit: LIMIT, sortBy: f.sortBy, order: f.sortOrder };
+    if (f.filterStatus)        p.status = f.filterStatus;
+    if (f.fromDate)            p.from   = f.fromDate;
+    if (f.toDate)              p.to     = f.toDate;
+    if (f.rmaDebounced.trim()) p.rma    = f.rmaDebounced.trim();
     return p;
-  }, [localPage, filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder]);
+  };
+
+  // ── FIX: Single stable fetch trigger using a counter ─────────────────────
+  // Instead of depending on derived callbacks, we increment a counter whenever
+  // we want a fetch to happen. The fetch effect only depends on this counter,
+  // preventing the circular rebuild chain that caused infinite loading.
+  const [fetchTick, setFetchTick] = useState(0);
+  const triggerFetch = useCallback(() => setFetchTick((n) => n + 1), []);
 
   // ── Fetch list ────────────────────────────────────────────────────────────
-  const handleFetchReturns = useCallback(() => {
-    if (showUnreadOnly) {
+  useEffect(() => {
+    if (filtersRef.current.showUnreadOnly) {
       dispatch(getReturnsWithUnreadMessages());
     } else {
       dispatch(getAllReturns(buildListParams()));
     }
-  }, [dispatch, showUnreadOnly, buildListParams]);
-
-  useEffect(() => {
-    handleFetchReturns();
-  }, [handleFetchReturns]);
-
-  // Reset to page 1 on any filter change (not on page change itself)
-  const prevFilters = useMemo(
-    () => ({ filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly]
-  );
+  }, [fetchTick, dispatch]);
+
+  // ── FIX: Trigger fetch when filters change (debounced values settle) ──────
+  // Previously this was handled by making handleFetchReturns depend on
+  // buildListParams which depended on all filters — causing the loop.
+  // Now we just trigger the stable counter, which fires the fetch effect once.
   useEffect(() => {
+    // Reset to page 1 on filter changes (not on page change itself)
     setLocalPage(1);
-    // prevFilters identity changes when any filter changes — this effect fires
+    // Delay slightly so setLocalPage(1) has time to update filtersRef
+    // before the fetch effect reads it. Using setTimeout(0) is safe here
+    // because the fetch effect reads from filtersRef.current (always fresh).
+    triggerFetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevFilters]);
+  }, [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly]);
+
+  // ── Trigger fetch on page change ──────────────────────────────────────────
+  useEffect(() => {
+    triggerFetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localPage]);
+
+  // ── Manual refresh ────────────────────────────────────────────────────────
+  const handleFetchReturns = useCallback(() => {
+    triggerFetch();
+  }, [triggerFetch]);
 
   // ── Toast auto-dismiss ────────────────────────────────────────────────────
   useEffect(() => {
@@ -240,11 +262,9 @@ const AdminReturns = () => {
   const displayList = showUnreadOnly ? unreadReturns : returns;
   const tableLoading = showUnreadOnly ? unreadLoading : returnsLoading;
 
-  // Unread dot awareness per status filter tab
   const hasUnreadByStatus = useMemo(() => {
     const map = { all: false };
     displayList.forEach((item) => {
-      // getAllReturns projection includes unreadMessages count
       const count = item.unreadMessages ?? 0;
       if (count > 0) {
         map.all = true;
@@ -255,7 +275,6 @@ const AdminReturns = () => {
     return map;
   }, [displayList]);
 
-  // Ellipsis-aware page numbers
   const pageNumbers = useMemo(() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages = [];
@@ -269,7 +288,6 @@ const AdminReturns = () => {
     return pages;
   }, [totalPages, currentPage]);
 
-  // What next statuses are valid for the current return
   const validNextStatuses = useMemo(() => {
     if (!currentReturn) return [];
     const current = currentReturn.returnInfo?.status;
@@ -297,7 +315,6 @@ const AdminReturns = () => {
     await fetchReturnDetails(orderId);
   }, [fetchReturnDetails]);
 
-  // Await getSingleReturn before showing modal so currentReturn is never null
   const handleOpenMessageModal = useCallback(async (orderId) => {
     setSelectedId(orderId);
     await dispatch(getSingleReturn(orderId));
@@ -327,23 +344,22 @@ const AdminReturns = () => {
       setRestockFee('');
       dispatch(getAllReturns(buildListParams()));
     } catch (_) { /* error surfaced via slice error state */ }
-  }, [dispatch, reviewAction, adminNote, restockFee, selectedId, buildListParams]);
+  }, [dispatch, reviewAction, adminNote, restockFee, selectedId]);
 
   const handleUpdateStatus = useCallback(async () => {
     if (!newStatus || !selectedId) return;
     try {
       await dispatch(updateReturnStatus({
-        orderId:        selectedId,
-        status:         newStatus,
+        orderId:         selectedId,
+        status:          newStatus,
         inspectionNotes: newStatus === 'inspected' ? (inspectionNotes || undefined) : undefined,
       })).unwrap();
       setNewStatus('');
       setInspectionNotes('');
       dispatch(getAllReturns(buildListParams()));
     } catch (_) { /* error surfaced via slice */ }
-  }, [dispatch, newStatus, inspectionNotes, selectedId, buildListParams]);
+  }, [dispatch, newStatus, inspectionNotes, selectedId]);
 
-  // Modal send: thunk field is "content" not "message"
   const handleSendMessage = useCallback(async (text, files, pendingUrls = []) => {
     if (!selectedId) return;
     await dispatch(sendReturnMessage({
@@ -374,8 +390,8 @@ const AdminReturns = () => {
   const handleCloseMessageModal = useCallback(() => {
     setShowMessageModal(false);
     dispatch(clearReturnMessages());
-    dispatch(getAllReturns(buildListParams()));
-  }, [dispatch, buildListParams]);
+    triggerFetch();
+  }, [dispatch, triggerFetch]);
 
   const handleClosePanel = useCallback(() => {
     setShowDetailPanel(false);
@@ -388,8 +404,8 @@ const AdminReturns = () => {
     setNewStatus('');
     setInspectionNotes('');
     dispatch(clearCurrentReturn());
-    dispatch(getAllReturns(buildListParams()));
-  }, [dispatch, buildListParams]);
+    triggerFetch();
+  }, [dispatch, triggerFetch]);
 
   const handleModalRefresh = useCallback(() => {
     if (selectedId) dispatch(getReturnMessages({ orderId: selectedId, page: 1 }));
@@ -397,7 +413,6 @@ const AdminReturns = () => {
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
-  // KPI cards
   const renderKPICards = () => {
     if (!stats) {
       return Array.from({ length: 5 }).map((_, i) => (
@@ -431,7 +446,6 @@ const AdminReturns = () => {
     ));
   };
 
-  // Table
   const renderTable = () => {
     if (tableLoading && displayList.length === 0) {
       return (
@@ -449,7 +463,7 @@ const AdminReturns = () => {
       );
     }
 
-    if (displayList.length === 0) {
+    if (!tableLoading && displayList.length === 0) {
       return (
         <div className="rt-empty">
           <Inventory style={{ fontSize: 36, color: '#D1D5DB' }} />
@@ -536,7 +550,6 @@ const AdminReturns = () => {
     );
   };
 
-  // Pagination
   const renderPagination = () => {
     if (showUnreadOnly || totalPages <= 1) return null;
     return (
@@ -579,7 +592,6 @@ const AdminReturns = () => {
     );
   };
 
-  // Detail drawer
   const renderDetailPanel = () => {
     if (!showDetailPanel) return null;
 
@@ -637,7 +649,6 @@ const AdminReturns = () => {
             <button type="button" className="rt-drawer-close" onClick={handleClosePanel} aria-label="Close panel">×</button>
           </div>
 
-          {/* Tab bar */}
           <div className="rt-drawer-tabs">
             <div className="rt-tf rt-drawer-tab-row">
               {DRAWER_TABS.map((tab) => (
@@ -655,10 +666,8 @@ const AdminReturns = () => {
 
           <div className="rt-drawer-body">
 
-            {/* ── OVERVIEW ─────────────────────────────────────────────── */}
             {activeTab === 'overview' && (
               <>
-                {/* Return info */}
                 <div className="rt-section"><span className="rt-section-text">Return Info</span><span className="rt-section-line" /></div>
                 <div className="rt-card">
                   <div className="rt-card-body">
@@ -705,7 +714,6 @@ const AdminReturns = () => {
                   </div>
                 </div>
 
-                {/* Customer description */}
                 {returnInfo.description && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Customer Description</span><span className="rt-section-line" /></div>
@@ -719,7 +727,6 @@ const AdminReturns = () => {
                   </>
                 )}
 
-                {/* Inspection notes (visible once inspected) */}
                 {returnInfo.inspectionNotes && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Inspection Notes</span><span className="rt-section-line" /></div>
@@ -733,7 +740,6 @@ const AdminReturns = () => {
                   </>
                 )}
 
-                {/* Items to return */}
                 {returnInfo.itemsToReturn?.length > 0 && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Items to Return</span><span className="rt-section-line" /></div>
@@ -761,7 +767,6 @@ const AdminReturns = () => {
                   </>
                 )}
 
-                {/* Order items */}
                 {currentReturn.orderItems?.length > 0 && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Order Items</span><span className="rt-section-line" /></div>
@@ -787,7 +792,6 @@ const AdminReturns = () => {
               </>
             )}
 
-            {/* ── REVIEW ───────────────────────────────────────────────── */}
             {activeTab === 'review' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -868,7 +872,6 @@ const AdminReturns = () => {
               </div>
             )}
 
-            {/* ── STATUS UPDATE ─────────────────────────────────────────── */}
             {activeTab === 'status' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -881,12 +884,11 @@ const AdminReturns = () => {
                   </div>
                 </div>
                 <div className="rt-card-body">
-                  {/* Status progression indicator */}
                   <div className="rt-progress-row">
                     {LIFECYCLE_STATUSES.map((s, idx) => {
                       const currentIdx = LIFECYCLE_STATUSES.indexOf(retStatus);
-                      const isPast   = idx < currentIdx;
-                      const isCurrent = s === retStatus;
+                      const isPast     = idx < currentIdx;
+                      const isCurrent  = s === retStatus;
                       return (
                         <React.Fragment key={s}>
                           <div className={`rt-progress-step${isCurrent ? ' rt-progress-step--current' : isPast ? ' rt-progress-step--done' : ''}`}>
@@ -959,7 +961,6 @@ const AdminReturns = () => {
               </div>
             )}
 
-            {/* ── TIMELINE ──────────────────────────────────────────────── */}
             {activeTab === 'timeline' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -1008,7 +1009,6 @@ const AdminReturns = () => {
               </div>
             )}
 
-            {/* ── DOCUMENTS ─────────────────────────────────────────────── */}
             {activeTab === 'documents' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -1029,7 +1029,6 @@ const AdminReturns = () => {
                     onChange={(e) => {
                       if (e.target.files?.length) {
                         handleFileUpload(Array.from(e.target.files));
-                        // Reset input so same file can be re-selected
                         // eslint-disable-next-line no-param-reassign
                         e.target.value = '';
                       }
@@ -1091,7 +1090,6 @@ const AdminReturns = () => {
             )}
           </div>
 
-          {/* Footer */}
           <div className="rt-drawer-footer">
             <button
               type="button"
@@ -1124,7 +1122,6 @@ const AdminReturns = () => {
           <ArrowBack style={{ fontSize: 15 }} />Dashboard
         </Link>
 
-        {/* Header */}
         <div className="rt-hd">
           <div className="rt-hd-left">
             <span className="rt-hd-icon" style={{ background: '#6366F115', color: '#6366F1' }}>
@@ -1148,7 +1145,6 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* KPI cards */}
         <div className="rt-kpi-grid">{renderKPICards()}</div>
 
         <div className="rt-section">
@@ -1156,9 +1152,7 @@ const AdminReturns = () => {
           <span className="rt-section-line" />
         </div>
 
-        {/* Filters */}
         <div className="rt-filters">
-          {/* RMA / order search */}
           <div className="rt-search-wrap">
             <Search className="rt-search-icon" style={{ fontSize: 16 }} />
             <input
@@ -1171,7 +1165,6 @@ const AdminReturns = () => {
             />
           </div>
 
-          {/* Status filter pills */}
           <div className="rt-tf rt-filter-pills">
             {STATUS_FILTERS.map((opt) => (
               <button
@@ -1186,7 +1179,6 @@ const AdminReturns = () => {
             ))}
           </div>
 
-          {/* Date range — backend params "from" / "to" */}
           <div className="rt-date-wrap">
             <input
               type="date"
@@ -1205,7 +1197,6 @@ const AdminReturns = () => {
             />
           </div>
 
-          {/* Sort controls */}
           <div className="rt-sort-wrap">
             <select
               className="rt-form-select rt-sort-select"
@@ -1227,7 +1218,6 @@ const AdminReturns = () => {
             </button>
           </div>
 
-          {/* Unread toggle */}
           <div className="rt-toggle-wrap">
             <button
               type="button"
@@ -1243,7 +1233,6 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* Error banner */}
         {error && (
           <div className="rt-error-banner" role="alert">
             <Warning style={{ fontSize: 18, flexShrink: 0 }} />
@@ -1254,7 +1243,6 @@ const AdminReturns = () => {
           </div>
         )}
 
-        {/* Retry banner for partial upload failure */}
         {errorStage === 'send' && pendingAttachments.length > 0 && (
           <div className="rt-retry-banner" role="alert">
             <Warning style={{ fontSize: 16, flexShrink: 0 }} />
@@ -1279,7 +1267,6 @@ const AdminReturns = () => {
           </div>
         )}
 
-        {/* Table card */}
         <div className="rt-card">
           <div className="rt-card-hd">
             <div>
@@ -1301,7 +1288,6 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* Success toast */}
         {success && successMessage && (
           <div className="rt-toast-wrap" role="status" aria-live="polite">
             <div className="rt-toast rt-toast--success">
@@ -1315,10 +1301,8 @@ const AdminReturns = () => {
         )}
       </div>
 
-      {/* Detail drawer */}
       {renderDetailPanel()}
 
-      {/* Message modal — only mounts when currentReturn is populated */}
       {showMessageModal && currentReturn && (
         <ReturnMessagesModal
           isOpen={showMessageModal}
