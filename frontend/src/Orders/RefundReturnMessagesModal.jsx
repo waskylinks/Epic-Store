@@ -176,9 +176,6 @@ function RefundReturnMessagesModal({
   const messagesEndRef  = useRef(null);
   const fileInputRef    = useRef(null);
   const textareaRef     = useRef(null);
-  // FIX-10: ref-based send guard. setState is async so isSending state
-  // is still false in a synchronous second call (e.g. two rapid Enter presses).
-  // The ref is set synchronously before await, so the second call is blocked.
   const isSendingRef    = useRef(false);
 
   const isAdmin   = currentUserRole === "admin";
@@ -189,10 +186,6 @@ function RefundReturnMessagesModal({
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
 
-  // Auto-scroll to bottom when new messages arrive — only if already near bottom.
-  // FIX-7: defer via rAF so the new bubble has painted and scrollHeight is updated
-  // before the nearBottom check runs. Without rAF the old scrollHeight is used
-  // and the check can incorrectly conclude the user has scrolled away.
   useEffect(() => {
     const list = messagesListRef.current;
     if (!list) return;
@@ -203,9 +196,6 @@ function RefundReturnMessagesModal({
     return () => cancelAnimationFrame(raf);
   }, [messages, scrollToBottom]);
 
-  // Show/hide scroll-to-bottom chevron.
-  // FIX-8: read ref inside the handler rather than capturing it at effect-time.
-  // Avoids stale-ref issues if the DOM node is replaced (HMR / StrictMode).
   useEffect(() => {
     const list = messagesListRef.current;
     if (!list) return;
@@ -223,16 +213,12 @@ function RefundReturnMessagesModal({
     if (isOpen && onRefresh) onRefresh();
   }, [isOpen, onRefresh]);
 
-  // Instant scroll on open (before animation)
   useEffect(() => {
     if (isOpen) {
       requestAnimationFrame(() => scrollToBottom("auto"));
     }
   }, [isOpen, scrollToBottom]);
 
-  // Reset transient state on close.
-  // FIX-9: also reset textarea height so re-opening the modal after typing
-  // a multi-line message doesn't show a tall empty textarea.
   useEffect(() => {
     if (!isOpen) {
       setNewMessage("");
@@ -250,13 +236,13 @@ function RefundReturnMessagesModal({
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`; // cap ~5 lines
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   }, [newMessage]);
 
   // ── File handling ────────────────────────────────────────────────────────
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files);
-    e.target.value = ""; // allow reselecting the same file after removal
+    e.target.value = "";
 
     if (selectedFiles.length + files.length > MAX_FILES) {
       alert(`You can only attach up to ${MAX_FILES} files`);
@@ -295,21 +281,14 @@ function RefundReturnMessagesModal({
   // ── Send ─────────────────────────────────────────────────────────────────
   const handleSendMessage = async () => {
     const trimmed = newMessage.trim();
-    // FIX-10: check isSendingRef.current (synchronous) FIRST before the async
-    // isSending state. Two rapid Enter presses both read isSending=false from
-    // the same render closure, so the state check alone doesn't prevent the
-    // second call from slipping through. The ref is set synchronously below.
     if ((!trimmed && selectedFiles.length === 0) || isSendingRef.current) return;
 
-    // Capture before clearing — all three restored together on failure
     const capturedText     = trimmed;
     const capturedFiles    = [...selectedFiles];
     const capturedPreviews = [...filePreviews];
 
-    // Set ref synchronously — blocks any re-entrant call in the same tick
     isSendingRef.current = true;
 
-    // Clear immediately for instant feedback (WhatsApp behaviour)
     setNewMessage("");
     setSelectedFiles([]);
     setFilePreviews([]);
@@ -320,7 +299,6 @@ function RefundReturnMessagesModal({
       await onSendMessage(capturedText, capturedFiles);
       requestAnimationFrame(() => scrollToBottom());
     } catch (err) {
-      // Restore all input state so the user doesn't lose their message or files
       setNewMessage(capturedText);
       setSelectedFiles(capturedFiles);
       setFilePreviews(capturedPreviews);
@@ -352,8 +330,6 @@ function RefundReturnMessagesModal({
       ? `${orderInfo.customerName} · Order ${headerOrderRef}`
       : `Order ${headerOrderRef}`;
 
-  // Spinner only on the very first load when there is nothing to show yet.
-  // Background refreshes are silent — the list stays visible.
   const showInitialLoader = loading && messages.length === 0;
 
   return (
@@ -362,11 +338,13 @@ function RefundReturnMessagesModal({
 
         {/* Header */}
         <div className="rrmm-modal-header">
-          <div className="rrmm-header-info">
-            <h2 className="rrmm-header-title">
+          <div>
+            <h2>
               {type === "return" ? "Return" : "Refund"} Messages
               {isAdmin && (
-                <span className="rrmm-admin-badge"> — Admin View</span>
+                <span style={{ fontWeight: 400, color: "var(--rrmm-text-muted)" }}>
+                  {" — Admin View"}
+                </span>
               )}
             </h2>
             <p className="rrmm-modal-subtitle">{headerSubtitle}</p>
@@ -384,7 +362,7 @@ function RefundReturnMessagesModal({
         <div className="rrmm-modal-body">
 
           {/* Scrollable message area */}
-          <div className="rrmm-messages-scroll" ref={messagesListRef}>
+          <div className="rrmm-messages-list" ref={messagesListRef}>
             {showInitialLoader ? (
               <div className="rrmm-messages-loading">
                 <div className="rrmm-loading-spinner" />
@@ -397,116 +375,145 @@ function RefundReturnMessagesModal({
                 <small>Start a conversation about your {typeLabel}</small>
               </div>
             ) : (
-              <div className="rrmm-messages-list">
+              <>
                 {messages.map((msg, idx) => {
                   const senderIsCustomer = msg.senderType === "customer";
                   const isOutgoing       = isAdmin
-                    ? !senderIsCustomer   // admin's own messages are outgoing for admin
-                    : senderIsCustomer;   // customer's own messages are outgoing for customer
+                    ? !senderIsCustomer
+                    : senderIsCustomer;
 
                   const messageBody = msg.message || msg.content || msg.text || "";
                   const readByOther = msg.isRead === true;
                   const groupPos    = getGroupPosition(messages, idx);
 
-                  // Show sender name only on the first bubble of an incoming group
                   const showSenderName =
                     !isOutgoing && (groupPos === "first" || groupPos === "solo");
 
-                  // Date separator before the first message of each calendar day
                   const prevMsg  = messages[idx - 1];
                   const showDate = idx === 0 || isDifferentDay(prevMsg?.createdAt, msg.createdAt);
 
                   return (
                     <React.Fragment key={msg._id || idx}>
+
+                      {/* ── Date separator ── */}
                       {showDate && (
-                        // FIX-11: aria-label removed from wrapper div — screen readers
-                        // would read it AND the visible span text, causing duplication.
-                        // The span's visible text is the correct and sufficient label.
-                        <div className="rrmm-date-separator" role="separator">
-                          <span className="rrmm-date-separator-label">
+                        <div
+                          role="separator"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            margin: "8px 0",
+                          }}
+                        >
+                          <span style={{ flex: 1, height: 1, background: "var(--rrmm-border)" }} />
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "var(--rrmm-text-muted)",
+                              textTransform: "uppercase",
+                              letterSpacing: "0.5px",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {formatDateSeparator(msg.createdAt)}
                           </span>
+                          <span style={{ flex: 1, height: 1, background: "var(--rrmm-border)" }} />
                         </div>
                       )}
 
                       <div
                         className={[
                           "rrmm-message",
-                          isOutgoing
-                            ? "rrmm-message-outgoing"
-                            : "rrmm-message-incoming",
-                          `rrmm-group-${groupPos}`,
+                          isOutgoing ? "rrmm-message-outgoing" : "rrmm-message-incoming",
                         ].join(" ")}
                       >
-                        {/* Incoming sender name — first bubble of group only */}
-                        {showSenderName && (
-                          <span className="rrmm-sender-name">
-                            {getSenderDisplayName(msg)}
-                          </span>
-                        )}
-
-                        <div className="rrmm-message-bubble">
-                          {messageBody && (
-                            <p className="rrmm-message-text">{messageBody}</p>
+                        {/* CSS expects .rrmm-message-content wrapping content + footer */}
+                        <div className="rrmm-message-content">
+                          {showSenderName && (
+                            <span className="rrmm-message-sender">
+                              {getSenderDisplayName(msg)}
+                            </span>
                           )}
 
-                          {msg.attachments?.length > 0 && (
-                            <div className="rrmm-message-attachments">
-                              {msg.attachments.map((att, i) => (
-                                <a
-                                  key={i}
-                                  href={att.url}
-                                  download
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="rrmm-attachment"
-                                >
-                                  {getFileIcon(att.fileType || att.type)}
-                                  <span className="rrmm-attachment-name">
-                                    {att.filename || att.name || "Attachment"}
-                                  </span>
-                                  <FiDownload className="rrmm-download-icon" />
-                                </a>
-                              ))}
-                            </div>
-                          )}
+                          <div className="rrmm-message-bubble">
+                            {messageBody && <p>{messageBody}</p>}
 
-                          {/* Time + read receipt — inside bubble, bottom-right */}
-                          <div className="rrmm-message-meta">
-                            <span className="rrmm-message-time">
+                            {msg.attachments?.length > 0 && (
+                              <div className="rrmm-message-attachments">
+                                {msg.attachments.map((att, i) => (
+                                  <a
+                                    key={i}
+                                    href={att.url}
+                                    download
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="rrmm-attachment"
+                                  >
+                                    {getFileIcon(att.fileType || att.type)}
+                                    <span className="rrmm-attachment-name">
+                                      {att.filename || att.name || "Attachment"}
+                                    </span>
+                                    <FiDownload className="rrmm-download-icon" />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ── Footer: time + read receipt ── */}
+                          <div className="rrmm-message-footer">
+                            <span style={{ fontSize: "10.5px", fontWeight: 500 }}>
                               {formatMessageTime(msg.createdAt || msg.timestamp)}
                             </span>
 
-                            {/* Read receipt only on outgoing bubbles.
-                                NO "You" label — alignment makes authorship obvious. */}
                             {isOutgoing && (
                               <span
-                                className={`rrmm-ticks ${readByOther ? "rrmm-ticks-read" : ""}`}
+                                className={`rrmm-message-status${readByOther ? " rrmm-read" : ""}`}
                                 aria-label={readByOther ? "Read" : "Sent"}
                               >
-                                <FiCheck className="rrmm-tick" />
+                                <FiCheck className="rrmm-check" />
                                 {readByOther && (
-                                  <FiCheck className="rrmm-tick rrmm-tick-overlap" />
+                                  <FiCheck className="rrmm-check rrmm-check-double" />
                                 )}
                               </span>
                             )}
                           </div>
                         </div>
                       </div>
+
                     </React.Fragment>
                   );
                 })}
                 <div ref={messagesEndRef} />
-              </div>
+              </>
             )}
 
             {/* Scroll-to-bottom button */}
             {showScrollBtn && (
               <button
-                className="rrmm-scroll-to-bottom"
                 onClick={() => scrollToBottom()}
                 aria-label="Scroll to latest message"
                 type="button"
+                style={{
+                  position: "sticky",
+                  bottom: 12,
+                  alignSelf: "flex-end",
+                  width: 32,
+                  height: 32,
+                  borderRadius: "50%",
+                  background: "var(--rrmm-card)",
+                  border: "1px solid var(--rrmm-border)",
+                  boxShadow: "var(--rrmm-shadow)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: "var(--rrmm-text-sec)",
+                  marginLeft: "auto",
+                  marginRight: 4,
+                }}
               >
                 <FiChevronDown />
               </button>
@@ -576,7 +583,7 @@ function RefundReturnMessagesModal({
             />
 
             <button
-              className={`rrmm-send-btn${isSending ? " rrmm-send-btn-sending" : ""}`}
+              className="rrmm-send-btn"
               onClick={handleSendMessage}
               disabled={(!newMessage.trim() && selectedFiles.length === 0) || isSending}
               type="button"
