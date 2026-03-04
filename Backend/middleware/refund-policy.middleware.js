@@ -5,12 +5,18 @@ import Order from '../models/order-model.js';
 import HandleError from '../utils/handleError.js';
 
 /**
+ * Resolves the order ID from req.params regardless of whether the route
+ * defines the param as :id or :orderId.
+ */
+const resolveOrderId = (req) => req.params.id ?? req.params.orderId;
+
+/**
  * Check if order is eligible for refund based on business rules
  * @middleware
  */
 export const checkRefundEligibility = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = resolveOrderId(req);
 
     // 0. Validate ObjectId format
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -35,31 +41,35 @@ export const checkRefundEligibility = async (req, res, next) => {
       return next(new HandleError("Cannot refund unpaid order", 400));
     }
 
-    // 4. Check if refund already requested/processed
+    // 4. Check refund status against re-request policy:
+    //    - requested / approved / processing / completed → hard block
+    //    - rejected → block, must contact support
+    //    - cancelled / failed → allow re-request (customer cancelled by mistake
+    //      or gateway failed; penalising them serves no purpose)
     if (order.refundInfo && order.refundInfo.status !== 'none') {
       const status = order.refundInfo.status;
-      
-      if (status === "requested") {
+
+      if (status === 'requested') {
         return next(new HandleError("Refund request is already pending review", 400));
       }
-      
-      if (status === "approved") {
+
+      if (status === 'approved') {
         return next(new HandleError("Refund has already been approved and is being processed", 400));
       }
-      
-      if (status === "processing") {
+
+      if (status === 'processing') {
         return next(new HandleError("Refund is currently being processed", 400));
       }
-      
-      if (status === "completed") {
+
+      if (status === 'completed') {
         return next(new HandleError("This order has already been refunded", 400));
       }
 
-      // If rejected, allow re-requesting (optional - you can change this)
-      if (status === "rejected") {
-        // Allow re-request or return error
-        // return next(new HandleError("Previous refund request was rejected. Please contact support.", 400));
+      if (status === 'rejected') {
+        return next(new HandleError("Your refund request was rejected. Please contact support to proceed.", 400));
       }
+
+      // cancelled and failed → fall through, re-request is allowed
     }
 
     // 5. Check order status - only specific statuses can be refunded
@@ -74,7 +84,7 @@ export const checkRefundEligibility = async (req, res, next) => {
     // 6. Check refund time window (30 days from delivery/payment)
     const REFUND_WINDOW_DAYS = 30;
     const baseDate = order.deliveredAt || order.paymentInfo.paidAt;
-    
+
     if (!baseDate) {
       return next(new HandleError("Cannot determine refund eligibility date", 400));
     }
@@ -86,7 +96,7 @@ export const checkRefundEligibility = async (req, res, next) => {
       const daysSincePurchase = Math.floor(
         (new Date() - new Date(baseDate)) / (1000 * 60 * 60 * 24)
       );
-      
+
       return next(new HandleError(
         `Refund request period has expired. You can only request refunds within ${REFUND_WINDOW_DAYS} days. This order was ${daysSincePurchase} days ago.`,
         400
@@ -96,7 +106,7 @@ export const checkRefundEligibility = async (req, res, next) => {
     // 7. Check if payment gateway supports refunds
     const gateway = order.paymentInfo.method;
     const supportedGateways = ['paystack', 'flutterwave', 'stripe'];
-    
+
     if (!supportedGateways.includes(gateway)) {
       return next(new HandleError(
         `Refunds are not supported for payment method: ${gateway}. Please contact support for manual refund.`,
@@ -104,7 +114,7 @@ export const checkRefundEligibility = async (req, res, next) => {
       ));
     }
 
-    // 8. Additional check: Ensure there's a payment reference
+    // 8. Ensure there's a payment reference
     if (!order.paymentInfo.reference) {
       return next(new HandleError(
         "Payment reference not found. Cannot process refund.",
@@ -115,7 +125,6 @@ export const checkRefundEligibility = async (req, res, next) => {
     // 9. Attach order to request for use in controller
     req.order = order;
 
-    // Proceed to controller
     next();
 
   } catch (error) {
@@ -193,9 +202,8 @@ export const validateRefundAmount = (req, res, next) => {
  */
 export const canReviewRefund = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = resolveOrderId(req);
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return next(new HandleError("Invalid order ID format", 400));
     }
@@ -206,16 +214,14 @@ export const canReviewRefund = async (req, res, next) => {
       return next(new HandleError("Order not found", 404));
     }
 
-    // Check if refund was requested
     if (!order.refundInfo || order.refundInfo.status !== "requested") {
       return next(new HandleError(
-        "No pending refund request found. Current status: " + 
+        "No pending refund request found. Current status: " +
         (order.refundInfo?.status || "none"),
         400
       ));
     }
 
-    // Attach order to request
     req.order = order;
 
     next();
@@ -232,9 +238,8 @@ export const canReviewRefund = async (req, res, next) => {
  */
 export const canProcessRefund = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = resolveOrderId(req);
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return next(new HandleError("Invalid order ID format", 400));
     }
@@ -245,26 +250,22 @@ export const canProcessRefund = async (req, res, next) => {
       return next(new HandleError("Order not found", 404));
     }
 
-    // Check if refund was approved
     if (!order.refundInfo || order.refundInfo.status !== "approved") {
       return next(new HandleError(
-        "Refund must be approved before processing. Current status: " + 
+        "Refund must be approved before processing. Current status: " +
         (order.refundInfo?.status || "not requested"),
         400
       ));
     }
 
-    // Check if already processed
     if (order.refundInfo.status === "processing" || order.refundInfo.status === "completed") {
       return next(new HandleError("Refund already processed or in progress", 400));
     }
 
-    // Validate that there's a payment reference
     if (!order.paymentInfo.reference) {
       return next(new HandleError("Payment reference not found", 400));
     }
 
-    // Attach order to request
     req.order = order;
 
     next();
@@ -281,11 +282,10 @@ export const canProcessRefund = async (req, res, next) => {
  */
 export const canAddRefundMessage = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = resolveOrderId(req);
     const userId = req.user._id;
     const isAdmin = req.user.role === 'admin';
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return next(new HandleError("Invalid order ID format", 400));
     }
@@ -296,17 +296,14 @@ export const canAddRefundMessage = async (req, res, next) => {
       return next(new HandleError("Order not found", 404));
     }
 
-    // Check if refund exists
     if (!order.refundInfo || order.refundInfo.status === 'none') {
       return next(new HandleError("No refund request found for this order", 404));
     }
 
-    // Check ownership (unless admin)
     if (!isAdmin && order.user.toString() !== userId.toString()) {
       return next(new HandleError("Unauthorized", 403));
     }
 
-    // Check if refund is in a state that allows messaging
     const closedStatuses = ['completed', 'failed'];
     if (closedStatuses.includes(order.refundInfo.status)) {
       return next(new HandleError(
@@ -315,7 +312,6 @@ export const canAddRefundMessage = async (req, res, next) => {
       ));
     }
 
-    // Attach order to request
     req.order = order;
 
     next();
@@ -332,10 +328,9 @@ export const canAddRefundMessage = async (req, res, next) => {
  */
 export const canCancelRefund = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = resolveOrderId(req);
     const userId = req.user._id;
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return next(new HandleError("Invalid order ID format", 400));
     }
@@ -346,17 +341,14 @@ export const canCancelRefund = async (req, res, next) => {
       return next(new HandleError("Order not found", 404));
     }
 
-    // Check ownership
     if (order.user.toString() !== userId.toString()) {
       return next(new HandleError("Unauthorized", 403));
     }
 
-    // Check if refund exists
     if (!order.refundInfo || order.refundInfo.status === 'none') {
       return next(new HandleError("No refund request found", 404));
     }
 
-    // Can only cancel if still in requested status
     if (order.refundInfo.status !== 'requested') {
       return next(new HandleError(
         `Cannot cancel refund at this stage. Current status: ${order.refundInfo.status}`,
@@ -364,7 +356,6 @@ export const canCancelRefund = async (req, res, next) => {
       ));
     }
 
-    // Attach order to request
     req.order = order;
 
     next();
@@ -381,10 +372,9 @@ export const canCancelRefund = async (req, res, next) => {
  */
 export const checkReturnEligibility = async (req, res, next) => {
   try {
-    const { id } = req.params;
+    const id = resolveOrderId(req);
     const userId = req.user._id;
 
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return next(new HandleError("Invalid order ID format", 400));
     }
@@ -395,17 +385,14 @@ export const checkReturnEligibility = async (req, res, next) => {
       return next(new HandleError("Order not found", 404));
     }
 
-    // Check ownership
     if (order.user.toString() !== userId.toString()) {
       return next(new HandleError("Unauthorized", 403));
     }
 
-    // Check if order is delivered
     if (order.orderStatus !== 'Delivered') {
       return next(new HandleError("Can only return delivered orders", 400));
     }
 
-    // Check return window (30 days from delivery)
     if (!order.deliveredAt) {
       return next(new HandleError("Delivery date not found", 400));
     }
@@ -424,7 +411,6 @@ export const checkReturnEligibility = async (req, res, next) => {
       ));
     }
 
-    // Check if return already exists
     if (order.returnInfo && order.returnInfo.status !== 'none') {
       return next(new HandleError(
         `Return request already exists with status: ${order.returnInfo.status}`,
@@ -432,7 +418,6 @@ export const checkReturnEligibility = async (req, res, next) => {
       ));
     }
 
-    // Attach order to request
     req.order = order;
 
     next();
