@@ -15,8 +15,8 @@ import {
   Receipt as ReceiptIcon,
 } from '@mui/icons-material';
 import { getAllMyOrders } from '../features/cart/orderSlice';
-import { cancelRefundRequest } from '../features/refunds/refundSlice';
-import { cancelReturnRequest } from '../features/returns/returnSlice';
+import { cancelRefund } from '../features/refunds/refundSlice';
+import { cancelReturn } from '../features/returns/returnSlice';
 import Navbar from '../components/Navbar';
 import '../pageStyles/MyRefundsReturns.css';
 
@@ -443,9 +443,9 @@ export default function MyRefundsReturns() {
 
     try {
       if (type === 'refund') {
-        await dispatch(cancelRefundRequest(orderId)).unwrap();
+        await dispatch(cancelRefund(orderId)).unwrap();
       } else {
-        await dispatch(cancelReturnRequest(orderId)).unwrap();
+        await dispatch(cancelReturn(orderId)).unwrap();
       }
 
       showToast('Request cancelled successfully', 'success');

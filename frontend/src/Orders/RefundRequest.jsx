@@ -16,6 +16,7 @@ import {
   FiDollarSign,
   FiInfo,
   FiArrowLeft,
+  FiXCircle,
 } from 'react-icons/fi';
 
 import PageTitle from '../components/PageTitle';
@@ -27,27 +28,23 @@ import RefundReturnMessagesModal from './RefundReturnMessagesModal';
 import { getOrderDetails } from '../features/cart/orderSlice';
 import {
   requestRefund,
-  // BUG 1 FIX: addRefundMessage does not exist in the slice.
-  // The slice exposes sendRefundMessage which handles upload + send atomically.
-  // BUG 9 FIX: remove uploadRefundFiles as a separate dispatch — sendRefundMessage
-  // calls the upload endpoint internally; splitting them here bypassed the
-  // partial-failure / retry logic built into the thunk.
   sendRefundMessage,
   getRefundMessages,
   clearRefundState,
+  cancelRefund,
 } from '../features/refunds/refundSlice';
 
 import '../OrderStyles/RefundRequest.css';
 
 const REFUND_REASONS = [
-  { value: 'defective_product',    label: 'Defective or Damaged Product' },
-  { value: 'wrong_item',           label: 'Wrong Item Received' },
-  { value: 'not_as_described',     label: 'Product Not As Described' },
-  { value: 'damaged_in_shipping',  label: 'Damaged During Shipping' },
-  { value: 'changed_mind',         label: 'Changed My Mind' },
-  { value: 'duplicate_order',      label: 'Duplicate Order' },
-  { value: 'unauthorized_purchase',label: 'Unauthorized Purchase' },
-  { value: 'other',                label: 'Other' },
+  { value: 'defective_product',     label: 'Defective or Damaged Product' },
+  { value: 'wrong_item',            label: 'Wrong Item Received' },
+  { value: 'not_as_described',      label: 'Product Not As Described' },
+  { value: 'damaged_in_shipping',   label: 'Damaged During Shipping' },
+  { value: 'changed_mind',          label: 'Changed My Mind' },
+  { value: 'duplicate_order',       label: 'Duplicate Order' },
+  { value: 'unauthorized_purchase', label: 'Unauthorized Purchase' },
+  { value: 'other',                 label: 'Other' },
 ];
 
 const MAX_FILES = 5;
@@ -56,8 +53,6 @@ const ALLOWED_FILE_TYPES = {
   videos:    ['video/mp4', 'video/webm', 'video/quicktime'],
   documents: ['application/pdf'],
 };
-// FIX-2: flat allowed-types array at module level — avoids rebuilding on every
-// isFileTypeAllowed call (was spread inside the function body each invocation).
 const ALL_ALLOWED_RR = [
   ...ALLOWED_FILE_TYPES.images,
   ...ALLOWED_FILE_TYPES.videos,
@@ -97,15 +92,8 @@ function RefundRequest() {
 
   const {
     messages,
-    // BUG 11 FIX: requestRefund sets `loading`, not `uploadLoading`.
-    // uploadLoading is only set by the standalone uploadRefundFiles thunk
-    // which is no longer dispatched from this component. Removed uploadLoading
-    // from the selector to avoid reading a flag that is never true here.
     loading,
     messagesLoading,
-    // BUG 6 FIX: `error` removed from selector. The global useEffect that
-    // watched state.refund.error caused double-toasts (watcher + per-action
-    // catch). All error display is now handled in each action's own catch block.
   } = useSelector((state) => state.refund);
 
   const [formData, setFormData] = useState({
@@ -115,11 +103,15 @@ function RefundRequest() {
     requestedAmount: '',
   });
 
-  const [formErrors,    setFormErrors]    = useState({});
-  const [selectedFiles, setSelectedFiles] = useState([]);
-  const [filePreviews,  setFilePreviews]  = useState([]);
+  const [formErrors,       setFormErrors]       = useState({});
+  const [selectedFiles,    setSelectedFiles]    = useState([]);
+  const [filePreviews,     setFilePreviews]     = useState([]);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
-  const [unreadCount,   setUnreadCount]   = useState(0);
+  const [unreadCount,      setUnreadCount]      = useState(0);
+
+  // Cancel confirmation state — two-step to prevent accidental cancellation.
+  // null = idle, 'confirm' = awaiting confirmation, 'loading' = dispatching.
+  const [cancelState, setCancelState] = useState('idle'); // 'idle' | 'confirm' | 'loading'
 
   // FIX-6: also exclude 'failed' — a failed refund should allow the customer
   // to re-submit rather than showing a read-only status view with no action.
@@ -129,6 +121,13 @@ function RefundRequest() {
     order.refundInfo.status !== 'cancelled' &&
     order.refundInfo.status !== 'failed';
   const isTracking = hasActiveRefund;
+
+  // Backend only allows cancellation when status is 'requested' or 'approved'.
+  // Mirror that guard in the UI so the button is never shown for processing/
+  // completed/rejected states.
+  const canCancel =
+    isTracking &&
+    ['requested', 'approved'].includes(order?.refundInfo?.status);
 
   const fromMyRefunds = location.state?.from === 'my-refunds-returns';
   const backPath      = fromMyRefunds ? '/my-refunds-returns' : `/order/${orderId}`;
@@ -141,21 +140,9 @@ function RefundRequest() {
     }
   }, [dispatch, orderId]);
 
-  // getRefundMessages is intentionally NOT called on mount.
-  // The controller marks all admin messages isRead:true on every fetch, so a
-  // mount fetch would immediately zero the unread badge before the user sees it.
-  // Correct lifecycle:
-  //   Mount   → unreadCount derived from messages already in Redux (last session).
-  //   Modal open → onRefresh → getRefundMessages → server marks admin msgs read
-  //             → Redux updates with isRead:true → unreadCount=0 → badge clears.
-  // "Read" therefore means "user opened the modal", which is the intended UX.
-
   // ── Unread badge ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (messages && messages.length > 0) {
-      // BUG 3 FIX: the schema has no `readBy` array. The correct field is `isRead`
-      // (Boolean). Using readBy?.includes('customer') always returns undefined,
-      // making every admin message appear unread regardless of actual read state.
       const unread = messages.filter(
         (msg) => msg.senderType === 'admin' && !msg.isRead
       ).length;
@@ -166,10 +153,6 @@ function RefundRequest() {
   }, [messages]);
 
   // ── Pre-fill form when viewing an existing refund ────────────────────────
-  // FIX-5: a ref guards one-time pre-fill so removing formData.reason from
-  // the deps list doesn't break the guard. The old dep on formData.reason
-  // caused the effect to re-run whenever the user cleared the field and
-  // immediately re-populate it, preventing them from changing their reason.
   const hasPreFilledRef = React.useRef(false);
   useEffect(() => {
     if (isTracking && order?.refundInfo && !hasPreFilledRef.current) {
@@ -183,11 +166,11 @@ function RefundRequest() {
     }
   }, [isTracking, order?._id]);
 
-  // BUG 6 FIX: removed global useEffect error watcher. It caused double-toasts
-  // because every async action (handleSubmit, handleSendMessage) already has its
-  // own try/catch that shows the error. Watching state.refund.error additionally
-  // fired a second toast for the same rejection. All error display is now handled
-  // exclusively in the per-action catch blocks below.
+  // Reset cancel state if the order status changes (e.g. after cancel completes
+  // and getOrderDetails re-fetches, hasActiveRefund becomes false).
+  useEffect(() => {
+    if (!canCancel) setCancelState('idle');
+  }, [canCancel]);
 
   // ── Handlers ─────────────────────────────────────────────────────────────
   const handleChange = (e) => {
@@ -198,15 +181,10 @@ function RefundRequest() {
     }
   };
 
-  // FIX-2: uses module-level ALL_ALLOWED_RR instead of re-spreading each call.
   const isFileTypeAllowed = (file) => ALL_ALLOWED_RR.includes(file.type);
 
   const handleFileSelect = (e) => {
     const files = Array.from(e.target.files);
-
-    // BUG 7 FIX: without resetting e.target.value the browser considers the
-    // file "already selected" and won't fire onChange if the user removes it
-    // then tries to pick the same file again.
     e.target.value = '';
 
     if (selectedFiles.length + files.length > MAX_FILES) {
@@ -291,17 +269,12 @@ function RefundRequest() {
     };
 
     try {
-      // BUG 6 FIX: dispatch(clearRefundState()) before the call so that the
-      // Redux error watcher useEffect above does NOT fire for a leftover stale
-      // error, and we handle the fresh error exclusively in this catch block.
       dispatch(clearRefundState());
 
       await dispatch(
         requestRefund({ orderId, refundData, files: selectedFiles })
       ).unwrap();
 
-      // BUG 8 FIX: clear staged files and form after a successful submission
-      // so stale data isn't visible if the user returns to this page.
       setSelectedFiles([]);
       setFilePreviews([]);
       setFormData({ reason: '', description: '', refundType: 'full', requestedAmount: '' });
@@ -313,8 +286,6 @@ function RefundRequest() {
         autoClose: 3000,
       });
     } catch (err) {
-      // BUG 6 FIX: error is handled here only. clearRefundState() is called
-      // before the dispatch above so the Redux error watcher doesn't also fire.
       toast.error(
         typeof err === 'string' ? err : 'Failed to submit refund request',
         { position: 'top-center', autoClose: 3000 }
@@ -322,16 +293,43 @@ function RefundRequest() {
     }
   };
 
+  // ── Cancel refund ────────────────────────────────────────────────────────
+  // Two-step: first click → confirm state, second click → dispatch.
+  // "Keep Request" or clicking away resets to idle.
+  const handleCancelClick = () => {
+    if (cancelState === 'idle') {
+      setCancelState('confirm');
+      return;
+    }
+  };
+
+  const handleCancelConfirm = async () => {
+    setCancelState('loading');
+    try {
+      dispatch(clearRefundState());
+      await dispatch(cancelRefund(orderId)).unwrap();
+      dispatch(getOrderDetails(orderId));
+      toast.success('Refund request cancelled.', {
+        position: 'top-center',
+        autoClose: 3000,
+      });
+      // cancelState resets via the canCancel useEffect above once order refreshes
+    } catch (err) {
+      toast.error(
+        typeof err === 'string' ? err : 'Failed to cancel refund request',
+        { position: 'top-center', autoClose: 3000 }
+      );
+      setCancelState('idle');
+    }
+  };
+
+  const handleCancelDismiss = () => setCancelState('idle');
+
   const handleSendMessage = useCallback(async (content, files) => {
     try {
       await dispatch(
         sendRefundMessage({ orderId, message: content, files: files ?? [] })
       ).unwrap();
-      // No success toast — the double-tick read receipt in the modal is the
-      // correct send confirmation. A toast is redundant noise over the in-thread
-      // visual feedback. Errors still surface via the catch block below.
-      // No re-fetch: sendRefundMessage.fulfilled pushes the message optimistically.
-      // The modal's onRefresh (called on next open) guarantees freshness.
     } catch (err) {
       toast.error(
         typeof err === 'string' ? err : 'Failed to send message',
@@ -341,7 +339,6 @@ function RefundRequest() {
     }
   }, [dispatch, orderId]);
 
-  // BUG 2 FIX: was dispatch(getRefundMessages(orderId)) — string arg.
   const handleRefreshMessages = useCallback(() => {
     if (orderId) {
       dispatch(getRefundMessages({ orderId }));
@@ -350,7 +347,7 @@ function RefundRequest() {
 
   const formatCurrency = (amount, currency = 'USD') =>
     new Intl.NumberFormat('en-US', {
-      style:                'currency',
+      style:                 'currency',
       currency,
       minimumFractionDigits: 2,
     }).format(amount);
@@ -390,6 +387,8 @@ function RefundRequest() {
     );
   }
 
+  const isCancelLoading = cancelState === 'loading';
+
   // ── Main render ──────────────────────────────────────────────────────────
   return (
     <>
@@ -411,9 +410,6 @@ function RefundRequest() {
 
         <div className="rr-refund-header">
           <div className="rr-header-content">
-            {/* FIX-1: rr-header-icon is styled as a flex container div (38×38px with
-                background + border-radius). Applying it directly to an SVG element
-                rendered the SVG without the coloured pill box. */}
             <div className="rr-header-icon">
               <FiDollarSign />
             </div>
@@ -426,22 +422,21 @@ function RefundRequest() {
           </div>
 
           {isTracking && (
-            // FIX-4: type="button" prevents accidental form submit if ever
-            // rendered inside a form context in future.
-            <button
-              type="button"
-              className="rr-btn-messages"
-              onClick={() => setShowMessagesModal(true)}
-            >
-              <FiMessageSquare />
-              <span>Messages</span>
-              {/* FIX-3: cap badge at 9+ to prevent the pill stretching on large counts */}
-              {unreadCount > 0 && (
-                <span className="rr-message-badge">
-                  {unreadCount > 9 ? '9+' : unreadCount}
-                </span>
-              )}
-            </button>
+            <div className="rr-header-actions">
+              <button
+                type="button"
+                className="rr-btn-messages"
+                onClick={() => setShowMessagesModal(true)}
+              >
+                <FiMessageSquare />
+                <span>Messages</span>
+                {unreadCount > 0 && (
+                  <span className="rr-message-badge">
+                    {unreadCount > 9 ? '9+' : unreadCount}
+                  </span>
+                )}
+              </button>
+            </div>
           )}
         </div>
 
@@ -572,6 +567,62 @@ function RefundRequest() {
                     </div>
                   )}
                 </div>
+
+                {/* ── Cancel section ──────────────────────────────────────
+                    Only rendered when status is 'requested' or 'approved'.
+                    Two-step pattern: first click shows inline confirmation,
+                    second click dispatches. Mirrors the backend guard exactly. */}
+                {canCancel && (
+                  <div className="rr-cancel-section">
+                    {cancelState === 'idle' && (
+                      <button
+                        type="button"
+                        className="rr-btn-cancel-refund"
+                        onClick={handleCancelClick}
+                      >
+                        <FiXCircle />
+                        Cancel Refund Request
+                      </button>
+                    )}
+
+                    {cancelState === 'confirm' && (
+                      <div className="rr-cancel-confirm">
+                        <p className="rr-cancel-confirm-text">
+                          <FiAlertCircle className="rr-cancel-confirm-icon" />
+                          Are you sure? This cannot be undone.
+                        </p>
+                        <div className="rr-cancel-confirm-actions">
+                          <button
+                            type="button"
+                            className="rr-btn-cancel-keep"
+                            onClick={handleCancelDismiss}
+                          >
+                            Keep Request
+                          </button>
+                          <button
+                            type="button"
+                            className="rr-btn-cancel-confirm"
+                            onClick={handleCancelConfirm}
+                          >
+                            <FiXCircle />
+                            Yes, Cancel It
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {cancelState === 'loading' && (
+                      <button
+                        type="button"
+                        className="rr-btn-cancel-refund"
+                        disabled
+                      >
+                        <FiClock className="rr-spin" />
+                        Cancelling…
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -770,8 +821,7 @@ function RefundRequest() {
                     Supporting Documents (Optional)
                   </label>
                   <p className="rr-helper-text">
-                    Upload up to {MAX_FILES} files (images, videos, or PDFs). Max 10MB
-                    each.
+                    Upload up to {MAX_FILES} files (images, videos, or PDFs). Max 10MB each.
                   </p>
 
                   <div className="rr-file-upload-area">
@@ -843,10 +893,6 @@ function RefundRequest() {
                   >
                     Cancel
                   </button>
-                  {/* BUG 11 FIX: was disabled={loading || uploadLoading}.
-                      uploadLoading is set by the standalone uploadRefundFiles
-                      thunk which is no longer dispatched here. requestRefund
-                      handles files internally and only sets `loading`. */}
                   <button
                     type="submit"
                     className="rr-btn-primary"

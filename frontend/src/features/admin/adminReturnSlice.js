@@ -80,10 +80,6 @@ const normaliseDocument = (f) => ({
  * Safely extracts a string message from any error payload shape.
  * Guards against the backend ever changing from a plain string to an object.
  *
- * FIX XS-4 — admin slice previously used raw `state.error = payload` for all
- * rejected cases. This is fragile if any thunk changes to reject with an object.
- * Ported from customer slice for consistent error handling across both slices.
- *
  * @param {unknown} payload
  * @param {string}  fallback
  * @returns {string}
@@ -130,12 +126,6 @@ const sanitiseFilters = (filters) =>
  *   reason   {string}  — exact reason match
  *   sortBy   {string}  — "requestedAt" | "totalPrice" | "status"
  *   order    {string}  — "asc" | "desc"
- *
- * FIX AS-2 — sanitiseFilters() strips undefined/null/empty values before
- * URLSearchParams serialisation to prevent "key=undefined" query strings that
- * cause the backend to return zero results silently.
- *
- * FIX AS-14 — all supported filter params now documented above.
  */
 export const getAllReturns = createAsyncThunk(
   "adminReturn/getAllReturns",
@@ -237,18 +227,16 @@ export const updateReturnStatus = createAsyncThunk(
  *
  * ─── PARTIAL FAILURE / RETRY ─────────────────────────────────────────────────
  * Step 1 fails → rejectWithValue({ stage:'upload' })
- *   Files never reached Cloudinary — admin re-selects and retries normally.
- *
  * Step 2 fails → rejectWithValue({ stage:'send', pendingUrls:[…] })
- *   Files ARE on Cloudinary. URLs go into state.pendingAttachments.
- *   UI retries with { pendingUrls: state.pendingAttachments } — skips step 1.
  *
- * ─── USAGE ───────────────────────────────────────────────────────────────────
- *   dispatch(sendReturnMessage({ orderId, content: 'Hello' }))
- *   dispatch(sendReturnMessage({ orderId, content: 'See pic', files }))
- *   dispatch(sendReturnMessage({ orderId, content, pendingUrls: pendingAttachments }))
+ * ─── BACKEND RESPONSE ────────────────────────────────────────────────────────
+ * addReturnMessage controller returns:
+ *   { success, message: 'Message sent successfully', data: { orderId, message: <msgObj> } }
  *
- * NOTE: field name is "content" (return schema) — refund messages use "message".
+ * Thunk returns { ...data, attachmentUrls }, so payload shape is:
+ *   payload.message       = 'Message sent successfully'  ← plain string
+ *   payload.data.message  = <the actual message object>  ← correct path
+ *   payload.attachmentUrls = []
  */
 export const sendReturnMessage = createAsyncThunk(
   "adminReturn/sendReturnMessage",
@@ -256,7 +244,6 @@ export const sendReturnMessage = createAsyncThunk(
     { orderId, content, files = [], pendingUrls = [] },
     { rejectWithValue }
   ) => {
-    // ── Step 1: upload ───────────────────────────────────────────────────────
     let attachmentUrls = [...pendingUrls];
 
     if (files.length > 0 && pendingUrls.length === 0) {
@@ -271,7 +258,6 @@ export const sendReturnMessage = createAsyncThunk(
       }
     }
 
-    // ── Step 2: send ─────────────────────────────────────────────────────────
     try {
       const { data } = await axios.post(
         `/api/v1/admin/returns/${orderId}/messages`,
@@ -291,17 +277,14 @@ export const sendReturnMessage = createAsyncThunk(
 
 /**
  * Fetch return messages (paginated).
- *   page 1  → replaces the array (fresh open / re-open)
- *   page 2+ → prepends older messages (load earlier / scroll-up)
+ *   page 1  → replaces the array
+ *   page 2+ → prepends older messages (load-earlier / scroll-up)
  *
- * NOTE: This uses the shared customer route GET /api/v1/orders/:id/return/messages,
- * not an /admin/... route. This is intentional — the backend controller is
- * role-aware via req.user.role: admin reads trigger marking customer messages
- * as read, customer reads trigger marking admin messages as read. The shared
- * route handles both sides correctly.
+ * Uses shared customer route GET /api/v1/orders/:id/return/messages.
+ * Backend is role-aware: admin reads mark customer messages as read.
  *
- * FIX AS-1 — limit is now bubbled back in the return value so the reducer can
- * compare count === limit instead of the hardcoded 50.
+ * FIX AS-1 — limit bubbled back so reducer compares count === limit
+ * instead of hardcoded 50.
  */
 export const getReturnMessages = createAsyncThunk(
   "adminReturn/getReturnMessages",
@@ -359,10 +342,6 @@ export const getReturnDocuments = createAsyncThunk(
 /**
  * Standalone document upload — for the "Upload documents" panel separate from
  * the message thread. For files inside a message use sendReturnMessage instead.
- *
- * FIX AS-7 — fulfilled reducer now merges normalised file metadata into
- * state.documents so the documents panel updates without a round-trip refetch.
- * FIX AS-12 / XS-1 — uploadedAt stamped in uploadFiles() thunk, not in reducer.
  */
 export const uploadReturnFiles = createAsyncThunk(
   "adminReturn/uploadReturnFiles",
@@ -383,11 +362,10 @@ export const uploadReturnFiles = createAsyncThunk(
  * Stored in state.unreadReturns — never overwrites state.returns —
  * so a background badge poll never silently replaces the admin's paginated list.
  *
- * NOTE AS-15 — backend response shape for each entry:
+ * Backend response per entry:
  *   { _id, user, returnInfo: { status, rmaNumber, reason, unreadCount }, latestMessage }
- * The unread count field is returnInfo.unreadCount (NOT .unreadMessages).
- * This differs from the Mongoose virtual name (unreadReturnMessages) because
- * the backend controller renames it in the aggregation projection.
+ * Note: the unread count field is returnInfo.unreadCount (renamed from the
+ * Mongoose virtual unreadReturnMessages by the controller's aggregation projection).
  */
 export const getReturnsWithUnreadMessages = createAsyncThunk(
   "adminReturn/getReturnsWithUnreadMessages",
@@ -413,22 +391,15 @@ const adminReturnSlice = createSlice({
   name: "adminReturn",
   initialState: {
     returns: [],
-    // Unread results isolated here — a background poll never corrupts list view.
     unreadReturns: [],
     stats: null,
     currentReturn: null,
 
     messages: [],
     messagesPage: 1,
-    // FIX AS-9 — totalMessages stores backend totalCount so the UI can display
-    // "Load N earlier messages" without an extra round-trip.
     totalMessages: 0,
     hasMoreMessages: false,
 
-    /**
-     * Cloudinary URLs saved when upload succeeded but the message send failed.
-     * Pass as `pendingUrls` to sendReturnMessage to retry only the send step.
-     */
     pendingAttachments: [],
 
     timeline: [],
@@ -441,24 +412,20 @@ const adminReturnSlice = createSlice({
     },
 
     // ── Loading flags ────────────────────────────────────────────────────────
-    loading:           false, // getSingleReturn, reviewReturn, updateReturnStatus
-    returnsLoading:    false, // getAllReturns
-    unreadLoading:     false, // getReturnsWithUnreadMessages
-    messageSendLoading: false, // sendReturnMessage (upload + send combined)
-    messagesLoading:   false, // getReturnMessages
-    timelineLoading:   false,
-    documentsLoading:  false,
-    uploadLoading:     false, // standalone uploadReturnFiles
+    loading:             false, // getSingleReturn, reviewReturn, updateReturnStatus
+    returnsLoading:      false, // getAllReturns
+    unreadLoading:       false, // getReturnsWithUnreadMessages
+    messageSendLoading:  false, // sendReturnMessage (upload + send combined)
+    messagesLoading:     false, // getReturnMessages
+    timelineLoading:     false,
+    documentsLoading:    false,
+    uploadLoading:       false, // standalone uploadReturnFiles
 
     // ── Error / result state ─────────────────────────────────────────────────
-    error: null,
-    /**
-     * 'upload' | 'send' | null
-     * Lets the UI show the correct retry prompt without string-matching error.
-     */
-    errorStage: null,
-    success: false,
-    message: null,
+    error:      null,
+    errorStage: null, // 'upload' | 'send' | null
+    success:    false,
+    message:    null,
   },
 
   reducers: {
@@ -470,12 +437,19 @@ const adminReturnSlice = createSlice({
     },
 
     /**
+     * clearCurrentReturn
      * Call when navigating away from a return detail panel.
      *
-     * FIX AS-6 — also clears error, errorStage, success, and message.
-     * Previously, an error from return A (e.g. failed send) would persist
-     * in state when the admin opened return B, showing a stale error banner
-     * before any action was taken in the new panel.
+     * FIX AS-6 — clears error, errorStage, success, message so the next panel
+     * opens clean without stale banners from a previous return's failed send.
+     *
+     * FIX A3 — also resets all in-flight loading flags. If the admin navigates
+     * away while a send/upload/fetch is in flight, those flags would otherwise
+     * stay true indefinitely (the thunk's finally block fires but the component
+     * is already gone and the next panel inherits the stuck flag).
+     * Affected flags: messageSendLoading, uploadLoading, messagesLoading, loading.
+     * returnsLoading is NOT reset here — getAllReturns is a list-view concern
+     * and its flight is independent of any single return panel.
      */
     clearCurrentReturn: (state) => {
       state.currentReturn      = null;
@@ -486,18 +460,29 @@ const adminReturnSlice = createSlice({
       state.pendingAttachments = [];
       state.timeline           = [];
       state.documents          = [];
-      // FIX AS-6: clear error state so next panel opens clean.
+      // FIX AS-6
       state.error      = null;
       state.errorStage = null;
       state.success    = false;
       state.message    = null;
+      // FIX A3: reset in-flight flags so the next panel is never stuck loading
+      state.messageSendLoading = false;
+      state.uploadLoading      = false;
+      state.messagesLoading    = false;
+      state.loading            = false;
     },
 
     /**
+     * clearReturnMessages
      * Call on chat panel unmount to prevent stale messages on next open.
-     * FIX AS-6 (partial) — also clears error/errorStage for the same reason
-     * as clearCurrentReturn: a panel that closed mid-error must not re-open
-     * showing the stale error before any action is taken.
+     *
+     * FIX AS-6 (partial) — clears error/errorStage so stale error banners
+     * do not appear on re-open before any action is taken.
+     *
+     * FIX A2 — also resets messageSendLoading, uploadLoading, messagesLoading.
+     * Without this, closing the chat panel while a fetch or send is in flight
+     * leaves those flags true. The next panel open inherits a stuck loading
+     * spinner or a permanently disabled send button.
      */
     clearReturnMessages: (state) => {
       state.messages           = [];
@@ -507,9 +492,14 @@ const adminReturnSlice = createSlice({
       state.pendingAttachments = [];
       state.error              = null;
       state.errorStage         = null;
+      // FIX A2: reset in-flight loading flags
+      state.messageSendLoading = false;
+      state.uploadLoading      = false;
+      state.messagesLoading    = false;
     },
 
     /**
+     * clearPendingAttachments
      * Call when the admin dismisses a partial-failure error without retrying,
      * or when files are removed mid-compose so stale Cloudinary URLs from a
      * prior failed send are not silently re-attached to the next message.
@@ -536,11 +526,9 @@ const adminReturnSlice = createSlice({
       })
       .addCase(getAllReturns.fulfilled, (state, { payload }) => {
         state.returnsLoading = false;
-        // FIX AS-3 — ?? [] fallback prevents state.returns becoming undefined
-        // if payload.returns is absent, which would crash any .map() call.
-        state.returns = payload.returns ?? [];
-        state.stats   = payload.stats   ?? null;
-        state.pagination = {
+        state.returns        = payload.returns ?? [];
+        state.stats          = payload.stats   ?? null;
+        state.pagination     = {
           totalReturns: payload.totalReturns ?? 0,
           currentPage:  payload.currentPage  ?? 1,
           totalPages:   payload.totalPages   ?? 1,
@@ -559,7 +547,8 @@ const adminReturnSlice = createSlice({
       })
       .addCase(getSingleReturn.fulfilled, (state, { payload }) => {
         state.loading       = false;
-        // Backend: { success, order: { ..., returnInfo: { ...subdoc, messages: last-5-preview } } }
+        // Backend: { success, order: { _id, user, orderItems, shippingInfo,
+        //   returnInfo: { ...subdoc, messages: last-5-preview }, ... } }
         state.currentReturn = payload.order ?? null;
       })
       .addCase(getSingleReturn.rejected, (state, { payload }) => {
@@ -577,11 +566,9 @@ const adminReturnSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = payload.message;
-        // FIX AS-5 — payload.order branch removed. Backend returns only
-        // { success, message, returnInfo } — never a full .order object.
-        // The dead payload.order branch would have fully replaced currentReturn,
-        // wiping populated orderItems, shippingInfo, user etc if the backend
-        // ever added .order to the response. Patch returnInfo only.
+        // FIX AS-5 — backend returns { success, message, returnInfo }, never
+        // a full .order object. Patch only returnInfo to preserve the populated
+        // orderItems, shippingInfo, user etc. already in currentReturn.
         if (state.currentReturn && payload.returnInfo) {
           state.currentReturn = {
             ...state.currentReturn,
@@ -604,7 +591,7 @@ const adminReturnSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = payload.message;
-        // FIX AS-5 — same as reviewReturn: patch returnInfo only; no .order branch.
+        // FIX AS-5 — same as reviewReturn: patch returnInfo only.
         if (state.currentReturn && payload.returnInfo) {
           state.currentReturn = {
             ...state.currentReturn,
@@ -627,19 +614,45 @@ const adminReturnSlice = createSlice({
       .addCase(sendReturnMessage.fulfilled, (state, { payload }) => {
         state.messageSendLoading = false;
         state.pendingAttachments = [];
-        // FIX AS-4 — errorStage was only cleared in pending. A prior stage:"send"
-        // failure left errorStage="send" visible after a successful retry.
+        // FIX AS-4 — clear errorStage here too, not just in pending, so a
+        // prior stage:"send" failure prompt disappears on successful retry.
         state.errorStage = null;
-        const newMsg = payload?.data?.message;
-        if (newMsg) {
+
+        // ── Append to full message thread ────────────────────────────────────
+        // Backend addReturnMessage response shape:
+        //   { success, message: 'Message sent successfully', data: { orderId, message: <msgObj> } }
+        // Thunk returns { ...data, attachmentUrls }, so:
+        //   payload.message      = 'Message sent successfully'  ← string
+        //   payload.data.message = <the actual message object>  ← object
+        //
+        // typeof guard ensures we never push a plain string into the messages
+        // array if the backend shape changes or a partial response is received.
+        const newMsg = payload?.data?.message ?? null;
+        if (newMsg && typeof newMsg === "object") {
           state.messages.push(newMsg);
-          // FIX AS-8 — also append to the 5-message preview in currentReturn so
-          // components reading currentReturn.returnInfo.messages (e.g. a preview
-          // strip on the detail card) reflect the new message without a refetch.
-          if (state.currentReturn?.returnInfo?.messages) {
-            state.currentReturn.returnInfo.messages.push(newMsg);
-          }
         }
+
+        // ── FIX A4 + A5: preview sync removed ───────────────────────────────
+        // Original FIX AS-8 pushed the new message into
+        // currentReturn.returnInfo.messages (the 5-message preview from
+        // getSingleReturn). This introduced two bugs:
+        //
+        // A4 [MEDIUM] — Mixed hydration: getSingleReturn populates the sender
+        //   field (name, email, role). Messages from sendReturnMessage are raw
+        //   — sender is an ObjectId only. The preview array then has two
+        //   different shapes, so any component reading msg.sender.name crashes
+        //   on messages added after the initial fetch.
+        //
+        // A5 [LOW] — Unbounded growth: getSingleReturn returns exactly 5 messages
+        //   as a fixed preview. Without a .slice(-5) cap, each successful send
+        //   grows the preview by one indefinitely, leaking memory and breaking
+        //   the "5 message preview" contract.
+        //
+        // Fix: do not push to the preview at all. The full thread in
+        // state.messages (populated via getReturnMessages) is the source of
+        // truth for the chat panel. The preview in currentReturn.returnInfo.messages
+        // should only be refreshed by calling getSingleReturn or getReturnMessages,
+        // where sender population is guaranteed.
       })
       .addCase(sendReturnMessage.rejected, (state, { payload }) => {
         state.messageSendLoading = false;
@@ -656,22 +669,46 @@ const adminReturnSlice = createSlice({
         state.messagesLoading = true;
         state.error           = null;
       })
-      // FIX AS-1 — hasMoreMessages now compares count against the actual limit
-      // returned from the thunk. Previously hardcoded to 50 which broke
-      // pagination for any caller supplying a different limit.
-      // FIX AS-9 — totalMessages now stored from backend's totalCount field.
       .addCase(getReturnMessages.fulfilled, (state, { payload }) => {
         state.messagesLoading = false;
         const { messages = [], count, totalCount, page, limit } = payload;
+
         if (page === 1) {
           state.messages = messages;
         } else {
-          // Prepend older pages — load-earlier / scroll-up pattern.
           state.messages = [...messages, ...state.messages];
         }
-        state.messagesPage    = page;
-        state.totalMessages   = totalCount ?? 0;
-        state.hasMoreMessages = count === (limit ?? 50);
+
+        state.messagesPage  = page;
+        state.totalMessages = totalCount ?? 0;
+
+        // FIX A1 [HIGH] — original: state.hasMoreMessages = count === (limit ?? 50)
+        //
+        // This produces a false-positive when the total number of messages is
+        // exactly divisible by the page limit. Example: 50 messages total,
+        // limit=50 — page 1 returns count=50, hasMoreMessages becomes true,
+        // the "Load earlier" button appears, the admin clicks it, page 2
+        // returns 0 messages — a wasted round-trip with an empty result and
+        // a confusing UX flash.
+        //
+        // Fix: combine the full-page signal with the backend-provided totalCount.
+        //   count === limit    →  a full page was returned (necessary condition)
+        //   receivedSoFar < totalCount  →  server confirms more exist
+        //
+        // receivedSoFar uses the local messages variable for page 1 (state not
+        // yet updated when this line runs... actually state IS updated above).
+        // For page 1: use messages.length (current page only, not cumulative).
+        // For page 2+: use state.messages.length (already updated by prepend above).
+        //
+        // When totalCount is absent (future backend change), falls back to the
+        // original count===limit heuristic to avoid breaking the integration.
+        const receivedSoFar = page === 1
+          ? messages.length
+          : state.messages.length;
+
+        state.hasMoreMessages =
+          count === (limit ?? 50) &&
+          (totalCount == null || receivedSoFar < totalCount);
       })
       .addCase(getReturnMessages.rejected, (state, { payload }) => {
         state.messagesLoading = false;
@@ -714,11 +751,6 @@ const adminReturnSlice = createSlice({
         state.uploadLoading = true;
         state.error         = null;
       })
-      // FIX AS-7 — payload.files was previously discarded entirely, forcing
-      // the admin to manually refetch getReturnDocuments to see new uploads.
-      // We now merge normalised entries into state.documents immediately.
-      // FIX AS-12/XS-1 — uploadedAt is set in the thunk (via uploadFiles()),
-      // not here. No Date construction in reducers.
       .addCase(uploadReturnFiles.fulfilled, (state, { payload }) => {
         state.uploadLoading = false;
         state.success       = true;
@@ -738,8 +770,6 @@ const adminReturnSlice = createSlice({
         state.unreadLoading = true;
         state.error         = null;
       })
-      // FIX AS-3 — ?? [] fallback prevents state.unreadReturns becoming
-      // undefined if payload.returns is absent.
       .addCase(getReturnsWithUnreadMessages.fulfilled, (state, { payload }) => {
         state.unreadLoading = false;
         // Isolated from state.returns — background badge poll never corrupts

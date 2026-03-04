@@ -36,9 +36,9 @@ const uploadFiles = async (orderId, files) => {
     { withCredentials: true }
   );
 
-  // FIX XS-1 / CS-7 — uploadedAt is stamped HERE in the thunk (async context),
-  // not inside the Immer reducer. Reducers must be pure and deterministic;
-  // calling new Date() inside a reducer breaks time-travel debugging.
+  // uploadedAt is stamped HERE in the thunk (async context), not inside the
+  // Immer reducer. Reducers must be pure and deterministic; calling new Date()
+  // inside a reducer breaks time-travel debugging.
   const receivedAt = new Date().toISOString();
   return (data.files ?? []).map(({ url, filename, fileType, fileSize }) => ({
     url,
@@ -82,8 +82,6 @@ const normaliseDocument = (f) => ({
  * extractErrorMessage
  * Safely extracts a string message from any error payload shape.
  * Guards against the backend ever changing from a plain string to an object.
- *
- * FIX CS-6 (prev FIX #6) — replaces fragile payload?.includes?.() pattern.
  *
  * @param {unknown} payload
  * @param {string}  fallback
@@ -195,6 +193,11 @@ export const cancelReturn = createAsyncThunk(
  *   dispatch(sendReturnMessage({ orderId, content, pendingUrls: pendingAttachments }))
  *
  * NOTE: field name is "content" (return schema) — refund messages use "message".
+ *
+ * Backend response: { success, message: 'Message sent successfully',
+ *                     data: { orderId, message: newMessage } }
+ * Thunk returns:    { ...backendData, attachmentUrls }
+ * So payload.data.message === the new message document (correct).
  */
 export const sendReturnMessage = createAsyncThunk(
   "return/sendReturnMessage",
@@ -213,8 +216,8 @@ export const sendReturnMessage = createAsyncThunk(
         attachmentUrls = await uploadFiles(orderId, files);
       } catch (err) {
         return rejectWithValue({
-          stage: "upload",
-          message: err.response?.data?.message ?? "Failed to upload files",
+          stage:       "upload",
+          message:     err.response?.data?.message ?? "Failed to upload files",
           pendingUrls: [],
         });
       }
@@ -230,8 +233,8 @@ export const sendReturnMessage = createAsyncThunk(
       return { ...data, attachmentUrls };
     } catch (err) {
       return rejectWithValue({
-        stage: "send",
-        message: err.response?.data?.message ?? "Failed to send message",
+        stage:       "send",
+        message:     err.response?.data?.message ?? "Failed to send message",
         pendingUrls: attachmentUrls,
       });
     }
@@ -243,8 +246,16 @@ export const sendReturnMessage = createAsyncThunk(
  *   page 1  → replaces the array (fresh open / re-open)
  *   page 2+ → prepends older messages (load earlier / scroll-up)
  *
- * FIX CS-1 — limit is bubbled back so the reducer compares count === limit
- * instead of the hardcoded 50, making hasMoreMessages correct for any limit.
+ * limit is bubbled back so the reducer can compute hasMoreMessages accurately
+ * for any caller-supplied limit without hardcoding 50.
+ *
+ * Backend response: { success, count, totalCount, currentPage, totalPages, messages }
+ *
+ * NOTE on isRead: the backend aggregation fetches the message slice BEFORE
+ * calling markReturnMessagesAsRead + save, so the HTTP response contains
+ * stale isRead:false values even though the server already persisted the read
+ * state. The reducer compensates by normalising admin messages to isRead:true
+ * client-side (see getReturnMessages.fulfilled).
  */
 export const getReturnMessages = createAsyncThunk(
   "return/getReturnMessages",
@@ -301,12 +312,12 @@ export const getReturnDocuments = createAsyncThunk(
 
 /**
  * Standalone document upload — for adding evidence outside the message thread.
- * For files inside a message use sendReturnMessage instead.
+ * For files attached to a message use sendReturnMessage instead.
  *
- * FIX CS-7 (prev #7) — uploadedAt timestamp computed in uploadFiles() (thunk),
- * not in the reducer, keeping the reducer pure and deterministic.
- * FIX CS-8 (prev #7b) — normaliseDocument() ensures consistent shape in
- * state.documents regardless of which code path populated the entry.
+ * Does NOT set state.success. Setting it here would re-trigger the global
+ * success useEffect in ReturnRequest.jsx (which watches success for the
+ * "Return request submitted" toast) after the component has already cleared it
+ * from requestReturn.fulfilled — causing a spurious duplicate toast.
  */
 export const uploadReturnFiles = createAsyncThunk(
   "return/uploadReturnFiles",
@@ -331,11 +342,11 @@ const returnSlice = createSlice({
   initialState: {
     returnStatus: { status: "none", hasReturn: false },
 
-    messages: [],
-    messagesPage: 1,
-    // FIX CS-8 (prev #8) — totalMessages stores backend totalCount so the UI
-    // can display "Load N earlier messages" without an extra round-trip.
-    totalMessages: 0,
+    messages:        [],
+    messagesPage:    1,
+    // totalMessages stores backend totalCount so the UI can display
+    // "Load N earlier messages" without an extra round-trip.
+    totalMessages:   0,
     hasMoreMessages: false,
 
     /**
@@ -348,27 +359,27 @@ const returnSlice = createSlice({
      */
     pendingAttachments: [],
 
-    timeline: [],
+    timeline:  [],
     documents: [],
 
     // ── Loading flags ────────────────────────────────────────────────────────
-    loading: false,            // requestReturn, cancelReturn
-    statusLoading: false,      // getReturnStatus
+    loading:            false, // requestReturn, cancelReturn
+    statusLoading:      false, // getReturnStatus
     messageSendLoading: false, // sendReturnMessage (upload + send combined)
-    messagesLoading: false,    // getReturnMessages
-    timelineLoading: false,
-    documentsLoading: false,
-    uploadLoading: false,      // standalone uploadReturnFiles
+    messagesLoading:    false, // getReturnMessages
+    timelineLoading:    false,
+    documentsLoading:   false,
+    uploadLoading:      false, // standalone uploadReturnFiles
 
     // ── Error / result state ─────────────────────────────────────────────────
-    error: null,
+    error:      null,
     /**
      * 'upload' | 'send' | null
      * Lets the UI show the correct retry prompt without string-matching error.
      */
     errorStage: null,
-    success: false,
-    message: null,
+    success:    false,
+    message:    null,
   },
 
   reducers: {
@@ -384,21 +395,24 @@ const returnSlice = createSlice({
     },
 
     /**
-     * Call on chat panel unmount to prevent stale messages on next open.
+     * Call on chat panel unmount / close to prevent stale messages on next open.
      *
-     * FIX CS-4 — also clears error and errorStage so that a panel which
-     * closed mid-error does not re-open showing a stale error state.
+     * Clears error, errorStage, and in-flight loading flags so a panel which
+     * closed mid-error or mid-send does not re-open with stale banners or a
+     * permanently-disabled send button.
      */
     clearReturnMessages: (state) => {
-      state.messages          = [];
-      state.messagesPage      = 1;
-      state.totalMessages     = 0;
-      state.hasMoreMessages   = false;
+      state.messages           = [];
+      state.messagesPage       = 1;
+      state.totalMessages      = 0;
+      state.hasMoreMessages    = false;
       state.pendingAttachments = [];
-      // FIX CS-4: error/errorStage were NOT cleared previously, causing stale
-      // error banners to appear on re-open before any action was taken.
-      state.error      = null;
-      state.errorStage = null;
+      state.error              = null;
+      state.errorStage         = null;
+      // Reset in-flight flags — closing mid-request must not leave the send
+      // button or attach button permanently disabled on re-open.
+      state.messageSendLoading = false;
+      state.uploadLoading      = false;
     },
 
     /**
@@ -425,10 +439,10 @@ const returnSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = payload.message;
-        // FIX CS-3 (prev #3) — backend returns raw Mongoose subdocument which
-        // never contains the hasReturn virtual. Merge it explicitly so components
-        // gating on returnStatus.hasReturn work immediately after submission
-        // without a follow-up getReturnStatus call.
+        // Backend returns raw Mongoose subdocument which never contains the
+        // hasReturn virtual. Merge it explicitly so components gating on
+        // returnStatus.hasReturn work immediately after submission without a
+        // follow-up getReturnStatus call.
         state.returnStatus = payload.returnInfo
           ? { ...payload.returnInfo, hasReturn: true }
           : { status: "requested", hasReturn: true };
@@ -471,10 +485,10 @@ const returnSlice = createSlice({
         state.loading = false;
         state.success = true;
         state.message = payload.message;
-        // FIX CS-4 (prev #4) — backend returns only { success, message } with
-        // no returnInfo. Spread over existing shape to preserve reason,
-        // rmaNumber, requestedAt etc. A wholesale replacement would blank any
-        // component that reads those fields.
+        // Backend returns only { success, message } with no returnInfo.
+        // Spread over existing shape to preserve reason, rmaNumber,
+        // requestedAt etc. A wholesale replacement would blank components that
+        // read those fields.
         state.returnStatus = {
           ...state.returnStatus,
           status:    "cancelled",
@@ -496,10 +510,12 @@ const returnSlice = createSlice({
       .addCase(sendReturnMessage.fulfilled, (state, { payload }) => {
         state.messageSendLoading = false;
         state.pendingAttachments = [];
-        // FIX CS-5 (prev #5) — errorStage was only cleared in pending. A prior
-        // stage:"send" failure left errorStage="send" visible after a successful
-        // retry. Clear explicitly here so the retry prompt disappears on success.
+        // Clear errorStage explicitly — a prior stage:"send" failure left it
+        // set; without this the retry prompt stays visible after a successful
+        // retry.
         state.errorStage = null;
+        // payload = { ...backendData, attachmentUrls }
+        // backendData = { success, message, data: { orderId, message: newMsg } }
         const newMsg = payload?.data?.message;
         if (newMsg) state.messages.push(newMsg);
       })
@@ -520,19 +536,35 @@ const returnSlice = createSlice({
       })
       .addCase(getReturnMessages.fulfilled, (state, { payload }) => {
         state.messagesLoading = false;
-        const { messages = [], count, totalCount, page, limit } = payload;
+        const { messages = [], totalCount, page, limit } = payload;
+
+        // FIX (isRead normalisation): The backend's getReturnMessages
+        // aggregation runs BEFORE the markReturnMessagesAsRead + save, so the
+        // HTTP response always carries stale isRead:false on admin messages
+        // even though the server has already persisted them as read.
+        //
+        // Normalising here (rather than via a separate clearUnreadMessages
+        // dispatch) ensures the badge drops on the SAME render cycle as the
+        // fetch resolves, with no risk of the read state being overwritten by
+        // a subsequent fetch the way an optimistic dispatch would be.
+        const normalised = messages.map((m) =>
+          m.senderType === "admin" ? { ...m, isRead: true } : m
+        );
+
         if (page === 1) {
-          state.messages = messages;
+          state.messages = normalised;
         } else {
           // Prepend older pages — load-earlier / scroll-up pattern.
-          state.messages = [...messages, ...state.messages];
+          state.messages = [...normalised, ...state.messages];
         }
+
         state.messagesPage  = page;
-        // FIX CS-8 (prev #8) — store backend totalCount for "N messages remaining" UI.
         state.totalMessages = totalCount ?? 0;
-        // FIX CS-1 (prev #1) — compare against the actual limit used, not
-        // hardcoded 50. Any caller-supplied limit now works correctly.
-        state.hasMoreMessages = count === (limit ?? 50);
+
+        // FIX (hasMoreMessages): count === limit was wrong — it evaluates true
+        // when the last page fills exactly `limit` messages, causing an empty
+        // "Load earlier" fetch. Use totalCount instead.
+        state.hasMoreMessages = (page * limit) < (totalCount ?? 0);
       })
       .addCase(getReturnMessages.rejected, (state, { payload }) => {
         state.messagesLoading = false;
@@ -577,15 +609,10 @@ const returnSlice = createSlice({
         state.uploadLoading = true;
         state.error         = null;
       })
-      // FIX CS-7/XS-1 — uploadedAt is stamped in the thunk (via uploadFiles()),
-      // NOT here in the reducer. Reducers must be pure/deterministic for
-      // Redux DevTools time-travel to work correctly.
-      // FIX CS-8 — normaliseDocument() pads upload-response entries to the
-      // full getReturnDocuments shape so state.documents is always uniform.
       .addCase(uploadReturnFiles.fulfilled, (state, { payload }) => {
         state.uploadLoading = false;
-        state.success       = true;
-        state.documents     = [
+        // NOTE: success is intentionally NOT set here — see thunk JSDoc.
+        state.documents = [
           ...state.documents,
           ...(payload.files ?? []).map(normaliseDocument),
         ];

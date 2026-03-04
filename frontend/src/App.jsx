@@ -33,6 +33,7 @@ import ReviewList from './Admin/ReviewList';
 import OAuthCallback from './User/OauthCallback';
 import RefundRequest from './Orders/RefundRequest';
 import AdminRefunds from './Admin/AdminRefunds';
+import AdminReturns from './Admin/AdminReturns';
 import AboutPage from './pages/AboutPage';
 import ContactPage from './pages/ContactPage';
 import CategoriesPage from './pages/CategoriesPage';
@@ -132,6 +133,7 @@ function App() {
         <Route path='/admin/orders' element={<ProtectedRoute element={<AllOrders />} adminOnly={true} />} />
         <Route path='/admin/reviews' element={<ProtectedRoute element={<ReviewList />} adminOnly={true} />} />
         <Route path='/admin/refunds' element={<ProtectedRoute element={<AdminRefunds />} adminOnly={true} />} />
+        <Route path='/admin/returns' element={<ProtectedRoute element={<AdminReturns />} adminOnly={true} />} />
         <Route path='/admin/analytics' element={<ProtectedRoute element={<AnalyticsOverview />} adminOnly={true} />} />
         <Route path='/admin/reports' element={<ProtectedRoute element={<Reports />} adminOnly={true} />} />
         <Route path='/admin/customers' element={<ProtectedRoute element={<CustomerAnalytics />} adminOnly={true} />} />

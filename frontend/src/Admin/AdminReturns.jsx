@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
 import {
   Search,
   Refresh,
@@ -14,229 +15,433 @@ import {
   Timeline as TimelineIcon,
   Description,
   Warning,
-  Schedule
+  Schedule,
+  ChevronLeft,
+  ChevronRight,
+  ArrowBack,
+  HourglassEmpty,
+  ReportProblem,
+  LocalShipping,
+  SwapHoriz,
 } from '@mui/icons-material';
 import {
   getAllReturns,
   getSingleReturn,
   reviewReturn,
   updateReturnStatus,
-  addReturnMessage,
+  sendReturnMessage,
   getReturnMessages,
   getReturnTimeline,
   getReturnDocuments,
   uploadReturnFiles,
   getReturnsWithUnreadMessages,
-  clearCurrentReturn
+  clearCurrentReturn,
+  clearAdminReturnState,
+  clearReturnMessages,
+  clearPendingAttachments,
 } from '../features/admin/adminReturnSlice';
-import MessageModal from '../Orders/RefundReturnMessagesModal';
+import ReturnMessagesModal from '../Orders/ReturnMessagesModal';
 import '../AdminStyles/AdminReturns.css';
 
+// ── Debounce hook ────────────────────────────────────────────────────────────
+function useDebounce(value, delay) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
+// ── Pure helpers ─────────────────────────────────────────────────────────────
+// Backend populates user.name (single field) for returns
+const getCustomerName = (user) => {
+  if (!user) return 'N/A';
+  return user.name?.trim() || user.email || 'N/A';
+};
+
+// Format currency safely
+const fmt = (n) => (typeof n === 'number' ? n.toFixed(2) : '0.00');
+
+// Return-specific status colours
+const STATUS_COLOR = {
+  requested:  'requested',
+  approved:   'approved',
+  in_transit: 'in_transit',
+  received:   'received',
+  inspected:  'inspected',
+  completed:  'completed',
+  rejected:   'rejected',
+  cancelled:  'cancelled',
+};
+
+const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled']);
+
+// Statuses that can receive an updateReturnStatus call (post-approval lifecycle)
+const LIFECYCLE_STATUSES = ['in_transit', 'received', 'inspected', 'completed'];
+
+// Which lifecycle statuses are valid next steps for a given current status
+const NEXT_STATUS_MAP = {
+  approved:   ['in_transit'],
+  in_transit: ['received'],
+  received:   ['inspected'],
+  inspected:  ['completed'],
+};
+
+const DRAWER_TABS = ['overview', 'review', 'status', 'timeline', 'documents'];
+
+const STATUS_FILTERS = [
+  { value: '',           label: 'All' },
+  { value: 'requested',  label: 'Requested' },
+  { value: 'approved',   label: 'Approved' },
+  { value: 'in_transit', label: 'In Transit' },
+  { value: 'received',   label: 'Received' },
+  { value: 'inspected',  label: 'Inspected' },
+  { value: 'completed',  label: 'Completed' },
+  { value: 'rejected',   label: 'Rejected' },
+  { value: 'cancelled',  label: 'Cancelled' },
+];
+
+const SORT_OPTIONS = [
+  { value: 'requestedAt', label: 'Date Requested' },
+  { value: 'totalPrice',  label: 'Order Total' },
+  { value: 'status',      label: 'Status' },
+];
+
+const LIMIT = 20;
+
+// ── Component ────────────────────────────────────────────────────────────────
 const AdminReturns = () => {
   const dispatch = useDispatch();
 
-  // Redux state
   const {
     returns,
+    unreadReturns,
     stats,
     currentReturn,
     messages,
+    messagesPage,
+    hasMoreMessages,
+    totalMessages,
+    pendingAttachments,
+    errorStage,
     timeline,
     documents,
+    pagination,
     loading,
     returnsLoading,
+    unreadLoading,
+    messageSendLoading,
     messagesLoading,
     timelineLoading,
     documentsLoading,
     uploadLoading,
     error,
     success,
-    message: successMessage
-  } = useSelector(state => state.adminReturn);
+    message: successMessage,
+  } = useSelector((state) => state.adminReturn);
 
-  // Local state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filters, setFilters] = useState({
-    status: '',
-    reason: '',
-    startDate: '',
-    endDate: ''
-  });
+  const { currentPage, totalPages, totalReturns } = pagination;
+
+  // ── Filter / sort / page state ────────────────────────────────────────────
+  // No setPage action in adminReturnSlice; page is passed as a filter param
+  const [localPage,      setLocalPage]      = useState(1);
+  const [searchRaw,      setSearchRaw]      = useState('');
+  const [filterStatus,   setFilterStatus]   = useState('');
+  const [fromDate,       setFromDate]       = useState('');
+  const [toDate,         setToDate]         = useState('');
+  const [rmaSearch,      setRmaSearch]      = useState('');
+  const [sortBy,         setSortBy]         = useState('requestedAt');
+  const [sortOrder,      setSortOrder]      = useState('desc');
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
-  const [selectedReturn, setSelectedReturn] = useState(null);
-  const [showDetailPanel, setShowDetailPanel] = useState(false);
+
+  // ── Panel / modal state ───────────────────────────────────────────────────
+  const [selectedId,       setSelectedId]       = useState(null);
+  const [showDetailPanel,  setShowDetailPanel]  = useState(false);
   const [showMessageModal, setShowMessageModal] = useState(false);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab,        setActiveTab]        = useState('overview');
 
-  // Review form state
-  const [reviewAction, setReviewAction] = useState('');
-  const [restockFee, setRestockFee] = useState(0);
-  const [adminNote, setAdminNote] = useState('');
+  // ── Form state (drawer) ───────────────────────────────────────────────────
+  const [reviewAction,     setReviewAction]     = useState('');
+  const [adminNote,        setAdminNote]        = useState('');
+  const [restockFee,       setRestockFee]       = useState('');
+  const [newStatus,        setNewStatus]        = useState('');
+  const [inspectionNotes,  setInspectionNotes]  = useState('');
 
-  // Status update state
-  const [newStatus, setNewStatus] = useState('');
-  const [inspectionNotes, setInspectionNotes] = useState('');
+  const searchTerm = useDebounce(searchRaw, 400);
+  // RMA search also debounced — it's a regex query on backend
+  const rmaDebounced = useDebounce(rmaSearch, 400);
 
-  // Pagination
-  const [currentPage] = useState(1);
-  const itemsPerPage = 20;
+  // ── Build filter params ───────────────────────────────────────────────────
+  // These params go directly to getAllReturns which passes them through
+  // sanitiseFilters → URLSearchParams on the backend
+  const buildListParams = useCallback(() => {
+    const p = { page: localPage, limit: LIMIT, sortBy, order: sortOrder };
+    if (filterStatus)         p.status = filterStatus;
+    if (fromDate)             p.from   = fromDate;
+    if (toDate)               p.to     = toDate;
+    if (rmaDebounced.trim())  p.rma    = rmaDebounced.trim();
+    // Backend doesn't have a "search" filter; rma covers the RMA lookup.
+    // searchTerm is kept for frontend reference but rma is the backend filter.
+    return p;
+  }, [localPage, filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder]);
 
-  // Fetch returns — stable reference via useCallback
+  // ── Fetch list ────────────────────────────────────────────────────────────
   const handleFetchReturns = useCallback(() => {
-    const queryFilters = {
-      ...filters,
-      search: searchQuery,
-      page: currentPage,
-      limit: itemsPerPage
-    };
-
     if (showUnreadOnly) {
       dispatch(getReturnsWithUnreadMessages());
     } else {
-      dispatch(getAllReturns(queryFilters));
+      dispatch(getAllReturns(buildListParams()));
     }
-  }, [filters, searchQuery, showUnreadOnly, currentPage, dispatch]);
+  }, [dispatch, showUnreadOnly, buildListParams]);
 
-  // Fetch on mount + whenever deps change
   useEffect(() => {
     handleFetchReturns();
   }, [handleFetchReturns]);
 
-  // Handle view return details
-  const handleViewReturn = async (orderId) => {
-    setSelectedReturn(orderId);
-    setShowDetailPanel(true);
+  // Reset to page 1 on any filter change (not on page change itself)
+  const prevFilters = useMemo(
+    () => ({ filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly]
+  );
+  useEffect(() => {
+    setLocalPage(1);
+    // prevFilters identity changes when any filter changes — this effect fires
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prevFilters]);
 
+  // ── Toast auto-dismiss ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!success) return undefined;
+    const t = setTimeout(() => dispatch(clearAdminReturnState()), 3000);
+    return () => clearTimeout(t);
+  }, [success, dispatch]);
+
+  useEffect(() => {
+    if (!error) return undefined;
+    const t = setTimeout(() => dispatch(clearAdminReturnState()), 5000);
+    return () => clearTimeout(t);
+  }, [error, dispatch]);
+
+  // Pre-populate available next statuses when status tab opens
+  useEffect(() => {
+    if (activeTab === 'status' && currentReturn) {
+      const current = currentReturn.returnInfo?.status;
+      const options = NEXT_STATUS_MAP[current] ?? [];
+      if (options.length === 1 && !newStatus) {
+        setNewStatus(options[0]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, currentReturn]);
+
+  // ── Derived ───────────────────────────────────────────────────────────────
+  const displayList = showUnreadOnly ? unreadReturns : returns;
+  const tableLoading = showUnreadOnly ? unreadLoading : returnsLoading;
+
+  // Unread dot awareness per status filter tab
+  const hasUnreadByStatus = useMemo(() => {
+    const map = { all: false };
+    displayList.forEach((item) => {
+      // getAllReturns projection includes unreadMessages count
+      const count = item.unreadMessages ?? 0;
+      if (count > 0) {
+        map.all = true;
+        const s = item.returnInfo?.status;
+        if (s) map[s] = true;
+      }
+    });
+    return map;
+  }, [displayList]);
+
+  // Ellipsis-aware page numbers
+  const pageNumbers = useMemo(() => {
+    if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
+    const pages = [];
+    const left  = Math.max(2, currentPage - 2);
+    const right = Math.min(totalPages - 1, currentPage + 2);
+    pages.push(1);
+    if (left > 2) pages.push('...');
+    for (let i = left; i <= right; i += 1) pages.push(i);
+    if (right < totalPages - 1) pages.push('...');
+    pages.push(totalPages);
+    return pages;
+  }, [totalPages, currentPage]);
+
+  // What next statuses are valid for the current return
+  const validNextStatuses = useMemo(() => {
+    if (!currentReturn) return [];
+    const current = currentReturn.returnInfo?.status;
+    return NEXT_STATUS_MAP[current] ?? [];
+  }, [currentReturn]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handlePageChange = useCallback((page) => {
+    if (page < 1 || page > totalPages) return;
+    setLocalPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [totalPages]);
+
+  const fetchReturnDetails = useCallback(async (orderId) => {
     await dispatch(getSingleReturn(orderId));
     dispatch(getReturnTimeline(orderId));
     dispatch(getReturnDocuments(orderId));
-    dispatch(getReturnMessages(orderId));
-  };
+    dispatch(getReturnMessages({ orderId, page: 1 }));
+  }, [dispatch]);
 
-  // Handle review return
-  const handleReviewReturn = async () => {
-    if (!reviewAction) return;
+  const handleViewReturn = useCallback(async (orderId) => {
+    setSelectedId(orderId);
+    setActiveTab('overview');
+    setShowDetailPanel(true);
+    await fetchReturnDetails(orderId);
+  }, [fetchReturnDetails]);
 
+  // Await getSingleReturn before showing modal so currentReturn is never null
+  const handleOpenMessageModal = useCallback(async (orderId) => {
+    setSelectedId(orderId);
+    await dispatch(getSingleReturn(orderId));
+    dispatch(getReturnMessages({ orderId, page: 1 }));
+    dispatch(getReturnTimeline(orderId));
+    dispatch(getReturnDocuments(orderId));
+    setShowDetailPanel(true);
+    setShowMessageModal(true);
+  }, [dispatch]);
+
+  const handleLoadMoreMessages = useCallback(() => {
+    if (!selectedId || !hasMoreMessages || messagesLoading) return;
+    dispatch(getReturnMessages({ orderId: selectedId, page: messagesPage + 1 }));
+  }, [dispatch, selectedId, hasMoreMessages, messagesPage, messagesLoading]);
+
+  const handleReviewReturn = useCallback(async () => {
+    if (!reviewAction || !selectedId) return;
     try {
       await dispatch(reviewReturn({
-        orderId: selectedReturn,
-        action: reviewAction,
-        restockFee: reviewAction === 'approve' ? restockFee : 0,
-        adminNote
+        orderId:    selectedId,
+        action:     reviewAction,
+        restockFee: restockFee ? Number(restockFee) : undefined,
+        adminNote:  adminNote || undefined,
       })).unwrap();
-
       setReviewAction('');
-      setRestockFee(0);
       setAdminNote('');
+      setRestockFee('');
+      dispatch(getAllReturns(buildListParams()));
+    } catch (_) { /* error surfaced via slice error state */ }
+  }, [dispatch, reviewAction, adminNote, restockFee, selectedId, buildListParams]);
 
-      handleFetchReturns();
-      handleViewReturn(selectedReturn);
-    } catch (err) {
-      console.error('Failed to review return:', err);
-    }
-  };
-
-  // Handle status update
-  const handleUpdateStatus = async () => {
-    if (!newStatus) return;
-
+  const handleUpdateStatus = useCallback(async () => {
+    if (!newStatus || !selectedId) return;
     try {
       await dispatch(updateReturnStatus({
-        orderId: selectedReturn,
-        status: newStatus,
-        inspectionNotes
+        orderId:        selectedId,
+        status:         newStatus,
+        inspectionNotes: newStatus === 'inspected' ? (inspectionNotes || undefined) : undefined,
       })).unwrap();
-
       setNewStatus('');
       setInspectionNotes('');
+      dispatch(getAllReturns(buildListParams()));
+    } catch (_) { /* error surfaced via slice */ }
+  }, [dispatch, newStatus, inspectionNotes, selectedId, buildListParams]);
 
-      handleFetchReturns();
-      handleViewReturn(selectedReturn);
-    } catch (err) {
-      console.error('Failed to update status:', err);
-    }
-  };
+  // Modal send: thunk field is "content" not "message"
+  const handleSendMessage = useCallback(async (text, files, pendingUrls = []) => {
+    if (!selectedId) return;
+    await dispatch(sendReturnMessage({
+      orderId:     selectedId,
+      content:     text,
+      files:       files ?? [],
+      pendingUrls: pendingUrls ?? [],
+    })).unwrap();
+  }, [dispatch, selectedId]);
 
-  // Handle send message
-  const handleSendMessage = async (content, attachments) => {
+  const handleRetryMessage = useCallback(() => {
+    if (!selectedId || !pendingAttachments.length) return;
+    dispatch(sendReturnMessage({
+      orderId:     selectedId,
+      content:     '',
+      pendingUrls: pendingAttachments,
+    }));
+  }, [dispatch, selectedId, pendingAttachments]);
+
+  const handleFileUpload = useCallback(async (files) => {
+    if (!selectedId) return;
     try {
-      await dispatch(addReturnMessage({
-        orderId: selectedReturn,
-        content,
-        attachments
-      })).unwrap();
+      await dispatch(uploadReturnFiles({ orderId: selectedId, files })).unwrap();
+      dispatch(getReturnDocuments(selectedId));
+    } catch (_) { /* error surfaced via slice */ }
+  }, [dispatch, selectedId]);
 
-      dispatch(getReturnMessages(selectedReturn));
-    } catch (err) {
-      console.error('Failed to send message:', err);
-    }
-  };
+  const handleCloseMessageModal = useCallback(() => {
+    setShowMessageModal(false);
+    dispatch(clearReturnMessages());
+    dispatch(getAllReturns(buildListParams()));
+  }, [dispatch, buildListParams]);
 
-  // Handle file upload
-  const handleFileUpload = async (files) => {
-    try {
-      await dispatch(uploadReturnFiles({
-        orderId: selectedReturn,
-        files
-      })).unwrap();
-
-      dispatch(getReturnDocuments(selectedReturn));
-    } catch (err) {
-      console.error('Failed to upload files:', err);
-    }
-  };
-
-  // Close detail panel
-  const handleClosePanel = () => {
+  const handleClosePanel = useCallback(() => {
     setShowDetailPanel(false);
-    setSelectedReturn(null);
+    setShowMessageModal(false);
+    setSelectedId(null);
     setActiveTab('overview');
+    setReviewAction('');
+    setAdminNote('');
+    setRestockFee('');
+    setNewStatus('');
+    setInspectionNotes('');
     dispatch(clearCurrentReturn());
-  };
+    dispatch(getAllReturns(buildListParams()));
+  }, [dispatch, buildListParams]);
 
-  // ─── Render KPI Cards ──────────────────────────────────────────────────────
+  const handleModalRefresh = useCallback(() => {
+    if (selectedId) dispatch(getReturnMessages({ orderId: selectedId, page: 1 }));
+  }, [dispatch, selectedId]);
+
+  // ── Render helpers ────────────────────────────────────────────────────────
+
+  // KPI cards
   const renderKPICards = () => {
     if (!stats) {
-      return [...Array(6)].map((_, i) => (
-        <div key={i} className="art-kpi-card art-kpi-skeleton">
-          <div className="art-skeleton-icon"></div>
-          <div className="art-skeleton-text" style={{ width: '60%' }}></div>
-          <div className="art-skeleton-value"></div>
+      return Array.from({ length: 5 }).map((_, i) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <div key={i} className="rt-kpi" style={{ '--kpi-color': '#E5E7EB' }}>
+          <div className="rt-kpi-top">
+            <div className="rt-skel" style={{ width: 40, height: 40, borderRadius: 10 }} />
+          </div>
+          <div className="rt-skel" style={{ width: '55%', height: 11, marginBottom: 8 }} />
+          <div className="rt-skel" style={{ width: '70%', height: 26 }} />
         </div>
       ));
     }
-
-    const kpiData = [
-      { label: 'Total Requests',  value: stats.totalRequests  || 0, icon: Assessment,  color: 'neutral'  },
-      { label: 'Pending Approval', value: stats.pendingApproval || 0, icon: Schedule,    color: 'warning'  },
-      { label: 'Approved',        value: stats.approved       || 0, icon: CheckCircle,  color: 'positive' },
-      { label: 'Rejected',        value: stats.rejected       || 0, icon: Cancel,       color: 'neutral'  },
-      { label: 'Items Received',  value: stats.received       || 0, icon: Inventory,    color: 'neutral'  },
-      { label: 'Completed',       value: stats.completed      || 0, icon: CheckCircle,  color: 'positive' }
+    const cards = [
+      { label: 'Total Returns',  value: stats.total      ?? 0, icon: Assessment,    color: '#6366F1' },
+      { label: 'Pending Review', value: stats.requested  ?? 0, icon: Schedule,      color: '#F59E0B' },
+      { label: 'In Progress',    value: (stats.approved ?? 0) + (stats.in_transit ?? 0) + (stats.received ?? 0) + (stats.inspected ?? 0), icon: LocalShipping, color: '#8B5CF6' },
+      { label: 'Completed',      value: stats.completed  ?? 0, icon: CheckCircle,   color: '#10B981' },
+      { label: 'Rejected',       value: stats.rejected   ?? 0, icon: Cancel,        color: '#EF4444' },
     ];
-
-    return kpiData.map((kpi, index) => (
-      <div key={index} className="art-kpi-card">
-        <div className="art-kpi-header">
-          <div className={`art-kpi-icon ${kpi.color}`}>
-            <kpi.icon />
-          </div>
+    return cards.map((c) => (
+      <div key={c.label} className="rt-kpi" style={{ '--kpi-color': c.color }}>
+        <div className="rt-kpi-top">
+          <span className="rt-kpi-icon" style={{ background: `${c.color}18`, color: c.color }}>
+            <c.icon style={{ fontSize: 20 }} />
+          </span>
         </div>
-        <p className="art-kpi-label">{kpi.label}</p>
-        <h3 className="art-kpi-value">{kpi.value.toLocaleString()}</h3>
+        <div className="rt-kpi-label">{c.label}</div>
+        <div className="rt-kpi-value">{c.value.toLocaleString()}</div>
       </div>
     ));
   };
 
-  // ─── Render Table ──────────────────────────────────────────────────────────
+  // Table
   const renderTable = () => {
-    if (returnsLoading) {
+    if (tableLoading && displayList.length === 0) {
       return (
-        <div className="art-table-skeleton">
-          {[...Array(5)].map((_, i) => (
-            <div key={i} className="art-skeleton-row">
-              {[...Array(4)].map((__, j) => (
-                <div key={j} className="art-skeleton-cell"></div>
+        <div style={{ padding: '20px' }}>
+          {Array.from({ length: 5 }).map((_, i) => (
+            // eslint-disable-next-line react/no-array-index-key
+            <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+              {Array.from({ length: 7 }).map((__, j) => (
+                // eslint-disable-next-line react/no-array-index-key
+                <div key={j} className="rt-skel" style={{ height: 16, flex: 1 }} />
               ))}
             </div>
           ))}
@@ -244,368 +449,664 @@ const AdminReturns = () => {
       );
     }
 
-    if (!returns || returns.length === 0) {
+    if (displayList.length === 0) {
       return (
-        <div className="art-empty-state">
-          <div className="art-empty-icon">📦</div>
-          <h3 className="art-empty-title">No returns found</h3>
-          <p className="art-empty-desc">
-            {showUnreadOnly
-              ? 'No returns with unread messages'
-              : 'There are no return requests at the moment'}
-          </p>
+        <div className="rt-empty">
+          <Inventory style={{ fontSize: 36, color: '#D1D5DB' }} />
+          <span>{showUnreadOnly ? 'No returns with unread messages' : 'No return requests found'}</span>
         </div>
       );
     }
 
     return (
-      <div className="art-table-wrapper">
-        <table className="art-data-table">
+      <div className="rt-tbl-wrap">
+        {tableLoading && displayList.length > 0 && <div className="rt-loading-bar" />}
+        <table className="rt-tbl">
           <thead>
             <tr>
               <th>Order ID</th>
               <th>Customer</th>
-              <th>Products</th>
+              <th>RMA</th>
+              <th>Requested Amt</th>
               <th>Reason</th>
               <th>Requested</th>
               <th>Status</th>
-              <th>Inspection</th>
-              <th>Messages</th>
+              <th>Msgs</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            {returns.map((returnItem) => (
-              <tr key={returnItem._id}>
-                <td className="art-td-bold">
-                  #{returnItem.orderInfo?.orderNumber || returnItem._id.slice(-6)}
-                </td>
-                <td>{returnItem.user?.name || 'N/A'}</td>
-                <td>{returnItem.items?.length || 0} items</td>
-                <td>{returnItem.returnReason || 'N/A'}</td>
-                <td>{new Date(returnItem.requestedAt).toLocaleDateString()}</td>
-                <td>
-                  <span className={`art-badge art-badge--${returnItem.returnStatus?.toLowerCase()}`}>
-                    <span className="art-badge-dot"></span>
-                    {returnItem.returnStatus}
-                  </span>
-                </td>
-                <td>
-                  {returnItem.inspectionStatus ? (
-                    <span className={`art-badge art-badge--${returnItem.inspectionStatus.toLowerCase()}`}>
-                      {returnItem.inspectionStatus}
+            {displayList.map((item) => {
+              const status      = item.returnInfo?.status ?? 'unknown';
+              const orderRef    = item.orderId ? item.orderId.toString().slice(-6).toUpperCase() : (item._id ? item._id.toString().slice(-6).toUpperCase() : 'N/A');
+              const rma         = item.returnInfo?.rmaNumber ?? '—';
+              const unreadCount = item.unreadMessages ?? 0;
+              return (
+                <tr key={item.orderId ?? item._id}>
+                  <td className="rt-td-name">#{orderRef}</td>
+                  <td>{getCustomerName(item.user)}</td>
+                  <td className="rt-td-mono">{rma}</td>
+                  <td className="rt-td-money">
+                    ${fmt(item.returnInfo?.requestedAmount ?? 0)}
+                  </td>
+                  <td className="rt-td-reason">
+                    {item.returnInfo?.reason?.replace(/_/g, ' ') ?? 'N/A'}
+                  </td>
+                  <td className="rt-td-muted">
+                    {item.returnInfo?.requestedAt
+                      ? new Date(item.returnInfo.requestedAt).toLocaleDateString()
+                      : 'N/A'}
+                  </td>
+                  <td>
+                    <span className={`rt-status rt-status--${STATUS_COLOR[status] ?? 'cancelled'}`}>
+                      {status.replace(/_/g, ' ')}
                     </span>
-                  ) : (
-                    <span className="art-dash">—</span>
-                  )}
-                </td>
-                <td>
-                  <div className="art-unread-wrap">
-                    <Message style={{ fontSize: 18 }} />
-                    {returnItem.hasUnreadMessages && <span className="art-unread-dot"></span>}
-                  </div>
-                </td>
-                <td>
-                  <div className="art-row-actions">
+                  </td>
+                  <td>
                     <button
-                      className="art-icon-btn"
-                      onClick={() => handleViewReturn(returnItem._id)}
-                      title="View Details"
-                    >
-                      <Visibility style={{ fontSize: 18 }} />
-                    </button>
-                    <button
-                      className="art-icon-btn"
-                      onClick={() => {
-                        handleViewReturn(returnItem._id);
-                        setShowMessageModal(true);
-                      }}
+                      type="button"
+                      className="rt-icon-btn"
+                      onClick={() => handleOpenMessageModal(item.orderId ?? item._id)}
                       title="Open Messages"
                     >
-                      <Message style={{ fontSize: 18 }} />
+                      <Message style={{ fontSize: 16 }} />
+                      {unreadCount > 0 && (
+                        <span className="rt-msg-badge">
+                          {unreadCount > 99 ? '99+' : unreadCount}
+                        </span>
+                      )}
                     </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="rt-icon-btn"
+                      onClick={() => handleViewReturn(item.orderId ?? item._id)}
+                      title="View Details"
+                    >
+                      <Visibility style={{ fontSize: 16 }} />
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
     );
   };
 
-  // ─── Render Detail Panel ───────────────────────────────────────────────────
+  // Pagination
+  const renderPagination = () => {
+    if (showUnreadOnly || totalPages <= 1) return null;
+    return (
+      <div className="rt-pagination">
+        <button
+          type="button"
+          className="rt-page-btn rt-page-btn--nav"
+          onClick={() => handlePageChange(currentPage - 1)}
+          disabled={currentPage === 1}
+          title="Previous"
+        >
+          <ChevronLeft style={{ fontSize: 18 }} />
+        </button>
+        {pageNumbers.map((p, idx) =>
+          p === '...'
+            // eslint-disable-next-line react/no-array-index-key
+            ? <span key={`e${idx}`} className="rt-page-ellipsis">…</span>
+            : (
+              <button
+                key={p}
+                type="button"
+                className={`rt-page-btn${currentPage === p ? ' rt-page-btn--active' : ''}`}
+                onClick={() => handlePageChange(p)}
+              >
+                {p}
+              </button>
+            )
+        )}
+        <button
+          type="button"
+          className="rt-page-btn rt-page-btn--nav"
+          onClick={() => handlePageChange(currentPage + 1)}
+          disabled={currentPage === totalPages}
+          title="Next"
+        >
+          <ChevronRight style={{ fontSize: 18 }} />
+        </button>
+        <span className="rt-page-info">Page {currentPage} of {totalPages}</span>
+      </div>
+    );
+  };
+
+  // Detail drawer
   const renderDetailPanel = () => {
-    if (!showDetailPanel || !currentReturn) return null;
+    if (!showDetailPanel) return null;
+
+    if (!currentReturn) {
+      return (
+        <div
+          className="rt-drawer-overlay"
+          onClick={handleClosePanel}
+          role="presentation"
+        >
+          <div
+            className="rt-drawer"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="rt-drawer-hd">
+              <h2 className="rt-drawer-title">Loading…</h2>
+              <button type="button" className="rt-drawer-close" onClick={handleClosePanel} aria-label="Close">×</button>
+            </div>
+            <div className="rt-drawer-body">
+              <div className="rt-loading"><div className="rt-spinner" /><span>Fetching return…</span></div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const returnInfo  = currentReturn.returnInfo ?? {};
+    const retStatus   = returnInfo.status ?? 'unknown';
+    const isTerminal  = TERMINAL_STATUSES.has(retStatus);
+    const orderRef    = currentReturn._id ? currentReturn._id.toString().slice(-6).toUpperCase() : 'N/A';
+    const rma         = returnInfo.rmaNumber ?? null;
 
     return (
-      <div className="art-drawer-overlay" onClick={handleClosePanel}>
-        <div className="art-drawer-panel" onClick={(e) => e.stopPropagation()}>
-          <div className="art-panel-header">
-            <h2 className="art-panel-title">
-              Return Details — #{currentReturn.orderInfo?.orderNumber}
-            </h2>
-            <button className="art-panel-close" onClick={handleClosePanel}>×</button>
+      <div
+        className="rt-drawer-overlay"
+        onClick={handleClosePanel}
+        role="presentation"
+      >
+        <div
+          className="rt-drawer"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="rt-drawer-heading"
+        >
+          <div className="rt-drawer-hd">
+            <div className="rt-drawer-hd-info">
+              <h2 className="rt-drawer-title" id="rt-drawer-heading">
+                Return — #{orderRef}
+              </h2>
+              {rma && <span className="rt-rma-badge">RMA: {rma}</span>}
+            </div>
+            <button type="button" className="rt-drawer-close" onClick={handleClosePanel} aria-label="Close panel">×</button>
           </div>
 
-          <div className="art-panel-body">
-            {/* Tab Nav */}
-            <div className="art-tab-nav">
-              {['overview', 'review', 'status', 'timeline', 'documents'].map(tab => (
+          {/* Tab bar */}
+          <div className="rt-drawer-tabs">
+            <div className="rt-tf rt-drawer-tab-row">
+              {DRAWER_TABS.map((tab) => (
                 <button
                   key={tab}
-                  className={`art-tab-btn${activeTab === tab ? ' active' : ''}`}
+                  type="button"
+                  className={`rt-tf-btn${activeTab === tab ? ' rt-tf-btn--active' : ''}`}
                   onClick={() => setActiveTab(tab)}
                 >
-                  {tab === 'status' ? 'Status Update' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
+          </div>
 
-            {/* Overview Tab */}
+          <div className="rt-drawer-body">
+
+            {/* ── OVERVIEW ─────────────────────────────────────────────── */}
             {activeTab === 'overview' && (
               <>
-                <div className="art-section">
-                  <h3 className="art-section-title">Return Information</h3>
-                  <div className="art-info-grid">
-                    <div className="art-info-item">
-                      <span className="art-info-label">Customer</span>
-                      <span className="art-info-value">{currentReturn.user?.name}</span>
-                    </div>
-                    <div className="art-info-item">
-                      <span className="art-info-label">Email</span>
-                      <span className="art-info-value">{currentReturn.user?.email}</span>
-                    </div>
-                    <div className="art-info-item">
-                      <span className="art-info-label">Order Total</span>
-                      <span className="art-info-value">
-                        ${currentReturn.orderInfo?.totalAmount?.toFixed(2)}
+                {/* Return info */}
+                <div className="rt-section"><span className="rt-section-text">Return Info</span><span className="rt-section-line" /></div>
+                <div className="rt-card">
+                  <div className="rt-card-body">
+                    {[
+                      ['Customer',       getCustomerName(currentReturn.user)],
+                      ['Email',          currentReturn.user?.email ?? 'N/A'],
+                      ['Phone',          currentReturn.user?.phone ?? 'N/A'],
+                      ['Order Total',    `$${fmt(currentReturn.totalPrice)}`],
+                      ['Requested Amt',  `$${fmt(returnInfo.requestedAmount)}`],
+                      ['Restock Fee',    returnInfo.restockFee ? `$${fmt(returnInfo.restockFee)}` : 'None'],
+                      ['Reason',         returnInfo.reason?.replace(/_/g, ' ') ?? 'N/A'],
+                    ].map(([label, val]) => (
+                      <div key={label} className="rt-metric-row">
+                        <span className="rt-metric-label">{label}</span>
+                        <span className="rt-metric-val">{val}</span>
+                      </div>
+                    ))}
+                    <div className="rt-metric-row">
+                      <span className="rt-metric-label">Status</span>
+                      <span className={`rt-status rt-status--${STATUS_COLOR[retStatus] ?? 'cancelled'}`}>
+                        {retStatus.replace(/_/g, ' ')}
                       </span>
                     </div>
-                    <div className="art-info-item">
-                      <span className="art-info-label">Return Reason</span>
-                      <span className="art-info-value">{currentReturn.returnReason}</span>
-                    </div>
-                    <div className="art-info-item">
-                      <span className="art-info-label">Status</span>
-                      <span className={`art-badge art-badge--${currentReturn.returnStatus?.toLowerCase()}`}>
-                        {currentReturn.returnStatus}
+                    <div className="rt-metric-row">
+                      <span className="rt-metric-label">Requested On</span>
+                      <span className="rt-metric-val">
+                        {returnInfo.requestedAt
+                          ? new Date(returnInfo.requestedAt).toLocaleString()
+                          : 'N/A'}
                       </span>
                     </div>
-                    <div className="art-info-item">
-                      <span className="art-info-label">Requested On</span>
-                      <span className="art-info-value">
-                        {new Date(currentReturn.requestedAt).toLocaleString()}
-                      </span>
-                    </div>
+                    {returnInfo.adminNote && (
+                      <div className="rt-metric-row">
+                        <span className="rt-metric-label">Admin Note</span>
+                        <span className="rt-metric-val">{returnInfo.adminNote}</span>
+                      </div>
+                    )}
+                    {returnInfo.trackingNumber && (
+                      <div className="rt-metric-row">
+                        <span className="rt-metric-label">Tracking #</span>
+                        <span className="rt-metric-val rt-td-mono">{returnInfo.trackingNumber}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
-                <div className="art-section">
-                  <h3 className="art-section-title">Items to Return</h3>
-                  {currentReturn.items?.map((item, idx) => (
-                    <div key={idx} className="art-item-row">
-                      <div className="art-item-name">{item.name}</div>
-                      <div className="art-item-meta">
-                        Quantity: {item.quantity} &bull; Price: ${item.price?.toFixed(2)}
+                {/* Customer description */}
+                {returnInfo.description && (
+                  <>
+                    <div className="rt-section"><span className="rt-section-text">Customer Description</span><span className="rt-section-line" /></div>
+                    <div className="rt-card">
+                      <div className="rt-card-body">
+                        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
+                          {returnInfo.description}
+                        </p>
                       </div>
                     </div>
-                  ))}
-                </div>
+                  </>
+                )}
+
+                {/* Inspection notes (visible once inspected) */}
+                {returnInfo.inspectionNotes && (
+                  <>
+                    <div className="rt-section"><span className="rt-section-text">Inspection Notes</span><span className="rt-section-line" /></div>
+                    <div className="rt-card">
+                      <div className="rt-card-body">
+                        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
+                          {returnInfo.inspectionNotes}
+                        </p>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Items to return */}
+                {returnInfo.itemsToReturn?.length > 0 && (
+                  <>
+                    <div className="rt-section"><span className="rt-section-text">Items to Return</span><span className="rt-section-line" /></div>
+                    <div className="rt-card">
+                      <div className="rt-card-body">
+                        {returnInfo.itemsToReturn.map((item, idx) => (
+                          // eslint-disable-next-line react/no-array-index-key
+                          <div key={item.product ?? idx} className="rt-item-row">
+                            <div className="rt-item-info">
+                              <span className="rt-item-name">
+                                {item.product?.name ?? `Item ${idx + 1}`}
+                              </span>
+                              <span className="rt-item-meta">
+                                Qty: {item.quantity ?? 1}
+                                {item.condition ? ` · ${item.condition}` : ''}
+                              </span>
+                            </div>
+                            {item.reason && (
+                              <span className="rt-item-reason">{item.reason.replace(/_/g, ' ')}</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Order items */}
+                {currentReturn.orderItems?.length > 0 && (
+                  <>
+                    <div className="rt-section"><span className="rt-section-text">Order Items</span><span className="rt-section-line" /></div>
+                    <div className="rt-card">
+                      <div className="rt-card-body">
+                        {currentReturn.orderItems.map((item, idx) => (
+                          // eslint-disable-next-line react/no-array-index-key
+                          <div key={item._id ?? idx} className="rt-item-row">
+                            <div className="rt-item-info">
+                              <span className="rt-item-name">
+                                {item.product?.name ?? `Item ${idx + 1}`}
+                              </span>
+                              <span className="rt-item-meta">
+                                Qty: {item.quantity ?? 1} · ${fmt(item.price ?? 0)} ea
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             )}
 
-            {/* Review Tab */}
+            {/* ── REVIEW ───────────────────────────────────────────────── */}
             {activeTab === 'review' && (
-              <div className="art-section">
-                <h3 className="art-section-title">Review Return Request</h3>
-                <div className="art-form-group">
-                  <label className="art-form-label">Decision *</label>
-                  <select
-                    className="art-form-select"
-                    value={reviewAction}
-                    onChange={(e) => setReviewAction(e.target.value)}
-                  >
-                    <option value="">Select action</option>
-                    <option value="approve">Approve Return</option>
-                    <option value="reject">Reject Return</option>
-                  </select>
+              <div className="rt-card">
+                <div className="rt-card-hd">
+                  <div>
+                    <h3 className="rt-card-title">Review Return Request</h3>
+                    <p className="rt-card-sub">Approve or reject this return</p>
+                  </div>
                 </div>
-
-                {reviewAction === 'approve' && (
-                  <div className="art-form-group">
-                    <label className="art-form-label">Restock Fee ($)</label>
-                    <input
-                      type="number"
-                      className="art-form-input"
-                      value={restockFee}
-                      onChange={(e) => setRestockFee(Number(e.target.value))}
-                      min="0"
-                      step="0.01"
+                <div className="rt-card-body">
+                  {retStatus !== 'requested' && (
+                    <div className={`rt-info-banner rt-info-banner--${isTerminal ? 'warning' : 'info'}`}>
+                      {isTerminal
+                        ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
+                        : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
+                      <span>
+                        This return is <strong>{retStatus.replace(/_/g, ' ')}</strong> and cannot be re-reviewed.
+                      </span>
+                    </div>
+                  )}
+                  <div className="rt-form-group">
+                    <label className="rt-form-label" htmlFor="rt-review-action">Decision *</label>
+                    <select
+                      id="rt-review-action"
+                      className="rt-form-select"
+                      value={reviewAction}
+                      onChange={(e) => setReviewAction(e.target.value)}
+                      disabled={retStatus !== 'requested' || loading}
+                    >
+                      <option value="">Select action</option>
+                      <option value="approve">Approve Return</option>
+                      <option value="reject">Reject Return</option>
+                    </select>
+                  </div>
+                  {reviewAction === 'approve' && (
+                    <div className="rt-form-group">
+                      <label className="rt-form-label" htmlFor="rt-restock-fee">Restock Fee ($)</label>
+                      <input
+                        id="rt-restock-fee"
+                        type="number"
+                        className="rt-form-input"
+                        value={restockFee}
+                        onChange={(e) => setRestockFee(e.target.value)}
+                        min="0"
+                        step="0.01"
+                        placeholder="0.00"
+                        disabled={retStatus !== 'requested' || loading}
+                      />
+                      <span className="rt-helper-text">Leave blank or 0 for no restock fee</span>
+                    </div>
+                  )}
+                  <div className="rt-form-group">
+                    <label className="rt-form-label" htmlFor="rt-admin-note">Admin Note</label>
+                    <textarea
+                      id="rt-admin-note"
+                      className="rt-form-textarea"
+                      rows={3}
+                      value={adminNote}
+                      onChange={(e) => setAdminNote(e.target.value)}
+                      placeholder="Add a note for the customer…"
+                      disabled={retStatus !== 'requested' || loading}
                     />
                   </div>
-                )}
-
-                <div className="art-form-group">
-                  <label className="art-form-label">Admin Note</label>
-                  <textarea
-                    className="art-form-textarea"
-                    value={adminNote}
-                    onChange={(e) => setAdminNote(e.target.value)}
-                    placeholder="Add any notes for the customer..."
-                  />
-                </div>
-
-                <button
-                  className={`art-btn ${reviewAction === 'approve' ? 'art-btn--success' : 'art-btn--danger'}`}
-                  onClick={handleReviewReturn}
-                  disabled={!reviewAction || loading}
-                >
-                  {loading ? 'Processing...' : `${reviewAction === 'approve' ? 'Approve' : 'Reject'} Return`}
-                </button>
-              </div>
-            )}
-
-            {/* Status Update Tab */}
-            {activeTab === 'status' && (
-              <div className="art-section">
-                <h3 className="art-section-title">Update Return Status</h3>
-                <div className="art-form-group">
-                  <label className="art-form-label">New Status *</label>
-                  <select
-                    className="art-form-select"
-                    value={newStatus}
-                    onChange={(e) => setNewStatus(e.target.value)}
+                  <button
+                    type="button"
+                    className={`rt-btn ${reviewAction === 'approve' ? 'rt-btn--success' : reviewAction === 'reject' ? 'rt-btn--danger' : 'rt-btn--primary'}`}
+                    onClick={handleReviewReturn}
+                    disabled={!reviewAction || loading || retStatus !== 'requested'}
                   >
-                    <option value="">Select status</option>
-                    <option value="approved">Approved</option>
-                    <option value="in-transit">In Transit</option>
-                    <option value="received">Received at Warehouse</option>
-                    <option value="inspected">Under Inspection</option>
-                    <option value="completed">Completed</option>
-                  </select>
+                    {loading
+                      ? 'Processing…'
+                      : reviewAction === 'approve'
+                        ? 'Approve Return'
+                        : reviewAction === 'reject'
+                          ? 'Reject Return'
+                          : 'Select an action'}
+                  </button>
                 </div>
-
-                <div className="art-form-group">
-                  <label className="art-form-label">Inspection Notes</label>
-                  <textarea
-                    className="art-form-textarea"
-                    value={inspectionNotes}
-                    onChange={(e) => setInspectionNotes(e.target.value)}
-                    placeholder="Add inspection findings or notes..."
-                  />
-                </div>
-
-                <button
-                  className="art-btn art-btn--primary"
-                  onClick={handleUpdateStatus}
-                  disabled={!newStatus || loading}
-                >
-                  {loading ? 'Updating...' : 'Update Status'}
-                </button>
               </div>
             )}
 
-            {/* Timeline Tab */}
-            {activeTab === 'timeline' && (
-              <div className="art-section">
-                <h3 className="art-section-title">
-                  <TimelineIcon style={{ marginRight: 8 }} />
-                  Return Timeline
-                </h3>
-                {timelineLoading ? (
-                  <div className="art-loading">
-                    <div className="art-spinner"></div>
-                    <span>Loading timeline...</span>
+            {/* ── STATUS UPDATE ─────────────────────────────────────────── */}
+            {activeTab === 'status' && (
+              <div className="rt-card">
+                <div className="rt-card-hd">
+                  <div>
+                    <h3 className="rt-card-title">
+                      <SwapHoriz style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
+                      Update Return Status
+                    </h3>
+                    <p className="rt-card-sub">Advance through the return lifecycle</p>
                   </div>
-                ) : timeline && timeline.length > 0 ? (
-                  <div className="art-timeline">
-                    {timeline.map((event, idx) => (
-                      <div key={idx} className="art-timeline-item">
-                        <div className={`art-timeline-dot${event.completed ? ' completed' : ''}`}></div>
-                        <div className="art-timeline-content">
-                          <h4 className="art-timeline-title">{event.title}</h4>
-                          {event.description && (
-                            <p className="art-timeline-desc">{event.description}</p>
+                </div>
+                <div className="rt-card-body">
+                  {/* Status progression indicator */}
+                  <div className="rt-progress-row">
+                    {LIFECYCLE_STATUSES.map((s, idx) => {
+                      const currentIdx = LIFECYCLE_STATUSES.indexOf(retStatus);
+                      const isPast   = idx < currentIdx;
+                      const isCurrent = s === retStatus;
+                      return (
+                        <React.Fragment key={s}>
+                          <div className={`rt-progress-step${isCurrent ? ' rt-progress-step--current' : isPast ? ' rt-progress-step--done' : ''}`}>
+                            <div className="rt-progress-dot" />
+                            <span className="rt-progress-label">{s.replace(/_/g, ' ')}</span>
+                          </div>
+                          {idx < LIFECYCLE_STATUSES.length - 1 && (
+                            <div className={`rt-progress-line${isPast || isCurrent ? ' rt-progress-line--done' : ''}`} />
                           )}
-                          <span className="art-timeline-time">
-                            {new Date(event.timestamp).toLocaleString()}
-                          </span>
-                        </div>
+                        </React.Fragment>
+                      );
+                    })}
+                  </div>
+
+                  {validNextStatuses.length === 0 && (
+                    <div className={`rt-info-banner rt-info-banner--${isTerminal ? 'warning' : 'info'}`}>
+                      {isTerminal
+                        ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
+                        : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
+                      <span>
+                        {isTerminal
+                          ? `This return is ${retStatus.replace(/_/g, ' ')} — no further status updates.`
+                          : `Return must be approved before the lifecycle can begin. Current: ${retStatus.replace(/_/g, ' ')}.`}
+                      </span>
+                    </div>
+                  )}
+
+                  {validNextStatuses.length > 0 && (
+                    <>
+                      <div className="rt-form-group">
+                        <label className="rt-form-label" htmlFor="rt-new-status">Next Status *</label>
+                        <select
+                          id="rt-new-status"
+                          className="rt-form-select"
+                          value={newStatus}
+                          onChange={(e) => setNewStatus(e.target.value)}
+                          disabled={loading}
+                        >
+                          <option value="">Select status</option>
+                          {validNextStatuses.map((s) => (
+                            <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                          ))}
+                        </select>
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="art-empty-state">
-                    <p>No timeline events yet</p>
-                  </div>
-                )}
+                      {newStatus === 'inspected' && (
+                        <div className="rt-form-group">
+                          <label className="rt-form-label" htmlFor="rt-inspection-notes">Inspection Notes</label>
+                          <textarea
+                            id="rt-inspection-notes"
+                            className="rt-form-textarea"
+                            rows={3}
+                            value={inspectionNotes}
+                            onChange={(e) => setInspectionNotes(e.target.value)}
+                            placeholder="Describe the condition of returned items…"
+                            disabled={loading}
+                          />
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="rt-btn rt-btn--primary"
+                        onClick={handleUpdateStatus}
+                        disabled={!newStatus || loading}
+                      >
+                        {loading ? 'Updating…' : `Mark as ${newStatus.replace(/_/g, ' ') || '…'}`}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
 
-            {/* Documents Tab */}
-            {activeTab === 'documents' && (
-              <div className="art-section">
-                <h3 className="art-section-title">
-                  <Description style={{ marginRight: 8 }} />
-                  Documents &amp; Attachments
-                </h3>
-
-                <input
-                  type="file"
-                  multiple
-                  onChange={(e) => handleFileUpload(Array.from(e.target.files))}
-                  style={{ display: 'none' }}
-                  id="art-file-upload"
-                />
-                <label htmlFor="art-file-upload">
-                  <div className="art-upload-zone">
-                    <CloudUpload className="art-upload-icon" />
-                    <p className="art-upload-text">Click to upload documents</p>
+            {/* ── TIMELINE ──────────────────────────────────────────────── */}
+            {activeTab === 'timeline' && (
+              <div className="rt-card">
+                <div className="rt-card-hd">
+                  <div>
+                    <h3 className="rt-card-title">
+                      <TimelineIcon style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
+                      Timeline
+                    </h3>
                   </div>
-                </label>
-
-                {uploadLoading && (
-                  <div className="art-loading" style={{ padding: '1rem' }}>
-                    <div className="art-spinner"></div>
-                    <span>Uploading...</span>
-                  </div>
-                )}
-
-                {documentsLoading ? (
-                  <div className="art-loading">
-                    <div className="art-spinner"></div>
-                    <span>Loading documents...</span>
-                  </div>
-                ) : documents && documents.length > 0 ? (
-                  <div className="art-file-list">
-                    {documents.map((doc, idx) => (
-                      <div key={idx} className="art-file-item">
-                        <div className="art-file-info">
-                          <AttachFile style={{ fontSize: 18 }} />
-                          <span>{doc.filename}</span>
+                </div>
+                <div className="rt-card-body">
+                  {timelineLoading ? (
+                    <div className="rt-loading"><div className="rt-spinner" /><span>Loading…</span></div>
+                  ) : timeline.length > 0 ? (
+                    <div className="rt-timeline">
+                      {timeline.map((ev, idx) => (
+                        // eslint-disable-next-line react/no-array-index-key
+                        <div key={ev._id ?? idx} className="rt-timeline-item">
+                          <div className="rt-timeline-dot" />
+                          <div className="rt-timeline-content">
+                            <div className="rt-tl-row">
+                              <strong>{ev.title ?? ev.action ?? 'Event'}</strong>
+                              <span className="rt-td-muted">
+                                {ev.timestamp
+                                  ? new Date(ev.timestamp).toLocaleString()
+                                  : ''}
+                              </span>
+                            </div>
+                            {ev.description && (
+                              <p className="rt-tl-desc">{ev.description}</p>
+                            )}
+                            {ev.performedBy?.name && (
+                              <p className="rt-tl-by">by {ev.performedBy.name}</p>
+                            )}
+                          </div>
                         </div>
-                        <a href={doc.url} download className="art-btn art-btn--ghost">
-                          Download
-                        </a>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rt-empty" style={{ minHeight: 120 }}>
+                      <TimelineIcon style={{ fontSize: 28, color: '#D1D5DB' }} />
+                      <span>No timeline events yet</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── DOCUMENTS ─────────────────────────────────────────────── */}
+            {activeTab === 'documents' && (
+              <div className="rt-card">
+                <div className="rt-card-hd">
+                  <div>
+                    <h3 className="rt-card-title">
+                      <Description style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
+                      Documents
+                    </h3>
                   </div>
-                ) : (
-                  <div className="art-empty-state">
-                    <p>No documents uploaded yet</p>
-                  </div>
-                )}
+                </div>
+                <div className="rt-card-body">
+                  <input
+                    type="file"
+                    multiple
+                    id="rt-file-upload"
+                    style={{ display: 'none' }}
+                    aria-label="Upload return documents"
+                    onChange={(e) => {
+                      if (e.target.files?.length) {
+                        handleFileUpload(Array.from(e.target.files));
+                        // Reset input so same file can be re-selected
+                        // eslint-disable-next-line no-param-reassign
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                  <label htmlFor="rt-file-upload">
+                    <div
+                      className="rt-upload-zone"
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click(); }}
+                    >
+                      <CloudUpload className="rt-upload-icon" />
+                      <p className="rt-upload-text">Click to upload documents</p>
+                      <p className="rt-upload-hint">Max 8 files · Images, PDFs, Videos</p>
+                    </div>
+                  </label>
+                  {uploadLoading && (
+                    <div className="rt-loading" style={{ padding: '1rem' }}>
+                      <div className="rt-spinner" /><span>Uploading…</span>
+                    </div>
+                  )}
+                  {documentsLoading ? (
+                    <div className="rt-loading"><div className="rt-spinner" /><span>Loading documents…</span></div>
+                  ) : documents.length > 0 ? (
+                    <div className="rt-file-list">
+                      {documents.map((doc, idx) => (
+                        // eslint-disable-next-line react/no-array-index-key
+                        <div key={doc._id ?? idx} className="rt-file-item">
+                          <div className="rt-file-info">
+                            <AttachFile style={{ fontSize: 16 }} />
+                            <span>{doc.filename ?? 'File'}</span>
+                            {doc.fileSize && (
+                              <span className="rt-file-size">
+                                {(doc.fileSize / 1024).toFixed(0)} KB
+                              </span>
+                            )}
+                          </div>
+                          <a
+                            href={doc.url}
+                            download
+                            className="rt-btn rt-btn--ghost"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Download
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rt-empty" style={{ minHeight: 100 }}>
+                      <Description style={{ fontSize: 28, color: '#D1D5DB' }} />
+                      <span>No documents uploaded yet</span>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
 
-          <div className="art-panel-footer">
-            <button className="art-btn art-btn--primary" onClick={() => setShowMessageModal(true)}>
-              <Message style={{ marginRight: 8, fontSize: 18 }} />
-              Open Messages
+          {/* Footer */}
+          <div className="rt-drawer-footer">
+            <button
+              type="button"
+              className="rt-btn rt-btn--primary"
+              onClick={() => setShowMessageModal(true)}
+            >
+              <Message style={{ marginRight: 6, fontSize: 16 }} />
+              Messages
+              {(currentReturn.returnInfo?.messages?.length > 0) && (
+                <span className="rt-footer-msg-count">
+                  {currentReturn.returnInfo.messages.length}
+                </span>
+              )}
             </button>
-            <button className="art-btn art-btn--secondary" onClick={handleClosePanel}>
+            <button type="button" className="rt-btn rt-btn--secondary" onClick={handleClosePanel}>
               Close
             </button>
           </div>
@@ -614,145 +1115,232 @@ const AdminReturns = () => {
     );
   };
 
-  // ─── Main Render ───────────────────────────────────────────────────────────
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
-    <div className="art-container">
-      {/* Header */}
-      <header className="art-header">
-        <div className="art-header-top">
-          <h1 className="art-header-title">Returns Management</h1>
-          <div className="art-header-actions">
-            <button className="art-btn art-btn--secondary" onClick={handleFetchReturns}>
+    <div className="rt-page">
+      <div className="rt-body">
+
+        <Link to="/admin/dashboard" className="rt-back-btn">
+          <ArrowBack style={{ fontSize: 15 }} />Dashboard
+        </Link>
+
+        {/* Header */}
+        <div className="rt-hd">
+          <div className="rt-hd-left">
+            <span className="rt-hd-icon" style={{ background: '#6366F115', color: '#6366F1' }}>
+              <Inventory style={{ fontSize: 24 }} />
+            </span>
+            <div>
+              <h1 className="rt-hd-title">Returns Management</h1>
+              <p className="rt-hd-sub">Review, approve and process customer return requests</p>
+            </div>
+          </div>
+          <div className="rt-hd-right">
+            <button
+              type="button"
+              className={`rt-icon-btn${(returnsLoading || unreadLoading) ? ' rt-icon-btn--spin' : ''}`}
+              onClick={handleFetchReturns}
+              disabled={returnsLoading || unreadLoading}
+              title="Refresh"
+            >
               <Refresh style={{ fontSize: 18 }} />
-              Refresh
             </button>
           </div>
         </div>
 
-        <div className="art-controls">
-          <div className="art-filter-bar">
-            {/* Search */}
-            <div className="art-search-wrap">
-              <Search className="art-search-icon" />
-              <input
-                type="text"
-                className="art-search-input"
-                placeholder="Search by order ID or customer..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
+        {/* KPI cards */}
+        <div className="rt-kpi-grid">{renderKPICards()}</div>
 
-            {/* Status Filter */}
-            <select
-              className="art-filter-select"
-              value={filters.status}
-              onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-            >
-              <option value="">All Statuses</option>
-              <option value="requested">Requested</option>
-              <option value="approved">Approved</option>
-              <option value="rejected">Rejected</option>
-              <option value="in-transit">In Transit</option>
-              <option value="received">Received</option>
-              <option value="inspected">Inspected</option>
-              <option value="completed">Completed</option>
-            </select>
+        <div className="rt-section">
+          <span className="rt-section-text">Return Requests</span>
+          <span className="rt-section-line" />
+        </div>
 
-            {/* Reason Filter */}
-            <select
-              className="art-filter-select"
-              value={filters.reason}
-              onChange={(e) => setFilters({ ...filters, reason: e.target.value })}
-            >
-              <option value="">All Reasons</option>
-              <option value="defective">Defective</option>
-              <option value="wrong-item">Wrong Item</option>
-              <option value="not-as-described">Not as Described</option>
-              <option value="changed-mind">Changed Mind</option>
-              <option value="other">Other</option>
-            </select>
+        {/* Filters */}
+        <div className="rt-filters">
+          {/* RMA / order search */}
+          <div className="rt-search-wrap">
+            <Search className="rt-search-icon" style={{ fontSize: 16 }} />
+            <input
+              type="text"
+              className="rt-search-input"
+              placeholder="Search RMA number…"
+              value={rmaSearch}
+              onChange={(e) => setRmaSearch(e.target.value)}
+              aria-label="Search by RMA number"
+            />
+          </div>
 
-            {/* Date Range */}
-            <div className="art-date-range">
-              <input
-                type="date"
-                className="art-date-input"
-                value={filters.startDate}
-                onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
-              />
-              <span>to</span>
-              <input
-                type="date"
-                className="art-date-input"
-                value={filters.endDate}
-                onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
-              />
-            </div>
-
-            {/* Unread Toggle */}
-            <div className="art-toggle-wrap">
-              <div
-                className={`art-toggle${showUnreadOnly ? ' active' : ''}`}
-                onClick={() => setShowUnreadOnly(!showUnreadOnly)}
+          {/* Status filter pills */}
+          <div className="rt-tf rt-filter-pills">
+            {STATUS_FILTERS.map((opt) => (
+              <button
+                key={opt.value || 'all'}
+                type="button"
+                className={`rt-tf-btn${filterStatus === opt.value ? ' rt-tf-btn--active' : ''}`}
+                onClick={() => setFilterStatus(opt.value)}
               >
-                <div className="art-toggle-knob"></div>
-              </div>
-              <span className="art-toggle-label">Unread Messages Only</span>
+                {opt.label}
+                {hasUnreadByStatus[opt.value || 'all'] && <span className="rt-tab-dot" />}
+              </button>
+            ))}
+          </div>
+
+          {/* Date range — backend params "from" / "to" */}
+          <div className="rt-date-wrap">
+            <input
+              type="date"
+              className="rt-date-input"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              aria-label="From date"
+            />
+            <span className="rt-date-sep">—</span>
+            <input
+              type="date"
+              className="rt-date-input"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              aria-label="To date"
+            />
+          </div>
+
+          {/* Sort controls */}
+          <div className="rt-sort-wrap">
+            <select
+              className="rt-form-select rt-sort-select"
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              aria-label="Sort by"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="rt-icon-btn rt-sort-dir-btn"
+              onClick={() => setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+              title={sortOrder === 'desc' ? 'Descending' : 'Ascending'}
+            >
+              <span className={`rt-sort-arrow${sortOrder === 'asc' ? ' rt-sort-arrow--up' : ''}`}>↓</span>
+            </button>
+          </div>
+
+          {/* Unread toggle */}
+          <div className="rt-toggle-wrap">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showUnreadOnly}
+              className={`rt-toggle${showUnreadOnly ? ' rt-toggle--active' : ''}`}
+              onClick={() => setShowUnreadOnly((v) => !v)}
+              aria-label="Show unread only"
+            >
+              <span className="rt-toggle-knob" />
+            </button>
+            <span className="rt-toggle-label">Unread Only</span>
+          </div>
+        </div>
+
+        {/* Error banner */}
+        {error && (
+          <div className="rt-error-banner" role="alert">
+            <Warning style={{ fontSize: 18, flexShrink: 0 }} />
+            <div>
+              <strong className="rt-error-title">Error</strong>
+              <p className="rt-error-msg">{error}</p>
             </div>
           </div>
-        </div>
-      </header>
+        )}
 
-      {/* Error Banner */}
-      {error && (
-        <div className="art-error-banner">
-          <Warning className="art-error-icon" />
-          <div>
-            <h4 className="art-error-title">Error</h4>
-            <p className="art-error-msg">{error}</p>
+        {/* Retry banner for partial upload failure */}
+        {errorStage === 'send' && pendingAttachments.length > 0 && (
+          <div className="rt-retry-banner" role="alert">
+            <Warning style={{ fontSize: 16, flexShrink: 0 }} />
+            <span className="rt-retry-msg">Files uploaded but message failed to send.</span>
+            <div className="rt-retry-actions">
+              <button
+                type="button"
+                className="rt-btn rt-btn--primary"
+                onClick={handleRetryMessage}
+                disabled={messageSendLoading}
+              >
+                {messageSendLoading ? 'Retrying…' : 'Retry Send'}
+              </button>
+              <button
+                type="button"
+                className="rt-btn rt-btn--ghost"
+                onClick={() => dispatch(clearPendingAttachments())}
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Table card */}
+        <div className="rt-card">
+          <div className="rt-card-hd">
+            <div>
+              <h3 className="rt-card-title">
+                {showUnreadOnly ? 'Unread Returns' : 'All Returns'}
+              </h3>
+              <p className="rt-card-sub">
+                {returnsLoading || unreadLoading
+                  ? 'Loading…'
+                  : showUnreadOnly
+                    ? `${unreadReturns.length} with unread messages`
+                    : `${totalReturns} total`}
+              </p>
+            </div>
+          </div>
+          <div className="rt-card-body--np">
+            {renderTable()}
+            {renderPagination()}
           </div>
         </div>
-      )}
 
-      {/* KPI Cards */}
-      <div className="art-kpi-grid">{renderKPICards()}</div>
+        {/* Success toast */}
+        {success && successMessage && (
+          <div className="rt-toast-wrap" role="status" aria-live="polite">
+            <div className="rt-toast rt-toast--success">
+              <CheckCircle style={{ fontSize: 18 }} />
+              <div>
+                <strong>Success</strong>
+                <p>{successMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
 
-      {/* Table */}
-      <div className="art-table-container">{renderTable()}</div>
-
-      {/* Detail Panel */}
+      {/* Detail drawer */}
       {renderDetailPanel()}
 
-      {/* Message Modal */}
+      {/* Message modal — only mounts when currentReturn is populated */}
       {showMessageModal && currentReturn && (
-        <MessageModal
+        <ReturnMessagesModal
           isOpen={showMessageModal}
-          onClose={() => setShowMessageModal(false)}
-          orderId={selectedReturn}
+          onClose={handleCloseMessageModal}
+          orderId={selectedId}
           orderInfo={{
-            orderNumber: currentReturn.orderInfo?.orderNumber,
-            customerName: currentReturn.user?.name,
-            date: new Date(currentReturn.requestedAt).toLocaleDateString()
+            orderNumber:  currentReturn._id?.toString().slice(-6).toUpperCase() ?? '',
+            customerName: getCustomerName(currentReturn.user),
           }}
           messages={messages}
-          onSendMessage={handleSendMessage}
           loading={messagesLoading}
+          hasMoreMessages={hasMoreMessages}
+          totalMessages={totalMessages}
+          onSendMessage={handleSendMessage}
+          onRefresh={handleModalRefresh}
+          onLoadMore={handleLoadMoreMessages}
+          pendingAttachments={pendingAttachments}
+          errorStage={errorStage}
+          onClearPending={() => dispatch(clearPendingAttachments())}
           currentUserRole="admin"
+          isSendingExternal={messageSendLoading}
         />
-      )}
-
-      {/* Success Toast */}
-      {success && successMessage && (
-        <div className="art-toast-container">
-          <div className="art-toast art-toast--success">
-            <CheckCircle className="art-toast-icon" />
-            <div>
-              <h4 className="art-toast-title">Success</h4>
-              <p className="art-toast-msg">{successMessage}</p>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );
