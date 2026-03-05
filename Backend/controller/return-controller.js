@@ -193,7 +193,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         as:          'user',
       },
     },
-    { $unwind: { path: '$user', preserveNullAndEmpty: true } },
+    { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
     {
       $lookup: {
         from:        'users',
@@ -203,7 +203,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         as:          'returnInfo.requestedBy',
       },
     },
-    { $unwind: { path: '$returnInfo.requestedBy', preserveNullAndEmpty: true } },
+    { $unwind: { path: '$returnInfo.requestedBy', preserveNullAndEmptyArrays: true } },
   ];
 
   const projectStage = {
@@ -332,7 +332,8 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     .populate('returnInfo.approvedBy',          'name email')
     .populate('returnInfo.inspectedBy',         'name email')
     .populate('returnInfo.documents.uploadedBy','name email')
-    .populate('orderItems.product',             'name images price');
+    .populate('orderItems.product',             'name images price')
+    .populate('returnInfo.itemsToReturn.product',   'name images price');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -409,8 +410,12 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 
   // FIX L-02 — calculate requestedAmount so admins have financial context
   const orderItemMap = new Map(
-    order.orderItems.map((i) => [i.product.toString(), i.price])
+    order.orderItems.map((i) => {
+      const id = i.product?._id ?? i.product;
+      return [id.toString(), i.price];
+    })
   );
+  
   const requestedAmount = items.reduce((sum, item) => {
     const price = orderItemMap.get(item.product?.toString()) ?? 0;
     return sum + price * (item.quantity || 0);
