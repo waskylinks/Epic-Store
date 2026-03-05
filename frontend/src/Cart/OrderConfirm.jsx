@@ -15,7 +15,8 @@ import {
 import { selectSelectedAddress } from '../features/shipping/shippingSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
-import { FiAlertCircle, FiCheckCircle, FiLock } from 'react-icons/fi';
+import { FiCheckCircle, FiLock } from 'react-icons/fi';
+// FIX: removed unused FiAlertCircle import
 
 function OrderConfirm() {
   const dispatch = useDispatch();
@@ -26,13 +27,17 @@ function OrderConfirm() {
   const selectedShippingAddress = useSelector(selectSelectedAddress);
   const { 
     session,
-    pricing: checkoutPricing,
+    // FIX: removed unused checkoutPricing — local calculatePricing() is used instead
     loading: checkoutLoading,
     error: checkoutError,
     success: checkoutSuccess
   } = useSelector(state => state.checkout);
 
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // FIX: addressChecked defers the redirect guard by one tick so Redux state
+  // has time to settle after navigation from Shipping page
+  const [addressChecked, setAddressChecked] = useState(false);
 
   // Calculate local pricing for display
   const calculatePricing = () => {
@@ -47,7 +52,9 @@ function OrderConfirm() {
     return { itemPrice, taxPrice, shippingPrice, totalPrice };
   };
 
-  const displayPricing = cartDetails.length > 0 ? calculatePricing() : { itemPrice: 0, taxPrice: 0, shippingPrice: 0, totalPrice: 0 };
+  const displayPricing = cartDetails.length > 0
+    ? calculatePricing()
+    : { itemPrice: 0, taxPrice: 0, shippingPrice: 0, totalPrice: 0 };
 
   // Get user's full name
   const getUserFullName = () => {
@@ -66,15 +73,23 @@ function OrderConfirm() {
     }
   }, [cartItems.length, dispatch, navigate]);
 
-  // Redirect if no shipping info
+  // FIX: defer the address check by one tick so Redux state settles after
+  // navigation. Without setTimeout(0), the effect runs before the store
+  // update from Shipping's selectAddress dispatch is reflected here,
+  // causing a false redirect even when the address is valid.
   useEffect(() => {
-    if (!selectedShippingAddress || !selectedShippingAddress.address) {
-      toast.warning('Please select a shipping address', {
-        position: 'top-center',
-        autoClose: 2000
-      });
-      navigate('/shipping');
-    }
+    const timer = setTimeout(() => {
+      if (!selectedShippingAddress || !selectedShippingAddress.address) {
+        toast.warning('Please select a shipping address', {
+          position: 'top-center',
+          autoClose: 2000
+        });
+        navigate('/shipping');
+      }
+      setAddressChecked(true);
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, [selectedShippingAddress, navigate]);
 
   // Handle checkout errors
@@ -88,7 +103,7 @@ function OrderConfirm() {
     }
   }, [checkoutError, dispatch]);
 
-  // Handle checkout success
+  // Handle checkout success — session ready, navigate to payment
   useEffect(() => {
     if (checkoutSuccess && session) {
       toast.success('Checkout session created', {
@@ -109,6 +124,7 @@ function OrderConfirm() {
   };
 
   const proceedToPayment = async () => {
+    // Fallback guard (also covered by the useEffect above)
     if (!selectedShippingAddress) {
       toast.error('Please select a shipping address', {
         position: 'top-center',
@@ -121,7 +137,6 @@ function OrderConfirm() {
     setIsProcessing(true);
 
     try {
-      // Create checkout session with cart items and shipping info
       const items = cartDetails.map(item => ({
         product: item.product,
         quantity: item.quantity
@@ -140,7 +155,6 @@ function OrderConfirm() {
 
       await dispatch(createCheckoutSession({ items, shippingInfo })).unwrap();
 
-      // Navigate to payment page
       navigate('/process/payment');
     } catch (err) {
       toast.error(err.message || 'Failed to create checkout session', {
@@ -151,7 +165,9 @@ function OrderConfirm() {
     }
   };
 
-  if ((cartLoading && cartDetails.length === 0) || checkoutLoading) {
+  // Show loader while: cart data is loading, checkout is processing,
+  // or the address check hasn't fired yet (prevents flash of redirect)
+  if ((cartLoading && cartDetails.length === 0) || checkoutLoading || !addressChecked) {
     return (
       <>
         <PageTitle title='Order Confirmation' />
@@ -255,7 +271,6 @@ function OrderConfirm() {
           {/* Order Summary */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Order Summary</h2>
-            
             <div className="eoc-table-container">
               <table className="eoc-table eoc-summary-table">
                 <thead>

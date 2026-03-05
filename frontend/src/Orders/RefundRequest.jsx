@@ -140,6 +140,13 @@ function RefundRequest() {
     }
   }, [dispatch, orderId]);
 
+
+  useEffect(() => {
+    if (orderId && order?._id && hasActiveRefund) {
+      dispatch(getRefundMessages({ orderId }));
+    }
+  }, [dispatch, orderId, order?._id, hasActiveRefund]);
+
   // ── Unread badge ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (messages && messages.length > 0) {

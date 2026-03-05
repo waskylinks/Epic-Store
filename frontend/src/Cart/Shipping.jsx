@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import '../CartStyles/Shipping.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
@@ -89,7 +89,6 @@ const buildSelectStyles = (hasError = false) => ({
 });
 
 // ─── CSC API key ──────────────────────────────────────────────────────────────
-// Add to your .env file: REACT_APP_CSC_API_KEY=your_key_here
 const CSC_KEY = import.meta.env.VITE_CSC_API_KEY || '';
 const CSC_HEADERS = { 'X-CSCAPI-KEY': CSC_KEY };
 
@@ -124,7 +123,7 @@ function Shipping() {
     message
   } = useSelector(state => state.shipping);
 
-  // ─── Form data (same shape as before — nothing changes in Redux/backend) ────
+  // ─── Form data ──────────────────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     address: '',
     city: '',
@@ -134,26 +133,29 @@ function Shipping() {
     phoneNo: ''
   });
 
-  // ─── Dropdown options ───────────────────────────────────────────────────────
+  // ─── Dropdown options ────────────────────────────────────────────────────────
   const [countries, setCountries] = useState([]);
   const [states, setStates] = useState([]);
   const [cities, setCities] = useState([]);
 
-  // ─── Loading states for cascading dropdowns ─────────────────────────────────
+  // ─── Loading states for cascading dropdowns ──────────────────────────────────
   const [loadingCountries, setLoadingCountries] = useState(false);
   const [loadingStates, setLoadingStates] = useState(false);
   const [loadingCities, setLoadingCities] = useState(false);
 
-  // ─── React Select controlled values ─────────────────────────────────────────
+  // ─── React Select controlled values ──────────────────────────────────────────
   const [selectedCountry, setSelectedCountry] = useState(null);
   const [selectedState, setSelectedState] = useState(null);
   const [selectedCity, setSelectedCity] = useState(null);
+
+  // ─── Form-level validation errors for React Select fields ────────────────────
+  const [formErrors, setFormErrors] = useState({});
 
   const [saveToAccount, setSaveToAccount] = useState(false);
   const [setAsDefaultCheck, setSetAsDefaultCheck] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ─── On mount: fetch saved addresses + all countries ───────────────────────
+  // ─── On mount: fetch saved addresses + all countries ─────────────────────────
   useEffect(() => {
     dispatch(getSavedAddresses());
     dispatch(getDefaultAddress());
@@ -188,7 +190,8 @@ function Shipping() {
     }
   };
 
-  const fetchStates = async (countryIso2) => {
+  // ─── useCallback so fetchStates can be safely used in effects ────────────────
+  const fetchStates = useCallback(async (countryIso2) => {
     if (!countryIso2) return;
     setLoadingStates(true);
     setStates([]);
@@ -215,9 +218,9 @@ function Shipping() {
     } finally {
       setLoadingStates(false);
     }
-  };
+  }, []);
 
-  const fetchCities = async (countryIso2, stateIso2) => {
+  const fetchCities = useCallback(async (countryIso2, stateIso2) => {
     if (!countryIso2 || !stateIso2) return;
     setLoadingCities(true);
     setCities([]);
@@ -237,47 +240,54 @@ function Shipping() {
     } finally {
       setLoadingCities(false);
     }
-  };
+  }, []);
 
-  // ─── Auto-fill when user selects a saved address ────────────────────────────
+  // ─── Auto-fill when user selects a saved address ──────────────────────────────
+  // FIX: guard with countries.length > 0 so iso2 lookup doesn't silently fail
   useEffect(() => {
-    if (selectedAddress) {
-      setFormData({
-        address: selectedAddress.address || '',
-        city: selectedAddress.city || '',
-        state: selectedAddress.state || '',
-        country: selectedAddress.country || 'Nigeria',
-        pinCode: selectedAddress.pinCode || '',
-        phoneNo: selectedAddress.phoneNo || ''
-      });
-      const countryOpt = countries.find(c => c.value === selectedAddress.country);
-      if (countryOpt) {
-        setSelectedCountry(countryOpt);
-        fetchStates(countryOpt.iso2);
-      }
-    }
-  }, [selectedAddress]);
+    if (!selectedAddress || countries.length === 0) return;
 
-  // Sync state dropdown after states load (for saved address re-hydration)
+    setFormData({
+      address: selectedAddress.address || '',
+      city: selectedAddress.city || '',
+      state: selectedAddress.state || '',
+      country: selectedAddress.country || 'Nigeria',
+      pinCode: selectedAddress.pinCode || '',
+      phoneNo: selectedAddress.phoneNo || ''
+    });
+
+    const countryOpt = countries.find(c => c.value === selectedAddress.country);
+    if (countryOpt) {
+      setSelectedCountry(countryOpt);
+      // Reset state/city selects and re-fetch for this country
+      setSelectedState(null);
+      setSelectedCity(null);
+      fetchStates(countryOpt.iso2);
+    }
+  }, [selectedAddress, countries, fetchStates]);
+
+  // ─── Sync state dropdown after states load (saved address re-hydration) ───────
+  // FIX: removed selectedState from deps to avoid stale closure loop
   useEffect(() => {
-    if (formData.state && states.length > 0 && !selectedState) {
-      const opt = states.find(s => s.value === formData.state);
-      if (opt) {
-        setSelectedState(opt);
-        fetchCities(opt.countryIso, opt.iso2);
-      }
+    if (!formData.state || states.length === 0) return;
+    const opt = states.find(s => s.value === formData.state);
+    if (opt && (!selectedState || selectedState.value !== opt.value)) {
+      setSelectedState(opt);
+      fetchCities(opt.countryIso, opt.iso2);
     }
-  }, [states]);
+  }, [states, formData.state, fetchCities]);
 
-  // Sync city dropdown after cities load (for saved address re-hydration)
+  // ─── Sync city dropdown after cities load (saved address re-hydration) ────────
+  // FIX: removed selectedCity from deps to avoid stale closure loop
   useEffect(() => {
-    if (formData.city && cities.length > 0 && !selectedCity) {
-      const opt = cities.find(c => c.value === formData.city);
-      if (opt) setSelectedCity(opt);
+    if (!formData.city || cities.length === 0) return;
+    const opt = cities.find(c => c.value === formData.city);
+    if (opt && (!selectedCity || selectedCity.value !== opt.value)) {
+      setSelectedCity(opt);
     }
-  }, [cities]);
+  }, [cities, formData.city]);
 
-  // ─── Toasts ─────────────────────────────────────────────────────────────────
+  // ─── Toasts ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center', autoClose: 3000 });
@@ -299,11 +309,18 @@ function Shipping() {
     }
   }, [cartItems, navigate]);
 
-  // ─── Change handlers ─────────────────────────────────────────────────────────
+  // ─── Reset setAsDefaultCheck when saveToAccount is unchecked ─────────────────
+  // FIX: prevents stale true value if user unchecks saveToAccount
+  useEffect(() => {
+    if (!saveToAccount) setSetAsDefaultCheck(false);
+  }, [saveToAccount]);
+
+  // ─── Change handlers ──────────────────────────────────────────────────────────
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
     dispatch(resetValidation());
+    setFormErrors(prev => ({ ...prev, [name]: '' }));
   };
 
   const handleCountryChange = (selected) => {
@@ -312,6 +329,7 @@ function Shipping() {
     setSelectedCity(null);
     setFormData(prev => ({ ...prev, country: selected?.value || '', state: '', city: '' }));
     dispatch(resetValidation());
+    setFormErrors(prev => ({ ...prev, country: '', state: '', city: '' }));
     if (selected) fetchStates(selected.iso2);
     else { setStates([]); setCities([]); }
   };
@@ -321,6 +339,7 @@ function Shipping() {
     setSelectedCity(null);
     setFormData(prev => ({ ...prev, state: selected?.value || '', city: '' }));
     dispatch(resetValidation());
+    setFormErrors(prev => ({ ...prev, state: '', city: '' }));
     if (selected) fetchCities(selected.countryIso, selected.iso2);
     else setCities([]);
   };
@@ -329,20 +348,44 @@ function Shipping() {
     setSelectedCity(selected);
     setFormData(prev => ({ ...prev, city: selected?.value || '' }));
     dispatch(resetValidation());
+    setFormErrors(prev => ({ ...prev, city: '' }));
   };
 
-  // ─── Submit ──────────────────────────────────────────────────────────────────
+  // ─── Validate React Select fields (not covered by HTML5 required) ─────────────
+  const validateForm = () => {
+    const errors = {};
+    if (!formData.country) errors.country = 'Country is required';
+    if (!formData.state) errors.state = 'State is required';
+    if (!formData.city) errors.city = 'City is required';
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  // ─── Submit ───────────────────────────────────────────────────────────────────
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateForm()) return;
+
     setIsSubmitting(true);
     try {
+      const userName = user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'User';
+
       if (saveToAccount) {
-        await dispatch(saveAddress({
-          name: user?.name || `${user?.firstName} ${user?.lastName}` || 'User',
+        // FIX: capture the returned saved address and dispatch it as selectedAddress
+        const saved = await dispatch(saveAddress({
+          name: userName,
           ...formData,
           isDefault: setAsDefaultCheck
         })).unwrap();
+        dispatch(selectAddress(saved));
+      } else {
+        // FIX: always push formData into Redux so OrderConfirm has a valid address
+        dispatch(selectAddress({
+          name: userName,
+          ...formData
+        }));
       }
+
       navigate('/order/confirm');
     } catch (err) {
       console.error('Shipping submission failed:', err);
@@ -351,8 +394,8 @@ function Shipping() {
     }
   };
 
-  const handleSelectAddress = (address) => {
-    dispatch(selectAddress(address));
+  const handleSelectAddress = (addr) => {
+    dispatch(selectAddress(addr));
     toast.success('Address selected', { position: 'top-center', autoClose: 2000 });
   };
 
@@ -365,11 +408,11 @@ function Shipping() {
     try { await dispatch(setDefaultAddress(id)).unwrap(); } catch (err) {}
   };
 
-  // ─── Validation helpers ──────────────────────────────────────────────────────
+  // ─── Validation helpers (Redux server-side errors) ────────────────────────────
   const hasError = (kw) => validationErrors.length > 0 && validationErrors.some(e => e.includes(kw));
   const getErrors = (kw) => validationErrors.filter(e => e.includes(kw));
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle title='Shipping Information' />
@@ -474,12 +517,13 @@ function Shipping() {
                     onChange={handleCountryChange}
                     isLoading={loadingCountries}
                     placeholder={loadingCountries ? 'Loading countries...' : 'Search country...'}
-                    styles={buildSelectStyles(hasError('Country'))}
+                    styles={buildSelectStyles(hasError('Country') || !!formErrors.country)}
                     formatOptionLabel={formatCountryOption}
                     noOptionsMessage={() => 'No country found'}
                     loadingMessage={() => 'Loading countries...'}
                     isClearable
                   />
+                  {formErrors.country && <span className="es-error">{formErrors.country}</span>}
                   {getErrors('Country').map((err, i) => <span key={i} className="es-error">{err}</span>)}
                 </div>
               </div>
@@ -491,7 +535,6 @@ function Shipping() {
                   <label className="es-label">
                     State <span className="es-required">*</span>
                   </label>
-                  {/* Show dropdown if states exist or still loading */}
                   {(states.length > 0 || loadingStates || !selectedCountry) ? (
                     <Select
                       inputId="state"
@@ -505,22 +548,22 @@ function Shipping() {
                         : loadingStates ? 'Loading states...'
                         : 'Search state...'
                       }
-                      styles={buildSelectStyles(hasError('State'))}
+                      styles={buildSelectStyles(hasError('State') || !!formErrors.state)}
                       noOptionsMessage={() => 'No states found'}
                       isClearable
                     />
                   ) : (
-                    /* Fallback: plain text input if API returned no states */
                     <input
                       type="text"
                       name="state"
                       value={formData.state}
                       onChange={handleChange}
-                      className={`es-input ${hasError('State') ? 'es-input-error' : ''}`}
+                      className={`es-input ${hasError('State') || formErrors.state ? 'es-input-error' : ''}`}
                       placeholder="Enter your state"
                       required
                     />
                   )}
+                  {formErrors.state && <span className="es-error">{formErrors.state}</span>}
                   {getErrors('State').map((err, i) => <span key={i} className="es-error">{err}</span>)}
                 </div>
 
@@ -542,22 +585,22 @@ function Shipping() {
                         : loadingCities ? 'Loading cities...'
                         : 'Search city...'
                       }
-                      styles={buildSelectStyles(hasError('City'))}
+                      styles={buildSelectStyles(hasError('City') || !!formErrors.city)}
                       noOptionsMessage={() => 'No cities found'}
                       isClearable
                     />
                   ) : (
-                    /* Fallback: plain text input if API returned no cities */
                     <input
                       type="text"
                       name="city"
                       value={formData.city}
                       onChange={handleChange}
-                      className={`es-input ${hasError('City') ? 'es-input-error' : ''}`}
+                      className={`es-input ${hasError('City') || formErrors.city ? 'es-input-error' : ''}`}
                       placeholder="Enter your city"
                       required
                     />
                   )}
+                  {formErrors.city && <span className="es-error">{formErrors.city}</span>}
                   {getErrors('City').map((err, i) => <span key={i} className="es-error">{err}</span>)}
                 </div>
               </div>

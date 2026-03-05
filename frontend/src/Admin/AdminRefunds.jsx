@@ -30,7 +30,17 @@ function useDebounce(value, delay) {
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
-// FIX: controller populates user with firstName/lastName, not a name field.
+// Compute unread count directly from the messages array — mirrors AllOrders.js
+// getUnreadCount pattern. LIST_PROJECTION already includes refundInfo.messages
+// so the data is always present without any extra fetch.
+const getUnreadCount = (order) => {
+  if (!Array.isArray(order.refundInfo?.messages)) return 0;
+  return order.refundInfo.messages.filter(
+    (msg) => !msg.isRead && msg.senderType === 'customer'
+  ).length;
+};
+
+// controller populates user with firstName/lastName, not a name field.
 const getCustomerName = (user) => {
   if (!user) return 'N/A';
   const name = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim();
@@ -70,7 +80,6 @@ const AdminRefunds = () => {
     error, success, message: successMessage,
   } = useSelector((state) => state.adminRefund);
 
-  // FIX: currentPage/totalPages from Redux, not local frozen useState.
   const { currentPage, totalPages, totalRefunds } = pagination;
 
   // ── Filter state ──────────────────────────────────────────────────────────
@@ -92,7 +101,6 @@ const AdminRefunds = () => {
   const [refundAmount, setRefundAmount] = useState('');
   const [merchantNote, setMerchantNote] = useState('');
 
-  // FIX: debounce search — was firing on every keystroke.
   const searchTerm = useDebounce(searchRaw, 400);
 
   const LIMIT = 20;
@@ -115,7 +123,6 @@ const AdminRefunds = () => {
 
   useEffect(() => { handleFetchRefunds(); }, [handleFetchRefunds]);
 
-  // FIX: reset to page 1 on any filter change.
   useEffect(() => {
     dispatch(setPage(1));
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -134,7 +141,6 @@ const AdminRefunds = () => {
     return () => clearTimeout(t);
   }, [error, dispatch]);
 
-  // FIX: pre-fill refund amount when process tab opens on an approved refund.
   useEffect(() => {
     if (
       activeTab === 'process' &&
@@ -148,14 +154,13 @@ const AdminRefunds = () => {
   }, [activeTab, currentRefund, refundAmount]);
 
   // ── Derived state ─────────────────────────────────────────────────────────
-  // FIX: use the correct array depending on mode.
   const displayList = showUnreadOnly ? unreadRefunds : refunds;
 
-  // Per-status unread awareness for tab dots.
+  // Use getUnreadCount so tab dots work the same way as the badge counts.
   const hasUnreadByStatus = useMemo(() => {
     const map = { all: false };
     displayList.forEach((order) => {
-      if ((order.unreadMessages ?? 0) > 0) {
+      if (getUnreadCount(order) > 0) {
         map.all = true;
         const s = order.refundInfo?.status;
         if (s) map[s] = true;
@@ -164,7 +169,6 @@ const AdminRefunds = () => {
     return map;
   }, [displayList]);
 
-  // FIX: ellipsis-aware pagination (from AllOrders).
   const pageNumbers = useMemo(() => {
     if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1);
     const pages = [];
@@ -199,8 +203,6 @@ const AdminRefunds = () => {
     await fetchRefundDetails(orderId);
   }, [fetchRefundDetails]);
 
-  // FIX: await getSingleRefund before showing MessageModal so currentRefund
-  // is never null when the modal mounts.
   const handleOpenMessageModal = useCallback(async (orderId) => {
     setSelectedId(orderId);
     await dispatch(getSingleRefund(orderId));
@@ -233,8 +235,6 @@ const AdminRefunds = () => {
     } catch (_) { /* error surfaced via slice → error banner */ }
   }, [dispatch, refundAmount, merchantNote, selectedId, buildListParams]);
 
-  // FIX: correct thunk name sendRefundMessage. No extra getRefundMessages after
-  // send — slice appends optimistically, re-fetch would cause visible flicker.
   const handleSendMessage = useCallback(async (content, files) => {
     if (!selectedId) return;
     await dispatch(sendRefundMessage({ orderId: selectedId, message: content, files })).unwrap();
@@ -253,7 +253,6 @@ const AdminRefunds = () => {
     } catch (_) { /* error surfaced via slice */ }
   }, [dispatch, selectedId]);
 
-  // FIX: re-fetch list on modal close so unread badges update.
   const handleCloseMessageModal = useCallback(() => {
     setShowMessageModal(false);
     dispatch(getAllRefunds(buildListParams()));
@@ -272,7 +271,6 @@ const AdminRefunds = () => {
     dispatch(getAllRefunds(buildListParams()));
   }, [dispatch, buildListParams]);
 
-  // FIX: onRefresh for MessageModal — reloads messages when modal re-opens.
   const handleModalRefresh = useCallback(() => {
     if (selectedId) dispatch(getRefundMessages({ orderId: selectedId, page: 1 }));
   }, [dispatch, selectedId]);
@@ -340,7 +338,6 @@ const AdminRefunds = () => {
 
     return (
       <div className="rf-tbl-wrap">
-        {/* FIX: thin bar instead of full skeleton during pagination reloads. */}
         {tableLoading && displayList.length > 0 && <div className="rf-loading-bar" />}
         <table className="rf-tbl">
           <thead>
@@ -359,12 +356,13 @@ const AdminRefunds = () => {
             {displayList.map((item) => {
               const status      = item.refundInfo?.status ?? 'unknown';
               const orderRef    = item._id ? item._id.toString().slice(-6).toUpperCase() : 'N/A';
-              // FIX: use numeric count (normalised in slice), not just boolean.
-              const unreadCount = item.unreadMessages ?? 0;
+              // Compute directly from messages array — same pattern as AllOrders.js.
+              // LIST_PROJECTION already includes refundInfo.messages so no extra
+              // fetch is needed.
+              const unreadCount = getUnreadCount(item);
               return (
                 <tr key={item._id}>
                   <td className="rf-td-name">#{orderRef}</td>
-                  {/* FIX: getCustomerName uses firstName + lastName */}
                   <td>{getCustomerName(item.user)}</td>
                   <td className="rf-td-money">
                     ${(item.refundInfo?.requestedAmount ?? 0).toFixed(2)}
@@ -389,7 +387,6 @@ const AdminRefunds = () => {
                       title="Open Messages"
                     >
                       <Message style={{ fontSize: 16 }} />
-                      {/* FIX: show actual count badge */}
                       {unreadCount > 0 && (
                         <span className="rf-msg-badge">{unreadCount > 99 ? '99+' : unreadCount}</span>
                       )}
@@ -473,7 +470,6 @@ const AdminRefunds = () => {
             <button type="button" className="rf-drawer-close" onClick={handleClosePanel} aria-label="Close panel">×</button>
           </div>
 
-          {/* Scrollable tab nav */}
           <div className="rf-drawer-tabs">
             <div className="rf-tf">
               {DRAWER_TABS.map((tab) => (
@@ -615,7 +611,6 @@ const AdminRefunds = () => {
                     <label className="rf-form-label" htmlFor="rf-refund-amount">Refund Amount ($) *</label>
                     <input id="rf-refund-amount" type="number" className="rf-form-input" value={refundAmount}
                       onChange={(e) => setRefundAmount(e.target.value)} min="0.01" step="0.01"
-                      // FIX: use refundableAmount not amountPaid — matches controller enforcement.
                       max={currentRefund.refundableAmount ?? currentRefund.amountPaid}
                       disabled={refStatus !== 'approved'} />
                     <span className="rf-helper-text">
@@ -719,7 +714,6 @@ const AdminRefunds = () => {
           </div>
         </div>
       </div>
-
     );
   };
 
@@ -856,7 +850,6 @@ const AdminRefunds = () => {
 
         {renderDetailPanel()}
 
-        {/* FIX: MessageModal only mounts when currentRefund is populated */}
         {showMessageModal && currentRefund && (
           <RefundReturnMessagesModal
             isOpen={showMessageModal}
@@ -864,12 +857,10 @@ const AdminRefunds = () => {
             orderId={selectedId}
             orderInfo={{
               orderNumber: currentRefund._id?.toString().slice(-6).toUpperCase(),
-              // FIX: getCustomerName — was user?.name which doesn't exist
               customerName: getCustomerName(currentRefund.user),
             }}
             messages={messages}
             onSendMessage={handleSendMessage}
-            // FIX: onRefresh now passed — modal reloads messages on open
             onRefresh={handleModalRefresh}
             loading={messagesLoading}
             currentUserRole="admin"
