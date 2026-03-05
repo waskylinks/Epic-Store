@@ -501,9 +501,10 @@
 .rrmm-message-input::placeholder { color: var(--rrmm-text-muted); font-weight: 400; }
 
 .rrmm-message-input:focus {
-  border-color: var(--rrmm-coral);
-  box-shadow: 0 0 0 3px var(--rrmm-coral-pale);
+  border-color: transparent;
+  box-shadow: 0 0 0 3px var(--rrmm-coral-pale), 0 0 0 1px var(--rrmm-coral);
 }
+
 
 .rrmm-message-input:disabled {
   background: #F9FAFB;
