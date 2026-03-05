@@ -4,14 +4,12 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinaryUpload.js';
 import { deleteCachePattern, getCache, setCache } from '../utils/redis.js';
+import { PaymentFactory } from '../Services/payment/paymentFactory.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Fields that are safe to return in list responses. Excludes auditLog,
-// shipments, paymentMeta, fraudCheck, orderItems — none of which are
-// needed to render the refunds table or KPI cards.
 const LIST_PROJECTION = {
   user: 1,
   orderNumber: 1,
@@ -28,19 +26,20 @@ const LIST_PROJECTION = {
   'refundInfo.refundAmount': 1,
   'refundInfo.requestedAt': 1,
   'refundInfo.adminNote': 1,
-  'refundInfo.messages': 1,   // needed for unreadMessages virtual
+  'refundInfo.messages': 1,
   createdAt: 1,
 };
 
-// Strip sensitive / heavy fields from single-order responses. Returns only
-// what the detail panel and message modal need.
+// FIX: added gatewayResponse, gatewayStatus, refundId — these are now
+// stored by the gateway service files and webhook handlers, and the
+// frontend detail panel needs them to show the raw gateway reply.
 const safeRefundResponse = (order) => ({
-  _id:             order._id,
-  orderNumber:     order.orderNumber,
-  orderStatus:     order.orderStatus,
-  totalPrice:      order.totalPrice,
-  amountPaid:      order.amountPaid,
-  refundableAmount: order.refundableAmount,   // virtual
+  _id:              order._id,
+  orderNumber:      order.orderNumber,
+  orderStatus:      order.orderStatus,
+  totalPrice:       order.totalPrice,
+  amountPaid:       order.amountPaid,
+  refundableAmount: order.refundableAmount,
   paymentInfo: {
     method:   order.paymentInfo?.method,
     currency: order.paymentInfo?.currency,
@@ -63,19 +62,21 @@ const safeRefundResponse = (order) => ({
     refundAmount:    order.refundInfo?.refundAmount,
     refundCurrency:  order.refundInfo?.refundCurrency,
     refundReference: order.refundInfo?.refundReference,
-    refundId:        order.refundInfo?.refundId,
+    refundId:        order.refundInfo?.refundId,         // gateway refund ID
+    gatewayStatus:   order.refundInfo?.gatewayStatus,    // raw status from gateway
+    gatewayResponse: order.refundInfo?.gatewayResponse,  // raw gateway response object
     processedAt:     order.refundInfo?.processedAt,
+    processedBy:     order.refundInfo?.processedBy,      // admin who clicked Process Refund
     refundedAt:      order.refundInfo?.refundedAt,
     failureReason:   order.refundInfo?.failureReason,
     messages:        order.refundInfo?.messages,
     documents:       order.refundInfo?.documents,
     timeline:        order.refundInfo?.timeline,
   },
-  unreadMessages: order.unreadRefundMessages,   // virtual
+  unreadMessages: order.unreadRefundMessages,
   createdAt:      order.createdAt,
 });
 
-// Shared cache invalidation — fire-and-forget, never blocks responses.
 const invalidateRefundCaches = () => {
   Promise.all([
     deleteCachePattern('admin_stats*'),
@@ -86,18 +87,12 @@ const invalidateRefundCaches = () => {
   ]).catch((err) => console.error('Refund cache invalidation error:', err));
 };
 
-// Cloudinary resource_type → document type enum map.
-// Shared by admin and customer upload handlers so the mapping stays
-// consistent and is not duplicated.
 const resolveDocType = (resourceType) => {
   if (resourceType === 'image') return 'photo';
   if (resourceType === 'video') return 'video';
   return 'other';
 };
 
-// Compute refund stats from a count query rather than loading documents.
-// Stats are always computed against the full non-filtered dataset so cached
-// values are never contaminated by a ?status filter.
 const getRefundStats = async () => {
   const results = await Order.aggregate([
     { $match: { 'refundInfo.status': { $nin: ['none'] } } },
@@ -118,13 +113,172 @@ const getRefundStats = async () => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GATEWAY REFUND HELPER
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Builds the correct params object for each gateway's refundPayment() function.
+ * Each service expects different field names — this centralises that mapping
+ * so processRefund never has to branch on gateway itself.
+ *
+ * Paystack  : { transactionReference, amount, merchantNote }
+ * Flutterwave: { chargeId, amount, reason, merchantNote }
+ *              chargeId = providerTxId from original verify response
+ * Stripe    : { paymentIntentId, amount, reason, merchantNote }
+ *              paymentIntentId = stripePaymentIntentId ?? providerTxId
+ */
+const buildGatewayRefundParams = (order, refundAmount, merchantNote) => {
+  const gateway = order.paymentInfo?.method;
+
+  if (gateway === 'paystack') {
+    return {
+      transactionReference: order.paymentInfo.reference,
+      amount: Number(refundAmount),
+      merchantNote: merchantNote ?? '',
+    };
+  }
+
+  if (gateway === 'flutterwave') {
+    // Flutterwave refund API requires the charge_id from the original transaction.
+    // This is stored as providerTxId when the payment was verified.
+    return {
+      chargeId: order.paymentInfo.providerTxId,
+      amount: Number(refundAmount),
+      reason: 'Customer refund request',
+      merchantNote: merchantNote ?? '',
+    };
+  }
+
+  if (gateway === 'stripe') {
+    return {
+      paymentIntentId: order.paymentInfo.stripePaymentIntentId ?? order.paymentInfo.providerTxId,
+      amount: Number(refundAmount),
+      reason: 'requested_by_customer',
+      merchantNote: merchantNote ?? '',
+    };
+  }
+
+  throw new Error(`Unsupported payment gateway for refund: ${gateway}`);
+};
+
+/**
+ * Fire-and-forget gateway refund call.
+ * Runs after the HTTP response has already been sent to the frontend.
+ * Saves the final status (completed/failed) back to the order.
+ *
+ * The frontend receives 'processing' immediately. The order then updates
+ * to completed/failed asynchronously here, and in production the webhook
+ * from the gateway also updates it once the payment processor settles.
+ */
+const fireGatewayRefund = async (orderId, gateway, refundParams, adminUserId) => {
+  try {
+    console.log(`[Refund] Calling ${gateway} gateway | order=${orderId}`);
+
+    const gatewayResult = await PaymentFactory.refundPayment(gateway, refundParams);
+
+    console.log(`[Refund] ${gateway} response | status=${gatewayResult.gatewayStatus} | mapped=${gatewayResult.status}`);
+
+    // Reload order fresh — it may have changed since the HTTP response was sent
+    const order = await Order.findById(orderId);
+    if (!order) {
+      console.error(`[Refund] Order ${orderId} not found when saving gateway result`);
+      return;
+    }
+
+    // Guard: only update if still in processing — webhook may have already settled it
+    if (order.refundInfo?.status !== 'processing') {
+      console.log(`[Refund] Order ${orderId} already in state '${order.refundInfo?.status}', skipping gateway result write`);
+      return;
+    }
+
+    order.refundInfo.refundId        = gatewayResult.refundId;
+    order.refundInfo.gatewayStatus   = gatewayResult.gatewayStatus;
+    order.refundInfo.gatewayResponse = gatewayResult.raw;
+    order.refundInfo.status          = gatewayResult.status; // 'completed' | 'failed' | 'processing'
+
+    if (gatewayResult.status === 'completed') {
+      order.refundInfo.refundedAt  = new Date();
+      order.refundInfo.refundAmount = gatewayResult.amount ?? order.refundInfo.refundAmount;
+
+      order.addRefundTimeline(
+        'refund_completed',
+        `Refund of $${(gatewayResult.amount ?? order.refundInfo.refundAmount).toFixed(2)} completed via ${gateway}${gatewayResult.refundId ? ` (ref: ${gatewayResult.refundId})` : ''}`,
+        adminUserId,
+        { gatewayStatus: gatewayResult.gatewayStatus, refundId: gatewayResult.refundId }
+      );
+
+      order.addRefundMessage(
+        adminUserId,
+        'admin',
+        `Your refund of $${(gatewayResult.amount ?? order.refundInfo.refundAmount).toFixed(2)} has been processed and should appear within 3–10 business days.`
+      );
+
+      order.addAuditEntry(
+        'refund_completed',
+        adminUserId,
+        { field: 'refundInfo.status', oldValue: 'processing', newValue: 'completed' }
+      );
+    } else if (gatewayResult.status === 'failed') {
+      order.refundInfo.failureReason = `${gateway} declined: ${gatewayResult.gatewayStatus}`;
+
+      order.addRefundTimeline(
+        'refund_failed',
+        `Refund failed via ${gateway}: ${gatewayResult.gatewayStatus}`,
+        adminUserId,
+        { gatewayStatus: gatewayResult.gatewayStatus }
+      );
+
+      order.addAuditEntry(
+        'refund_failed',
+        adminUserId,
+        { field: 'refundInfo.status', oldValue: 'processing', newValue: 'failed' }
+      );
+    } else {
+      // Still processing (prod: gateway returned pending) — webhook will finalise
+      console.log(`[Refund] ${gateway} returned pending for order=${orderId}, awaiting webhook`);
+    }
+
+    await order.save();
+    invalidateRefundCaches();
+
+    console.log(`[Refund] Gateway result saved | order=${orderId} | final status=${order.refundInfo.status}`);
+  } catch (err) {
+    console.error(`[Refund] ${gateway} gateway call failed for order=${orderId}:`, err.message);
+
+    // Save failed status so admin can see it in the panel
+    try {
+      const order = await Order.findById(orderId);
+      if (order && order.refundInfo?.status === 'processing') {
+        order.refundInfo.status        = 'failed';
+        order.refundInfo.failureReason = err.message ?? 'Gateway error';
+        order.refundInfo.gatewayResponse = { error: err.message };
+
+        order.addRefundTimeline(
+          'refund_failed',
+          `Refund failed via ${gateway}: ${err.message}`,
+          adminUserId
+        );
+
+        order.addAuditEntry(
+          'refund_failed',
+          adminUserId,
+          { field: 'refundInfo.status', oldValue: 'processing', newValue: 'failed' }
+        );
+
+        await order.save();
+        invalidateRefundCaches();
+      }
+    } catch (saveErr) {
+      console.error(`[Refund] Failed to save error state for order=${orderId}:`, saveErr.message);
+    }
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CONTROLLERS
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── GET /api/v1/admin/refunds ─────────────────────────────────────────────
-// Supports: status filter, date range, search (orderNumber or customer name),
-//           pagination. Stats are always computed from the full dataset
-//           independent of the ?status filter.
 export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   const {
     status,
@@ -139,33 +293,22 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   const limitNum = Math.min(100, Math.max(1, Number(limit)));
   const skip     = (pageNum - 1) * limitNum;
 
-  // List filter — may be narrowed by ?status.
-  // Uses compound index { 'refundInfo.status': 1, 'refundInfo.requestedAt': -1 }.
-  const baseMatch = {
-    'refundInfo.status': { $nin: ['none'] },
-  };
+  const baseMatch = { 'refundInfo.status': { $nin: ['none'] } };
 
-  if (status) {
-    baseMatch['refundInfo.status'] = status;
-  }
+  if (status) baseMatch['refundInfo.status'] = status;
 
   if (startDate || endDate) {
     baseMatch['refundInfo.requestedAt'] = {};
-    if (startDate) {
-      baseMatch['refundInfo.requestedAt'].$gte = new Date(startDate);
-    }
+    if (startDate) baseMatch['refundInfo.requestedAt'].$gte = new Date(startDate);
     if (endDate) {
-      // Include the full end date day up to 23:59:59.999.
       baseMatch['refundInfo.requestedAt'].$lte = new Date(
         new Date(endDate).setHours(23, 59, 59, 999)
       );
     }
   }
 
-  // Stats cache is keyed to 'all' only — never to a specific status filter
-  // so cached stats always represent the global picture.
-  const STATS_CACHE_KEY    = 'refund_stats:all';
-  const STATS_TTL_SECONDS  = 60;
+  const STATS_CACHE_KEY   = 'refund_stats:all';
+  const STATS_TTL_SECONDS = 60;
 
   let stats = null;
   try {
@@ -176,24 +319,12 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
   let orders;
   let totalRefunds;
 
-  // ── Search path ───────────────────────────────────────────────────────────
-  // orderNumber search: plain find() — orderNumber is indexed on Order directly.
-  // Name/email search: aggregation with $lookup — user is a ref, not embedded,
-  //   so we can't query user.firstName at find() time.
   if (search && search.trim()) {
     const trimmed = search.trim();
-
-    // orderNumber is last 8 chars of _id uppercased, e.g. "A1B2C3D4".
     const isOrderNumberSearch = /^[a-f0-9]+$/i.test(trimmed);
 
     if (isOrderNumberSearch) {
-      // Efficient regex on the indexed orderNumber field.
-      // Collation on the index makes this case-insensitive without 'i' flag overhead.
-      const orderMatch = {
-        ...baseMatch,
-        orderNumber: { $regex: trimmed, $options: 'i' },
-      };
-
+      const orderMatch = { ...baseMatch, orderNumber: { $regex: trimmed, $options: 'i' } };
       [orders, totalRefunds] = await Promise.all([
         Order.find(orderMatch)
           .select(LIST_PROJECTION)
@@ -206,21 +337,10 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
         Order.countDocuments(orderMatch),
       ]);
     } else {
-      // Name/email search — requires $lookup because user is a ref.
-      // baseMatch runs before $lookup so only refund orders are joined,
-      // keeping the join set small.
       const nameRx = new RegExp(trimmed, 'i');
-
       const pipeline = [
         { $match: baseMatch },
-        {
-          $lookup: {
-            from:         'users',
-            localField:   'user',
-            foreignField: '_id',
-            as:           'user',
-          },
-        },
+        { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'user' } },
         { $unwind: { path: '$user', preserveNullAndEmpty: true } },
         {
           $match: {
@@ -234,8 +354,8 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
         {
           $facet: {
             data: [
-              { $sort:  { 'refundInfo.requestedAt': -1, _id: -1 } },
-              { $skip:  skip },
+              { $sort: { 'refundInfo.requestedAt': -1, _id: -1 } },
+              { $skip: skip },
               { $limit: limitNum },
             ],
             total: [{ $count: 'count' }],
@@ -244,11 +364,7 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
       ];
 
       const [result] = await Order.aggregate(pipeline);
-      totalRefunds   = result.total[0]?.count ?? 0;
-
-      // Aggregate returns plain objects — virtuals don't fire. Compute
-      // unreadMessages manually so the table renderer gets the same shape
-      // as the find() path.
+      totalRefunds = result.total[0]?.count ?? 0;
       orders = (result.data ?? []).map((o) => ({
         ...o,
         unreadMessages: (o.refundInfo?.messages ?? []).filter(
@@ -257,7 +373,6 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
       }));
     }
   } else {
-    // No search — plain find() with projection and populate.
     [orders, totalRefunds] = await Promise.all([
       Order.find(baseMatch)
         .select(LIST_PROJECTION)
@@ -271,7 +386,6 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
     ]);
   }
 
-  // Stats — only computed when cache is cold.
   if (!stats) {
     stats = await getRefundStats();
     setCache(STATS_CACHE_KEY, JSON.stringify(stats), STATS_TTL_SECONDS).catch(() => {});
@@ -289,7 +403,6 @@ export const getAllRefunds = handleAsyncError(async (req, res, next) => {
 });
 
 // ── GET /api/v1/admin/refunds/unread ─────────────────────────────────────
-// Returns orders with unread customer refund messages.
 export const getRefundsWithUnreadMessages = handleAsyncError(async (req, res) => {
   const orders = await Order.getRefundsWithUnreadMessages();
 
@@ -303,36 +416,32 @@ export const getRefundsWithUnreadMessages = handleAsyncError(async (req, res) =>
         status:          order.refundInfo.status,
         reason:          order.refundInfo.reason,
         requestedAmount: order.refundInfo.requestedAmount,
-        unreadCount:     order.unreadRefundMessages,   // virtual
+        unreadCount:     order.unreadRefundMessages,
       },
-      latestMessage: order.latestRefundMessage,        // virtual
+      latestMessage: order.latestRefundMessage,
     })),
   });
 });
 
 // ── GET /api/v1/admin/refunds/:orderId ────────────────────────────────────
-// Returns a single refund order. Also marks all customer messages as read.
 export const getSingleRefund = handleAsyncError(async (req, res, next) => {
   const order = await Order.findById(req.params.orderId)
-    .populate('user',                               'firstName lastName email phone')
-    .populate('refundInfo.requestedBy',             'firstName lastName email')
-    .populate('refundInfo.approvedBy',              'firstName lastName email')
-    .populate('refundInfo.rejectedBy',              'firstName lastName email')
-    .populate('refundInfo.processedBy',             'firstName lastName email')
-    .populate('refundInfo.messages.sender',         'firstName lastName email role')
-    .populate('refundInfo.documents.uploadedBy',    'firstName lastName email')
-    .populate('refundInfo.timeline.performedBy',    'firstName lastName email')
-    .populate('orderItems.product',                 'name images');
+    .populate('user',                             'firstName lastName email phone')
+    .populate('refundInfo.requestedBy',           'firstName lastName email')
+    .populate('refundInfo.approvedBy',            'firstName lastName email')
+    .populate('refundInfo.rejectedBy',            'firstName lastName email')
+    .populate('refundInfo.processedBy',           'firstName lastName email')
+    .populate('refundInfo.messages.sender',       'firstName lastName email role')
+    .populate('refundInfo.documents.uploadedBy',  'firstName lastName email')
+    .populate('refundInfo.timeline.performedBy',  'firstName lastName email')
+    .populate('orderItems.product',               'name images');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.refundInfo || order.refundInfo?.status === 'none') {
     return next(new HandleError('This order has no refund request', 400));
   }
 
-  // Mark all unread customer messages as read now that admin is viewing.
   const hasUnread = order.refundInfo?.messages?.some(
     (m) => !m.isRead && m.senderType === 'customer'
   );
@@ -369,12 +478,13 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
   const { reason, description, refundType = 'full', requestedAmount } = req.body;
   const userId = req.user._id;
 
-  // Use the order already fetched and validated by checkRefundEligibility.
+  // req.order is required — attached by checkRefundEligibility middleware.
+  // The middleware validates ownership, order status, and refund eligibility
+  // before this controller runs, so no fallback fetch is needed here.
   const order = req.order;
 
   let refundAmount = order.amountPaid;
   if (refundType === 'partial') {
-    // validateRefundAmount middleware already validated this value.
     refundAmount = parseFloat(requestedAmount);
   }
 
@@ -400,7 +510,6 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
 
   if (req.files && req.files.length > 0) {
     const folder = `ecommerce/refunds/${order._id}/customer`;
-
     const uploadResults = await Promise.all(
       req.files.map((file) =>
         uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
@@ -409,15 +518,8 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
         }))
       )
     );
-
     for (const { result, originalname } of uploadResults) {
-      order.addRefundDocument(
-        resolveDocType(result.resource_type),
-        result.secure_url,
-        originalname,
-        userId,
-        ''
-      );
+      order.addRefundDocument(resolveDocType(result.resource_type), result.secure_url, originalname, userId, '');
     }
   }
 
@@ -432,7 +534,6 @@ export const requestRefund = handleAsyncError(async (req, res, next) => {
 });
 
 // ── GET /api/v1/orders/:orderId/refund/status ─────────────────────────────
-// Customer checks their own refund status.
 export const getRefundStatus = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
@@ -451,8 +552,6 @@ export const getRefundStatus = handleAsyncError(async (req, res, next) => {
 });
 
 // ── PUT /api/v1/admin/orders/:orderId/refund/review ───────────────────────
-// Approves or rejects a refund request.
-// Uses req.order attached by canReviewRefund middleware.
 export const reviewRefund = handleAsyncError(async (req, res, next) => {
   const { action, adminNote } = req.body;
 
@@ -460,21 +559,13 @@ export const reviewRefund = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('action must be "approve" or "reject"', 400));
   }
 
-  // Use the order already fetched and validated by canReviewRefund middleware
-  // when present, otherwise fall back to fetching by param.
   const order = req.order ?? await Order.findById(req.params.orderId);
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.refundInfo?.status !== 'requested') {
-    return next(
-      new HandleError(
-        `Cannot review a refund with status "${order.refundInfo?.status}"`,
-        400
-      )
-    );
+    return next(new HandleError(
+      `Cannot review a refund with status "${order.refundInfo?.status}"`, 400
+    ));
   }
 
   const now       = new Date();
@@ -500,7 +591,6 @@ export const reviewRefund = handleAsyncError(async (req, res, next) => {
     req.user._id
   );
 
-  // Notify customer via system message.
   order.addRefundMessage(
     req.user._id,
     'admin',
@@ -528,51 +618,65 @@ export const reviewRefund = handleAsyncError(async (req, res, next) => {
 });
 
 // ── POST /api/v1/admin/orders/:orderId/refund/process ─────────────────────
-// Processes the actual payment transfer for an approved refund.
-// Uses req.order from canProcessRefund middleware. Applies an atomic
-// compare-and-swap to prevent duplicate gateway calls under concurrency.
+//
+// Flow:
+//   1. Validate amount and current status
+//   2. Atomic CAS: approved → processing (prevents duplicate gateway calls)
+//   3. Reload order, write processing metadata, save to DB
+//   4. Return 'processing' response to frontend immediately
+//   5. Fire gateway call asynchronously via setImmediate (after response is sent)
+//   6. Gateway result saves completed/failed back to order (fireGatewayRefund)
+//   7. In production, webhook from gateway also updates the order when it settles
 export const processRefund = handleAsyncError(async (req, res, next) => {
-  const { orderId } = req.params;
+  const { orderId }                  = req.params;
   const { refundAmount, merchantNote } = req.body;
 
   if (!refundAmount || isNaN(Number(refundAmount)) || Number(refundAmount) <= 0) {
     return next(new HandleError('A valid refundAmount is required', 400));
   }
 
-  // Use the order already fetched and validated by canProcessRefund middleware
-  // when present, otherwise fall back to fetching by param.
   const order = req.order ?? await Order.findById(orderId);
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.refundInfo?.status !== 'approved') {
-    return next(
-      new HandleError(
-        `Cannot process a refund with status "${order.refundInfo?.status}". Must be "approved".`,
-        400
-      )
-    );
+    return next(new HandleError(
+      `Cannot process a refund with status "${order.refundInfo?.status}". Must be "approved".`, 400
+    ));
   }
 
-  // Enforce refundableAmount (amountPaid minus any already-refunded amount)
-  // to prevent over-refunding on partial refunds already partially processed.
   const maxRefund = order.amountPaid - (order.refundInfo.refundAmount || 0);
-
   if (Number(refundAmount) > maxRefund) {
-    return next(
-      new HandleError(
-        `Refund amount $${refundAmount} exceeds the maximum refundable amount of $${maxRefund.toFixed(2)}`,
-        400
-      )
-    );
+    return next(new HandleError(
+      `Refund amount $${refundAmount} exceeds the maximum refundable amount of $${maxRefund.toFixed(2)}`, 400
+    ));
   }
 
-  // Atomic compare-and-swap — transition status from 'approved' → 'processing'
-  // only if it is still 'approved'. A second concurrent request will find 0
-  // matching documents and be rejected before the gateway is called,
-  // eliminating the duplicate-refund race condition.
+  const gateway = order.paymentInfo?.method;
+
+  // FIX: validate gateway is supported before the CAS so we don't lock
+  // the order into 'processing' and then immediately fail on an unknown gateway
+  if (!PaymentFactory.isSupported(gateway)) {
+    return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
+  }
+
+  // FIX: validate we have the required identifier for this gateway before CAS
+  if (gateway === 'flutterwave' && !order.paymentInfo?.providerTxId) {
+    return next(new HandleError(
+      'Flutterwave refund requires providerTxId (charge ID) which is missing from this order', 400
+    ));
+  }
+  if (gateway === 'stripe' && !order.paymentInfo?.stripePaymentIntentId && !order.paymentInfo?.providerTxId) {
+    return next(new HandleError(
+      'Stripe refund requires paymentIntentId which is missing from this order', 400
+    ));
+  }
+  if (gateway === 'paystack' && !order.paymentInfo?.reference) {
+    return next(new HandleError(
+      'Paystack refund requires transaction reference which is missing from this order', 400
+    ));
+  }
+
+  // ── Atomic CAS: approved → processing ──────────────────────────────────
   const transitioned = await Order.findOneAndUpdate(
     { _id: orderId, 'refundInfo.status': 'approved' },
     { $set: { 'refundInfo.status': 'processing' } },
@@ -580,30 +684,26 @@ export const processRefund = handleAsyncError(async (req, res, next) => {
   );
 
   if (!transitioned) {
-    return next(
-      new HandleError(
-        'Refund is no longer in an approved state. It may have already been processed.',
-        409
-      )
-    );
+    return next(new HandleError(
+      'Refund is no longer in an approved state. It may have already been submitted for processing.', 409
+    ));
   }
 
-  // Reload fresh after the atomic update so all subsequent mutations work
-  // on the correct version.
+  // Reload fresh after the CAS
   const freshOrder = await Order.findById(orderId);
 
-  freshOrder.refundInfo.refundAmount   = Number(refundAmount);
-  freshOrder.refundInfo.refundCurrency = freshOrder.paymentInfo?.currency ?? 'USD';
-  freshOrder.refundInfo.processedAt    = new Date();
-  freshOrder.refundInfo.processedBy    = req.user._id;
+  freshOrder.refundInfo.refundAmount    = Number(refundAmount);
+  freshOrder.refundInfo.refundCurrency  = freshOrder.paymentInfo?.currency ?? 'USD';
+  freshOrder.refundInfo.processedAt     = new Date();
+  freshOrder.refundInfo.processedBy     = req.user._id;
   freshOrder.refundInfo.refundReference = `REF-${Date.now()}-${freshOrder._id.toString().slice(-6)}`;
   if (merchantNote) freshOrder.refundInfo.notes = merchantNote;
 
   freshOrder.addRefundTimeline(
     'refund_processing',
-    `Refund of $${Number(refundAmount).toFixed(2)} initiated`,
+    `Refund of $${Number(refundAmount).toFixed(2)} submitted to ${gateway}`,
     req.user._id,
-    { refundAmount }
+    { refundAmount, gateway }
   );
 
   freshOrder.addAuditEntry(
@@ -612,75 +712,31 @@ export const processRefund = handleAsyncError(async (req, res, next) => {
     { field: 'refundInfo.status', oldValue: 'approved', newValue: 'processing' }
   );
 
-  // ── Payment gateway integration ─────────────────────────────────────────
-  // Replace this block with your actual gateway call (Paystack, Stripe, etc.).
-  // On success: set status → 'completed', store gatewayResponse, refundReference.
-  // On failure: set status → 'failed', store failureReason.
-  try {
-    // const gatewayResult = await yourGateway.refund({ ... });
-    // freshOrder.refundInfo.gatewayResponse = gatewayResult;
-    // freshOrder.refundInfo.refundId        = gatewayResult.refundId;
-    freshOrder.refundInfo.status     = 'completed';
-    freshOrder.refundInfo.refundedAt = new Date();
-
-    freshOrder.addRefundTimeline(
-      'refund_completed',
-      `Refund of $${Number(refundAmount).toFixed(2)} completed successfully`,
-      req.user._id,
-      { refundAmount }
-    );
-
-    freshOrder.addRefundMessage(
-      req.user._id,
-      'admin',
-      `Your refund of $${Number(refundAmount).toFixed(2)} has been processed and should appear within 3–5 business days.`
-    );
-
-    freshOrder.addAuditEntry(
-      'refund_completed',
-      req.user._id,
-      { field: 'refundInfo.status', oldValue: 'processing', newValue: 'completed' }
-    );
-  } catch (gatewayErr) {
-    freshOrder.refundInfo.status        = 'failed';
-    freshOrder.refundInfo.failureReason = gatewayErr?.message ?? 'Gateway error';
-
-    freshOrder.addRefundTimeline(
-      'refund_failed',
-      `Refund failed: ${freshOrder.refundInfo.failureReason}`,
-      req.user._id
-    );
-
-    freshOrder.addAuditEntry(
-      'refund_failed',
-      req.user._id,
-      { field: 'refundInfo.status', oldValue: 'processing', newValue: 'failed' }
-    );
-
-    await freshOrder.save();
-    invalidateRefundCaches();
-
-    return next(new HandleError(`Refund processing failed: ${gatewayErr?.message ?? 'Gateway error'}`, 500));
-  }
-
   await freshOrder.save();
   invalidateRefundCaches();
 
   await freshOrder.populate('user', 'firstName lastName email');
 
+  // ── Return 'processing' to frontend immediately ────────────────────────
+  // FIX: response message now accurately reflects that processing has started
+  // not that it completed. The frontend shows a processing badge from here.
   res.status(200).json({
     success: true,
-    message: freshOrder.refundInfo.status === 'completed'
-      ? 'Refund processed successfully'
-      : 'Refund processing failed — check failureReason',
-    order: safeRefundResponse(freshOrder),
+    message: `Refund submitted to ${gateway} for processing`,
+    order:   safeRefundResponse(freshOrder),
+  });
+
+  // ── Fire gateway call after response is sent ───────────────────────────
+  // setImmediate ensures this runs after the current event loop tick
+  // (i.e. after res.json() has flushed). The HTTP response is already sent
+  // to the client before any gateway network call happens.
+  setImmediate(() => {
+    const refundParams = buildGatewayRefundParams(freshOrder, refundAmount, merchantNote);
+    fireGatewayRefund(orderId, gateway, refundParams, req.user._id);
   });
 });
 
 // ── GET /api/v1/orders/:orderId/refund/messages ───────────────────────────
-// Paginated refund message history. Accessible by both customer and admin.
-// Bulk-updates all unread messages as read via arrayFilters (fire-and-forget)
-// so messages across all pages are marked, not just the current slice.
 export const getRefundMessages = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const page        = Math.max(1, Number(req.query.page  ?? 1));
@@ -690,14 +746,12 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
   const skip        = (page - 1) * limit;
 
   const order = await Order.findById(orderId, {
-    user:                    1,
-    'refundInfo.status':     1,
-    'refundInfo.messages':   { $slice: [skip, limit] },
+    user:                  1,
+    'refundInfo.status':   1,
+    'refundInfo.messages': { $slice: [skip, limit] },
   }).populate('refundInfo.messages.sender', 'firstName lastName email role');
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -707,13 +761,8 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, total: 0, messages: [] });
   }
 
-  // Admin reads → mark customer messages as read.
-  // Customer reads → mark admin messages as read.
   const senderToMarkRead = isAdmin ? 'customer' : 'admin';
 
-  // Bulk-update all unread messages from senderToMarkRead across the FULL
-  // messages array using arrayFilters — not limited to the current $slice.
-  // Fire-and-forget so it does not block the response.
   Order.updateOne(
     { _id: orderId },
     {
@@ -735,8 +784,6 @@ export const getRefundMessages = handleAsyncError(async (req, res, next) => {
 });
 
 // ── POST /api/v1/admin/refunds/:orderId/messages ──────────────────────────
-// Admin sends a message on a refund thread.
-// Uses req.order from canAddRefundMessage middleware when available.
 export const sendRefundMessage = handleAsyncError(async (req, res, next) => {
   const { message, attachments = [] } = req.body;
 
@@ -745,22 +792,17 @@ export const sendRefundMessage = handleAsyncError(async (req, res, next) => {
   }
 
   const order = req.order ?? await Order.findById(req.params.orderId);
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.refundInfo?.status === 'none') {
     return next(new HandleError('This order has no refund request', 400));
   }
 
   order.addRefundMessage(req.user._id, 'admin', message?.trim() ?? '', attachments);
-
   await order.save();
 
   const newMessage = order.refundInfo.messages[order.refundInfo.messages.length - 1];
 
-  // Manually populate sender from req.user — avoids an extra DB round-trip.
   const populatedMessage = {
     ...newMessage.toObject(),
     sender: {
@@ -780,17 +822,12 @@ export const sendRefundMessage = handleAsyncError(async (req, res, next) => {
 });
 
 // ── POST /api/v1/orders/:orderId/refund/messages ──────────────────────────
-// Customer sends a message on a refund thread.
-// Uses req.order from canAddRefundMessage middleware when available.
 export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) => {
   const { message, attachments = [] } = req.body;
   const userId = req.user._id;
 
   const order = req.order ?? await Order.findById(req.params.orderId);
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -801,7 +838,6 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
   }
 
   order.addRefundMessage(userId, 'customer', message?.trim() ?? '', attachments);
-
   await order.save();
 
   const newMessage = order.refundInfo.messages[order.refundInfo.messages.length - 1];
@@ -825,7 +861,6 @@ export const addCustomerRefundMessage = handleAsyncError(async (req, res, next) 
 });
 
 // ── GET /api/v1/orders/:orderId/refund/timeline ───────────────────────────
-// Accessible by both customer and admin.
 export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
@@ -833,12 +868,9 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
 
   const order = await Order.findById(orderId)
     .populate('refundInfo.timeline.performedBy', 'firstName lastName email role')
-    // Object projection is reliable for nested subdocument paths.
     .select({ 'refundInfo.timeline': 1, user: 1 });
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -852,7 +884,6 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
 });
 
 // ── GET /api/v1/orders/:orderId/refund/documents ──────────────────────────
-// Accessible by both customer and admin.
 export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
@@ -860,12 +891,9 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
 
   const order = await Order.findById(orderId)
     .populate('refundInfo.documents.uploadedBy', 'firstName lastName email role')
-    // Object projection is reliable for nested subdocument paths.
     .select({ 'refundInfo.documents': 1, user: 1 });
 
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!isAdmin && order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
@@ -879,24 +907,17 @@ export const getRefundDocuments = handleAsyncError(async (req, res, next) => {
 });
 
 // ── POST /api/v1/admin/refunds/:orderId/upload ────────────────────────────
-// Admin uploads files to Cloudinary and attaches them as refund documents.
 export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
-  if (!req.files?.length) {
-    return next(new HandleError('No files provided', 400));
-  }
+  if (!req.files?.length) return next(new HandleError('No files provided', 400));
 
   const order = await Order.findById(req.params.orderId);
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (!order.refundInfo || order.refundInfo.status === 'none') {
     return next(new HandleError('No refund request found for this order', 400));
   }
 
   const folder  = `ecommerce/refunds/${order._id}/admin`;
-
   const results = await Promise.all(
     req.files.map((file) =>
       uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
@@ -933,14 +954,11 @@ export const uploadRefundFiles = handleAsyncError(async (req, res, next) => {
 });
 
 // ── POST /api/v1/orders/:orderId/refund/upload ────────────────────────────
-// Customer uploads files for their own refund.
 export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next) => {
   const { orderId } = req.params;
   const userId      = req.user._id;
 
-  if (!req.files?.length) {
-    return next(new HandleError('No files provided', 400));
-  }
+  if (!req.files?.length) return next(new HandleError('No files provided', 400));
 
   const order = await Order.findById(orderId);
   if (!order) return next(new HandleError('Order not found', 404));
@@ -953,8 +971,7 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
     return next(new HandleError('No refund request found for this order', 400));
   }
 
-  const folder = `ecommerce/refunds/${order._id}/customer`;
-
+  const folder  = `ecommerce/refunds/${order._id}/customer`;
   const results = await Promise.all(
     req.files.map((file) =>
       uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' }).then((result) => ({
@@ -990,28 +1007,20 @@ export const uploadCustomerRefundFiles = handleAsyncError(async (req, res, next)
 });
 
 // ── PUT /api/v1/orders/:orderId/refund/cancel ─────────────────────────────
-// Customer cancels their own refund request.
-// Uses req.order from canCancelRefund middleware when available.
 export const cancelRefundRequest = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
 
   const order = req.order ?? await Order.findById(req.params.orderId);
-
-  if (!order) {
-    return next(new HandleError('Order not found', 404));
-  }
+  if (!order) return next(new HandleError('Order not found', 404));
 
   if (order.user.toString() !== userId.toString()) {
     return next(new HandleError('Unauthorized', 403));
   }
 
   if (!['requested', 'approved'].includes(order.refundInfo?.status)) {
-    return next(
-      new HandleError(
-        `Cannot cancel a refund with status "${order.refundInfo?.status}"`,
-        400
-      )
-    );
+    return next(new HandleError(
+      `Cannot cancel a refund with status "${order.refundInfo?.status}"`, 400
+    ));
   }
 
   order.refundInfo.status = 'cancelled';
