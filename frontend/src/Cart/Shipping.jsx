@@ -90,7 +90,7 @@ const buildSelectStyles = (hasError = false) => ({
 
 // ─── CSC API key ──────────────────────────────────────────────────────────────
 // Add to your .env file: REACT_APP_CSC_API_KEY=your_key_here
-const CSC_KEY = process.env.REACT_APP_CSC_API_KEY || '';
+const CSC_KEY = import.meta.env.VITE_CSC_API_KEY || '';
 const CSC_HEADERS = { 'X-CSCAPI-KEY': CSC_KEY };
 
 // ─── Format country option with flag ─────────────────────────────────────────

@@ -14,6 +14,8 @@ import {
   uploadRefundFiles, getRefundsWithUnreadMessages,
   clearCurrentRefund, clearAdminRefundState, clearPendingAttachments, setPage,
 } from '../features/admin/adminRefundSlice';
+import Navbar from '../components/Navbar';
+import Footer from '../components/footer';
 import RefundReturnMessagesModal from '../Orders/RefundReturnMessagesModal';
 import '../AdminStyles/AdminRefunds.css';
 
@@ -201,11 +203,8 @@ const AdminRefunds = () => {
   // is never null when the modal mounts.
   const handleOpenMessageModal = useCallback(async (orderId) => {
     setSelectedId(orderId);
-    setShowDetailPanel(true);
     await dispatch(getSingleRefund(orderId));
     dispatch(getRefundMessages({ orderId, page: 1 }));
-    dispatch(getRefundTimeline(orderId));
-    dispatch(getRefundDocuments(orderId));
     setShowMessageModal(true);
   }, [dispatch]);
 
@@ -720,161 +719,166 @@ const AdminRefunds = () => {
           </div>
         </div>
       </div>
+
     );
   };
 
   // ── Main Render ───────────────────────────────────────────────────────────
   return (
-    <div className="rf-page">
-      <div className="rf-body">
+    <>
+      <Navbar />
+      <div className="rf-page">
+        <div className="rf-body">
 
-        <Link to="/admin/dashboard" className="rf-back-btn">
-          <ArrowBack style={{ fontSize: 15 }} />Dashboard
-        </Link>
+          <Link to="/admin/dashboard" className="rf-back-btn">
+            <ArrowBack style={{ fontSize: 15 }} />Dashboard
+          </Link>
 
-        <div className="rf-hd">
-          <div className="rf-hd-left">
-            <span className="rf-hd-icon" style={{ background: '#6366F115', color: '#6366F1' }}>
-              <Assessment style={{ fontSize: 24 }} />
-            </span>
-            <div>
-              <h1 className="rf-hd-title">Refunds Management</h1>
-              <p className="rf-hd-sub">Review, approve and process customer refund requests</p>
+          <div className="rf-hd">
+            <div className="rf-hd-left">
+              <span className="rf-hd-icon" style={{ background: '#6366F115', color: '#6366F1' }}>
+                <Assessment style={{ fontSize: 24 }} />
+              </span>
+              <div>
+                <h1 className="rf-hd-title">Refunds Management</h1>
+                <p className="rf-hd-sub">Review, approve and process customer refund requests</p>
+              </div>
             </div>
-          </div>
-          <div className="rf-hd-right">
-            <button type="button"
-              className={`rf-icon-btn${refundsLoading || unreadLoading ? ' rf-icon-btn--spin' : ''}`}
-              onClick={handleFetchRefunds} disabled={refundsLoading || unreadLoading} title="Refresh">
-              <Refresh style={{ fontSize: 18 }} />
-            </button>
-          </div>
-        </div>
-
-        <div className="rf-kpi-grid">{renderKPICards()}</div>
-
-        <div className="rf-section"><span className="rf-section-text">Refund Requests</span><span className="rf-section-line" /></div>
-
-        {/* Filters */}
-        <div className="rf-filters">
-          <div className="rf-search-wrap">
-            <Search className="rf-search-icon" style={{ fontSize: 16 }} />
-            <input type="text" className="rf-search-input" placeholder="Search by order ID or customer…"
-              value={searchRaw} onChange={(e) => setSearchRaw(e.target.value)} aria-label="Search refunds" />
-          </div>
-
-          <div className="rf-tf rf-filter-pills">
-            {STATUS_FILTERS.map((opt) => (
-              <button key={opt.value || 'all'} type="button"
-                className={`rf-tf-btn${filterStatus === opt.value ? ' rf-tf-btn--active' : ''}`}
-                onClick={() => setFilterStatus(opt.value)}>
-                {opt.label}
-                {hasUnreadByStatus[opt.value || 'all'] && <span className="rf-tab-dot" />}
+            <div className="rf-hd-right">
+              <button type="button"
+                className={`rf-icon-btn${refundsLoading || unreadLoading ? ' rf-icon-btn--spin' : ''}`}
+                onClick={handleFetchRefunds} disabled={refundsLoading || unreadLoading} title="Refresh">
+                <Refresh style={{ fontSize: 18 }} />
               </button>
-            ))}
+            </div>
           </div>
 
-          <div className="rf-date-wrap">
-            <input type="date" className="rf-date-input" value={startDate}
-              onChange={(e) => setStartDate(e.target.value)} aria-label="From date" />
-            <span className="rf-date-sep">—</span>
-            <input type="date" className="rf-date-input" value={endDate}
-              onChange={(e) => setEndDate(e.target.value)} aria-label="To date" />
-          </div>
+          <div className="rf-kpi-grid">{renderKPICards()}</div>
 
-          <div className="rf-toggle-wrap">
-            <button type="button" role="switch" aria-checked={showUnreadOnly}
-              className={`rf-toggle${showUnreadOnly ? ' rf-toggle--active' : ''}`}
-              onClick={() => setShowUnreadOnly((v) => !v)} aria-label="Show unread only">
-              <span className="rf-toggle-knob" />
-            </button>
-            <span className="rf-toggle-label">Unread Only</span>
-          </div>
-        </div>
+          <div className="rf-section"><span className="rf-section-text">Refund Requests</span><span className="rf-section-line" /></div>
 
-        {/* Error banner */}
-        {error && (
-          <div className="rf-error-banner" role="alert">
-            <Warning style={{ fontSize: 18, flexShrink: 0 }} />
-            <div><strong className="rf-error-title">Error</strong><p className="rf-error-msg">{error}</p></div>
-          </div>
-        )}
+          {/* Filters */}
+          <div className="rf-filters">
+            <div className="rf-search-wrap">
+              <Search className="rf-search-icon" style={{ fontSize: 16 }} />
+              <input type="text" className="rf-search-input" placeholder="Search by order ID or customer…"
+                value={searchRaw} onChange={(e) => setSearchRaw(e.target.value)} aria-label="Search refunds" />
+            </div>
 
-        {/* Pending attachment retry banner */}
-        {errorStage === 'send' && pendingAttachments.length > 0 && (
-          <div className="rf-retry-banner" role="alert">
-            <Warning style={{ fontSize: 16, flexShrink: 0 }} />
-            <span className="rf-retry-msg">Files uploaded but message failed to send.</span>
-            <div className="rf-retry-actions">
-              <button type="button" className="rf-btn rf-btn--primary" onClick={handleRetryMessage} disabled={messageSendLoading}>
-                {messageSendLoading ? 'Retrying…' : 'Retry Send'}
+            <div className="rf-tf rf-filter-pills">
+              {STATUS_FILTERS.map((opt) => (
+                <button key={opt.value || 'all'} type="button"
+                  className={`rf-tf-btn${filterStatus === opt.value ? ' rf-tf-btn--active' : ''}`}
+                  onClick={() => setFilterStatus(opt.value)}>
+                  {opt.label}
+                  {hasUnreadByStatus[opt.value || 'all'] && <span className="rf-tab-dot" />}
+                </button>
+              ))}
+            </div>
+
+            <div className="rf-date-wrap">
+              <input type="date" className="rf-date-input" value={startDate}
+                onChange={(e) => setStartDate(e.target.value)} aria-label="From date" />
+              <span className="rf-date-sep">—</span>
+              <input type="date" className="rf-date-input" value={endDate}
+                onChange={(e) => setEndDate(e.target.value)} aria-label="To date" />
+            </div>
+
+            <div className="rf-toggle-wrap">
+              <button type="button" role="switch" aria-checked={showUnreadOnly}
+                className={`rf-toggle${showUnreadOnly ? ' rf-toggle--active' : ''}`}
+                onClick={() => setShowUnreadOnly((v) => !v)} aria-label="Show unread only">
+                <span className="rf-toggle-knob" />
               </button>
-              <button type="button" className="rf-btn rf-btn--ghost" onClick={() => dispatch(clearPendingAttachments())}>Dismiss</button>
+              <span className="rf-toggle-label">Unread Only</span>
             </div>
           </div>
-        )}
 
-        {/* Load-more messages banner (shown when detail panel is open) */}
-        {showDetailPanel && hasMoreMessages && (
-          <div className="rf-load-more-wrap">
-            <button type="button" className="rf-btn rf-btn--ghost" onClick={handleLoadMoreMessages} disabled={messagesLoading}>
-              {messagesLoading ? 'Loading…' : 'Load older messages'}
-            </button>
-          </div>
-        )}
+          {/* Error banner */}
+          {error && (
+            <div className="rf-error-banner" role="alert">
+              <Warning style={{ fontSize: 18, flexShrink: 0 }} />
+              <div><strong className="rf-error-title">Error</strong><p className="rf-error-msg">{error}</p></div>
+            </div>
+          )}
 
-        {/* Table card */}
-        <div className="rf-card">
-          <div className="rf-card-hd">
-            <div>
-              <h3 className="rf-card-title">{showUnreadOnly ? 'Unread Refunds' : 'All Refunds'}</h3>
-              <p className="rf-card-sub">
-                {refundsLoading || unreadLoading ? 'Loading…'
-                  : showUnreadOnly ? `${unreadRefunds.length} with unread messages`
-                  : `${totalRefunds} total`}
-              </p>
+          {/* Pending attachment retry banner */}
+          {errorStage === 'send' && pendingAttachments.length > 0 && (
+            <div className="rf-retry-banner" role="alert">
+              <Warning style={{ fontSize: 16, flexShrink: 0 }} />
+              <span className="rf-retry-msg">Files uploaded but message failed to send.</span>
+              <div className="rf-retry-actions">
+                <button type="button" className="rf-btn rf-btn--primary" onClick={handleRetryMessage} disabled={messageSendLoading}>
+                  {messageSendLoading ? 'Retrying…' : 'Retry Send'}
+                </button>
+                <button type="button" className="rf-btn rf-btn--ghost" onClick={() => dispatch(clearPendingAttachments())}>Dismiss</button>
+              </div>
+            </div>
+          )}
+
+          {/* Load-more messages banner (shown when detail panel is open) */}
+          {showDetailPanel && hasMoreMessages && (
+            <div className="rf-load-more-wrap">
+              <button type="button" className="rf-btn rf-btn--ghost" onClick={handleLoadMoreMessages} disabled={messagesLoading}>
+                {messagesLoading ? 'Loading…' : 'Load older messages'}
+              </button>
+            </div>
+          )}
+
+          {/* Table card */}
+          <div className="rf-card">
+            <div className="rf-card-hd">
+              <div>
+                <h3 className="rf-card-title">{showUnreadOnly ? 'Unread Refunds' : 'All Refunds'}</h3>
+                <p className="rf-card-sub">
+                  {refundsLoading || unreadLoading ? 'Loading…'
+                    : showUnreadOnly ? `${unreadRefunds.length} with unread messages`
+                    : `${totalRefunds} total`}
+                </p>
+              </div>
+            </div>
+            <div className="rf-card-body--np">
+              {renderTable()}
+              {renderPagination()}
             </div>
           </div>
-          <div className="rf-card-body--np">
-            {renderTable()}
-            {renderPagination()}
-          </div>
+
+          {/* Success toast */}
+          {success && successMessage && (
+            <div className="rf-toast-wrap" role="status" aria-live="polite">
+              <div className="rf-toast rf-toast--success">
+                <CheckCircle style={{ fontSize: 18 }} />
+                <div><strong>Success</strong><p>{successMessage}</p></div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Success toast */}
-        {success && successMessage && (
-          <div className="rf-toast-wrap" role="status" aria-live="polite">
-            <div className="rf-toast rf-toast--success">
-              <CheckCircle style={{ fontSize: 18 }} />
-              <div><strong>Success</strong><p>{successMessage}</p></div>
-            </div>
-          </div>
+        {renderDetailPanel()}
+
+        {/* FIX: MessageModal only mounts when currentRefund is populated */}
+        {showMessageModal && currentRefund && (
+          <RefundReturnMessagesModal
+            isOpen={showMessageModal}
+            onClose={handleCloseMessageModal}
+            orderId={selectedId}
+            orderInfo={{
+              orderNumber: currentRefund._id?.toString().slice(-6).toUpperCase(),
+              // FIX: getCustomerName — was user?.name which doesn't exist
+              customerName: getCustomerName(currentRefund.user),
+            }}
+            messages={messages}
+            onSendMessage={handleSendMessage}
+            // FIX: onRefresh now passed — modal reloads messages on open
+            onRefresh={handleModalRefresh}
+            loading={messagesLoading}
+            currentUserRole="admin"
+            type="refund"
+          />
         )}
       </div>
-
-      {renderDetailPanel()}
-
-      {/* FIX: MessageModal only mounts when currentRefund is populated */}
-      {showMessageModal && currentRefund && (
-        <RefundReturnMessagesModal
-          isOpen={showMessageModal}
-          onClose={handleCloseMessageModal}
-          orderId={selectedId}
-          orderInfo={{
-            orderNumber: currentRefund._id?.toString().slice(-6).toUpperCase(),
-            // FIX: getCustomerName — was user?.name which doesn't exist
-            customerName: getCustomerName(currentRefund.user),
-          }}
-          messages={messages}
-          onSendMessage={handleSendMessage}
-          // FIX: onRefresh now passed — modal reloads messages on open
-          onRefresh={handleModalRefresh}
-          loading={messagesLoading}
-          currentUserRole="admin"
-          type="refund"
-        />
-      )}
-    </div>
+      <Footer />
+    </>
   );
 };
 

@@ -41,6 +41,8 @@ import {
   clearPendingAttachments,
 } from '../features/admin/adminReturnSlice';
 import ReturnMessagesModal from '../Orders/ReturnMessagesModal';
+import Footer from '../components/footer'
+import Navbar from '../components/Navbar'
 import '../AdminStyles/AdminReturns.css';
 
 // ── Debounce hook ────────────────────────────────────────────────────────────
@@ -319,9 +321,6 @@ const AdminReturns = () => {
     setSelectedId(orderId);
     await dispatch(getSingleReturn(orderId));
     dispatch(getReturnMessages({ orderId, page: 1 }));
-    dispatch(getReturnTimeline(orderId));
-    dispatch(getReturnDocuments(orderId));
-    setShowDetailPanel(true);
     setShowMessageModal(true);
   }, [dispatch]);
 
@@ -1115,6 +1114,8 @@ const AdminReturns = () => {
 
   // ── Main render ───────────────────────────────────────────────────────────
   return (
+    <>
+    <Navbar />
     <div className="rt-page">
       <div className="rt-body">
 
@@ -1327,6 +1328,8 @@ const AdminReturns = () => {
         />
       )}
     </div>
+    <Footer />
+    </>
   );
 };
 
