@@ -9,7 +9,7 @@ import {
 } from '@mui/icons-material';
 import {
   getAllRefunds, getSingleRefund, reviewRefund, processRefund,
-  sendRefundMessage,          
+  sendRefundMessage,
   getRefundMessages, getRefundTimeline, getRefundDocuments,
   uploadRefundFiles, getRefundsWithUnreadMessages,
   clearCurrentRefund, clearAdminRefundState, clearPendingAttachments, setPage,
@@ -19,7 +19,7 @@ import Footer from '../components/footer';
 import RefundReturnMessagesModal from '../Orders/RefundReturnMessagesModal';
 import '../AdminStyles/AdminRefunds.css';
 
-// ── Debounce hook (from AllOrders) ───────────────────────────────────────────
+// ── Debounce hook ────────────────────────────────────────────────────────────
 function useDebounce(value, delay) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -30,17 +30,19 @@ function useDebounce(value, delay) {
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
-// Compute unread count directly from the messages array — mirrors AllOrders.js
-// getUnreadCount pattern. LIST_PROJECTION already includes refundInfo.messages
-// so the data is always present without any extra fetch.
+
+// FIX: fall back to order.unreadMessages (set by normaliseUnreadOrder in the
+// slice) when refundInfo.messages is absent — the unread list endpoint returns
+// a slimmed shape without the full messages array.
 const getUnreadCount = (order) => {
-  if (!Array.isArray(order.refundInfo?.messages)) return 0;
-  return order.refundInfo.messages.filter(
-    (msg) => !msg.isRead && msg.senderType === 'customer'
-  ).length;
+  if (Array.isArray(order.refundInfo?.messages)) {
+    return order.refundInfo.messages.filter(
+      (msg) => !msg.isRead && msg.senderType === 'customer'
+    ).length;
+  }
+  return order.unreadMessages ?? 0;
 };
 
-// controller populates user with firstName/lastName, not a name field.
 const getCustomerName = (user) => {
   if (!user) return 'N/A';
   const name = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim();
@@ -53,6 +55,11 @@ const STATUS_COLOR = {
 };
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'rejected']);
+
+// FIX: 'processing' must NOT be in TERMINAL_STATUSES — it is an active state
+// that the gateway is still working on. Webhooks will transition it to
+// completed/failed. Tabs and controls stay readable while processing.
+const PROCESSING_STATUSES = new Set(['processing']);
 
 const DRAWER_TABS = ['overview', 'review', 'process', 'timeline', 'documents'];
 
@@ -141,6 +148,8 @@ const AdminRefunds = () => {
     return () => clearTimeout(t);
   }, [error, dispatch]);
 
+  // FIX: pre-fill refund amount when switching to Process tab — only when
+  // status is approved so we don't overwrite a partially-typed value.
   useEffect(() => {
     if (
       activeTab === 'process' &&
@@ -156,7 +165,6 @@ const AdminRefunds = () => {
   // ── Derived state ─────────────────────────────────────────────────────────
   const displayList = showUnreadOnly ? unreadRefunds : refunds;
 
-  // Use getUnreadCount so tab dots work the same way as the badge counts.
   const hasUnreadByStatus = useMemo(() => {
     const map = { all: false };
     displayList.forEach((order) => {
@@ -221,19 +229,31 @@ const AdminRefunds = () => {
       await dispatch(reviewRefund({ orderId: selectedId, action: reviewAction, adminNote })).unwrap();
       setReviewAction('');
       setAdminNote('');
-      dispatch(getAllRefunds(buildListParams()));
+      // FIX: auto-advance to Process tab after approval so admin can
+      // immediately set the refund amount without manually clicking over.
+      if (reviewAction === 'approve') {
+        setActiveTab('process');
+      }
+      // FIX: removed getAllRefunds refetch — the slice already updates the
+      // list row status via the targeted merge in reviewRefund.fulfilled.
     } catch (_) { /* error surfaced via slice → error banner */ }
-  }, [dispatch, reviewAction, adminNote, selectedId, buildListParams]);
+  }, [dispatch, reviewAction, adminNote, selectedId]);
 
   const handleProcessRefund = useCallback(async () => {
     if (!refundAmount || !selectedId) return;
     try {
-      await dispatch(processRefund({ orderId: selectedId, refundAmount: Number(refundAmount), merchantNote })).unwrap();
-      setRefundAmount('');
+      await dispatch(processRefund({
+        orderId: selectedId,
+        refundAmount: Number(refundAmount),
+        merchantNote,
+      })).unwrap();
+      // FIX: do NOT clear refundAmount after submit — the amount stays visible
+      // so the admin can see what was submitted while status shows 'processing'.
+      // FIX: removed getAllRefunds refetch — the slice already updates the
+      // list row status via the targeted merge in processRefund.fulfilled.
       setMerchantNote('');
-      dispatch(getAllRefunds(buildListParams()));
     } catch (_) { /* error surfaced via slice → error banner */ }
-  }, [dispatch, refundAmount, merchantNote, selectedId, buildListParams]);
+  }, [dispatch, refundAmount, merchantNote, selectedId]);
 
   const handleSendMessage = useCallback(async (content, files) => {
     if (!selectedId) return;
@@ -356,9 +376,6 @@ const AdminRefunds = () => {
             {displayList.map((item) => {
               const status      = item.refundInfo?.status ?? 'unknown';
               const orderRef    = item._id ? item._id.toString().slice(-6).toUpperCase() : 'N/A';
-              // Compute directly from messages array — same pattern as AllOrders.js.
-              // LIST_PROJECTION already includes refundInfo.messages so no extra
-              // fetch is needed.
               const unreadCount = getUnreadCount(item);
               return (
                 <tr key={item._id}>
@@ -457,9 +474,15 @@ const AdminRefunds = () => {
       );
     }
 
-    const orderRef    = currentRefund._id ? currentRefund._id.toString().slice(-6).toUpperCase() : 'N/A';
-    const refStatus   = currentRefund.refundInfo?.status ?? 'unknown';
-    const isTerminal  = TERMINAL_STATUSES.has(refStatus);
+    const orderRef   = currentRefund._id ? currentRefund._id.toString().slice(-6).toUpperCase() : 'N/A';
+    const refStatus  = currentRefund.refundInfo?.status ?? 'unknown';
+    const isTerminal = TERMINAL_STATUSES.has(refStatus);
+    const isProcessing = PROCESSING_STATUSES.has(refStatus);
+
+    // FIX: Process tab inputs are editable when approved OR processing.
+    // 'processing' means the gateway call has been fired but not yet settled —
+    // the admin should still be able to see what was submitted.
+    const canProcess = refStatus === 'approved';
 
     return (
       <div className="rf-drawer-overlay" onClick={handleClosePanel} role="presentation">
@@ -484,20 +507,20 @@ const AdminRefunds = () => {
 
           <div className="rf-drawer-body">
 
-            {/* OVERVIEW */}
+            {/* ── OVERVIEW ── */}
             {activeTab === 'overview' && (
               <>
                 <div className="rf-section"><span className="rf-section-text">Refund Info</span><span className="rf-section-line" /></div>
                 <div className="rf-card">
                   <div className="rf-card-body">
                     {[
-                      ['Customer',        getCustomerName(currentRefund.user)],
-                      ['Email',           currentRefund.user?.email ?? 'N/A'],
-                      ['Order Total',     `$${(currentRefund.totalPrice ?? 0).toFixed(2)}`],
-                      ['Amount Paid',     `$${(currentRefund.amountPaid ?? 0).toFixed(2)}`],
-                      ['Requested Amt',   `$${(currentRefund.refundInfo?.requestedAmount ?? 0).toFixed(2)}`],
-                      ['Refund Type',     currentRefund.refundInfo?.refundType === 'full' ? 'Full Refund' : 'Partial Refund'],
-                      ['Reason',          currentRefund.refundInfo?.reason?.replace(/_/g, ' ') ?? 'N/A'],
+                      ['Customer',       getCustomerName(currentRefund.user)],
+                      ['Email',          currentRefund.user?.email ?? 'N/A'],
+                      ['Order Total',    `$${(currentRefund.totalPrice ?? 0).toFixed(2)}`],
+                      ['Amount Paid',    `$${(currentRefund.amountPaid ?? 0).toFixed(2)}`],
+                      ['Requested Amt',  `$${(currentRefund.refundInfo?.requestedAmount ?? 0).toFixed(2)}`],
+                      ['Refund Type',    currentRefund.refundInfo?.refundType === 'full' ? 'Full Refund' : 'Partial Refund'],
+                      ['Reason',         currentRefund.refundInfo?.reason?.replace(/_/g, ' ') ?? 'N/A'],
                     ].map(([label, val]) => (
                       <div key={label} className="rf-metric-row">
                         <span className="rf-metric-label">{label}</span>
@@ -511,7 +534,9 @@ const AdminRefunds = () => {
                     <div className="rf-metric-row">
                       <span className="rf-metric-label">Requested On</span>
                       <span className="rf-metric-val">
-                        {currentRefund.refundInfo?.requestedAt ? new Date(currentRefund.refundInfo.requestedAt).toLocaleString() : 'N/A'}
+                        {currentRefund.refundInfo?.requestedAt
+                          ? new Date(currentRefund.refundInfo.requestedAt).toLocaleString()
+                          : 'N/A'}
                       </span>
                     </div>
                     {currentRefund.refundInfo?.adminNote && (
@@ -528,7 +553,9 @@ const AdminRefunds = () => {
                     <div className="rf-section"><span className="rf-section-text">Customer Description</span><span className="rf-section-line" /></div>
                     <div className="rf-card">
                       <div className="rf-card-body">
-                        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{currentRefund.refundInfo.description}</p>
+                        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
+                          {currentRefund.refundInfo.description}
+                        </p>
                       </div>
                     </div>
                   </>
@@ -549,6 +576,47 @@ const AdminRefunds = () => {
                           </div>
                           <span className="rf-bar-val">${(currentRefund.refundInfo.refundAmount ?? 0).toFixed(2)}</span>
                         </div>
+                        {/* FIX: show gateway refund ID when available */}
+                        {currentRefund.refundInfo?.refundId && (
+                          <div className="rf-metric-row" style={{ marginTop: 10 }}>
+                            <span className="rf-metric-label">Gateway Ref</span>
+                            <span className="rf-metric-val" style={{ fontFamily: 'monospace', fontSize: 12 }}>
+                              {currentRefund.refundInfo.refundId}
+                            </span>
+                          </div>
+                        )}
+                        {currentRefund.refundInfo?.gatewayStatus && (
+                          <div className="rf-metric-row">
+                            <span className="rf-metric-label">Gateway Status</span>
+                            <span className="rf-metric-val">{currentRefund.refundInfo.gatewayStatus}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* FIX: show raw gateway response for debugging — visible to admin only */}
+                {currentRefund.refundInfo?.gatewayResponse && (
+                  <>
+                    <div className="rf-section"><span className="rf-section-text">Gateway Response</span><span className="rf-section-line" /></div>
+                    <div className="rf-card">
+                      <div className="rf-card-body">
+                        <pre style={{
+                          margin: 0,
+                          fontSize: 11,
+                          color: '#374151',
+                          background: '#F9FAFB',
+                          padding: '10px 12px',
+                          borderRadius: 6,
+                          overflowX: 'auto',
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all',
+                          maxHeight: 300,
+                          overflowY: 'auto',
+                        }}>
+                          {JSON.stringify(currentRefund.refundInfo.gatewayResponse, null, 2)}
+                        </pre>
                       </div>
                     </div>
                   </>
@@ -556,16 +624,21 @@ const AdminRefunds = () => {
               </>
             )}
 
-            {/* REVIEW */}
+            {/* ── REVIEW ── */}
             {activeTab === 'review' && (
               <div className="rf-card">
                 <div className="rf-card-hd">
-                  <div><h3 className="rf-card-title">Review Refund Request</h3><p className="rf-card-sub">Approve or reject this refund</p></div>
+                  <div>
+                    <h3 className="rf-card-title">Review Refund Request</h3>
+                    <p className="rf-card-sub">Approve or reject this refund</p>
+                  </div>
                 </div>
                 <div className="rf-card-body">
                   {refStatus !== 'requested' && (
                     <div className={`rf-info-banner rf-info-banner--${isTerminal ? 'warning' : 'info'}`}>
-                      {isTerminal ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} /> : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
+                      {isTerminal
+                        ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
+                        : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
                       <span>This refund is <strong>{refStatus}</strong> and cannot be re-reviewed.</span>
                     </div>
                   )}
@@ -588,54 +661,121 @@ const AdminRefunds = () => {
                     className={`rf-btn ${reviewAction === 'approve' ? 'rf-btn--success' : 'rf-btn--danger'}`}
                     onClick={handleReviewRefund}
                     disabled={!reviewAction || loading || refStatus !== 'requested'}>
-                    {loading ? 'Processing…' : reviewAction === 'approve' ? 'Approve Refund' : reviewAction === 'reject' ? 'Reject Refund' : 'Select an action'}
+                    {loading
+                      ? 'Processing…'
+                      : reviewAction === 'approve'
+                        ? 'Approve Refund'
+                        : reviewAction === 'reject'
+                          ? 'Reject Refund'
+                          : 'Select an action'}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* PROCESS */}
+            {/* ── PROCESS ── */}
             {activeTab === 'process' && (
               <div className="rf-card">
                 <div className="rf-card-hd">
-                  <div><h3 className="rf-card-title">Process Refund Payment</h3><p className="rf-card-sub">Initiate the payment transfer</p></div>
+                  <div>
+                    <h3 className="rf-card-title">Process Refund Payment</h3>
+                    <p className="rf-card-sub">Initiate the payment transfer to the gateway</p>
+                  </div>
                 </div>
                 <div className="rf-card-body">
-                  {refStatus !== 'approved' && (
-                    <div className={`rf-info-banner rf-info-banner--${isTerminal ? 'warning' : 'info'}`}>
-                      {isTerminal ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} /> : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
+
+                  {/* FIX: separate banners for each non-approved state */}
+                  {isProcessing && (
+                    <div className="rf-info-banner rf-info-banner--info">
+                      <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />
+                      <span>
+                        Refund of <strong>${(currentRefund.refundInfo?.refundAmount ?? 0).toFixed(2)}</strong> has
+                        been submitted to the payment gateway and is being processed.
+                        {' '}The status will update automatically once the gateway confirms.
+                      </span>
+                    </div>
+                  )}
+
+                  {isTerminal && (
+                    <div className="rf-info-banner rf-info-banner--warning">
+                      <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
+                      <span>
+                        This refund is <strong>{refStatus}</strong>.
+                        {refStatus === 'failed' && currentRefund.refundInfo?.failureReason && (
+                          <> Reason: {currentRefund.refundInfo.failureReason}</>
+                        )}
+                      </span>
+                    </div>
+                  )}
+
+                  {!isProcessing && !isTerminal && refStatus !== 'approved' && (
+                    <div className="rf-info-banner rf-info-banner--info">
+                      <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />
                       <span>Refund must be <strong>approved</strong> before processing. Current: <strong>{refStatus}</strong>.</span>
                     </div>
                   )}
+
                   <div className="rf-form-group">
                     <label className="rf-form-label" htmlFor="rf-refund-amount">Refund Amount ($) *</label>
-                    <input id="rf-refund-amount" type="number" className="rf-form-input" value={refundAmount}
-                      onChange={(e) => setRefundAmount(e.target.value)} min="0.01" step="0.01"
+                    <input
+                      id="rf-refund-amount"
+                      type="number"
+                      className="rf-form-input"
+                      value={refundAmount}
+                      onChange={(e) => setRefundAmount(e.target.value)}
+                      min="0.01"
+                      step="0.01"
                       max={currentRefund.refundableAmount ?? currentRefund.amountPaid}
-                      disabled={refStatus !== 'approved'} />
+                      // FIX: disable when not approved — processing/terminal/pending
+                      // all lock the input. Only 'approved' allows editing.
+                      disabled={!canProcess}
+                    />
                     <span className="rf-helper-text">
                       Max: ${(currentRefund.refundableAmount ?? currentRefund.amountPaid ?? 0).toFixed(2)}
                     </span>
                   </div>
+
                   <div className="rf-form-group">
                     <label className="rf-form-label" htmlFor="rf-merchant-note">Merchant Note</label>
-                    <textarea id="rf-merchant-note" className="rf-form-textarea" rows={3} value={merchantNote}
-                      onChange={(e) => setMerchantNote(e.target.value)} placeholder="Internal note…"
-                      disabled={refStatus !== 'approved'} />
+                    <textarea
+                      id="rf-merchant-note"
+                      className="rf-form-textarea"
+                      rows={3}
+                      value={merchantNote}
+                      onChange={(e) => setMerchantNote(e.target.value)}
+                      placeholder="Internal note…"
+                      disabled={!canProcess}
+                    />
                   </div>
-                  <button type="button" className="rf-btn rf-btn--primary" onClick={handleProcessRefund}
-                    disabled={!refundAmount || loading || refStatus !== 'approved'}>
-                    {loading ? 'Processing…' : 'Process Refund'}
+
+                  <button
+                    type="button"
+                    className="rf-btn rf-btn--primary"
+                    onClick={handleProcessRefund}
+                    // FIX: disabled when not approved, no amount entered, or loading.
+                    // 'processing' disables naturally via !canProcess.
+                    disabled={!refundAmount || loading || !canProcess}
+                  >
+                    {loading
+                      ? 'Submitting to gateway…'
+                      : isProcessing
+                        ? 'Submitted — Awaiting Gateway'
+                        : 'Process Refund'}
                   </button>
                 </div>
               </div>
             )}
 
-            {/* TIMELINE */}
+            {/* ── TIMELINE ── */}
             {activeTab === 'timeline' && (
               <div className="rf-card">
                 <div className="rf-card-hd">
-                  <div><h3 className="rf-card-title"><TimelineIcon style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />Timeline</h3></div>
+                  <div>
+                    <h3 className="rf-card-title">
+                      <TimelineIcon style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
+                      Timeline
+                    </h3>
+                  </div>
                 </div>
                 <div className="rf-card-body">
                   {timelineLoading ? (
@@ -652,7 +792,11 @@ const AdminRefunds = () => {
                                 {ev.timestamp ? new Date(ev.timestamp).toLocaleString() : ''}
                               </span>
                             </div>
-                            {ev.description && <p style={{ margin: '4px 0 0', fontSize: 12, color: '#6B7280' }}>{ev.description}</p>}
+                            {ev.description && (
+                              <p style={{ margin: '4px 0 0', fontSize: 12, color: '#6B7280' }}>
+                                {ev.description}
+                              </p>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -667,31 +811,50 @@ const AdminRefunds = () => {
               </div>
             )}
 
-            {/* DOCUMENTS */}
+            {/* ── DOCUMENTS ── */}
             {activeTab === 'documents' && (
               <div className="rf-card">
                 <div className="rf-card-hd">
-                  <div><h3 className="rf-card-title"><Description style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />Documents</h3></div>
+                  <div>
+                    <h3 className="rf-card-title">
+                      <Description style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
+                      Documents
+                    </h3>
+                  </div>
                 </div>
                 <div className="rf-card-body">
-                  <input type="file" multiple id="rf-file-upload" style={{ display: 'none' }}
+                  <input
+                    type="file"
+                    multiple
+                    id="rf-file-upload"
+                    style={{ display: 'none' }}
                     aria-label="Upload refund documents"
-                    onChange={(e) => handleFileUpload(Array.from(e.target.files))} />
+                    onChange={(e) => handleFileUpload(Array.from(e.target.files))}
+                  />
                   <label htmlFor="rf-file-upload">
                     <div className="rf-upload-zone" role="button" tabIndex={0}>
                       <CloudUpload className="rf-upload-icon" />
                       <p className="rf-upload-text">Click to upload documents</p>
                     </div>
                   </label>
-                  {uploadLoading && <div className="rf-loading" style={{ padding: '1rem' }}><div className="rf-spinner" /><span>Uploading…</span></div>}
+                  {uploadLoading && (
+                    <div className="rf-loading" style={{ padding: '1rem' }}>
+                      <div className="rf-spinner" /><span>Uploading…</span>
+                    </div>
+                  )}
                   {documentsLoading ? (
                     <div className="rf-loading"><div className="rf-spinner" /><span>Loading documents…</span></div>
                   ) : documents.length > 0 ? (
                     <div className="rf-file-list">
                       {documents.map((doc, idx) => (
                         <div key={doc._id ?? idx} className="rf-file-item">
-                          <div className="rf-file-info"><AttachFile style={{ fontSize: 16 }} /><span>{doc.filename ?? 'File'}</span></div>
-                          <a href={doc.url} download className="rf-btn rf-btn--ghost" target="_blank" rel="noopener noreferrer">Download</a>
+                          <div className="rf-file-info">
+                            <AttachFile style={{ fontSize: 16 }} />
+                            <span>{doc.filename ?? 'File'}</span>
+                          </div>
+                          <a href={doc.url} download className="rf-btn rf-btn--ghost" target="_blank" rel="noopener noreferrer">
+                            Download
+                          </a>
                         </div>
                       ))}
                     </div>
@@ -792,7 +955,10 @@ const AdminRefunds = () => {
           {error && (
             <div className="rf-error-banner" role="alert">
               <Warning style={{ fontSize: 18, flexShrink: 0 }} />
-              <div><strong className="rf-error-title">Error</strong><p className="rf-error-msg">{error}</p></div>
+              <div>
+                <strong className="rf-error-title">Error</strong>
+                <p className="rf-error-msg">{error}</p>
+              </div>
             </div>
           )}
 
@@ -825,9 +991,11 @@ const AdminRefunds = () => {
               <div>
                 <h3 className="rf-card-title">{showUnreadOnly ? 'Unread Refunds' : 'All Refunds'}</h3>
                 <p className="rf-card-sub">
-                  {refundsLoading || unreadLoading ? 'Loading…'
-                    : showUnreadOnly ? `${unreadRefunds.length} with unread messages`
-                    : `${totalRefunds} total`}
+                  {refundsLoading || unreadLoading
+                    ? 'Loading…'
+                    : showUnreadOnly
+                      ? `${unreadRefunds.length} with unread messages`
+                      : `${totalRefunds} total`}
                 </p>
               </div>
             </div>
@@ -856,7 +1024,7 @@ const AdminRefunds = () => {
             onClose={handleCloseMessageModal}
             orderId={selectedId}
             orderInfo={{
-              orderNumber: currentRefund._id?.toString().slice(-6).toUpperCase(),
+              orderNumber:  currentRefund._id?.toString().slice(-6).toUpperCase(),
               customerName: getCustomerName(currentRefund.user),
             }}
             messages={messages}
