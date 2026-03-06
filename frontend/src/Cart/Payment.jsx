@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useNavigate } from "react-router-dom";
 
@@ -95,11 +95,14 @@ function Payment() {
   const [selectedGateway, setSelectedGateway] = useState("paystack");
   const [selectedCurrency, setSelectedCurrency] = useState("USD");
 
+  // FIX 1: useState (not just ref) so hiding the button triggers a re-render
+  const [flutterwaveOpen, setFlutterwaveOpen] = useState(false);
+
   const paystackTriggered = useRef(false);
   const flutterwaveTriggered = useRef(false);
   const stripeFormRef = useRef(null);
 
-  // Mount-only guards — must not react to state cleared during/after payment
+  // Mount-only guards
   useEffect(() => {
     if (!checkoutSession && !checkoutId) {
       toast.warning("Please complete checkout first", { position: "top-center" });
@@ -149,7 +152,11 @@ function Payment() {
     }
   }, [selectedGateway, paymentData?.client_secret]);
 
-  const openPaystackPopup = React.useCallback(() => {
+  // FIX 2: Removed unused `transactionId` variable from the callback.
+  // FIX 3: openPaystackPopup uses `paymentData` from closure — stable because
+  //         it's only called after paymentData is confirmed non-null in the
+  //         trigger useEffect below.
+  const openPaystackPopup = useCallback(() => {
     if (!window.PaystackPop) { toast.error("Paystack SDK not loaded"); return; }
     const key = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
     if (!key) { toast.error("Paystack public key missing"); return; }
@@ -202,25 +209,33 @@ function Payment() {
     };
   }, [paymentData, selectedGateway, user.email, user.name, checkoutSession]);
 
-  const handleFlutterwavePayment = useFlutterwave(
-    flutterwaveConfig || {
-      public_key: "",
-      tx_ref: "",
-      amount: 0,
-      currency: "NGN",
-      customer: { email: "", name: "" }
-    }
-  );
+  // FIX 4: useFlutterwave must always be called with a valid-shaped config
+  //         (React hook rules). We pass a stable fallback when config is null.
+  const safeFlutterwaveConfig = flutterwaveConfig || {
+    public_key: import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY || "",
+    tx_ref: "placeholder",
+    amount: 0,
+    currency: "NGN",
+    customer: { email: user?.email || "", name: user?.name || "Customer" }
+  };
 
-  const triggerFlutterwavePayment = React.useCallback(() => {
+  const handleFlutterwavePayment = useFlutterwave(safeFlutterwaveConfig);
+
+  const triggerFlutterwavePayment = useCallback(() => {
     if (!flutterwaveConfig) { toast.error("Payment configuration not ready"); return; }
+
+    // FIX 1 (continued): set open state so the Pay button unmounts behind the modal
+    setFlutterwaveOpen(true);
+
     handleFlutterwavePayment({
       callback: (response) => {
         closePaymentModal();
+        setFlutterwaveOpen(false);
+
         if (response.status === "successful" || response.status === "completed") {
-          const transactionId = String(response.transaction_id);
           const txRef = response.tx_ref;
-          dispatch(verifyPayment({ gateway: "flutterwave", reference: response.tx_ref }))
+          const transactionId = String(response.transaction_id); // numeric ID — bypasses unreliable tx_ref search
+          dispatch(verifyPayment({ gateway: "flutterwave", reference: txRef, transactionId }))
             .unwrap()
             .then(() => {
               dispatch(clearCart());
@@ -236,6 +251,7 @@ function Payment() {
       },
       onClose: () => {
         toast.info("Payment cancelled");
+        setFlutterwaveOpen(false);
         dispatch(clearPaymentData());
         flutterwaveTriggered.current = false;
       }
@@ -246,6 +262,7 @@ function Payment() {
     if (!paymentData) {
       paystackTriggered.current = false;
       flutterwaveTriggered.current = false;
+      setFlutterwaveOpen(false);
       return;
     }
     if (selectedGateway === "paystack" && paymentData.authorization_url && !paystackTriggered.current) {
@@ -266,6 +283,8 @@ function Payment() {
 
     paystackTriggered.current = false;
     flutterwaveTriggered.current = false;
+    // FIX 5: also reset flutterwaveOpen on fresh initialization
+    setFlutterwaveOpen(false);
 
     dispatch(
       initializePayment({
@@ -332,19 +351,19 @@ function Payment() {
 
   const selectedGatewayConfig = gateways.find((g) => g.value === selectedGateway);
 
-const orderSummary = paymentData?.breakdown
-  ? {
-      subtotal: paymentData.breakdown.itemPrice || 0,
-      tax: paymentData.breakdown.taxPrice || 0,
-      shipping: paymentData.breakdown.shippingPrice || 0,
-      total: paymentData.breakdown.totalPrice || 0
-    }
-  : {
-      subtotal: checkoutPricing?.itemPrice || 0,
-      tax: checkoutPricing?.taxPrice || 0,
-      shipping: checkoutPricing?.shippingPrice || 0,
-      total: checkoutPricing?.totalPrice || 0
-    };
+  const orderSummary = paymentData?.breakdown
+    ? {
+        subtotal: paymentData.breakdown.itemPrice || 0,
+        tax: paymentData.breakdown.taxPrice || 0,
+        shipping: paymentData.breakdown.shippingPrice || 0,
+        total: paymentData.breakdown.totalPrice || 0
+      }
+    : {
+        subtotal: checkoutPricing?.itemPrice || 0,
+        tax: checkoutPricing?.taxPrice || 0,
+        shipping: checkoutPricing?.shippingPrice || 0,
+        total: checkoutPricing?.totalPrice || 0
+      };
 
   return (
     <>
@@ -383,31 +402,31 @@ const orderSummary = paymentData?.breakdown
                         dispatch(clearPaymentData());
                         paystackTriggered.current = false;
                         flutterwaveTriggered.current = false;
+                        // FIX 6: reset modal state when switching gateways
+                        setFlutterwaveOpen(false);
                       }}
                     />
-                    
-                      <div className="ep-gateway-content">
-                        <div className="ep-gateway-logo-wrapper">
-                          <img
-                            src={gateway.logo}
-                            alt={gateway.label}
-                            className="ep-gateway-logo-img"
-                            onError={(e) => {
-                              e.target.style.display = "none";
-                              const fallback = e.target.parentNode.querySelector('.ep-gateway-logo-fallback');
-                              if (fallback) fallback.style.display = 'block';
-                            }}
-                          />
-                          <span className="ep-gateway-logo-fallback" style={{ display: 'none' }}>
-                            {gateway.label}
-                          </span>
-                        </div>
-                        <span className="ep-gateway-name">{gateway.label}</span>
-                        {selectedGateway === gateway.value && (
-                          <FiCheckCircle className="ep-check-icon" />
-                        )}
+                    <div className="ep-gateway-content">
+                      <div className="ep-gateway-logo-wrapper">
+                        <img
+                          src={gateway.logo}
+                          alt={gateway.label}
+                          className="ep-gateway-logo-img"
+                          onError={(e) => {
+                            e.target.style.display = "none";
+                            const fallback = e.target.parentNode.querySelector(".ep-gateway-logo-fallback");
+                            if (fallback) fallback.style.display = "block";
+                          }}
+                        />
+                        <span className="ep-gateway-logo-fallback" style={{ display: "none" }}>
+                          {gateway.label}
+                        </span>
                       </div>
-
+                      <span className="ep-gateway-name">{gateway.label}</span>
+                      {selectedGateway === gateway.value && (
+                        <FiCheckCircle className="ep-check-icon" />
+                      )}
+                    </div>
                   </label>
                 ))}
               </div>
@@ -523,7 +542,8 @@ const orderSummary = paymentData?.breakdown
                 <span>Secure Payment</span>
               </div>
 
-              {selectedGateway !== "stripe" && (
+              {/* FIX 1 (final): hide Pay button while Flutterwave modal is open */}
+              {selectedGateway !== "stripe" && !flutterwaveOpen && (
                 <button
                   className="ep-pay-btn"
                   onClick={handleInitializePayment}

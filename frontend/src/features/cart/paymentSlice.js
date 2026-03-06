@@ -2,7 +2,7 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
 // ----------------------
-// INITIALIZE PAYMENT THUNK (NEW - SECURE FLOW)
+// INITIALIZE PAYMENT THUNK
 // ----------------------
 export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
@@ -12,20 +12,11 @@ export const initializePayment = createAsyncThunk(
 
       const { data } = await axios.post(
         "/api/v1/payment/initialize",
-        {
-          gateway,
-          currency,
-          shippingInfo,
-          cartItems // Only send product IDs and quantities
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`
-          }
-        }
+        { gateway, currency, shippingInfo, cartItems },
+        { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
       );
 
-      return data.data; // Contains: reference, orderId, amount, authorization_url, etc.
+      return data.data;
     } catch (error) {
       return rejectWithValue(
         error.response?.data || { message: "Payment initialization failed" }
@@ -35,23 +26,20 @@ export const initializePayment = createAsyncThunk(
 );
 
 // ----------------------
-// VERIFY PAYMENT THUNK (UPDATED - SIMPLIFIED)
+// VERIFY PAYMENT THUNK
 // ----------------------
 export const verifyPayment = createAsyncThunk(
   "payment/verifyPayment",
   async (payload, { rejectWithValue }) => {
     try {
-      const { gateway = "paystack", reference } = payload;
+      const { gateway = "paystack", reference, transactionId } = payload;
 
-      // Only send gateway and reference - backend has all other data
+      // transactionId is passed for Flutterwave to bypass the unreliable
+      // tx_ref search endpoint — backend will use it directly if present.
       const { data } = await axios.post(
         "/api/v1/payment/verify",
-        { gateway, reference },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`
-          }
-        }
+        { gateway, reference, transactionId },
+        { headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }
       );
 
       return data;
@@ -68,23 +56,23 @@ export const verifyPayment = createAsyncThunk(
 // ----------------------
 const initialState = {
   loading: false,
-  initLoading: false, // Separate loading for initialization
+  initLoading: false,
   success: false,
   error: null,
   message: null,
   order: null,
-  paymentData: null // Store initialization data (reference, authorization_url, etc.)
+  paymentData: null
 };
 
 const paymentSlice = createSlice({
   name: "payment",
   initialState,
   reducers: {
-    removePaymentError: (state) => { 
-      state.error = null; 
+    removePaymentError: (state) => {
+      state.error = null;
     },
-    removePaymentMessage: (state) => { 
-      state.message = null; 
+    removePaymentMessage: (state) => {
+      state.message = null;
     },
     resetPaymentState: (state) => {
       state.loading = false;
@@ -109,7 +97,7 @@ const paymentSlice = createSlice({
       })
       .addCase(initializePayment.fulfilled, (state, action) => {
         state.initLoading = false;
-        state.paymentData = action.payload; // Store reference, authorization_url, etc.
+        state.paymentData = action.payload;
       })
       .addCase(initializePayment.rejected, (state, action) => {
         state.initLoading = false;
@@ -138,11 +126,11 @@ const paymentSlice = createSlice({
   }
 });
 
-export const { 
-  removePaymentError, 
-  removePaymentMessage, 
+export const {
+  removePaymentError,
+  removePaymentMessage,
   resetPaymentState,
-  clearPaymentData 
+  clearPaymentData
 } = paymentSlice.actions;
 
 export default paymentSlice.reducer;
