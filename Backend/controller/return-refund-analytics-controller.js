@@ -4,9 +4,6 @@ import Product from "../models/product-model.js";
 import { getCache, setCache } from "../utils/redis.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getDateRanges } from "../utils/dateRanges.js";
-// FIX RR1: calculateTrend was missing. Both getReturnOverview and getRefundOverview
-// calculated trends manually inline — inconsistent with every other controller and
-// wrong when previous is 0 (divide-by-zero produces NaN, not 100% increase).
 import { calculateTrend } from "../utils/calculateTrend.js";
 
 // ============================================
@@ -36,12 +33,12 @@ export const getReturnOverview = handleAsyncError(async (req, res, next) => {
           _id: null,
           totalReturns: { $sum: 1 },
           requested: { $sum: { $cond: [{ $eq: ["$returnInfo.status", "requested"] }, 1, 0] } },
-          approved: { $sum: { $cond: [{ $eq: ["$returnInfo.status", "approved"] }, 1, 0] } },
+          approved:  { $sum: { $cond: [{ $eq: ["$returnInfo.status", "approved"] },  1, 0] } },
           inTransit: { $sum: { $cond: [{ $eq: ["$returnInfo.status", "in_transit"] }, 1, 0] } },
-          received: { $sum: { $cond: [{ $eq: ["$returnInfo.status", "received"] }, 1, 0] } },
+          received:  { $sum: { $cond: [{ $eq: ["$returnInfo.status", "received"] },  1, 0] } },
           completed: { $sum: { $cond: [{ $eq: ["$returnInfo.status", "completed"] }, 1, 0] } },
-          rejected: { $sum: { $cond: [{ $eq: ["$returnInfo.status", "rejected"] }, 1, 0] } },
-          totalValue: { $sum: "$totalPrice" },
+          rejected:  { $sum: { $cond: [{ $eq: ["$returnInfo.status", "rejected"] },  1, 0] } },
+          totalValue:    { $sum: "$totalPrice" },
           avgOrderValue: { $avg: "$totalPrice" }
         }
       }
@@ -64,13 +61,13 @@ export const getReturnOverview = handleAsyncError(async (req, res, next) => {
 
   const current = currentReturns[0] || {
     totalReturns: 0,
-    requested: 0,
-    approved: 0,
-    inTransit: 0,
-    received: 0,
-    completed: 0,
-    rejected: 0,
-    totalValue: 0,
+    requested:    0,
+    approved:     0,
+    inTransit:    0,
+    received:     0,
+    completed:    0,
+    rejected:     0,
+    totalValue:   0,
     avgOrderValue: 0
   };
   const previous = previousReturns[0] || { totalReturns: 0 };
@@ -108,6 +105,7 @@ export const getReturnOverview = handleAsyncError(async (req, res, next) => {
           }
         }
       },
+      { $match: { processingTime: { $gt: 0 } } },
       { $group: { _id: null, avgProcessingDays: { $avg: "$processingTime" } } }
     ])
   ]);
@@ -119,16 +117,15 @@ export const getReturnOverview = handleAsyncError(async (req, res, next) => {
       avgProcessingDays: processingTimes[0]?.avgProcessingDays || 0
     },
     previousPeriod: { totalReturns: previous.totalReturns },
-    // FIX RR1: Use calculateTrend — handles previous=0 safely (returns 0 not NaN).
     trend: calculateTrend(current.totalReturns, previous.totalReturns),
     breakdown: {
       byStatus: {
         requested: current.requested,
-        approved: current.approved,
+        approved:  current.approved,
         inTransit: current.inTransit,
-        received: current.received,
+        received:  current.received,
         completed: current.completed,
-        rejected: current.rejected
+        rejected:  current.rejected
       },
       byReason: returnReasons
     }
@@ -151,8 +148,8 @@ export const getReturnsByProduct = handleAsyncError(async (req, res, next) => {
       { $unwind: "$returnInfo.itemsToReturn" },
       {
         $group: {
-          _id: "$returnInfo.itemsToReturn.product",
-          totalReturns: { $sum: 1 },
+          _id:           "$returnInfo.itemsToReturn.product",
+          totalReturns:  { $sum: 1 },
           totalQuantity: { $sum: "$returnInfo.itemsToReturn.quantity" }
         }
       }
@@ -167,8 +164,8 @@ export const getReturnsByProduct = handleAsyncError(async (req, res, next) => {
       { $unwind: "$orderItems" },
       {
         $group: {
-          _id: "$orderItems.product",
-          totalSales: { $sum: 1 },
+          _id:               "$orderItems.product",
+          totalSales:        { $sum: 1 },
           totalQuantitySold: { $sum: "$orderItems.quantity" }
         }
       }
@@ -196,15 +193,15 @@ export const getReturnsByProduct = handleAsyncError(async (req, res, next) => {
       return {
         product: product
           ? {
-              _id: product._id,
-              name: product.name,
-              image: product.images?.[0]?.url,
+              _id:      product._id,
+              name:     product.name,
+              image:    product.images?.[0]?.url,
               category: product.category,
-              price: product.pricing?.regular || 0
+              price:    product.pricing?.regular || 0
             }
           : null,
         returns: { totalReturns: item.totalReturns, totalQuantity: item.totalQuantity },
-        sales: { totalSales: sales.totalSales, totalQuantitySold: sales.totalQuantitySold },
+        sales:   { totalSales: sales.totalSales, totalQuantitySold: sales.totalQuantitySold },
         returnRate
       };
     })
@@ -227,8 +224,7 @@ export const getReturnsByProduct = handleAsyncError(async (req, res, next) => {
         sortedProducts.length > 0
           ? Math.round(
               (sortedProducts.reduce((sum, p) => sum + p.returnRate, 0) /
-                sortedProducts.length) *
-                100
+                sortedProducts.length) * 100
             ) / 100
           : 0
     }
@@ -249,10 +245,10 @@ export const getReturnsByCategory = handleAsyncError(async (req, res, next) => {
       { $unwind: "$returnInfo.itemsToReturn" },
       {
         $lookup: {
-          from: "products",
-          localField: "returnInfo.itemsToReturn.product",
+          from:         "products",
+          localField:   "returnInfo.itemsToReturn.product",
           foreignField: "_id",
-          as: "productDetails"
+          as:           "productDetails"
         }
       },
       { $unwind: "$productDetails" },
@@ -269,10 +265,10 @@ export const getReturnsByCategory = handleAsyncError(async (req, res, next) => {
       { $unwind: "$orderItems" },
       {
         $lookup: {
-          from: "products",
-          localField: "orderItems.product",
+          from:         "products",
+          localField:   "orderItems.product",
           foreignField: "_id",
-          as: "productDetails"
+          as:           "productDetails"
         }
       },
       { $unwind: "$productDetails" },
@@ -322,15 +318,15 @@ export const getRefundOverview = handleAsyncError(async (req, res, next) => {
       {
         $group: {
           _id: null,
-          totalRefunds: { $sum: 1 },
-          requested: { $sum: { $cond: [{ $eq: ["$refundInfo.status", "requested"] }, 1, 0] } },
-          approved: { $sum: { $cond: [{ $eq: ["$refundInfo.status", "approved"] }, 1, 0] } },
-          processing: { $sum: { $cond: [{ $eq: ["$refundInfo.status", "processing"] }, 1, 0] } },
-          completed: { $sum: { $cond: [{ $eq: ["$refundInfo.status", "completed"] }, 1, 0] } },
-          rejected: { $sum: { $cond: [{ $eq: ["$refundInfo.status", "rejected"] }, 1, 0] } },
-          failed: { $sum: { $cond: [{ $eq: ["$refundInfo.status", "failed"] }, 1, 0] } },
+          totalRefunds:      { $sum: 1 },
+          requested:         { $sum: { $cond: [{ $eq: ["$refundInfo.status", "requested"] },  1, 0] } },
+          approved:          { $sum: { $cond: [{ $eq: ["$refundInfo.status", "approved"] },   1, 0] } },
+          processing:        { $sum: { $cond: [{ $eq: ["$refundInfo.status", "processing"] }, 1, 0] } },
+          completed:         { $sum: { $cond: [{ $eq: ["$refundInfo.status", "completed"] },  1, 0] } },
+          rejected:          { $sum: { $cond: [{ $eq: ["$refundInfo.status", "rejected"] },   1, 0] } },
+          failed:            { $sum: { $cond: [{ $eq: ["$refundInfo.status", "failed"] },     1, 0] } },
           totalRefundAmount: { $sum: "$refundInfo.refundAmount" },
-          avgRefundAmount: { $avg: "$refundInfo.refundAmount" }
+          avgRefundAmount:   { $avg: "$refundInfo.refundAmount" }
         }
       }
     ]),
@@ -344,7 +340,7 @@ export const getRefundOverview = handleAsyncError(async (req, res, next) => {
       {
         $group: {
           _id: null,
-          totalRefunds: { $sum: 1 },
+          totalRefunds:      { $sum: 1 },
           totalRefundAmount: { $sum: "$refundInfo.refundAmount" }
         }
       }
@@ -352,19 +348,19 @@ export const getRefundOverview = handleAsyncError(async (req, res, next) => {
   ]);
 
   const current = currentRefunds[0] || {
-    totalRefunds: 0,
-    requested: 0,
-    approved: 0,
-    processing: 0,
-    completed: 0,
-    rejected: 0,
-    failed: 0,
+    totalRefunds:      0,
+    requested:         0,
+    approved:          0,
+    processing:        0,
+    completed:         0,
+    rejected:          0,
+    failed:            0,
     totalRefundAmount: 0,
-    avgRefundAmount: 0
+    avgRefundAmount:   0
   };
   const previous = previousRefunds[0] || { totalRefunds: 0, totalRefundAmount: 0 };
 
-  const [refundReasons, processingTimes] = await Promise.all([
+  const [refundReasons, processingTimes, totalSuccessfulOrders] = await Promise.all([
     Order.aggregate([
       {
         $match: {
@@ -374,8 +370,8 @@ export const getRefundOverview = handleAsyncError(async (req, res, next) => {
       },
       {
         $group: {
-          _id: "$refundInfo.reason",
-          count: { $sum: 1 },
+          _id:         "$refundInfo.reason",
+          count:       { $sum: 1 },
           totalAmount: { $sum: "$refundInfo.refundAmount" }
         }
       },
@@ -385,48 +381,96 @@ export const getRefundOverview = handleAsyncError(async (req, res, next) => {
       {
         $match: {
           "refundInfo.status": "completed",
-          "refundInfo.requestedAt": { $gte: currentPeriodStart }
+          "refundInfo.requestedAt": { $exists: true, $ne: null },
+          $or: [
+            { "refundInfo.refundedAt":  { $gte: currentPeriodStart } },
+            { "refundInfo.processedAt": { $gte: currentPeriodStart } },
+            { "updatedAt":              { $gte: currentPeriodStart } }
+          ]
         }
       },
       {
         $project: {
           processingTime: {
             $divide: [
-              { $subtract: ["$refundInfo.refundedAt", "$refundInfo.requestedAt"] },
-              1000 * 60 * 60 * 24
+              {
+                $subtract: [
+                  {
+                    $ifNull: [
+                      "$refundInfo.refundedAt",
+                      "$refundInfo.processedAt",
+                      "$updatedAt"
+                    ]
+                  },
+                  "$refundInfo.requestedAt"
+                ]
+              },
+              1000 * 60 * 60 // hours directly
             ]
           }
         }
       },
-      { $group: { _id: null, avgProcessingDays: { $avg: "$processingTime" } } }
-    ])
+      { $match: { processingTime: { $gte: 0 } } }, // include instant dev completions
+      { $group: { _id: null, avgProcessingHrs: { $avg: "$processingTime" } } }
+    ]),
+    Order.countDocuments({
+      "paymentInfo.status": "success",
+      $or: [
+        { "paymentInfo.paidAt": { $gte: currentPeriodStart } },
+        { createdAt:            { $gte: currentPeriodStart } }
+      ]
+    })
   ]);
+
+  const byStatus = {
+    requested:  current.requested,
+    approved:   current.approved,
+    processing: current.processing,
+    completed:  current.completed,
+    rejected:   current.rejected,
+    failed:     current.failed,
+  };
+
+  const refundRate =
+  totalSuccessfulOrders > 0
+    ? Math.round((current.completed / totalSuccessfulOrders) * 100 * 100) / 100
+    : 0;
+
+  const avgProcessingHrs = Math.round((processingTimes[0]?.avgProcessingHrs || 0) * 10) / 10;
 
   const response = {
     currentPeriod: {
       ...current,
-      avgProcessingDays: processingTimes[0]?.avgProcessingDays || 0
+      refundRate,          // FIX 1: was missing from currentPeriod
+      avgProcessingHrs,    // FIX 4: renamed from avgProcessingDays, now in hours directly
     },
     previousPeriod: {
-      totalRefunds: previous.totalRefunds,
-      totalRefundAmount: previous.totalRefundAmount
+      totalRefunds:      previous.totalRefunds,
+      totalRefundAmount: previous.totalRefundAmount,
     },
     trends: {
-      // FIX RR1 (same): Use calculateTrend instead of manual divide-by-zero-prone expression.
-      refunds: calculateTrend(current.totalRefunds, previous.totalRefunds),
-      amount: calculateTrend(current.totalRefundAmount, previous.totalRefundAmount)
+      refunds: calculateTrend(current.totalRefunds,      previous.totalRefunds),
+      amount:  calculateTrend(current.totalRefundAmount, previous.totalRefundAmount),
     },
     breakdown: {
-      byStatus: {
-        requested: current.requested,
-        approved: current.approved,
-        processing: current.processing,
-        completed: current.completed,
-        rejected: current.rejected,
-        failed: current.failed
-      },
-      byReason: refundReasons
-    }
+      byStatus,
+      byReason: refundReasons,
+    },
+
+    // ── Flat fields for dashboard consumption ────────────────────────────
+    totalRefunds:      current.totalRefunds,
+    refundRate,
+    pending:           (current.requested || 0) + (current.approved || 0) + (current.processing || 0),
+    totalAmount:       Math.round((current.totalRefundAmount || 0) * 100) / 100,
+    avgAmount:         Math.round((current.avgRefundAmount   || 0) * 100) / 100,
+    avgProcessingTime: avgProcessingHrs, // FIX 4: no longer needs * 24 multiplication
+    statusBreakdown: Object.entries(byStatus).map(([status, count]) => ({
+      status,
+      count,
+      percentage: current.totalRefunds > 0
+        ? Math.round((count / current.totalRefunds) * 100 * 10) / 10
+        : 0,
+    })),
   };
 
   await setCache(cacheKey, response, 300);
@@ -434,26 +478,50 @@ export const getRefundOverview = handleAsyncError(async (req, res, next) => {
 });
 
 export const getRefundsByPaymentMethod = handleAsyncError(async (req, res, next) => {
-  const cacheKey = "refunds_by_payment_method";
+  const { timeframe = "month" } = req.query;
+  validateTimeframe(timeframe, next);
+
+  const cacheKey = `refunds_by_payment_method_${timeframe}`;
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
+  const { currentPeriodStart } = getDateRanges(timeframe);
+
   const [refundsByMethod, ordersByMethod] = await Promise.all([
     Order.aggregate([
-      { $match: { "refundInfo.status": "completed" } },
+      {
+        $match: {
+          "refundInfo.status":     "completed",
+          "refundInfo.refundedAt": { $gte: currentPeriodStart }
+        }
+      },
       {
         $group: {
-          _id: "$paymentInfo.method",
-          totalRefunds: { $sum: 1 },
+          _id:               "$paymentInfo.method",
+          totalRefunds:      { $sum: 1 },
           totalRefundAmount: { $sum: "$refundInfo.refundAmount" },
-          avgRefundAmount: { $avg: "$refundInfo.refundAmount" }
+          avgRefundAmount:   { $avg: "$refundInfo.refundAmount" }
         }
       },
       { $sort: { totalRefunds: -1 } }
     ]),
+    // FIX: fall back to createdAt when paidAt is not set — same as getRefundOverview.
     Order.aggregate([
-      { $match: { "paymentInfo.status": "success" } },
-      { $group: { _id: "$paymentInfo.method", totalOrders: { $sum: 1 } } }
+      {
+        $match: {
+          "paymentInfo.status": "success",
+          $or: [
+            { "paymentInfo.paidAt": { $gte: currentPeriodStart } },
+            { createdAt:            { $gte: currentPeriodStart } }
+          ]
+        }
+      },
+      {
+        $group: {
+          _id:         "$paymentInfo.method",
+          totalOrders: { $sum: 1 }
+        }
+      }
     ])
   ]);
 
@@ -467,16 +535,31 @@ export const getRefundsByPaymentMethod = handleAsyncError(async (req, res, next)
         : 0;
 
     return {
-      paymentMethod: item._id,
-      totalRefunds: item.totalRefunds,
-      totalRefundAmount: Math.round(item.totalRefundAmount * 100) / 100,
-      avgRefundAmount: Math.round(item.avgRefundAmount * 100) / 100,
+      paymentMethod:     item._id,
+      totalRefunds:      item.totalRefunds,
+      totalRefundAmount: Math.round((item.totalRefundAmount || 0) * 100) / 100,
+      avgRefundAmount:   Math.round((item.avgRefundAmount   || 0) * 100) / 100,
       totalOrders,
-      refundRate
+      refundRate,
     };
   });
 
-  const response = { byPaymentMethod: methodsWithRefundRate };
+  const totalRefunded = methodsWithRefundRate.reduce((sum, m) => sum + m.totalRefundAmount, 0);
+
+  const response = {
+    byPaymentMethod: methodsWithRefundRate,
+    summary: {
+      totalRefunds:      methodsWithRefundRate.reduce((sum, m) => sum + m.totalRefunds, 0),
+      totalRefundAmount: Math.round(totalRefunded * 100) / 100,
+      avgRefundAmount:   methodsWithRefundRate.length > 0
+        ? Math.round(
+            (methodsWithRefundRate.reduce((sum, m) => sum + m.avgRefundAmount, 0) /
+              methodsWithRefundRate.length) * 100
+          ) / 100
+        : 0,
+      topMethod: methodsWithRefundRate[0]?.paymentMethod || null,
+    },
+  };
 
   await setCache(cacheKey, response, 300);
   res.status(200).json({ success: true, ...response });
@@ -506,9 +589,9 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
     },
     {
       $group: {
-        _id: dateFormat,
+        _id:          dateFormat,
         totalRefunds: { $sum: 1 },
-        totalAmount: { $sum: "$refundInfo.refundAmount" },
+        totalAmount:  { $sum: "$refundInfo.refundAmount" },
         completed: {
           $sum: { $cond: [{ $eq: ["$refundInfo.status", "completed"] }, 1, 0] }
         }
@@ -520,9 +603,9 @@ export const getRefundTimeline = handleAsyncError(async (req, res, next) => {
   const response = {
     timeline,
     summary: {
-      totalRefunds: timeline.reduce((sum, t) => sum + t.totalRefunds, 0),
-      totalAmount: timeline.reduce((sum, t) => sum + t.totalAmount, 0),
-      totalCompleted: timeline.reduce((sum, t) => sum + t.completed, 0)
+      totalRefunds:   timeline.reduce((sum, t) => sum + t.totalRefunds, 0),
+      totalAmount:    timeline.reduce((sum, t) => sum + t.totalAmount,  0),
+      totalCompleted: timeline.reduce((sum, t) => sum + t.completed,    0)
     }
   };
 

@@ -30,12 +30,10 @@ export const getRevenueTrends = handleAsyncError(async (req, res, next) => {
   if (cached) return res.status(200).json({ success: true, ...cached });
 
   const { currentPeriodStart } = getDateRanges(timeframe);
-
-  // FIX D1: Replaced inline date format switch/case with shared getDateGroupFormat.
   const dateFormat = getDateGroupFormat(groupBy);
 
-  // FIX D2: Added paymentInfo.status: 'success' — only count revenue that was
-  // actually collected. "Relaxing" this filter inflates revenue with failed payments.
+  // FIX: Net revenue per period = gross - completed refunds for that period.
+  // Returns are excluded — users get a discount token, no cash leaves the business.
   const trends = await Order.aggregate([
     {
       $match: {
@@ -47,18 +45,31 @@ export const getRevenueTrends = handleAsyncError(async (req, res, next) => {
     {
       $group: {
         _id: dateFormat,
-        revenue: { $sum: "$totalPrice" },
-        orders: { $sum: 1 },
+        grossRevenue: { $sum: "$totalPrice" },
+        orders:       { $sum: 1 },
         avgOrderValue: { $avg: "$totalPrice" },
-        customers: { $addToSet: "$user" }
+        customers:    { $addToSet: "$user" },
+        totalRefunded: {
+          $sum: {
+            $cond: [
+              { $eq: ["$refundInfo.status", "completed"] },
+              "$refundInfo.refundAmount",
+              0
+            ]
+          }
+        }
       }
     },
     {
       $project: {
-        date: "$_id",
-        revenue: { $round: ["$revenue", 2] },
-        orders: 1,
-        avgOrderValue: { $round: ["$avgOrderValue", 2] },
+        date:          "$_id",
+        grossRevenue:  { $round: ["$grossRevenue", 2] },
+        totalRefunded: { $round: ["$totalRefunded", 2] },
+        revenue: {
+          $round: [{ $subtract: ["$grossRevenue", "$totalRefunded"] }, 2]
+        },
+        orders:          1,
+        avgOrderValue:   { $round: ["$avgOrderValue", 2] },
         uniqueCustomers: { $size: "$customers" }
       }
     },
@@ -66,16 +77,24 @@ export const getRevenueTrends = handleAsyncError(async (req, res, next) => {
   ]);
 
   let cumulativeRevenue = 0;
+  let cumulativeRefunded = 0;
   const trendsWithCumulative = trends.map((item) => {
-    cumulativeRevenue += item.revenue;
-    return { ...item, cumulativeRevenue: Math.round(cumulativeRevenue * 100) / 100 };
+    cumulativeRevenue  += item.revenue;
+    cumulativeRefunded += item.totalRefunded;
+    return {
+      ...item,
+      cumulativeRevenue:  Math.round(cumulativeRevenue  * 100) / 100,
+      cumulativeRefunded: Math.round(cumulativeRefunded * 100) / 100
+    };
   });
 
   const response = {
     data: trendsWithCumulative,
     summary: {
-      totalRevenue: Math.round(cumulativeRevenue * 100) / 100,
-      totalOrders: trends.reduce((sum, t) => sum + t.orders, 0),
+      grossRevenue:    Math.round(trends.reduce((s, t) => s + t.grossRevenue,  0) * 100) / 100,
+      totalRefunded:   Math.round(cumulativeRefunded * 100) / 100,
+      totalRevenue:    Math.round(cumulativeRevenue  * 100) / 100,
+      totalOrders:     trends.reduce((s, t) => s + t.orders, 0),
       avgDailyRevenue:
         trends.length > 0
           ? Math.round((cumulativeRevenue / trends.length) * 100) / 100
@@ -101,7 +120,6 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart } = getDateRanges(timeframe);
 
-  // FIX D3: Replaced three local duplicate functions with shared helpers.
   const [products, customers, categories] = await Promise.all([
     getTopProductsByRevenue(currentPeriodStart, 10),
     getTopCustomers(currentPeriodStart, 10),
@@ -128,32 +146,43 @@ export const getDashboardKPIs = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } = getDateRanges(timeframe);
 
-  // FIX D2: Consistent payment success filter.
   const [currentOrders, previousOrders] = await Promise.all([
     Order.find({
       createdAt: { $gte: currentPeriodStart },
       orderStatus: { $ne: ORDER_STATUSES.CANCELLED },
       "paymentInfo.status": "success"
-    }).select("totalPrice orderItems user createdAt"),
+    }).select("totalPrice orderItems user createdAt refundInfo"),
     Order.find({
       createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd },
       orderStatus: { $ne: ORDER_STATUSES.CANCELLED },
       "paymentInfo.status": "success"
-    }).select("totalPrice orderItems user")
+    }).select("totalPrice orderItems user refundInfo")
   ]);
 
-  const currentRevenue = currentOrders.reduce((sum, o) => sum + o.totalPrice, 0);
-  const currentOrderCount = currentOrders.length;
-  const currentAOV = currentOrderCount > 0 ? currentRevenue / currentOrderCount : 0;
-  const currentCustomers = new Set(currentOrders.map((o) => o.user?.toString())).size;
+  // FIX: Deduct completed cash refunds from gross revenue.
+  // Returns are excluded — discount tokens don't reduce cash revenue.
+  const currentGross     = currentOrders.reduce((s, o) => s + o.totalPrice, 0);
+  const currentRefunded  = currentOrders.reduce((s, o) =>
+    s + (o.refundInfo?.status === "completed" ? (o.refundInfo?.refundAmount || 0) : 0), 0);
+  const currentRevenue   = currentGross - currentRefunded;
 
-  const previousRevenue = previousOrders.reduce((sum, o) => sum + o.totalPrice, 0);
+  const previousGross    = previousOrders.reduce((s, o) => s + o.totalPrice, 0);
+  const previousRefunded = previousOrders.reduce((s, o) =>
+    s + (o.refundInfo?.status === "completed" ? (o.refundInfo?.refundAmount || 0) : 0), 0);
+  const previousRevenue  = previousGross - previousRefunded;
+
+  const currentOrderCount  = currentOrders.length;
   const previousOrderCount = previousOrders.length;
-  const previousAOV = previousOrderCount > 0 ? previousRevenue / previousOrderCount : 0;
+
+  // AOV is based on gross (pre-refund) order value — refunds are post-purchase events
+  // and shouldn't distort the average ticket size metric.
+  const currentAOV  = currentOrderCount  > 0 ? currentGross  / currentOrderCount  : 0;
+  const previousAOV = previousOrderCount > 0 ? previousGross / previousOrderCount : 0;
+
+  const currentCustomers  = new Set(currentOrders.map((o)  => o.user?.toString())).size;
   const previousCustomers = new Set(previousOrders.map((o) => o.user?.toString())).size;
 
-  // FIX D4: Replaced local getEstimatedVisitors with shared helper.
-  const totalVisitors = await getEstimatedVisitors();
+  const totalVisitors  = await getEstimatedVisitors();
   const conversionRate = totalVisitors > 0 ? (currentOrderCount / totalVisitors) * 100 : 0;
 
   const avgCLV = await CustomerAnalytics.aggregate([
@@ -162,29 +191,31 @@ export const getDashboardKPIs = handleAsyncError(async (req, res, next) => {
 
   const kpis = {
     revenue: {
-      current: Math.round(currentRevenue * 100) / 100,
-      previous: Math.round(previousRevenue * 100) / 100,
-      change: calculateTrend(currentRevenue, previousRevenue),
-      target: Math.round(currentRevenue * 1.15 * 100) / 100
+      current:       Math.round(currentRevenue  * 100) / 100,
+      previous:      Math.round(previousRevenue * 100) / 100,
+      change:        calculateTrend(currentRevenue, previousRevenue),
+      grossRevenue:  Math.round(currentGross    * 100) / 100,
+      totalRefunded: Math.round(currentRefunded * 100) / 100,
+      target:        Math.round(currentRevenue  * 1.15 * 100) / 100
     },
     orders: {
-      current: currentOrderCount,
+      current:  currentOrderCount,
       previous: previousOrderCount,
-      change: calculateTrend(currentOrderCount, previousOrderCount),
-      target: Math.round(currentOrderCount * 1.15)
+      change:   calculateTrend(currentOrderCount, previousOrderCount),
+      target:   Math.round(currentOrderCount * 1.15)
     },
     averageOrderValue: {
-      current: Math.round(currentAOV * 100) / 100,
+      current:  Math.round(currentAOV  * 100) / 100,
       previous: Math.round(previousAOV * 100) / 100,
-      change: calculateTrend(currentAOV, previousAOV)
+      change:   calculateTrend(currentAOV, previousAOV)
     },
     customers: {
-      current: currentCustomers,
+      current:  currentCustomers,
       previous: previousCustomers,
-      change: calculateTrend(currentCustomers, previousCustomers)
+      change:   calculateTrend(currentCustomers, previousCustomers)
     },
     conversionRate: {
-      current: Math.round(conversionRate * 100) / 100,
+      current:     Math.round(conversionRate * 100) / 100,
       description: "Orders / Estimated Visitors"
     },
     customerLifetimeValue: {
@@ -363,8 +394,8 @@ export const getDashboardOverview = handleAsyncError(async (req, res, next) => {
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } = getDateRanges(timeframe);
 
+  // getRevenueMetrics already deducts completed refunds — no change needed here.
   const [revenue, orders, customers, products, checkouts, returns] = await Promise.all([
-    // FIX D3: Replaced duplicate local getRevenueMetrics with shared helper.
     getRevenueMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
     getOrderMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
     getCustomerMetrics(currentPeriodStart, previousPeriodStart, previousPeriodEnd),
@@ -419,8 +450,8 @@ const getCustomerMetrics = async (currentStart, previousStart, previousEnd) => {
   ]);
 
   return {
-    newCustomers: { current, previous, change: calculateTrend(current, previous) },
-    vipCustomers: vipCount,
+    newCustomers:   { current, previous, change: calculateTrend(current, previous) },
+    vipCustomers:   vipCount,
     atRiskCustomers: atRiskCount
   };
 };
@@ -460,14 +491,14 @@ const getCheckoutMetrics = async (currentStart, previousStart, previousEnd) => {
     Checkout.countDocuments({ createdAt: { $gte: previousStart, $lt: previousEnd } })
   ]);
 
-  const currentRate = totalCurrent > 0 ? (currentAbandoned / totalCurrent) * 100 : 0;
+  const currentRate  = totalCurrent  > 0 ? (currentAbandoned  / totalCurrent)  * 100 : 0;
   const previousRate = totalPrevious > 0 ? (previousAbandoned / totalPrevious) * 100 : 0;
 
   return {
     abandonmentRate: {
-      current: Math.round(currentRate * 100) / 100,
+      current:  Math.round(currentRate  * 100) / 100,
       previous: Math.round(previousRate * 100) / 100,
-      change: calculateTrend(currentRate, previousRate)
+      change:   calculateTrend(currentRate, previousRate)
     },
     abandonedCount: currentAbandoned
   };
@@ -491,7 +522,7 @@ const getReturnMetrics = async (currentStart, previousStart, previousEnd) => {
   return {
     current,
     previous,
-    change: calculateTrend(current, previous),
+    change:     calculateTrend(current, previous),
     returnRate: Math.round(returnRate * 100) / 100
   };
 };

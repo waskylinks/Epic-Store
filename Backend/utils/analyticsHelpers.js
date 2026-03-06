@@ -30,9 +30,9 @@ export const buildInventoryStatusBreakdown = (statusAgg) => {
   const breakdown = { inStock: 0, lowStock: 0, outOfStock: 0, discontinued: 0 };
   statusAgg.forEach(({ _id, count }) => {
     switch (_id) {
-      case INVENTORY_STATUSES.IN_STOCK:     breakdown.inStock     = count; break;
-      case INVENTORY_STATUSES.LOW_STOCK:    breakdown.lowStock    = count; break;
-      case INVENTORY_STATUSES.OUT_OF_STOCK: breakdown.outOfStock  = count; break;
+      case INVENTORY_STATUSES.IN_STOCK:     breakdown.inStock      = count; break;
+      case INVENTORY_STATUSES.LOW_STOCK:    breakdown.lowStock     = count; break;
+      case INVENTORY_STATUSES.OUT_OF_STOCK: breakdown.outOfStock   = count; break;
       case INVENTORY_STATUSES.DISCONTINUED: breakdown.discontinued = count; break;
     }
   });
@@ -193,6 +193,10 @@ export const getTopCategories = async (startDate, limit = 10) => {
 // FIX: Was duplicated across dashboardController, adminStatsController,
 // and reportsController with inconsistent paymentInfo filters.
 // Canonical version always requires paymentInfo.status: success.
+//
+// FIX: Net revenue now deducts completed refunds.
+// Returns do NOT reduce revenue — users receive a discount token instead.
+// Only cash refunds (refundInfo.status === "completed") are deducted.
 // ============================================
 export const getRevenueMetrics = async (currentStart, previousStart, previousEnd) => {
   const [current, previous] = await Promise.all([
@@ -207,9 +211,21 @@ export const getRevenueMetrics = async (currentStart, previousStart, previousEnd
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$totalPrice" },
-          totalProfit: { $sum: "$profitAnalysis.netProfit" },
-          orders: { $sum: 1 }
+          grossRevenue: { $sum: "$totalPrice" },
+          totalProfit:  { $sum: "$profitAnalysis.netProfit" },
+          orders:       { $sum: 1 },
+          // Sum refund amounts only for completed (cash) refunds.
+          // Pending/rejected/processing refunds are excluded — money not yet
+          // returned should not reduce reported revenue.
+          totalRefunded: {
+            $sum: {
+              $cond: [
+                { $eq: ["$refundInfo.status", "completed"] },
+                "$refundInfo.refundAmount",
+                0
+              ]
+            }
+          }
         }
       }
     ]),
@@ -224,25 +240,42 @@ export const getRevenueMetrics = async (currentStart, previousStart, previousEnd
       {
         $group: {
           _id: null,
-          totalRevenue: { $sum: "$totalPrice" },
-          orders: { $sum: 1 }
+          grossRevenue:  { $sum: "$totalPrice" },
+          orders:        { $sum: 1 },
+          totalRefunded: {
+            $sum: {
+              $cond: [
+                { $eq: ["$refundInfo.status", "completed"] },
+                "$refundInfo.refundAmount",
+                0
+              ]
+            }
+          }
         }
       }
     ])
   ]);
 
-  const currentRevenue = current[0]?.totalRevenue || 0;
-  const previousRevenue = previous[0]?.totalRevenue || 0;
+  const grossRevenue     = current[0]?.grossRevenue   || 0;
+  const totalRefunded    = current[0]?.totalRefunded   || 0;
+  const netRevenue       = grossRevenue - totalRefunded;
+
+  const prevGrossRevenue  = previous[0]?.grossRevenue  || 0;
+  const prevTotalRefunded = previous[0]?.totalRefunded || 0;
+  const prevNetRevenue    = prevGrossRevenue - prevTotalRefunded;
+
   const currentProfit = current[0]?.totalProfit || 0;
 
   return {
-    current: Math.round(currentRevenue * 100) / 100,
-    previous: Math.round(previousRevenue * 100) / 100,
-    change: calculateTrend(currentRevenue, previousRevenue),
-    profit: Math.round(currentProfit * 100) / 100,
+    current:       Math.round(netRevenue      * 100) / 100,
+    previous:      Math.round(prevNetRevenue  * 100) / 100,
+    change:        calculateTrend(netRevenue, prevNetRevenue),
+    grossRevenue:  Math.round(grossRevenue    * 100) / 100,
+    totalRefunded: Math.round(totalRefunded   * 100) / 100,
+    profit:        Math.round(currentProfit   * 100) / 100,
     profitMargin:
-      currentRevenue > 0
-        ? Math.round((currentProfit / currentRevenue) * 100 * 100) / 100
+      netRevenue > 0
+        ? Math.round((currentProfit / netRevenue) * 100 * 100) / 100
         : 0
   };
 };
