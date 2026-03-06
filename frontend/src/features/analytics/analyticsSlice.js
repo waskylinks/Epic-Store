@@ -1695,16 +1695,43 @@ const analyticsSlice = createSlice({
         // ============================================
         builder
             .addCase(fetchReturnOverview.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.returnOverview = data;
-                }
+                if (action.payload._timeframe !== state.activeTimeframe) return;
+                const { currentPeriod = {}, breakdown = {}, trend } = action.payload;
+                const byReason = breakdown.byReason || [];
+                const totalReasons = byReason.reduce((sum, r) => sum + (r.count || 0), 0);
+
+                state.returnOverview = {
+                    totalReturns:      currentPeriod.totalReturns    || 0,
+                    returnRate:        currentPeriod.returnRate       || 0,
+                    approved:          currentPeriod.approved         || 0,
+                    pendingReview:     (currentPeriod.requested || 0) + (currentPeriod.inTransit || 0),
+                    totalValue:        currentPeriod.totalValue       || 0,
+                    avgProcessingDays: currentPeriod.avgProcessingDays || 0,
+                    trend,
+                    topReasons: byReason.map(r => ({
+                        reason:     r._id || 'Unknown',
+                        count:      r.count || 0,
+                        percentage: totalReasons > 0
+                            ? Math.round((r.count / totalReasons) * 100 * 10) / 10
+                            : 0,
+                    })),
+                };
             })
+
             .addCase(fetchRefundOverview.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.refundOverview = data;
-                }
+                if (action.payload._timeframe !== state.activeTimeframe) return;
+                const { trends } = action.payload;
+
+                state.refundOverview = {
+                    totalRefunds:      action.payload.totalRefunds      || 0,
+                    refundRate:        action.payload.refundRate        || 0,
+                    pending:           action.payload.pending           || 0,
+                    totalAmount:       action.payload.totalAmount       || 0,
+                    avgAmount:         action.payload.avgAmount         || 0,
+                    avgProcessingTime: action.payload.avgProcessingTime || 0,
+                    trends,
+                    statusBreakdown:   action.payload.statusBreakdown   || [],
+                };
             })
             .addCase(fetchReturnsByProduct.fulfilled, (state, action) => {
                 state.returnsByProduct = action.payload;

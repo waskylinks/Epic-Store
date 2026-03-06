@@ -315,6 +315,8 @@ const AdminRefunds = () => {
       { label: 'Approved',       value: stats.approved  ?? 0, icon: CheckCircle, color: '#10B981' },
       { label: 'Rejected',       value: stats.rejected  ?? 0, icon: Cancel,      color: '#EF4444' },
       { label: 'Completed',      value: stats.completed ?? 0, icon: Inventory,   color: '#3B82F6' },
+      { label: 'Failed',         value: stats.failed    ?? 0, icon: ReportProblem, color: '#DC2626' },
+      { label: 'Cancelled',      value: stats.cancelled ?? 0, icon: Cancel,      color: '#6B7280' },
     ];
     return cards.map((c) => (
       <div key={c.label} className="rf-kpi" style={{ '--kpi-color': c.color }}>

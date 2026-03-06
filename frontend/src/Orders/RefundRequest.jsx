@@ -103,11 +103,11 @@ function RefundRequest() {
     requestedAmount: '',
   });
 
-  const [formErrors,       setFormErrors]       = useState({});
-  const [selectedFiles,    setSelectedFiles]    = useState([]);
-  const [filePreviews,     setFilePreviews]     = useState([]);
+  const [formErrors,        setFormErrors]        = useState({});
+  const [selectedFiles,     setSelectedFiles]     = useState([]);
+  const [filePreviews,      setFilePreviews]      = useState([]);
   const [showMessagesModal, setShowMessagesModal] = useState(false);
-  const [unreadCount,      setUnreadCount]      = useState(0);
+  const [unreadCount,       setUnreadCount]       = useState(0);
 
   // Cancel confirmation state — two-step to prevent accidental cancellation.
   // null = idle, 'confirm' = awaiting confirmation, 'loading' = dispatching.
@@ -140,7 +140,6 @@ function RefundRequest() {
     }
   }, [dispatch, orderId]);
 
-
   useEffect(() => {
     if (orderId && order?._id && hasActiveRefund) {
       dispatch(getRefundMessages({ orderId }));
@@ -148,7 +147,12 @@ function RefundRequest() {
   }, [dispatch, orderId, order?._id, hasActiveRefund]);
 
   // ── Unread badge ─────────────────────────────────────────────────────────
+  // Only recalculate when the modal is NOT open. While the modal is open we
+  // optimistically show 0 (set in handleOpenMessages), and we don't want an
+  // in-flight re-fetch to momentarily flash the old count back.
   useEffect(() => {
+    if (showMessagesModal) return; // don't recalculate while modal is visible
+
     if (messages && messages.length > 0) {
       const unread = messages.filter(
         (msg) => msg.senderType === 'admin' && !msg.isRead
@@ -157,7 +161,7 @@ function RefundRequest() {
     } else {
       setUnreadCount(0);
     }
-  }, [messages]);
+  }, [messages, showMessagesModal]);
 
   // ── Pre-fill form when viewing an existing refund ────────────────────────
   const hasPreFilledRef = React.useRef(false);
@@ -301,8 +305,6 @@ function RefundRequest() {
   };
 
   // ── Cancel refund ────────────────────────────────────────────────────────
-  // Two-step: first click → confirm state, second click → dispatch.
-  // "Keep Request" or clicking away resets to idle.
   const handleCancelClick = () => {
     if (cancelState === 'idle') {
       setCancelState('confirm');
@@ -320,7 +322,6 @@ function RefundRequest() {
         position: 'top-center',
         autoClose: 3000,
       });
-      // cancelState resets via the canCancel useEffect above once order refreshes
     } catch (err) {
       toast.error(
         typeof err === 'string' ? err : 'Failed to cancel refund request',
@@ -331,6 +332,29 @@ function RefundRequest() {
   };
 
   const handleCancelDismiss = () => setCancelState('idle');
+
+  // ── Open messages modal ──────────────────────────────────────────────────
+  // Optimistically zero the badge immediately so the user sees it clear as
+  // soon as they open the modal. Then re-fetch so the server can mark messages
+  // as read; the unread-recalculation effect is suppressed while the modal is
+  // open, so there's no flicker back to the old count during the fetch.
+  const handleOpenMessages = useCallback(() => {
+    setUnreadCount(0);          // optimistic clear — badge disappears immediately
+    setShowMessagesModal(true);
+    if (orderId) {
+      dispatch(getRefundMessages({ orderId })); // server marks as read
+    }
+  }, [dispatch, orderId]);
+
+  // ── Close messages modal ─────────────────────────────────────────────────
+  // After the modal closes, re-fetch once more so the unread-recalculation
+  // effect can pick up the server-confirmed read state cleanly.
+  const handleCloseMessages = useCallback(() => {
+    setShowMessagesModal(false);
+    if (orderId) {
+      dispatch(getRefundMessages({ orderId }));
+    }
+  }, [dispatch, orderId]);
 
   const handleSendMessage = useCallback(async (content, files) => {
     try {
@@ -433,7 +457,7 @@ function RefundRequest() {
               <button
                 type="button"
                 className="rr-btn-messages"
-                onClick={() => setShowMessagesModal(true)}
+                onClick={handleOpenMessages}
               >
                 <FiMessageSquare />
                 <span>Messages</span>
@@ -575,10 +599,7 @@ function RefundRequest() {
                   )}
                 </div>
 
-                {/* ── Cancel section ──────────────────────────────────────
-                    Only rendered when status is 'requested' or 'approved'.
-                    Two-step pattern: first click shows inline confirmation,
-                    second click dispatches. Mirrors the backend guard exactly. */}
+                {/* ── Cancel section ───────────────────────────────────── */}
                 {canCancel && (
                   <div className="rr-cancel-section">
                     {cancelState === 'idle' && (
@@ -926,7 +947,7 @@ function RefundRequest() {
 
       <RefundReturnMessagesModal
         isOpen={showMessagesModal}
-        onClose={() => setShowMessagesModal(false)}
+        onClose={handleCloseMessages}
         orderId={orderId}
         messages={messages}
         loading={messagesLoading}
