@@ -65,8 +65,11 @@ const invalidatePaymentCaches = async () => {
 /**
  * Normalize gateway verification response into a unified shape.
  * Returns { verified, amount, currency, id, raw }
+ *
+ * For Flutterwave: accepts an optional transactionId (numeric) which bypasses
+ * the unreliable tx_ref search endpoint and verifies directly by ID.
  */
-const verifyWithGateway = async (paymentService, gateway, reference) => {
+const verifyWithGateway = async (paymentService, gateway, reference, transactionId = null) => {
   let raw = null;
   let verified = false;
 
@@ -77,7 +80,11 @@ const verifyWithGateway = async (paymentService, gateway, reference) => {
     raw = await paymentService.verifyPaystackTransaction(reference);
     verified = raw.status === "success";
   } else if (gateway === 'flutterwave') {
-    raw = await paymentService.verifyFlutterwaveTransaction(reference);
+    // If the frontend callback gave us the numeric transaction_id, use it directly.
+    // This skips the GET /v3/transactions?tx_ref=... search which is unreliable
+    // and frequently returns empty results even for successful payments.
+    const lookupRef = transactionId ? String(transactionId) : reference;
+    raw = await paymentService.verifyFlutterwaveTransaction(lookupRef);
     verified = raw.status === "successful";
   } else {
     throw new Error(`Unsupported gateway: ${gateway}`);
@@ -338,7 +345,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
 /**
  * Verify Payment — confirms gateway charge, creates order.
- * 
+ *
  * FIX: Removed MongoDB transaction entirely. The previous implementation used
  * mongoose.startSession() + startTransaction() which caused infinite hangs when:
  *   1. MongoDB connection was in a recovering state (seen in logs)
@@ -356,7 +363,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
 
-  const { gateway, reference } = req.body;
+  const { gateway, reference, transactionId } = req.body;
   if (!gateway || !reference) {
     return next(new HandleError("Both 'gateway' and 'reference' are required to verify a payment", 400));
   }
@@ -436,9 +443,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   }
 
   // 6. Verify the charge with the gateway
+  // For Flutterwave: pass transactionId (numeric, from frontend callback) so the
+  // service can call GET /v3/transactions/:id/verify directly, bypassing the
+  // unreliable tx_ref search endpoint.
   let gatewayData;
   try {
-    gatewayData = await verifyWithGateway(paymentService, gateway, reference);
+    gatewayData = await verifyWithGateway(paymentService, gateway, reference, transactionId || null);
   } catch (err) {
     return next(new HandleError(
       `Payment verification failed with ${gateway}: ${err.message}`,

@@ -26,7 +26,7 @@ const mapFlutterwaveRefundStatus = (flwStatus) => {
 
   switch (flwStatus) {
     case 'succeeded':
-    case 'completed': // some versions return 'completed'
+    case 'completed':
       return 'completed';
     case 'failed':
       return 'failed';
@@ -109,43 +109,53 @@ export async function initializeFlutterwavePayment({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET TRANSACTION BY REFERENCE
-// ─────────────────────────────────────────────────────────────────────────────
-
-export async function getTransactionByReference(txRef) {
-  try {
-    const url = `https://api.flutterwave.com/v3/transactions?tx_ref=${txRef}`;
-    const { data } = await axios.get(url, {
-      headers: { Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}` },
-      timeout: 8000,
-    });
-
-    if (data.status === 'success' && data.data && data.data.length > 0) {
-      return data.data[0];
-    }
-
-    throw new Error('Transaction not found for tx_ref: ' + txRef);
-  } catch (err) {
-    console.error('Get transaction by reference error:', err.response?.data || err.message);
-    throw new Error('Failed to get transaction: ' + err.message);
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // VERIFY
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function verifyFlutterwaveTransaction(reference, maxAttempts = 3) {
-  let transactionId = reference;
+/**
+ * Verify a Flutterwave transaction.
+ *
+ * Resolution priority (per official Flutterwave docs):
+ *
+ *  1. transactionId (numeric) provided by the frontend callback
+ *     → GET /v3/transactions/:id/verify
+ *       This is the primary recommended approach in the docs. The numeric id
+ *       comes from data.id in the charge response and webhook payload.
+ *
+ *  2. reference is already a numeric string
+ *     → GET /v3/transactions/:id/verify  (same fast path as above)
+ *       Handles the case where the controller passes lookupRef = String(transactionId)
+ *
+ *  3. Only a tx_ref string is available (no transactionId at all)
+ *     → GET /v3/transactions/verify_by_reference?tx_ref=...
+ *       This is the OFFICIAL Flutterwave endpoint for verifying by merchant reference.
+ *       Replaces the old manual polling loop that queried GET /v3/transactions?tx_ref=
+ *       — an undocumented search endpoint that returns empty arrays while the
+ *       transaction is still being indexed, causing the 5-attempt timeout failure.
+ *
+ * FIX: Added `transactionId = null` as the 3rd parameter. Previously this arg
+ * was passed by verifyAndUpdateOrder() but silently dropped because the function
+ * signature only declared 2 params, forcing every webhook/fallback call through
+ * the broken polling loop.
+ */
+export async function verifyFlutterwaveTransaction(reference, maxAttempts = 3, transactionId = null) {
+  let url;
 
-  if (isNaN(Number(reference))) {
-    console.log(`🔍 Resolving tx_ref to transaction_id: ${reference}`);
-    const tx = await getTransactionByReference(reference);
-    transactionId = tx.id;
-    console.log(`✅ Resolved transaction_id: ${transactionId}`);
+  if (transactionId) {
+    // Path 1: numeric id from frontend callback — fastest and most reliable per docs
+    url = `https://api.flutterwave.com/v3/transactions/${String(transactionId)}/verify`;
+    console.log(`✅ [flw] Verifying by transaction_id: ${transactionId}`);
+  } else if (!isNaN(Number(reference))) {
+    // Path 2: reference is already numeric (controller passed String(transactionId) as lookupRef)
+    url = `https://api.flutterwave.com/v3/transactions/${reference}/verify`;
+    console.log(`✅ [flw] Reference is numeric, verifying by id: ${reference}`);
+  } else {
+    // Path 3: only tx_ref available — use the official dedicated endpoint (single call, no loop)
+    // Docs: GET https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref={tx_ref}
+    url = `https://api.flutterwave.com/v3/transactions/verify_by_reference?tx_ref=${reference}`;
+    console.log(`🔍 [flw] Verifying by tx_ref via verify_by_reference: ${reference}`);
   }
 
-  const url = `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`;
   let attempt = 0;
   let lastErr;
 
@@ -157,11 +167,12 @@ export async function verifyFlutterwaveTransaction(reference, maxAttempts = 3) {
         timeout: 8000,
       });
 
-      if (data.status === 'success' && data.data.status === 'successful') {
+      if (data.status === 'success' && data.data?.status === 'successful') {
+        console.log(`✅ [flw] Transaction verified on attempt ${attempt}`);
         return data.data;
       }
 
-      throw new Error(`Flutterwave status: ${data.data?.status || 'unknown'}`);
+      throw new Error(`Flutterwave status: ${data.data?.status || data.message || 'unknown'}`);
     } catch (err) {
       lastErr = err;
       if (attempt < maxAttempts) {
@@ -177,13 +188,14 @@ export async function verifyFlutterwaveTransaction(reference, maxAttempts = 3) {
 // VERIFY AND UPDATE ORDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-export async function verifyAndUpdateOrder({ reference, orderId, expectedAmount, expectedCurrency, userId }) {
+export async function verifyAndUpdateOrder({ reference, transactionId, orderId, expectedAmount, expectedCurrency, userId }) {
   let tx;
   let order;
 
   try {
-    console.log(`🔍 Verifying Flutterwave transaction: ${reference}`);
-    tx = await verifyFlutterwaveTransaction(reference);
+    console.log(`🔍 Verifying Flutterwave transaction: ${reference}${transactionId ? ` (transaction_id: ${transactionId})` : ''}`);
+    // transactionId is now correctly received as the 3rd param and used directly
+    tx = await verifyFlutterwaveTransaction(reference, 3, transactionId || null);
     console.log(`✅ Transaction verified. tx_ref: ${tx.tx_ref}, amount: ${tx.amount}`);
   } catch (err) {
     console.error('Flutterwave verification failed:', err);
@@ -263,11 +275,8 @@ export async function verifyAndUpdateOrder({ reference, orderId, expectedAmount,
  *     created_datetime: "..."
  *   }
  * }
- *
- * chargeId: the charge_id from the original transaction object (tx.id from verify response)
  */
 export async function refundPayment({ chargeId, amount, reason, merchantNote }) {
-  // Flutterwave v4 refund endpoint
   const url = 'https://api.flutterwave.com/refunds';
 
   try {
@@ -287,8 +296,6 @@ export async function refundPayment({ chargeId, amount, reason, merchantNote }) 
       timeout: 15000,
     });
 
-    // Flutterwave returns { message: "Refund Initiated", data: {...} }
-    // It does NOT have a top-level status field like v3 did
     if (!data.data) {
       throw new Error(data.message || 'Flutterwave refund failed — no data in response');
     }
@@ -373,7 +380,7 @@ export async function getRefundStatus(refundId) {
  *     status: "succeeded",
  *     amount_refunded: 2000,
  *     charge_id: "chg_xxx",
- *     tx_ref: "ORD-xxx",       // original transaction tx_ref
+ *     tx_ref: "ORD-xxx",
  *     created_datetime: "..."
  *   }
  * }
@@ -397,12 +404,10 @@ export async function handleWebhook(req, res) {
 
     console.log('📨 Flutterwave webhook event:', event);
 
-    // ── Payment event ─────────────────────────────────────────────────────────
     if (event === 'charge.completed') {
       return await handleFlutterwaveChargeCompleted(tx, res);
     }
 
-    // ── Refund events ─────────────────────────────────────────────────────────
     if (event === 'refund.completed' || event === 'refund.failed') {
       return await handleFlutterwaveRefundEvent(event, tx, res);
     }
@@ -415,42 +420,63 @@ export async function handleWebhook(req, res) {
 }
 
 // ── Internal: handle charge.completed ────────────────────────────────────────
+
+/**
+ * Per Flutterwave docs best practice:
+ * "Before giving value to a customer based on a webhook notification, always
+ *  re-query our API to verify the transaction details."
+ *
+ * We now re-verify via the API using tx.id (numeric, from the webhook payload)
+ * before trusting any data or updating the order. The original code trusted the
+ * raw webhook payload directly — this fixes that.
+ */
 async function handleFlutterwaveChargeCompleted(tx, res) {
   if (tx.status !== 'successful') {
     console.warn('Webhook: Transaction not successful:', tx.status);
     return res.status(200).json({ message: 'Transaction not successful' });
   }
 
-  const order = await Order.findOne({ 'paymentInfo.reference': tx.tx_ref });
+  // Re-verify via the API before trusting the webhook payload (docs requirement)
+  let verified;
+  try {
+    verified = await verifyFlutterwaveTransaction(tx.tx_ref, 3, tx.id);
+  } catch (err) {
+    console.error('Webhook: Re-verification failed:', err.message);
+    // Return 200 so Flutterwave doesn't keep retrying — log for manual review
+    return res.status(200).json({ message: 'Re-verification failed, ignoring webhook' });
+  }
+
+  const order = await Order.findOne({ 'paymentInfo.reference': verified.tx_ref });
 
   if (!order) {
-    console.warn('Webhook: Order not found for reference:', tx.tx_ref);
+    console.warn('Webhook: Order not found for reference:', verified.tx_ref);
     return res.status(200).json({ message: 'Order not found, ignoring webhook' });
   }
 
+  // Idempotency — already processed
   if (order.paymentInfo.status === 'success') {
     return res.status(200).json({ message: 'Already processed' });
   }
 
   order.paymentInfo.status = 'success';
-  order.paymentInfo.providerTxId = tx.id;
-  order.paymentInfo.paidAt = new Date(tx.created_at);
-  order.amountPaid = parseFloat(tx.amount);
+  order.paymentInfo.providerTxId = verified.id;
+  order.paymentInfo.paidAt = new Date(verified.created_at);
+  order.amountPaid = parseFloat(verified.amount);
 
   order.paymentMeta = {
-    channel: tx.payment_type,
-    ipAddress: tx.ip,
-    customer: tx.customer,
-    cardDetails: tx.card
+    channel: verified.payment_type,
+    ipAddress: verified.ip,
+    customer: verified.customer,
+    cardDetails: verified.card
       ? {
-          last4: tx.card.last_4digits,
-          brand: tx.card.type,
-          expMonth: tx.card.expiry?.split('/')[0],
-          expYear: tx.card.expiry?.split('/')[1],
+          last4: verified.card.last_4digits,
+          brand: verified.card.type,
+          expMonth: verified.card.expiry?.split('/')[0],
+          expYear: verified.card.expiry?.split('/')[1],
         }
       : undefined,
-    customMetadata: tx.meta,
-    raw: tx,
+    customMetadata: verified.meta,
+    raw: verified,
   };
 
   await order.save();
@@ -481,7 +507,6 @@ async function handleFlutterwaveChargeCompleted(tx, res) {
 
 // ── Internal: handle refund webhook events ────────────────────────────────────
 async function handleFlutterwaveRefundEvent(event, tx, res) {
-  // Flutterwave refund webhook includes tx_ref of the original transaction
   const orderRef = tx.tx_ref;
 
   if (!orderRef) {
