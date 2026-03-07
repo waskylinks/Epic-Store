@@ -1,0 +1,462 @@
+/* ============================================================
+   REFUND ANALYTICS PAGE — RefundAnalytics.css
+   Prefix: rfa-  (extends adm- from Dashboard.css)
+   Consistent with Dashboard.css design system
+   ============================================================ */
+
+/* ── Breadcrumb ─────────────────────────────────────────────── */
+.rfa-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 24px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.rfa-breadcrumb-link {
+  color: var(--adm-text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  transition: var(--adm-transition);
+}
+
+.rfa-breadcrumb-link:hover {
+  color: var(--adm-text);
+}
+
+.rfa-breadcrumb-sep {
+  color: var(--adm-border-md);
+  font-weight: 400;
+}
+
+.rfa-breadcrumb-current {
+  color: var(--adm-text);
+  font-weight: 700;
+  flex: 1;
+}
+
+.rfa-manage-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: #14B8A6;
+  color: #fff;
+  border-radius: var(--adm-radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: var(--adm-transition);
+  margin-left: auto;
+}
+
+.rfa-manage-btn:hover {
+  background: #0D9488;
+  color: #fff;
+}
+
+/* ── Period Comparison Banner ────────────────────────────────── */
+.rfa-compare-banner {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--adm-card);
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius);
+  padding: 20px 24px;
+  box-shadow: var(--adm-shadow-sm);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.rfa-compare-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 120px;
+}
+
+.rfa-compare-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--adm-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.rfa-compare-val {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--adm-text);
+}
+
+.rfa-compare-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+}
+
+.rfa-compare-divider {
+  width: 1px;
+  height: 48px;
+  background: var(--adm-border);
+  align-self: center;
+}
+
+/* ── Custom Tooltip ──────────────────────────────────────────── */
+.rfa-tooltip {
+  background: #fff;
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-sm);
+  padding: 10px 14px;
+  font-size: 13px;
+  box-shadow: var(--adm-shadow);
+  min-width: 160px;
+}
+
+.rfa-tooltip-label {
+  font-weight: 700;
+  color: var(--adm-text);
+  margin-bottom: 6px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--adm-border);
+  padding-bottom: 6px;
+}
+
+.rfa-tooltip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.rfa-tooltip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rfa-tooltip-name {
+  flex: 1;
+  color: var(--adm-text-sec);
+  font-weight: 500;
+}
+
+.rfa-tooltip-value {
+  font-weight: 700;
+  color: var(--adm-text);
+}
+
+/* ── Status Dot & Bar ────────────────────────────────────────── */
+.rfa-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.rfa-status-bar-wrap {
+  width: 80px;
+  height: 6px;
+  background: #E5E7EB;
+  border-radius: 20px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.rfa-status-bar {
+  height: 100%;
+  border-radius: 20px;
+  transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 3px;
+}
+
+/* ── Reason Badge ────────────────────────────────────────────── */
+.rfa-reason-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+/* ── Rate Chip ───────────────────────────────────────────────── */
+.rfa-rate-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 12px;
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* ── Top Method Badge ────────────────────────────────────────── */
+.rfa-top-method-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  background: #EFF6FF;
+  border: 1px solid #BFDBFE;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #1E40AF;
+}
+
+/* ── Payment Method Table ────────────────────────────────────── */
+.rfa-method-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.rfa-method-table-hd,
+.rfa-method-table-row,
+.rfa-method-table-footer {
+  display: grid;
+  grid-template-columns: 1fr 60px 80px 70px;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 0;
+}
+
+.rfa-method-table-hd {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--adm-text-muted);
+  border-bottom: 1px solid var(--adm-border);
+  margin-bottom: 2px;
+}
+
+.rfa-method-table-row {
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--adm-border);
+  color: var(--adm-text-sec);
+  font-weight: 500;
+  transition: var(--adm-transition);
+}
+
+.rfa-method-table-row:last-of-type {
+  border-bottom: none;
+}
+
+.rfa-method-table-row:hover {
+  background: #F9FAFB;
+  border-radius: var(--adm-radius-xs);
+}
+
+.rfa-method-table-footer {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--adm-text);
+  border-top: 2px solid var(--adm-border);
+  margin-top: 4px;
+  background: #F9FAFB;
+  border-radius: 0 0 var(--adm-radius-xs) var(--adm-radius-xs);
+  padding: 10px 8px;
+}
+
+.rfa-method-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--adm-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rfa-method-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Product Table ───────────────────────────────────────────── */
+.rfa-product-table {
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+}
+
+.rfa-product-table-hd,
+.rfa-product-table-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr 70px 70px 90px;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 0;
+}
+
+.rfa-product-table-hd {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--adm-text-muted);
+  border-bottom: 1px solid var(--adm-border);
+  margin-bottom: 2px;
+}
+
+.rfa-product-table-row {
+  font-size: 12.5px;
+  border-bottom: 1px solid var(--adm-border);
+  color: var(--adm-text-sec);
+  font-weight: 500;
+  transition: var(--adm-transition);
+}
+
+.rfa-product-table-row:last-child {
+  border-bottom: none;
+}
+
+.rfa-product-table-row:hover {
+  background: #F9FAFB;
+}
+
+.rfa-product-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--adm-text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rfa-product-thumb {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--adm-border);
+  flex-shrink: 0;
+}
+
+.rfa-product-cat {
+  color: var(--adm-text-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ════════════════════════════════════════════════════════════
+   RESPONSIVE
+════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1024px) {
+  .rfa-product-table-hd,
+  .rfa-product-table-row {
+    grid-template-columns: 2fr 70px 70px 90px;
+  }
+
+  /* Hide category column on mid-size screens */
+  .rfa-product-table-hd  > span:nth-child(2),
+  .rfa-product-table-row > span:nth-child(2) {
+    display: none;
+  }
+}
+
+@media (max-width: 768px) {
+  .rfa-compare-banner {
+    padding: 14px 16px;
+    gap: 12px;
+  }
+
+  .rfa-compare-divider {
+    display: none;
+  }
+
+  .rfa-compare-val {
+    font-size: 18px;
+  }
+
+  .rfa-status-bar-wrap {
+    width: 50px;
+  }
+
+  .rfa-method-table-hd,
+  .rfa-method-table-row,
+  .rfa-method-table-footer {
+    grid-template-columns: 1fr 55px 70px;
+  }
+
+  /* Hide refund count on mobile */
+  .rfa-method-table-hd  > span:nth-child(2),
+  .rfa-method-table-row > span:nth-child(2),
+  .rfa-method-table-footer > span:nth-child(2) {
+    display: none;
+  }
+
+  .rfa-product-table-hd,
+  .rfa-product-table-row {
+    grid-template-columns: 1fr 70px 90px;
+  }
+
+  /* Hide sales column on mobile */
+  .rfa-product-table-hd  > span:nth-child(2),
+  .rfa-product-table-row > span:nth-child(2),
+  .rfa-product-table-hd  > span:nth-child(4),
+  .rfa-product-table-row > span:nth-child(4) {
+    display: none;
+  }
+
+  .rfa-breadcrumb {
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+
+  .rfa-manage-btn {
+    margin-left: 0;
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .rfa-compare-banner {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .rfa-compare-arrow {
+    transform: rotate(90deg);
+  }
+
+  .rfa-compare-item {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+  }
+
+  .rfa-compare-val {
+    font-size: 16px;
+  }
+
+  .rfa-product-table-hd,
+  .rfa-product-table-row {
+    grid-template-columns: 1fr 80px;
+  }
+
+  .rfa-product-table-hd  > span:nth-child(3),
+  .rfa-product-table-row > span:nth-child(3) {
+    display: none;
+  }
+}

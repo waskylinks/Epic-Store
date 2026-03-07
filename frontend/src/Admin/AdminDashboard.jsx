@@ -67,6 +67,7 @@ const NAV_GROUPS = [
       { path: '/admin/customers',   icon: PersonSearch,         label: 'Customers',   color: '#06B6D4' },
       { path: '/admin/attribution', icon: CampaignOutlined,     label: 'Attribution', color: '#F59E0B' },
       { path: '/admin/checkout',    icon: ShoppingCartCheckout, label: 'Checkout',    color: '#10B981' },
+      { path: '/admin/refund-analytics', icon: CurrencyExchange, label: 'Refund Analytics', color: '#14B8A6' },
     ],
   },
   {
