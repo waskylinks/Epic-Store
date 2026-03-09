@@ -59,6 +59,38 @@ const handleReturnUpload = async (order, files, role, uploaderId) => {
 };
 
 /**
+ * handlePleaUpload
+ * Like handleReturnUpload but writes to pleaInfo.pleaDocuments via the
+ * addPleaDocument instance method. Kept separate so plea evidence is
+ * stored distinctly from the main return documents array.
+ */
+const handlePleaUpload = async (order, files, uploaderId) => {
+  const salt   = crypto.randomBytes(8).toString('hex');
+  const folder = `ecommerce/returns/${order._id}-${salt}/plea`;
+
+  const results = await Promise.all(
+    files.map((file) =>
+      uploadToCloudinary(file.buffer, { folder, resource_type: 'auto' })
+        .then((result) => ({ result, originalname: file.originalname }))
+    )
+  );
+
+  return results.map(({ result, originalname }) => {
+    const docType =
+      result.resource_type === 'image' ? 'photo' :
+      result.resource_type === 'video' ? 'video' : 'other';
+
+    order.addPleaDocument(docType, result.secure_url, originalname, uploaderId, '');
+    return {
+      url:      result.secure_url,
+      filename: originalname,
+      fileType: result.resource_type,
+      fileSize: result.bytes,
+    };
+  });
+};
+
+/**
  * buildMatchStage
  * Builds the MongoDB $match stage from the query string.
  * FIX F-01 — adds multi-status, date range, RMA search, and reason filters
@@ -139,6 +171,43 @@ const invalidateReturnCaches = (scope = 'stats') => {
   });
 };
 
+/**
+ * checkAndExpireTimers
+ * Lazily checks whether any pending timers on the order have expired and
+ * auto-advances status accordingly. Called at the top of any controller
+ * that reads or writes return state so no cron job is required.
+ *
+ * Rules:
+ * - items_reviewed + pleaDeadline expired → advance to awaiting_discount
+ *   (customer did not submit a plea within 48 hours)
+ *
+ * Returns true if the order was mutated (caller must save).
+ */
+const checkAndExpireTimers = (order) => {
+  if (!order.returnInfo) return false;
+
+  const { status, pleaDeadline } = order.returnInfo;
+  const now = new Date();
+  let mutated = false;
+
+  if (
+    status === 'items_reviewed' &&
+    pleaDeadline &&
+    now > new Date(pleaDeadline)
+  ) {
+    // Plea window expired with no plea submitted — move forward automatically
+    order.returnInfo.status = 'awaiting_discount';
+    order.addReturnTimeline(
+      'plea_window_expired',
+      'Plea window expired. Return advanced to awaiting discount.',
+      null
+    );
+    mutated = true;
+  }
+
+  return mutated;
+};
+
 // ============================================
 // GET ALL RETURNS (Admin)
 // FIX P-01 — totalCount now stored inside stats cache; warm hit skips aggregation
@@ -147,6 +216,7 @@ const invalidateReturnCaches = (scope = 'stats') => {
 // FIX F-02 — dynamic sortBy / order params (whitelist-guarded)
 // FIX F-03 — page / limit validated and clamped
 // FIX F-04 — cache key hashes all active filters
+// UPDATED  — stats now include new flow statuses + totalRequestedAmount
 // @route  GET /api/v1/admin/returns
 // @access Private/Admin
 // ============================================
@@ -172,7 +242,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 
   // FIX F-04
   const STATS_CACHE_KEY   = buildCacheKey(req.query);
-  // Shorter TTL for filtered views — less risk of stale counts
   const STATS_TTL_SECONDS = (req.query.status || req.query.from || req.query.to) ? 30 : 60;
 
   // ── Warm cache path ──────────────────────────────────────────────────────
@@ -213,6 +282,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         status: 1, rmaNumber: 1, reason: 1, description: 1,
         itemsToReturn: 1, requestedAmount: 1, requestedAt: 1,
         requestedBy: 1, adminNote: 1, restockFee: 1,
+        pleaDeadline: 1, pleaAttempts: 1, discountValue: 1,
       },
       orderStatus: 1,
       totalPrice:  1,
@@ -261,7 +331,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   }
 
   // ── Cold cache: single $facet ────────────────────────────────────────────
-  // FIX P-02 — $lookup inside data facet replaces N+1 post-aggregate populate
+  // UPDATED: added totalRequestedAmount facet and new status counts
   const [facetResult] = await Order.aggregate([
     { $match: matchStage },
     {
@@ -275,6 +345,16 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         ],
         totalCount: [{ $count: 'count' }],
         statCounts: [{ $group: { _id: '$returnInfo.status', count: { $sum: 1 } } }],
+        // NEW — sum all requestedAmount values across the filtered result set
+        // so the admin KPI card can show the total financial exposure at a glance
+        totalRequestedAmount: [
+          {
+            $group: {
+              _id:   null,
+              total: { $sum: { $ifNull: ['$returnInfo.requestedAmount', 0] } },
+            },
+          },
+        ],
       },
     },
   ]);
@@ -282,18 +362,25 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const orders       = facetResult.data            || [];
   const totalReturns = facetResult.totalCount?.[0]?.count || 0;
   const countMap     = Object.fromEntries((facetResult.statCounts || []).map((s) => [s._id, s.count]));
+  // NEW — extract the aggregated total, default 0 when no results match
+  const totalRequestedAmount = facetResult.totalRequestedAmount?.[0]?.total || 0;
 
-  // FIX P-01 — total is now inside the cached payload
+  // UPDATED: added new flow status counts alongside existing ones
   stats = {
-    total:      totalReturns,
-    requested:  countMap.requested  || 0,
-    approved:   countMap.approved   || 0,
-    in_transit: countMap.in_transit || 0,
-    received:   countMap.received   || 0,
-    inspected:  countMap.inspected  || 0,
-    completed:  countMap.completed  || 0,
-    rejected:   countMap.rejected   || 0,
-    cancelled:  countMap.cancelled  || 0,
+    total:              totalReturns,
+    requested:          countMap.requested          || 0,
+    approved:           countMap.approved           || 0,
+    items_reviewed:     countMap.items_reviewed     || 0,
+    plea_submitted:     countMap.plea_submitted     || 0,
+    awaiting_discount:  countMap.awaiting_discount  || 0,
+    in_transit:         countMap.in_transit         || 0,
+    received:           countMap.received           || 0,
+    inspected:          countMap.inspected          || 0,
+    completed:          countMap.completed          || 0,
+    rejected:           countMap.rejected           || 0,
+    cancelled:          countMap.cancelled          || 0,
+    // NEW — total financial value of all return requests in the current filter
+    totalRequestedAmount,
   };
 
   setCache(STATS_CACHE_KEY, JSON.stringify(stats), STATS_TTL_SECONDS).catch((err) => {
@@ -319,6 +406,8 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 // GET SINGLE RETURN (Admin)
 // FIX P-04 — removed full message-thread populate (7 → 5 chains)
 //            Last 5 messages returned as a preview only
+// UPDATED  — response includes unreadMessages: 0 explicitly after marking
+//            read so the frontend badge zeros on the same render cycle
 // @route  GET /api/v1/admin/returns/:id
 // @access Private/Admin
 // ============================================
@@ -327,13 +416,14 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id)
-    .populate('user',                           'name email phone')
-    .populate('returnInfo.requestedBy',         'name email')
-    .populate('returnInfo.approvedBy',          'name email')
-    .populate('returnInfo.inspectedBy',         'name email')
-    .populate('returnInfo.documents.uploadedBy','name email')
-    .populate('orderItems.product',             'name images price')
-    .populate('returnInfo.itemsToReturn.product',   'name images price');
+    .populate('user',                                'name email phoneNo')
+    .populate('returnInfo.requestedBy',              'name email')
+    .populate('returnInfo.approvedBy',               'name email')
+    .populate('returnInfo.inspectedBy',              'name email')
+    .populate('returnInfo.documents.uploadedBy',     'name email')
+    .populate('returnInfo.pleaInfo.pleaDocuments.uploadedBy', 'name email')
+    .populate('orderItems.product',                  'name images price')
+    .populate('returnInfo.itemsToReturn.product',    'name images price');
 
   if (!order) return next(new HandleError('Order not found', 404));
 
@@ -341,12 +431,18 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found for this order', 404));
   }
 
+  // Run lazy timer expiry check — if the plea window has elapsed, advance
+  // status before returning so the frontend always sees the current state
+  const timerMutated = checkAndExpireTimers(order);
+
   const hasUnread = order.returnInfo.messages?.some(
     (m) => !m.isRead && m.senderType === 'customer'
   );
-  if (hasUnread) {
-    order.markReturnMessagesAsRead('admin');
+
+  if (hasUnread || timerMutated) {
+    if (hasUnread) order.markReturnMessagesAsRead('admin');
     await order.save({ validateBeforeSave: false });
+    if (timerMutated) invalidateReturnCaches('status');
   }
 
   // FIX P-04 — preview only; full thread via GET /return/messages
@@ -356,6 +452,9 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success: true,
+    // NEW — explicit 0 so the frontend badge clears immediately without
+    // waiting for the list to re-fetch
+    unreadMessages: 0,
     order: {
       _id:          order._id,
       user:         order.user,
@@ -376,12 +475,15 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 // FIX L-02 — requestedAmount calculated from order item prices
 // FIX L-03 — return window check duplicated here as service-layer safety net
 // FIX A-02 — assertOrderOwner helper
+// UPDATED  — records policyAcknowledgedAt from request body
 // @route  POST /api/v1/orders/:id/return/request
 // @access Private/Customer
 // ============================================
 
 export const requestReturn = handleAsyncError(async (req, res, next) => {
-  const { reason, description, items, attachments = [] } = req.body;
+  // NEW — policyAcknowledged: the frontend sends this as true after the user
+  // clicks through the policy screen. We record the timestamp server-side.
+  const { reason, description, items, attachments = [], policyAcknowledged } = req.body;
   const userId = req.user._id;
 
   // FIX S-01 — req.order set by checkReturnEligibility
@@ -415,24 +517,26 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
       return [id.toString(), i.price];
     })
   );
-  
+
   const requestedAmount = items.reduce((sum, item) => {
     const price = orderItemMap.get(item.product?.toString()) ?? 0;
     return sum + price * (item.quantity || 0);
   }, 0);
 
   order.returnInfo = {
-    status:          'requested',
+    status:               'requested',
     reason,
     description,
-    itemsToReturn:   items,
+    itemsToReturn:        items,
     requestedAmount,
-    requestedAt:     new Date(),
-    requestedBy:     userId,
+    requestedAt:          new Date(),
+    requestedBy:          userId,
     attachments,
-    messages:        [],
-    timeline:        [],
-    documents:       [],
+    messages:             [],
+    timeline:             [],
+    documents:            [],
+    // NEW — record when the customer acknowledged the discount-only policy
+    policyAcknowledgedAt: policyAcknowledged ? new Date() : null,
   };
 
   order.addReturnTimeline('return_requested', `Return requested: ${reason}`, userId);
@@ -450,18 +554,19 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// ADMIN APPROVES / REJECTS RETURN
-// FIX S-01 — uses req.order from canReviewReturn
-// FIX S-05 — adminNote sanitized before persistence
-// FIX M-01 — RMA generation removed; delegated entirely to pre-save hook
+// ADMIN REVIEWS RETURN — per-item decisions
+// UPDATED — replaces the old single approve/reject with per-item decisions.
+//           Sets status to items_reviewed and starts the 48-hour plea timer.
+//           restockFee is intentionally never written — all returns use
+//           discount codes only.
+// Uses req.order from canReviewReturn (allows requested + plea_submitted)
 // @route  PUT /api/v1/admin/orders/:id/return/review
 // @access Private/Admin
 // ============================================
 
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
-  const { action, restockFee = 0, adminNote = '' } = req.body;
+  const { itemDecisions, adminNote = '' } = req.body;
 
-  // FIX S-01
   const order = req.order;
 
   // FIX S-05 — sanitize before any persistence
@@ -469,46 +574,275 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     ? sanitizeHtml.sanitize(String(adminNote))
     : '';
 
-  if (action === 'approve') {
-    order.returnInfo.status     = 'approved';
-    order.returnInfo.approvedAt = new Date();
-    order.returnInfo.approvedBy = req.user._id;
-    order.returnInfo.restockFee = Number(restockFee) || 0;
-    // FIX M-01 — rmaNumber deliberately NOT set here.
-    // The pre-save hook in order-model.js is the single canonical source,
-    // triggered automatically when status becomes 'approved' and rmaNumber
-    // is absent. Two generators producing different formats has been removed.
-    if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
+  // Apply per-item decisions from the validated itemDecisions array.
+  // Each entry: { productId, decision: 'approved'|'rejected', rejectionReason? }
+  itemDecisions.forEach((decision) => {
+    const item = order.returnInfo.itemsToReturn.find(
+      (i) => {
+        const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
+        return itemProductId === decision.productId.toString();
+      }
+    );
+    if (item) {
+      item.adminDecision          = decision.decision;
+      item.adminRejectionReason   = decision.decision === 'rejected'
+        ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
+        : '';
+    }
+  });
 
-    order.addReturnTimeline('return_approved', 'Return approved by admin', req.user._id);
-    order.addAuditEntry('return_approved', req.user._id, {});
+  // Calculate discountValue from all approved items.
+  // Uses item price stored at return-request time (requestedAmount calc).
+  const orderItemPriceMap = new Map(
+    order.orderItems.map((i) => {
+      const pid = i.product?._id?.toString() ?? i.product?.toString();
+      return [pid, i.price ?? 0];
+    })
+  );
 
-    await order.save();
-    invalidateReturnCaches('stats');
+  const discountValue = order.returnInfo.itemsToReturn
+    .filter((i) => i.adminDecision === 'approved')
+    .reduce((sum, i) => {
+      const pid   = i.product?._id?.toString() ?? i.product?.toString();
+      const price = orderItemPriceMap.get(pid) ?? 0;
+      return sum + price * (i.quantity ?? 1);
+    }, 0);
 
-    return res.status(200).json({
-      success:    true,
-      message:    'Return approved. RMA number generated.',
-      returnInfo: order.returnInfo,
-    });
-  }
+  order.returnInfo.discountValue = discountValue;
+  order.returnInfo.status        = 'items_reviewed';
+  order.returnInfo.approvedAt    = new Date();
+  order.returnInfo.approvedBy    = req.user._id;
 
-  // reject
-  order.returnInfo.status     = 'rejected';
-  order.returnInfo.approvedAt = new Date();
-  order.returnInfo.approvedBy = req.user._id;
+  // Set the 48-hour plea window. The customer has until this deadline to
+  // submit a plea on any rejected items. After expiry checkAndExpireTimers
+  // advances the status to awaiting_discount lazily on the next read.
+  const pleaDeadline = new Date();
+  pleaDeadline.setHours(pleaDeadline.getHours() + 48);
+  order.returnInfo.pleaDeadline = pleaDeadline;
+
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
 
-  order.addReturnTimeline('return_rejected', 'Return rejected by admin', req.user._id, { reason: sanitizedNote });
-  order.addAuditEntry('return_rejected', req.user._id, { adminNote: sanitizedNote });
+  const approvedCount = itemDecisions.filter((d) => d.decision === 'approved').length;
+  const rejectedCount = itemDecisions.filter((d) => d.decision === 'rejected').length;
+
+  order.addReturnTimeline(
+    'items_reviewed',
+    `Admin reviewed items: ${approvedCount} approved, ${rejectedCount} rejected`,
+    req.user._id,
+    { approvedCount, rejectedCount, discountValue }
+  );
+  order.addAuditEntry('items_reviewed', req.user._id, { approvedCount, rejectedCount, discountValue });
 
   await order.save();
   invalidateReturnCaches('stats');
 
   return res.status(200).json({
     success:    true,
-    message:    'Return request rejected',
+    message:    `Items reviewed. ${approvedCount} approved, ${rejectedCount} rejected. Customer has 48 hours to submit a plea.`,
     returnInfo: order.returnInfo,
+  });
+});
+
+// ============================================
+// CUSTOMER SUBMITS PLEA
+// Uses req.order from canSubmitPlea middleware
+// @route  POST /api/v1/orders/:id/return/plea
+// @access Private/Customer
+// ============================================
+
+export const submitPlea = handleAsyncError(async (req, res, next) => {
+  const { pleaDescription } = req.body;
+  const userId  = req.user._id;
+  const order   = req.order;
+
+  try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
+
+  // Persist plea info
+  order.returnInfo.pleaInfo = {
+    pleaDescription:  sanitizeHtml.sanitize(String(pleaDescription)),
+    pleaSubmittedAt:  new Date(),
+    pleaDocuments:    order.returnInfo.pleaInfo?.pleaDocuments ?? [],
+  };
+
+  order.returnInfo.status       = 'plea_submitted';
+  order.returnInfo.pleaAttempts = (order.returnInfo.pleaAttempts ?? 0) + 1;
+
+  // Reset the plea deadline to give the admin 48 hours to respond
+  const adminResponseDeadline = new Date();
+  adminResponseDeadline.setHours(adminResponseDeadline.getHours() + 48);
+  order.returnInfo.pleaDeadline = adminResponseDeadline;
+
+  // Upload any new evidence files if they were sent via a separate upload
+  // request (the plea upload route calls addPleaDocument directly; this
+  // controller only handles the text description submission)
+
+  order.addReturnTimeline(
+    'plea_submitted',
+    'Customer submitted a plea for reconsideration',
+    userId
+  );
+  order.addAuditEntry('plea_submitted', userId, {
+    pleaAttempts: order.returnInfo.pleaAttempts,
+  });
+
+  await order.save();
+  invalidateReturnCaches('stats');
+
+  return res.status(200).json({
+    success:    true,
+    message:    'Plea submitted successfully. The admin will review your plea within 48 hours.',
+    returnInfo: order.returnInfo,
+  });
+});
+
+// ============================================
+// ADMIN RESOLVES PLEA — second-round per-item decisions
+// Uses req.order from canReviewReturn (which allows plea_submitted status)
+// This is the final item-level decision round. pleaAttempts >= 1 means
+// no further pleas can be submitted after this.
+// @route  PUT /api/v1/admin/orders/:id/return/plea-review
+// @access Private/Admin
+// ============================================
+
+export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
+  const { itemDecisions, adminNote = '' } = req.body;
+
+  const order = req.order;
+
+  const sanitizedNote = adminNote
+    ? sanitizeHtml.sanitize(String(adminNote))
+    : '';
+
+  // Apply updated per-item decisions — same logic as reviewReturnRequest
+  itemDecisions.forEach((decision) => {
+    const item = order.returnInfo.itemsToReturn.find(
+      (i) => {
+        const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
+        return itemProductId === decision.productId.toString();
+      }
+    );
+    if (item) {
+      item.adminDecision        = decision.decision;
+      item.adminRejectionReason = decision.decision === 'rejected'
+        ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
+        : '';
+    }
+  });
+
+  // Recalculate discountValue with the updated decisions
+  const orderItemPriceMap = new Map(
+    order.orderItems.map((i) => {
+      const pid = i.product?._id?.toString() ?? i.product?.toString();
+      return [pid, i.price ?? 0];
+    })
+  );
+
+  const discountValue = order.returnInfo.itemsToReturn
+    .filter((i) => i.adminDecision === 'approved')
+    .reduce((sum, i) => {
+      const pid   = i.product?._id?.toString() ?? i.product?.toString();
+      const price = orderItemPriceMap.get(pid) ?? 0;
+      return sum + price * (i.quantity ?? 1);
+    }, 0);
+
+  order.returnInfo.discountValue = discountValue;
+  order.returnInfo.status        = 'awaiting_discount';
+  order.returnInfo.pleaDeadline  = null; // plea phase is permanently closed
+
+  if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
+
+  const approvedCount = itemDecisions.filter((d) => d.decision === 'approved').length;
+  const rejectedCount = itemDecisions.filter((d) => d.decision === 'rejected').length;
+
+  order.addReturnTimeline(
+    'plea_resolved',
+    `Plea reviewed. Final decisions: ${approvedCount} approved, ${rejectedCount} rejected. Return awaiting discount.`,
+    req.user._id,
+    { approvedCount, rejectedCount, discountValue, isFinalRound: true }
+  );
+  order.addAuditEntry('plea_resolved', req.user._id, { approvedCount, rejectedCount, discountValue });
+
+  await order.save();
+  invalidateReturnCaches('stats');
+
+  return res.status(200).json({
+    success:    true,
+    message:    `Plea resolved. ${approvedCount} items approved, ${rejectedCount} rejected. Return is now awaiting discount code generation.`,
+    returnInfo: order.returnInfo,
+  });
+});
+
+// ============================================
+// ADMIN GENERATES DISCOUNT CODE
+// Uses req.order from canGenerateDiscount middleware (pre-populated with
+// user and itemsToReturn.product so no extra DB round-trip needed here)
+// Sets status to completed, returns full return data for discount page
+// pre-population, and triggers the frontend redirect.
+// @route  POST /api/v1/admin/orders/:id/return/generate-discount
+// @access Private/Admin
+// ============================================
+
+export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
+  const { adminNote = '' } = req.body;
+  const order = req.order; // pre-populated by canGenerateDiscount
+
+  const sanitizedNote = adminNote
+    ? sanitizeHtml.sanitize(String(adminNote))
+    : '';
+
+  // Mark the return as completed
+  order.returnInfo.status      = 'completed';
+  order.returnInfo.completedAt = new Date();
+  if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
+
+  order.addReturnTimeline(
+    'discount_generated',
+    'Admin manually generated discount code. Return marked completed.',
+    req.user._id
+  );
+  order.addAuditEntry('discount_generated', req.user._id, {
+    discountValue: order.returnInfo.discountValue,
+  });
+
+  await order.save();
+  invalidateReturnCaches('status');
+
+  // Build the approved items summary for discount page pre-population.
+  // canGenerateDiscount already populated itemsToReturn.product and user
+  // so we can access .name, .price, .images without another findById.
+  const approvedItems = order.returnInfo.itemsToReturn
+    .filter((i) => i.adminDecision === 'approved')
+    .map((i) => ({
+      productId:   i.product?._id ?? i.product,
+      name:        i.product?.name ?? 'Unknown Product',
+      quantity:    i.quantity ?? 1,
+      unitPrice:   i.product?.price ?? 0,
+      image:       i.product?.images?.[0]?.url ?? null,
+      reason:      i.reason ?? '',
+    }));
+
+  // Full return data payload sent to the frontend so the admin is redirected
+  // to the discount creation page with everything pre-populated.
+  const returnDataForDiscount = {
+    orderId:            order._id,
+    orderReference:     order.orderNumber ?? order._id.toString().slice(-8).toUpperCase(),
+    customerId:         order.user?._id ?? order.user,
+    customerName:       order.user?.name ?? '',
+    customerEmail:      order.user?.email ?? '',
+    approvedItems,
+    totalApprovedValue: order.returnInfo.discountValue ?? 0,
+    discountValue:      order.returnInfo.discountValue ?? 0,
+    returnStatus:       'completed',
+  };
+
+  return res.status(200).json({
+    success:               true,
+    message:               'Return marked as completed. Discount code data ready.',
+    // redirectToDiscount: true is a signal to the frontend to navigate to
+    // the discount creation page with returnDataForDiscount pre-filled
+    redirectToDiscount:    true,
+    returnDataForDiscount,
+    returnInfo:            order.returnInfo,
   });
 });
 
@@ -604,7 +938,7 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 export const addReturnMessage = handleAsyncError(async (req, res, next) => {
-  const order                       = req.order;
+  const order                         = req.order;
   const { content, attachments = [] } = req.body;
 
   order.addReturnMessage(req.user._id, 'admin', content, attachments);
@@ -628,8 +962,8 @@ export const addReturnMessage = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) => {
-  const order                       = req.order;
-  const userId                      = req.user._id;
+  const order                         = req.order;
+  const userId                        = req.user._id;
   const { content, attachments = [] } = req.body;
 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
@@ -659,7 +993,7 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
 // ============================================
 
 export const getReturnMessages = handleAsyncError(async (req, res, next) => {
-  const { id }           = req.params;
+  const { id }                   = req.params;
   const { page = 1, limit = 50 } = req.query;
   const userId  = req.user._id;
   const isAdmin = req.user.role === 'admin';
@@ -771,7 +1105,8 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   const isAdmin = req.user.role === 'admin';
 
   const order = await Order.findById(id)
-    .populate('returnInfo.documents.uploadedBy', 'name email role')
+    .populate('returnInfo.documents.uploadedBy',          'name email role')
+    .populate('returnInfo.pleaInfo.pleaDocuments.uploadedBy', 'name email role')
     .select('returnInfo user');
 
   if (!order) return next(new HandleError('Order not found', 404));
@@ -780,9 +1115,12 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   catch (e) { return next(e); }
 
   return res.status(200).json({
-    success:   true,
-    count:     order.returnInfo?.documents?.length || 0,
-    documents: order.returnInfo?.documents         || [],
+    success:      true,
+    count:        order.returnInfo?.documents?.length || 0,
+    documents:    order.returnInfo?.documents         || [],
+    // NEW — plea evidence returned separately so the frontend can display
+    // original evidence and plea evidence in distinct sections
+    pleaDocuments: order.returnInfo?.pleaInfo?.pleaDocuments || [],
   });
 });
 
@@ -833,6 +1171,34 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
 });
 
 // ============================================
+// UPLOAD PLEA FILES — Customer
+// Separate from uploadCustomerReturnFiles so plea evidence is written to
+// pleaInfo.pleaDocuments via addPleaDocument rather than the main
+// documents array. Only allowed when status is items_reviewed.
+// @route  POST /api/v1/orders/:id/return/plea/upload
+// @access Private/Customer
+// ============================================
+
+export const uploadPleaFiles = handleAsyncError(async (req, res, next) => {
+  const userId = req.user._id;
+  const order  = await Order.findById(req.params.id);
+  if (!order) return next(new HandleError('Order not found', 404));
+
+  try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
+
+  if (!order.returnInfo || order.returnInfo.status !== 'items_reviewed') {
+    return next(new HandleError(
+      'Plea evidence can only be uploaded when the return is in items_reviewed status', 400
+    ));
+  }
+
+  const uploadedFiles = await handlePleaUpload(order, req.files, userId);
+  await order.save();
+
+  return res.status(200).json({ success: true, message: 'Plea evidence uploaded successfully', files: uploadedFiles });
+});
+
+// ============================================
 // GET RETURN STATUS — Customer
 // FIX A-02 — assertOrderOwner helper
 // @route  GET /api/v1/orders/:id/return/status
@@ -847,6 +1213,14 @@ export const getReturnStatus = handleAsyncError(async (req, res, next) => {
   if (!order) return next(new HandleError('Order not found', 404));
 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
+
+  // Run lazy timer expiry on the customer status fetch too so the customer
+  // always sees the current state even when the admin hasn't opened the panel
+  const timerMutated = checkAndExpireTimers(order);
+  if (timerMutated) {
+    await order.save({ validateBeforeSave: false });
+    invalidateReturnCaches('status');
+  }
 
   const hasReturn = order.returnInfo && order.returnInfo.status !== 'none';
 
@@ -896,7 +1270,6 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
 
 export const cancelReturnRequest = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
-  // FIX S-01/L-05 — req.order already validated by canCancelReturn middleware
   const order  = req.order;
 
   order.returnInfo.status = 'cancelled';
