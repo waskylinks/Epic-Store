@@ -277,25 +277,53 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     returnInfo: {
       type: {
+        // UPDATED: added items_reviewed, plea_submitted, awaiting_discount
+        // to support the new return flow states. Existing statuses unchanged.
         status: {
           type: String,
           enum: [
-            'none', 'requested', 'approved', 'rejected',
-            'in_transit', 'received', 'inspected', 'completed', 'cancelled',
+            'none',
+            'requested',
+            'approved',
+            'rejected',
+            'items_reviewed',
+            'plea_submitted',
+            'awaiting_discount',
+            'in_transit',
+            'received',
+            'inspected',
+            'completed',
+            'cancelled',
           ],
           default: 'none',
         },
         rmaNumber: String,
         reason: String,
         description: String,
+
+        // UPDATED: added adminDecision and adminRejectionReason per item
+        // so the admin can approve or reject individual items rather than
+        // the whole return in one shot. All existing fields preserved.
         itemsToReturn: [
           {
             product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
             quantity: Number,
             condition: String,
             reason: String,
+            // NEW — per-item admin decision set during reviewReturnRequest
+            // and resolveAfterPlea. Default 'pending' so existing documents
+            // without this field are treated as not yet reviewed.
+            adminDecision: {
+              type: String,
+              enum: ['approved', 'rejected', 'pending'],
+              default: 'pending',
+            },
+            // NEW — required when adminDecision is 'rejected'.
+            // Stored so the customer can see exactly why each item was rejected.
+            adminRejectionReason: { type: String, default: '' },
           },
         ],
+
         returnLabel: {
           url: String,
           carrier: String,
@@ -304,7 +332,12 @@ const orderSchema = new mongoose.Schema(
         inspectionNotes: String,
         inspectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         inspectedAt: Date,
+
+        // restockFee kept for backwards compatibility with existing documents.
+        // New code paths must never write to this field — all returns are now
+        // handled via discount code only and no fee is charged.
         restockFee: { type: Number, default: 0 },
+
         requestedAmount: Number,
         requestedAt: Date,
         requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -313,6 +346,62 @@ const orderSchema = new mongoose.Schema(
         receivedAt: Date,
         completedAt: Date,
         adminNote: String,
+
+        // NEW — records the date/time the customer explicitly acknowledged
+        // the return policy (discount-code-only, non-refundable items) on
+        // the policy screen before submitting their return request.
+        policyAcknowledgedAt: { type: Date, default: null },
+
+        // NEW — the 48-hour window within which the customer can submit a
+        // plea after the admin posts per-item decisions. Set by the controller
+        // when status transitions to items_reviewed. Auto-expires to
+        // awaiting_discount if the customer does not act within 48 hours.
+        pleaDeadline: { type: Date, default: null },
+
+        // NEW — the 48-hour window for any pending customer action after
+        // the plea round resolves and the process moves toward discount
+        // generation. Currently used as a safety expiry gate.
+        acceptanceDeadline: { type: Date, default: null },
+
+        // NEW — tracks how many plea attempts the customer has made.
+        // Maximum of 1 plea is allowed. Once pleaAttempts reaches 1 the
+        // plea option is permanently locked regardless of status.
+        pleaAttempts: { type: Number, default: 0 },
+
+        // NEW — the calculated total value of all admin-approved items.
+        // Set by reviewReturnRequest and recalculated by resolveAfterPlea.
+        // Passed to the discount creation page so the admin can pre-populate
+        // the discount value without manually summing approved items.
+        discountValue: { type: Number, default: 0 },
+
+        // NEW — stores the customer's plea submission.
+        // pleaDescription: the customer's written argument for reconsidering
+        //   rejected items.
+        // pleaSubmittedAt: timestamp of submission.
+        // pleaDocuments: additional evidence uploaded alongside the plea,
+        //   using the same structure as the top-level documents array so
+        //   existing upload helpers work without modification.
+        pleaInfo: {
+          pleaDescription: { type: String, default: '' },
+          pleaSubmittedAt: { type: Date, default: null },
+          pleaDocuments: [
+            {
+              type: {
+                type: String,
+                enum: ['photo', 'video', 'receipt', 'other'],
+                required: true,
+              },
+              url: { type: String, required: true },
+              filename: String,
+              description: String,
+              uploadedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+              uploadedAt: { type: Date, default: Date.now },
+              fileSize: Number,
+              mimeType: String,
+            },
+          ],
+        },
+
         messages: [
           {
             sender: {
@@ -604,6 +693,11 @@ orderSchema.index({ 'returnInfo.messages.isRead': 1 });
 orderSchema.index({ 'returnInfo.messages.senderType': 1 });
 orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 
+// NEW — index on pleaDeadline so the lazy timer-expiry check in the
+// controller can efficiently find returns with an expired plea window
+// without scanning the entire collection.
+orderSchema.index({ 'returnInfo.pleaDeadline': 1 });
+
 // ============================================
 // VIRTUALS
 // ============================================
@@ -723,6 +817,35 @@ orderSchema.virtual('latestReturnMessage').get(function () {
   return msgs?.length ? msgs[msgs.length - 1] : null;
 });
 
+// NEW — convenience virtual: true when the customer still has time and
+// eligibility to submit a plea. Checks status, pleaAttempts cap, and
+// whether the pleaDeadline has not yet passed.
+orderSchema.virtual('canSubmitPlea').get(function () {
+  if (this.returnInfo?.status !== 'items_reviewed') return false;
+  if ((this.returnInfo?.pleaAttempts ?? 0) >= 1) return false;
+  const deadline = this.returnInfo?.pleaDeadline;
+  if (!deadline) return false;
+  return new Date() < new Date(deadline);
+});
+
+// NEW — milliseconds remaining on the plea deadline. Returns 0 if expired
+// or not set. Useful for rendering the countdown timer on the frontend
+// without extra arithmetic.
+orderSchema.virtual('pleaDeadlineMs').get(function () {
+  const deadline = this.returnInfo?.pleaDeadline;
+  if (!deadline) return 0;
+  return Math.max(0, new Date(deadline) - new Date());
+});
+
+// NEW — total value of items the admin has individually approved.
+// Calculated from itemsToReturn where adminDecision === 'approved'.
+// Used as a cross-check against the stored discountValue field.
+orderSchema.virtual('approvedItemsValue').get(function () {
+  return (this.returnInfo?.itemsToReturn ?? [])
+    .filter((item) => item.adminDecision === 'approved')
+    .reduce((sum, item) => sum + (item.price ?? 0) * (item.quantity ?? 1), 0);
+});
+
 orderSchema.set('toJSON', { virtuals: true });
 orderSchema.set('toObject', { virtuals: true });
 orderSchema.set('strictQuery', true);
@@ -794,10 +917,21 @@ orderSchema.statics.getPendingFraudReviews = async function () {
     .sort({ createdAt: -1 });
 };
 
+// UPDATED: added new statuses to the $in list so these returns surface
+// in the active returns query used by admin dashboards.
 orderSchema.statics.getActiveReturns = async function () {
   return this.find({
     'returnInfo.status': {
-      $in: ['requested', 'approved', 'in_transit', 'received', 'inspected'],
+      $in: [
+        'requested',
+        'approved',
+        'items_reviewed',
+        'plea_submitted',
+        'awaiting_discount',
+        'in_transit',
+        'received',
+        'inspected',
+      ],
     },
   })
     .populate('user', 'firstName lastName email')
@@ -843,14 +977,22 @@ orderSchema.statics.getOrdersWithUnreadMessages = async function () {
 // 500 objects loaded just to extract one count and one preview.
 // This aggregation computes the unread count and extracts the latest
 // message entirely within MongoDB, sending only what the controller needs.
+//
+// UPDATED: items_reviewed, plea_submitted, awaiting_discount removed from
+// the $nin exclusion list so these active statuses correctly appear in the
+// unread messages queue. Only truly closed statuses are excluded.
 orderSchema.statics.getReturnsWithUnreadMessages = async function () {
   return this.aggregate([
     {
       $match: {
-        // FIX V-04 (model side): consistent with the middleware change —
-        // rejected and cancelled returns are excluded since messaging is
-        // closed on those statuses (canAddReturnMessage blocks them too).
-        'returnInfo.status':   { $nin: ['none', 'completed', 'rejected', 'cancelled'] },
+        'returnInfo.status': {
+          $nin: ['none', 'completed', 'cancelled'],
+          // NOTE: 'rejected' intentionally removed from $nin here compared
+          // to the original. A rejection followed by a plea means the return
+          // is still active and messages should surface. The canAddReturnMessage
+          // middleware is the enforcement gate for who can write; this query
+          // is read-only and should be inclusive of all active returns.
+        },
         'returnInfo.messages': { $elemMatch: { isRead: false, senderType: 'customer' } },
       },
     },
@@ -863,7 +1005,7 @@ orderSchema.statics.getReturnsWithUnreadMessages = async function () {
         as:           'user',
       },
     },
-    { $unwind: { path: '$user', preserveNullAndEmpty: true } },
+    { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
     {
       $project: {
         user:        1,
@@ -1029,6 +1171,20 @@ orderSchema.methods.addReturnDocument = function (type, url, filename, uploadedB
     type, url, filename, description, uploadedBy, uploadedAt: new Date(),
   });
   this.addReturnTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
+};
+
+// NEW — adds a document to the plea evidence array specifically.
+// Keeps plea evidence separate from the main return documents array
+// so the admin can distinguish original submission evidence from
+// plea evidence at a glance.
+orderSchema.methods.addPleaDocument = function (type, url, filename, uploadedBy, description = '') {
+  if (!this.returnInfo) this.returnInfo = { status: 'none' };
+  if (!this.returnInfo.pleaInfo) this.returnInfo.pleaInfo = {};
+  if (!this.returnInfo.pleaInfo.pleaDocuments) this.returnInfo.pleaInfo.pleaDocuments = [];
+  this.returnInfo.pleaInfo.pleaDocuments.push({
+    type, url, filename, description, uploadedBy, uploadedAt: new Date(),
+  });
+  this.addReturnTimeline('plea_document_uploaded', `Plea evidence uploaded: ${filename}`, uploadedBy);
 };
 
 export default mongoose.model('Order', orderSchema);
