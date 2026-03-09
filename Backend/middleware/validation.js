@@ -578,22 +578,67 @@ export const validateReturnMessage = (req, res, next) => {
 };
 
 /**
- * Validate return review (admin)
+ * Validate return review (admin) — per-item decisions.
+ *
+ * UPDATED: replaces the old single approve/reject action field with an
+ * itemDecisions array so the admin can approve or reject individual items
+ * independently. An optional top-level adminNote is still accepted.
+ *
+ * Expected body shape:
+ * {
+ *   itemDecisions: [
+ *     { productId: '...', decision: 'approved' },
+ *     { productId: '...', decision: 'rejected', rejectionReason: 'Damaged on arrival' },
+ *   ],
+ *   adminNote: 'Optional overall note visible to customer'   // optional
+ * }
+ *
+ * Rules:
+ * - itemDecisions must be a non-empty array
+ * - Each entry must have productId (non-empty string) and decision ('approved'|'rejected')
+ * - When decision is 'rejected', rejectionReason is required and min 5 chars
+ * - adminNote is optional but capped at 1000 chars when provided
  */
 export const validateReturnReview = (req, res, next) => {
-  const { action, adminNote } = req.body;
+  const { itemDecisions, adminNote } = req.body;
   const errors = [];
 
-  if (!action || !['approve', 'reject'].includes(action)) {
-    errors.push('Action must be either "approve" or "reject"');
+  if (!itemDecisions || !Array.isArray(itemDecisions) || itemDecisions.length === 0) {
+    errors.push('itemDecisions must be a non-empty array of per-item decisions');
   }
 
-  if (action === 'reject' && (!adminNote || adminNote.trim().length < 10)) {
-    errors.push('Rejection reason must be at least 10 characters');
+  if (Array.isArray(itemDecisions)) {
+    itemDecisions.forEach((entry, index) => {
+      const n = index + 1;
+
+      if (!entry.productId || String(entry.productId).trim().length === 0) {
+        errors.push(`Decision ${n}: productId is required`);
+      }
+
+      if (!entry.decision || !['approved', 'rejected'].includes(entry.decision)) {
+        errors.push(`Decision ${n}: decision must be either "approved" or "rejected"`);
+      }
+
+      if (entry.decision === 'rejected') {
+        const reason = entry.rejectionReason?.trim() ?? '';
+        if (reason.length < 5) {
+          errors.push(`Decision ${n}: rejectionReason must be at least 5 characters when rejecting an item`);
+        }
+        if (reason.length > 500) {
+          errors.push(`Decision ${n}: rejectionReason cannot exceed 500 characters`);
+        }
+        // Write trimmed value back so the controller receives clean data
+        entry.rejectionReason = reason;
+      }
+    });
   }
 
-  if (adminNote && adminNote.length > 1000) {
-    errors.push('Admin note cannot exceed 1000 characters');
+  if (adminNote !== undefined && adminNote !== null) {
+    if (typeof adminNote !== 'string') {
+      errors.push('adminNote must be a string');
+    } else if (adminNote.length > 1000) {
+      errors.push('adminNote cannot exceed 1000 characters');
+    }
   }
 
   if (errors.length > 0) {
@@ -604,19 +649,106 @@ export const validateReturnReview = (req, res, next) => {
 };
 
 /**
- * Validate return status update
+ * Validate return status update.
+ *
+ * UPDATED: added items_reviewed, plea_submitted, awaiting_discount to the
+ * valid statuses list to support the new return flow states. The existing
+ * in_transit, received, inspected, completed statuses are unchanged.
  */
 export const validateReturnStatusUpdate = (req, res, next) => {
   const { status, inspectionNotes } = req.body;
   const errors = [];
 
-  const validStatuses = ['in_transit', 'received', 'inspected', 'completed'];
+  const validStatuses = [
+    'in_transit',
+    'received',
+    'inspected',
+    'completed',
+    'items_reviewed',
+    'plea_submitted',
+    'awaiting_discount',
+  ];
+
   if (!status || !validStatuses.includes(status)) {
-    errors.push('Invalid return status. Must be: in_transit, received, inspected, or completed');
+    errors.push(
+      'Invalid return status. Must be: in_transit, received, inspected, completed, items_reviewed, plea_submitted, or awaiting_discount'
+    );
   }
 
   if (status === 'inspected' && inspectionNotes && inspectionNotes.length > 2000) {
     errors.push('Inspection notes cannot exceed 2000 characters');
+  }
+
+  if (errors.length > 0) {
+    return next(new HandleError(errors.join('. '), 400));
+  }
+
+  next();
+};
+
+/**
+ * Validate plea submission (customer).
+ *
+ * NEW: validates the customer's plea request after the admin has posted
+ * per-item decisions and at least one item was rejected.
+ *
+ * Expected body shape:
+ * {
+ *   pleaDescription: 'Detailed argument for reconsideration...'
+ * }
+ *
+ * File attachments are handled separately by validateReturnFileUpload
+ * in return-policy.middleware.js and do not need validation here.
+ */
+export const validatePleaSubmission = (req, res, next) => {
+  const { pleaDescription } = req.body;
+  const errors = [];
+
+  if (!pleaDescription || pleaDescription.trim().length === 0) {
+    errors.push('Plea description is required');
+  }
+
+  if (pleaDescription && pleaDescription.trim().length < 10) {
+    errors.push('Plea description must be at least 10 characters');
+  }
+
+  if (pleaDescription && pleaDescription.length > 2000) {
+    errors.push('Plea description cannot exceed 2000 characters');
+  }
+
+  if (errors.length > 0) {
+    return next(new HandleError(errors.join('. '), 400));
+  }
+
+  // Write trimmed value back so the controller receives clean data
+  req.body.pleaDescription = pleaDescription.trim();
+
+  next();
+};
+
+/**
+ * Validate generate discount code request (admin).
+ *
+ * NEW: validates the admin's request to manually generate and send a
+ * discount code once all item decisions are final and the return has
+ * reached awaiting_discount status. The status gate is enforced by the
+ * canGenerateDiscount middleware — this validator only checks the shape
+ * of the request body.
+ *
+ * Body is intentionally minimal since the discount value is derived
+ * server-side from the approved items, not supplied by the client.
+ * An optional adminNote can be included for internal record-keeping.
+ */
+export const validateGenerateDiscount = (req, res, next) => {
+  const { adminNote } = req.body;
+  const errors = [];
+
+  if (adminNote !== undefined && adminNote !== null) {
+    if (typeof adminNote !== 'string') {
+      errors.push('adminNote must be a string');
+    } else if (adminNote.length > 1000) {
+      errors.push('adminNote cannot exceed 1000 characters');
+    }
   }
 
   if (errors.length > 0) {
