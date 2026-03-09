@@ -60,7 +60,22 @@ export const checkReturnEligibility = async (req, res, next) => {
   }
 };
 
-export const canReviewReturn = async (req, res, next) => {
+// ============================================
+// canReviewFirstRound
+// FIX BUG-1 / BUG-3 — previously a single canReviewReturn middleware
+// accepted only 'requested', then was naively patched to also accept
+// 'plea_submitted'. That caused both the first-round review route
+// (PUT /review) and the second-round plea-review route (PUT /plea-review)
+// to accept the wrong statuses — an admin could re-run the first-round
+// review on a plea_submitted return, overwriting plea data.
+//
+// Solution: two separate middleware functions with explicit allowed
+// statuses, one per route.
+//
+// canReviewFirstRound — used ONLY by PUT /admin/orders/:id/return/review
+// Allows: 'requested' only.
+// ============================================
+export const canReviewFirstRound = async (req, res, next) => {
   try {
     const { id } = req.params;
 
@@ -69,18 +84,65 @@ export const canReviewReturn = async (req, res, next) => {
 
     if (!order.returnInfo || order.returnInfo.status !== 'requested') {
       return next(new HandleError(
-        'No pending return request found. Current status: ' + (order.returnInfo?.status || 'none'), 400
+        `First-round review requires status 'requested'. Current status: ${order.returnInfo?.status || 'none'}`, 400
       ));
     }
 
     req.order = order;
     next();
   } catch (error) {
-    console.error('Review return check error:', error);
+    console.error('canReviewFirstRound check error:', error);
     return next(new HandleError('Failed to validate return review', 500));
   }
 };
 
+// ============================================
+// canReviewPleaRound
+// FIX BUG-1 / BUG-3 — second half of the split.
+//
+// canReviewPleaRound — used ONLY by PUT /admin/orders/:id/return/plea-review
+// Allows: 'plea_submitted' only.
+// Guards that a plea was actually submitted (pleaAttempts > 0) as a
+// defence-in-depth check against a manually forced status change.
+// ============================================
+export const canReviewPleaRound = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const order = await Order.findById(id);
+    if (!order) return next(new HandleError('Order not found', 404));
+
+    if (!order.returnInfo || order.returnInfo.status !== 'plea_submitted') {
+      return next(new HandleError(
+        `Plea-round review requires status 'plea_submitted'. Current status: ${order.returnInfo?.status || 'none'}`, 400
+      ));
+    }
+
+    // Defence-in-depth: if status was manually forced to plea_submitted
+    // without a real plea being submitted, pleaAttempts will be 0.
+    if ((order.returnInfo.pleaAttempts ?? 0) === 0) {
+      return next(new HandleError(
+        'Cannot run plea-round review: no plea has been submitted by the customer', 400
+      ));
+    }
+
+    req.order = order;
+    next();
+  } catch (error) {
+    console.error('canReviewPleaRound check error:', error);
+    return next(new HandleError('Failed to validate plea review', 500));
+  }
+};
+
+// ============================================
+// canAddReturnMessage
+// FIX V-04 — updated closed statuses list.
+// 'rejected' is kept closed: in the new flow the overall return status
+// 'rejected' is only reachable via the legacy updateReturnStatus admin
+// endpoint and represents a terminal admin rejection of the whole request
+// (not a per-item rejection). Per-item rejections land the return in
+// 'items_reviewed', not 'rejected', so messaging remains open there.
+// ============================================
 export const canAddReturnMessage = async (req, res, next) => {
   try {
     const { id }  = req.params;
@@ -98,7 +160,9 @@ export const canAddReturnMessage = async (req, res, next) => {
       return next(new HandleError('Unauthorized', 403));
     }
 
-    // FIX V-04 — rejected and cancelled returns are now closed for messaging
+    // Only truly terminal statuses block messaging.
+    // 'items_reviewed', 'plea_submitted', 'awaiting_discount' must remain
+    // open so customers and admins can communicate throughout the new flow.
     const closedStatuses = ['completed', 'rejected', 'cancelled'];
     if (closedStatuses.includes(order.returnInfo.status)) {
       return next(new HandleError(
@@ -167,4 +231,94 @@ export const validateReturnFileUpload = (req, res, next) => {
   }
 
   next();
+};
+
+// ============================================
+// canSubmitPlea
+// FIX BUG-2 — was completely missing from the file, causing a hard crash
+// when the route tried to invoke it as Express middleware.
+//
+// Guards:
+// 1. Order exists and belongs to the requesting customer
+// 2. Status is exactly 'items_reviewed' (the only window for a plea)
+// 3. pleaAttempts < 1 (maximum one plea allowed per return)
+// 4. pleaDeadline has not expired (48-hour window enforced here)
+//    — if the deadline has passed the customer missed their window;
+//      checkAndExpireTimers will auto-advance the status on the next read.
+// ============================================
+export const canSubmitPlea = async (req, res, next) => {
+  try {
+    const { id }  = req.params;
+    const userId  = req.user._id;
+
+    const order = await Order.findById(id);
+    if (!order) return next(new HandleError('Order not found', 404));
+
+    // Ownership — only the order owner can submit a plea
+    if (order.user.toString() !== userId.toString()) {
+      return next(new HandleError('Unauthorized', 403));
+    }
+
+    if (!order.returnInfo || order.returnInfo.status !== 'items_reviewed') {
+      return next(new HandleError(
+        `Plea submission is only allowed when return status is 'items_reviewed'. Current status: ${order.returnInfo?.status || 'none'}`, 400
+      ));
+    }
+
+    if ((order.returnInfo.pleaAttempts ?? 0) >= 1) {
+      return next(new HandleError(
+        'You have already submitted a plea for this return. Only one plea is allowed.', 400
+      ));
+    }
+
+    const deadline = order.returnInfo.pleaDeadline;
+    if (!deadline || new Date() > new Date(deadline)) {
+      return next(new HandleError(
+        'The plea submission window has closed. Your return will proceed based on the original item decisions.', 400
+      ));
+    }
+
+    req.order = order;
+    next();
+  } catch (error) {
+    console.error('canSubmitPlea check error:', error);
+    return next(new HandleError('Failed to validate plea submission', 500));
+  }
+};
+
+// ============================================
+// canGenerateDiscount
+// FIX BUG-2 — was completely missing from the file, causing a hard crash.
+//
+// Guards:
+// 1. Order exists and is in 'awaiting_discount' status
+// 2. Pre-populates order.user and order.returnInfo.itemsToReturn.product
+//    so the controller can build the discount page payload without any
+//    additional DB round-trips.
+//
+// Note: admin-only access is already enforced by the adminAuth middleware
+// array applied in return-routes.js before this middleware runs.
+// ============================================
+export const canGenerateDiscount = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+
+    const order = await Order.findById(id)
+      .populate('user',                             'name email')
+      .populate('returnInfo.itemsToReturn.product', 'name price images');
+
+    if (!order) return next(new HandleError('Order not found', 404));
+
+    if (!order.returnInfo || order.returnInfo.status !== 'awaiting_discount') {
+      return next(new HandleError(
+        `Discount generation requires status 'awaiting_discount'. Current status: ${order.returnInfo?.status || 'none'}`, 400
+      ));
+    }
+
+    req.order = order;
+    next();
+  } catch (error) {
+    console.error('canGenerateDiscount check error:', error);
+    return next(new HandleError('Failed to validate discount generation', 500));
+  }
 };

@@ -17,6 +17,11 @@ import {
   uploadCustomerReturnFiles,
   getReturnsWithUnreadMessages,
   cancelReturnRequest,
+  // NEW
+  submitPlea,
+  resolveAfterPlea,
+  generateDiscountCode,
+  uploadPleaFiles,
 } from '../controller/return-controller.js';
 
 import {
@@ -25,15 +30,25 @@ import {
   validateReturnReview,
   validateReturnStatusUpdate,
   sanitizeInput,
+  // NEW
+  validatePleaSubmission,
+  validateGenerateDiscount,
 } from '../middleware/validation.js';
 
 import {
-  validateObjectId,           // FIX V-01 — new export
+  validateObjectId,
   checkReturnEligibility,
-  canReviewReturn,
+  // FIX BUG-1 / BUG-3 — canReviewReturn split into two status-specific
+  // guards so each route only accepts the status it should act on.
+  // Importing the old canReviewReturn is intentionally removed.
+  canReviewFirstRound,    // PUT /review       — requires status 'requested'
+  canReviewPleaRound,     // PUT /plea-review  — requires status 'plea_submitted'
   canAddReturnMessage,
   canCancelReturn,
   validateReturnFileUpload,
+  // NEW
+  canSubmitPlea,
+  canGenerateDiscount,
 } from '../middleware/return-policy.middleware.js';
 
 import upload from '../middleware/multer.js';
@@ -91,6 +106,18 @@ const uploadLimiter = rateLimit({
   legacyHeaders:   false,
 });
 
+// NEW — tighter plea rate limiter (max 3/min per user)
+// Plea submissions are a once-per-return action so there is no legitimate
+// reason for bursts; this prevents accidental or malicious double-posts.
+const pleaLimiter = rateLimit({
+  windowMs:        60 * 1000,
+  max:             3,
+  keyGenerator:    (req) => req.user?._id?.toString() || ipKeyGenerator(req),
+  message:         { success: false, message: 'Too many plea submissions. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders:   false,
+});
+
 /* ======================================================
    CUSTOMER ROUTES
 ====================================================== */
@@ -111,7 +138,7 @@ router.post(
   messageLimiter,           // FIX S-02
   sanitizeInput,
   validateReturnMessage,
-  canAddReturnMessage,      // FIX V-04 — now blocks rejected/cancelled; sets req.order
+  canAddReturnMessage,      // FIX V-04 — blocks completed/rejected/cancelled; sets req.order
   addCustomerReturnMessage
 );
 
@@ -136,6 +163,37 @@ router.put(
   cancelReturnRequest
 );
 
+// NEW — customer submits a plea after admin posts per-item decisions.
+// canSubmitPlea enforces: status=items_reviewed, pleaAttempts<1,
+// pleaDeadline not expired, and order ownership.
+// NOTE: must come BEFORE /orders/:id/return/plea/upload so Express does
+// not accidentally match the POST body route when :id === "upload"
+// (router.param already guards :id as a valid ObjectId, so this is moot
+// in practice, but ordering remains conventional).
+router.post(
+  '/orders/:id/return/plea',
+  verifyUserAuth,
+  pleaLimiter,
+  sanitizeInput,
+  validatePleaSubmission,
+  canSubmitPlea,            // sets req.order; blocks if window expired or already used
+  submitPlea
+);
+
+// NEW — customer uploads evidence files for a plea.
+// Intentionally does NOT go through canSubmitPlea because uploads are
+// valid both before (items_reviewed) and after (plea_submitted) the text
+// submission. The controller enforces the status + deadline check directly.
+// FIX BUG-15 — no canSubmitPlea here; controller handles status+deadline.
+router.post(
+  '/orders/:id/return/plea/upload',
+  verifyUserAuth,
+  uploadLimiter,
+  upload.array('attachments', UPLOAD_LIMIT),
+  validateReturnFileUpload,
+  uploadPleaFiles
+);
+
 /* ======================================================
    ADMIN ROUTES
    NOTE: /admin/returns/unread MUST remain BEFORE /admin/returns/:id
@@ -146,12 +204,13 @@ router.get('/admin/returns/unread',  ...adminAuth, getReturnsWithUnreadMessages)
 router.get('/admin/returns',         ...adminAuth, getAllReturns);
 router.get('/admin/returns/:id',     ...adminAuth, getSingleReturn);
 
+// FIX BUG-3 — first-round review uses canReviewFirstRound (status='requested' only)
 router.put(
   '/admin/orders/:id/return/review',
   ...adminAuth,
   sanitizeInput,
   validateReturnReview,
-  canReviewReturn,          // sets req.order
+  canReviewFirstRound,      // sets req.order; ONLY allows status='requested'
   reviewReturnRequest
 );
 
@@ -180,6 +239,32 @@ router.post(
   upload.array('attachments', UPLOAD_LIMIT),
   validateReturnFileUpload,
   uploadReturnFiles
+);
+
+// FIX BUG-3 — second-round plea review uses canReviewPleaRound
+// (status='plea_submitted' only). Previously shared canReviewReturn
+// middleware with the first-round route, which would have allowed
+// the admin to overwrite a plea_submitted return with a first-round
+// review (destroying plea data) after the naive BUG-1 patch.
+router.put(
+  '/admin/orders/:id/return/plea-review',
+  ...adminAuth,
+  sanitizeInput,
+  validateReturnReview,
+  canReviewPleaRound,       // sets req.order; ONLY allows status='plea_submitted'
+  resolveAfterPlea
+);
+
+// NEW — admin manually generates and sends a discount code once all item
+// decisions are final and the return is in awaiting_discount status.
+// canGenerateDiscount populates order.user and order.returnInfo.itemsToReturn.product
+// so the controller can build the discount page payload without extra DB calls.
+router.post(
+  '/admin/orders/:id/return/generate-discount',
+  ...adminAuth,
+  validateGenerateDiscount,
+  canGenerateDiscount,      // sets req.order (pre-populated); status guard
+  generateDiscountCode
 );
 
 export default router;

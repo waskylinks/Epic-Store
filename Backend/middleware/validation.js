@@ -6,9 +6,6 @@ import HandleError from '../utils/handleError.js';
 // USER AUTHENTICATION VALIDATORS
 // ============================================
 
-/**
- * Validate registration data (firstName, lastName)
- */
 export const validateRegistration = (req, res, next) => {
     if (!req.body || Object.keys(req.body).length === 0) {
         return next(new HandleError('Request body is empty. Please provide registration data.', 400));
@@ -57,9 +54,6 @@ export const validateRegistration = (req, res, next) => {
     next();
 };
 
-/**
- * Validate login data
- */
 export const validateLogin = (req, res, next) => {
     if (!req.body || Object.keys(req.body).length === 0) {
         return next(new HandleError('Request body is empty. Please provide login credentials.', 400));
@@ -83,9 +77,6 @@ export const validateLogin = (req, res, next) => {
     next();
 };
 
-/**
- * Validate profile update (with avatar)
- */
 export const validateProfileUpdate = (req, res, next) => {
     if (!req.body || Object.keys(req.body).length === 0) {
         return next(new HandleError('Request body is empty.', 400));
@@ -129,9 +120,6 @@ export const validateProfileUpdate = (req, res, next) => {
     next();
 };
 
-/**
- * Validate password update
- */
 export const validatePasswordUpdate = (req, res, next) => {
     if (!req.body || Object.keys(req.body).length === 0) {
         return next(new HandleError('Request body is empty.', 400));
@@ -167,9 +155,6 @@ export const validatePasswordUpdate = (req, res, next) => {
     next();
 };
 
-/**
- * Validate password reset
- */
 export const validatePasswordReset = (req, res, next) => {
     if (!req.body || Object.keys(req.body).length === 0) {
         return next(new HandleError('Request body is empty.', 400));
@@ -207,9 +192,6 @@ export const validatePasswordReset = (req, res, next) => {
     next();
 };
 
-/**
- * Validate email
- */
 export const validateEmail = (req, res, next) => {
     if (!req.body || !req.body.email || !validator.isEmail(req.body.email)) {
         return next(new HandleError('Please provide a valid email address', 400));
@@ -217,9 +199,6 @@ export const validateEmail = (req, res, next) => {
     next();
 };
 
-/**
- * Validate verification code
- */
 export const validateVerificationCode = (req, res, next) => {
     if (!req.body || !req.body.code) {
         return next(new HandleError('Verification code is required', 400));
@@ -236,22 +215,14 @@ export const validateVerificationCode = (req, res, next) => {
 // REFUND VALIDATORS
 // ============================================
 
-/**
- * Validate refund request
- */
 export const validateRefundRequest = (req, res, next) => {
     const { reason, description, refundType, requestedAmount } = req.body;
     const errors = [];
 
     const validReasons = [
-        'defective_product',
-        'wrong_item',
-        'not_as_described',
-        'damaged_in_shipping',
-        'changed_mind',
-        'duplicate_order',
-        'unauthorized_purchase',
-        'other'
+        'defective_product', 'wrong_item', 'not_as_described',
+        'damaged_in_shipping', 'changed_mind', 'duplicate_order',
+        'unauthorized_purchase', 'other'
     ];
 
     if (!reason || !validReasons.includes(reason)) {
@@ -282,9 +253,6 @@ export const validateRefundRequest = (req, res, next) => {
     next();
 };
 
-/**
- * Validate refund message
- */
 export const validateRefundMessage = (req, res, next) => {
     const { message } = req.body;
     const errors = [];
@@ -303,9 +271,6 @@ export const validateRefundMessage = (req, res, next) => {
     next();
 };
 
-/**
- * Validate refund review (admin)
- */
 export const validateRefundReview = (req, res, next) => {
     const { action, adminNote } = req.body;
     const errors = [];
@@ -329,21 +294,10 @@ export const validateRefundReview = (req, res, next) => {
     next();
 };
 
-/**
- * Validate process refund payment.
- *
- * FIX: refundAmount is now required. Previously it was validated only
- * "if present" (optional), meaning a request without refundAmount would
- * reach the controller and produce a misleading "Invalid refund amount.
- * Maximum refundable: X" error instead of a clear "refundAmount is required"
- * message. The controller's own guard (!refundAmount) caught the case but
- * error messaging was wrong and validation responsibility belonged here.
- */
 export const validateProcessRefund = (req, res, next) => {
     const { refundAmount, merchantNote } = req.body;
     const errors = [];
 
-    // FIX: refundAmount is required, not optional
     if (refundAmount === undefined || refundAmount === null || refundAmount === '') {
         errors.push('Refund amount is required');
     } else if (isNaN(refundAmount) || Number(refundAmount) <= 0) {
@@ -365,9 +319,6 @@ export const validateProcessRefund = (req, res, next) => {
 // ORDER VALIDATORS
 // ============================================
 
-/**
- * Validate order note
- */
 export const validateOrderNote = (req, res, next) => {
     const { content, type } = req.body;
     const errors = [];
@@ -393,9 +344,6 @@ export const validateOrderNote = (req, res, next) => {
     next();
 };
 
-/**
- * Validate tracking info
- */
 export const validateTrackingInfo = (req, res, next) => {
     const { carrier, trackingNumber, estimatedDelivery } = req.body;
     const errors = [];
@@ -425,12 +373,6 @@ export const validateTrackingInfo = (req, res, next) => {
     next();
 };
 
-/**
- * Validate return request.
- * - reason: required enum (overall return category)
- * - description: required, min 5, max 2000 chars (general description for all items)
- * - items: required array, each item must have product, quantity, and its own reason
- */
 const VALID_RETURN_REASONS = [
   'defective_product', 'wrong_item', 'wrong_size', 'not_as_described',
   'quality_issues', 'changed_mind', 'better_price', 'duplicate_order',
@@ -456,7 +398,6 @@ export const validateReturnRequest = (req, res, next) => {
     errors.push('At least one item must be selected for return');
   }
 
-  // FIX S-04 — cap the array itself
   if (Array.isArray(items) && items.length > 20) {
     errors.push('Cannot return more than 20 items in a single request');
   }
@@ -471,20 +412,16 @@ export const validateReturnRequest = (req, res, next) => {
         errors.push(`Item ${n}: Valid quantity is required`);
       }
 
-      // FIX V-03 — trim before checking length
       const trimmedReason = item.reason?.trim() ?? '';
 
-      // FIX V-02 — validate against enum for data quality
       if (!trimmedReason || !VALID_RETURN_REASONS.includes(trimmedReason)) {
         errors.push(`Item ${n}: Please select a valid reason`);
       }
 
-      // FIX S-04 — cap item reason length
       if (trimmedReason.length > 500) {
         errors.push(`Item ${n}: Reason cannot exceed 500 characters`);
       }
 
-      // Write the trimmed value back so downstream code works with clean data
       item.reason = trimmedReason;
     });
   }
@@ -493,9 +430,6 @@ export const validateReturnRequest = (req, res, next) => {
   next();
 };
 
-/**
- * Validate fraud review decision
- */
 export const validateFraudReview = (req, res, next) => {
     const { decision } = req.body;
     const errors = [];
@@ -515,12 +449,6 @@ export const validateFraudReview = (req, res, next) => {
 // UTILITY VALIDATORS
 // ============================================
 
-/**
- * Safe input sanitization — trims top-level string fields.
- * Note: nested object fields (e.g. items[0].reason in return requests)
- * are not trimmed here; validators for those routes handle their own
- * nested sanitization where needed.
- */
 export const sanitizeInput = (req, res, next) => {
     if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {
         Object.keys(req.body).forEach(key => {
@@ -532,9 +460,6 @@ export const sanitizeInput = (req, res, next) => {
     next();
 };
 
-/**
- * Validate order message
- */
 export const validateOrderMessage = (req, res, next) => {
   const { content } = req.body;
   const errors = [];
@@ -556,9 +481,6 @@ export const validateOrderMessage = (req, res, next) => {
   next();
 };
 
-/**
- * Validate return message
- */
 export const validateReturnMessage = (req, res, next) => {
   const { content } = req.body;
   const errors = [];
@@ -580,24 +502,14 @@ export const validateReturnMessage = (req, res, next) => {
 /**
  * Validate return review (admin) — per-item decisions.
  *
- * UPDATED: replaces the old single approve/reject action field with an
- * itemDecisions array so the admin can approve or reject individual items
- * independently. An optional top-level adminNote is still accepted.
- *
  * Expected body shape:
  * {
  *   itemDecisions: [
  *     { productId: '...', decision: 'approved' },
  *     { productId: '...', decision: 'rejected', rejectionReason: 'Damaged on arrival' },
  *   ],
- *   adminNote: 'Optional overall note visible to customer'   // optional
+ *   adminNote: 'Optional overall note'   // optional
  * }
- *
- * Rules:
- * - itemDecisions must be a non-empty array
- * - Each entry must have productId (non-empty string) and decision ('approved'|'rejected')
- * - When decision is 'rejected', rejectionReason is required and min 5 chars
- * - adminNote is optional but capped at 1000 chars when provided
  */
 export const validateReturnReview = (req, res, next) => {
   const { itemDecisions, adminNote } = req.body;
@@ -627,7 +539,6 @@ export const validateReturnReview = (req, res, next) => {
         if (reason.length > 500) {
           errors.push(`Decision ${n}: rejectionReason cannot exceed 500 characters`);
         }
-        // Write trimmed value back so the controller receives clean data
         entry.rejectionReason = reason;
       }
     });
@@ -651,27 +562,41 @@ export const validateReturnReview = (req, res, next) => {
 /**
  * Validate return status update.
  *
- * UPDATED: added items_reviewed, plea_submitted, awaiting_discount to the
- * valid statuses list to support the new return flow states. The existing
- * in_transit, received, inspected, completed statuses are unchanged.
+ * FIX BUG-10 — removed items_reviewed, plea_submitted, and awaiting_discount
+ * from the valid statuses list.
+ *
+ * These three statuses are ONLY reachable via dedicated controller actions:
+ *   items_reviewed   → reviewReturnRequest  (PUT /return/review)
+ *   plea_submitted   → submitPlea           (POST /return/plea)
+ *   awaiting_discount→ resolveAfterPlea     (PUT /return/plea-review)
+ *                      or checkAndExpireTimers (lazy auto-advance)
+ *
+ * Allowing them here would let an admin bypass all business logic —
+ * per-item decisions, discountValue calculation, pleaDeadline setting,
+ * and pleaAttempts tracking — by manually forcing the status via the
+ * general update endpoint. This was a significant data integrity hole.
+ *
+ * The general status update endpoint (PUT /return/status) is intentionally
+ * scoped to the physical fulfilment states of the returned parcel only:
+ * in_transit, received, inspected, and completed.
  */
 export const validateReturnStatusUpdate = (req, res, next) => {
   const { status, inspectionNotes } = req.body;
   const errors = [];
 
+  // FIX BUG-10 — items_reviewed, plea_submitted, awaiting_discount intentionally excluded.
+  // These statuses are only reachable via their own dedicated routes.
   const validStatuses = [
     'in_transit',
     'received',
     'inspected',
     'completed',
-    'items_reviewed',
-    'plea_submitted',
-    'awaiting_discount',
   ];
 
   if (!status || !validStatuses.includes(status)) {
     errors.push(
-      'Invalid return status. Must be: in_transit, received, inspected, completed, items_reviewed, plea_submitted, or awaiting_discount'
+      'Invalid return status. The general status update endpoint only accepts: in_transit, received, inspected, or completed. ' +
+      'Use the dedicated review, plea, and discount routes for other status transitions.'
     );
   }
 
@@ -689,16 +614,10 @@ export const validateReturnStatusUpdate = (req, res, next) => {
 /**
  * Validate plea submission (customer).
  *
- * NEW: validates the customer's plea request after the admin has posted
- * per-item decisions and at least one item was rejected.
- *
  * Expected body shape:
  * {
  *   pleaDescription: 'Detailed argument for reconsideration...'
  * }
- *
- * File attachments are handled separately by validateReturnFileUpload
- * in return-policy.middleware.js and do not need validation here.
  */
 export const validatePleaSubmission = (req, res, next) => {
   const { pleaDescription } = req.body;
@@ -720,7 +639,6 @@ export const validatePleaSubmission = (req, res, next) => {
     return next(new HandleError(errors.join('. '), 400));
   }
 
-  // Write trimmed value back so the controller receives clean data
   req.body.pleaDescription = pleaDescription.trim();
 
   next();
@@ -729,15 +647,13 @@ export const validatePleaSubmission = (req, res, next) => {
 /**
  * Validate generate discount code request (admin).
  *
- * NEW: validates the admin's request to manually generate and send a
- * discount code once all item decisions are final and the return has
- * reached awaiting_discount status. The status gate is enforced by the
- * canGenerateDiscount middleware — this validator only checks the shape
- * of the request body.
+ * Body is intentionally minimal. The discount value is derived server-side
+ * from approved items. An optional adminNote can be included for records.
  *
- * Body is intentionally minimal since the discount value is derived
- * server-side from the approved items, not supplied by the client.
- * An optional adminNote can be included for internal record-keeping.
+ * NOTE on BUG-18: The orderId ObjectId check is handled upstream by
+ * router.param('id', validateObjectId), and the status guard is handled
+ * by canGenerateDiscount middleware. This validator is deliberately minimal
+ * and only validates the optional adminNote field.
  */
 export const validateGenerateDiscount = (req, res, next) => {
   const { adminNote } = req.body;

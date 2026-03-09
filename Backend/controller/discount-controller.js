@@ -3,6 +3,7 @@ import HandleError from "../utils/handleError.js";
 import Discount from "../models/discount-model.js";
 import User from "../models/userModel.js";
 import Product from "../models/product-model.js";
+import crypto from "crypto";
 
 // ============================================
 // ADMIN: CREATE DISCOUNT
@@ -82,7 +83,6 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Discount not found", 404));
   }
 
-  // Update allowed fields
   const allowedUpdates = [
     "description",
     "status",
@@ -113,7 +113,7 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 /**
- * Delete discount
+ * Delete discount (soft delete)
  * @route DELETE /api/v1/discounts/:id
  * @access Admin
  */
@@ -126,7 +126,6 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Discount not found", 404));
   }
 
-  // Soft delete by setting status to inactive
   discount.status = "inactive";
   await discount.save();
 
@@ -157,7 +156,6 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
 
   const query = {};
 
-  // Filters
   if (status) query.status = status;
   if (category) query.category = category;
   if (type) query.type = type;
@@ -195,6 +193,9 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET SINGLE DISCOUNT
+// FIX — added relatedReturn populate. relatedReturn was stored on the
+//       document but never populated on fetch, meaning the discount detail
+//       view had no access to the return reference data it linked to.
 // ============================================
 
 /**
@@ -208,6 +209,9 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
   const discount = await Discount.findById(id)
     .populate("createdBy", "firstName lastName email")
     .populate("relatedOrder", "orderNumber totalPrice")
+    // FIX — populate relatedReturn so the admin can navigate back to the
+    // originating return request from the discount detail view.
+    .populate("relatedReturn", "returnInfo.rmaNumber returnInfo.status returnInfo.discountValue")
     .populate("usageHistory.user", "firstName lastName email")
     .populate("usageHistory.order", "orderNumber");
 
@@ -223,6 +227,16 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: CREATE REFUND/RETURN DISCOUNT
+// FIX — amount is now validated to be a positive number.
+//       Previously `!amount` was truthy for amount=0 but falsy checks
+//       passed for negative values (e.g. -50 is truthy), meaning a
+//       negative discount value would be created without error.
+// FIX — code generation now uses crypto.randomBytes instead of
+//       Date.now().slice(-6). The millisecond approach collided when two
+//       admins generated codes for customers with the same first name
+//       within the same second. randomBytes(4) gives 2^32 combinations,
+//       making collisions negligibly unlikely. The uniqueness index on
+//       the Discount model is still a safety net but should never fire.
 // ============================================
 
 /**
@@ -241,8 +255,15 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     relatedReturn
   } = req.body;
 
-  if (!userId || !amount || !category) {
+  // FIX — explicit presence check first, then positive number check.
+  // !amount would pass for amount=0 (missing) but also for amount=-50
+  // (negative, truthy) — the original code silently accepted negative values.
+  if (!userId || amount === undefined || amount === null || !category) {
     return next(new HandleError("Missing required fields", 400));
+  }
+
+  if (isNaN(Number(amount)) || Number(amount) <= 0) {
+    return next(new HandleError("Amount must be a positive number", 400));
   }
 
   // Verify user exists
@@ -251,8 +272,11 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     return next(new HandleError("User not found", 404));
   }
 
-  // Generate unique code
-  const code = `${category.toUpperCase()}-${user.firstName.toUpperCase()}-${Date.now().toString().slice(-6)}`;
+  // FIX — use crypto.randomBytes for the unique suffix instead of
+  // Date.now().slice(-6) to prevent collisions under concurrent requests.
+  // Format: RETURN-ALICE-3F9A2C1B (category-firstName-8hexchars)
+  const uniqueSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
+  const code = `${category.toUpperCase()}-${user.firstName.toUpperCase()}-${uniqueSuffix}`;
 
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + parseInt(validDays));
@@ -261,7 +285,7 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     code,
     description: reason || `Compensation discount for ${user.firstName}`,
     type: "fixed",
-    value: amount,
+    value: Number(amount),
     category,
     validUntil,
     usageLimit: {
@@ -269,6 +293,7 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
       usesPerUser: 1
     },
     conditions: {
+      // Scoped to the specific customer — cannot be used by anyone else
       eligibleUsers: [userId],
       minPurchaseAmount: 0
     },
@@ -305,14 +330,12 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid cart total", 400));
   }
 
-  // Find discount
   const discount = await Discount.findActiveByCode(code);
 
   if (!discount) {
     return next(new HandleError("Invalid or expired discount code", 400));
   }
 
-  // Check if user can use (if logged in)
   const userId = req.user?._id;
   if (userId) {
     const canUse = await discount.canUserUse(userId);
@@ -321,13 +344,11 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // Validate cart
   const validation = discount.validateCart(cartTotal, items, userId);
   if (!validation.valid) {
     return next(new HandleError(validation.reason, 400));
   }
 
-  // Calculate discount
   const discountAmount = discount.calculateDiscount(cartTotal, items);
 
   res.status(200).json({
@@ -416,7 +437,6 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
     }
   ]);
 
-  // Overall stats
   const overall = await Discount.aggregate([
     {
       $group: {

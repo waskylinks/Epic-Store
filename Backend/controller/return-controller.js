@@ -177,9 +177,17 @@ const invalidateReturnCaches = (scope = 'stats') => {
  * auto-advances status accordingly. Called at the top of any controller
  * that reads or writes return state so no cron job is required.
  *
+ * FIX BUG-8 — added plea_submitted → awaiting_discount expiry case.
+ * Previously only items_reviewed was handled. If an admin never responded
+ * to the customer's plea within 48 hours, the return was stuck at
+ * plea_submitted forever with no way to advance automatically.
+ *
  * Rules:
- * - items_reviewed + pleaDeadline expired → advance to awaiting_discount
+ * - items_reviewed + pleaDeadline expired → awaiting_discount
  *   (customer did not submit a plea within 48 hours)
+ * - plea_submitted + pleaDeadline expired → awaiting_discount
+ *   (admin did not respond to the plea within 48 hours; plea is accepted
+ *    by default and the return proceeds to discount generation)
  *
  * Returns true if the order was mutated (caller must save).
  */
@@ -190,19 +198,31 @@ const checkAndExpireTimers = (order) => {
   const now = new Date();
   let mutated = false;
 
-  if (
-    status === 'items_reviewed' &&
-    pleaDeadline &&
-    now > new Date(pleaDeadline)
-  ) {
-    // Plea window expired with no plea submitted — move forward automatically
-    order.returnInfo.status = 'awaiting_discount';
-    order.addReturnTimeline(
-      'plea_window_expired',
-      'Plea window expired. Return advanced to awaiting discount.',
-      null
-    );
-    mutated = true;
+  if (pleaDeadline && now > new Date(pleaDeadline)) {
+    if (status === 'items_reviewed') {
+      // Customer did not submit a plea within the 48-hour window.
+      // Auto-advance to awaiting_discount so the return can proceed.
+      order.returnInfo.status = 'awaiting_discount';
+      order.addReturnTimeline(
+        'plea_window_expired',
+        'Plea window expired without submission. Return advanced to awaiting discount.',
+        null
+      );
+      mutated = true;
+    } else if (status === 'plea_submitted') {
+      // FIX BUG-8 — admin did not respond to the plea within 48 hours.
+      // The plea window has closed; advance directly to awaiting_discount.
+      // The most recently stored discountValue (from the original review)
+      // is preserved as-is since there was no second-round decision.
+      order.returnInfo.status      = 'awaiting_discount';
+      order.returnInfo.pleaDeadline = null; // close the plea phase permanently
+      order.addReturnTimeline(
+        'admin_plea_response_expired',
+        'Admin did not respond to plea within 48 hours. Return advanced to awaiting discount using original item decisions.',
+        null
+      );
+      mutated = true;
+    }
   }
 
   return mutated;
@@ -331,7 +351,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   }
 
   // ── Cold cache: single $facet ────────────────────────────────────────────
-  // UPDATED: added totalRequestedAmount facet and new status counts
   const [facetResult] = await Order.aggregate([
     { $match: matchStage },
     {
@@ -345,8 +364,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         ],
         totalCount: [{ $count: 'count' }],
         statCounts: [{ $group: { _id: '$returnInfo.status', count: { $sum: 1 } } }],
-        // NEW — sum all requestedAmount values across the filtered result set
-        // so the admin KPI card can show the total financial exposure at a glance
+        // Sum all requestedAmount values so the KPI card shows total financial exposure
         totalRequestedAmount: [
           {
             $group: {
@@ -362,10 +380,8 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const orders       = facetResult.data            || [];
   const totalReturns = facetResult.totalCount?.[0]?.count || 0;
   const countMap     = Object.fromEntries((facetResult.statCounts || []).map((s) => [s._id, s.count]));
-  // NEW — extract the aggregated total, default 0 when no results match
   const totalRequestedAmount = facetResult.totalRequestedAmount?.[0]?.total || 0;
 
-  // UPDATED: added new flow status counts alongside existing ones
   stats = {
     total:              totalReturns,
     requested:          countMap.requested          || 0,
@@ -379,7 +395,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     completed:          countMap.completed          || 0,
     rejected:           countMap.rejected           || 0,
     cancelled:          countMap.cancelled          || 0,
-    // NEW — total financial value of all return requests in the current filter
     totalRequestedAmount,
   };
 
@@ -406,6 +421,8 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 // GET SINGLE RETURN (Admin)
 // FIX P-04 — removed full message-thread populate (7 → 5 chains)
 //            Last 5 messages returned as a preview only
+// FIX BUG-9 — added cache invalidation when messages are marked read so
+//             the unread badge in getAllReturns doesn't show a stale count
 // UPDATED  — response includes unreadMessages: 0 explicitly after marking
 //            read so the frontend badge zeros on the same render cycle
 // @route  GET /api/v1/admin/returns/:id
@@ -431,7 +448,7 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found for this order', 404));
   }
 
-  // Run lazy timer expiry check — if the plea window has elapsed, advance
+  // Run lazy timer expiry check — if any deadline has elapsed, advance
   // status before returning so the frontend always sees the current state
   const timerMutated = checkAndExpireTimers(order);
 
@@ -440,7 +457,12 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
   );
 
   if (hasUnread || timerMutated) {
-    if (hasUnread) order.markReturnMessagesAsRead('admin');
+    if (hasUnread) {
+      order.markReturnMessagesAsRead('admin');
+      // FIX BUG-9 — invalidate message cache so getAllReturns unread badge
+      // reflects the newly-read state without waiting for a cache TTL expiry.
+      invalidateReturnCaches('messages');
+    }
     await order.save({ validateBeforeSave: false });
     if (timerMutated) invalidateReturnCaches('status');
   }
@@ -452,7 +474,7 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success: true,
-    // NEW — explicit 0 so the frontend badge clears immediately without
+    // Explicit 0 so the frontend badge clears immediately without
     // waiting for the list to re-fetch
     unreadMessages: 0,
     order: {
@@ -475,14 +497,16 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 // FIX L-02 — requestedAmount calculated from order item prices
 // FIX L-03 — return window check duplicated here as service-layer safety net
 // FIX A-02 — assertOrderOwner helper
+// FIX BUG-17 — price now stored on each itemsToReturn entry at request time
+//              so discountValue calculation in reviewReturnRequest is immune
+//              to future price changes on the product, and the
+//              approvedItemsValue virtual on the model returns a correct value.
 // UPDATED  — records policyAcknowledgedAt from request body
 // @route  POST /api/v1/orders/:id/return/request
 // @access Private/Customer
 // ============================================
 
 export const requestReturn = handleAsyncError(async (req, res, next) => {
-  // NEW — policyAcknowledged: the frontend sends this as true after the user
-  // clicks through the policy screen. We record the timestamp server-side.
   const { reason, description, items, attachments = [], policyAcknowledged } = req.body;
   const userId = req.user._id;
 
@@ -510,11 +534,12 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // FIX L-02 — calculate requestedAmount so admins have financial context
+  // FIX L-02 — build price map from order items for requestedAmount
+  // FIX BUG-17 — also used to stamp price onto each itemsToReturn entry
   const orderItemMap = new Map(
     order.orderItems.map((i) => {
       const id = i.product?._id ?? i.product;
-      return [id.toString(), i.price];
+      return [id.toString(), i.price ?? 0];
     })
   );
 
@@ -523,11 +548,20 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     return sum + price * (item.quantity || 0);
   }, 0);
 
+  // FIX BUG-17 — stamp the unit price onto every itemsToReturn entry so:
+  // 1. The approvedItemsValue virtual on the model can calculate correctly
+  // 2. discountValue calculation is immune to future product price changes
+  // 3. No reliance on orderItemPriceMap being accurate at review time
+  const itemsWithPrice = items.map((item) => ({
+    ...item,
+    price: orderItemMap.get(item.product?.toString()) ?? 0,
+  }));
+
   order.returnInfo = {
     status:               'requested',
     reason,
     description,
-    itemsToReturn:        items,
+    itemsToReturn:        itemsWithPrice,
     requestedAmount,
     requestedAt:          new Date(),
     requestedBy:          userId,
@@ -535,7 +569,6 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     messages:             [],
     timeline:             [],
     documents:            [],
-    // NEW — record when the customer acknowledged the discount-only policy
     policyAcknowledgedAt: policyAcknowledged ? new Date() : null,
   };
 
@@ -554,12 +587,18 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// ADMIN REVIEWS RETURN — per-item decisions
-// UPDATED — replaces the old single approve/reject with per-item decisions.
+// ADMIN REVIEWS RETURN — per-item decisions (first round)
+// UPDATED — replaces old single approve/reject with per-item decisions.
 //           Sets status to items_reviewed and starts the 48-hour plea timer.
-//           restockFee is intentionally never written — all returns use
-//           discount codes only.
-// Uses req.order from canReviewReturn (allows requested + plea_submitted)
+//           restockFee intentionally never written.
+// FIX BUG-6 — added guard: all itemsToReturn products must exist in the
+//             orderItemPriceMap. If any product is missing, the discount
+//             value would be silently under-calculated. Now throws 400
+//             with the specific missing product IDs so the issue is visible.
+//             NOTE: with BUG-17 fixed (price stored at request time), the
+//             controller now prefers item.price over the map lookup so this
+//             guard is defence-in-depth rather than the primary calculation.
+// Uses req.order from canReviewFirstRound (requires status='requested')
 // @route  PUT /api/v1/admin/orders/:id/return/review
 // @access Private/Admin
 // ============================================
@@ -569,7 +608,6 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
 
   const order = req.order;
 
-  // FIX S-05 — sanitize before any persistence
   const sanitizedNote = adminNote
     ? sanitizeHtml.sanitize(String(adminNote))
     : '';
@@ -591,8 +629,10 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     }
   });
 
-  // Calculate discountValue from all approved items.
-  // Uses item price stored at return-request time (requestedAmount calc).
+  // FIX BUG-6 — prefer item.price (stamped at request time by BUG-17 fix)
+  // and fall back to orderItemPriceMap only as a safety net for older
+  // documents that predate the BUG-17 fix. Collect missing product IDs
+  // so the error message is actionable.
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
       const pid = i.product?._id?.toString() ?? i.product?.toString();
@@ -600,13 +640,29 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     })
   );
 
+  const missingProductIds = [];
   const discountValue = order.returnInfo.itemsToReturn
     .filter((i) => i.adminDecision === 'approved')
     .reduce((sum, i) => {
-      const pid   = i.product?._id?.toString() ?? i.product?.toString();
-      const price = orderItemPriceMap.get(pid) ?? 0;
-      return sum + price * (i.quantity ?? 1);
+      const pid = i.product?._id?.toString() ?? i.product?.toString();
+      // Prefer the price stamped at request time (BUG-17 fix); fall back to map
+      const unitPrice = (i.price != null && i.price > 0)
+        ? i.price
+        : (orderItemPriceMap.get(pid) ?? null);
+
+      if (unitPrice === null) {
+        missingProductIds.push(pid);
+        return sum;
+      }
+      return sum + unitPrice * (i.quantity ?? 1);
     }, 0);
+
+  if (missingProductIds.length > 0) {
+    return next(new HandleError(
+      `Cannot calculate discount: approved items with no price data (product IDs: ${missingProductIds.join(', ')}). Check that these products still exist in the order.`,
+      400
+    ));
+  }
 
   order.returnInfo.discountValue = discountValue;
   order.returnInfo.status        = 'items_reviewed';
@@ -646,6 +702,10 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
 // ============================================
 // CUSTOMER SUBMITS PLEA
 // Uses req.order from canSubmitPlea middleware
+// FIX BUG-11 — added check that at least one item was actually rejected.
+//              If all items were approved there is nothing to plea about;
+//              submitting a plea in this state would be confusing and
+//              wasteful of admin time.
 // @route  POST /api/v1/orders/:id/return/plea
 // @access Private/Customer
 // ============================================
@@ -657,6 +717,18 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
 
+  // FIX BUG-11 — a plea only makes sense if at least one item was rejected.
+  // canSubmitPlea guards status and deadline; this guards business logic.
+  const hasRejectedItem = order.returnInfo.itemsToReturn.some(
+    (i) => i.adminDecision === 'rejected'
+  );
+  if (!hasRejectedItem) {
+    return next(new HandleError(
+      'All items in this return have been approved. There are no rejected items to submit a plea for.',
+      400
+    ));
+  }
+
   // Persist plea info
   order.returnInfo.pleaInfo = {
     pleaDescription:  sanitizeHtml.sanitize(String(pleaDescription)),
@@ -667,14 +739,13 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
   order.returnInfo.status       = 'plea_submitted';
   order.returnInfo.pleaAttempts = (order.returnInfo.pleaAttempts ?? 0) + 1;
 
-  // Reset the plea deadline to give the admin 48 hours to respond
+  // Reset pleaDeadline to give the admin 48 hours to respond.
+  // After this point pleaDeadline represents the ADMIN's response window.
+  // checkAndExpireTimers handles the plea_submitted + expired case by
+  // advancing to awaiting_discount if the admin never responds.
   const adminResponseDeadline = new Date();
   adminResponseDeadline.setHours(adminResponseDeadline.getHours() + 48);
   order.returnInfo.pleaDeadline = adminResponseDeadline;
-
-  // Upload any new evidence files if they were sent via a separate upload
-  // request (the plea upload route calls addPleaDocument directly; this
-  // controller only handles the text description submission)
 
   order.addReturnTimeline(
     'plea_submitted',
@@ -697,9 +768,11 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN RESOLVES PLEA — second-round per-item decisions
-// Uses req.order from canReviewReturn (which allows plea_submitted status)
-// This is the final item-level decision round. pleaAttempts >= 1 means
-// no further pleas can be submitted after this.
+// Uses req.order from canReviewPleaRound (requires status='plea_submitted')
+// FIX BUG-13 — added pleaAttempts > 0 guard as defence-in-depth.
+//              canReviewPleaRound already checks this, but a belt-and-
+//              suspenders guard here ensures the controller is safe even
+//              if the middleware chain is ever bypassed in tests.
 // @route  PUT /api/v1/admin/orders/:id/return/plea-review
 // @access Private/Admin
 // ============================================
@@ -708,6 +781,15 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
 
   const order = req.order;
+
+  // FIX BUG-13 — defence-in-depth: require at least one plea to have been
+  // submitted before a plea-review decision can be applied.
+  if ((order.returnInfo.pleaAttempts ?? 0) === 0) {
+    return next(new HandleError(
+      'Cannot resolve plea: no plea has been submitted by the customer for this return.',
+      400
+    ));
+  }
 
   const sanitizedNote = adminNote
     ? sanitizeHtml.sanitize(String(adminNote))
@@ -729,7 +811,7 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
     }
   });
 
-  // Recalculate discountValue with the updated decisions
+  // Recalculate discountValue — prefer stored item.price (BUG-17 fix)
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
       const pid = i.product?._id?.toString() ?? i.product?.toString();
@@ -740,14 +822,16 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   const discountValue = order.returnInfo.itemsToReturn
     .filter((i) => i.adminDecision === 'approved')
     .reduce((sum, i) => {
-      const pid   = i.product?._id?.toString() ?? i.product?.toString();
-      const price = orderItemPriceMap.get(pid) ?? 0;
-      return sum + price * (i.quantity ?? 1);
+      const pid = i.product?._id?.toString() ?? i.product?.toString();
+      const unitPrice = (i.price != null && i.price > 0)
+        ? i.price
+        : (orderItemPriceMap.get(pid) ?? 0);
+      return sum + unitPrice * (i.quantity ?? 1);
     }, 0);
 
   order.returnInfo.discountValue = discountValue;
   order.returnInfo.status        = 'awaiting_discount';
-  order.returnInfo.pleaDeadline  = null; // plea phase is permanently closed
+  order.returnInfo.pleaDeadline  = null; // plea phase permanently closed
 
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
 
@@ -816,16 +900,16 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
       productId:   i.product?._id ?? i.product,
       name:        i.product?.name ?? 'Unknown Product',
       quantity:    i.quantity ?? 1,
-      unitPrice:   i.product?.price ?? 0,
+      unitPrice:   i.product?.price ?? i.price ?? 0,
       image:       i.product?.images?.[0]?.url ?? null,
       reason:      i.reason ?? '',
     }));
 
-  // Full return data payload sent to the frontend so the admin is redirected
-  // to the discount creation page with everything pre-populated.
   const returnDataForDiscount = {
     orderId:            order._id,
-    orderReference:     order.orderNumber ?? order._id.toString().slice(-8).toUpperCase(),
+    // Use rmaNumber as the primary reference — now correctly generated by
+    // the pre-save hook on items_reviewed status (BUG-5 fix in order-model)
+    orderReference:     order.returnInfo.rmaNumber ?? order.orderNumber ?? order._id.toString().slice(-8).toUpperCase(),
     customerId:         order.user?._id ?? order.user,
     customerName:       order.user?.name ?? '',
     customerEmail:      order.user?.email ?? '',
@@ -838,8 +922,6 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
   return res.status(200).json({
     success:               true,
     message:               'Return marked as completed. Discount code data ready.',
-    // redirectToDiscount: true is a signal to the frontend to navigate to
-    // the discount creation page with returnDataForDiscount pre-filled
     redirectToDiscount:    true,
     returnDataForDiscount,
     returnInfo:            order.returnInfo,
@@ -849,9 +931,12 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
 // ============================================
 // UPDATE RETURN STATUS (Admin)
 // FIX L-01 — stock restoration uses $ifNull instead of the broken
-//            $type/$gt/'missing' string comparison that silently skipped
-//            the increment for all numeric inventory fields
+//            $type/$gt/'missing' string comparison
 // FIX S-05 — inspectionNotes sanitized before persistence
+// NOTE: items_reviewed, plea_submitted, awaiting_discount are intentionally
+//       NOT handled here — they are only reachable via dedicated controller
+//       actions (reviewReturnRequest, submitPlea, resolveAfterPlea,
+//       generateDiscountCode). The validator (validation.js) enforces this.
 // @route  PUT /api/v1/admin/orders/:id/return/status
 // @access Private/Admin
 // ============================================
@@ -893,12 +978,7 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
     );
 
     if (restorableItems.length > 0) {
-      // FIX L-01 — the original code used:
-      //   { $gt: [{ $type: '$inventory.stock' }, 'missing'] }
-      // $type returns a BSON type string (e.g. "double", "int").
-      // "double" > "missing" is FALSE lexicographically (d < m), so the
-      // $add branch was NEVER taken — stock was silently never restored.
-      // $ifNull correctly handles both present and absent fields.
+      // FIX L-01 — $ifNull correctly handles both present and absent fields
       const bulkOps = restorableItems.map((item) => ({
         updateOne: {
           filter: { _id: item.product },
@@ -986,8 +1066,6 @@ export const addCustomerReturnMessage = handleAsyncError(async (req, res, next) 
 // FIX L-04 — response now includes totalCount so clients can paginate
 // FIX L-06 — readerType renamed to unreadSenderType (accurate semantics)
 // FIX F-03 — page/limit validated and clamped
-// NOTE: Uses aggregation to get page slice + total in one round trip,
-//       then refetches the Mongoose document only if markAsRead is needed.
 // @route  GET /api/v1/orders/:id/return/messages
 // @access Private/User or Admin
 // ============================================
@@ -1039,16 +1117,12 @@ export const getReturnMessages = handleAsyncError(async (req, res, next) => {
   // Populate senders on the in-memory slice
   await Order.populate(result.messages, { path: 'sender', model: 'User', select: 'name email role' });
 
-  // FIX L-06 — this holds the SENDER type whose messages should be marked read,
-  // not the reader's type. markReturnMessagesAsRead marks where senderType !== arg.
-  // Admin reading → mark 'customer' messages as read, and vice-versa.
   const unreadSenderType = isAdmin ? 'customer' : 'admin';
   const hasUnread = result.messages.some(
     (m) => !m.isRead && m.senderType === unreadSenderType
   );
 
   if (hasUnread) {
-    // Re-fetch the Mongoose document only when a write is actually needed
     const orderDoc = await Order.findById(id).select('returnInfo.messages user');
     if (orderDoc) {
       orderDoc.markReturnMessagesAsRead(unreadSenderType);
@@ -1115,19 +1189,15 @@ export const getReturnDocuments = handleAsyncError(async (req, res, next) => {
   catch (e) { return next(e); }
 
   return res.status(200).json({
-    success:      true,
-    count:        order.returnInfo?.documents?.length || 0,
-    documents:    order.returnInfo?.documents         || [],
-    // NEW — plea evidence returned separately so the frontend can display
-    // original evidence and plea evidence in distinct sections
+    success:       true,
+    count:         order.returnInfo?.documents?.length || 0,
+    documents:     order.returnInfo?.documents         || [],
     pleaDocuments: order.returnInfo?.pleaInfo?.pleaDocuments || [],
   });
 });
 
 // ============================================
 // UPLOAD FILES — Admin
-// FIX A-01 — shared handleReturnUpload helper
-// FIX S-03 — cryptographic salt in path (via helper)
 // @route  POST /api/v1/admin/returns/:id/upload
 // @access Private/Admin
 // ============================================
@@ -1147,8 +1217,6 @@ export const uploadReturnFiles = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPLOAD FILES — Customer
-// FIX A-01 — shared handleReturnUpload helper
-// FIX A-02 — assertOrderOwner helper
 // @route  POST /api/v1/orders/:id/return/upload
 // @access Private/Customer
 // ============================================
@@ -1172,9 +1240,13 @@ export const uploadCustomerReturnFiles = handleAsyncError(async (req, res, next)
 
 // ============================================
 // UPLOAD PLEA FILES — Customer
-// Separate from uploadCustomerReturnFiles so plea evidence is written to
-// pleaInfo.pleaDocuments via addPleaDocument rather than the main
-// documents array. Only allowed when status is items_reviewed.
+// FIX BUG-4 — expanded allowed statuses to include 'plea_submitted'.
+//             Previously only 'items_reviewed' was accepted, which blocked
+//             uploads after the customer submitted their plea text (status
+//             transitions to 'plea_submitted' at that point). The plea
+//             evidence upload should remain open throughout the plea window.
+// FIX BUG-15 — explicitly checks pleaDeadline so uploads are rejected
+//              after the plea window closes, regardless of status.
 // @route  POST /api/v1/orders/:id/return/plea/upload
 // @access Private/Customer
 // ============================================
@@ -1186,9 +1258,20 @@ export const uploadPleaFiles = handleAsyncError(async (req, res, next) => {
 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
 
-  if (!order.returnInfo || order.returnInfo.status !== 'items_reviewed') {
+  const allowedStatuses = ['items_reviewed', 'plea_submitted'];
+  if (!order.returnInfo || !allowedStatuses.includes(order.returnInfo.status)) {
     return next(new HandleError(
-      'Plea evidence can only be uploaded when the return is in items_reviewed status', 400
+      'Plea evidence can only be uploaded during the plea window (items_reviewed or plea_submitted status)', 400
+    ));
+  }
+
+  // FIX BUG-15 — reject uploads after the plea deadline, even if status
+  // hasn't been lazily advanced yet (checkAndExpireTimers fires on read,
+  // not on every write path, so there can be a brief window).
+  const deadline = order.returnInfo.pleaDeadline;
+  if (!deadline || new Date() > new Date(deadline)) {
+    return next(new HandleError(
+      'The plea window has closed. Evidence can no longer be uploaded.', 400
     ));
   }
 
@@ -1201,6 +1284,11 @@ export const uploadPleaFiles = handleAsyncError(async (req, res, next) => {
 // ============================================
 // GET RETURN STATUS — Customer
 // FIX A-02 — assertOrderOwner helper
+// FIX BUG-14 — messages array is no longer leaked in the response.
+//              getReturnStatus is a lightweight poll endpoint; the full
+//              message thread is only available via GET /return/messages.
+//              Spreading the entire returnInfo toObject() was sending
+//              potentially thousands of message objects on every status poll.
 // @route  GET /api/v1/orders/:id/return/status
 // @access Private/Customer
 // ============================================
@@ -1224,18 +1312,30 @@ export const getReturnStatus = handleAsyncError(async (req, res, next) => {
 
   const hasReturn = order.returnInfo && order.returnInfo.status !== 'none';
 
+  if (!hasReturn) {
+    return res.status(200).json({
+      success:    true,
+      returnInfo: { status: 'none', hasReturn: false },
+    });
+  }
+
+  // FIX BUG-14 — build a lean status object without the messages array.
+  // The customer needs status, deadlines, item decisions, and plea info
+  // to render the return tracking page — not the full message thread.
+  const ri = order.returnInfo.toObject();
+  const {
+    messages: _omitted, // intentionally excluded
+    ...returnInfoWithoutMessages
+  } = ri;
+
   return res.status(200).json({
     success:    true,
-    returnInfo: hasReturn
-      ? { ...order.returnInfo.toObject(), hasReturn: true }
-      : { status: 'none', hasReturn: false },
+    returnInfo: { ...returnInfoWithoutMessages, hasReturn: true },
   });
 });
 
 // ============================================
 // GET RETURNS WITH UNREAD MESSAGES (Admin)
-// FIX P-03 — model static method rewritten with $filter + $slice
-//            (see order-model.js); controller unchanged, benefits automatically
 // @route  GET /api/v1/admin/returns/unread
 // @access Private/Admin
 // ============================================
@@ -1262,8 +1362,6 @@ export const getReturnsWithUnreadMessages = handleAsyncError(async (req, res, ne
 
 // ============================================
 // CANCEL RETURN — Customer
-// FIX S-01 / L-05 — uses req.order from canCancelReturn; duplicate
-//                   eligibility checks removed
 // @route  PUT /api/v1/orders/:id/return/cancel
 // @access Private/Customer
 // ============================================

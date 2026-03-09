@@ -222,8 +222,7 @@ const orderSchema = new mongoose.Schema(
             required: true,
           },
           // NOTE: field is intentionally named 'message' (not 'content') to
-          // match existing stored documents. Renaming without a migration would
-          // silently orphan all existing refund message data.
+          // match existing stored documents.
           message: { type: String, required: true },
           attachments: [
             {
@@ -270,15 +269,11 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     // RETURN INFORMATION (RMA)
     // FIX M-02: returnInfo now has a top-level default so order.returnInfo
-    // is never undefined on new documents. Previously the parent object had
-    // no default, meaning order.returnInfo was undefined (not { status:'none' })
-    // for any order that had never had a return — causing TypeErrors on any
-    // direct property access without optional chaining.
+    // is never undefined on new documents.
     // ============================================
     returnInfo: {
       type: {
         // UPDATED: added items_reviewed, plea_submitted, awaiting_discount
-        // to support the new return flow states. Existing statuses unchanged.
         status: {
           type: String,
           enum: [
@@ -301,25 +296,30 @@ const orderSchema = new mongoose.Schema(
         reason: String,
         description: String,
 
-        // UPDATED: added adminDecision and adminRejectionReason per item
-        // so the admin can approve or reject individual items rather than
-        // the whole return in one shot. All existing fields preserved.
+        // UPDATED: added adminDecision, adminRejectionReason, and price per item.
+        // FIX BUG-17 — price is now stored at return-request time so that:
+        // 1. discountValue calculations are immune to future product price changes.
+        // 2. The approvedItemsValue virtual can calculate correctly.
+        // 3. No need to cross-reference orderItems at review time for pricing.
+        // price defaults to 0 so existing documents without the field
+        // are handled gracefully (the virtual returns 0 for old docs, which
+        // is the same as the previous broken behaviour, not a regression).
         itemsToReturn: [
           {
             product: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
             quantity: Number,
             condition: String,
             reason: String,
-            // NEW — per-item admin decision set during reviewReturnRequest
-            // and resolveAfterPlea. Default 'pending' so existing documents
-            // without this field are treated as not yet reviewed.
+            // FIX BUG-17 — unit price at the time the return was requested.
+            // Stamped by requestReturn controller from order.orderItems[].price.
+            price: { type: Number, default: 0 },
+            // NEW — per-item admin decision
             adminDecision: {
               type: String,
               enum: ['approved', 'rejected', 'pending'],
               default: 'pending',
             },
             // NEW — required when adminDecision is 'rejected'.
-            // Stored so the customer can see exactly why each item was rejected.
             adminRejectionReason: { type: String, default: '' },
           },
         ],
@@ -333,9 +333,8 @@ const orderSchema = new mongoose.Schema(
         inspectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
         inspectedAt: Date,
 
-        // restockFee kept for backwards compatibility with existing documents.
-        // New code paths must never write to this field — all returns are now
-        // handled via discount code only and no fee is charged.
+        // restockFee kept for backwards compatibility only. Never written
+        // to by new code paths.
         restockFee: { type: Number, default: 0 },
 
         requestedAmount: Number,
@@ -347,40 +346,28 @@ const orderSchema = new mongoose.Schema(
         completedAt: Date,
         adminNote: String,
 
-        // NEW — records the date/time the customer explicitly acknowledged
-        // the return policy (discount-code-only, non-refundable items) on
-        // the policy screen before submitting their return request.
+        // NEW — records when the customer acknowledged the return policy
         policyAcknowledgedAt: { type: Date, default: null },
 
-        // NEW — the 48-hour window within which the customer can submit a
-        // plea after the admin posts per-item decisions. Set by the controller
-        // when status transitions to items_reviewed. Auto-expires to
-        // awaiting_discount if the customer does not act within 48 hours.
+        // NEW — 48-hour window for customer plea OR admin response.
+        // Semantics depend on current status:
+        //   status=items_reviewed  → customer must submit plea before this date
+        //   status=plea_submitted  → admin must respond before this date
+        // checkAndExpireTimers handles both expiry cases.
         pleaDeadline: { type: Date, default: null },
 
-        // NEW — the 48-hour window for any pending customer action after
-        // the plea round resolves and the process moves toward discount
-        // generation. Currently used as a safety expiry gate.
+        // NEW — safety expiry gate for any pending customer action after
+        // the plea round resolves toward discount generation.
         acceptanceDeadline: { type: Date, default: null },
 
-        // NEW — tracks how many plea attempts the customer has made.
-        // Maximum of 1 plea is allowed. Once pleaAttempts reaches 1 the
-        // plea option is permanently locked regardless of status.
+        // NEW — max 1 plea allowed per return.
         pleaAttempts: { type: Number, default: 0 },
 
-        // NEW — the calculated total value of all admin-approved items.
-        // Set by reviewReturnRequest and recalculated by resolveAfterPlea.
-        // Passed to the discount creation page so the admin can pre-populate
-        // the discount value without manually summing approved items.
+        // NEW — calculated total value of all admin-approved items.
+        // Passed to the discount creation page for pre-population.
         discountValue: { type: Number, default: 0 },
 
-        // NEW — stores the customer's plea submission.
-        // pleaDescription: the customer's written argument for reconsidering
-        //   rejected items.
-        // pleaSubmittedAt: timestamp of submission.
-        // pleaDocuments: additional evidence uploaded alongside the plea,
-        //   using the same structure as the top-level documents array so
-        //   existing upload helpers work without modification.
+        // NEW — customer's plea submission.
         pleaInfo: {
           pleaDescription: { type: String, default: '' },
           pleaSubmittedAt: { type: Date, default: null },
@@ -459,7 +446,6 @@ const orderSchema = new mongoose.Schema(
         ],
       },
       // FIX M-02: guarantees order.returnInfo is always { status: 'none' }
-      // on new documents, never undefined.
       default: () => ({ status: 'none' }),
     },
 
@@ -678,9 +664,6 @@ orderSchema.index({ 'fraudCheck.reviewRequired': 1 });
 orderSchema.index({ 'analytics.source': 1 });
 orderSchema.index({ 'analytics.isFirstPurchase': 1 });
 
-// NOTE: MongoDB cannot use a compound multikey index when both fields come
-// from the same array. These are separate single-field indexes; senderType
-// is applied as an in-memory filter after the isRead index scan.
 orderSchema.index({ 'refundInfo.messages.isRead': 1 });
 orderSchema.index({ 'refundInfo.messages.senderType': 1 });
 orderSchema.index({ 'refundInfo.messages.createdAt': -1 });
@@ -693,9 +676,7 @@ orderSchema.index({ 'returnInfo.messages.isRead': 1 });
 orderSchema.index({ 'returnInfo.messages.senderType': 1 });
 orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 
-// NEW — index on pleaDeadline so the lazy timer-expiry check in the
-// controller can efficiently find returns with an expired plea window
-// without scanning the entire collection.
+// Index on pleaDeadline for efficient lazy timer-expiry queries
 orderSchema.index({ 'returnInfo.pleaDeadline': 1 });
 
 // ============================================
@@ -763,8 +744,6 @@ orderSchema.virtual('unreadRefundMessagesFromAdmin').get(function () {
   ).length;
 });
 
-// Alias — admin dashboard unread count (customer→admin direction).
-// Directionally asymmetric by design. Do not rename without updating callers.
 orderSchema.virtual('unreadRefundMessages').get(function () {
   return (this.refundInfo?.messages ?? []).filter(
     (m) => !m.isRead && m.senderType === 'customer'
@@ -795,7 +774,6 @@ orderSchema.virtual('unreadReturnMessagesFromAdmin').get(function () {
   ).length;
 });
 
-// Alias — consistent with unreadRefundMessages naming convention.
 orderSchema.virtual('unreadReturnMessages').get(function () {
   return (this.returnInfo?.messages ?? []).filter(
     (m) => !m.isRead && m.senderType === 'customer'
@@ -817,9 +795,6 @@ orderSchema.virtual('latestReturnMessage').get(function () {
   return msgs?.length ? msgs[msgs.length - 1] : null;
 });
 
-// NEW — convenience virtual: true when the customer still has time and
-// eligibility to submit a plea. Checks status, pleaAttempts cap, and
-// whether the pleaDeadline has not yet passed.
 orderSchema.virtual('canSubmitPlea').get(function () {
   if (this.returnInfo?.status !== 'items_reviewed') return false;
   if ((this.returnInfo?.pleaAttempts ?? 0) >= 1) return false;
@@ -828,18 +803,18 @@ orderSchema.virtual('canSubmitPlea').get(function () {
   return new Date() < new Date(deadline);
 });
 
-// NEW — milliseconds remaining on the plea deadline. Returns 0 if expired
-// or not set. Useful for rendering the countdown timer on the frontend
-// without extra arithmetic.
 orderSchema.virtual('pleaDeadlineMs').get(function () {
   const deadline = this.returnInfo?.pleaDeadline;
   if (!deadline) return 0;
   return Math.max(0, new Date(deadline) - new Date());
 });
 
-// NEW — total value of items the admin has individually approved.
-// Calculated from itemsToReturn where adminDecision === 'approved'.
-// Used as a cross-check against the stored discountValue field.
+// FIX BUG-7 — was previously `item.price ?? 0` which always returned 0
+// because itemsToReturn had no price field in the schema.
+// Now that price is stamped onto each itemsToReturn entry at request time
+// (BUG-17 fix in requestReturn controller + schema), this virtual correctly
+// returns the total value of admin-approved items and serves as a valid
+// cross-check against the stored discountValue field.
 orderSchema.virtual('approvedItemsValue').get(function () {
   return (this.returnInfo?.itemsToReturn ?? [])
     .filter((item) => item.adminDecision === 'approved')
@@ -854,16 +829,10 @@ orderSchema.set('strictQuery', true);
 // PRE-SAVE MIDDLEWARE
 // ============================================
 orderSchema.pre('save', function (next) {
-  // Generate orderNumber once on first save from the tail of the ObjectId.
-  // _id is always assigned before pre('save') fires so this is always safe.
   if (!this.orderNumber) {
     this.orderNumber = this._id.toString().slice(-8).toUpperCase();
   }
 
-  // Generate invoice number when payment succeeds, if not already set.
-  // NOTE: Date.now() + process.pid entropy can collide under concurrent saves
-  // at millisecond resolution. The unique index will catch it. For production
-  // at scale replace with an atomic counter or UUID.
   if (!this.invoiceInfo?.invoiceNumber && this.paymentInfo?.status === 'success') {
     const now     = new Date();
     const year    = now.getFullYear();
@@ -874,12 +843,27 @@ orderSchema.pre('save', function (next) {
     this.invoiceInfo.invoiceDate   = now;
   }
 
-  // FIX M-01: this is now the ONLY place rmaNumber is generated.
-  // The controller (reviewReturnRequest) previously also generated it with a
-  // different format (`RMA-${Date.now()}`), creating two divergent formats.
-  // That assignment has been removed from the controller.
-  // Format: RMA-YYYYMM-<8 uppercase hex chars> — human-readable and consistent.
-  if (this.returnInfo?.status === 'approved' && !this.returnInfo.rmaNumber) {
+  // FIX BUG-5 — RMA number generation now also fires on 'items_reviewed'.
+  //
+  // The new return flow never sets status to 'approved'; it goes:
+  //   requested → items_reviewed → [plea_submitted] → awaiting_discount → completed
+  //
+  // Previously the hook only fired on 'approved', meaning rmaNumber was
+  // never generated for any return processed through the new flow. This
+  // caused generateDiscountCode to fall back to orderNumber in the
+  // orderReference field, which is semantically wrong (order ref ≠ return ref).
+  //
+  // Fix: fire on EITHER 'approved' (legacy path, kept for backward
+  // compatibility with any existing documents) OR 'items_reviewed' (new
+  // path). The !rmaNumber guard prevents duplicate generation on subsequent
+  // saves — once set it is never overwritten.
+  //
+  // FIX M-01: this remains the ONLY place rmaNumber is generated.
+  const triggerStatuses = ['approved', 'items_reviewed'];
+  if (
+    triggerStatuses.includes(this.returnInfo?.status) &&
+    !this.returnInfo.rmaNumber
+  ) {
     const now     = new Date();
     const year    = now.getFullYear();
     const month   = String(now.getMonth() + 1).padStart(2, '0');
@@ -917,8 +901,7 @@ orderSchema.statics.getPendingFraudReviews = async function () {
     .sort({ createdAt: -1 });
 };
 
-// UPDATED: added new statuses to the $in list so these returns surface
-// in the active returns query used by admin dashboards.
+// UPDATED: added new statuses to the $in list
 orderSchema.statics.getActiveReturns = async function () {
   return this.find({
     'returnInfo.status': {
@@ -971,27 +954,16 @@ orderSchema.statics.getOrdersWithUnreadMessages = async function () {
     .sort({ 'orderMessages.createdAt': -1 });
 };
 
-// FIX P-03: rewritten as an aggregation so full message arrays are never
-// loaded into memory. The previous .find() implementation hydrated every
-// message for every matching order — for a 500-message order that was
-// 500 objects loaded just to extract one count and one preview.
-// This aggregation computes the unread count and extracts the latest
-// message entirely within MongoDB, sending only what the controller needs.
-//
-// UPDATED: items_reviewed, plea_submitted, awaiting_discount removed from
-// the $nin exclusion list so these active statuses correctly appear in the
-// unread messages queue. Only truly closed statuses are excluded.
+// FIX P-03: rewritten as an aggregation.
+// UPDATED: items_reviewed, plea_submitted, awaiting_discount correctly
+// included (not in $nin) so active returns surface in the unread queue.
+// Only truly terminal statuses are excluded.
 orderSchema.statics.getReturnsWithUnreadMessages = async function () {
   return this.aggregate([
     {
       $match: {
         'returnInfo.status': {
-          $nin: ['none', 'completed', 'cancelled'],
-          // NOTE: 'rejected' intentionally removed from $nin here compared
-          // to the original. A rejection followed by a plea means the return
-          // is still active and messages should surface. The canAddReturnMessage
-          // middleware is the enforcement gate for who can write; this query
-          // is read-only and should be inclusive of all active returns.
+          $nin: ['none', 'completed', 'cancelled', 'rejected'],
         },
         'returnInfo.messages': { $elemMatch: { isRead: false, senderType: 'customer' } },
       },
@@ -1013,7 +985,6 @@ orderSchema.statics.getReturnsWithUnreadMessages = async function () {
         'returnInfo.status':    1,
         'returnInfo.rmaNumber': 1,
         'returnInfo.reason':    1,
-        // Compute unread count without loading the full messages array
         unreadReturnMessages: {
           $size: {
             $filter: {
@@ -1028,7 +999,6 @@ orderSchema.statics.getReturnsWithUnreadMessages = async function () {
             },
           },
         },
-        // Latest message preview only — never loads the full array
         latestReturnMessage: { $arrayElemAt: ['$returnInfo.messages', -1] },
       },
     },
@@ -1086,19 +1056,12 @@ orderSchema.methods.addRefundMessage = function (sender, senderType, message, at
   if (!this.refundInfo) this.refundInfo = { status: 'none' };
   if (!this.refundInfo.messages) this.refundInfo.messages = [];
   this.refundInfo.messages.push({
-    sender,
-    senderType,
-    message, // stored field name is 'message' — see schema comment above
-    attachments,
-    isRead: false,
-    createdAt: new Date(),
+    sender, senderType, message, attachments,
+    isRead: false, createdAt: new Date(),
   });
   this.addRefundTimeline('message_sent', `New message from ${senderType}`, sender);
 };
 
-// Semantics: pass the READER's role.
-// Marks messages FROM the other party as read.
-// e.g. markRefundMessagesAsRead('admin') marks customer messages as read.
 orderSchema.methods.markRefundMessagesAsRead = function (senderType) {
   (this.refundInfo?.messages ?? []).forEach((msg) => {
     if (msg.senderType !== senderType && !msg.isRead) {
@@ -1144,8 +1107,7 @@ orderSchema.methods.markReturnMessagesDelivered = function (senderType) {
   });
 };
 
-// Semantics: pass the READER's role (same convention as markRefundMessagesAsRead).
-// Marks messages FROM the other party as read.
+// Semantics: pass the READER's role.
 // e.g. markReturnMessagesAsRead('admin') marks customer messages as read.
 orderSchema.methods.markReturnMessagesAsRead = function (senderType) {
   (this.returnInfo?.messages ?? []).forEach((msg) => {
@@ -1173,10 +1135,7 @@ orderSchema.methods.addReturnDocument = function (type, url, filename, uploadedB
   this.addReturnTimeline('document_uploaded', `${type} document uploaded`, uploadedBy);
 };
 
-// NEW — adds a document to the plea evidence array specifically.
-// Keeps plea evidence separate from the main return documents array
-// so the admin can distinguish original submission evidence from
-// plea evidence at a glance.
+// NEW — adds evidence to the plea documents array specifically.
 orderSchema.methods.addPleaDocument = function (type, url, filename, uploadedBy, description = '') {
   if (!this.returnInfo) this.returnInfo = { status: 'none' };
   if (!this.returnInfo.pleaInfo) this.returnInfo.pleaInfo = {};
