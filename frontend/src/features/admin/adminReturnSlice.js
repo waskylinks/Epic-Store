@@ -163,20 +163,25 @@ export const getSingleReturn = createAsyncThunk(
 );
 
 /**
- * Approve or reject a pending return request.
- *   action:      "approve" | "reject"
- *   restockFee:  number (optional, approve only)
- *   adminNote:   string (optional)
+ * Approve or reject a pending return request (first-round, status=requested).
+ *
+ * Body shape expected by the backend (validateReturnReview + canReviewFirstRound):
+ *   { itemDecisions: [{ productId, decision, rejectionReason? }], adminNote? }
+ *
+ * The old { action, restockFee, adminNote } shape is gone — the restock fee
+ * input was removed per spec Section 8, and the backend now expects per-item
+ * decisions. Do NOT pass `action` or `restockFee` — they will be ignored by
+ * the new controller and may confuse validation.
  *
  * Backend returns: { success, message, returnInfo }  ← no .order field.
  */
 export const reviewReturn = createAsyncThunk(
   "adminReturn/reviewReturn",
-  async ({ orderId, action, restockFee, adminNote }, { rejectWithValue }) => {
+  async ({ orderId, itemDecisions, adminNote = "" }, { rejectWithValue }) => {
     try {
       const { data } = await axios.put(
         `/api/v1/admin/orders/${orderId}/return/review`,
-        { action, restockFee, adminNote },
+        { itemDecisions, adminNote },
         { withCredentials: true }
       );
       return data;
@@ -189,9 +194,90 @@ export const reviewReturn = createAsyncThunk(
 );
 
 /**
+ * submitAdminPleaReview
+ * Review a customer plea after the plea window (status=plea_submitted).
+ * Calls PUT /api/v1/admin/orders/:id/return/plea-review via canReviewPleaRound.
+ *
+ * Body shape: { itemDecisions: [{ productId, decision, rejectionReason? }], adminNote? }
+ * Same shape as reviewReturn — the controller (resolveAfterPlea) handles the
+ * different status transition (plea_submitted → awaiting_discount).
+ *
+ * Backend returns: { success, message, returnInfo }
+ *
+ * NEW — required for the plea review tab added in spec Section 8.
+ */
+export const submitAdminPleaReview = createAsyncThunk(
+  "adminReturn/submitAdminPleaReview",
+  async ({ orderId, itemDecisions, adminNote = "" }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.put(
+        `/api/v1/admin/orders/${orderId}/return/plea-review`,
+        { itemDecisions, adminNote },
+        { withCredentials: true }
+      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message ?? "Failed to submit plea review"
+      );
+    }
+  }
+);
+
+/**
+ * generateDiscountCode
+ * Triggers the backend to mark the return completed and build the
+ * returnDataForDiscount payload. The admin is then navigated to the
+ * discount creation page with this payload in location.state.
+ *
+ * Route: POST /api/v1/admin/orders/:id/return/generate-discount
+ * Guard: canGenerateDiscount (status must be awaiting_discount)
+ *
+ * Backend response shape:
+ *   {
+ *     success: true,
+ *     message: '...',
+ *     redirectToDiscount: true,
+ *     returnDataForDiscount: {
+ *       orderId, orderNumber, orderReference, customerId,
+ *       approvedItems: [{ productId, name, quantity, unitPrice }],
+ *       totalApprovedValue, discountValue,
+ *     },
+ *     returnInfo: { ...updatedReturnInfo }
+ *   }
+ *
+ * Navigation to /admin/discounts/new belongs in the COMPONENT, not here.
+ * This thunk returns the full payload; the component reads payload.returnDataForDiscount.
+ *
+ * NEW — required for the "Generate Discount Code" button in spec Section 8.
+ */
+export const generateDiscountCode = createAsyncThunk(
+  "adminReturn/generateDiscountCode",
+  async (orderId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `/api/v1/admin/orders/${orderId}/return/generate-discount`,
+        {},
+        { withCredentials: true }
+      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message ?? "Failed to generate discount code"
+      );
+    }
+  }
+);
+
+/**
  * Update return status through the post-approval lifecycle.
  *   status:          "in_transit" | "received" | "inspected" | "completed"
  *   inspectionNotes: string (inspected status only)
+ *
+ * NOTE: The new flow statuses (items_reviewed, plea_submitted, awaiting_discount)
+ * are NOT valid values here — they are set by dedicated endpoints (reviewReturn,
+ * submitAdminPleaReview, generateDiscountCode). Passing them here will be
+ * rejected by the backend's validateReturnStatusUpdate validator (BUG-10 fix).
  *
  * Backend returns: { success, message, returnInfo }  ← no .order field.
  */
@@ -384,6 +470,84 @@ export const getReturnsWithUnreadMessages = createAsyncThunk(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// STATUS CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * STATUS_COLORS
+ * Maps every possible returnInfo.status value to a Tailwind colour token.
+ * Used by AdminReturns.jsx for badge colouring and STATUS_FILTERS.
+ *
+ * NEW — items_reviewed, plea_submitted, awaiting_discount added for new flow.
+ * None of the three new statuses are terminal (they progress further).
+ */
+export const STATUS_COLORS = {
+  requested:         "yellow",
+  items_reviewed:    "blue",    // NEW — admin has posted per-item decisions
+  plea_submitted:    "purple",  // NEW — customer has submitted a plea
+  awaiting_discount: "orange",  // NEW — awaiting admin discount code generation
+  in_transit:        "sky",
+  received:          "indigo",
+  inspected:         "teal",
+  completed:         "green",
+  cancelled:         "gray",
+  rejected:          "red",
+};
+
+/**
+ * STATUS_LABELS
+ * Human-readable label for each status, used in filter dropdowns, badges,
+ * and timeline dots.
+ *
+ * NEW — three new-flow statuses added.
+ */
+export const STATUS_LABELS = {
+  requested:         "Requested",
+  items_reviewed:    "Items Reviewed",    // NEW
+  plea_submitted:    "Plea Submitted",    // NEW
+  awaiting_discount: "Awaiting Discount", // NEW
+  in_transit:        "In Transit",
+  received:          "Received",
+  inspected:         "Inspected",
+  completed:         "Completed",
+  cancelled:         "Cancelled",
+  rejected:          "Rejected",
+};
+
+/**
+ * STATUS_FILTERS
+ * Ordered list of statuses available in the admin filter dropdown.
+ * Preserves natural flow order so the dropdown reads top-to-bottom
+ * as the return progresses through its lifecycle.
+ *
+ * NEW — items_reviewed, plea_submitted, awaiting_discount inserted
+ * between requested and in_transit.
+ */
+export const STATUS_FILTERS = [
+  "requested",
+  "items_reviewed",    // NEW
+  "plea_submitted",    // NEW
+  "awaiting_discount", // NEW
+  "in_transit",
+  "received",
+  "inspected",
+  "completed",
+  "cancelled",
+  "rejected",
+];
+
+/**
+ * TERMINAL_STATUSES
+ * Returns in a terminal status cannot be acted on further.
+ * Used to hide action buttons, disable review tabs, etc.
+ *
+ * IMPORTANT: items_reviewed, plea_submitted, and awaiting_discount are NOT
+ * terminal — they are mid-flow states that expect further admin or customer
+ * action. Only completed, cancelled, and rejected are true end-states.
+ */
+export const TERMINAL_STATUSES = ["completed", "cancelled", "rejected"];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SLICE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -394,6 +558,11 @@ const adminReturnSlice = createSlice({
     unreadReturns: [],
     stats: null,
     currentReturn: null,
+
+    // NEW — total monetary exposure across all active returns.
+    // Populated from getAllReturns.fulfilled via payload.stats.totalRequestedAmount.
+    // Used by the KPI card in AdminReturns.jsx (spec Section 8, item 7).
+    totalRequestedAmount: 0,
 
     messages: [],
     messagesPage: 1,
@@ -412,14 +581,16 @@ const adminReturnSlice = createSlice({
     },
 
     // ── Loading flags ────────────────────────────────────────────────────────
-    loading:             false, // getSingleReturn, reviewReturn, updateReturnStatus
-    returnsLoading:      false, // getAllReturns
-    unreadLoading:       false, // getReturnsWithUnreadMessages
-    messageSendLoading:  false, // sendReturnMessage (upload + send combined)
-    messagesLoading:     false, // getReturnMessages
-    timelineLoading:     false,
-    documentsLoading:    false,
-    uploadLoading:       false, // standalone uploadReturnFiles
+    loading:              false, // getSingleReturn, reviewReturn, updateReturnStatus
+    returnsLoading:       false, // getAllReturns
+    unreadLoading:        false, // getReturnsWithUnreadMessages
+    messageSendLoading:   false, // sendReturnMessage (upload + send combined)
+    messagesLoading:      false, // getReturnMessages
+    timelineLoading:      false,
+    documentsLoading:     false,
+    uploadLoading:        false, // standalone uploadReturnFiles
+    pleaReviewLoading:    false, // NEW — submitAdminPleaReview
+    discountCodeLoading:  false, // NEW — generateDiscountCode
 
     // ── Error / result state ─────────────────────────────────────────────────
     error:      null,
@@ -450,6 +621,9 @@ const adminReturnSlice = createSlice({
      * Affected flags: messageSendLoading, uploadLoading, messagesLoading, loading.
      * returnsLoading is NOT reset here — getAllReturns is a list-view concern
      * and its flight is independent of any single return panel.
+     *
+     * NEW — also resets pleaReviewLoading and discountCodeLoading for the same
+     * reason: if the admin navigates away mid-request these flags must clear.
      */
     clearCurrentReturn: (state) => {
       state.currentReturn      = null;
@@ -466,10 +640,13 @@ const adminReturnSlice = createSlice({
       state.success    = false;
       state.message    = null;
       // FIX A3: reset in-flight flags so the next panel is never stuck loading
-      state.messageSendLoading = false;
-      state.uploadLoading      = false;
-      state.messagesLoading    = false;
-      state.loading            = false;
+      state.messageSendLoading  = false;
+      state.uploadLoading       = false;
+      state.messagesLoading     = false;
+      state.loading             = false;
+      // NEW
+      state.pleaReviewLoading   = false;
+      state.discountCodeLoading = false;
     },
 
     /**
@@ -509,6 +686,54 @@ const adminReturnSlice = createSlice({
       state.errorStage         = null;
       state.error              = null;
     },
+
+    /**
+     * markReturnRead
+     * Optimistic local update — zeroes the unreadMessages counter on a
+     * specific return in state.returns WITHOUT waiting for a list re-fetch.
+     *
+     * Call this immediately after getSingleReturn resolves inside both
+     * handleViewReturn and handleOpenMessageModal in AdminReturns.jsx:
+     *
+     *   await dispatch(getSingleReturn(orderId)).unwrap();
+     *   dispatch(markReturnRead(orderId));
+     *
+     * Why local instead of an API call:
+     * The backend already sets unreadMessages=0 on the getSingleReturn response
+     * (admin fetch marks messages read server-side). This reducer just syncs
+     * the badge in the list view immediately, without waiting for the list
+     * query to re-run (which might be debounced or on a timer).
+     *
+     * Affects both state.returns (paginated list) and state.unreadReturns
+     * (badge poll list) so all badge sources are consistent.
+     *
+     * NEW — spec Section 8, item 4 / adminReturnSlice change 1.
+     *
+     * @param {string} action.payload — orderId
+     */
+    markReturnRead: (state, { payload: orderId }) => {
+      const idStr = String(orderId);
+
+      // Zero the badge in the main paginated list
+      const inList = state.returns.find(
+        (r) => String(r._id) === idStr || String(r.orderId) === idStr
+      );
+      if (inList) {
+        inList.returnInfo = inList.returnInfo ?? {};
+        inList.returnInfo.unreadMessages = 0;
+      }
+
+      // Also zero the badge in the unread poll list so the sidebar badge
+      // clears immediately rather than waiting for the next poll interval.
+      const inUnread = state.unreadReturns.find(
+        (r) => String(r._id) === idStr || String(r.orderId) === idStr
+      );
+      if (inUnread) {
+        inUnread.returnInfo = inUnread.returnInfo ?? {};
+        inUnread.returnInfo.unreadMessages = 0;
+        inUnread.returnInfo.unreadCount    = 0; // aggregation projection field
+      }
+    },
   },
 
   extraReducers: (builder) => {
@@ -533,6 +758,10 @@ const adminReturnSlice = createSlice({
           currentPage:  payload.currentPage  ?? 1,
           totalPages:   payload.totalPages   ?? 1,
         };
+        // NEW — totalRequestedAmount lives inside stats (computed by the
+        // facet aggregation in getAllReturns controller). Safe fallback to 0
+        // if the stats facet is absent (e.g. empty result set).
+        state.totalRequestedAmount = payload.stats?.totalRequestedAmount ?? 0;
       })
       .addCase(getAllReturns.rejected, (state, { payload }) => {
         state.returnsLoading = false;
@@ -579,6 +808,62 @@ const adminReturnSlice = createSlice({
       .addCase(reviewReturn.rejected, (state, { payload }) => {
         state.loading = false;
         state.error   = extractErrorMessage(payload, "Failed to review return");
+      });
+
+    // ── submitAdminPleaReview ─────────────────────────────────────────────────
+    // NEW — handles the plea review tab submit (spec Section 8, item 3).
+    // Calls resolveAfterPlea on the backend via canReviewPleaRound middleware.
+    // Follows the same returnInfo-patch pattern as reviewReturn (FIX AS-5).
+    builder
+      .addCase(submitAdminPleaReview.pending, (state) => {
+        state.pleaReviewLoading = true;
+        state.error             = null;
+      })
+      .addCase(submitAdminPleaReview.fulfilled, (state, { payload }) => {
+        state.pleaReviewLoading = false;
+        state.success           = true;
+        state.message           = payload.message;
+        // Patch returnInfo only — preserve populated fields from getSingleReturn
+        if (state.currentReturn && payload.returnInfo) {
+          state.currentReturn = {
+            ...state.currentReturn,
+            returnInfo: payload.returnInfo,
+          };
+        }
+      })
+      .addCase(submitAdminPleaReview.rejected, (state, { payload }) => {
+        state.pleaReviewLoading = false;
+        state.error = extractErrorMessage(payload, "Failed to submit plea review");
+      });
+
+    // ── generateDiscountCode ──────────────────────────────────────────────────
+    // NEW — handles the "Generate Discount Code" button (spec Section 8, item 5/6).
+    // On fulfilled the COMPONENT navigates to /admin/discounts/new with
+    // payload.returnDataForDiscount in location.state. This reducer only
+    // patches currentReturn.returnInfo (status now 'completed').
+    builder
+      .addCase(generateDiscountCode.pending, (state) => {
+        state.discountCodeLoading = true;
+        state.error               = null;
+      })
+      .addCase(generateDiscountCode.fulfilled, (state, { payload }) => {
+        state.discountCodeLoading = false;
+        state.success             = true;
+        state.message             = payload.message;
+        // Patch returnInfo — status is now 'completed' after this call.
+        // returnDataForDiscount is NOT stored in Redux state — it is consumed
+        // by the component immediately via action.payload and passed as
+        // navigation state to the discount creation page.
+        if (state.currentReturn && payload.returnInfo) {
+          state.currentReturn = {
+            ...state.currentReturn,
+            returnInfo: payload.returnInfo,
+          };
+        }
+      })
+      .addCase(generateDiscountCode.rejected, (state, { payload }) => {
+        state.discountCodeLoading = false;
+        state.error = extractErrorMessage(payload, "Failed to generate discount code");
       });
 
     // ── updateReturnStatus ───────────────────────────────────────────────────
@@ -633,26 +918,11 @@ const adminReturnSlice = createSlice({
         }
 
         // ── FIX A4 + A5: preview sync removed ───────────────────────────────
-        // Original FIX AS-8 pushed the new message into
-        // currentReturn.returnInfo.messages (the 5-message preview from
-        // getSingleReturn). This introduced two bugs:
-        //
-        // A4 [MEDIUM] — Mixed hydration: getSingleReturn populates the sender
-        //   field (name, email, role). Messages from sendReturnMessage are raw
-        //   — sender is an ObjectId only. The preview array then has two
-        //   different shapes, so any component reading msg.sender.name crashes
-        //   on messages added after the initial fetch.
-        //
-        // A5 [LOW] — Unbounded growth: getSingleReturn returns exactly 5 messages
-        //   as a fixed preview. Without a .slice(-5) cap, each successful send
-        //   grows the preview by one indefinitely, leaking memory and breaking
-        //   the "5 message preview" contract.
-        //
-        // Fix: do not push to the preview at all. The full thread in
-        // state.messages (populated via getReturnMessages) is the source of
-        // truth for the chat panel. The preview in currentReturn.returnInfo.messages
-        // should only be refreshed by calling getSingleReturn or getReturnMessages,
-        // where sender population is guaranteed.
+        // Do not push to currentReturn.returnInfo.messages (the 5-message
+        // preview). Sender field is an ObjectId from sendReturnMessage but a
+        // populated object from getSingleReturn — mixing shapes crashes
+        // msg.sender.name references (A4). Preview also grows unboundedly (A5).
+        // The full thread in state.messages is the source of truth for chat.
       })
       .addCase(sendReturnMessage.rejected, (state, { payload }) => {
         state.messageSendLoading = false;
@@ -694,14 +964,6 @@ const adminReturnSlice = createSlice({
         // Fix: combine the full-page signal with the backend-provided totalCount.
         //   count === limit    →  a full page was returned (necessary condition)
         //   receivedSoFar < totalCount  →  server confirms more exist
-        //
-        // receivedSoFar uses the local messages variable for page 1 (state not
-        // yet updated when this line runs... actually state IS updated above).
-        // For page 1: use messages.length (current page only, not cumulative).
-        // For page 2+: use state.messages.length (already updated by prepend above).
-        //
-        // When totalCount is absent (future backend change), falls back to the
-        // original count===limit heuristic to avoid breaking the integration.
         const receivedSoFar = page === 1
           ? messages.length
           : state.messages.length;
@@ -788,6 +1050,7 @@ export const {
   clearCurrentReturn,
   clearReturnMessages,
   clearPendingAttachments,
+  markReturnRead,           
 } = adminReturnSlice.actions;
 
 export default adminReturnSlice.reducer;
