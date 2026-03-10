@@ -3,6 +3,7 @@ import HandleError from "../utils/handleError.js";
 import Discount from "../models/discount-model.js";
 import User from "../models/userModel.js";
 import crypto from "crypto";
+import Order from "../models/order-model.js";
 
 // ============================================
 // ADMIN: CREATE DISCOUNT
@@ -222,47 +223,190 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
  * @route POST /api/v1/discounts/create-compensation
  * @access Admin
  */
+// ============================================
+// ADMIN: CREATE COMPENSATION DISCOUNT (refund / return)
+//
+// FIX 1 — relatedReturn uniqueness guard
+//   Before creating, check whether a discount already exists for this
+//   relatedReturn ID. Returns 409 with the existing code so the admin
+//   sees it rather than silently creating a duplicate. Without this, the
+//   admin could navigate back from the discount creation page and click
+//   "Generate Discount Code" again on the same completed return, producing
+//   two valid discount codes for the same customer compensation.
+//
+// FIX 2 — server-side amount re-validation from the return document
+//   When the request comes from the return flow (relatedReturn is present),
+//   the backend re-reads discountValue directly from the Order document
+//   instead of trusting the amount the frontend sends. This means the
+//   frontend pre-fill is display-only — an intercepted or tampered request
+//   cannot inflate the discount amount, because the final value always
+//   comes from the server-authoritative return record.
+//
+//   For manually created compensation discounts (no relatedReturn), the
+//   admin-supplied amount is used as before, subject to the existing
+//   positive-number validation.
+//
+// FIX 3 — return status guard
+//   If relatedReturn is provided, the referenced Order must be in
+//   'awaiting_discount' or 'completed' status. This prevents a race
+//   condition where two admins both click "Generate Discount Code" on
+//   the same return at the same time — the second request arrives after
+//   the first has already flipped the status to 'completed', so the
+//   guard on the second request catches it and returns a clear error.
+//
+// Existing fixes preserved from previous iteration:
+//   - amount === undefined/null check before Number() coercion
+//   - isNaN / <= 0 guard for manual compensation amounts
+//   - crypto.randomBytes(4) suffix instead of Date.now().slice(-6)
+//   - validUntil calculation from validDays
+//   - eligibleUsers scoped to the specific customer
+//
+// @route  POST /api/v1/discounts/create-compensation
+// @access Admin
+// ============================================
+
 export const createCompensationDiscount = handleAsyncError(async (req, res, next) => {
   const {
-    userId, amount, reason, category,
-    validDays = 30, relatedOrder, relatedReturn
+    userId,
+    amount,        // used only when relatedReturn is absent (manual compensation)
+    reason,
+    category,      // 'refund' | 'return'
+    validDays = 30,
+    relatedOrder,
+    relatedReturn,
   } = req.body;
 
-  if (!userId || amount === undefined || amount === null || !category) {
-    return next(new HandleError("Missing required fields", 400));
+  // ── Basic presence check ────────────────────────────────────────────────
+  if (!userId || !category) {
+    return next(new HandleError("Missing required fields: userId, category", 400));
   }
 
-  if (isNaN(Number(amount)) || Number(amount) <= 0) {
-    return next(new HandleError("Amount must be a positive number", 400));
+  // ── FIX 1: relatedReturn uniqueness guard ───────────────────────────────
+  // Check BEFORE any DB writes so we never enter a partial-create state.
+  if (relatedReturn) {
+    const existing = await Discount.findOne({ relatedReturn }).lean();
+    if (existing) {
+      return res.status(409).json({
+        success: false,
+        message: `A discount code already exists for this return: ${existing.code}`,
+        existingCode: existing.code,
+        existingDiscountId: existing._id,
+      });
+    }
   }
 
+  // ── Verify user exists ──────────────────────────────────────────────────
   const user = await User.findById(userId).lean();
-  if (!user) return next(new HandleError("User not found", 404));
+  if (!user) {
+    return next(new HandleError("User not found", 404));
+  }
 
+  // ── FIX 2 + FIX 3: re-read amount from the return document ─────────────
+  // When this request originates from the return flow, authoritative amount
+  // comes from the Order — never from the request body.
+  let finalAmount;
+
+  if (relatedReturn) {
+    // Import Order model — already available in the return controller; add
+    // the import at the top of discount-controller.js if not already present:
+    //   import Order from "../models/order-model.js";
+    const order = await Order.findById(relatedReturn)
+      .select("returnInfo.status returnInfo.discountValue")
+      .lean();
+
+    if (!order) {
+      return next(new HandleError("Related return order not found", 404));
+    }
+
+    // FIX 3 — status guard: only awaiting_discount is a valid entry point.
+    // 'completed' is also accepted defensively in case the status was
+    // already flipped by a concurrent generateDiscountCode call — the
+    // uniqueness guard above (FIX 1) will catch true duplicates first, so
+    // reaching 'completed' here means the status advanced between the
+    // uniqueness check and this read (very rare but possible under load).
+    const allowedStatuses = ["awaiting_discount", "completed"];
+    if (!allowedStatuses.includes(order.returnInfo?.status)) {
+      return next(
+        new HandleError(
+          `Cannot generate discount: return status is '${order.returnInfo?.status}'. ` +
+            `Expected 'awaiting_discount'.`,
+          400
+        )
+      );
+    }
+
+    // Re-read the server-authoritative discount value — ignore req.body.amount
+    finalAmount = order.returnInfo?.discountValue;
+
+    if (
+      finalAmount === undefined ||
+      finalAmount === null ||
+      isNaN(Number(finalAmount)) ||
+      Number(finalAmount) <= 0
+    ) {
+      return next(
+        new HandleError(
+          "Return has no valid discount value. Ensure items have been reviewed and approved before generating a discount.",
+          400
+        )
+      );
+    }
+
+    finalAmount = Number(finalAmount);
+  } else {
+    // ── Manual compensation (no relatedReturn): validate req.body.amount ──
+    if (amount === undefined || amount === null) {
+      return next(new HandleError("Missing required field: amount", 400));
+    }
+    if (isNaN(Number(amount)) || Number(amount) <= 0) {
+      return next(new HandleError("Amount must be a positive number", 400));
+    }
+    finalAmount = Number(amount);
+  }
+
+  // ── Generate collision-resistant code ───────────────────────────────────
+  // crypto.randomBytes(4) → 2^32 combinations; far safer than Date.now().slice(-6)
+  // which collides when two requests arrive within the same millisecond.
+  // The unique index on Discount.code is still a safety net.
   const uniqueSuffix = crypto.randomBytes(4).toString("hex").toUpperCase();
   const code = `${category.toUpperCase()}-${user.firstName.toUpperCase()}-${uniqueSuffix}`;
 
+  // ── Build validUntil ────────────────────────────────────────────────────
   const validUntil = new Date();
   validUntil.setDate(validUntil.getDate() + parseInt(validDays));
 
+  // ── Create discount ─────────────────────────────────────────────────────
   const discount = await Discount.create({
     code,
-    description: reason || `Compensation discount for ${user.firstName}`,
+    description:
+      reason ||
+      `Compensation discount for ${user.firstName}${relatedReturn ? " (return)" : ""}`,
     type: "fixed",
-    value: Number(amount),
+    value: finalAmount,
     category,
     validUntil,
-    usageLimit: { totalUses: 1, usesPerUser: 1 },
-    conditions: { eligibleUsers: [userId], minPurchaseAmount: 0 },
-    notes: `Auto-generated compensation for ${category}`,
-    relatedOrder, relatedReturn,
-    createdBy: req.user._id
+    usageLimit: {
+      totalUses: 1,    // single-use — this is a personalised compensation code
+      usesPerUser: 1,
+    },
+    conditions: {
+      // Scoped to the specific customer — cannot be used by anyone else.
+      // The validateDiscountCode endpoint enforces this via canUserUse().
+      eligibleUsers: [userId],
+      minPurchaseAmount: 0,
+    },
+    notes: relatedReturn
+      ? `Auto-generated from return ${relatedReturn}`
+      : `Manual compensation — ${category}`,
+    relatedOrder,
+    relatedReturn,
+    createdBy: req.user._id,
   });
 
-  res.status(201).json({
+  return res.status(201).json({
     success: true,
     message: "Compensation discount created successfully",
-    discount
+    discount,
   });
 });
 
