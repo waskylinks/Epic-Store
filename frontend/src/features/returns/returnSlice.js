@@ -168,6 +168,54 @@ export const cancelReturn = createAsyncThunk(
 );
 
 /**
+ * submitPlea
+ * Customer submits a plea for reconsideration after per-item admin decisions.
+ *
+ * Route:  POST /api/v1/orders/:id/return/plea
+ * Guards: canSubmitPlea (status=items_reviewed, pleaAttempts<1, deadline not
+ *         expired, order ownership), validatePleaSubmission, pleaLimiter
+ *
+ * Body:   { pleaDescription: string }
+ *
+ * File uploads for plea evidence are a SEPARATE call — use uploadPleaFiles
+ * (POST /orders/:id/return/plea/upload) BEFORE or AFTER submitting the text.
+ * The uploadPleaFiles route intentionally does NOT go through canSubmitPlea
+ * so uploads are valid in both items_reviewed and plea_submitted states.
+ *
+ * Backend response:
+ *   {
+ *     success:    true,
+ *     message:    'Plea submitted successfully...',
+ *     returnInfo: { ...full returnInfo subdoc, status: 'plea_submitted',
+ *                   pleaAttempts: 1, pleaDeadline: <admin 48h window>,
+ *                   pleaInfo: { pleaDescription, pleaSubmittedAt, pleaDocuments } }
+ *   }
+ *
+ * On fulfilled: returnStatus is replaced with the full fresh returnInfo
+ * (same pattern as requestReturn). The backend always returns the full
+ * subdoc so there is no risk of losing plea or item decision fields.
+ *
+ * NEW — required for the plea submission form in spec Section 9.
+ */
+export const submitPlea = createAsyncThunk(
+  "return/submitPlea",
+  async ({ orderId, pleaDescription }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `/api/v1/orders/${orderId}/return/plea`,
+        { pleaDescription },
+        { withCredentials: true }
+      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(
+        err.response?.data?.message ?? "Failed to submit plea"
+      );
+    }
+  }
+);
+
+/**
  * Send a return message, optionally with file attachments.
  *
  * ─── WHY ONE THUNK ───────────────────────────────────────────────────────────
@@ -187,11 +235,6 @@ export const cancelReturn = createAsyncThunk(
  *   Files ARE on Cloudinary. URLs go into state.pendingAttachments.
  *   UI retries with { pendingUrls: state.pendingAttachments } — skips step 1.
  *
- * ─── USAGE ───────────────────────────────────────────────────────────────────
- *   dispatch(sendReturnMessage({ orderId, content: 'Hello' }))
- *   dispatch(sendReturnMessage({ orderId, content: 'See pic', files }))
- *   dispatch(sendReturnMessage({ orderId, content, pendingUrls: pendingAttachments }))
- *
  * NOTE: field name is "content" (return schema) — refund messages use "message".
  *
  * Backend response: { success, message: 'Message sent successfully',
@@ -205,10 +248,6 @@ export const sendReturnMessage = createAsyncThunk(
     { orderId, content, files = [], pendingUrls = [] },
     { rejectWithValue }
   ) => {
-    // ── Step 1: upload ───────────────────────────────────────────────────────
-    // Skip when caller passes pendingUrls (retry path after step-2 failure).
-    // The UI MUST call clearPendingAttachments() if the user clears their file
-    // selection mid-compose — otherwise stale URLs will silently attach.
     let attachmentUrls = [...pendingUrls];
 
     if (files.length > 0 && pendingUrls.length === 0) {
@@ -223,7 +262,6 @@ export const sendReturnMessage = createAsyncThunk(
       }
     }
 
-    // ── Step 2: send ─────────────────────────────────────────────────────────
     try {
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/return/messages`,
@@ -313,6 +351,9 @@ export const getReturnDocuments = createAsyncThunk(
 /**
  * Standalone document upload — for adding evidence outside the message thread.
  * For files attached to a message use sendReturnMessage instead.
+ * For plea evidence files use the plea/upload route directly from the component
+ * (POST /orders/:id/return/plea/upload) — that route writes to
+ * pleaInfo.pleaDocuments, not returnInfo.documents.
  *
  * Does NOT set state.success. Setting it here would re-trigger the global
  * success useEffect in ReturnRequest.jsx (which watches success for the
@@ -342,6 +383,38 @@ const returnSlice = createSlice({
   initialState: {
     returnStatus: { status: "none", hasReturn: false },
 
+    // ── New-flow fields ───────────────────────────────────────────────────────
+    // These are populated from returnStatus (which is the full returnInfo object
+    // from the backend) but are also mirrored as top-level state fields so
+    // components can select them without deep-diving into returnStatus.
+    //
+    // pleaDeadline — ISO string or null.
+    //   During items_reviewed: the customer's 48-hour window to submit a plea.
+    //   During plea_submitted: the admin's 48-hour window to respond.
+    //   Set to null when the phase ends (resolveAfterPlea clears it).
+    //   Source: returnInfo.pleaDeadline (present in both getReturnStatus and
+    //   submitPlea responses).
+    //
+    // pleaAttempts — number, default 0.
+    //   Incremented by the backend on submitPlea. Used to hide the plea form
+    //   once the customer has used their one attempt.
+    //   Source: returnInfo.pleaAttempts.
+    //
+    // discountValue — number or null.
+    //   The calculated discount amount based on approved items.
+    //   Set by reviewReturnRequest (first round) and resolveAfterPlea.
+    //   Source: returnInfo.discountValue.
+    //
+    // acceptanceDeadline — ISO string or null.
+    //   Schema field for a future "customer accept/decline discount" window.
+    //   Currently unused by any controller but exists in the schema. Tracked
+    //   here so components don't break if the backend starts populating it.
+    //   Source: returnInfo.acceptanceDeadline.
+    pleaDeadline:       null,
+    pleaAttempts:       0,
+    discountValue:      null,
+    acceptanceDeadline: null,
+
     messages:        [],
     messagesPage:    1,
     // totalMessages stores backend totalCount so the UI can display
@@ -365,6 +438,7 @@ const returnSlice = createSlice({
     // ── Loading flags ────────────────────────────────────────────────────────
     loading:            false, // requestReturn, cancelReturn
     statusLoading:      false, // getReturnStatus
+    pleaLoading:        false, // NEW — submitPlea
     messageSendLoading: false, // sendReturnMessage (upload + send combined)
     messagesLoading:    false, // getReturnMessages
     timelineLoading:    false,
@@ -378,6 +452,7 @@ const returnSlice = createSlice({
      * Lets the UI show the correct retry prompt without string-matching error.
      */
     errorStage: null,
+    pleaError:  null, // NEW — isolated so plea errors don't clobber other UI
     success:    false,
     message:    null,
   },
@@ -386,12 +461,17 @@ const returnSlice = createSlice({
     clearReturnState: (state) => {
       state.error      = null;
       state.errorStage = null;
+      state.pleaError  = null;
       state.success    = false;
       state.message    = null;
     },
 
     resetReturnStatus: (state) => {
-      state.returnStatus = { status: "none", hasReturn: false };
+      state.returnStatus      = { status: "none", hasReturn: false };
+      state.pleaDeadline      = null;
+      state.pleaAttempts      = 0;
+      state.discountValue     = null;
+      state.acceptanceDeadline = null;
     },
 
     /**
@@ -409,8 +489,6 @@ const returnSlice = createSlice({
       state.pendingAttachments = [];
       state.error              = null;
       state.errorStage         = null;
-      // Reset in-flight flags — closing mid-request must not leave the send
-      // button or attach button permanently disabled on re-open.
       state.messageSendLoading = false;
       state.uploadLoading      = false;
     },
@@ -424,6 +502,20 @@ const returnSlice = createSlice({
       state.pendingAttachments = [];
       state.errorStage         = null;
       state.error              = null;
+    },
+
+    /**
+     * clearPleaError
+     * Clears plea-specific error so the plea form can be re-attempted after
+     * the user dismisses the error banner without clearing the whole return state.
+     * Call from the plea form's error dismiss handler.
+     *
+     * NEW — isolated plea error state means a failed submitPlea does not
+     * accidentally clear a concurrent requestReturn success banner.
+     */
+    clearPleaError: (state) => {
+      state.pleaError  = null;
+      state.pleaLoading = false;
     },
   },
 
@@ -463,7 +555,16 @@ const returnSlice = createSlice({
         state.statusLoading = false;
         // Backend getReturnStatus controller injects hasReturn directly into
         // the returnInfo object before sending — safe to assign directly.
-        state.returnStatus = payload.returnInfo ?? { status: "none", hasReturn: false };
+        const ri = payload.returnInfo ?? { status: "none", hasReturn: false };
+        state.returnStatus = ri;
+        // Mirror new-flow deadline / counter fields to top-level state so
+        // components can select them without deep-diving returnStatus.
+        // These are all present on the returnInfo object returned by
+        // getReturnStatus (BUG-14 fix strips messages only, not these fields).
+        state.pleaDeadline       = ri.pleaDeadline       ?? null;
+        state.pleaAttempts       = ri.pleaAttempts       ?? 0;
+        state.discountValue      = ri.discountValue      ?? null;
+        state.acceptanceDeadline = ri.acceptanceDeadline ?? null;
       })
       .addCase(getReturnStatus.rejected, (state, { payload }) => {
         state.statusLoading = false;
@@ -498,6 +599,45 @@ const returnSlice = createSlice({
       .addCase(cancelReturn.rejected, (state, { payload }) => {
         state.loading = false;
         state.error   = extractErrorMessage(payload, "Failed to cancel return");
+      });
+
+    // ── submitPlea ───────────────────────────────────────────────────────────
+    // NEW — customer plea submission after per-item decisions (spec Section 9).
+    //
+    // Backend returns the full returnInfo subdoc on success, so we replace
+    // returnStatus entirely and re-mirror the new-flow fields — exactly the
+    // same pattern as requestReturn.fulfilled. This ensures the plea form
+    // hides immediately (pleaAttempts becomes 1) and the countdown timer
+    // switches to "admin response window" mode (pleaDeadline is updated).
+    //
+    // pleaError is used instead of the shared error field so a plea failure
+    // does not accidentally clobber an unrelated error banner elsewhere on
+    // the page (e.g. a failed document upload that is still showing).
+    builder
+      .addCase(submitPlea.pending, (state) => {
+        state.pleaLoading = true;
+        state.pleaError   = null;
+      })
+      .addCase(submitPlea.fulfilled, (state, { payload }) => {
+        state.pleaLoading = false;
+        state.success     = true;
+        state.message     = payload.message;
+        // Replace full returnStatus with fresh returnInfo from backend
+        const ri = payload.returnInfo
+          ? { ...payload.returnInfo, hasReturn: true }
+          : state.returnStatus;
+        state.returnStatus = ri;
+        // Re-mirror new-flow fields
+        state.pleaDeadline       = ri.pleaDeadline       ?? null;
+        state.pleaAttempts       = ri.pleaAttempts       ?? 0;
+        state.discountValue      = ri.discountValue      ?? null;
+        state.acceptanceDeadline = ri.acceptanceDeadline ?? null;
+      })
+      .addCase(submitPlea.rejected, (state, { payload }) => {
+        state.pleaLoading = false;
+        // Isolated plea error — does not touch state.error so it cannot
+        // accidentally clear or overwrite other UI banners.
+        state.pleaError = extractErrorMessage(payload, "Failed to submit plea");
       });
 
     // ── sendReturnMessage ────────────────────────────────────────────────────
@@ -542,11 +682,6 @@ const returnSlice = createSlice({
         // aggregation runs BEFORE the markReturnMessagesAsRead + save, so the
         // HTTP response always carries stale isRead:false on admin messages
         // even though the server has already persisted them as read.
-        //
-        // Normalising here (rather than via a separate clearUnreadMessages
-        // dispatch) ensures the badge drops on the SAME render cycle as the
-        // fetch resolves, with no risk of the read state being overwritten by
-        // a subsequent fetch the way an optimistic dispatch would be.
         const normalised = messages.map((m) =>
           m.senderType === "admin" ? { ...m, isRead: true } : m
         );
@@ -554,7 +689,6 @@ const returnSlice = createSlice({
         if (page === 1) {
           state.messages = normalised;
         } else {
-          // Prepend older pages — load-earlier / scroll-up pattern.
           state.messages = [...normalised, ...state.messages];
         }
 
@@ -629,6 +763,7 @@ export const {
   resetReturnStatus,
   clearReturnMessages,
   clearPendingAttachments,
+  clearPleaError,          
 } = returnSlice.actions;
 
 export default returnSlice.reducer;

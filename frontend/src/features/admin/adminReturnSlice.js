@@ -687,53 +687,6 @@ const adminReturnSlice = createSlice({
       state.error              = null;
     },
 
-    /**
-     * markReturnRead
-     * Optimistic local update — zeroes the unreadMessages counter on a
-     * specific return in state.returns WITHOUT waiting for a list re-fetch.
-     *
-     * Call this immediately after getSingleReturn resolves inside both
-     * handleViewReturn and handleOpenMessageModal in AdminReturns.jsx:
-     *
-     *   await dispatch(getSingleReturn(orderId)).unwrap();
-     *   dispatch(markReturnRead(orderId));
-     *
-     * Why local instead of an API call:
-     * The backend already sets unreadMessages=0 on the getSingleReturn response
-     * (admin fetch marks messages read server-side). This reducer just syncs
-     * the badge in the list view immediately, without waiting for the list
-     * query to re-run (which might be debounced or on a timer).
-     *
-     * Affects both state.returns (paginated list) and state.unreadReturns
-     * (badge poll list) so all badge sources are consistent.
-     *
-     * NEW — spec Section 8, item 4 / adminReturnSlice change 1.
-     *
-     * @param {string} action.payload — orderId
-     */
-    markReturnRead: (state, { payload: orderId }) => {
-      const idStr = String(orderId);
-
-      // Zero the badge in the main paginated list
-      const inList = state.returns.find(
-        (r) => String(r._id) === idStr || String(r.orderId) === idStr
-      );
-      if (inList) {
-        inList.returnInfo = inList.returnInfo ?? {};
-        inList.returnInfo.unreadMessages = 0;
-      }
-
-      // Also zero the badge in the unread poll list so the sidebar badge
-      // clears immediately rather than waiting for the next poll interval.
-      const inUnread = state.unreadReturns.find(
-        (r) => String(r._id) === idStr || String(r.orderId) === idStr
-      );
-      if (inUnread) {
-        inUnread.returnInfo = inUnread.returnInfo ?? {};
-        inUnread.returnInfo.unreadMessages = 0;
-        inUnread.returnInfo.unreadCount    = 0; // aggregation projection field
-      }
-    },
   },
 
   extraReducers: (builder) => {
@@ -1050,7 +1003,6 @@ export const {
   clearCurrentReturn,
   clearReturnMessages,
   clearPendingAttachments,
-  markReturnRead,           
 } = adminReturnSlice.actions;
 
 export default adminReturnSlice.reducer;
