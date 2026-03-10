@@ -5,8 +5,9 @@ dotenv.config({ path: './.env' });
 import app from './app.js';
 import { connectDB, setupGracefulShutdown, getDBStatus } from './Database/database.js';
 import { initializeRedis, shutdownRedis, default as redis } from './utils/redis.js';
-import { configureCloudinary } from './utils/cloudinaryUpload.js'; // ✅ Import centralized config
-
+import { configureCloudinary } from './utils/cloudinaryUpload.js';
+import { startDiscountCleanupJob } from './jobs/discount-cleanup.js';
+import { startAuditCleanupJob }    from './jobs/audit-log-cleanup.js';
 
 /* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
@@ -41,7 +42,7 @@ const validateEnvVariables = () => {
     console.log('✅ Environment variables validated');
 };
 
-/* ================= UNCUGHT EXCEPTIONS ================= */
+/* ================= UNCAUGHT EXCEPTIONS ================= */
 process.on('uncaughtException', (err) => {
     console.error('💥 UNCAUGHT EXCEPTION! Shutting down...');
     console.error('Error name:', err.name);
@@ -58,7 +59,7 @@ const startServer = async () => {
         // 1️⃣ Validate env
         validateEnvVariables();
 
-        // 2️⃣ Configure Cloudinary (using centralized config)
+        // 2️⃣ Configure Cloudinary
         configureCloudinary();
 
         // 3️⃣ Initialize Redis
@@ -71,7 +72,15 @@ const startServer = async () => {
         // 5️⃣ Setup graceful shutdown hooks
         setupGracefulShutdown();
 
-        // 6️⃣ Start Express server
+        // 6️⃣ Register scheduled jobs
+        // Both jobs require an active DB connection — registered AFTER connectDB().
+        // Offsets prevent concurrent DB pressure:
+        //   discount-cleanup.js → 2 AM daily  (CLEANUP_CRON)
+        //   audit-log-cleanup.js → 3 AM daily  (AUDIT_CLEANUP_CRON)
+        startDiscountCleanupJob();
+        startAuditCleanupJob();
+
+        // 7️⃣ Start Express server
         const PORT = process.env.PORT || 8000;
         server = app.listen(PORT, () => {
             console.log('\n' + '='.repeat(50));
@@ -146,6 +155,6 @@ const startServer = async () => {
         process.exit(1);
     }
 };
-  
+
 /* ================= INITIALIZE APP ================= */
 startServer();
