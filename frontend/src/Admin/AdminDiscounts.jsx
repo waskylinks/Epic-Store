@@ -34,7 +34,7 @@ import {
   clearAdminDiscountState,
   clearCurrentDiscount,
   clearCleanupResult,
-} from '../features/discounts/adminDiscountSlice';
+} from '../features/admin/adminDiscountSlice';
 
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
