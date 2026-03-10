@@ -57,6 +57,11 @@ const userSchema = new mongoose.Schema(
       addedAt: { type: Date, default: Date.now }
     }],
 
+    lastSeenDiscountsAt: {
+      type: Date,
+      default: null
+    },
+
     role: {
       type: String,
       enum: ["user", "admin", "superAdmin"],
@@ -126,6 +131,7 @@ userSchema.index({ firstName: 1, lastName: 1 });
 userSchema.index({ "wishlist.product": 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ emailVerified: 1 });
+userSchema.index({ lastSeenDiscountsAt: 1 });
 
 /* ================= MIDDLEWARE ================= */
 
