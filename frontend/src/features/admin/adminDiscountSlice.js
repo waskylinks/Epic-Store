@@ -4,13 +4,15 @@ import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
 // ============================================
-// ADMIN: GET ALL DISCOUNTS
+// ADMIN: GET ALL DISCOUNTS (cursor-based pagination)
 // ============================================
 
 /**
- * Get all discounts with filters
- * @route GET /api/v1/discounts
+ * @route GET /api/v1/discounts?status&category&type&search&limit&cursor
  * @access Admin
+ *
+ * Pass filters + optional `cursor` from previous response to paginate.
+ * On first load omit cursor. On "load more" pass pagination.nextCursor.
  */
 export const getAllDiscounts = createAsyncThunk(
   "adminDiscount/getAllDiscounts",
@@ -18,10 +20,10 @@ export const getAllDiscounts = createAsyncThunk(
     try {
       const params = new URLSearchParams(filters).toString();
       const { data } = await axios.get(
-        `/api/v1/discounts${params ? `?${params}` : ''}`,
+        `/api/v1/discounts${params ? `?${params}` : ""}`,
         { withCredentials: true }
       );
-      return data;
+      return data; // { success, discounts, pagination: { limit, hasNextPage, nextCursor } }
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch discounts"
@@ -35,7 +37,6 @@ export const getAllDiscounts = createAsyncThunk(
 // ============================================
 
 /**
- * Get discount details
  * @route GET /api/v1/discounts/:id
  * @access Admin
  */
@@ -43,11 +44,10 @@ export const getSingleDiscount = createAsyncThunk(
   "adminDiscount/getSingleDiscount",
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(
-        `/api/v1/discounts/${id}`,
-        { withCredentials: true }
-      );
-      return data;
+      const { data } = await axios.get(`/api/v1/discounts/${id}`, {
+        withCredentials: true,
+      });
+      return data; // { success, discount }
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch discount details"
@@ -61,7 +61,6 @@ export const getSingleDiscount = createAsyncThunk(
 // ============================================
 
 /**
- * Create new discount code
  * @route POST /api/v1/discounts
  * @access Admin
  */
@@ -69,12 +68,10 @@ export const createDiscount = createAsyncThunk(
   "adminDiscount/createDiscount",
   async (discountData, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(
-        `/api/v1/discounts`,
-        discountData,
-        { withCredentials: true }
-      );
-      return data;
+      const { data } = await axios.post("/api/v1/discounts", discountData, {
+        withCredentials: true,
+      });
+      return data; // { success, message, discount }
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to create discount"
@@ -88,9 +85,11 @@ export const createDiscount = createAsyncThunk(
 // ============================================
 
 /**
- * Update discount
  * @route PUT /api/v1/discounts/:id
  * @access Admin
+ *
+ * Allowed fields: description, status, validFrom, validUntil,
+ *                 usageLimit, conditions, notes
  */
 export const updateDiscount = createAsyncThunk(
   "adminDiscount/updateDiscount",
@@ -101,7 +100,7 @@ export const updateDiscount = createAsyncThunk(
         discountData,
         { withCredentials: true }
       );
-      return data;
+      return data; // { success, message, discount }
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to update discount"
@@ -111,11 +110,10 @@ export const updateDiscount = createAsyncThunk(
 );
 
 // ============================================
-// ADMIN: DELETE DISCOUNT
+// ADMIN: DELETE DISCOUNT (soft delete → status: inactive)
 // ============================================
 
 /**
- * Delete discount (soft delete)
  * @route DELETE /api/v1/discounts/:id
  * @access Admin
  */
@@ -123,10 +121,9 @@ export const deleteDiscount = createAsyncThunk(
   "adminDiscount/deleteDiscount",
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.delete(
-        `/api/v1/discounts/${id}`,
-        { withCredentials: true }
-      );
+      const { data } = await axios.delete(`/api/v1/discounts/${id}`, {
+        withCredentials: true,
+      });
       return { id, message: data.message };
     } catch (error) {
       return rejectWithValue(
@@ -137,24 +134,26 @@ export const deleteDiscount = createAsyncThunk(
 );
 
 // ============================================
-// ADMIN: CREATE COMPENSATION DISCOUNT
+// ADMIN: CREATE COMPENSATION DISCOUNT (refund / return)
 // ============================================
 
 /**
- * Create personalized discount for refund/return
  * @route POST /api/v1/discounts/create-compensation
  * @access Admin
+ *
+ * Body: { userId, amount, reason, category, validDays,
+ *         relatedOrder?, relatedReturn? }
  */
 export const createCompensationDiscount = createAsyncThunk(
   "adminDiscount/createCompensationDiscount",
   async (compensationData, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
-        `/api/v1/discounts/create-compensation`,
+        "/api/v1/discounts/create-compensation",
         compensationData,
         { withCredentials: true }
       );
-      return data;
+      return data; // { success, message, discount }
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to create compensation discount"
@@ -168,7 +167,6 @@ export const createCompensationDiscount = createAsyncThunk(
 // ============================================
 
 /**
- * Get discount usage statistics
  * @route GET /api/v1/discounts/stats
  * @access Admin
  */
@@ -176,11 +174,10 @@ export const getDiscountStats = createAsyncThunk(
   "adminDiscount/getDiscountStats",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(
-        `/api/v1/discounts/stats`,
-        { withCredentials: true }
-      );
-      return data;
+      const { data } = await axios.get("/api/v1/discounts/stats", {
+        withCredentials: true,
+      });
+      return data; // { success, stats (by category), overall }
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch discount stats"
@@ -190,107 +187,69 @@ export const getDiscountStats = createAsyncThunk(
 );
 
 // ============================================
-// PUBLIC: VALIDATE DISCOUNT CODE
+// ADMIN: TRIGGER CLEANUP (manual on-demand)
 // ============================================
 
 /**
- * Validate discount code (used in cart)
- * @route POST /api/v1/discounts/validate
- * @access Public
+ * @route POST /api/v1/discounts/cleanup
+ * @access Admin
+ *
+ * Body: { daysOld?: number }   default 90
+ * Returns: { success, expired, deleted }
  */
-export const validateDiscountCode = createAsyncThunk(
-  "adminDiscount/validateDiscountCode",
-  async ({ code, cartTotal, items }, { rejectWithValue }) => {
+export const triggerCleanup = createAsyncThunk(
+  "adminDiscount/triggerCleanup",
+  async (payload = {}, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
-        `/api/v1/discounts/validate`,
-        { code, cartTotal, items }
-      );
-      return data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to validate discount code"
-      );
-    }
-  }
-);
-
-// ============================================
-// PUBLIC: GET ACTIVE PROMOS
-// ============================================
-
-/**
- * Get all active public promo codes
- * @route GET /api/v1/discounts/promos
- * @access Public
- */
-export const getActivePromos = createAsyncThunk(
-  "adminDiscount/getActivePromos",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(`/api/v1/discounts/promos`);
-      return data;
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch active promos"
-      );
-    }
-  }
-);
-
-// ============================================
-// USER: GET MY DISCOUNTS
-// ============================================
-
-/**
- * Get user's personalized discounts
- * @route GET /api/v1/discounts/my-discounts
- * @access Private (User)
- */
-export const getMyDiscounts = createAsyncThunk(
-  "adminDiscount/getMyDiscounts",
-  async (_, { rejectWithValue }) => {
-    try {
-      const { data } = await axios.get(
-        `/api/v1/discounts/my-discounts`,
+        "/api/v1/discounts/cleanup",
+        payload,
         { withCredentials: true }
       );
-      return data;
+      return data; // { success, message, expired, deleted }
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch my discounts"
+        error.response?.data?.message || "Failed to run cleanup"
       );
     }
   }
 );
 
 // ============================================
-// SLICE DEFINITION
+// SLICE
 // ============================================
 
 const adminDiscountSlice = createSlice({
   name: "adminDiscount",
   initialState: {
+    // List view
     discounts: [],
+    pagination: null, // { limit, hasNextPage, nextCursor }
+
+    // Detail view
     currentDiscount: null,
-    stats: null,
-    categoryStats: [],
-    activePromos: [],
-    myDiscounts: [],
-    validatedDiscount: null,
-    pagination: null,
-    
-    loading: false,
+
+    // Stats
+    stats: null,       // overall totals
+    categoryStats: [], // per-category breakdown
+
+    // Cleanup
+    cleanupResult: null, // { expired, deleted }
+
+    // Loading states — granular so UI can show targeted spinners
     discountsLoading: false,
+    detailLoading: false,
+    actionLoading: false, // create / update / delete / compensation / cleanup
     statsLoading: false,
-    validationLoading: false,
-    
+
+    // Feedback
     error: null,
     success: false,
     message: null,
   },
+
   reducers: {
-    clearDiscountState: (state) => {
+    clearAdminDiscountState: (state) => {
       state.error = null;
       state.success = false;
       state.message = null;
@@ -298,12 +257,18 @@ const adminDiscountSlice = createSlice({
     clearCurrentDiscount: (state) => {
       state.currentDiscount = null;
     },
-    clearValidatedDiscount: (state) => {
-      state.validatedDiscount = null;
-    }
+    clearCleanupResult: (state) => {
+      state.cleanupResult = null;
+    },
+    // Append next page of discounts (cursor pagination "load more")
+    appendDiscounts: (state, action) => {
+      state.discounts = [...state.discounts, ...action.payload.discounts];
+      state.pagination = action.payload.pagination;
+    },
   },
+
   extraReducers: (builder) => {
-    // Get All Discounts
+    // ── GET ALL DISCOUNTS ──────────────────────────────────────────────
     builder
       .addCase(getAllDiscounts.pending, (state) => {
         state.discountsLoading = true;
@@ -319,100 +284,104 @@ const adminDiscountSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Get Single Discount
+    // ── GET SINGLE DISCOUNT ────────────────────────────────────────────
     builder
       .addCase(getSingleDiscount.pending, (state) => {
-        state.loading = true;
+        state.detailLoading = true;
         state.error = null;
       })
       .addCase(getSingleDiscount.fulfilled, (state, action) => {
-        state.loading = false;
+        state.detailLoading = false;
         state.currentDiscount = action.payload.discount;
       })
       .addCase(getSingleDiscount.rejected, (state, action) => {
-        state.loading = false;
+        state.detailLoading = false;
         state.error = action.payload;
       });
 
-    // Create Discount
+    // ── CREATE DISCOUNT ────────────────────────────────────────────────
     builder
       .addCase(createDiscount.pending, (state) => {
-        state.loading = true;
+        state.actionLoading = true;
         state.error = null;
       })
       .addCase(createDiscount.fulfilled, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.success = true;
         state.message = action.payload.message;
+        // Prepend so the new code appears at the top of the admin list
         state.discounts.unshift(action.payload.discount);
       })
       .addCase(createDiscount.rejected, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.error = action.payload;
       });
 
-    // Update Discount
+    // ── UPDATE DISCOUNT ────────────────────────────────────────────────
     builder
       .addCase(updateDiscount.pending, (state) => {
-        state.loading = true;
+        state.actionLoading = true;
         state.error = null;
       })
       .addCase(updateDiscount.fulfilled, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.success = true;
         state.message = action.payload.message;
-        const index = state.discounts.findIndex(d => d._id === action.payload.discount._id);
-        if (index !== -1) {
-          state.discounts[index] = action.payload.discount;
-        }
-        if (state.currentDiscount?._id === action.payload.discount._id) {
-          state.currentDiscount = action.payload.discount;
+
+        const updated = action.payload.discount;
+
+        // Sync list row in-place
+        const idx = state.discounts.findIndex((d) => d._id === updated._id);
+        if (idx !== -1) state.discounts[idx] = updated;
+
+        // Sync detail view if open
+        if (state.currentDiscount?._id === updated._id) {
+          state.currentDiscount = updated;
         }
       })
       .addCase(updateDiscount.rejected, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.error = action.payload;
       });
 
-    // Delete Discount
+    // ── DELETE DISCOUNT (soft) ─────────────────────────────────────────
     builder
       .addCase(deleteDiscount.pending, (state) => {
-        state.loading = true;
+        state.actionLoading = true;
         state.error = null;
       })
       .addCase(deleteDiscount.fulfilled, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.success = true;
         state.message = action.payload.message;
-        // Update status to inactive instead of removing
-        const index = state.discounts.findIndex(d => d._id === action.payload.id);
-        if (index !== -1) {
-          state.discounts[index].status = 'inactive';
-        }
+
+        // Reflect soft-delete — keep row visible but mark inactive
+        const idx = state.discounts.findIndex((d) => d._id === action.payload.id);
+        if (idx !== -1) state.discounts[idx].status = "inactive";
       })
       .addCase(deleteDiscount.rejected, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.error = action.payload;
       });
 
-    // Create Compensation Discount
+    // ── CREATE COMPENSATION DISCOUNT ───────────────────────────────────
     builder
       .addCase(createCompensationDiscount.pending, (state) => {
-        state.loading = true;
+        state.actionLoading = true;
         state.error = null;
       })
       .addCase(createCompensationDiscount.fulfilled, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.success = true;
         state.message = action.payload.message;
         state.discounts.unshift(action.payload.discount);
       })
       .addCase(createCompensationDiscount.rejected, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.error = action.payload;
       });
 
-    // Get Discount Stats
+    // ── GET DISCOUNT STATS ─────────────────────────────────────────────
     builder
       .addCase(getDiscountStats.pending, (state) => {
         state.statsLoading = true;
@@ -428,58 +397,33 @@ const adminDiscountSlice = createSlice({
         state.error = action.payload;
       });
 
-    // Validate Discount Code
+    // ── TRIGGER CLEANUP ────────────────────────────────────────────────
     builder
-      .addCase(validateDiscountCode.pending, (state) => {
-        state.validationLoading = true;
+      .addCase(triggerCleanup.pending, (state) => {
+        state.actionLoading = true;
         state.error = null;
       })
-      .addCase(validateDiscountCode.fulfilled, (state, action) => {
-        state.validationLoading = false;
-        state.validatedDiscount = action.payload.discount;
+      .addCase(triggerCleanup.fulfilled, (state, action) => {
+        state.actionLoading = false;
+        state.success = true;
+        state.message = action.payload.message;
+        state.cleanupResult = {
+          expired: action.payload.expired,
+          deleted: action.payload.deleted,
+        };
       })
-      .addCase(validateDiscountCode.rejected, (state, action) => {
-        state.validationLoading = false;
-        state.error = action.payload;
-        state.validatedDiscount = null;
-      });
-
-    // Get Active Promos
-    builder
-      .addCase(getActivePromos.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getActivePromos.fulfilled, (state, action) => {
-        state.loading = false;
-        state.activePromos = action.payload.promos;
-      })
-      .addCase(getActivePromos.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload;
-      });
-
-    // Get My Discounts
-    builder
-      .addCase(getMyDiscounts.pending, (state) => {
-        state.loading = true;
-        state.error = null;
-      })
-      .addCase(getMyDiscounts.fulfilled, (state, action) => {
-        state.loading = false;
-        state.myDiscounts = action.payload.discounts;
-      })
-      .addCase(getMyDiscounts.rejected, (state, action) => {
-        state.loading = false;
+      .addCase(triggerCleanup.rejected, (state, action) => {
+        state.actionLoading = false;
         state.error = action.payload;
       });
   },
 });
 
-export const { 
-  clearDiscountState, 
+export const {
+  clearAdminDiscountState,
   clearCurrentDiscount,
-  clearValidatedDiscount 
+  clearCleanupResult,
+  appendDiscounts,
 } = adminDiscountSlice.actions;
 
 export default adminDiscountSlice.reducer;
