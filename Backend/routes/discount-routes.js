@@ -10,7 +10,8 @@ import {
   validateDiscountCode,
   getActivePromos,
   getMyDiscounts,
-  getDiscountStats
+  getDiscountStats,
+  triggerCleanup
 } from '../controller/discount-controller.js';
 
 const router = express.Router();
@@ -19,82 +20,36 @@ const router = express.Router();
 // PUBLIC ROUTES
 // ============================================
 
-/**
- * Validate discount code (used in cart)
- * @route POST /api/v1/discounts/validate
- * @access Public
- */
 router.post('/validate', validateDiscountCode);
-
-/**
- * Get active public promo codes
- * @route GET /api/v1/discounts/promos
- * @access Public
- */
 router.get('/promos', getActivePromos);
 
 // ============================================
 // USER ROUTES (Authenticated)
 // ============================================
 
-/**
- * Get my personalized discounts
- * @route GET /api/v1/discounts/my-discounts
- * @access Private
- */
 router.get('/my-discounts', verifyUserAuth, getMyDiscounts);
 
 // ============================================
 // ADMIN ROUTES
+// Note: specific named routes (/stats, /create-compensation, /cleanup)
+// must come BEFORE the /:id param route to prevent Express matching
+// them as IDs.
 // ============================================
 
-/**
- * Get discount statistics
- * @route GET /api/v1/discounts/stats
- * @access Admin
- */
 router.get('/stats', verifyUserAuth, roleBaseAccess('admin'), getDiscountStats);
-
-/**
- * Get all discounts
- * @route GET /api/v1/discounts
- * @access Admin
- */
-router.get('/', verifyUserAuth, roleBaseAccess('admin'), getAllDiscounts);
-
-/**
- * Create new discount
- * @route POST /api/v1/discounts
- * @access Admin
- */
-router.post('/', verifyUserAuth, roleBaseAccess('admin'), createDiscount);
-
-/**
- * Create compensation discount (refund/return)
- * @route POST /api/v1/discounts/create-compensation
- * @access Admin
- */
 router.post('/create-compensation', verifyUserAuth, roleBaseAccess('admin'), createCompensationDiscount);
 
 /**
- * Get single discount
- * @route GET /api/v1/discounts/:id
- * @access Admin
+ * Manual cleanup trigger — useful for on-demand runs or testing.
+ * Body: { daysOld: 90 }
  */
+router.post('/cleanup', verifyUserAuth, roleBaseAccess('admin'), triggerCleanup);
+
+router.get('/', verifyUserAuth, roleBaseAccess('admin'), getAllDiscounts);
+router.post('/', verifyUserAuth, roleBaseAccess('admin'), createDiscount);
+
 router.get('/:id', verifyUserAuth, roleBaseAccess('admin'), getDiscountById);
-
-/**
- * Update discount
- * @route PUT /api/v1/discounts/:id
- * @access Admin
- */
 router.put('/:id', verifyUserAuth, roleBaseAccess('admin'), updateDiscount);
-
-/**
- * Delete discount
- * @route DELETE /api/v1/discounts/:id
- * @access Admin
- */
 router.delete('/:id', verifyUserAuth, roleBaseAccess('admin'), deleteDiscount);
 
 export default router;
