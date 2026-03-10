@@ -1,5 +1,5 @@
-import express from 'express';
-import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
+import express from "express";
+import { verifyUserAuth, roleBaseAccess } from "../middleware/user-auth.js";
 import {
   createDiscount,
   updateDiscount,
@@ -10,46 +10,164 @@ import {
   validateDiscountCode,
   getActivePromos,
   getMyDiscounts,
+  hasNewDiscounts,
   getDiscountStats,
-  triggerCleanup
-} from '../controller/discount-controller.js';
+  getAuditLog,
+  getDiscountAuditLog,
+  getPurgeLog,
+  triggerCleanup,
+} from "../controller/discount-controller.js";
 
 const router = express.Router();
 
 // ============================================
-// PUBLIC ROUTES
+// ROUTE ORDER MATTERS
+//
+// Express matches routes top-to-bottom. All named routes
+// (/stats, /audit, /has-new, etc.) MUST be registered before
+// the /:id and /audit/:discountId param routes, otherwise Express
+// will match "stats", "audit", "has-new" etc. as ID values and
+// call the wrong controller.
+//
+// Order:
+//   1. Public routes (no auth)
+//   2. User routes  (verifyUserAuth only)
+//   3. Admin named routes (verifyUserAuth + roleBaseAccess)
+//   4. Admin param routes /:id  — always last
 // ============================================
 
-router.post('/validate', validateDiscountCode);
-router.get('/promos', getActivePromos);
-
 // ============================================
-// USER ROUTES (Authenticated)
+// 1. PUBLIC ROUTES
 // ============================================
 
-router.get('/my-discounts', verifyUserAuth, getMyDiscounts);
+// Validate a discount code at checkout (auth optional — logged-in users
+// get per-user eligibility checks; guests get basic validation only)
+router.post("/validate", validateDiscountCode);
+
+// Public promo listing — audience:'all' active discounts only
+router.get("/promos", getActivePromos);
 
 // ============================================
-// ADMIN ROUTES
-// Note: specific named routes (/stats, /create-compensation, /cleanup)
-// must come BEFORE the /:id param route to prevent Express matching
-// them as IDs.
+// 2. USER ROUTES (authenticated, any role)
 // ============================================
 
-router.get('/stats', verifyUserAuth, roleBaseAccess('admin'), getDiscountStats);
-router.post('/create-compensation', verifyUserAuth, roleBaseAccess('admin'), createCompensationDiscount);
+// Personal + broadcast discounts for the logged-in user.
+// Also stamps user.lastSeenDiscountsAt — clears the Navbar dot.
+router.get("/my-discounts", verifyUserAuth, getMyDiscounts);
 
-/**
- * Manual cleanup trigger — useful for on-demand runs or testing.
- * Body: { daysOld: 90 }
- */
-router.post('/cleanup', verifyUserAuth, roleBaseAccess('admin'), triggerCleanup);
+// Lightweight dot check — called by Navbar on mount.
+// Returns { hasNew: true/false } based on audience:'all' discounts
+// created after user.lastSeenDiscountsAt.
+// No DB writes — read-only.
+router.get("/has-new", verifyUserAuth, hasNewDiscounts);
 
-router.get('/', verifyUserAuth, roleBaseAccess('admin'), getAllDiscounts);
-router.post('/', verifyUserAuth, roleBaseAccess('admin'), createDiscount);
+// ============================================
+// 3. ADMIN NAMED ROUTES
+// All must appear before /:id and /audit/:discountId
+// ============================================
 
-router.get('/:id', verifyUserAuth, roleBaseAccess('admin'), getDiscountById);
-router.put('/:id', verifyUserAuth, roleBaseAccess('admin'), updateDiscount);
-router.delete('/:id', verifyUserAuth, roleBaseAccess('admin'), deleteDiscount);
+// Discount stats (KPI cards + category breakdown)
+router.get(
+  "/stats",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  getDiscountStats
+);
+
+// Create compensation discount (return / refund flow)
+router.post(
+  "/create-compensation",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  createCompensationDiscount
+);
+
+// Manual cleanup trigger (on-demand for admin UI)
+router.post(
+  "/cleanup",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  triggerCleanup
+);
+
+// ── Audit routes ─────────────────────────────────────────────────────────────
+// /audit/purge-log must come before /audit/:discountId to prevent
+// Express matching "purge-log" as a discountId param.
+
+// All audit logs — paginated, filterable.
+// Includes CRON system entries (performedBy.system === true).
+router.get(
+  "/audit",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  getAuditLog
+);
+
+// Purge receipts from AuditPurgeLog — permanent, append-only.
+// Also returns showBanner flag for the UI receipt notification.
+// NO delete route is registered for AuditPurgeLog — ever.
+router.get(
+  "/audit/purge-log",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  getPurgeLog
+);
+
+// Per-discount audit trail — last 20 entries.
+// Used by the detail drawer in AdminDiscounts.jsx.
+// Registered AFTER /audit and /audit/purge-log.
+router.get(
+  "/audit/:discountId",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  getDiscountAuditLog
+);
+
+// ============================================
+// 4. ADMIN PARAM ROUTES (/:id — always last)
+// ============================================
+
+// List all discounts — cursor-based pagination
+router.get(
+  "/",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  getAllDiscounts
+);
+
+// Create a new discount code
+router.post(
+  "/",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  createDiscount
+);
+
+// Get single discount — includes usageHistory, relatedReturn, relatedOrder
+router.get(
+  "/:id",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  getDiscountById
+);
+
+// Update allowed fields only (description, status, validFrom,
+// validUntil, usageLimit, conditions, notes)
+router.put(
+  "/:id",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  updateDiscount
+);
+
+// Soft-delete (status → inactive).
+// Blocked if discount is within its 30-day fraud-protection window.
+// Blocked attempts are logged to DiscountAuditLog regardless.
+router.delete(
+  "/:id",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  deleteDiscount
+);
 
 export default router;
