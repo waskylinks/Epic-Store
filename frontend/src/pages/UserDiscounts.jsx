@@ -7,7 +7,7 @@ import {
   validateDiscountCode,
   clearValidatedDiscount,
   clearUserDiscountError,
-} from '../features/discount/discountSlice';
+} from '../features/discount/userDiscountSlice';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import '../pageStyles/UserDiscounts.css';
@@ -34,8 +34,8 @@ const fmtDate = (d) =>
   d
     ? new Date(d).toLocaleDateString('en-US', {
         month: 'short',
-        day: 'numeric',
-        year: 'numeric',
+        day:   'numeric',
+        year:  'numeric',
       })
     : '—';
 
@@ -45,37 +45,34 @@ const fmtCurrency = (n) =>
 const getUrgency = (date) => {
   const days = getDaysUntil(date);
   if (days === null) return 'none';
-  if (days < 0) return 'expired';
-  if (days <= 2) return 'critical';
-  if (days <= 7) return 'warning';
+  if (days < 0)      return 'expired';
+  if (days <= 2)     return 'critical';
+  if (days <= 7)     return 'warning';
   return 'safe';
 };
 
 const CATEGORY_META = {
-  promo:     { label: 'Promo',       color: '#B45309', bg: '#FEF3C7' },
-  refund:    { label: 'Refund',      color: '#B91C1C', bg: '#FEE2E2' },
-  return:    { label: 'Return',      color: '#C2410C', bg: '#FFEDD5' },
-  loyalty:   { label: 'Loyalty',     color: '#065F46', bg: '#D1FAE5' },
-  affiliate: { label: 'Affiliate',   color: '#5B21B6', bg: '#EDE9FE' },
-  support:   { label: 'Support',     color: '#0369A1', bg: '#E0F2FE' },
+  promo:     { label: 'Promo',     color: '#B45309', bg: '#FEF3C7' },
+  refund:    { label: 'Refund',    color: '#B91C1C', bg: '#FEE2E2' },
+  return:    { label: 'Return',    color: '#C2410C', bg: '#FFEDD5' },
+  loyalty:   { label: 'Loyalty',   color: '#065F46', bg: '#D1FAE5' },
+  affiliate: { label: 'Affiliate', color: '#5B21B6', bg: '#EDE9FE' },
+  support:   { label: 'Support',   color: '#0369A1', bg: '#E0F2FE' },
 };
 
 // ── Countdown pill ────────────────────────────────────────────────────────────
 const ExpiryPill = ({ validUntil }) => {
-  const days = getDaysUntil(validUntil);
+  const days    = getDaysUntil(validUntil);
   const urgency = getUrgency(validUntil);
 
-  if (urgency === 'expired') {
+  if (urgency === 'expired')
     return <span className="ud-expiry ud-expiry--expired">Expired</span>;
-  }
   if (days === null) return null;
 
   const label =
-    days === 0
-      ? 'Expires today'
-      : days === 1
-      ? 'Expires tomorrow'
-      : `${days} days left`;
+    days === 0 ? 'Expires today'
+    : days === 1 ? 'Expires tomorrow'
+    : `${days} days left`;
 
   return (
     <span className={`ud-expiry ud-expiry--${urgency}`}>
@@ -85,13 +82,36 @@ const ExpiryPill = ({ validUntil }) => {
   );
 };
 
+// ── Audience badge ────────────────────────────────────────────────────────────
+// Shown on broadcast (audience:'all') discounts so users understand
+// the code is a sitewide promo and not a personal compensation code.
+// Confirmed design decision: "Available to all" label.
+const AudienceBadge = ({ audience }) => {
+  if (audience !== 'all') return null;
+  return (
+    <span className="ud-audience-badge" title="This discount is available to all customers">
+      <svg
+        width="10" height="10" viewBox="0 0 24 24"
+        fill="none" stroke="currentColor"
+        strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+      </svg>
+      Available to all
+    </span>
+  );
+};
+
 // ── Discount Card ─────────────────────────────────────────────────────────────
 const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
-  const { copiedCode: copied } = { copiedCode };
-  const isCopied = copiedCode === discount.code;
-  const urgency  = getUrgency(discount.validUntil);
+  const isCopied  = copiedCode === discount.code;
+  const urgency   = getUrgency(discount.validUntil);
   const isExpired = urgency === 'expired';
-  const meta     = CATEGORY_META[discount.category] ?? CATEGORY_META.promo;
+  const meta      = CATEGORY_META[discount.category] ?? CATEGORY_META.promo;
 
   const valueDisplay =
     discount.type === 'percentage'
@@ -116,12 +136,16 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
             <span
               className="ud-category-chip"
               style={{
-                color: isExpired ? '#9CA3AF' : meta.color,
+                color:      isExpired ? '#9CA3AF' : meta.color,
                 background: isExpired ? '#F3F4F6' : meta.bg,
               }}
             >
               {meta.label}
             </span>
+
+            {/* Audience badge — broadcast promos only */}
+            <AudienceBadge audience={discount.audience} />
+
             {discount.conditions?.firstOrderOnly && (
               <span className="ud-first-order-chip">First order</span>
             )}
@@ -132,9 +156,7 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
         {/* Value display */}
         <div className={`ud-value${isExpired ? ' ud-value--expired' : ''}`}>
           <span className="ud-value-amount">{valueDisplay}</span>
-          <span className="ud-value-label">
-            {discount.type === 'percentage' ? 'off your order' : 'off your order'}
-          </span>
+          <span className="ud-value-label">off your order</span>
         </div>
 
         {/* Description */}
@@ -148,11 +170,12 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
             Min. spend {fmtCurrency(discount.conditions.minPurchaseAmount)}
           </p>
         )}
-        {discount.conditions?.maxDiscountAmount && discount.type === 'percentage' && (
-          <p className="ud-card-condition">
-            Up to {fmtCurrency(discount.conditions.maxDiscountAmount)} discount
-          </p>
-        )}
+        {discount.conditions?.maxDiscountAmount &&
+          discount.type === 'percentage' && (
+            <p className="ud-card-condition">
+              Up to {fmtCurrency(discount.conditions.maxDiscountAmount)} discount
+            </p>
+          )}
 
         {/* Code + actions */}
         <div className="ud-card-footer">
@@ -166,9 +189,18 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
               aria-label={isCopied ? 'Copied!' : `Copy code ${discount.code}`}
             >
               {isCopied ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="3"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
               ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
               )}
               <span>{isCopied ? 'Copied!' : 'Copy'}</span>
             </button>
@@ -187,7 +219,9 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
 
         {/* Valid until footer */}
         {!isExpired && discount.validUntil && (
-          <p className="ud-valid-until">Valid until {fmtDate(discount.validUntil)}</p>
+          <p className="ud-valid-until">
+            Valid until {fmtDate(discount.validUntil)}
+          </p>
         )}
       </div>
     </div>
@@ -196,16 +230,19 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
 
 // ── Skeleton card ─────────────────────────────────────────────────────────────
 const SkeletonCard = ({ index }) => (
-  <div className="ud-card ud-card--skeleton" style={{ animationDelay: `${index * 80}ms` }}>
+  <div
+    className="ud-card ud-card--skeleton"
+    style={{ animationDelay: `${index * 80}ms` }}
+  >
     <div className="ud-card-strip" style={{ background: '#F3F4F6' }} />
     <div className="ud-card-inner">
-      <div className="ud-skel" style={{ width: 64, height: 20, marginBottom: 16 }} />
-      <div className="ud-skel" style={{ width: '40%', height: 36, marginBottom: 8 }} />
-      <div className="ud-skel" style={{ width: '75%', height: 14, marginBottom: 6 }} />
+      <div className="ud-skel" style={{ width: 64,   height: 20, marginBottom: 16 }} />
+      <div className="ud-skel" style={{ width: '40%', height: 36, marginBottom: 8  }} />
+      <div className="ud-skel" style={{ width: '75%', height: 14, marginBottom: 6  }} />
       <div className="ud-skel" style={{ width: '55%', height: 12, marginBottom: 20 }} />
       <div style={{ display: 'flex', gap: 8 }}>
-        <div className="ud-skel" style={{ flex: 1, height: 38 }} />
-        <div className="ud-skel" style={{ width: 88, height: 38 }} />
+        <div className="ud-skel" style={{ flex: 1,    height: 38 }} />
+        <div className="ud-skel" style={{ width: 88,  height: 38 }} />
       </div>
     </div>
   </div>
@@ -216,9 +253,22 @@ const EmptyState = ({ type }) => (
   <div className="ud-empty">
     <div className="ud-empty-icon">
       {type === 'personal' ? (
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 12V22H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="1.5"
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 12V22H4V12" />
+          <path d="M22 7H2v5h20V7z" />
+          <path d="M12 22V7" />
+          <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+          <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+        </svg>
       ) : (
-        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14l-5-5 5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="1.5"
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 14l-5-5 5-5" />
+          <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+        </svg>
       )}
     </div>
     <h3 className="ud-empty-title">
@@ -241,8 +291,8 @@ const EmptyState = ({ type }) => (
 
 // ── Main component ────────────────────────────────────────────────────────────
 const UserDiscounts = () => {
-  const dispatch  = useDispatch();
-  const navigate  = useNavigate();
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
 
   const {
     myDiscounts,
@@ -258,11 +308,14 @@ const UserDiscounts = () => {
   const { copiedCode, copy } = useCopy();
 
   // ── Local state ───────────────────────────────────────────────────────────
-  const [activeTab,   setActiveTab]   = useState('personal');  // personal | promos
-  const [codeInput,   setCodeInput]   = useState('');
+  const [activeTab,    setActiveTab]    = useState('personal');
+  const [codeInput,    setCodeInput]    = useState('');
   const [inputFocused, setInputFocused] = useState(false);
 
   // ── Fetch on mount ────────────────────────────────────────────────────────
+  // getMyDiscounts returns audience:'all' + audience:'specific' combined.
+  // It also stamps user.lastSeenDiscountsAt on the server — clearing
+  // the Navbar notification dot automatically via the slice reducer.
   useEffect(() => {
     dispatch(getMyDiscounts());
     dispatch(getActivePromos());
@@ -284,6 +337,8 @@ const UserDiscounts = () => {
   const handleValidate = useCallback(() => {
     const trimmed = codeInput.trim().toUpperCase();
     if (!trimmed) return;
+    // orderId not available in this context (user is browsing, not checking out)
+    // cartTotal set to 0.01 as a presence check — real validation happens at checkout
     dispatch(validateDiscountCode({ code: trimmed, cartTotal: 0.01 }));
   }, [codeInput, dispatch]);
 
@@ -302,18 +357,24 @@ const UserDiscounts = () => {
   }, [validatedDiscount, navigate]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
+  // myDiscounts is the combined set from the server:
+  //   - audience:'all'      → broadcast seasonal promos
+  //   - audience:'specific' → personal compensation / loyalty codes
+  //
+  // Split into active and expired for the "My Discounts" tab.
+  // The "Current Promos" tab uses activePromos (public endpoint, no auth needed).
   const { activePersonal, expiredPersonal } = useMemo(() => {
-    const active  = (myDiscounts ?? []).filter((d) => getUrgency(d.validUntil) !== 'expired' && d.status !== 'inactive');
-    const expired = (myDiscounts ?? []).filter((d) => getUrgency(d.validUntil) === 'expired' || d.status === 'inactive');
+    const active = (myDiscounts ?? []).filter(
+      (d) => getUrgency(d.validUntil) !== 'expired' && d.status !== 'inactive'
+    );
+    const expired = (myDiscounts ?? []).filter(
+      (d) => getUrgency(d.validUntil) === 'expired' || d.status === 'inactive'
+    );
     return { activePersonal: active, expiredPersonal: expired };
   }, [myDiscounts]);
 
-  const displayList =
-    activeTab === 'personal'
-      ? { active: activePersonal, expired: expiredPersonal, loading: myDiscountsLoading }
-      : { active: activePromos ?? [], expired: [], loading: promosLoading };
-
-  const totalActive = activePersonal.length + (activePromos?.length ?? 0);
+  const totalActive =
+    activePersonal.length + (activePromos?.length ?? 0);
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -326,7 +387,12 @@ const UserDiscounts = () => {
           <div className="ud-hero-inner">
             <div className="ud-hero-text">
               <div className="ud-hero-eyebrow">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                  <line x1="7" y1="7" x2="7.01" y2="7" />
+                </svg>
                 My Discounts
               </div>
               <h1 className="ud-hero-title">
@@ -342,8 +408,21 @@ const UserDiscounts = () => {
             {/* ── Check a code ──────────────────────────────────────── */}
             <div className="ud-checker">
               <p className="ud-checker-label">Check a discount code</p>
-              <div className={`ud-checker-input-wrap${inputFocused ? ' ud-checker-input-wrap--focused' : ''}${validationError ? ' ud-checker-input-wrap--error' : ''}${validatedDiscount ? ' ud-checker-input-wrap--success' : ''}`}>
-                <svg className="ud-checker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+              <div
+                className={[
+                  'ud-checker-input-wrap',
+                  inputFocused    ? 'ud-checker-input-wrap--focused' : '',
+                  validationError ? 'ud-checker-input-wrap--error'   : '',
+                  validatedDiscount && !validationError
+                    ? 'ud-checker-input-wrap--success' : '',
+                ].filter(Boolean).join(' ')}
+              >
+                <svg className="ud-checker-icon" width="16" height="16"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                  <line x1="7" y1="7" x2="7.01" y2="7" />
+                </svg>
                 <input
                   type="text"
                   className="ud-checker-input"
@@ -352,7 +431,7 @@ const UserDiscounts = () => {
                   onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
                   onKeyDown={handleKeyDown}
                   onFocus={() => setInputFocused(true)}
-                  onBlur={() => setInputFocused(false)}
+                  onBlur={()  => setInputFocused(false)}
                   aria-label="Enter discount code to check"
                   maxLength={40}
                 />
@@ -360,10 +439,18 @@ const UserDiscounts = () => {
                   <button
                     type="button"
                     className="ud-checker-clear"
-                    onClick={() => { setCodeInput(''); dispatch(clearValidatedDiscount()); dispatch(clearUserDiscountError()); }}
+                    onClick={() => {
+                      setCodeInput('');
+                      dispatch(clearValidatedDiscount());
+                      dispatch(clearUserDiscountError());
+                    }}
                     aria-label="Clear"
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <line x1="18" y1="6"  x2="6"  y2="18" />
+                      <line x1="6"  y1="6"  x2="18" y2="18" />
+                    </svg>
                   </button>
                 )}
                 <button
@@ -373,25 +460,32 @@ const UserDiscounts = () => {
                   disabled={!codeInput.trim() || validationLoading}
                   aria-label="Check code"
                 >
-                  {validationLoading ? (
-                    <span className="ud-checker-spinner" />
-                  ) : (
-                    'Check'
-                  )}
+                  {validationLoading
+                    ? <span className="ud-checker-spinner" />
+                    : 'Check'}
                 </button>
               </div>
 
               {/* Validation result */}
               {validationError && (
                 <div className="ud-checker-result ud-checker-result--error" role="alert">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8"  x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
                   {validationError}
                 </div>
               )}
               {validatedDiscount && !validationError && (
                 <div className="ud-checker-result ud-checker-result--success" role="status">
                   <div className="ud-checker-success-row">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5"
+                      strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
                     <div>
                       <span className="ud-checker-success-label">Valid code</span>
                       <span className="ud-checker-success-value">
@@ -400,7 +494,9 @@ const UserDiscounts = () => {
                           : `${fmtCurrency(validatedDiscount.value)} off`}
                       </span>
                       {validatedDiscount.description && (
-                        <span className="ud-checker-success-desc">{validatedDiscount.description}</span>
+                        <span className="ud-checker-success-desc">
+                          {validatedDiscount.description}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -428,7 +524,12 @@ const UserDiscounts = () => {
                 className={`ud-tab${activeTab === 'personal' ? ' ud-tab--active' : ''}`}
                 onClick={() => setActiveTab('personal')}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
                 My Discounts
                 {activePersonal.length > 0 && (
                   <span className="ud-tab-count">{activePersonal.length}</span>
@@ -439,10 +540,17 @@ const UserDiscounts = () => {
                 className={`ud-tab${activeTab === 'promos' ? ' ud-tab--active' : ''}`}
                 onClick={() => setActiveTab('promos')}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14l-5-5 5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2"
+                  strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 14l-5-5 5-5" />
+                  <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+                </svg>
                 Current Promos
                 {(activePromos?.length ?? 0) > 0 && (
-                  <span className="ud-tab-count ud-tab-count--promo">{activePromos.length}</span>
+                  <span className="ud-tab-count ud-tab-count--promo">
+                    {activePromos.length}
+                  </span>
                 )}
               </button>
             </div>
@@ -451,7 +559,12 @@ const UserDiscounts = () => {
           {/* General error */}
           {error && (
             <div className="ud-alert ud-alert--error" role="alert">
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8"  x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
               {error}
             </div>
           )}
@@ -459,20 +572,24 @@ const UserDiscounts = () => {
           {/* ── PERSONAL TAB ─────────────────────────────────────────── */}
           {activeTab === 'personal' && (
             <>
-              {displayList.loading ? (
+              {myDiscountsLoading ? (
                 <div className="ud-grid">
-                  {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} index={i} />)}
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <SkeletonCard key={i} index={i} />
+                  ))}
                 </div>
               ) : activePersonal.length === 0 && expiredPersonal.length === 0 ? (
                 <EmptyState type="personal" />
               ) : (
                 <>
-                  {/* Active personal */}
+                  {/* Active — broadcast + personal combined */}
                   {activePersonal.length > 0 && (
                     <>
                       <div className="ud-section-hd">
                         <span className="ud-section-title">Ready to use</span>
-                        <span className="ud-section-count">{activePersonal.length}</span>
+                        <span className="ud-section-count">
+                          {activePersonal.length}
+                        </span>
                       </div>
                       <div className="ud-grid">
                         {activePersonal.map((d, i) => (
@@ -489,12 +606,14 @@ const UserDiscounts = () => {
                     </>
                   )}
 
-                  {/* Expired personal */}
+                  {/* Expired */}
                   {expiredPersonal.length > 0 && (
                     <>
                       <div className="ud-section-hd ud-section-hd--muted">
                         <span className="ud-section-title">Expired</span>
-                        <span className="ud-section-count ud-section-count--muted">{expiredPersonal.length}</span>
+                        <span className="ud-section-count ud-section-count--muted">
+                          {expiredPersonal.length}
+                        </span>
                       </div>
                       <div className="ud-grid ud-grid--faded">
                         {expiredPersonal.map((d, i) => (
@@ -518,9 +637,11 @@ const UserDiscounts = () => {
           {/* ── PROMOS TAB ───────────────────────────────────────────── */}
           {activeTab === 'promos' && (
             <>
-              {displayList.loading ? (
+              {promosLoading ? (
                 <div className="ud-grid">
-                  {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} index={i} />)}
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <SkeletonCard key={i} index={i} />
+                  ))}
                 </div>
               ) : (activePromos?.length ?? 0) === 0 ? (
                 <EmptyState type="promos" />
@@ -552,9 +673,21 @@ const UserDiscounts = () => {
             <h2 className="ud-how-title">How to use a discount</h2>
             <div className="ud-how-steps">
               {[
-                { n: '1', title: 'Copy your code', desc: 'Click the copy button on any active discount card above.' },
-                { n: '2', title: 'Add items to cart', desc: 'Browse the store and add your favourite items to the cart.' },
-                { n: '3', title: 'Apply at checkout', desc: 'Paste the code in the discount field before placing your order.' },
+                {
+                  n:     '1',
+                  title: 'Copy your code',
+                  desc:  'Click the copy button on any active discount card above.',
+                },
+                {
+                  n:     '2',
+                  title: 'Add items to cart',
+                  desc:  'Browse the store and add your favourite items to the cart.',
+                },
+                {
+                  n:     '3',
+                  title: 'Apply at checkout',
+                  desc:  'Paste the code in the discount field before placing your order.',
+                },
               ].map((step) => (
                 <div key={step.n} className="ud-how-step">
                   <div className="ud-how-num">{step.n}</div>

@@ -779,3 +779,61 @@
   .ud-section-hd { margin-bottom: 12px; }
   .ud-how-num    { width: 30px; height: 30px; font-size: 13px; }
 }
+
+
+/* ============================================================
+   UserDiscounts.css — ADDITIONS ONLY
+   Append these rules to your existing pageStyles/UserDiscounts.css
+   Do not replace the existing file — these are new selectors only.
+   ============================================================ */
+
+/* ── Audience badge ──────────────────────────────────────────────────────────
+   Shown on broadcast (audience:'all') discount cards.
+   Sits in the top-left row alongside the category chip.
+   Communicates to the user that this is a sitewide promo,
+   not a personal compensation code.
+   ──────────────────────────────────────────────────────────────────────────── */
+.ud-audience-badge {
+  display:       inline-flex;
+  align-items:   center;
+  gap:           4px;
+  padding:       2px 7px;
+  border-radius: 20px;
+  font-size:     10px;
+  font-weight:   600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+
+  /* Neutral teal — distinct from category chip colours,
+     clearly informational rather than categorical */
+  color:      #0F766E;
+  background: #CCFBF1;
+  border:     1px solid #99F6E4;
+
+  /* Sits at the same vertical rhythm as the category chip */
+  line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ud-audience-badge svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+/* Expired card variant — desaturate to match the expired card state */
+.ud-card--expired .ud-audience-badge {
+  color:      #9CA3AF;
+  background: #F3F4F6;
+  border-color: #E5E7EB;
+}
+
+/* ── Card top-left wrap ───────────────────────────────────────────────────────
+   The existing .ud-card-top-left likely uses display:flex.
+   Ensure wrapping is enabled when both category chip + audience badge
+   + first-order chip are present simultaneously on narrow cards.
+   ──────────────────────────────────────────────────────────────────────────── */
+.ud-card-top-left {
+  flex-wrap: wrap;
+  gap:       4px;
+}
