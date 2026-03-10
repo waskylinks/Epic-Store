@@ -156,11 +156,11 @@ function Navbar() {
       icon: <DashboardIcon />,
       action: () => navigate('/admin/dashboard')
     }] : []),
-    { name: 'My Account', icon: <PersonIcon />, action: () => navigate('/profile') },
+    { name: 'Account', icon: <PersonIcon />, action: () => navigate('/profile') },
     { name: `Cart (${cartItems.length})`, icon: <ShoppingCartIcon />, action: () => navigate('/cart'), badge: cartItems.length },
-    { name: 'My Orders', icon: <OrdersIcon />, action: () => navigate('/orders/user') },
-    { name: 'My Discounts',        icon: <OfferIcon />,       action: () => navigate('/my-discounts') }
-    { name: 'My Refunds & Returns',  icon: <ReturnsIcon />,    action: () => navigate('/my-refunds-returns') },
+    { name: 'Orders', icon: <OrdersIcon />, action: () => navigate('/orders/user') },
+    { name: 'Discounts',        icon: <OfferIcon />,       action: () => navigate('/my-discounts') },
+    { name: 'Refunds & Returns',  icon: <ReturnsIcon />,    action: () => navigate('/my-refunds-returns') },
     { name: 'Logout', icon: <LogoutIcon />, action: handleLogout, isDanger: true }
   ];
 
