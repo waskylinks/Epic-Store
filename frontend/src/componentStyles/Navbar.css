@@ -848,3 +848,88 @@
   outline-offset: 2px;
   border-radius: var(--nb-radius-xs);
 }
+
+/* Wrapper for the icon + dot pair in the desktop dropdown menu */
+.nb-menu-option-icon-wrap {
+  position: relative;
+  display:  inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Matches the MUI icon size so the dot is correctly anchored */
+  width:  24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* Wrapper for the icon + dot pair in the mobile menu actions */
+.nb-mobile-icon-wrap {
+  position: relative;
+  display:  inline-flex;
+  align-items: center;
+  justify-content: center;
+  width:  24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+/* The dot itself — shared between desktop and mobile wrappers */
+.nb-notif-dot {
+  position:      absolute;
+  top:           -2px;
+  right:         -2px;
+  width:         8px;
+  height:        8px;
+  border-radius: 50%;
+  background:    #EF4444;          /* Red-500 — clear urgency signal    */
+  border:        2px solid #fff;   /* White ring — separates from icon  */
+  display:       block;
+  flex-shrink:   0;
+  pointer-events: none;            /* Dot is decorative — not clickable */
+
+  /* Subtle pulse so it catches the eye without being distracting */
+  animation: nb-dot-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes nb-dot-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0);
+  }
+}
+
+/* ── Dark Navbar variant ─────────────────────────────────────────────────────
+   If your Navbar uses a dark background, the white border on the dot
+   won't separate cleanly. Override the border colour here to match
+   your dark background colour. Adjust the hex to your actual bg value.
+   ──────────────────────────────────────────────────────────────────────────── */
+.nb-navbar.nb-dark .nb-notif-dot {
+  border-color: #1a1a2e; /* Replace with your actual dark navbar bg colour */
+}
+
+/* ── Scrolled state ──────────────────────────────────────────────────────────
+   If your scrolled Navbar has a different background, sync the border.
+   ──────────────────────────────────────────────────────────────────────────── */
+.nb-navbar.nb-scrolled .nb-notif-dot {
+  border-color: #fff; /* Adjust if your scrolled navbar bg is not white */
+}
+
+/* ── Reduced motion — accessibility ─────────────────────────────────────────
+   Users who prefer reduced motion get a static dot without the pulse.
+   ──────────────────────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .nb-notif-dot {
+    animation: none;
+  }
+}
+
+/* ── Mobile menu action — icon alignment fix ─────────────────────────────────
+   Ensures the icon wrapper doesn't break the existing flex row layout
+   of .nb-mobile-menu-action buttons which already use gap/flex.
+   The wrapper adds no width beyond the icon's natural 24px.
+   ──────────────────────────────────────────────────────────────────────────── */
+.nb-mobile-menu-action .nb-mobile-icon-wrap {
+  /* Override any inherited flex-grow from .nb-mobile-menu-action > svg */
+  flex-grow: 0;
+}
