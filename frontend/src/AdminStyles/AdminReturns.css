@@ -953,3 +953,321 @@
   .rt-kpi   { padding: 14px; }
   .rt-kpi-value { font-size: 20px; }
 }
+
+
+/* ================================================================
+   ADMIN RETURNS — CSS ADDITIONS
+   Appended to AdminReturns.css
+   New classes: per-item decisions, plea UI, countdown, discount,
+   new status chips, decision badges
+   ================================================================ */
+
+/* ── New status chips ───────────────────────────────────────── */
+.rt-status--items_reviewed    { background: #DBEAFE; color: #1E40AF; }
+.rt-status--plea_submitted    { background: #F3E8FF; color: #6B21A8; }
+.rt-status--awaiting_discount { background: #FFEDD5; color: #C2410C; }
+
+/* ── CountdownTimer ─────────────────────────────────────────── */
+.rt-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 6px 10px;
+  width: fit-content;
+}
+.rt-countdown--expired {
+  color: #9CA3AF;
+  background: #F9FAFB;
+}
+.rt-countdown-label {
+  color: #6B7280;
+  font-weight: 500;
+}
+.rt-countdown-value {
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+.rt-countdown--expired .rt-countdown-value {
+  color: #9CA3AF;
+}
+
+/* ── Per-item decision cards ────────────────────────────────── */
+.rt-per-item-decisions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rt-item-decision-card {
+  border: 1px solid #E5E7EB;
+  border-radius: 10px;
+  padding: 12px;
+  background: #FAFAFA;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 0.15s;
+}
+.rt-item-decision-card:hover {
+  border-color: #D1D5DB;
+}
+
+.rt-item-decision-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.rt-item-decision-img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+.rt-item-decision-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rt-item-decision-controls {
+  display: flex;
+  gap: 8px;
+}
+
+.rt-decision-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1.5px solid #E5E7EB;
+  background: #fff;
+  color: #6B7280;
+  transition: all 0.15s;
+  font-family: inherit;
+  flex: 1;
+  justify-content: center;
+}
+.rt-decision-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.rt-decision-btn--approve:hover:not(:disabled) {
+  border-color: #6EE7B7;
+  color: #065F46;
+  background: #F0FDF4;
+}
+.rt-decision-btn--active-approve {
+  border-color: #10B981 !important;
+  background: #DCFCE7 !important;
+  color: #065F46 !important;
+}
+.rt-decision-btn--reject:hover:not(:disabled) {
+  border-color: #FCA5A5;
+  color: #991B1B;
+  background: #FEF2F2;
+}
+.rt-decision-btn--active-reject {
+  border-color: #EF4444 !important;
+  background: #FEE2E2 !important;
+  color: #991B1B !important;
+}
+
+.rt-item-rejection-reason {
+  padding-top: 4px;
+}
+
+/* ── Item decision badges (overview tab) ────────────────────── */
+.rt-item-decision-badges {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rt-decision-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 7px;
+}
+.rt-decision-badge--approved {
+  background: #DCFCE7;
+  color: #065F46;
+}
+.rt-decision-badge--rejected {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+.rt-decision-badge-reason {
+  font-weight: 400;
+  color: #6B7280;
+  font-size: 12px;
+}
+
+/* ── Plea submitted badge (overview tab) ────────────────────── */
+.rt-plea-submitted-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6B21A8;
+  background: #F3E8FF;
+  border: 1px solid #E9D5FF;
+  border-radius: 8px;
+  padding: 8px 12px;
+  width: fit-content;
+}
+
+/* ── Plea review tab ────────────────────────────────────────── */
+.rt-plea-text-block {
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.rt-plea-text-block p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: #374151;
+  line-height: 1.6;
+}
+
+.rt-plea-evidence {
+  margin-bottom: 12px;
+}
+.rt-plea-evidence-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.rt-plea-evidence-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 8px;
+  border: 1px solid #E5E7EB;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  color: #6B7280;
+  background: #F3F4F6;
+  flex-shrink: 0;
+  transition: border-color 0.15s;
+}
+.rt-plea-evidence-thumb:hover {
+  border-color: #6366F1;
+}
+.rt-plea-evidence-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.rt-plea-evidence-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  text-align: center;
+  padding: 4px;
+  overflow: hidden;
+}
+.rt-plea-evidence-placeholder span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 56px;
+}
+
+/* ── Awaiting discount — approved items summary ─────────────── */
+.rt-approved-summary {
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.rt-approved-summary-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: #374151;
+  border-bottom: 1px solid #D1FAE5;
+}
+.rt-approved-summary-item:last-child {
+  border-bottom: none;
+}
+.rt-approved-summary-item span:nth-child(2) {
+  flex: 1;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rt-approved-summary-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  border-top: 1px solid #BBF7D0;
+  margin-top: 6px;
+}
+
+/* ── Generate discount button ───────────────────────────────── */
+.rt-btn--generate-discount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 22px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  background: linear-gradient(135deg, #F59E0B 0%, #D97706 100%);
+  color: #fff;
+  transition: all 0.2s;
+  white-space: nowrap;
+  line-height: 1;
+  font-family: inherit;
+  width: 100%;
+  box-shadow: 0 2px 8px rgba(217, 119, 6, 0.3);
+}
+.rt-btn--generate-discount:hover:not(:disabled) {
+  background: linear-gradient(135deg, #D97706 0%, #B45309 100%);
+  box-shadow: 0 4px 14px rgba(217, 119, 6, 0.4);
+  transform: translateY(-1px);
+}
+.rt-btn--generate-discount:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}

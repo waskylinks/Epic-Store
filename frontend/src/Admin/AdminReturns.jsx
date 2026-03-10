@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   Search,
   Refresh,
@@ -23,11 +23,15 @@ import {
   ReportProblem,
   LocalShipping,
   SwapHoriz,
+  Discount,
+  Gavel,
 } from '@mui/icons-material';
 import {
   getAllReturns,
   getSingleReturn,
   reviewReturn,
+  submitAdminPleaReview,
+  generateDiscountCode,
   updateReturnStatus,
   sendReturnMessage,
   getReturnMessages,
@@ -41,8 +45,8 @@ import {
   clearPendingAttachments,
 } from '../features/admin/adminReturnSlice';
 import ReturnMessagesModal from '../Orders/ReturnMessagesModal';
-import Footer from '../components/footer'
-import Navbar from '../components/Navbar'
+import Footer from '../components/footer';
+import Navbar from '../components/Navbar';
 import '../AdminStyles/AdminReturns.css';
 
 // ── Debounce hook ────────────────────────────────────────────────────────────
@@ -63,18 +67,27 @@ const getCustomerName = (user) => {
 
 const fmt = (n) => (typeof n === 'number' ? n.toFixed(2) : '0.00');
 
+const fmtCurrency = (n) => `$${fmt(typeof n === 'number' ? n : 0)}`;
+
+// ── Status constants (updated to include new-flow statuses) ──────────────────
 const STATUS_COLOR = {
-  requested:  'requested',
-  approved:   'approved',
-  in_transit: 'in_transit',
-  received:   'received',
-  inspected:  'inspected',
-  completed:  'completed',
-  rejected:   'rejected',
-  cancelled:  'cancelled',
+  requested:         'requested',
+  items_reviewed:    'items_reviewed',
+  plea_submitted:    'plea_submitted',
+  awaiting_discount: 'awaiting_discount',
+  approved:          'approved',
+  in_transit:        'in_transit',
+  received:          'received',
+  inspected:         'inspected',
+  completed:         'completed',
+  rejected:          'rejected',
+  cancelled:         'cancelled',
 };
 
+// items_reviewed, plea_submitted, awaiting_discount are NOT terminal —
+// they are mid-flow states that expect further action.
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled']);
+
 const LIFECYCLE_STATUSES = ['in_transit', 'received', 'inspected', 'completed'];
 
 const NEXT_STATUS_MAP = {
@@ -84,36 +97,175 @@ const NEXT_STATUS_MAP = {
   inspected:  ['completed'],
 };
 
-const DRAWER_TABS = ['overview', 'review', 'status', 'timeline', 'documents'];
+// 'plea' tab inserted between 'review' and 'status'
+const DRAWER_TABS = ['overview', 'review', 'plea', 'status', 'timeline', 'documents'];
 
 const STATUS_FILTERS = [
-  { value: '',           label: 'All' },
-  { value: 'requested',  label: 'Requested' },
-  { value: 'approved',   label: 'Approved' },
-  { value: 'in_transit', label: 'In Transit' },
-  { value: 'received',   label: 'Received' },
-  { value: 'inspected',  label: 'Inspected' },
-  { value: 'completed',  label: 'Completed' },
-  { value: 'rejected',   label: 'Rejected' },
-  { value: 'cancelled',  label: 'Cancelled' },
+  { value: '',                  label: 'All'               },
+  { value: 'requested',         label: 'Requested'         },
+  { value: 'items_reviewed',    label: 'Items Reviewed'    },
+  { value: 'plea_submitted',    label: 'Plea Submitted'    },
+  { value: 'awaiting_discount', label: 'Awaiting Discount' },
+  { value: 'approved',          label: 'Approved'          },
+  { value: 'in_transit',        label: 'In Transit'        },
+  { value: 'received',          label: 'Received'          },
+  { value: 'inspected',         label: 'Inspected'         },
+  { value: 'completed',         label: 'Completed'         },
+  { value: 'rejected',          label: 'Rejected'          },
+  { value: 'cancelled',         label: 'Cancelled'         },
 ];
 
 const SORT_OPTIONS = [
   { value: 'requestedAt', label: 'Date Requested' },
-  { value: 'totalPrice',  label: 'Order Total' },
-  { value: 'status',      label: 'Status' },
+  { value: 'totalPrice',  label: 'Order Total'    },
+  { value: 'status',      label: 'Status'         },
 ];
 
 const LIMIT = 20;
 
+// ── CountdownTimer ───────────────────────────────────────────────────────────
+// Reusable countdown — takes a deadline ISO string or Date.
+// Shows expiredLabel when past. Updates every second, cleans up on unmount.
+// Date.now() is only called inside the setInterval callback (async context),
+// never during render — satisfies react-hooks/purity.
+const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
+  const [timeLeft, setTimeLeft] = useState(null);
+
+  useEffect(() => {
+    if (!deadline) return undefined;
+
+    const tick = () => {
+      const diff = new Date(deadline) - Date.now();
+      if (diff <= 0) {
+        setTimeLeft(null);
+        return;
+      }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft({ d, h, m, s });
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [deadline]);
+
+  if (!deadline) return null;
+
+  const isExpired = !timeLeft;
+
+  return (
+    <div className={`rt-countdown${isExpired ? ' rt-countdown--expired' : ''}`}>
+      <Schedule style={{ fontSize: 14, flexShrink: 0 }} />
+      {label && <span className="rt-countdown-label">{label}</span>}
+      <span className="rt-countdown-value">
+        {isExpired
+          ? expiredLabel
+          : `${timeLeft.d}d ${timeLeft.h}h ${timeLeft.m}m ${timeLeft.s}s`}
+      </span>
+    </div>
+  );
+};
+
+// ── PerItemDecisionForm ──────────────────────────────────────────────────────
+// Shared per-item approve/reject UI used in both review tab and plea tab.
+// Props:
+//   items          — array of itemsToReturn objects
+//   decisions      — { [productId]: { decision, rejectionReason } }
+//   onDecisionChange(productId, field, value) — callback
+//   disabled       — bool
+const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled }) => {
+  if (!items || items.length === 0) {
+    return (
+      <div className="rt-empty" style={{ minHeight: 80 }}>
+        <span>No items to review</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rt-per-item-decisions">
+      {items.map((item, idx) => {
+        const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+        const image = item.product?.images?.[0]?.url ?? item.image ?? null;
+        const dec = decisions[pid] ?? { decision: '', rejectionReason: '' };
+
+        return (
+          <div key={pid} className="rt-item-decision-card">
+            <div className="rt-item-decision-info">
+              {image && (
+                <img
+                  src={image}
+                  alt={name}
+                  className="rt-item-decision-img"
+                />
+              )}
+              <div className="rt-item-decision-meta">
+                <span className="rt-item-name">{name}</span>
+                <span className="rt-item-meta">
+                  Qty: {item.quantity ?? 1}
+                  {item.price ? ` · ${fmtCurrency(item.price)} ea` : ''}
+                </span>
+                {item.reason && (
+                  <span className="rt-item-reason">
+                    {item.reason.replace(/_/g, ' ')}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="rt-item-decision-controls">
+              <button
+                type="button"
+                className={`rt-decision-btn rt-decision-btn--approve${dec.decision === 'approved' ? ' rt-decision-btn--active-approve' : ''}`}
+                onClick={() => onDecisionChange(pid, 'decision', 'approved')}
+                disabled={disabled}
+              >
+                <CheckCircle style={{ fontSize: 14 }} />
+                Approve
+              </button>
+              <button
+                type="button"
+                className={`rt-decision-btn rt-decision-btn--reject${dec.decision === 'rejected' ? ' rt-decision-btn--active-reject' : ''}`}
+                onClick={() => onDecisionChange(pid, 'decision', 'rejected')}
+                disabled={disabled}
+              >
+                <Cancel style={{ fontSize: 14 }} />
+                Reject
+              </button>
+            </div>
+            {dec.decision === 'rejected' && (
+              <div className="rt-item-rejection-reason">
+                <input
+                  type="text"
+                  className="rt-form-input"
+                  placeholder="Rejection reason (required)…"
+                  value={dec.rejectionReason ?? ''}
+                  onChange={(e) => onDecisionChange(pid, 'rejectionReason', e.target.value)}
+                  disabled={disabled}
+                  maxLength={500}
+                />
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ── Component ────────────────────────────────────────────────────────────────
 const AdminReturns = () => {
   const dispatch = useDispatch();
+  const navigate = useNavigate();
 
   const {
     returns,
     unreadReturns,
     stats,
+    totalRequestedAmount,
     currentReturn,
     messages,
     messagesPage,
@@ -132,6 +284,8 @@ const AdminReturns = () => {
     timelineLoading,
     documentsLoading,
     uploadLoading,
+    pleaReviewLoading,
+    discountCodeLoading,
     error,
     success,
     message: successMessage,
@@ -141,7 +295,6 @@ const AdminReturns = () => {
 
   // ── Filter / sort / page state ────────────────────────────────────────────
   const [localPage,      setLocalPage]      = useState(1);
-  const [searchRaw,      setSearchRaw]      = useState('');
   const [filterStatus,   setFilterStatus]   = useState('');
   const [fromDate,       setFromDate]       = useState('');
   const [toDate,         setToDate]         = useState('');
@@ -156,33 +309,28 @@ const AdminReturns = () => {
   const [showMessageModal, setShowMessageModal] = useState(false);
   const [activeTab,        setActiveTab]        = useState('overview');
 
-  // ── Form state (drawer) ───────────────────────────────────────────────────
-  const [reviewAction,     setReviewAction]     = useState('');
-  const [adminNote,        setAdminNote]        = useState('');
-  const [restockFee,       setRestockFee]       = useState('');
-  const [newStatus,        setNewStatus]        = useState('');
-  const [inspectionNotes,  setInspectionNotes]  = useState('');
+  // ── Review tab: per-item decisions ────────────────────────────────────────
+  // decisions shape: { [productId]: { decision: 'approved'|'rejected', rejectionReason: string } }
+  const [itemDecisions, setItemDecisions] = useState({});
+  const [adminNote,     setAdminNote]     = useState('');
+
+  // ── Plea review tab: per-item decisions ───────────────────────────────────
+  const [pleaDecisions, setPleaDecisions] = useState({});
+  const [pleaAdminNote, setPleaAdminNote] = useState('');
+
+  // ── Status tab ────────────────────────────────────────────────────────────
+  const [newStatus,       setNewStatus]       = useState('');
+  const [inspectionNotes, setInspectionNotes] = useState('');
 
   const rmaDebounced = useDebounce(rmaSearch, 400);
 
-  // ── FIX: Use a ref to track which filters were last fetched ──────────────
-  // This breaks the circular dependency:
-  // buildListParams → useCallback → handleFetchReturns → useCallback → useEffect → fetch
-  // The ref approach lets us read current filter values at fetch time
-  // without making them reactive dependencies of the fetch effect itself.
+  // ── Stable filter ref — avoids circular dependency in fetch effect ────────
   const filtersRef = useRef({});
   filtersRef.current = {
-    localPage,
-    filterStatus,
-    fromDate,
-    toDate,
-    rmaDebounced,
-    sortBy,
-    sortOrder,
-    showUnreadOnly,
+    localPage, filterStatus, fromDate, toDate,
+    rmaDebounced, sortBy, sortOrder, showUnreadOnly,
   };
 
-  // ── Build filter params (pure function, no useCallback needed) ────────────
   const buildListParams = () => {
     const f = filtersRef.current;
     const p = { page: f.localPage, limit: LIMIT, sortBy: f.sortBy, order: f.sortOrder };
@@ -193,10 +341,6 @@ const AdminReturns = () => {
     return p;
   };
 
-  // ── FIX: Single stable fetch trigger using a counter ─────────────────────
-  // Instead of depending on derived callbacks, we increment a counter whenever
-  // we want a fetch to happen. The fetch effect only depends on this counter,
-  // preventing the circular rebuild chain that caused infinite loading.
   const [fetchTick, setFetchTick] = useState(0);
   const triggerFetch = useCallback(() => setFetchTick((n) => n + 1), []);
 
@@ -207,33 +351,23 @@ const AdminReturns = () => {
     } else {
       dispatch(getAllReturns(buildListParams()));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+   
   }, [fetchTick, dispatch]);
 
-  // ── FIX: Trigger fetch when filters change (debounced values settle) ──────
-  // Previously this was handled by making handleFetchReturns depend on
-  // buildListParams which depended on all filters — causing the loop.
-  // Now we just trigger the stable counter, which fires the fetch effect once.
+  // Reset to page 1 on filter change, then trigger fetch
   useEffect(() => {
-    // Reset to page 1 on filter changes (not on page change itself)
     setLocalPage(1);
-    // Delay slightly so setLocalPage(1) has time to update filtersRef
-    // before the fetch effect reads it. Using setTimeout(0) is safe here
-    // because the fetch effect reads from filtersRef.current (always fresh).
     triggerFetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly]);
 
-  // ── Trigger fetch on page change ──────────────────────────────────────────
+  // Trigger fetch on page change
   useEffect(() => {
     triggerFetch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [localPage]);
 
-  // ── Manual refresh ────────────────────────────────────────────────────────
-  const handleFetchReturns = useCallback(() => {
-    triggerFetch();
-  }, [triggerFetch]);
+  const handleFetchReturns = useCallback(() => triggerFetch(), [triggerFetch]);
 
   // ── Toast auto-dismiss ────────────────────────────────────────────────────
   useEffect(() => {
@@ -248,7 +382,7 @@ const AdminReturns = () => {
     return () => clearTimeout(t);
   }, [error, dispatch]);
 
-  // Pre-populate available next statuses when status tab opens
+  // Pre-populate next status when status tab opens
   useEffect(() => {
     if (activeTab === 'status' && currentReturn) {
       const current = currentReturn.returnInfo?.status;
@@ -260,8 +394,42 @@ const AdminReturns = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, currentReturn]);
 
+  // Seed per-item decision state when currentReturn loads or tab changes
+  useEffect(() => {
+    if (!currentReturn?.returnInfo?.itemsToReturn) return;
+    const items = currentReturn.returnInfo.itemsToReturn;
+
+    // Review tab: seed with existing adminDecision values if already set
+    setItemDecisions((prev) => {
+      const next = { ...prev };
+      items.forEach((item, idx) => {
+        const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        if (!next[pid]) {
+          next[pid] = {
+            decision:        item.adminDecision ?? '',
+            rejectionReason: item.adminRejectionReason ?? '',
+          };
+        }
+      });
+      return next;
+    });
+
+    // Plea tab: always start fresh (admin sees the plea and re-decides)
+    if (activeTab === 'plea') {
+      const fresh = {};
+      items.forEach((item, idx) => {
+        const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        fresh[pid] = {
+          decision:        item.adminDecision ?? '',
+          rejectionReason: item.adminRejectionReason ?? '',
+        };
+      });
+      setPleaDecisions(fresh);
+    }
+  }, [currentReturn, activeTab]);
+
   // ── Derived ───────────────────────────────────────────────────────────────
-  const displayList = showUnreadOnly ? unreadReturns : returns;
+  const displayList  = showUnreadOnly ? unreadReturns : returns;
   const tableLoading = showUnreadOnly ? unreadLoading : returnsLoading;
 
   const hasUnreadByStatus = useMemo(() => {
@@ -296,6 +464,29 @@ const AdminReturns = () => {
     return NEXT_STATUS_MAP[current] ?? [];
   }, [currentReturn]);
 
+  // All items have a decision and rejected items have a non-empty reason
+  const reviewDecisionsComplete = useMemo(() => {
+    if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
+    return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
+      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const dec = itemDecisions[pid];
+      if (!dec?.decision) return false;
+      if (dec.decision === 'rejected' && !dec.rejectionReason?.trim()) return false;
+      return true;
+    });
+  }, [currentReturn, itemDecisions]);
+
+  const pleaDecisionsComplete = useMemo(() => {
+    if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
+    return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
+      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const dec = pleaDecisions[pid];
+      if (!dec?.decision) return false;
+      if (dec.decision === 'rejected' && !dec.rejectionReason?.trim()) return false;
+      return true;
+    });
+  }, [currentReturn, pleaDecisions]);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
   const handlePageChange = useCallback((page) => {
     if (page < 1 || page > totalPages) return;
@@ -303,47 +494,115 @@ const AdminReturns = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [totalPages]);
 
-  const fetchReturnDetails = useCallback(async (orderId) => {
-    await dispatch(getSingleReturn(orderId));
-    dispatch(getReturnTimeline(orderId));
-    dispatch(getReturnDocuments(orderId));
-    dispatch(getReturnMessages({ orderId, page: 1 }));
-  }, [dispatch]);
-
   const handleViewReturn = useCallback(async (orderId) => {
     setSelectedId(orderId);
     setActiveTab('overview');
+    setItemDecisions({});
+    setAdminNote('');
+    setPleaDecisions({});
+    setPleaAdminNote('');
+    setNewStatus('');
+    setInspectionNotes('');
     setShowDetailPanel(true);
-    await fetchReturnDetails(orderId);
-  }, [fetchReturnDetails]);
+    await dispatch(getSingleReturn(orderId));
+    // Backend marks messages as read and returns unreadMessages:0.
+    // Trigger a list re-fetch so the badge clears without waiting for panel close.
+    triggerFetch();
+    dispatch(getReturnTimeline(orderId));
+    dispatch(getReturnDocuments(orderId));
+    dispatch(getReturnMessages({ orderId, page: 1 }));
+  }, [dispatch, triggerFetch]);
 
   const handleOpenMessageModal = useCallback(async (orderId) => {
     setSelectedId(orderId);
     await dispatch(getSingleReturn(orderId));
+    // Same: backend already marked read; refresh list so badge clears.
+    triggerFetch();
     dispatch(getReturnMessages({ orderId, page: 1 }));
     setShowMessageModal(true);
-  }, [dispatch]);
+  }, [dispatch, triggerFetch]);
 
   const handleLoadMoreMessages = useCallback(() => {
     if (!selectedId || !hasMoreMessages || messagesLoading) return;
     dispatch(getReturnMessages({ orderId: selectedId, page: messagesPage + 1 }));
   }, [dispatch, selectedId, hasMoreMessages, messagesPage, messagesLoading]);
 
+  // Per-item decision change handler (review tab)
+  const handleItemDecisionChange = useCallback((productId, field, value) => {
+    setItemDecisions((prev) => ({
+      ...prev,
+      [productId]: { ...prev[productId], [field]: value },
+    }));
+  }, []);
+
+  // Per-item decision change handler (plea tab)
+  const handlePleaDecisionChange = useCallback((productId, field, value) => {
+    setPleaDecisions((prev) => ({
+      ...prev,
+      [productId]: { ...prev[productId], [field]: value },
+    }));
+  }, []);
+
+  // Build itemDecisions array for the backend from the decisions map
+  const buildDecisionsArray = (decisionsMap, items) =>
+    items.map((item, idx) => {
+      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const dec = decisionsMap[pid] ?? {};
+      return {
+        productId:       pid,
+        decision:        dec.decision,
+        rejectionReason: dec.rejectionReason ?? '',
+      };
+    });
+
+  // Review tab submit (first-round, status=requested)
   const handleReviewReturn = useCallback(async () => {
-    if (!reviewAction || !selectedId) return;
+    if (!selectedId || !currentReturn?.returnInfo?.itemsToReturn) return;
+    const items = currentReturn.returnInfo.itemsToReturn;
+    const decisionsArray = buildDecisionsArray(itemDecisions, items);
     try {
       await dispatch(reviewReturn({
-        orderId:    selectedId,
-        action:     reviewAction,
-        restockFee: restockFee ? Number(restockFee) : undefined,
-        adminNote:  adminNote || undefined,
+        orderId:       selectedId,
+        itemDecisions: decisionsArray,
+        adminNote:     adminNote || undefined,
       })).unwrap();
-      setReviewAction('');
+      setItemDecisions({});
       setAdminNote('');
-      setRestockFee('');
-      dispatch(getAllReturns(buildListParams()));
-    } catch (_) { /* error surfaced via slice error state */ }
-  }, [dispatch, reviewAction, adminNote, restockFee, selectedId]);
+      triggerFetch();
+    } catch { /* error surfaced via slice error state */ }
+  }, [dispatch, selectedId, currentReturn, itemDecisions, adminNote, triggerFetch]);
+
+  // Plea review tab submit (second-round, status=plea_submitted)
+  const handlePleaReviewSubmit = useCallback(async () => {
+    if (!selectedId || !currentReturn?.returnInfo?.itemsToReturn) return;
+    const items = currentReturn.returnInfo.itemsToReturn;
+    const decisionsArray = buildDecisionsArray(pleaDecisions, items);
+    try {
+      await dispatch(submitAdminPleaReview({
+        orderId:       selectedId,
+        itemDecisions: decisionsArray,
+        adminNote:     pleaAdminNote || undefined,
+      })).unwrap();
+      setPleaDecisions({});
+      setPleaAdminNote('');
+      triggerFetch();
+    } catch { /* error surfaced via slice error state */ }
+  }, [dispatch, selectedId, currentReturn, pleaDecisions, pleaAdminNote, triggerFetch]);
+
+  // Generate discount code and navigate to discount creation page
+  const handleGenerateDiscount = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const action = await dispatch(generateDiscountCode(selectedId)).unwrap();
+      triggerFetch();
+      navigate('/admin/discounts/new', {
+        state: {
+          fromReturn: true,
+          returnData: action.returnDataForDiscount ?? action,
+        },
+      });
+    } catch { /* error surfaced via slice error state */ }
+  }, [dispatch, selectedId, navigate, triggerFetch]);
 
   const handleUpdateStatus = useCallback(async () => {
     if (!newStatus || !selectedId) return;
@@ -355,9 +614,9 @@ const AdminReturns = () => {
       })).unwrap();
       setNewStatus('');
       setInspectionNotes('');
-      dispatch(getAllReturns(buildListParams()));
-    } catch (_) { /* error surfaced via slice */ }
-  }, [dispatch, newStatus, inspectionNotes, selectedId]);
+      triggerFetch();
+    } catch { /* error surfaced via slice */ }
+  }, [dispatch, newStatus, inspectionNotes, selectedId, triggerFetch]);
 
   const handleSendMessage = useCallback(async (text, files, pendingUrls = []) => {
     if (!selectedId) return;
@@ -383,7 +642,7 @@ const AdminReturns = () => {
     try {
       await dispatch(uploadReturnFiles({ orderId: selectedId, files })).unwrap();
       dispatch(getReturnDocuments(selectedId));
-    } catch (_) { /* error surfaced via slice */ }
+    } catch { /* error surfaced via slice */ }
   }, [dispatch, selectedId]);
 
   const handleCloseMessageModal = useCallback(() => {
@@ -397,9 +656,10 @@ const AdminReturns = () => {
     setShowMessageModal(false);
     setSelectedId(null);
     setActiveTab('overview');
-    setReviewAction('');
+    setItemDecisions({});
     setAdminNote('');
-    setRestockFee('');
+    setPleaDecisions({});
+    setPleaAdminNote('');
     setNewStatus('');
     setInspectionNotes('');
     dispatch(clearCurrentReturn());
@@ -414,8 +674,7 @@ const AdminReturns = () => {
 
   const renderKPICards = () => {
     if (!stats) {
-      return Array.from({ length: 5 }).map((_, i) => (
-        // eslint-disable-next-line react/no-array-index-key
+      return Array.from({ length: 6 }).map((_, i) => (
         <div key={i} className="rt-kpi" style={{ '--kpi-color': '#E5E7EB' }}>
           <div className="rt-kpi-top">
             <div className="rt-skel" style={{ width: 40, height: 40, borderRadius: 10 }} />
@@ -426,11 +685,12 @@ const AdminReturns = () => {
       ));
     }
     const cards = [
-      { label: 'Total Returns',  value: stats.total      ?? 0, icon: Assessment,    color: '#6366F1' },
-      { label: 'Pending Review', value: stats.requested  ?? 0, icon: Schedule,      color: '#F59E0B' },
-      { label: 'In Progress',    value: (stats.approved ?? 0) + (stats.in_transit ?? 0) + (stats.received ?? 0) + (stats.inspected ?? 0), icon: LocalShipping, color: '#8B5CF6' },
-      { label: 'Completed',      value: stats.completed  ?? 0, icon: CheckCircle,   color: '#10B981' },
-      { label: 'Rejected',       value: stats.rejected   ?? 0, icon: Cancel,        color: '#EF4444' },
+      { label: 'Total Returns',    value: stats.total      ?? 0,                                                                                                       icon: Assessment,    color: '#6366F1', isCount: true  },
+      { label: 'Pending Review',   value: stats.requested  ?? 0,                                                                                                       icon: Schedule,      color: '#F59E0B', isCount: true  },
+      { label: 'In Progress',      value: (stats.approved ?? 0) + (stats.in_transit ?? 0) + (stats.received ?? 0) + (stats.inspected ?? 0),                            icon: LocalShipping, color: '#8B5CF6', isCount: true  },
+      { label: 'Completed',        value: stats.completed  ?? 0,                                                                                                       icon: CheckCircle,   color: '#10B981', isCount: true  },
+      { label: 'Rejected',         value: stats.rejected   ?? 0,                                                                                                       icon: Cancel,        color: '#EF4444', isCount: true  },
+      { label: 'Total Requested',  value: typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,                                                          icon: Discount,      color: '#0EA5E9', isCount: false },
     ];
     return cards.map((c) => (
       <div key={c.label} className="rt-kpi" style={{ '--kpi-color': c.color }}>
@@ -440,7 +700,9 @@ const AdminReturns = () => {
           </span>
         </div>
         <div className="rt-kpi-label">{c.label}</div>
-        <div className="rt-kpi-value">{c.value.toLocaleString()}</div>
+        <div className="rt-kpi-value">
+          {c.isCount ? c.value.toLocaleString() : fmtCurrency(c.value)}
+        </div>
       </div>
     ));
   };
@@ -450,10 +712,8 @@ const AdminReturns = () => {
       return (
         <div style={{ padding: '20px' }}>
           {Array.from({ length: 5 }).map((_, i) => (
-            // eslint-disable-next-line react/no-array-index-key
             <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
               {Array.from({ length: 7 }).map((__, j) => (
-                // eslint-disable-next-line react/no-array-index-key
                 <div key={j} className="rt-skel" style={{ height: 16, flex: 1 }} />
               ))}
             </div>
@@ -491,16 +751,19 @@ const AdminReturns = () => {
           <tbody>
             {displayList.map((item) => {
               const status      = item.returnInfo?.status ?? 'unknown';
-              const orderRef    = item.orderId ? item.orderId.toString().slice(-6).toUpperCase() : (item._id ? item._id.toString().slice(-6).toUpperCase() : 'N/A');
+              const orderRef    = item.orderId
+                ? item.orderId.toString().slice(-6).toUpperCase()
+                : (item._id ? item._id.toString().slice(-6).toUpperCase() : 'N/A');
               const rma         = item.returnInfo?.rmaNumber ?? '—';
               const unreadCount = item.unreadMessages ?? 0;
+              const rowId       = item.orderId ?? item._id;
               return (
-                <tr key={item.orderId ?? item._id}>
+                <tr key={rowId}>
                   <td className="rt-td-name">#{orderRef}</td>
                   <td>{getCustomerName(item.user)}</td>
                   <td className="rt-td-mono">{rma}</td>
                   <td className="rt-td-money">
-                    ${fmt(item.returnInfo?.requestedAmount ?? 0)}
+                    {fmtCurrency(item.returnInfo?.requestedAmount ?? 0)}
                   </td>
                   <td className="rt-td-reason">
                     {item.returnInfo?.reason?.replace(/_/g, ' ') ?? 'N/A'}
@@ -519,7 +782,7 @@ const AdminReturns = () => {
                     <button
                       type="button"
                       className="rt-icon-btn"
-                      onClick={() => handleOpenMessageModal(item.orderId ?? item._id)}
+                      onClick={() => handleOpenMessageModal(rowId)}
                       title="Open Messages"
                     >
                       <Message style={{ fontSize: 16 }} />
@@ -534,7 +797,7 @@ const AdminReturns = () => {
                     <button
                       type="button"
                       className="rt-icon-btn"
-                      onClick={() => handleViewReturn(item.orderId ?? item._id)}
+                      onClick={() => handleViewReturn(rowId)}
                       title="View Details"
                     >
                       <Visibility style={{ fontSize: 16 }} />
@@ -564,7 +827,6 @@ const AdminReturns = () => {
         </button>
         {pageNumbers.map((p, idx) =>
           p === '...'
-            // eslint-disable-next-line react/no-array-index-key
             ? <span key={`e${idx}`} className="rt-page-ellipsis">…</span>
             : (
               <button
@@ -587,6 +849,39 @@ const AdminReturns = () => {
           <ChevronRight style={{ fontSize: 18 }} />
         </button>
         <span className="rt-page-info">Page {currentPage} of {totalPages}</span>
+      </div>
+    );
+  };
+
+  // ── Overview tab: items_reviewed decision badges ──────────────────────────
+  const renderItemDecisionBadges = (returnInfo) => {
+    const items = returnInfo?.itemsToReturn ?? [];
+    if (!items.length) return null;
+
+    const reviewed = items.filter((i) => i.adminDecision);
+    if (!reviewed.length) return null;
+
+    return (
+      <div className="rt-item-decision-badges">
+        {items.map((item, idx) => {
+          const pid  = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+          const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+          const dec  = item.adminDecision;
+          if (!dec) return null;
+          return (
+            <div key={pid} className={`rt-decision-badge rt-decision-badge--${dec}`}>
+              {dec === 'approved'
+                ? <CheckCircle style={{ fontSize: 13 }} />
+                : <Cancel style={{ fontSize: 13 }} />}
+              <span>{name}</span>
+              {dec === 'rejected' && item.adminRejectionReason && (
+                <span className="rt-decision-badge-reason">
+                  — {item.adminRejectionReason}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -619,11 +914,19 @@ const AdminReturns = () => {
       );
     }
 
-    const returnInfo  = currentReturn.returnInfo ?? {};
-    const retStatus   = returnInfo.status ?? 'unknown';
-    const isTerminal  = TERMINAL_STATUSES.has(retStatus);
-    const orderRef    = currentReturn._id ? currentReturn._id.toString().slice(-6).toUpperCase() : 'N/A';
-    const rma         = returnInfo.rmaNumber ?? null;
+    const returnInfo = currentReturn.returnInfo ?? {};
+    const retStatus  = returnInfo.status ?? 'unknown';
+    const isTerminal = TERMINAL_STATUSES.has(retStatus);
+    const orderRef   = currentReturn._id ? currentReturn._id.toString().slice(-6).toUpperCase() : 'N/A';
+    const rma        = returnInfo.rmaNumber ?? null;
+
+    const approvedItems = (returnInfo.itemsToReturn ?? []).filter((i) => i.adminDecision === 'approved');
+
+    // Plea tab is only visible when status is plea_submitted
+    const visibleTabs = DRAWER_TABS.filter((t) => {
+      if (t === 'plea') return retStatus === 'plea_submitted';
+      return true;
+    });
 
     return (
       <div
@@ -650,14 +953,14 @@ const AdminReturns = () => {
 
           <div className="rt-drawer-tabs">
             <div className="rt-tf rt-drawer-tab-row">
-              {DRAWER_TABS.map((tab) => (
+              {visibleTabs.map((tab) => (
                 <button
                   key={tab}
                   type="button"
                   className={`rt-tf-btn${activeTab === tab ? ' rt-tf-btn--active' : ''}`}
                   onClick={() => setActiveTab(tab)}
                 >
-                  {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  {tab === 'plea' ? 'Plea Review' : tab.charAt(0).toUpperCase() + tab.slice(1)}
                 </button>
               ))}
             </div>
@@ -665,6 +968,7 @@ const AdminReturns = () => {
 
           <div className="rt-drawer-body">
 
+            {/* ── OVERVIEW TAB ── */}
             {activeTab === 'overview' && (
               <>
                 <div className="rt-section"><span className="rt-section-text">Return Info</span><span className="rt-section-line" /></div>
@@ -674,9 +978,8 @@ const AdminReturns = () => {
                       ['Customer',       getCustomerName(currentReturn.user)],
                       ['Email',          currentReturn.user?.email ?? 'N/A'],
                       ['Phone',          currentReturn.user?.phone ?? 'N/A'],
-                      ['Order Total',    `$${fmt(currentReturn.totalPrice)}`],
-                      ['Requested Amt',  `$${fmt(returnInfo.requestedAmount)}`],
-                      ['Restock Fee',    returnInfo.restockFee ? `$${fmt(returnInfo.restockFee)}` : 'None'],
+                      ['Order Total',    fmtCurrency(currentReturn.totalPrice)],
+                      ['Requested Amt',  fmtCurrency(returnInfo.requestedAmount)],
                       ['Reason',         returnInfo.reason?.replace(/_/g, ' ') ?? 'N/A'],
                     ].map(([label, val]) => (
                       <div key={label} className="rt-metric-row">
@@ -684,6 +987,12 @@ const AdminReturns = () => {
                         <span className="rt-metric-val">{val}</span>
                       </div>
                     ))}
+                    {typeof returnInfo.discountValue === 'number' && (
+                      <div className="rt-metric-row">
+                        <span className="rt-metric-label">Discount Value</span>
+                        <span className="rt-metric-val rt-td-money">{fmtCurrency(returnInfo.discountValue)}</span>
+                      </div>
+                    )}
                     <div className="rt-metric-row">
                       <span className="rt-metric-label">Status</span>
                       <span className={`rt-status rt-status--${STATUS_COLOR[retStatus] ?? 'cancelled'}`}>
@@ -726,6 +1035,57 @@ const AdminReturns = () => {
                   </>
                 )}
 
+                {/* items_reviewed: show per-item decision badges + plea countdown */}
+                {retStatus === 'items_reviewed' && returnInfo.itemsToReturn?.length > 0 && (
+                  <>
+                    <div className="rt-section"><span className="rt-section-text">Item Decisions</span><span className="rt-section-line" /></div>
+                    <div className="rt-card">
+                      <div className="rt-card-body">
+                        {renderItemDecisionBadges(returnInfo)}
+                        {returnInfo.pleaDeadline && (
+                          <div style={{ marginTop: 12 }}>
+                            <CountdownTimer
+                              deadline={returnInfo.pleaDeadline}
+                              label="Customer plea window:"
+                              expiredLabel="Plea window closed"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* plea_submitted: show plea description + badge */}
+                {retStatus === 'plea_submitted' && (
+                  <>
+                    <div className="rt-section"><span className="rt-section-text">Plea Submitted</span><span className="rt-section-line" /></div>
+                    <div className="rt-card">
+                      <div className="rt-card-body">
+                        <div className="rt-plea-submitted-badge">
+                          <Gavel style={{ fontSize: 15 }} />
+                          <span>Customer has submitted a plea for reconsideration</span>
+                        </div>
+                        {returnInfo.pleaInfo?.pleaDescription && (
+                          <p style={{ margin: '10px 0 0', fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
+                            {returnInfo.pleaInfo.pleaDescription}
+                          </p>
+                        )}
+                        {returnInfo.pleaDeadline && (
+                          <div style={{ marginTop: 12 }}>
+                            <CountdownTimer
+                              deadline={returnInfo.pleaDeadline}
+                              label="Admin response window:"
+                              expiredLabel="Response window closed"
+                            />
+                          </div>
+                        )}
+                        {renderItemDecisionBadges(returnInfo)}
+                      </div>
+                    </div>
+                  </>
+                )}
+
                 {returnInfo.inspectionNotes && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Inspection Notes</span><span className="rt-section-line" /></div>
@@ -739,14 +1099,14 @@ const AdminReturns = () => {
                   </>
                 )}
 
-                {returnInfo.itemsToReturn?.length > 0 && (
+                {/* Items list (shown for all statuses not already shown above via decision badges) */}
+                {!['items_reviewed', 'plea_submitted'].includes(retStatus) && returnInfo.itemsToReturn?.length > 0 && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Items to Return</span><span className="rt-section-line" /></div>
                     <div className="rt-card">
                       <div className="rt-card-body">
                         {returnInfo.itemsToReturn.map((item, idx) => (
-                          // eslint-disable-next-line react/no-array-index-key
-                          <div key={item.product ?? idx} className="rt-item-row">
+                          <div key={item.product?._id ?? idx} className="rt-item-row">
                             <div className="rt-item-info">
                               <span className="rt-item-name">
                                 {item.product?.name ?? `Item ${idx + 1}`}
@@ -772,14 +1132,13 @@ const AdminReturns = () => {
                     <div className="rt-card">
                       <div className="rt-card-body">
                         {currentReturn.orderItems.map((item, idx) => (
-                          // eslint-disable-next-line react/no-array-index-key
                           <div key={item._id ?? idx} className="rt-item-row">
                             <div className="rt-item-info">
                               <span className="rt-item-name">
                                 {item.product?.name ?? `Item ${idx + 1}`}
                               </span>
                               <span className="rt-item-meta">
-                                Qty: {item.quantity ?? 1} · ${fmt(item.price ?? 0)} ea
+                                Qty: {item.quantity ?? 1} · {fmtCurrency(item.price ?? 0)} ea
                               </span>
                             </div>
                           </div>
@@ -791,12 +1150,13 @@ const AdminReturns = () => {
               </>
             )}
 
+            {/* ── REVIEW TAB ── */}
             {activeTab === 'review' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
                   <div>
                     <h3 className="rt-card-title">Review Return Request</h3>
-                    <p className="rt-card-sub">Approve or reject this return</p>
+                    <p className="rt-card-sub">Make a per-item approve / reject decision</p>
                   </div>
                 </div>
                 <div className="rt-card-body">
@@ -806,71 +1166,132 @@ const AdminReturns = () => {
                         ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
                         : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
                       <span>
-                        This return is <strong>{retStatus.replace(/_/g, ' ')}</strong> and cannot be re-reviewed.
+                        This return is <strong>{retStatus.replace(/_/g, ' ')}</strong> and cannot be re-reviewed here.
                       </span>
                     </div>
                   )}
-                  <div className="rt-form-group">
-                    <label className="rt-form-label" htmlFor="rt-review-action">Decision *</label>
-                    <select
-                      id="rt-review-action"
-                      className="rt-form-select"
-                      value={reviewAction}
-                      onChange={(e) => setReviewAction(e.target.value)}
-                      disabled={retStatus !== 'requested' || loading}
-                    >
-                      <option value="">Select action</option>
-                      <option value="approve">Approve Return</option>
-                      <option value="reject">Reject Return</option>
-                    </select>
-                  </div>
-                  {reviewAction === 'approve' && (
-                    <div className="rt-form-group">
-                      <label className="rt-form-label" htmlFor="rt-restock-fee">Restock Fee ($)</label>
-                      <input
-                        id="rt-restock-fee"
-                        type="number"
-                        className="rt-form-input"
-                        value={restockFee}
-                        onChange={(e) => setRestockFee(e.target.value)}
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        disabled={retStatus !== 'requested' || loading}
+
+                  {retStatus === 'requested' && (
+                    <>
+                      <PerItemDecisionForm
+                        items={returnInfo.itemsToReturn ?? []}
+                        decisions={itemDecisions}
+                        onDecisionChange={handleItemDecisionChange}
+                        disabled={loading}
                       />
-                      <span className="rt-helper-text">Leave blank or 0 for no restock fee</span>
+                      <div className="rt-form-group" style={{ marginTop: 14 }}>
+                        <label className="rt-form-label" htmlFor="rt-admin-note">Admin Note</label>
+                        <textarea
+                          id="rt-admin-note"
+                          className="rt-form-textarea"
+                          rows={3}
+                          value={adminNote}
+                          onChange={(e) => setAdminNote(e.target.value)}
+                          placeholder="Add a note for the customer…"
+                          disabled={loading}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        className="rt-btn rt-btn--primary"
+                        onClick={handleReviewReturn}
+                        disabled={loading || !reviewDecisionsComplete}
+                        title={!reviewDecisionsComplete ? 'All items must have a decision (and rejection reason if rejected)' : ''}
+                      >
+                        {loading ? 'Processing…' : 'Submit Item Decisions'}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── PLEA REVIEW TAB — visible only when status=plea_submitted ── */}
+            {activeTab === 'plea' && retStatus === 'plea_submitted' && (
+              <div className="rt-card">
+                <div className="rt-card-hd">
+                  <div>
+                    <h3 className="rt-card-title">
+                      <Gavel style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
+                      Plea Review
+                    </h3>
+                    <p className="rt-card-sub">Second-round item decisions after customer plea</p>
+                  </div>
+                </div>
+                <div className="rt-card-body">
+                  {/* Customer plea description */}
+                  {returnInfo.pleaInfo?.pleaDescription && (
+                    <div className="rt-plea-text-block">
+                      <span className="rt-form-label">Customer Plea:</span>
+                      <p>{returnInfo.pleaInfo.pleaDescription}</p>
                     </div>
                   )}
-                  <div className="rt-form-group">
-                    <label className="rt-form-label" htmlFor="rt-admin-note">Admin Note</label>
+
+                  {/* Plea evidence documents */}
+                  {returnInfo.pleaInfo?.pleaDocuments?.length > 0 && (
+                    <div className="rt-plea-evidence">
+                      <span className="rt-form-label">Submitted Evidence:</span>
+                      <div className="rt-plea-evidence-grid">
+                        {returnInfo.pleaInfo.pleaDocuments.map((doc, i) => (
+                          <a
+                            key={doc._id ?? i}
+                            href={doc.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rt-plea-evidence-thumb"
+                          >
+                            {doc.mimeType?.startsWith('image/') || doc.fileType === 'image' ? (
+                              <img src={doc.url} alt={doc.filename ?? 'Evidence'} />
+                            ) : (
+                              <div className="rt-plea-evidence-placeholder">
+                                <AttachFile style={{ fontSize: 20 }} />
+                                <span>{doc.filename ?? 'File'}</span>
+                              </div>
+                            )}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="rt-section" style={{ margin: '14px 0 10px' }}>
+                    <span className="rt-section-text">Second-Round Decisions</span>
+                    <span className="rt-section-line" />
+                  </div>
+
+                  <PerItemDecisionForm
+                    items={returnInfo.itemsToReturn ?? []}
+                    decisions={pleaDecisions}
+                    onDecisionChange={handlePleaDecisionChange}
+                    disabled={pleaReviewLoading}
+                  />
+
+                  <div className="rt-form-group" style={{ marginTop: 14 }}>
+                    <label className="rt-form-label" htmlFor="rt-plea-admin-note">Admin Note</label>
                     <textarea
-                      id="rt-admin-note"
+                      id="rt-plea-admin-note"
                       className="rt-form-textarea"
                       rows={3}
-                      value={adminNote}
-                      onChange={(e) => setAdminNote(e.target.value)}
-                      placeholder="Add a note for the customer…"
-                      disabled={retStatus !== 'requested' || loading}
+                      value={pleaAdminNote}
+                      onChange={(e) => setPleaAdminNote(e.target.value)}
+                      placeholder="Final note for the customer…"
+                      disabled={pleaReviewLoading}
                     />
                   </div>
                   <button
                     type="button"
-                    className={`rt-btn ${reviewAction === 'approve' ? 'rt-btn--success' : reviewAction === 'reject' ? 'rt-btn--danger' : 'rt-btn--primary'}`}
-                    onClick={handleReviewReturn}
-                    disabled={!reviewAction || loading || retStatus !== 'requested'}
+                    className="rt-btn rt-btn--primary"
+                    onClick={handlePleaReviewSubmit}
+                    disabled={pleaReviewLoading || !pleaDecisionsComplete}
+                    title={!pleaDecisionsComplete ? 'All items must have a decision' : ''}
                   >
-                    {loading
-                      ? 'Processing…'
-                      : reviewAction === 'approve'
-                        ? 'Approve Return'
-                        : reviewAction === 'reject'
-                          ? 'Reject Return'
-                          : 'Select an action'}
+                    {pleaReviewLoading ? 'Processing…' : 'Submit Final Decisions'}
                   </button>
                 </div>
               </div>
             )}
 
+            {/* ── STATUS TAB ── */}
             {activeTab === 'status' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -883,83 +1304,136 @@ const AdminReturns = () => {
                   </div>
                 </div>
                 <div className="rt-card-body">
-                  <div className="rt-progress-row">
-                    {LIFECYCLE_STATUSES.map((s, idx) => {
-                      const currentIdx = LIFECYCLE_STATUSES.indexOf(retStatus);
-                      const isPast     = idx < currentIdx;
-                      const isCurrent  = s === retStatus;
-                      return (
-                        <React.Fragment key={s}>
-                          <div className={`rt-progress-step${isCurrent ? ' rt-progress-step--current' : isPast ? ' rt-progress-step--done' : ''}`}>
-                            <div className="rt-progress-dot" />
-                            <span className="rt-progress-label">{s.replace(/_/g, ' ')}</span>
-                          </div>
-                          {idx < LIFECYCLE_STATUSES.length - 1 && (
-                            <div className={`rt-progress-line${isPast || isCurrent ? ' rt-progress-line--done' : ''}`} />
-                          )}
-                        </React.Fragment>
-                      );
-                    })}
-                  </div>
 
-                  {validNextStatuses.length === 0 && (
-                    <div className={`rt-info-banner rt-info-banner--${isTerminal ? 'warning' : 'info'}`}>
-                      {isTerminal
-                        ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
-                        : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
-                      <span>
-                        {isTerminal
-                          ? `This return is ${retStatus.replace(/_/g, ' ')} — no further status updates.`
-                          : `Return must be approved before the lifecycle can begin. Current: ${retStatus.replace(/_/g, ' ')}.`}
-                      </span>
-                    </div>
-                  )}
-
-                  {validNextStatuses.length > 0 && (
+                  {/* awaiting_discount: hide lifecycle, show generate discount button */}
+                  {retStatus === 'awaiting_discount' ? (
                     <>
-                      <div className="rt-form-group">
-                        <label className="rt-form-label" htmlFor="rt-new-status">Next Status *</label>
-                        <select
-                          id="rt-new-status"
-                          className="rt-form-select"
-                          value={newStatus}
-                          onChange={(e) => setNewStatus(e.target.value)}
-                          disabled={loading}
-                        >
-                          <option value="">Select status</option>
-                          {validNextStatuses.map((s) => (
-                            <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
-                          ))}
-                        </select>
+                      <div className="rt-info-banner rt-info-banner--info">
+                        <Discount style={{ fontSize: 16, flexShrink: 0 }} />
+                        <span>
+                          This return is awaiting discount code generation.
+                          All item decisions are final.
+                        </span>
                       </div>
-                      {newStatus === 'inspected' && (
-                        <div className="rt-form-group">
-                          <label className="rt-form-label" htmlFor="rt-inspection-notes">Inspection Notes</label>
-                          <textarea
-                            id="rt-inspection-notes"
-                            className="rt-form-textarea"
-                            rows={3}
-                            value={inspectionNotes}
-                            onChange={(e) => setInspectionNotes(e.target.value)}
-                            placeholder="Describe the condition of returned items…"
-                            disabled={loading}
-                          />
+
+                      {approvedItems.length > 0 && (
+                        <div className="rt-approved-summary">
+                          <span className="rt-form-label">Approved Items:</span>
+                          {approvedItems.map((item, idx) => {
+                            const pid  = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+                            const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+                            return (
+                              <div key={pid} className="rt-approved-summary-item">
+                                <CheckCircle style={{ fontSize: 13, color: '#10B981' }} />
+                                <span>{name}</span>
+                                <span className="rt-td-muted">×{item.quantity ?? 1}</span>
+                                {item.price && (
+                                  <span className="rt-td-money">{fmtCurrency((item.price ?? 0) * (item.quantity ?? 1))}</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {typeof returnInfo.discountValue === 'number' && (
+                            <div className="rt-approved-summary-total">
+                              <span>Total Discount Value:</span>
+                              <strong className="rt-td-money">{fmtCurrency(returnInfo.discountValue)}</strong>
+                            </div>
+                          )}
                         </div>
                       )}
+
                       <button
                         type="button"
-                        className="rt-btn rt-btn--primary"
-                        onClick={handleUpdateStatus}
-                        disabled={!newStatus || loading}
+                        className="rt-btn rt-btn--generate-discount"
+                        onClick={handleGenerateDiscount}
+                        disabled={discountCodeLoading}
                       >
-                        {loading ? 'Updating…' : `Mark as ${newStatus.replace(/_/g, ' ') || '…'}`}
+                        <Discount style={{ fontSize: 16, marginRight: 6 }} />
+                        {discountCodeLoading ? 'Generating…' : 'Generate Discount Code'}
                       </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="rt-progress-row">
+                        {LIFECYCLE_STATUSES.map((s, idx) => {
+                          const currentIdx = LIFECYCLE_STATUSES.indexOf(retStatus);
+                          const isPast     = idx < currentIdx;
+                          const isCurrent  = s === retStatus;
+                          return (
+                            <React.Fragment key={s}>
+                              <div className={`rt-progress-step${isCurrent ? ' rt-progress-step--current' : isPast ? ' rt-progress-step--done' : ''}`}>
+                                <div className="rt-progress-dot" />
+                                <span className="rt-progress-label">{s.replace(/_/g, ' ')}</span>
+                              </div>
+                              {idx < LIFECYCLE_STATUSES.length - 1 && (
+                                <div className={`rt-progress-line${isPast || isCurrent ? ' rt-progress-line--done' : ''}`} />
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+
+                      {validNextStatuses.length === 0 && (
+                        <div className={`rt-info-banner rt-info-banner--${isTerminal ? 'warning' : 'info'}`}>
+                          {isTerminal
+                            ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
+                            : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
+                          <span>
+                            {isTerminal
+                              ? `This return is ${retStatus.replace(/_/g, ' ')} — no further status updates.`
+                              : `Return must be approved before the lifecycle can begin. Current: ${retStatus.replace(/_/g, ' ')}.`}
+                          </span>
+                        </div>
+                      )}
+
+                      {validNextStatuses.length > 0 && (
+                        <>
+                          <div className="rt-form-group">
+                            <label className="rt-form-label" htmlFor="rt-new-status">Next Status *</label>
+                            <select
+                              id="rt-new-status"
+                              className="rt-form-select"
+                              value={newStatus}
+                              onChange={(e) => setNewStatus(e.target.value)}
+                              disabled={loading}
+                            >
+                              <option value="">Select status</option>
+                              {validNextStatuses.map((s) => (
+                                <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {newStatus === 'inspected' && (
+                            <div className="rt-form-group">
+                              <label className="rt-form-label" htmlFor="rt-inspection-notes">Inspection Notes</label>
+                              <textarea
+                                id="rt-inspection-notes"
+                                className="rt-form-textarea"
+                                rows={3}
+                                value={inspectionNotes}
+                                onChange={(e) => setInspectionNotes(e.target.value)}
+                                placeholder="Describe the condition of returned items…"
+                                disabled={loading}
+                              />
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            className="rt-btn rt-btn--primary"
+                            onClick={handleUpdateStatus}
+                            disabled={!newStatus || loading}
+                          >
+                            {loading ? 'Updating…' : `Mark as ${newStatus.replace(/_/g, ' ') || '…'}`}
+                          </button>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
               </div>
             )}
 
+            {/* ── TIMELINE TAB ── */}
             {activeTab === 'timeline' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -976,24 +1450,17 @@ const AdminReturns = () => {
                   ) : timeline.length > 0 ? (
                     <div className="rt-timeline">
                       {timeline.map((ev, idx) => (
-                        // eslint-disable-next-line react/no-array-index-key
                         <div key={ev._id ?? idx} className="rt-timeline-item">
                           <div className="rt-timeline-dot" />
                           <div className="rt-timeline-content">
                             <div className="rt-tl-row">
                               <strong>{ev.title ?? ev.action ?? 'Event'}</strong>
                               <span className="rt-td-muted">
-                                {ev.timestamp
-                                  ? new Date(ev.timestamp).toLocaleString()
-                                  : ''}
+                                {ev.timestamp ? new Date(ev.timestamp).toLocaleString() : ''}
                               </span>
                             </div>
-                            {ev.description && (
-                              <p className="rt-tl-desc">{ev.description}</p>
-                            )}
-                            {ev.performedBy?.name && (
-                              <p className="rt-tl-by">by {ev.performedBy.name}</p>
-                            )}
+                            {ev.description && <p className="rt-tl-desc">{ev.description}</p>}
+                            {ev.performedBy?.name && <p className="rt-tl-by">by {ev.performedBy.name}</p>}
                           </div>
                         </div>
                       ))}
@@ -1008,6 +1475,7 @@ const AdminReturns = () => {
               </div>
             )}
 
+            {/* ── DOCUMENTS TAB ── */}
             {activeTab === 'documents' && (
               <div className="rt-card">
                 <div className="rt-card-hd">
@@ -1028,7 +1496,6 @@ const AdminReturns = () => {
                     onChange={(e) => {
                       if (e.target.files?.length) {
                         handleFileUpload(Array.from(e.target.files));
-                        // eslint-disable-next-line no-param-reassign
                         e.target.value = '';
                       }
                     }}
@@ -1055,7 +1522,6 @@ const AdminReturns = () => {
                   ) : documents.length > 0 ? (
                     <div className="rt-file-list">
                       {documents.map((doc, idx) => (
-                        // eslint-disable-next-line react/no-array-index-key
                         <div key={doc._id ?? idx} className="rt-file-item">
                           <div className="rt-file-info">
                             <AttachFile style={{ fontSize: 16 }} />
@@ -1097,7 +1563,7 @@ const AdminReturns = () => {
             >
               <Message style={{ marginRight: 6, fontSize: 16 }} />
               Messages
-              {(currentReturn.returnInfo?.messages?.length > 0) && (
+              {currentReturn.returnInfo?.messages?.length > 0 && (
                 <span className="rt-footer-msg-count">
                   {currentReturn.returnInfo.messages.length}
                 </span>
@@ -1115,220 +1581,220 @@ const AdminReturns = () => {
   // ── Main render ───────────────────────────────────────────────────────────
   return (
     <>
-    <Navbar />
-    <div className="rt-page">
-      <div className="rt-body">
+      <Navbar />
+      <div className="rt-page">
+        <div className="rt-body">
 
-        <Link to="/admin/dashboard" className="rt-back-btn">
-          <ArrowBack style={{ fontSize: 15 }} />Dashboard
-        </Link>
+          <Link to="/admin/dashboard" className="rt-back-btn">
+            <ArrowBack style={{ fontSize: 15 }} />Dashboard
+          </Link>
 
-        <div className="rt-hd">
-          <div className="rt-hd-left">
-            <span className="rt-hd-icon" style={{ background: '#6366F115', color: '#6366F1' }}>
-              <Inventory style={{ fontSize: 24 }} />
-            </span>
-            <div>
-              <h1 className="rt-hd-title">Returns Management</h1>
-              <p className="rt-hd-sub">Review, approve and process customer return requests</p>
-            </div>
-          </div>
-          <div className="rt-hd-right">
-            <button
-              type="button"
-              className={`rt-icon-btn${(returnsLoading || unreadLoading) ? ' rt-icon-btn--spin' : ''}`}
-              onClick={handleFetchReturns}
-              disabled={returnsLoading || unreadLoading}
-              title="Refresh"
-            >
-              <Refresh style={{ fontSize: 18 }} />
-            </button>
-          </div>
-        </div>
-
-        <div className="rt-kpi-grid">{renderKPICards()}</div>
-
-        <div className="rt-section">
-          <span className="rt-section-text">Return Requests</span>
-          <span className="rt-section-line" />
-        </div>
-
-        <div className="rt-filters">
-          <div className="rt-search-wrap">
-            <Search className="rt-search-icon" style={{ fontSize: 16 }} />
-            <input
-              type="text"
-              className="rt-search-input"
-              placeholder="Search RMA number…"
-              value={rmaSearch}
-              onChange={(e) => setRmaSearch(e.target.value)}
-              aria-label="Search by RMA number"
-            />
-          </div>
-
-          <div className="rt-tf rt-filter-pills">
-            {STATUS_FILTERS.map((opt) => (
-              <button
-                key={opt.value || 'all'}
-                type="button"
-                className={`rt-tf-btn${filterStatus === opt.value ? ' rt-tf-btn--active' : ''}`}
-                onClick={() => setFilterStatus(opt.value)}
-              >
-                {opt.label}
-                {hasUnreadByStatus[opt.value || 'all'] && <span className="rt-tab-dot" />}
-              </button>
-            ))}
-          </div>
-
-          <div className="rt-date-wrap">
-            <input
-              type="date"
-              className="rt-date-input"
-              value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-              aria-label="From date"
-            />
-            <span className="rt-date-sep">—</span>
-            <input
-              type="date"
-              className="rt-date-input"
-              value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-              aria-label="To date"
-            />
-          </div>
-
-          <div className="rt-sort-wrap">
-            <select
-              className="rt-form-select rt-sort-select"
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              aria-label="Sort by"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className="rt-icon-btn rt-sort-dir-btn"
-              onClick={() => setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
-              title={sortOrder === 'desc' ? 'Descending' : 'Ascending'}
-            >
-              <span className={`rt-sort-arrow${sortOrder === 'asc' ? ' rt-sort-arrow--up' : ''}`}>↓</span>
-            </button>
-          </div>
-
-          <div className="rt-toggle-wrap">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={showUnreadOnly}
-              className={`rt-toggle${showUnreadOnly ? ' rt-toggle--active' : ''}`}
-              onClick={() => setShowUnreadOnly((v) => !v)}
-              aria-label="Show unread only"
-            >
-              <span className="rt-toggle-knob" />
-            </button>
-            <span className="rt-toggle-label">Unread Only</span>
-          </div>
-        </div>
-
-        {error && (
-          <div className="rt-error-banner" role="alert">
-            <Warning style={{ fontSize: 18, flexShrink: 0 }} />
-            <div>
-              <strong className="rt-error-title">Error</strong>
-              <p className="rt-error-msg">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {errorStage === 'send' && pendingAttachments.length > 0 && (
-          <div className="rt-retry-banner" role="alert">
-            <Warning style={{ fontSize: 16, flexShrink: 0 }} />
-            <span className="rt-retry-msg">Files uploaded but message failed to send.</span>
-            <div className="rt-retry-actions">
-              <button
-                type="button"
-                className="rt-btn rt-btn--primary"
-                onClick={handleRetryMessage}
-                disabled={messageSendLoading}
-              >
-                {messageSendLoading ? 'Retrying…' : 'Retry Send'}
-              </button>
-              <button
-                type="button"
-                className="rt-btn rt-btn--ghost"
-                onClick={() => dispatch(clearPendingAttachments())}
-              >
-                Dismiss
-              </button>
-            </div>
-          </div>
-        )}
-
-        <div className="rt-card">
-          <div className="rt-card-hd">
-            <div>
-              <h3 className="rt-card-title">
-                {showUnreadOnly ? 'Unread Returns' : 'All Returns'}
-              </h3>
-              <p className="rt-card-sub">
-                {returnsLoading || unreadLoading
-                  ? 'Loading…'
-                  : showUnreadOnly
-                    ? `${unreadReturns.length} with unread messages`
-                    : `${totalReturns} total`}
-              </p>
-            </div>
-          </div>
-          <div className="rt-card-body--np">
-            {renderTable()}
-            {renderPagination()}
-          </div>
-        </div>
-
-        {success && successMessage && (
-          <div className="rt-toast-wrap" role="status" aria-live="polite">
-            <div className="rt-toast rt-toast--success">
-              <CheckCircle style={{ fontSize: 18 }} />
+          <div className="rt-hd">
+            <div className="rt-hd-left">
+              <span className="rt-hd-icon" style={{ background: '#6366F115', color: '#6366F1' }}>
+                <Inventory style={{ fontSize: 24 }} />
+              </span>
               <div>
-                <strong>Success</strong>
-                <p>{successMessage}</p>
+                <h1 className="rt-hd-title">Returns Management</h1>
+                <p className="rt-hd-sub">Review, approve and process customer return requests</p>
               </div>
             </div>
+            <div className="rt-hd-right">
+              <button
+                type="button"
+                className={`rt-icon-btn${(returnsLoading || unreadLoading) ? ' rt-icon-btn--spin' : ''}`}
+                onClick={handleFetchReturns}
+                disabled={returnsLoading || unreadLoading}
+                title="Refresh"
+              >
+                <Refresh style={{ fontSize: 18 }} />
+              </button>
+            </div>
           </div>
+
+          <div className="rt-kpi-grid">{renderKPICards()}</div>
+
+          <div className="rt-section">
+            <span className="rt-section-text">Return Requests</span>
+            <span className="rt-section-line" />
+          </div>
+
+          <div className="rt-filters">
+            <div className="rt-search-wrap">
+              <Search className="rt-search-icon" style={{ fontSize: 16 }} />
+              <input
+                type="text"
+                className="rt-search-input"
+                placeholder="Search RMA number…"
+                value={rmaSearch}
+                onChange={(e) => setRmaSearch(e.target.value)}
+                aria-label="Search by RMA number"
+              />
+            </div>
+
+            <div className="rt-tf rt-filter-pills">
+              {STATUS_FILTERS.map((opt) => (
+                <button
+                  key={opt.value || 'all'}
+                  type="button"
+                  className={`rt-tf-btn${filterStatus === opt.value ? ' rt-tf-btn--active' : ''}`}
+                  onClick={() => setFilterStatus(opt.value)}
+                >
+                  {opt.label}
+                  {hasUnreadByStatus[opt.value || 'all'] && <span className="rt-tab-dot" />}
+                </button>
+              ))}
+            </div>
+
+            <div className="rt-date-wrap">
+              <input
+                type="date"
+                className="rt-date-input"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                aria-label="From date"
+              />
+              <span className="rt-date-sep">—</span>
+              <input
+                type="date"
+                className="rt-date-input"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                aria-label="To date"
+              />
+            </div>
+
+            <div className="rt-sort-wrap">
+              <select
+                className="rt-form-select rt-sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                aria-label="Sort by"
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="rt-icon-btn rt-sort-dir-btn"
+                onClick={() => setSortOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+                title={sortOrder === 'desc' ? 'Descending' : 'Ascending'}
+              >
+                <span className={`rt-sort-arrow${sortOrder === 'asc' ? ' rt-sort-arrow--up' : ''}`}>↓</span>
+              </button>
+            </div>
+
+            <div className="rt-toggle-wrap">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={showUnreadOnly}
+                className={`rt-toggle${showUnreadOnly ? ' rt-toggle--active' : ''}`}
+                onClick={() => setShowUnreadOnly((v) => !v)}
+                aria-label="Show unread only"
+              >
+                <span className="rt-toggle-knob" />
+              </button>
+              <span className="rt-toggle-label">Unread Only</span>
+            </div>
+          </div>
+
+          {error && (
+            <div className="rt-error-banner" role="alert">
+              <Warning style={{ fontSize: 18, flexShrink: 0 }} />
+              <div>
+                <strong className="rt-error-title">Error</strong>
+                <p className="rt-error-msg">{error}</p>
+              </div>
+            </div>
+          )}
+
+          {errorStage === 'send' && pendingAttachments.length > 0 && (
+            <div className="rt-retry-banner" role="alert">
+              <Warning style={{ fontSize: 16, flexShrink: 0 }} />
+              <span className="rt-retry-msg">Files uploaded but message failed to send.</span>
+              <div className="rt-retry-actions">
+                <button
+                  type="button"
+                  className="rt-btn rt-btn--primary"
+                  onClick={handleRetryMessage}
+                  disabled={messageSendLoading}
+                >
+                  {messageSendLoading ? 'Retrying…' : 'Retry Send'}
+                </button>
+                <button
+                  type="button"
+                  className="rt-btn rt-btn--ghost"
+                  onClick={() => dispatch(clearPendingAttachments())}
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="rt-card">
+            <div className="rt-card-hd">
+              <div>
+                <h3 className="rt-card-title">
+                  {showUnreadOnly ? 'Unread Returns' : 'All Returns'}
+                </h3>
+                <p className="rt-card-sub">
+                  {returnsLoading || unreadLoading
+                    ? 'Loading…'
+                    : showUnreadOnly
+                      ? `${unreadReturns.length} with unread messages`
+                      : `${totalReturns} total`}
+                </p>
+              </div>
+            </div>
+            <div className="rt-card-body--np">
+              {renderTable()}
+              {renderPagination()}
+            </div>
+          </div>
+
+          {success && successMessage && (
+            <div className="rt-toast-wrap" role="status" aria-live="polite">
+              <div className="rt-toast rt-toast--success">
+                <CheckCircle style={{ fontSize: 18 }} />
+                <div>
+                  <strong>Success</strong>
+                  <p>{successMessage}</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {renderDetailPanel()}
+
+        {showMessageModal && currentReturn && (
+          <ReturnMessagesModal
+            isOpen={showMessageModal}
+            onClose={handleCloseMessageModal}
+            orderId={selectedId}
+            orderInfo={{
+              orderNumber:  currentReturn._id?.toString().slice(-6).toUpperCase() ?? '',
+              customerName: getCustomerName(currentReturn.user),
+            }}
+            messages={messages}
+            loading={messagesLoading}
+            hasMoreMessages={hasMoreMessages}
+            totalMessages={totalMessages}
+            onSendMessage={handleSendMessage}
+            onRefresh={handleModalRefresh}
+            onLoadMore={handleLoadMoreMessages}
+            pendingAttachments={pendingAttachments}
+            errorStage={errorStage}
+            onClearPending={() => dispatch(clearPendingAttachments())}
+            currentUserRole="admin"
+            isSendingExternal={messageSendLoading}
+          />
         )}
       </div>
-
-      {renderDetailPanel()}
-
-      {showMessageModal && currentReturn && (
-        <ReturnMessagesModal
-          isOpen={showMessageModal}
-          onClose={handleCloseMessageModal}
-          orderId={selectedId}
-          orderInfo={{
-            orderNumber:  currentReturn._id?.toString().slice(-6).toUpperCase() ?? '',
-            customerName: getCustomerName(currentReturn.user),
-          }}
-          messages={messages}
-          loading={messagesLoading}
-          hasMoreMessages={hasMoreMessages}
-          totalMessages={totalMessages}
-          onSendMessage={handleSendMessage}
-          onRefresh={handleModalRefresh}
-          onLoadMore={handleLoadMoreMessages}
-          pendingAttachments={pendingAttachments}
-          errorStage={errorStage}
-          onClearPending={() => dispatch(clearPendingAttachments())}
-          currentUserRole="admin"
-          isSendingExternal={messageSendLoading}
-        />
-      )}
-    </div>
-    <Footer />
+      <Footer />
     </>
   );
 };
