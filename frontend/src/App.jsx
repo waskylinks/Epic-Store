@@ -51,6 +51,7 @@ import RecoverCart from './Cart/RecoverCart';
 import RecoveryEmailManager from './Admin/RecoveryEmailManager';
 import MyRefundsReturns from './pages/MyRefundReturns';
 import RefundAnalytics from './Admin/RefundAnalytics';
+import AdminDiscounts from './Admin/AdminDiscounts';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -142,6 +143,9 @@ function App() {
         <Route path='/admin/checkout' element={<ProtectedRoute element={<CheckoutAnalytics />} adminOnly={true} />} />
         <Route path='/admin/recovery-emails' element={<ProtectedRoute element={<RecoveryEmailManager />} adminOnly={true} />} />
         <Route path='/admin/refund-analytics' element={<ProtectedRoute element={<RefundAnalytics />} adminOnly={true} />} />
+        <Route path='/admin/discounts' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
+        <Route path='/admin/discounts/new' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
+        
 
       
       </Routes>

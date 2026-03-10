@@ -11,6 +11,7 @@ import {
   AttachMoney, Menu, Close,
   Warning, CheckCircle,
   Category,
+  LocalOffer,
   ManageAccounts,
   KeyboardArrowRight,
   ReplayCircleFilled,
@@ -75,6 +76,7 @@ const NAV_GROUPS = [
     items: [
       { path: '/admin/products', icon: Inventory,    label: 'Products', color: '#3B82F6' },
       { path: '/admin/orders',   icon: ShoppingCart, label: 'Orders',   color: '#F97316' },
+       { path: '/admin/discounts', icon: LocalOffer,  label: 'Discounts', color: '#e563f1' },
     ],
   },
   { group: 'Management', items: [{ path: '/admin/users', icon: ManageAccounts, label: 'Users', color: '#A855F7' }] },
