@@ -4,10 +4,8 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   getActivePromos,
   getMyDiscounts,
-  validateDiscountCode,
-  clearValidatedDiscount,
   clearUserDiscountError,
-} from '../features/discount/discountSlice';
+} from '../features/discount/userDiscountSlice';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import '../pageStyles/UserDiscounts.css';
@@ -82,10 +80,7 @@ const ExpiryPill = ({ validUntil }) => {
   );
 };
 
-// ── Audience badge ────────────────────────────────────────────────────────────
-// Shown on broadcast (audience:'all') discounts so users understand
-// the code is a sitewide promo and not a personal compensation code.
-// Confirmed design decision: "Available to all" label.
+// ── Audience badge ─────────────────────────────────────────────────────────────
 const AudienceBadge = ({ audience }) => {
   if (audience !== 'all') return null;
   return (
@@ -123,14 +118,12 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
       className={`ud-card${isExpired ? ' ud-card--expired' : ''} ud-card--${urgency}`}
       style={{ animationDelay: `${index * 60}ms` }}
     >
-      {/* Left accent strip */}
       <div
         className="ud-card-strip"
         style={{ background: isExpired ? '#E5E7EB' : meta.bg }}
       />
 
       <div className="ud-card-inner">
-        {/* Top row */}
         <div className="ud-card-top">
           <div className="ud-card-top-left">
             <span
@@ -142,10 +135,7 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
             >
               {meta.label}
             </span>
-
-            {/* Audience badge — broadcast promos only */}
             <AudienceBadge audience={discount.audience} />
-
             {discount.conditions?.firstOrderOnly && (
               <span className="ud-first-order-chip">First order</span>
             )}
@@ -153,18 +143,15 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
           <ExpiryPill validUntil={discount.validUntil} />
         </div>
 
-        {/* Value display */}
         <div className={`ud-value${isExpired ? ' ud-value--expired' : ''}`}>
           <span className="ud-value-amount">{valueDisplay}</span>
           <span className="ud-value-label">off your order</span>
         </div>
 
-        {/* Description */}
         {discount.description && (
           <p className="ud-card-desc">{discount.description}</p>
         )}
 
-        {/* Conditions */}
         {discount.conditions?.minPurchaseAmount > 0 && (
           <p className="ud-card-condition">
             Min. spend {fmtCurrency(discount.conditions.minPurchaseAmount)}
@@ -177,7 +164,6 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
             </p>
           )}
 
-        {/* Code + actions */}
         <div className="ud-card-footer">
           <div className="ud-code-box">
             <span className="ud-code">{discount.code}</span>
@@ -217,7 +203,6 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
           )}
         </div>
 
-        {/* Valid until footer */}
         {!isExpired && discount.validUntil && (
           <p className="ud-valid-until">
             Valid until {fmtDate(discount.validUntil)}
@@ -236,13 +221,13 @@ const SkeletonCard = ({ index }) => (
   >
     <div className="ud-card-strip" style={{ background: '#F3F4F6' }} />
     <div className="ud-card-inner">
-      <div className="ud-skel" style={{ width: 64,   height: 20, marginBottom: 16 }} />
+      <div className="ud-skel" style={{ width: 64,    height: 20, marginBottom: 16 }} />
       <div className="ud-skel" style={{ width: '40%', height: 36, marginBottom: 8  }} />
       <div className="ud-skel" style={{ width: '75%', height: 14, marginBottom: 6  }} />
       <div className="ud-skel" style={{ width: '55%', height: 12, marginBottom: 20 }} />
       <div style={{ display: 'flex', gap: 8 }}>
-        <div className="ud-skel" style={{ flex: 1,    height: 38 }} />
-        <div className="ud-skel" style={{ width: 88,  height: 38 }} />
+        <div className="ud-skel" style={{ flex: 1,   height: 38 }} />
+        <div className="ud-skel" style={{ width: 88, height: 38 }} />
       </div>
     </div>
   </div>
@@ -295,86 +280,77 @@ const UserDiscounts = () => {
   const navigate = useNavigate();
 
   const {
-    myDiscounts,
+    broadcastDiscounts,
+    personalDiscounts,
     activePromos,
-    validatedDiscount,
     myDiscountsLoading,
     promosLoading,
-    validationLoading,
     error,
-    validationError,
-  } = useSelector((state) => state.discount);
+  } = useSelector((state) => state.userDiscount);
 
   const { copiedCode, copy } = useCopy();
 
-  // ── Local state ───────────────────────────────────────────────────────────
   const [activeTab,    setActiveTab]    = useState('personal');
   const [codeInput,    setCodeInput]    = useState('');
   const [inputFocused, setInputFocused] = useState(false);
 
-  // ── Fetch on mount ────────────────────────────────────────────────────────
-  // getMyDiscounts returns audience:'all' + audience:'specific' combined.
-  // It also stamps user.lastSeenDiscountsAt on the server — clearing
-  // the Navbar notification dot automatically via the slice reducer.
+  // Local checker result — searched client-side from already-loaded discounts.
+  // No network call: avoids triggering recordUsage outside of checkout.
+  const [checkerResult, setCheckerResult] = useState(null); // 'found' | 'not-found' | null
+
   useEffect(() => {
     dispatch(getMyDiscounts());
     dispatch(getActivePromos());
     return () => {
-      dispatch(clearValidatedDiscount());
       dispatch(clearUserDiscountError());
     };
   }, [dispatch]);
 
-  // ── Clear validation when input clears ───────────────────────────────────
+  // Reset checker when input clears.
   useEffect(() => {
-    if (!codeInput) {
-      dispatch(clearValidatedDiscount());
-      dispatch(clearUserDiscountError());
-    }
-  }, [codeInput, dispatch]);
+    if (!codeInput) setCheckerResult(null);
+  }, [codeInput]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
-  const handleValidate = useCallback(() => {
+  const allLoaded = useMemo(
+    () => [...broadcastDiscounts, ...personalDiscounts, ...(activePromos ?? [])],
+    [broadcastDiscounts, personalDiscounts, activePromos]
+  );
+
+  const handleCheck = useCallback(() => {
     const trimmed = codeInput.trim().toUpperCase();
     if (!trimmed) return;
-    // orderId not available in this context (user is browsing, not checking out)
-    // cartTotal set to 0.01 as a presence check — real validation happens at checkout
-    dispatch(validateDiscountCode({ code: trimmed, cartTotal: 0.01 }));
-  }, [codeInput, dispatch]);
+    const match = allLoaded.find((d) => d.code === trimmed);
+    setCheckerResult(match ?? 'not-found');
+  }, [codeInput, allLoaded]);
 
   const handleKeyDown = (e) => {
-    if (e.key === 'Enter') handleValidate();
+    if (e.key === 'Enter') handleCheck();
   };
 
   const handleShopNow = useCallback((code) => {
     navigate('/shop', { state: { applyCode: code } });
   }, [navigate]);
 
-  const handleApplyValidated = useCallback(() => {
-    if (validatedDiscount?.code) {
-      navigate('/cart', { state: { applyCode: validatedDiscount.code } });
-    }
-  }, [validatedDiscount, navigate]);
+  const handleApplyFound = useCallback((code) => {
+    navigate('/cart', { state: { applyCode: code } });
+  }, [navigate]);
 
-  // ── Derived ───────────────────────────────────────────────────────────────
-  // myDiscounts is the combined set from the server:
-  //   - audience:'all'      → broadcast seasonal promos
-  //   - audience:'specific' → personal compensation / loyalty codes
-  //
-  // Split into active and expired for the "My Discounts" tab.
-  // The "Current Promos" tab uses activePromos (public endpoint, no auth needed).
+  // ── Derived: split personal discounts into active / expired ───────────────
   const { activePersonal, expiredPersonal } = useMemo(() => {
-    const active = (myDiscounts ?? []).filter(
+    const active  = personalDiscounts.filter(
       (d) => getUrgency(d.validUntil) !== 'expired' && d.status !== 'inactive'
     );
-    const expired = (myDiscounts ?? []).filter(
+    const expired = personalDiscounts.filter(
       (d) => getUrgency(d.validUntil) === 'expired' || d.status === 'inactive'
     );
     return { activePersonal: active, expiredPersonal: expired };
-  }, [myDiscounts]);
+  }, [personalDiscounts]);
 
-  const totalActive =
-    activePersonal.length + (activePromos?.length ?? 0);
+  const totalActive = activePersonal.length + (activePromos?.length ?? 0);
+
+  const checkerIsFound   = checkerResult && checkerResult !== 'not-found';
+  const checkerIsExpired = checkerIsFound && getUrgency(checkerResult.validUntil) === 'expired';
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
@@ -411,10 +387,11 @@ const UserDiscounts = () => {
               <div
                 className={[
                   'ud-checker-input-wrap',
-                  inputFocused    ? 'ud-checker-input-wrap--focused' : '',
-                  validationError ? 'ud-checker-input-wrap--error'   : '',
-                  validatedDiscount && !validationError
-                    ? 'ud-checker-input-wrap--success' : '',
+                  inputFocused  ? 'ud-checker-input-wrap--focused'  : '',
+                  checkerResult === 'not-found'
+                                ? 'ud-checker-input-wrap--error'    : '',
+                  checkerIsFound && !checkerIsExpired
+                                ? 'ud-checker-input-wrap--success'  : '',
                 ].filter(Boolean).join(' ')}
               >
                 <svg className="ud-checker-icon" width="16" height="16"
@@ -428,7 +405,10 @@ const UserDiscounts = () => {
                   className="ud-checker-input"
                   placeholder="Enter code e.g. SAVE20"
                   value={codeInput}
-                  onChange={(e) => setCodeInput(e.target.value.toUpperCase())}
+                  onChange={(e) => {
+                    setCodeInput(e.target.value.toUpperCase());
+                    setCheckerResult(null);
+                  }}
                   onKeyDown={handleKeyDown}
                   onFocus={() => setInputFocused(true)}
                   onBlur={()  => setInputFocused(false)}
@@ -441,8 +421,7 @@ const UserDiscounts = () => {
                     className="ud-checker-clear"
                     onClick={() => {
                       setCodeInput('');
-                      dispatch(clearValidatedDiscount());
-                      dispatch(clearUserDiscountError());
+                      setCheckerResult(null);
                     }}
                     aria-label="Clear"
                   >
@@ -456,18 +435,16 @@ const UserDiscounts = () => {
                 <button
                   type="button"
                   className="ud-checker-btn"
-                  onClick={handleValidate}
-                  disabled={!codeInput.trim() || validationLoading}
+                  onClick={handleCheck}
+                  disabled={!codeInput.trim()}
                   aria-label="Check code"
                 >
-                  {validationLoading
-                    ? <span className="ud-checker-spinner" />
-                    : 'Check'}
+                  Check
                 </button>
               </div>
 
-              {/* Validation result */}
-              {validationError && (
+              {/* Checker result */}
+              {checkerResult === 'not-found' && (
                 <div className="ud-checker-result ud-checker-result--error" role="alert">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -475,10 +452,23 @@ const UserDiscounts = () => {
                     <line x1="12" y1="8"  x2="12" y2="12" />
                     <line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
-                  {validationError}
+                  Code not found in your discounts
                 </div>
               )}
-              {validatedDiscount && !validationError && (
+
+              {checkerIsFound && checkerIsExpired && (
+                <div className="ud-checker-result ud-checker-result--error" role="alert">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8"  x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  This code has expired
+                </div>
+              )}
+
+              {checkerIsFound && !checkerIsExpired && (
                 <div className="ud-checker-result ud-checker-result--success" role="status">
                   <div className="ud-checker-success-row">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
@@ -489,13 +479,13 @@ const UserDiscounts = () => {
                     <div>
                       <span className="ud-checker-success-label">Valid code</span>
                       <span className="ud-checker-success-value">
-                        {validatedDiscount.type === 'percentage'
-                          ? `${validatedDiscount.value}% off`
-                          : `${fmtCurrency(validatedDiscount.value)} off`}
+                        {checkerResult.type === 'percentage'
+                          ? `${checkerResult.value}% off`
+                          : fmtCurrency(checkerResult.value) + ' off'}
                       </span>
-                      {validatedDiscount.description && (
+                      {checkerResult.description && (
                         <span className="ud-checker-success-desc">
-                          {validatedDiscount.description}
+                          {checkerResult.description}
                         </span>
                       )}
                     </div>
@@ -503,7 +493,7 @@ const UserDiscounts = () => {
                   <button
                     type="button"
                     className="ud-checker-apply-btn"
-                    onClick={handleApplyValidated}
+                    onClick={() => handleApplyFound(checkerResult.code)}
                   >
                     Apply to cart →
                   </button>
@@ -582,14 +572,11 @@ const UserDiscounts = () => {
                 <EmptyState type="personal" />
               ) : (
                 <>
-                  {/* Active — broadcast + personal combined */}
                   {activePersonal.length > 0 && (
                     <>
                       <div className="ud-section-hd">
                         <span className="ud-section-title">Ready to use</span>
-                        <span className="ud-section-count">
-                          {activePersonal.length}
-                        </span>
+                        <span className="ud-section-count">{activePersonal.length}</span>
                       </div>
                       <div className="ud-grid">
                         {activePersonal.map((d, i) => (
@@ -606,7 +593,6 @@ const UserDiscounts = () => {
                     </>
                   )}
 
-                  {/* Expired */}
                   {expiredPersonal.length > 0 && (
                     <>
                       <div className="ud-section-hd ud-section-hd--muted">

@@ -5,19 +5,28 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
   getAllDiscounts,
+  getSingleDiscount,
   createDiscount,
   updateDiscount,
   deleteDiscount,
   createCompensationDiscount,
+  createDiscountForUsers,
   getDiscountStats,
   triggerCleanup,
   getAuditLog,
   getDiscountAuditLog,
   getPurgeLog,
   clearAdminDiscountState,
+  clearCurrentDiscount,
   clearDiscountAuditLogs,
+  clearCleanupResult,
+  clearDeleteProtectionError,
+  clearCompensationConflict,
+  clearVipState,
+  dismissPurgeBanner,
   appendDiscounts,
   appendAuditLogs,
+  resetDiscountList,
 } from '../features/admin/adminDiscountSlice';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
@@ -33,14 +42,19 @@ const ACTION_META = {
   used:                 { label: 'Used',           color: '#7C3AED', bg: '#EDE9FE' },
   deactivated:          { label: 'Deactivated',    color: '#DC2626', bg: '#FEE2E2' },
   deactivation_blocked: { label: 'Block Attempt',  color: '#D97706', bg: '#FEF3C7' },
+  // FIX: manual_cleanup was missing — backend action enum includes it
+  manual_cleanup:       { label: 'Manual Cleanup', color: '#D97706', bg: '#FEF3C7' },
   sweep_run:            { label: 'Sweep Run',      color: '#6B7280', bg: '#F3F4F6' },
   sweep_auto_deleted:   { label: 'Auto-Deleted',   color: '#991B1B', bg: '#FEE2E2' },
   sweep_window_expired: { label: 'Window Expired', color: '#6B7280', bg: '#F3F4F6' },
 };
 
 const CATEGORY_OPTIONS = ['promo', 'refund', 'return', 'loyalty', 'affiliate', 'support'];
-const TYPE_OPTIONS     = ['percentage', 'fixed', 'freeShipping', 'buyXgetY'];
+// FIX: removed 'freeShipping' and 'buyXgetY' — not in backend enum (percentage | fixed only)
+const TYPE_OPTIONS     = ['percentage', 'fixed'];
 const STATUS_OPTIONS   = ['active', 'expired', 'inactive'];
+// Status options allowed in the edit form — backend allowedUpdates includes status
+const EDIT_STATUS_OPTIONS = ['active', 'inactive'];
 
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -71,8 +85,12 @@ const StatusBadge = ({ status }) => {
   return <span className={`addisc-badge ${m.cls}`}>{m.label}</span>;
 };
 
-const AudienceBadge = ({ audience }) =>
-  audience === 'all' ? <span className="addisc-audience-badge">All users</span> : null;
+// FIX: AudienceBadge now renders for both audience values so "Specific" is
+// always shown explicitly rather than falling back to scattered inline text
+const AudienceBadge = ({ audience }) => {
+  if (audience === 'all') return <span className="addisc-audience-badge addisc-audience-badge--all">All users</span>;
+  return <span className="addisc-audience-badge addisc-audience-badge--specific">Specific</span>;
+};
 
 const ActionBadge = ({ action }) => {
   const m = ACTION_META[action] ?? { label: action, color: '#6B7280', bg: '#F3F4F6' };
@@ -141,7 +159,7 @@ const AuditEntry = ({ entry, compact = false }) => {
           <span className="addisc-audit-time">{fmtDateTime(entry.performedAt)}</span>
           {hasMeta && (
             <button type="button" className="addisc-audit-expand"
-              onClick={() => setExpanded(!expanded)}
+              onClick={() => setExpanded((v) => !v)}
               aria-label={expanded ? 'Collapse meta' : 'Expand meta'}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
@@ -163,12 +181,12 @@ const AuditEntry = ({ entry, compact = false }) => {
 // CLEANUP CONFIRM MODAL
 // ─────────────────────────────────────────────
 
-const CleanupModal = ({ running, onConfirm, onClose }) => (
-  <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+const CleanupModal = ({ running, result, onConfirm, onClose }) => (
+  <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && !running && onClose()}>
     <div className="addisc-modal addisc-cleanup-modal">
       <div className="addisc-modal-header">
         <h2 className="addisc-modal-title">Run Manual Cleanup</h2>
-        <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
+        <button type="button" className="addisc-modal-close" onClick={onClose} disabled={running} aria-label="Close">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
             stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
             <line x1="18" y1="6" x2="6" y2="18" />
@@ -178,63 +196,84 @@ const CleanupModal = ({ running, onConfirm, onClose }) => (
       </div>
 
       <div className="addisc-cleanup-body">
-        <div className="addisc-cleanup-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <polyline points="1 4 1 10 7 10" />
-            <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
-          </svg>
-        </div>
-        <p className="addisc-cleanup-desc">
-          This will scan all discount codes and apply automated maintenance rules. This action cannot be undone.
-        </p>
-        <ul className="addisc-cleanup-checklist">
-          <li>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            Expire codes whose <strong>validUntil</strong> date has passed
-          </li>
-          <li>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            Delete expired codes outside the 30-day fraud-protection window
-          </li>
-          <li>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            Codes inside the fraud-protection window will <strong>not</strong> be deleted
-          </li>
-        </ul>
-      </div>
-
-      <div className="addisc-cleanup-footer">
-        <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose} disabled={running}>
-          Cancel
-        </button>
-        <button type="button" className="addisc-btn addisc-btn--warning" onClick={onConfirm} disabled={running}>
-          {running ? <><Spinner size={14} /> Running…</> : (
-            <>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+        {/* FIX: show cleanup result inside modal after run completes */}
+        {result ? (
+          <div className="addisc-cleanup-result">
+            <div className="addisc-cleanup-result-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <p className="addisc-cleanup-result-title">Cleanup complete</p>
+            <p className="addisc-cleanup-result-desc">
+              <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} expired &nbsp;·&nbsp;
+              <strong>{result.deleted}</strong> code{result.deleted !== 1 ? 's' : ''} permanently deleted
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="addisc-cleanup-icon">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                 <polyline points="1 4 1 10 7 10" />
                 <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
               </svg>
-              Run cleanup
-            </>
-          )}
+            </div>
+            <p className="addisc-cleanup-desc">
+              This will scan all discount codes and apply automated maintenance rules. This action cannot be undone.
+            </p>
+            <ul className="addisc-cleanup-checklist">
+              <li>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                Expire codes whose <strong>validUntil</strong> date has passed
+              </li>
+              <li>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                Delete expired codes outside the 30-day fraud-protection window
+              </li>
+              <li>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                Codes inside the fraud-protection window will <strong>not</strong> be deleted
+              </li>
+            </ul>
+          </>
+        )}
+      </div>
+
+      <div className="addisc-cleanup-footer">
+        <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose} disabled={running}>
+          {result ? 'Close' : 'Cancel'}
         </button>
+        {!result && (
+          <button type="button" className="addisc-btn addisc-btn--warning" onClick={onConfirm} disabled={running}>
+            {running ? <><Spinner size={14} /> Running…</> : (
+              <>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <polyline points="1 4 1 10 7 10" />
+                  <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
+                </svg>
+                Run cleanup
+              </>
+            )}
+          </button>
+        )}
       </div>
     </div>
   </div>
@@ -242,22 +281,41 @@ const CleanupModal = ({ running, onConfirm, onClose }) => (
 
 // ─────────────────────────────────────────────
 // DETAIL DRAWER
+// FIX: now calls getSingleDiscount to load full populated document
+// (usageHistory, relatedOrder, relatedReturn, createdBy).
+// Shows usageHistoryTotal/usageHistoryCapped from slice.
+// FIX: deleteProtectionError surfaced here with proper message.
 // ─────────────────────────────────────────────
 
-const DetailDrawer = ({ discount, auditLogs, auditLoading, onClose, onEdit, onDelete }) => {
-  const daysLeft = getDaysUntilEligible(discount.deletionEligibleAt);
-  const isLocked = discount.usageLimit?.currentUses >= 1 &&
-                   discount.deletionEligibleAt &&
-                   new Date(discount.deletionEligibleAt) > new Date();
+const DetailDrawer = ({
+  discount,
+  currentDiscount,
+  detailLoading,
+  auditLogs,
+  auditLoading,
+  deleteProtectionError,
+  usageHistoryTotal,
+  usageHistoryCapped,
+  onClose,
+  onEdit,
+  onDelete,
+}) => {
+  // Use the fully populated currentDiscount if loaded, else fall back to list snapshot
+  const d = currentDiscount ?? discount;
+
+  const daysLeft = getDaysUntilEligible(d.deletionEligibleAt);
+  const isLocked = (d.usageLimit?.currentUses ?? 0) >= 1 &&
+                   d.deletionEligibleAt &&
+                   new Date(d.deletionEligibleAt) > new Date();
 
   return (
     <div className="addisc-drawer-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="addisc-drawer">
         <div className="addisc-drawer-header">
           <div className="addisc-drawer-header-left">
-            <span className="addisc-drawer-code">{discount.code}</span>
-            <StatusBadge status={discount.status} />
-            <AudienceBadge audience={discount.audience} />
+            <span className="addisc-drawer-code">{d.code}</span>
+            <StatusBadge status={d.status} />
+            <AudienceBadge audience={d.audience} />
           </div>
           <button type="button" className="addisc-drawer-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -269,52 +327,116 @@ const DetailDrawer = ({ discount, auditLogs, auditLoading, onClose, onEdit, onDe
         </div>
 
         <div className="addisc-drawer-body">
+          {detailLoading && (
+            <div className="addisc-drawer-detail-loading">
+              <Spinner size={16} /><span>Loading full details…</span>
+            </div>
+          )}
+
           <section className="addisc-drawer-section">
             <h4 className="addisc-drawer-section-title">Details</h4>
             <div className="addisc-drawer-grid">
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Type</span>
-                <span className="addisc-drawer-value">{discount.type}</span>
+                <span className="addisc-drawer-value">{d.type}</span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Value</span>
                 <span className="addisc-drawer-value addisc-drawer-value--bold">
-                  {discount.type === 'percentage' ? `${discount.value}%` : fmtCurrency(discount.value)}
+                  {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
                 </span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Category</span>
-                <span className="addisc-drawer-value">{discount.category}</span>
+                <span className="addisc-drawer-value">{d.category}</span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Audience</span>
                 <span className="addisc-drawer-value">
-                  {discount.audience === 'all' ? 'All users (broadcast)' : 'Specific users'}
+                  {d.audience === 'all' ? 'All users (broadcast)' : 'Specific users'}
                 </span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Valid from</span>
-                <span className="addisc-drawer-value">{fmtDate(discount.validFrom)}</span>
+                <span className="addisc-drawer-value">{fmtDate(d.validFrom)}</span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Valid until</span>
-                <span className="addisc-drawer-value">{fmtDate(discount.validUntil)}</span>
+                <span className="addisc-drawer-value">{fmtDate(d.validUntil)}</span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Uses</span>
                 <span className="addisc-drawer-value">
-                  {discount.usageLimit?.currentUses ?? 0}
-                  {discount.usageLimit?.totalUses ? ` / ${discount.usageLimit.totalUses}` : ' / ∞'}
+                  {d.usageLimit?.currentUses ?? 0}
+                  {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ' / ∞'}
                 </span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Per user</span>
-                <span className="addisc-drawer-value">{discount.usageLimit?.usesPerUser ?? '∞'}</span>
+                <span className="addisc-drawer-value">{d.usageLimit?.usesPerUser ?? '∞'}</span>
               </div>
+              {d.createdBy && (
+                <div className="addisc-drawer-field">
+                  <span className="addisc-drawer-label">Created by</span>
+                  <span className="addisc-drawer-value">
+                    {d.createdBy.firstName
+                      ? `${d.createdBy.firstName} ${d.createdBy.lastName ?? ''}`.trim()
+                      : d.createdBy.email ?? '—'}
+                  </span>
+                </div>
+              )}
+              {d.relatedOrder && (
+                <div className="addisc-drawer-field">
+                  <span className="addisc-drawer-label">Related order</span>
+                  <span className="addisc-drawer-value">{d.relatedOrder.orderNumber ?? d.relatedOrder}</span>
+                </div>
+              )}
             </div>
-            {discount.description && <p className="addisc-drawer-desc">{discount.description}</p>}
-            {discount.notes && <p className="addisc-drawer-notes">📝 {discount.notes}</p>}
+            {d.description && <p className="addisc-drawer-desc">{d.description}</p>}
+            {d.notes && <p className="addisc-drawer-notes">📝 {d.notes}</p>}
           </section>
+
+          {/* FIX: usage history with capped indicator from slice */}
+          {d.usageHistory?.length > 0 && (
+            <section className="addisc-drawer-section">
+              <h4 className="addisc-drawer-section-title">
+                Usage history
+                {usageHistoryCapped && usageHistoryTotal && (
+                  <span className="addisc-drawer-section-hint">
+                    Showing last {d.usageHistory.length} of {usageHistoryTotal}
+                  </span>
+                )}
+              </h4>
+              <div className="addisc-usage-list">
+                {d.usageHistory.slice(-10).map((entry, i) => (
+                  <div key={entry._id ?? i} className="addisc-usage-entry">
+                    <span className="addisc-usage-user">
+                      {entry.user?.firstName
+                        ? `${entry.user.firstName} ${entry.user.lastName ?? ''}`.trim()
+                        : 'Guest'}
+                    </span>
+                    <span className="addisc-usage-amount">{fmtCurrency(entry.discountAmount)}</span>
+                    <span className="addisc-usage-date">{fmtDate(entry.usedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* FIX: deleteProtectionError surfaced here */}
+          {deleteProtectionError && (
+            <section className="addisc-drawer-section">
+              <div className="addisc-modal-error" role="alert">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                {deleteProtectionError.message}
+              </div>
+            </section>
+          )}
 
           {isLocked ? (
             <section className="addisc-drawer-section addisc-drawer-section--locked">
@@ -323,21 +445,21 @@ const DetailDrawer = ({ discount, auditLogs, auditLoading, onClose, onEdit, onDe
                 <div>
                   <p className="addisc-lock-banner-title">Fraud protection active</p>
                   <p className="addisc-lock-banner-desc">
-                    This discount was used on {fmtDate(discount.lockedAt)}.
+                    This discount was used on {fmtDate(d.lockedAt)}.
                     Deactivation is locked for 30 days to protect the audit trail.
-                    Eligible for deactivation on <strong>{fmtDate(discount.deletionEligibleAt)}</strong>
+                    Eligible for deactivation on <strong>{fmtDate(d.deletionEligibleAt)}</strong>
                     {daysLeft !== null && ` (${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining)`}.
                   </p>
                 </div>
               </div>
             </section>
-          ) : discount.lockedAt ? (
+          ) : d.lockedAt ? (
             <section className="addisc-drawer-section">
               <div className="addisc-lock-banner addisc-lock-banner--cleared">
                 <div>
                   <p className="addisc-lock-banner-title">Protection window passed</p>
                   <p className="addisc-lock-banner-desc">
-                    First used {fmtDate(discount.lockedAt)}. Protection window ended {fmtDate(discount.deletionEligibleAt)}.
+                    First used {fmtDate(d.lockedAt)}. Protection window ended {fmtDate(d.deletionEligibleAt)}.
                   </p>
                 </div>
               </div>
@@ -366,17 +488,17 @@ const DetailDrawer = ({ discount, auditLogs, auditLoading, onClose, onEdit, onDe
         </div>
 
         <div className="addisc-drawer-footer">
-          <button type="button" className="addisc-btn addisc-btn--outline" onClick={() => onEdit(discount)}>
+          <button type="button" className="addisc-btn addisc-btn--outline" onClick={() => onEdit(d)}>
             Edit
           </button>
           <button
             type="button"
             className={`addisc-btn ${isLocked ? 'addisc-btn--locked' : 'addisc-btn--danger'}`}
-            onClick={() => !isLocked && onDelete(discount)}
+            onClick={() => !isLocked && onDelete(d)}
             disabled={isLocked}
-            title={isLocked ? `Protected until ${fmtDate(discount.deletionEligibleAt)}` : 'Deactivate discount'}>
+            title={isLocked ? `Protected until ${fmtDate(d.deletionEligibleAt)}` : 'Deactivate discount'}>
             {isLocked ? (
-              <><LockIcon /> Protected until {fmtDate(discount.deletionEligibleAt)}</>
+              <><LockIcon /> Protected until {fmtDate(d.deletionEligibleAt)}</>
             ) : 'Deactivate'}
           </button>
         </div>
@@ -387,6 +509,8 @@ const DetailDrawer = ({ discount, auditLogs, auditLoading, onClose, onEdit, onDe
 
 // ─────────────────────────────────────────────
 // CREATE / EDIT MODAL
+// FIX: status field added to edit form (backend allowedUpdates includes it)
+// FIX: TYPE_OPTIONS restricted to backend enum values only
 // ─────────────────────────────────────────────
 
 const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit, onClose }) => {
@@ -397,6 +521,7 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
     value:       initial.value       ?? '',
     category:    initial.category    ?? 'promo',
     audience:    initial.audience    ?? 'specific',
+    status:      initial.status      ?? 'active',
     validFrom:   initial.validFrom   ? initial.validFrom.slice(0, 10) : '',
     validUntil:  initial.validUntil  ? initial.validUntil.slice(0, 10) : '',
     usageLimit:  initial.usageLimit  ?? { totalUses: '', usesPerUser: 1 },
@@ -435,7 +560,7 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           )}
 
-          {/* Audience toggle */}
+          {/* Audience toggle — disabled in edit mode, audience is immutable */}
           <div className="addisc-form-field">
             <label className="addisc-form-label">Audience</label>
             <div className="addisc-audience-toggle">
@@ -510,6 +635,21 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
                 {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
+            {/* FIX: status field in edit form — backend allowedUpdates includes status */}
+            {mode === 'edit' && (
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-status">Status</label>
+                <select id="addisc-status" className="addisc-form-select" value={form.status}
+                  onChange={(e) => set('status', e.target.value)}>
+                  {EDIT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                {form.status === 'active' && (
+                  <p className="addisc-form-hint addisc-form-hint--warn">
+                    Reactivating requires a future validUntil date.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="addisc-form-field">
@@ -569,9 +709,10 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
 
 // ─────────────────────────────────────────────
 // COMPENSATION MODAL
+// FIX: compensationConflict surfaced with dedicated conflict UI
 // ─────────────────────────────────────────────
 
-const CompensationModal = ({ loading, error, onSubmit, onClose }) => {
+const CompensationModal = ({ loading, error, compensationConflict, onViewExisting, onSubmit, onClose }) => {
   const [form, setForm] = useState({
     userId: '', amount: '', reason: '', category: 'refund',
     validDays: 30, relatedOrder: '', relatedReturn: '',
@@ -592,7 +733,31 @@ const CompensationModal = ({ loading, error, onSubmit, onClose }) => {
           </button>
         </div>
         <form className="addisc-modal-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}>
-          {error && (
+          {/* FIX: show 409 conflict as a distinct UI block with action button */}
+          {compensationConflict ? (
+            <div className="addisc-modal-conflict" role="alert">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <div>
+                <p>{compensationConflict.message}</p>
+                {compensationConflict.existingCode && (
+                  <p className="addisc-conflict-code">
+                    Existing code: <strong>{compensationConflict.existingCode}</strong>
+                  </p>
+                )}
+                {compensationConflict.existingDiscountId && (
+                  <button type="button" className="addisc-conflict-view-btn"
+                    onClick={() => onViewExisting(compensationConflict.existingDiscountId)}>
+                    View existing discount →
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : error ? (
             <div className="addisc-modal-error" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -602,7 +767,8 @@ const CompensationModal = ({ loading, error, onSubmit, onClose }) => {
               </svg>
               {error}
             </div>
-          )}
+          ) : null}
+
           <div className="addisc-form-field">
             <label className="addisc-form-label" htmlFor="comp-userId">User ID</label>
             <input id="comp-userId" className="addisc-form-input" type="text"
@@ -668,6 +834,239 @@ const CompensationModal = ({ loading, error, onSubmit, onClose }) => {
 };
 
 // ─────────────────────────────────────────────
+// VIP DISCOUNT MODAL
+// FIX: entirely new — createDiscountForUsers thunk was never surfaced
+// Supports userIds array, emails array, percentage + fixed types,
+// validUntil or validDays, usesPerUser, totalUses, minPurchaseAmount
+// ─────────────────────────────────────────────
+
+const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipEligibleCount, onSubmit, onClose }) => {
+  const [form, setForm] = useState({
+    userIdsRaw:       '',   // newline-separated raw input → split to array on submit
+    emailsRaw:        '',   // newline-separated raw input → split to array on submit
+    description:      '',
+    type:             'percentage',
+    value:            '',
+    category:         'loyalty',
+    validDays:        30,
+    validUntil:       '',
+    usesPerUser:      1,
+    totalUses:        '',
+    minPurchaseAmount: 0,
+    firstOrderOnly:   false,
+    code:             '',   // optional custom code; auto-generated if blank
+    notes:            '',
+  });
+
+  const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const userIds = form.userIdsRaw.split('\n').map((s) => s.trim()).filter(Boolean);
+    const emails  = form.emailsRaw.split('\n').map((s) => s.trim()).filter(Boolean);
+    const payload = {
+      description:       form.description,
+      type:              form.type,
+      value:             form.value,
+      category:          form.category,
+      usesPerUser:       form.usesPerUser,
+      minPurchaseAmount: form.minPurchaseAmount,
+      firstOrderOnly:    form.firstOrderOnly,
+      notes:             form.notes || undefined,
+      code:              form.code || undefined,
+    };
+    if (userIds.length) payload.userIds = userIds;
+    if (emails.length)  payload.emails  = emails;
+    // validUntil takes precedence over validDays
+    if (form.validUntil) {
+      payload.validUntil = form.validUntil;
+    } else {
+      payload.validDays = form.validDays;
+    }
+    if (form.totalUses) payload.totalUses = form.totalUses;
+    onSubmit(payload);
+  };
+
+  if (vipSuccess && lastCreatedVipDiscount) {
+    return (
+      <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+        <div className="addisc-modal">
+          <div className="addisc-modal-header">
+            <h2 className="addisc-modal-title">VIP Discount Created</h2>
+            <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+          <div className="addisc-vip-success">
+            <div className="addisc-vip-success-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            </div>
+            <p className="addisc-vip-success-code">{lastCreatedVipDiscount.code}</p>
+            <p className="addisc-vip-success-desc">
+              Issued to <strong>{lastVipEligibleCount}</strong> user{lastVipEligibleCount !== 1 ? 's' : ''}.
+              Valid until {fmtDate(lastCreatedVipDiscount.validUntil)}.
+            </p>
+          </div>
+          <div className="addisc-modal-footer">
+            <button type="button" className="addisc-btn addisc-btn--primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="addisc-modal">
+        <div className="addisc-modal-header">
+          <h2 className="addisc-modal-title">Create VIP / Targeted Discount</h2>
+          <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <form className="addisc-modal-form" onSubmit={handleSubmit}>
+          {error && (
+            <div className="addisc-modal-error" role="alert">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              {error}
+            </div>
+          )}
+
+          <div className="addisc-form-field">
+            <label className="addisc-form-label" htmlFor="vip-userIds">
+              User IDs
+              <span className="addisc-form-label-hint"> — one per line</span>
+            </label>
+            <textarea id="vip-userIds" className="addisc-form-textarea" rows={3}
+              placeholder={'6659e3a...abc\n6659e3b...def'}
+              value={form.userIdsRaw} onChange={(e) => set('userIdsRaw', e.target.value)} />
+          </div>
+
+          <div className="addisc-form-field">
+            <label className="addisc-form-label" htmlFor="vip-emails">
+              Emails
+              <span className="addisc-form-label-hint"> — one per line (resolved to user IDs server-side)</span>
+            </label>
+            <textarea id="vip-emails" className="addisc-form-textarea" rows={3}
+              placeholder={'user@example.com\nanother@example.com'}
+              value={form.emailsRaw} onChange={(e) => set('emailsRaw', e.target.value)} />
+          </div>
+
+          <div className="addisc-form-field">
+            <label className="addisc-form-label" htmlFor="vip-desc">Description</label>
+            <textarea id="vip-desc" className="addisc-form-textarea" rows={2}
+              placeholder="What is this VIP discount for?"
+              value={form.description} onChange={(e) => set('description', e.target.value)} required />
+          </div>
+
+          <div className="addisc-form-row">
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-type">Type</label>
+              <select id="vip-type" className="addisc-form-select" value={form.type}
+                onChange={(e) => set('type', e.target.value)}>
+                {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-value">Value</label>
+              <input id="vip-value" className="addisc-form-input" type="number" min="0.01" step="0.01"
+                placeholder={form.type === 'percentage' ? '20' : '10.00'}
+                value={form.value} onChange={(e) => set('value', e.target.value)} required />
+            </div>
+          </div>
+
+          <div className="addisc-form-row">
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-category">Category</label>
+              <select id="vip-category" className="addisc-form-select" value={form.category}
+                onChange={(e) => set('category', e.target.value)}>
+                {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-usesPerUser">Uses per user</label>
+              <input id="vip-usesPerUser" className="addisc-form-input" type="number" min="1"
+                value={form.usesPerUser} onChange={(e) => set('usesPerUser', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="addisc-form-row">
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-validDays">
+                Valid for (days)
+                <span className="addisc-form-label-hint"> — ignored if validUntil set</span>
+              </label>
+              <input id="vip-validDays" className="addisc-form-input" type="number" min="1" max="365"
+                value={form.validDays} onChange={(e) => set('validDays', e.target.value)} />
+            </div>
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-validUntil">Valid until (optional)</label>
+              <input id="vip-validUntil" className="addisc-form-input" type="date"
+                value={form.validUntil} onChange={(e) => set('validUntil', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="addisc-form-row">
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-totalUses">Total uses cap</label>
+              <input id="vip-totalUses" className="addisc-form-input" type="number" min="1"
+                placeholder="∞ unlimited"
+                value={form.totalUses} onChange={(e) => set('totalUses', e.target.value)} />
+            </div>
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="vip-minPurchase">Min purchase ($)</label>
+              <input id="vip-minPurchase" className="addisc-form-input" type="number" min="0" step="0.01"
+                value={form.minPurchaseAmount} onChange={(e) => set('minPurchaseAmount', e.target.value)} />
+            </div>
+          </div>
+
+          <div className="addisc-form-field">
+            <label className="addisc-form-label" htmlFor="vip-code">
+              Custom code
+              <span className="addisc-form-label-hint"> — auto-generated if blank</span>
+            </label>
+            <input id="vip-code" className="addisc-form-input" type="text"
+              placeholder="e.g. LOYALTY-VIP-GOLD"
+              value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())} />
+          </div>
+
+          <div className="addisc-form-field">
+            <label className="addisc-form-label addisc-form-label--checkbox">
+              <input type="checkbox" checked={form.firstOrderOnly}
+                onChange={(e) => set('firstOrderOnly', e.target.checked)} />
+              First order only
+            </label>
+          </div>
+
+          <div className="addisc-modal-footer">
+            <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="addisc-btn addisc-btn--primary" disabled={loading}>
+              {loading ? <Spinner size={15} /> : 'Create VIP discount'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
 // PURGE BANNER
 // ─────────────────────────────────────────────
 
@@ -708,23 +1107,43 @@ const AdminDiscounts = () => {
   const dispatch = useDispatch();
 
   const {
-    discounts, pagination,
-    stats, categoryStats,
-    auditLogs, auditPagination,
-    discountAuditLogs, discountAuditLoading,
-    purgeLog, latestPurge, showBanner,
-    discountsLoading, actionLoading, statsLoading,
+    discounts,
+    pagination,
+    currentDiscount,
+    stats,
+    categoryStats,
+    auditLogs,
+    auditPagination,
+    discountAuditLogs,
+    discountAuditLoading,
+    purgeLog,
+    latestPurge,
+    showBanner,
+    discountsLoading,
+    detailLoading,
+    actionLoading,
+    statsLoading,
     auditLoading,
     error,
+    deleteProtectionError,
+    compensationConflict,
+    cleanupResult,
+    usageHistoryTotal,
+    usageHistoryCapped,
+    vipLoading,
+    vipError,
+    vipSuccess,
+    lastCreatedVipDiscount,
+    lastVipEligibleCount,
   } = useSelector((state) => state.adminDiscount);
 
   const [activeTab,        setActiveTab]        = useState('codes');
   const [drawerDiscount,   setDrawerDiscount]   = useState(null);
-  const [modalMode,        setModalMode]        = useState(null);
+  const [modalMode,        setModalMode]        = useState(null);   // 'create' | 'edit' | null
   const [editTarget,       setEditTarget]       = useState(null);
-  const [bannerDismissed,  setBannerDismissed]  = useState(false);
   const [toast,            setToast]            = useState(null);
   const [showCompModal,    setShowCompModal]    = useState(false);
+  const [showVipModal,     setShowVipModal]     = useState(false);
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [cleanupRunning,   setCleanupRunning]   = useState(false);
   const [codesFilters,     setCodesFilters]     = useState({ status: '', category: '', type: '', search: '' });
@@ -735,29 +1154,52 @@ const AdminDiscounts = () => {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
+  // Initial data load
   useEffect(() => {
     dispatch(getAllDiscounts({}));
     dispatch(getDiscountStats());
   }, [dispatch]);
 
-  const auditFetchedRef = useRef(false);
+  // FIX: audit tab fetch — auditFetchedRef removed.
+  // Re-fetch when returning to the audit tab so filters applied
+  // in a previous visit are honoured and stale data is not shown.
+  // getPurgeLog only fetched once since it is permanent/append-only.
+  const purgeFetchedRef = useRef(false);
   useEffect(() => {
-    if (activeTab === 'audit' && !auditFetchedRef.current) {
-      auditFetchedRef.current = true;
-      dispatch(getAuditLog({}));
-      dispatch(getPurgeLog());
+    if (activeTab === 'audit') {
+      const params = {};
+      Object.entries(auditFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+      dispatch(getAuditLog(params));
+      if (!purgeFetchedRef.current) {
+        purgeFetchedRef.current = true;
+        dispatch(getPurgeLog());
+      }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, dispatch]);
+
+  // FIX: stats tab — refetch when stats were nulled by a mutation
+  useEffect(() => {
+    if (activeTab === 'stats' && stats === null && !statsLoading) {
+      dispatch(getDiscountStats());
+    }
+  }, [activeTab, stats, statsLoading, dispatch]);
 
   const openDrawer = useCallback((discount) => {
     setDrawerDiscount(discount);
     dispatch(clearDiscountAuditLogs());
+    dispatch(clearCurrentDiscount());
+    dispatch(clearDeleteProtectionError());
+    // FIX: fetch full populated document — list items are partial
+    dispatch(getSingleDiscount(discount._id));
     dispatch(getDiscountAuditLog(discount._id));
   }, [dispatch]);
 
   const closeDrawer = useCallback(() => {
     setDrawerDiscount(null);
     dispatch(clearDiscountAuditLogs());
+    dispatch(clearCurrentDiscount());
+    dispatch(clearDeleteProtectionError());
   }, [dispatch]);
 
   const handleEdit = useCallback((discount) => {
@@ -775,48 +1217,103 @@ const AdminDiscounts = () => {
         showToast('Discount deactivated.');
       })
       .catch((err) => {
-        dispatch(clearAdminDiscountState());
-        showToast(typeof err === 'string' ? err : err?.message ?? 'Failed.', 'error');
+        // FIX: deleteProtectionError is now shown inside the drawer
+        // via the slice state — only show toast for non-403 errors
+        if (err?.status !== 403) {
+          showToast(typeof err === 'string' ? err : err?.message ?? 'Failed.', 'error');
+          dispatch(clearAdminDiscountState());
+        }
+        // 403: leave drawer open so user sees the protection error banner
       });
   }, [dispatch, closeDrawer, showToast]);
 
   const handleModalSubmit = useCallback((formData) => {
     if (modalMode === 'create') {
       dispatch(createDiscount(formData)).unwrap()
-        .then(() => { setModalMode(null); dispatch(clearAdminDiscountState()); showToast('Discount created.'); })
-        .catch(() => {});
+        .then(() => {
+          setModalMode(null);
+          dispatch(clearAdminDiscountState());
+          showToast('Discount created.');
+        })
+        .catch(() => {
+          // error shown inside modal via slice error state
+        });
     } else {
       dispatch(updateDiscount({ id: editTarget._id, discountData: formData })).unwrap()
-        .then(() => { setModalMode(null); setEditTarget(null); dispatch(clearAdminDiscountState()); showToast('Discount updated.'); })
-        .catch(() => {});
+        .then(() => {
+          setModalMode(null);
+          setEditTarget(null);
+          dispatch(clearAdminDiscountState());
+          showToast('Discount updated.');
+        })
+        .catch(() => {
+          // error shown inside modal via slice error state
+        });
     }
   }, [dispatch, modalMode, editTarget, showToast]);
 
   const handleCompensationSubmit = useCallback((formData) => {
     dispatch(createCompensationDiscount(formData)).unwrap()
-      .then(() => { setShowCompModal(false); dispatch(clearAdminDiscountState()); showToast('Compensation discount created.'); })
-      .catch(() => {});
+      .then(() => {
+        setShowCompModal(false);
+        dispatch(clearAdminDiscountState());
+        dispatch(clearCompensationConflict());
+        showToast('Compensation discount created.');
+      })
+      .catch(() => {
+        // error / conflict shown inside modal via slice state
+      });
   }, [dispatch, showToast]);
 
-  // Cleanup — now uses modal instead of window.confirm
+  // FIX: view existing discount from compensation conflict — opens drawer
+  const handleViewExistingFromConflict = useCallback((discountId) => {
+    setShowCompModal(false);
+    dispatch(clearCompensationConflict());
+    dispatch(clearAdminDiscountState());
+    // Find in current list or fetch by id
+    const existing = discounts.find((d) => d._id === discountId);
+    if (existing) {
+      openDrawer(existing);
+    } else {
+      dispatch(getSingleDiscount(discountId)).unwrap()
+        .then((data) => {
+          if (data.discount) setDrawerDiscount(data.discount);
+        })
+        .catch(() => {});
+    }
+  }, [dispatch, discounts, openDrawer]);
+
+  const handleVipSubmit = useCallback((payload) => {
+    dispatch(createDiscountForUsers(payload));
+    // success state handled by vipSuccess in slice — modal reacts directly
+  }, [dispatch]);
+
   const handleCleanupConfirm = useCallback(() => {
     setCleanupRunning(true);
     dispatch(triggerCleanup({})).unwrap()
-      .then((data) => {
-        dispatch(clearAdminDiscountState());
-        setShowCleanupModal(false);
-        showToast(`Cleanup done — ${data.expired} expired, ${data.deleted} deleted.`);
+      .then(() => {
+        // FIX: result shown inside modal via cleanupResult slice state
+        // No toast here — modal shows the result in-place
       })
       .catch((err) => {
         dispatch(clearAdminDiscountState());
         showToast(typeof err === 'string' ? err : err?.message ?? 'Cleanup failed.', 'error');
+        setShowCleanupModal(false);
       })
       .finally(() => setCleanupRunning(false));
   }, [dispatch, showToast]);
 
+  const handleCleanupModalClose = useCallback(() => {
+    if (cleanupRunning) return;
+    setShowCleanupModal(false);
+    dispatch(clearCleanupResult());
+  }, [cleanupRunning, dispatch]);
+
   const applyCodesFilters = useCallback(() => {
     const params = {};
     Object.entries(codesFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+    // FIX: reset list before fresh filter fetch so Load More doesn't show stale cursor
+    dispatch(resetDiscountList());
     dispatch(getAllDiscounts(params));
   }, [dispatch, codesFilters]);
 
@@ -824,7 +1321,9 @@ const AdminDiscounts = () => {
     if (!pagination?.nextCursor) return;
     const params = { cursor: pagination.nextCursor };
     Object.entries(codesFilters).forEach(([k, v]) => { if (v) params[k] = v; });
-    dispatch(getAllDiscounts(params)).unwrap().then((data) => dispatch(appendDiscounts(data)));
+    dispatch(getAllDiscounts(params)).unwrap()
+      .then((data) => dispatch(appendDiscounts(data)))
+      .catch(() => {});
   }, [dispatch, pagination, codesFilters]);
 
   const applyAuditFilters = useCallback(() => {
@@ -837,9 +1336,12 @@ const AdminDiscounts = () => {
     if (!auditPagination?.nextCursor) return;
     const params = { cursor: auditPagination.nextCursor };
     Object.entries(auditFilters).forEach(([k, v]) => { if (v) params[k] = v; });
-    dispatch(getAuditLog(params)).unwrap().then((data) => dispatch(appendAuditLogs(data)));
+    dispatch(getAuditLog(params)).unwrap()
+      .then((data) => dispatch(appendAuditLogs(data)))
+      .catch(() => {});
   }, [dispatch, auditPagination, auditFilters]);
 
+  // FIX: broadcastCount derived from discounts list — uses audience:'all' correctly
   const broadcastCount = useMemo(
     () => discounts.filter((d) => d.audience === 'all' && d.status === 'active').length,
     [discounts],
@@ -917,6 +1419,15 @@ const AdminDiscounts = () => {
                 </svg>
                 Compensation
               </button>
+              {/* FIX: VIP button added */}
+              <button type="button" className="addisc-btn addisc-btn--outline"
+                onClick={() => setShowVipModal(true)}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                </svg>
+                VIP discount
+              </button>
               <button type="button" className="addisc-btn addisc-btn--primary"
                 onClick={() => setModalMode('create')}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -935,7 +1446,7 @@ const AdminDiscounts = () => {
             <span className="addisc-section-divider-line" />
           </div>
 
-          {/* KPI Grid */}
+          {/* KPI Grid — FIX: removed dead kpi.accent condition */}
           <div className="addisc-kpi-grid">
             {[
               { label: 'Total codes',      value: stats?.total     ?? 0, color: '#6366F1' },
@@ -947,7 +1458,7 @@ const AdminDiscounts = () => {
             ].map((kpi) => (
               <div
                 key={kpi.label}
-                className={`addisc-kpi${kpi.accent ? ' addisc-kpi--accent' : ''}`}
+                className="addisc-kpi"
                 style={{ '--addisc-kpi-color': kpi.color }}
               >
                 <span className="addisc-kpi-label">{kpi.label}</span>
@@ -1037,7 +1548,7 @@ const AdminDiscounts = () => {
                         </thead>
                         <tbody>
                           {discounts.map((d) => {
-                            const locked = d.usageLimit?.currentUses >= 1 &&
+                            const locked = (d.usageLimit?.currentUses ?? 0) >= 1 &&
                               d.deletionEligibleAt &&
                               new Date(d.deletionEligibleAt) > new Date();
                             return (
@@ -1059,7 +1570,6 @@ const AdminDiscounts = () => {
                                 <td>{d.category}</td>
                                 <td>
                                   <AudienceBadge audience={d.audience} />
-                                  {d.audience !== 'all' && <span className="addisc-specific-label">Specific</span>}
                                 </td>
                                 <td>
                                   {d.usageLimit?.currentUses ?? 0}
@@ -1125,7 +1635,7 @@ const AdminDiscounts = () => {
                     <span className="addisc-section-divider-text">By category</span>
                     <span className="addisc-section-divider-line" />
                   </div>
-                  {categoryStats?.length > 0 && (
+                  {categoryStats?.length > 0 ? (
                     <div className="addisc-table-wrap">
                       <div className="addisc-tbl-scroll">
                         <table className="addisc-table">
@@ -1152,6 +1662,12 @@ const AdminDiscounts = () => {
                         </table>
                       </div>
                     </div>
+                  ) : (
+                    <EmptyState
+                      icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>}
+                      title="No analytics data yet"
+                      desc="Stats will appear once discount codes are created."
+                    />
                   )}
                 </>
               )}
@@ -1161,8 +1677,12 @@ const AdminDiscounts = () => {
           {/* ════ TAB: AUDIT LOG ════ */}
           {activeTab === 'audit' && (
             <div className="addisc-tab-panel">
-              {showBanner && !bannerDismissed && (
-                <PurgeBanner purge={latestPurge} onDismiss={() => setBannerDismissed(true)} />
+              {/* FIX: dismiss now dispatches dismissPurgeBanner to redux — survives remount */}
+              {showBanner && (
+                <PurgeBanner
+                  purge={latestPurge}
+                  onDismiss={() => dispatch(dismissPurgeBanner())}
+                />
               )}
 
               <div className="addisc-filter-bar">
@@ -1243,7 +1763,8 @@ const AdminDiscounts = () => {
                               <td>{fmtDateTime(receipt.purgedAt)}</td>
                               <td>
                                 {receipt.actualDeletedCount ?? receipt.recordCount}
-                                {receipt.actualDeletedCount !== receipt.recordCount && (
+                                {receipt.actualDeletedCount != null &&
+                                 receipt.actualDeletedCount !== receipt.recordCount && (
                                   <span className="addisc-purge-anomaly" title="Count mismatch — check notes">⚠</span>
                                 )}
                               </td>
@@ -1264,13 +1785,18 @@ const AdminDiscounts = () => {
         </div>{/* /addisc-body */}
       </div>{/* /addisc-page */}
 
-      {/* ── Overlays — outside addisc-page so they stack correctly ── */}
+      {/* ── Overlays ── */}
 
       {drawerDiscount && (
         <DetailDrawer
           discount={drawerDiscount}
+          currentDiscount={currentDiscount}
+          detailLoading={detailLoading}
           auditLogs={discountAuditLogs}
           auditLoading={discountAuditLoading}
+          deleteProtectionError={deleteProtectionError}
+          usageHistoryTotal={usageHistoryTotal}
+          usageHistoryCapped={usageHistoryCapped}
           onClose={closeDrawer}
           onEdit={handleEdit}
           onDelete={handleDelete}
@@ -1280,16 +1806,39 @@ const AdminDiscounts = () => {
       {showCleanupModal && (
         <CleanupModal
           running={cleanupRunning}
+          result={cleanupResult}
           onConfirm={handleCleanupConfirm}
-          onClose={() => !cleanupRunning && setShowCleanupModal(false)}
+          onClose={handleCleanupModalClose}
         />
       )}
 
       {showCompModal && (
         <CompensationModal
-          loading={actionLoading} error={error}
+          loading={actionLoading}
+          error={error}
+          compensationConflict={compensationConflict}
+          onViewExisting={handleViewExistingFromConflict}
           onSubmit={handleCompensationSubmit}
-          onClose={() => { setShowCompModal(false); dispatch(clearAdminDiscountState()); }}
+          onClose={() => {
+            setShowCompModal(false);
+            dispatch(clearAdminDiscountState());
+            dispatch(clearCompensationConflict());
+          }}
+        />
+      )}
+
+      {showVipModal && (
+        <VipModal
+          loading={vipLoading}
+          error={vipError}
+          vipSuccess={vipSuccess}
+          lastCreatedVipDiscount={lastCreatedVipDiscount}
+          lastVipEligibleCount={lastVipEligibleCount}
+          onSubmit={handleVipSubmit}
+          onClose={() => {
+            setShowVipModal(false);
+            dispatch(clearVipState());
+          }}
         />
       )}
 
@@ -1297,9 +1846,14 @@ const AdminDiscounts = () => {
         <DiscountModal
           mode={modalMode}
           initial={modalMode === 'edit' ? editTarget : {}}
-          loading={actionLoading} error={error}
+          loading={actionLoading}
+          error={error}
           onSubmit={handleModalSubmit}
-          onClose={() => { setModalMode(null); setEditTarget(null); dispatch(clearAdminDiscountState()); }}
+          onClose={() => {
+            setModalMode(null);
+            setEditTarget(null);
+            dispatch(clearAdminDiscountState());
+          }}
         />
       )}
 

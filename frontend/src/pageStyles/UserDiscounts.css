@@ -1,112 +1,78 @@
-@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-
 /* ================================================================
    USER DISCOUNTS — UserDiscounts.css
-   Unified with Navbar.css token system (nb- variables)
-
-   Design direction: Same product skin as the Navbar.
-   ─ Font:       Plus Jakarta Sans (matches Navbar exactly)
-   ─ Accent:     #ff3c3c coral (single brand accent, matches Navbar)
-   ─ Background: #F9FAFB surface (matches Navbar --nb-surface)
-   ─ Borders:    #D1D5DB (matches Navbar --nb-border)
-   ─ Shadows:    same shadow tokens as Navbar
-   ─ Radius:     12px / 8px / 6px (matches Navbar --nb-radius scale)
-   ─ Hero dark:  #111827 (Navbar's --nb-text — intentional callback)
-   ─ Amber:      retained ONLY for expiry/promo badge secondary tints,
-                 NOT as a primary accent
-
    Prefix: ud-  |  Fully responsive  |  Scoped reset
-   ================================================================
 
-   TABLE OF CONTENTS
-   ────────────────────────────────────────────────────────────────
-    1.  Design Tokens (mirrors nb- variables)
-    2.  Scoped Reset
-    3.  Page Shell
-    4.  Hero Band
-    5.  Code Checker
-         5a. Input Wrap & States
-         5b. Buttons & Spinner
-         5c. Validation Result
-    6.  Body Container
-    7.  Alert
-    8.  Tabs
-    9.  Section Headings
-   10.  Card Grid
-   11.  Discount Card
-         11a. Urgency / State Variants
-         11b. Card Strip & Inner
-         11c. Top Row — chips, audience badge, expiry pill
-         11d. Value Display
-         11e. Description & Conditions
-         11f. Code Box & Copy / Shop Actions
-         11g. Valid-Until Footer
-   12.  Skeleton Card
-   13.  Empty State
-   14.  How-To Section
-   15.  Animations / Keyframes
-   16.  Responsive
+   Design system aligned with Dashboard.css:
+   ─ Font:       System stack (matches Dashboard exactly)
+   ─ Background: #F0F2F5 (matches --adm-bg)
+   ─ Cards:      white, --adm-border, --adm-radius, --adm-shadow-sm
+   ─ Spacing:    14px grid gaps, 20px/28px page padding
+   ─ Skeleton:   #E5E7EB/#F3F4F6 gradient (matches adm-skeleton)
+   ─ Transitions: 0.22s cubic-bezier(0.4, 0, 0.2, 1)
+
+   Retained (user brand):
+   ─ Accent:     #ff3c3c coral
+   ─ Hero band:  #111827 dark
+   ─ Category chip colours
+   ─ Expiry urgency colours
    ================================================================ */
 
 
 /* ================================================================
    1. DESIGN TOKENS
-   Scoped to .ud-page so they don't collide with :root nb- vars.
-   Values are intentionally matched to the nb- system.
    ================================================================ */
 .ud-page {
-  /* ── Typography ── */
-  --ud-font:        'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* ── System font stack — matches Dashboard exactly ── */
+  --ud-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
 
-  /* ── Palette ── */
-  --ud-bg:          #F9FAFB;       /* nb-surface */
-  --ud-bg-white:    #FFFFFF;       /* nb-bg — cards, inputs */
-  --ud-text:        #111827;       /* nb-text */
-  --ud-text-sec:    #374151;       /* nb-text-sec */
-  --ud-text-muted:  #6B7280;       /* nb-text-muted */
-  --ud-border:      #D1D5DB;       /* nb-border */
-  --ud-border-md:   #9CA3AF;       /* nb-border-md */
+  /* ── Palette — mirrors adm- variables ── */
+  --ud-bg:          #F0F2F5;
+  --ud-bg-white:    #FFFFFF;
+  --ud-text:        #111827;
+  --ud-text-sec:    #374151;
+  --ud-text-muted:  #6B7280;
+  --ud-border:      #D1D5DB;
+  --ud-border-md:   #9CA3AF;
 
-  /* ── Brand accent ── */
-  --ud-coral:       #ff3c3c;       /* nb-coral — primary accent */
+  /* ── Brand accent (retained) ── */
+  --ud-coral:       #ff3c3c;
   --ud-coral-light: rgba(255, 60, 60, 0.08);
   --ud-coral-mid:   rgba(255, 60, 60, 0.15);
-  --ud-coral-deep:  #e02020;       /* hover darken */
+  --ud-coral-deep:  #e02020;
 
   /* ── Hero dark band ── */
-  --ud-hero-bg:     #111827;       /* nb-text — intentional callback */
+  --ud-hero-bg:     #111827;
   --ud-hero-fg:     #F9FAFB;
 
-  /* ── Secondary tints (amber, only for badges) ── */
+  /* ── Secondary tints ── */
   --ud-amber:       #D97706;
   --ud-amber-light: #FEF3C7;
   --ud-amber-text:  #92400E;
 
   /* ── Status ── */
-  --ud-success:     #10B981;
-  --ud-success-bg:  #ECFDF5;
-  --ud-error:       #EF4444;
-  --ud-error-bg:    #FEF2F2;
-  --ud-error-border:#FECACA;
+  --ud-success:      #10B981;
+  --ud-success-bg:   #ECFDF5;
+  --ud-error:        #EF4444;
+  --ud-error-bg:     #FEF2F2;
+  --ud-error-border: #FECACA;
 
-  /* ── Shadows (nb- scale) ── */
-  --ud-shadow-sm:   0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
-  --ud-shadow:      0 4px 12px rgba(0,0,0,0.10);
-  --ud-shadow-lg:   0 12px 32px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.06);
+  /* ── Shadows — matches adm- scale exactly ── */
+  --ud-shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --ud-shadow:    0 4px 12px rgba(0,0,0,0.10), 0 1px 3px rgba(0,0,0,0.06);
+  --ud-shadow-lg: 0 10px 24px rgba(0,0,0,0.13);
 
-  /* ── Radius (nb- scale) ── */
-  --ud-radius:      12px;
-  --ud-radius-sm:   8px;
-  --ud-radius-xs:   6px;
+  /* ── Radius — matches adm- scale ── */
+  --ud-radius:    12px;
+  --ud-radius-sm: 8px;
+  --ud-radius-xs: 5px;
 
-  /* ── Transitions ── */
-  --ud-transition:  all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  /* ── Transitions — matches adm- ── */
+  --ud-transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 
 /* ================================================================
    2. SCOPED RESET
-   Contained within .ud-page — will not bleed into Navbar or Footer.
    ================================================================ */
 .ud-page *,
 .ud-page *::before,
@@ -130,32 +96,26 @@
 
 /* ================================================================
    4. HERO BAND
-   Uses --ud-hero-bg (#111827 = Navbar's own text colour) so the
-   transition from white navbar → dark hero reads as intentional
-   brand continuity rather than a clash.
    ================================================================ */
 .ud-hero {
   background: var(--ud-hero-bg);
   color:      var(--ud-hero-fg);
-  padding:    56px 32px 52px;
+  padding:    52px 28px 48px;
   position:   relative;
   overflow:   hidden;
-  z-index:    1; /* stays below Navbar z-index:900 */
+  z-index:    1;
 }
 
-/* Fine dot-grid texture — echoes the clean grid language of the Navbar */
 .ud-hero::before {
   content:    '';
   position:   absolute;
   inset:      0;
-  background-image:
-    radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-image: radial-gradient(circle, rgba(255,255,255,0.05) 1px, transparent 1px);
   background-size: 24px 24px;
   pointer-events: none;
   z-index:    0;
 }
 
-/* Coral glow — ties hero to the navbar's coral accent */
 .ud-hero::after {
   content:    '';
   position:   absolute;
@@ -202,26 +162,20 @@
 }
 
 .ud-hero-title {
-  font-size:      clamp(28px, 5vw, 46px);
-  font-weight:    800;
-  line-height:    1.1;
-  letter-spacing: -1px;
+  font-size:      clamp(26px, 4.5vw, 42px);
+  font-weight:    700;
+  line-height:    1.15;
+  letter-spacing: -0.5px;
   color:          var(--ud-hero-fg);
-  margin:         0 0 14px;
-}
-
-/* Coral underline on last word — mirrors the .nb-logo-accent pattern */
-.ud-hero-title em {
-  font-style: normal;
-  color:      var(--ud-coral);
+  margin:         0 0 12px;
 }
 
 .ud-hero-sub {
-  font-size:   15px;
+  font-size:   14px;
   font-weight: 400;
-  color:       rgba(249,250,251,0.55);
+  color:       rgba(249,250,251,0.5);
   margin:      0;
-  line-height: 1.65;
+  line-height: 1.6;
 }
 
 
@@ -232,22 +186,22 @@
   background:      rgba(255,255,255,0.05);
   border:          1px solid rgba(255,255,255,0.1);
   border-radius:   var(--ud-radius);
-  padding:         22px;
-  width:           340px;
+  padding:         20px;
+  width:           330px;
   flex-shrink:     0;
   backdrop-filter: blur(12px);
 }
 
 .ud-checker-label {
-  font-size:      11.5px;
+  font-size:      11px;
   font-weight:    700;
-  color:          rgba(249,250,251,0.45);
+  color:          rgba(249,250,251,0.4);
   margin:         0 0 10px;
   letter-spacing: 0.8px;
   text-transform: uppercase;
 }
 
-/* 5a. Input Wrap & States */
+/* 5a. Input Wrap */
 .ud-checker-input-wrap {
   display:       flex;
   align-items:   center;
@@ -256,23 +210,11 @@
   border-radius: var(--ud-radius-sm);
   overflow:      hidden;
   transition:    border-color 0.2s, box-shadow 0.2s;
-  position:      relative;
 }
 
-.ud-checker-input-wrap--focused {
-  border-color: var(--ud-coral);
-  box-shadow:   0 0 0 3px rgba(255,60,60,0.18);
-}
-
-.ud-checker-input-wrap--error {
-  border-color: var(--ud-error);
-  box-shadow:   0 0 0 3px rgba(239,68,68,0.14);
-}
-
-.ud-checker-input-wrap--success {
-  border-color: var(--ud-success);
-  box-shadow:   0 0 0 3px rgba(16,185,129,0.14);
-}
+.ud-checker-input-wrap--focused  { border-color: var(--ud-coral);   box-shadow: 0 0 0 3px rgba(255,60,60,0.18); }
+.ud-checker-input-wrap--error    { border-color: var(--ud-error);   box-shadow: 0 0 0 3px rgba(239,68,68,0.14); }
+.ud-checker-input-wrap--success  { border-color: var(--ud-success); box-shadow: 0 0 0 3px rgba(16,185,129,0.14); }
 
 .ud-checker-icon {
   color:       rgba(249,250,251,0.3);
@@ -281,17 +223,17 @@
 }
 
 .ud-checker-input {
-  flex:        1;
-  background:  transparent;
-  border:      none;
-  outline:     none;
-  padding:     10px 8px 10px 10px;
-  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
-  font-size:   13px;
-  font-weight: 700;
+  flex:           1;
+  background:     transparent;
+  border:         none;
+  outline:        none;
+  padding:        10px 8px 10px 10px;
+  font-family:    'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
+  font-size:      13px;
+  font-weight:    700;
   letter-spacing: 1.5px;
-  color:       var(--ud-hero-fg);
-  min-width:   0;
+  color:          var(--ud-hero-fg);
+  min-width:      0;
 }
 
 .ud-checker-input::placeholder {
@@ -314,7 +256,7 @@
 
 .ud-checker-clear:hover { color: rgba(249,250,251,0.7); }
 
-/* 5b. Buttons & Spinner */
+/* 5b. Check Button */
 .ud-checker-btn {
   background:      var(--ud-coral);
   color:           #fff;
@@ -337,23 +279,13 @@
 .ud-checker-btn:hover:not(:disabled) { background: var(--ud-coral-deep); }
 .ud-checker-btn:disabled             { opacity: 0.45; cursor: not-allowed; }
 
-.ud-checker-spinner {
-  display:       inline-block;
-  width:         14px;
-  height:        14px;
-  border:        2px solid rgba(255,255,255,0.35);
-  border-top-color: #fff;
-  border-radius: 50%;
-  animation:     ud-spin 0.65s linear infinite;
-}
-
-/* 5c. Validation Result */
+/* 5c. Result */
 .ud-checker-result {
-  margin-top:  10px;
-  padding:     11px 13px;
+  margin-top:    10px;
+  padding:       11px 13px;
   border-radius: var(--ud-radius-sm);
-  font-size:   13px;
-  animation:   ud-fade-drop 0.2s ease;
+  font-size:     13px;
+  animation:     ud-fade-drop 0.2s ease;
 }
 
 .ud-checker-result--error {
@@ -373,9 +305,9 @@
 }
 
 .ud-checker-success-row {
-  display:     flex;
-  align-items: flex-start;
-  gap:         9px;
+  display:       flex;
+  align-items:   flex-start;
+  gap:           9px;
   margin-bottom: 10px;
 }
 
@@ -393,31 +325,31 @@
 
 .ud-checker-success-value {
   display:        block;
-  font-size:      17px;
-  font-weight:    800;
+  font-size:      16px;
+  font-weight:    700;
   color:          #fff;
   letter-spacing: -0.3px;
 }
 
 .ud-checker-success-desc {
-  display:     block;
-  font-size:   12px;
-  opacity:     0.55;
-  margin-top:  3px;
+  display:    block;
+  font-size:  12px;
+  opacity:    0.55;
+  margin-top: 3px;
 }
 
 .ud-checker-apply-btn {
-  width:         100%;
-  background:    var(--ud-success);
-  color:         #fff;
-  border:        none;
-  padding:       9px 14px;
-  border-radius: var(--ud-radius-xs);
-  font-family:   var(--ud-font);
-  font-size:     13px;
-  font-weight:   700;
-  cursor:        pointer;
-  transition:    background 0.15s;
+  width:          100%;
+  background:     var(--ud-success);
+  color:          #fff;
+  border:         none;
+  padding:        9px 14px;
+  border-radius:  var(--ud-radius-xs);
+  font-family:    var(--ud-font);
+  font-size:      13px;
+  font-weight:    700;
+  cursor:         pointer;
+  transition:     background 0.15s;
   letter-spacing: 0.2px;
 }
 
@@ -425,45 +357,43 @@
 
 
 /* ================================================================
-   6. BODY CONTAINER
+   6. BODY CONTAINER — matches adm-content padding
    ================================================================ */
 .ud-body {
-  flex:       1;
-  max-width:  1200px;
-  width:      100%;
-  margin:     0 auto;
-  padding:    36px 32px 72px;
+  flex:      1;
+  max-width: 1200px;
+  width:     100%;
+  margin:    0 auto;
+  padding:   20px 28px 40px;
 }
 
 
 /* ================================================================
-   7. ALERT
+   7. ALERT — matches adm-error-banner exactly
    ================================================================ */
 .ud-alert {
-  display:      flex;
-  align-items:  center;
-  gap:          10px;
-  padding:      12px 16px;
+  display:       flex;
+  align-items:   center;
+  gap:           10px;
+  padding:       12px 16px;
   border-radius: var(--ud-radius-sm);
-  font-size:    13.5px;
-  font-weight:  500;
+  font-size:     13.5px;
+  font-weight:   500;
   margin-bottom: 20px;
 }
 
 .ud-alert--error {
   background: var(--ud-error-bg);
   border:     1px solid var(--ud-error-border);
-  color:      #B91C1C;
+  color:      #991B1B;
 }
 
 
 /* ================================================================
-   8. TABS
-   Uses coral as the active indicator — exact match to Navbar's
-   active link underline (same colour, same intent).
+   8. TABS — matches adm- tab pattern, coral active indicator
    ================================================================ */
 .ud-tabs-wrap {
-  margin-bottom: 32px;
+  margin-bottom: 20px;
   border-bottom: 1.5px solid var(--ud-border);
 }
 
@@ -483,7 +413,7 @@
   border-bottom:  2.5px solid transparent;
   margin-bottom:  -1.5px;
   font-family:    var(--ud-font);
-  font-size:      14px;
+  font-size:      13.5px;
   font-weight:    600;
   color:          var(--ud-text-muted);
   cursor:         pointer;
@@ -492,9 +422,9 @@
   letter-spacing: 0.2px;
 }
 
-.ud-tab:hover   { color: var(--ud-text); }
-.ud-tab--active { color: var(--ud-text); border-bottom-color: var(--ud-coral); }
-.ud-tab svg     { opacity: 0.6; transition: opacity 0.15s; }
+.ud-tab:hover    { color: var(--ud-text); }
+.ud-tab--active  { color: var(--ud-text); border-bottom-color: var(--ud-coral); }
+.ud-tab svg      { opacity: 0.6; transition: opacity 0.15s; }
 .ud-tab--active svg,
 .ud-tab:hover svg { opacity: 1; }
 
@@ -513,27 +443,26 @@
   line-height:     1;
 }
 
-/* Promo tab count uses coral — same as the Navbar notification dot */
 .ud-tab-count--promo { background: var(--ud-coral); }
 
 
 /* ================================================================
-   9. SECTION HEADINGS
+   9. SECTION HEADINGS — matches adm-section-hd pattern
    ================================================================ */
 .ud-section-hd {
   display:       flex;
   align-items:   center;
   gap:           10px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
-.ud-section-hd--muted { margin-top: 44px; }
+.ud-section-hd--muted { margin-top: 36px; }
 
 .ud-section-title {
   font-size:      11px;
   font-weight:    700;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 0.8px;
   color:          var(--ud-text-muted);
 }
 
@@ -559,28 +488,32 @@
 
 
 /* ================================================================
-   10. CARD GRID
+   10. CARD GRID — 14px gap matches Dashboard
    ================================================================ */
 .ud-grid {
   display:               grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap:                   18px;
-  margin-bottom:         12px;
+  gap:                   14px;
+  margin-bottom:         8px;
 }
 
 .ud-grid--faded { opacity: 0.55; }
 
-/* ── 10a. Urgency / State Variants ── */
+
+/* ================================================================
+   11. DISCOUNT CARD — shell matches adm-section-card exactly
+   ================================================================ */
+
+/* Urgency border overrides */
 .ud-card--critical { border-color: #FCA5A5 !important; }
 .ud-card--warning  { border-color: #FDE68A !important; }
 .ud-card--expired  { background: var(--ud-bg) !important; }
 
-/* ── 10b. Card Shell ── */
 .ud-card {
   display:       flex;
   background:    var(--ud-bg-white);
   border:        1px solid var(--ud-border);
-  border-radius: var(--ud-radius); /* matches nb-radius */
+  border-radius: var(--ud-radius);
   overflow:      hidden;
   box-shadow:    var(--ud-shadow-sm);
   transition:    var(--ud-transition);
@@ -589,20 +522,18 @@
 }
 
 .ud-card:hover:not(.ud-card--expired):not(.ud-card--skeleton) {
-  box-shadow:    var(--ud-shadow-lg);
-  transform:     translateY(-3px);
-  border-color:  var(--ud-border-md);
+  box-shadow:   var(--ud-shadow-lg);
+  transform:    translateY(-2px);
+  border-color: var(--ud-border-md);
 }
 
 /* Left accent strip */
 .ud-card-strip {
   width:       4px;
   flex-shrink: 0;
-  background:  var(--ud-border);
   transition:  background 0.22s;
 }
 
-/* Coral strip on active non-expired cards */
 .ud-card:not(.ud-card--expired):not(.ud-card--skeleton) .ud-card-strip {
   background: var(--ud-coral);
   opacity:    0.6;
@@ -610,22 +541,24 @@
 
 .ud-card--critical .ud-card-strip { background: #F87171; opacity: 1; }
 .ud-card--warning  .ud-card-strip { background: #FBBF24; opacity: 1; }
+.ud-card--expired  .ud-card-strip { background: var(--ud-border); opacity: 1; }
 
+/* 11b. Inner — matches adm-section-card-body padding */
 .ud-card-inner {
   flex:           1;
-  padding:        18px 18px 16px;
+  padding:        16px 18px 14px;
   display:        flex;
   flex-direction: column;
   min-width:      0;
 }
 
-/* ── 10c. Top Row ── */
+/* 11c. Top row */
 .ud-card-top {
   display:         flex;
   align-items:     center;
   justify-content: space-between;
   gap:             8px;
-  margin-bottom:   14px;
+  margin-bottom:   12px;
   flex-wrap:       wrap;
 }
 
@@ -636,29 +569,25 @@
   flex-wrap:   wrap;
 }
 
-/* Category chip */
 .ud-category-chip {
   font-size:      10px;
   font-weight:    700;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.5px;
   text-transform: uppercase;
-  padding:        3px 9px;
+  padding:        3px 8px;
   border-radius:  var(--ud-radius-xs);
-  /* colour set inline via CATEGORY_META */
 }
 
-/* First order chip */
 .ud-first-order-chip {
-  font-size:   10px;
-  font-weight: 600;
-  color:       var(--ud-coral);
-  background:  var(--ud-coral-light);
-  border:      1px solid rgba(255,60,60,0.15);
-  padding:     3px 8px;
+  font-size:     10px;
+  font-weight:   600;
+  color:         var(--ud-coral);
+  background:    var(--ud-coral-light);
+  border:        1px solid rgba(255,60,60,0.15);
+  padding:       3px 8px;
   border-radius: var(--ud-radius-xs);
 }
 
-/* Audience badge — broadcast promos */
 .ud-audience-badge {
   display:        inline-flex;
   align-items:    center;
@@ -679,7 +608,6 @@
 
 .ud-audience-badge svg { flex-shrink: 0; opacity: 0.8; }
 
-/* Expired override */
 .ud-card--expired .ud-audience-badge {
   color:        var(--ud-text-muted);
   background:   var(--ud-bg);
@@ -688,14 +616,14 @@
 
 /* Expiry pill */
 .ud-expiry {
-  display:     inline-flex;
-  align-items: center;
-  gap:         5px;
-  font-size:   10.5px;
-  font-weight: 700;
-  padding:     3px 9px;
+  display:       inline-flex;
+  align-items:   center;
+  gap:           5px;
+  font-size:     10.5px;
+  font-weight:   700;
+  padding:       3px 8px;
   border-radius: var(--ud-radius-xs);
-  white-space: nowrap;
+  white-space:   nowrap;
 }
 
 .ud-expiry--safe     { background: #F0FDF4; color: #15803D; }
@@ -712,17 +640,17 @@
   animation:     ud-pulse 1.4s infinite;
 }
 
-/* ── 10d. Value Display ── */
-.ud-value { margin-bottom: 10px; }
+/* 11d. Value Display */
+.ud-value         { margin-bottom: 8px; }
 
 .ud-value-amount {
   display:        block;
-  font-size:      clamp(28px, 5vw, 38px);
-  font-weight:    800;
+  font-size:      clamp(26px, 4vw, 34px);
+  font-weight:    700;
   color:          var(--ud-text);
-  letter-spacing: -1.5px;
+  letter-spacing: -1px;
   line-height:    1.05;
-  margin-bottom:  3px;
+  margin-bottom:  2px;
 }
 
 .ud-value--expired .ud-value-amount { color: var(--ud-border-md); }
@@ -734,17 +662,17 @@
   color:       var(--ud-text-muted);
 }
 
-/* ── 10e. Description & Conditions ── */
+/* 11e. Description & Conditions */
 .ud-card-desc {
-  font-size:            13px;
-  font-weight:          400;
-  color:                var(--ud-text-sec);
-  margin:               0 0 6px;
-  line-height:          1.55;
-  display:              -webkit-box;
-  -webkit-line-clamp:   2;
-  -webkit-box-orient:   vertical;
-  overflow:             hidden;
+  font-size:           13px;
+  font-weight:         400;
+  color:               var(--ud-text-sec);
+  margin:              0 0 5px;
+  line-height:         1.5;
+  display:             -webkit-box;
+  -webkit-line-clamp:  2;
+  -webkit-box-orient:  vertical;
+  overflow:            hidden;
 }
 
 .ud-card-condition {
@@ -754,13 +682,13 @@
   margin:      0 0 4px;
 }
 
-/* ── 10f. Code Box & Actions ── */
+/* 11f. Code Box & Actions */
 .ud-card-footer {
   display:     flex;
   align-items: center;
   gap:         8px;
   margin-top:  auto;
-  padding-top: 14px;
+  padding-top: 12px;
   flex-wrap:   wrap;
 }
 
@@ -780,12 +708,12 @@
 
 .ud-code {
   flex:           1;
-  padding:        9px 10px;
+  padding:        8px 10px;
   font-family:    'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
-  font-size:      12.5px;
+  font-size:      12px;
   font-weight:    700;
   color:          var(--ud-text);
-  letter-spacing: 1.2px;
+  letter-spacing: 1px;
   overflow:       hidden;
   text-overflow:  ellipsis;
   white-space:    nowrap;
@@ -796,7 +724,7 @@
   display:         flex;
   align-items:     center;
   gap:             5px;
-  padding:         9px 12px;
+  padding:         8px 12px;
   background:      var(--ud-text);
   color:           #fff;
   border:          none;
@@ -816,7 +744,7 @@
 .ud-copy-btn--done:hover          { background: #059669; }
 
 .ud-shop-btn {
-  padding:        9px 16px;
+  padding:        8px 16px;
   background:     var(--ud-coral);
   color:          #fff;
   border:         none;
@@ -833,17 +761,17 @@
 
 .ud-shop-btn:hover { background: var(--ud-coral-deep); transform: scale(1.02); }
 
-/* ── 10g. Valid-Until Footer ── */
+/* 11g. Valid-Until Footer */
 .ud-valid-until {
   font-size:   11px;
   font-weight: 500;
   color:       var(--ud-border-md);
-  margin:      10px 0 0;
+  margin:      8px 0 0;
 }
 
 
 /* ================================================================
-   11. SKELETON CARD
+   12. SKELETON CARD — matches adm-skeleton gradient exactly
    ================================================================ */
 .ud-card--skeleton {
   pointer-events: none;
@@ -854,9 +782,9 @@
   display:         block;
   background:      linear-gradient(
     90deg,
-    var(--ud-bg)    25%,
-    var(--ud-bg-white) 50%,
-    var(--ud-bg)    75%
+    #E5E7EB 25%,
+    #F3F4F6 50%,
+    #E5E7EB 75%
   );
   background-size: 200% 100%;
   animation:       ud-shimmer 1.6s infinite;
@@ -865,7 +793,7 @@
 
 
 /* ================================================================
-   12. EMPTY STATE
+   13. EMPTY STATE — matches adm-empty pattern
    ================================================================ */
 .ud-empty {
   display:         flex;
@@ -873,42 +801,45 @@
   align-items:     center;
   justify-content: center;
   text-align:      center;
-  padding:         80px 24px;
+  padding:         40px 24px;
+  color:           var(--ud-text-muted);
+  font-size:       13px;
+  font-weight:     500;
 }
 
 .ud-empty-icon {
-  width:         72px;
-  height:        72px;
-  border-radius: var(--ud-radius);
-  background:    var(--ud-bg-white);
-  border:        1.5px solid var(--ud-border);
-  box-shadow:    var(--ud-shadow-sm);
-  display:       flex;
-  align-items:   center;
+  width:           72px;
+  height:          72px;
+  border-radius:   var(--ud-radius);
+  background:      var(--ud-bg-white);
+  border:          1.5px solid var(--ud-border);
+  box-shadow:      var(--ud-shadow-sm);
+  display:         flex;
+  align-items:     center;
   justify-content: center;
-  color:         var(--ud-border-md);
-  margin-bottom: 20px;
+  color:           var(--ud-border-md);
+  margin-bottom:   20px;
 }
 
 .ud-empty-title {
-  font-size:      18px;
+  font-size:      17px;
   font-weight:    700;
   color:          var(--ud-text);
-  margin:         0 0 10px;
-  letter-spacing: -0.3px;
+  margin:         0 0 8px;
+  letter-spacing: -0.2px;
 }
 
 .ud-empty-desc {
-  font-size:   14px;
+  font-size:   13.5px;
   font-weight: 400;
   color:       var(--ud-text-muted);
   max-width:   320px;
-  line-height: 1.65;
+  line-height: 1.6;
   margin:      0 0 20px;
 }
 
 .ud-empty-link {
-  font-size:       13.5px;
+  font-size:       13px;
   font-weight:     700;
   color:           var(--ud-coral);
   text-decoration: none;
@@ -924,46 +855,51 @@
 
 
 /* ================================================================
-   13. HOW-TO SECTION
-   Matches the card aesthetic — white bg, nb-border, nb-radius.
+   14. HOW-TO SECTION — matches adm-section-card shell
    ================================================================ */
 .ud-how {
-  margin-top:    60px;
-  padding:       36px 40px;
+  margin-top:    48px;
+  padding:       24px 28px;
   background:    var(--ud-bg-white);
   border:        1px solid var(--ud-border);
   border-radius: var(--ud-radius);
   box-shadow:    var(--ud-shadow-sm);
+  transition:    var(--ud-transition);
+}
+
+.ud-how:hover {
+  box-shadow:   var(--ud-shadow);
+  border-color: var(--ud-border-md);
 }
 
 .ud-how-title {
-  font-size:      17px;
+  font-size:      15px;
   font-weight:    700;
   color:          var(--ud-text);
-  margin:         0 0 28px;
-  letter-spacing: -0.3px;
+  margin:         0 0 20px;
+  letter-spacing: -0.2px;
 }
 
 .ud-how-steps {
   display:               grid;
   grid-template-columns: repeat(3, 1fr);
-  gap:                   32px;
+  gap:                   28px;
 }
 
 .ud-how-step {
   display:     flex;
   align-items: flex-start;
-  gap:         16px;
+  gap:         14px;
 }
 
 .ud-how-num {
-  width:           36px;
-  height:          36px;
+  width:           32px;
+  height:          32px;
   border-radius:   var(--ud-radius-xs);
-  background:      var(--ud-coral);   /* coral instead of black — brand tie-in */
+  background:      var(--ud-coral);
   color:           #fff;
-  font-size:       14px;
-  font-weight:     800;
+  font-size:       13px;
+  font-weight:     700;
   display:         flex;
   align-items:     center;
   justify-content: center;
@@ -971,27 +907,27 @@
 }
 
 .ud-how-step-title {
-  font-size:      13.5px;
+  font-size:      13px;
   font-weight:    700;
   color:          var(--ud-text);
-  margin:         0 0 5px;
-  letter-spacing: -0.2px;
+  margin:         0 0 4px;
+  letter-spacing: -0.1px;
 }
 
 .ud-how-step-desc {
-  font-size:   13px;
+  font-size:   12.5px;
   font-weight: 400;
   color:       var(--ud-text-muted);
   margin:      0;
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
 
 /* ================================================================
-   14. ANIMATIONS / KEYFRAMES
+   15. ANIMATIONS / KEYFRAMES
    ================================================================ */
 @keyframes ud-card-enter {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: none; }
 }
 
@@ -1000,80 +936,73 @@
   to   { opacity: 1; transform: none; }
 }
 
-@keyframes ud-spin {
-  to { transform: rotate(360deg); }
-}
-
 @keyframes ud-shimmer {
   0%   { background-position:  200% 0; }
   100% { background-position: -200% 0; }
 }
 
 @keyframes ud-pulse {
-  0%, 100% { opacity: 1; transform: scale(1);   }
+  0%, 100% { opacity: 1;   transform: scale(1); }
   50%       { opacity: 0.4; transform: scale(0.8); }
 }
 
+/* Custom scrollbar — matches adm-content scrollbar */
+.ud-page::-webkit-scrollbar        { width: 6px; }
+.ud-page::-webkit-scrollbar-track  { background: transparent; }
+.ud-page::-webkit-scrollbar-thumb  { background: var(--ud-border); border-radius: 3px; }
+
 
 /* ================================================================
-   15. RESPONSIVE
+   16. RESPONSIVE
    ================================================================ */
 
-/* ── 1024px ── */
 @media (max-width: 1024px) {
-  .ud-hero         { padding: 44px 24px 44px; }
-  .ud-hero-inner   { gap: 32px; }
-  .ud-checker      { width: 300px; }
-  .ud-body         { padding: 28px 24px 60px; }
-  .ud-how          { padding: 28px; }
-  .ud-how-steps    { gap: 20px; }
+  .ud-hero       { padding: 40px 24px; }
+  .ud-hero-inner { gap: 28px; }
+  .ud-checker    { width: 300px; }
+  .ud-body       { padding: 20px 24px 36px; }
+  .ud-how        { padding: 20px 24px; }
+  .ud-how-steps  { gap: 18px; }
 }
 
-/* ── 860px — stack hero ── */
 @media (max-width: 860px) {
-  .ud-hero-inner   { flex-direction: column; align-items: stretch; }
-  .ud-checker      { width: 100%; }
-  .ud-how-steps    { grid-template-columns: 1fr; gap: 20px; }
+  .ud-hero-inner { flex-direction: column; align-items: stretch; }
+  .ud-checker    { width: 100%; }
+  .ud-how-steps  { grid-template-columns: 1fr; gap: 18px; }
 }
 
-/* ── 768px ── */
 @media (max-width: 768px) {
-  .ud-hero         { padding: 36px 20px 36px; }
-  .ud-body         { padding: 24px 20px 52px; }
-  .ud-grid         { grid-template-columns: 1fr; gap: 14px; }
-  .ud-how          { padding: 24px 20px; border-radius: var(--ud-radius-sm); }
-  .ud-how-title    { font-size: 15px; }
+  .ud-hero         { padding: 32px 20px; }
+  .ud-body         { padding: 16px 20px 36px; }
+  .ud-grid         { grid-template-columns: 1fr; gap: 10px; }
+  .ud-how          { padding: 20px; border-radius: var(--ud-radius-sm); }
+  .ud-how-title    { font-size: 14px; }
+  .ud-tabs-wrap    { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .ud-tabs         { width: max-content; min-width: 100%; }
 }
 
-/* ── 640px ── */
 @media (max-width: 640px) {
-  .ud-hero-title   { font-size: 26px; letter-spacing: -0.5px; }
-  .ud-hero-sub     { font-size: 14px; }
+  .ud-hero-title   { letter-spacing: -0.3px; }
+  .ud-hero-sub     { font-size: 13.5px; }
   .ud-tab          { font-size: 13px; margin-right: 20px; padding: 10px 0; }
   .ud-card-footer  { flex-direction: column; gap: 6px; }
   .ud-code-box     { width: 100%; }
   .ud-shop-btn     { width: 100%; justify-content: center; }
 }
 
-/* ── 480px ── */
 @media (max-width: 480px) {
-  .ud-hero         { padding: 28px 16px; }
-  .ud-body         { padding: 20px 16px 44px; }
-  .ud-checker      { padding: 16px; border-radius: var(--ud-radius-sm); }
-  .ud-how          { margin-top: 44px; padding: 20px 16px; }
-  .ud-empty        { padding: 56px 16px; }
-  .ud-card-inner   { padding: 16px 14px 14px; }
-  .ud-value-amount { font-size: 30px; }
-  .ud-tabs-wrap    { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .ud-tabs         { width: max-content; min-width: 100%; }
-  /* Hide hero glow blob on small screens — avoids overflow artifacts */
-  .ud-hero::after  { display: none; }
+  .ud-hero        { padding: 24px 16px; }
+  .ud-body        { padding: 14px 16px 32px; }
+  .ud-checker     { padding: 14px; border-radius: var(--ud-radius-sm); }
+  .ud-how         { margin-top: 36px; padding: 16px; }
+  .ud-empty       { padding: 40px 16px; }
+  .ud-card-inner  { padding: 14px 14px 12px; }
+  .ud-value-amount{ font-size: 28px; }
+  .ud-hero::after { display: none; }
 }
 
-/* ── 360px ── */
 @media (max-width: 360px) {
-  .ud-hero-title   { font-size: 22px; }
-  .ud-grid         { gap: 12px; }
-  .ud-section-hd   { margin-bottom: 12px; }
-  .ud-how-num      { width: 30px; height: 30px; font-size: 13px; border-radius: 6px; }
+  .ud-grid       { gap: 8px; }
+  .ud-section-hd { margin-bottom: 10px; }
+  .ud-how-num    { width: 28px; height: 28px; font-size: 12px; }
 }

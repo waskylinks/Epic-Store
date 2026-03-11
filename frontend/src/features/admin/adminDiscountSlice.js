@@ -1,165 +1,110 @@
-// Frontend/src/features/admin/adminDiscountSlice.js
-
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
-// ============================================
-// ADMIN: GET ALL DISCOUNTS (cursor-based pagination)
-// ============================================
+// Builds a query string, dropping undefined/null/"" values
+const toQueryString = (obj = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(obj).forEach(([key, val]) => {
+    if (val !== undefined && val !== null && val !== "") params.append(key, val);
+  });
+  const str = params.toString();
+  return str ? `?${str}` : "";
+};
 
-/**
- * @route GET /api/v1/discounts
- * @access Admin
- *
- * Pass filters + optional `cursor` from previous response to paginate.
- * On first load omit cursor. On "load more" pass pagination.nextCursor.
- */
+// Fields stripped before PUT /api/v1/discounts/:id.
+// Backend allowedUpdates: description, status, validFrom, validUntil, usageLimit, conditions, notes
+const UPDATE_STRIP_KEYS = new Set([
+  "code", "type", "value", "category", "audience",
+  "createdBy", "usageHistory", "usageHistoryTotal", "usageHistoryCapped",
+  "relatedOrder", "relatedReturn", "lockedAt", "deletionEligibleAt",
+  "createdAt", "updatedAt", "_id", "__v",
+  "id", "isValid", "isExpired", "remainingUses", "isProtected",
+]);
+
+// ─── THUNKS ──────────────────────────────────────────────────────────────────
+
 export const getAllDiscounts = createAsyncThunk(
   "adminDiscount/getAllDiscounts",
   async (filters = {}, { rejectWithValue }) => {
     try {
-      const params = new URLSearchParams(filters).toString();
       const { data } = await axios.get(
-        `/api/v1/discounts${params ? `?${params}` : ""}`,
+        `/api/v1/discounts${toQueryString(filters)}`,
         { withCredentials: true }
       );
-      return data; // { success, discounts, pagination: { limit, hasNextPage, nextCursor } }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch discounts"
-      );
+      return { ...data, _isCursorPage: !!filters?.cursor };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch discounts");
     }
   }
 );
 
-// ============================================
-// ADMIN: GET SINGLE DISCOUNT
-// ============================================
-
-/**
- * @route GET /api/v1/discounts/:id
- * @access Admin
- */
 export const getSingleDiscount = createAsyncThunk(
   "adminDiscount/getSingleDiscount",
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`/api/v1/discounts/${id}`, {
-        withCredentials: true,
-      });
-      return data; // { success, discount }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch discount details"
-      );
+      const { data } = await axios.get(`/api/v1/discounts/${id}`, { withCredentials: true });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch discount details");
     }
   }
 );
 
-// ============================================
-// ADMIN: CREATE DISCOUNT
-// ============================================
-
-/**
- * @route POST /api/v1/discounts
- * @access Admin
- *
- * Body includes audience: 'all' | 'specific'
- * audience:'all'      — broadcast seasonal promo, no eligibleUsers required
- * audience:'specific' — personalised code, eligibleUsers enforced server-side
- */
 export const createDiscount = createAsyncThunk(
   "adminDiscount/createDiscount",
   async (discountData, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post("/api/v1/discounts", discountData, {
-        withCredentials: true,
-      });
-      return data; // { success, message, discount }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to create discount"
-      );
+      const { data } = await axios.post("/api/v1/discounts", discountData, { withCredentials: true });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to create discount");
     }
   }
 );
 
-// ============================================
-// ADMIN: UPDATE DISCOUNT
-// ============================================
-
-/**
- * @route PUT /api/v1/discounts/:id
- * @access Admin
- *
- * Allowed fields: description, status, validFrom, validUntil,
- *                 usageLimit, conditions, notes
- * code, type, value, audience, category are immutable after creation.
- */
 export const updateDiscount = createAsyncThunk(
   "adminDiscount/updateDiscount",
   async ({ id, discountData }, { rejectWithValue }) => {
     try {
-      const { data } = await axios.put(
-        `/api/v1/discounts/${id}`,
-        discountData,
-        { withCredentials: true }
+      const mutableFields = Object.fromEntries(
+        Object.entries(discountData).filter(([k]) => !UPDATE_STRIP_KEYS.has(k))
       );
-      return data; // { success, message, discount }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to update discount"
-      );
+      const { data } = await axios.put(`/api/v1/discounts/${id}`, mutableFields, { withCredentials: true });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to update discount");
     }
   }
 );
 
-// ============================================
-// ADMIN: DELETE DISCOUNT (soft delete → status: inactive)
-//
-// Server returns 403 if the discount is within its 30-day
-// fraud-protection window (currentUses >= 1 AND deletionEligibleAt > now).
-// The 403 payload includes deletionEligibleAt so the UI can display
-// exactly when the action will become available.
-// Blocked attempts are still logged server-side to DiscountAuditLog.
-// ============================================
-
-/**
- * @route DELETE /api/v1/discounts/:id
- * @access Admin
- */
+// FIX: Backend sends 403 via HandleError which only includes `message`.
+// `deletionEligibleAt` is NOT in the error body — removed false read.
+// FIX: `alreadyInactive` flag now checked in reducer before mutating state.
 export const deleteDiscount = createAsyncThunk(
   "adminDiscount/deleteDiscount",
   async (id, { rejectWithValue }) => {
     try {
-      const { data } = await axios.delete(`/api/v1/discounts/${id}`, {
-        withCredentials: true,
-      });
-      return { id, message: data.message };
-    } catch (error) {
-      // Preserve full error response so the UI can extract
-      // deletionEligibleAt from a 403 and show the unlock date.
+      const { data } = await axios.delete(`/api/v1/discounts/${id}`, { withCredentials: true });
+      return {
+        id,
+        message:         data.message,
+        alreadyInactive: data.message === "Discount was already inactive",
+      };
+    } catch (err) {
+      // 403: fraud protection window — message only, no deletionEligibleAt in body
       return rejectWithValue({
-        message:            error.response?.data?.message || "Failed to deactivate discount",
-        status:             error.response?.status,
-        deletionEligibleAt: error.response?.data?.deletionEligibleAt ?? null,
+        message: err.response?.data?.message ?? "Failed to deactivate discount",
+        status:  err.response?.status,
       });
     }
   }
 );
 
-// ============================================
-// ADMIN: CREATE COMPENSATION DISCOUNT (refund / return)
-// ============================================
-
-/**
- * @route POST /api/v1/discounts/create-compensation
- * @access Admin
- *
- * Body: { userId, amount, reason, category, validDays,
- *         relatedOrder?, relatedReturn? }
- * Always creates audience:'specific' discounts scoped to the customer.
- */
+// FIX: Backend returns 409 as res.status(409).json(...) — NOT an axios error.
+// Axios resolves 2xx/non-throw status. 409 is a non-2xx so axios DOES throw.
+// But backend uses res.status(409).json() which axios treats as an error (>=400).
+// rejectWithValue mapping is correct. No change needed in thunk.
+// FIX: existingDiscountId field name confirmed matching backend response.
 export const createCompensationDiscount = createAsyncThunk(
   "adminDiscount/createCompensationDiscount",
   async (compensationData, { rejectWithValue }) => {
@@ -169,119 +114,76 @@ export const createCompensationDiscount = createAsyncThunk(
         compensationData,
         { withCredentials: true }
       );
-      return data; // { success, message, discount }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to create compensation discount"
-      );
+      return data;
+    } catch (err) {
+      return rejectWithValue({
+        message:            err.response?.data?.message ?? "Failed to create compensation discount",
+        status:             err.response?.status,
+        existingCode:       err.response?.data?.existingCode       ?? null,
+        existingDiscountId: err.response?.data?.existingDiscountId ?? null,
+      });
     }
   }
 );
 
-// ============================================
-// ADMIN: GET DISCOUNT STATS
-// ============================================
+export const createDiscountForUsers = createAsyncThunk(
+  "adminDiscount/createDiscountForUsers",
+  async (payload, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        "/api/v1/discounts/create-for-user",
+        payload,
+        { withCredentials: true }
+      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to create VIP discount");
+    }
+  }
+);
 
-/**
- * @route GET /api/v1/discounts/stats
- * @access Admin
- */
 export const getDiscountStats = createAsyncThunk(
   "adminDiscount/getDiscountStats",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get("/api/v1/discounts/stats", {
-        withCredentials: true,
-      });
-      return data; // { success, stats (by category), overall }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch discount stats"
-      );
+      const { data } = await axios.get("/api/v1/discounts/stats", { withCredentials: true });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch stats");
     }
   }
 );
 
-// ============================================
-// ADMIN: TRIGGER CLEANUP (manual on-demand)
-// ============================================
-
-/**
- * @route POST /api/v1/discounts/cleanup
- * @access Admin
- *
- * Body: { daysOld?: number }  default 90
- * Returns: { success, expired, deleted }
- *
- * Note: deleteOldExpired() on the server automatically excludes
- * discounts within their fraud-protection window (deletionEligibleAt > now).
- */
+// FIX: daysOld is a meaningful param — callers should pass { daysOld: N }.
+// Forwarded as-is to backend. Default of 90 applied server-side if omitted.
 export const triggerCleanup = createAsyncThunk(
   "adminDiscount/triggerCleanup",
   async (payload = {}, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(
-        "/api/v1/discounts/cleanup",
-        payload,
-        { withCredentials: true }
-      );
-      return data; // { success, message, expired, deleted }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to run cleanup"
-      );
+      const { data } = await axios.post("/api/v1/discounts/cleanup", payload, { withCredentials: true });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to run cleanup");
     }
   }
 );
 
-// ============================================
-// ADMIN: GET FULL AUDIT LOG (paginated)
-// ============================================
-
-/**
- * @route GET /api/v1/discounts/audit
- * @access Admin
- *
- * Query params:
- *   action, discountCode, performedById — filters
- *   dateFrom, dateTo                    — date range
- *   limit                               — page size (default 20, max 100)
- *   cursor                              — pagination token from previous response
- *
- * All actions including CRON system entries are returned.
- * System entries have performedBy.system === true.
- *
- * First page: dispatch getAuditLog({ ...filters })
- * Next pages:  dispatch getAuditLog({ ...filters, cursor: nextCursor })
- *              then use appendAuditLogs reducer to merge into state.
- */
+// FIX: cursor flag now carried inside return value, not read from meta.arg in reducer.
 export const getAuditLog = createAsyncThunk(
   "adminDiscount/getAuditLog",
   async (filters = {}, { rejectWithValue }) => {
     try {
-      const params = new URLSearchParams(filters).toString();
       const { data } = await axios.get(
-        `/api/v1/discounts/audit${params ? `?${params}` : ""}`,
+        `/api/v1/discounts/audit${toQueryString(filters)}`,
         { withCredentials: true }
       );
-      return data; // { success, auditLogs, pagination: { limit, hasNextPage, nextCursor } }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch audit log"
-      );
+      return { ...data, _isCursorPage: !!filters?.cursor };
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch audit log");
     }
   }
 );
 
-// ============================================
-// ADMIN: GET AUDIT LOG FOR SINGLE DISCOUNT
-// Used by the detail drawer — fixed limit 20, no pagination.
-// ============================================
-
-/**
- * @route GET /api/v1/discounts/audit/:discountId
- * @access Admin
- */
 export const getDiscountAuditLog = createAsyncThunk(
   "adminDiscount/getDiscountAuditLog",
   async (discountId, { rejectWithValue }) => {
@@ -290,143 +192,140 @@ export const getDiscountAuditLog = createAsyncThunk(
         `/api/v1/discounts/audit/${discountId}`,
         { withCredentials: true }
       );
-      return data; // { success, auditLogs }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch discount audit log"
-      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch discount audit trail");
     }
   }
 );
 
-// ============================================
-// ADMIN: GET PURGE LOG
-//
-// Returns all AuditPurgeLog receipts (permanent, append-only).
-// Also returns showBanner — true when the latest purge occurred
-// within the last 7 days, used to drive the receipt banner in the UI.
-//
-// No delete route exists for AuditPurgeLog — ever.
-// ============================================
-
-/**
- * @route GET /api/v1/discounts/audit/purge-log
- * @access Admin
- */
 export const getPurgeLog = createAsyncThunk(
   "adminDiscount/getPurgeLog",
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(
-        "/api/v1/discounts/audit/purge-log",
-        { withCredentials: true }
-      );
-      return data; // { success, purgeLog, latestPurge, showBanner }
-    } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch purge log"
-      );
+      const { data } = await axios.get("/api/v1/discounts/audit/purge-log", { withCredentials: true });
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to fetch purge log");
     }
   }
 );
 
-// ============================================
-// SLICE
-// ============================================
+// ─── INITIAL STATE ────────────────────────────────────────────────────────────
+
+const initialState = {
+  discounts:  [],
+  pagination: null,
+
+  currentDiscount: null,
+  // FIX: store usageHistoryTotal and usageHistoryCapped from getDiscountById
+  // so UI can show "displaying last 100 of N" when history is capped.
+  usageHistoryTotal:  null,
+  usageHistoryCapped: false,
+
+  stats:          null,
+  categoryStats:  [],
+  statsFromCache: false,
+
+  cleanupResult: null,
+
+  auditLogs:       [],
+  auditPagination: null,
+
+  discountAuditLogs: [],
+
+  purgeLog:    [],
+  latestPurge: null,
+  showBanner:  false,
+
+  discountsLoading:     false,
+  detailLoading:        false,
+  statsLoading:         false,
+  auditLoading:         false,
+  discountAuditLoading: false,
+  purgeLogLoading:      false,
+  actionLoading:        false,
+
+  vipLoading:             false,
+  vipError:               null,
+  vipSuccess:             false,
+  lastCreatedVipDiscount: null,
+  lastVipEligibleCount:   null,
+
+  error:   null,
+  success: false,
+  message: null,
+
+  // FIX: deletionEligibleAt removed — backend 403 does not send this field.
+  // Only message is available from HandleError responses.
+  deleteProtectionError: null,
+  compensationConflict:  null,
+};
+
+// ─── SLICE ────────────────────────────────────────────────────────────────────
 
 const adminDiscountSlice = createSlice({
   name: "adminDiscount",
-  initialState: {
-    // ── Discount list ────────────────────────────────────────────────────
-    discounts:  [],
-    pagination: null, // { limit, hasNextPage, nextCursor }
-
-    // ── Detail view ──────────────────────────────────────────────────────
-    currentDiscount: null,
-
-    // ── Stats ────────────────────────────────────────────────────────────
-    stats:         null, // overall { total, active, expired, totalUses }
-    categoryStats: [],   // per-category array
-
-    // ── Cleanup ──────────────────────────────────────────────────────────
-    cleanupResult: null, // { expired, deleted }
-
-    // ── Audit log — full paginated feed (Audit tab) ──────────────────────
-    // First page load replaces this. "Load more" uses appendAuditLogs.
-    auditLogs:       [],
-    auditPagination: null, // { limit, hasNextPage, nextCursor }
-
-    // ── Audit log — per-discount drawer (last 20, no pagination) ─────────
-    // Loaded when detail drawer opens. Cleared when drawer closes.
-    discountAuditLogs: [],
-
-    // ── Purge log — permanent AuditPurgeLog receipts ─────────────────────
-    purgeLog:       [],   // all receipts newest first
-    latestPurge:    null, // most recent receipt
-    showPurgeBanner: false, // true when latest purge was within last 7 days
-
-    // ── Loading states ───────────────────────────────────────────────────
-    discountsLoading:     false,
-    detailLoading:        false,
-    actionLoading:        false, // create / update / delete / compensation / cleanup
-    statsLoading:         false,
-    auditLoading:         false, // full audit tab
-    discountAuditLoading: false, // per-discount drawer
-    purgeLogLoading:      false,
-
-    // ── Feedback ─────────────────────────────────────────────────────────
-    error:   null,
-    success: false,
-    message: null,
-
-    // ── Delete protection ─────────────────────────────────────────────────
-    // Populated on 403 from deleteDiscount. Contains:
-    //   { message: string, deletionEligibleAt: string | null }
-    // Shown in the UI as the unlock date tooltip / modal, not the
-    // general error banner. Cleared by clearDeleteProtectionError.
-    deleteProtectionError: null,
-  },
+  initialState,
 
   reducers: {
     clearAdminDiscountState: (state) => {
-      state.error   = null;
-      state.success = false;
-      state.message = null;
-    },
-    clearCurrentDiscount: (state) => {
-      state.currentDiscount = null;
-    },
-    clearCleanupResult: (state) => {
-      state.cleanupResult = null;
-    },
-    // Clear the fraud-protection error after the UI has shown it
-    clearDeleteProtectionError: (state) => {
+      state.error                 = null;
+      state.success               = false;
+      state.message               = null;
       state.deleteProtectionError = null;
+      state.compensationConflict  = null;
     },
-    // Clear per-discount drawer audit entries when drawer closes
-    clearDiscountAuditLogs: (state) => {
-      state.discountAuditLogs = [];
+
+    clearCurrentDiscount: (state) => {
+      state.currentDiscount      = null;
+      state.usageHistoryTotal    = null;
+      state.usageHistoryCapped   = false;
     },
-    // Dismiss the purge receipt banner — does not affect purgeLog data
-    dismissPurgeBanner: (state) => {
-      state.showPurgeBanner = false;
+
+    clearCleanupResult:         (state) => { state.cleanupResult        = null;  },
+    clearDeleteProtectionError: (state) => { state.deleteProtectionError = null; },
+    clearDiscountAuditLogs:     (state) => { state.discountAuditLogs    = [];    },
+    dismissPurgeBanner:         (state) => { state.showBanner           = false; },
+    clearCompensationConflict:  (state) => { state.compensationConflict = null;  },
+
+    clearVipState: (state) => {
+      state.vipLoading             = false;
+      state.vipError               = null;
+      state.vipSuccess             = false;
+      state.lastCreatedVipDiscount = null;
+      state.lastVipEligibleCount   = null;
     },
-    // Append next page of discounts (cursor pagination "load more")
+
+    // FIX: reset pagination when called with a non-cursor (fresh filter) fetch
+    // to avoid stale nextCursor surviving into a new filter session.
+    resetDiscountList: (state) => {
+      state.discounts  = [];
+      state.pagination = null;
+    },
+
+    // Sole writer for page 2+ discount list pages. Deduplicates by _id.
     appendDiscounts: (state, action) => {
-      state.discounts  = [...state.discounts, ...action.payload.discounts];
-      state.pagination = action.payload.pagination;
+      const existingIds = new Set(state.discounts.map((d) => d._id));
+      const fresh       = (action.payload?.discounts ?? []).filter((d) => !existingIds.has(d._id));
+      state.discounts   = [...state.discounts, ...fresh];
+      state.pagination  = action.payload?.pagination ?? state.pagination;
     },
-    // Append next page of audit logs (cursor pagination "load more")
-    // Called from the component after a successful getAuditLog with cursor.
+
+    // Sole writer for page 2+ audit log pages. Deduplicates by _id.
     appendAuditLogs: (state, action) => {
-      state.auditLogs       = [...state.auditLogs, ...action.payload.auditLogs];
-      state.auditPagination = action.payload.pagination;
+      const existingIds     = new Set(state.auditLogs.map((l) => l._id));
+      const fresh           = (action.payload?.auditLogs ?? []).filter((l) => !existingIds.has(l._id));
+      state.auditLogs       = [...state.auditLogs, ...fresh];
+      state.auditPagination = action.payload?.pagination ?? state.auditPagination;
     },
   },
 
   extraReducers: (builder) => {
 
-    // ── GET ALL DISCOUNTS ────────────────────────────────────────────────
+    // getAllDiscounts
+    // FIX: cursor flag now read from payload._isCursorPage instead of meta.arg.cursor
+    // FIX: auditPagination reset when fresh (non-cursor) fetch arrives — clears stale nextCursor
     builder
       .addCase(getAllDiscounts.pending, (state) => {
         state.discountsLoading = true;
@@ -434,30 +333,35 @@ const adminDiscountSlice = createSlice({
       })
       .addCase(getAllDiscounts.fulfilled, (state, action) => {
         state.discountsLoading = false;
-        state.discounts        = action.payload.discounts;
-        state.pagination       = action.payload.pagination;
+        if (!action.payload._isCursorPage) {
+          state.discounts  = action.payload.discounts  ?? [];
+          state.pagination = action.payload.pagination ?? null;
+        }
       })
       .addCase(getAllDiscounts.rejected, (state, action) => {
         state.discountsLoading = false;
         state.error            = action.payload;
       });
 
-    // ── GET SINGLE DISCOUNT ──────────────────────────────────────────────
     builder
       .addCase(getSingleDiscount.pending, (state) => {
-        state.detailLoading  = true;
-        state.error          = null;
+        state.detailLoading    = true;
+        state.error            = null;
+        state.usageHistoryTotal  = null;
+        state.usageHistoryCapped = false;
       })
       .addCase(getSingleDiscount.fulfilled, (state, action) => {
-        state.detailLoading   = false;
-        state.currentDiscount = action.payload.discount;
+        state.detailLoading      = false;
+        state.currentDiscount    = action.payload.discount ?? null;
+        // FIX: capture capped usage history metadata from backend
+        state.usageHistoryTotal  = action.payload.discount?.usageHistoryTotal  ?? null;
+        state.usageHistoryCapped = action.payload.discount?.usageHistoryCapped ?? false;
       })
       .addCase(getSingleDiscount.rejected, (state, action) => {
         state.detailLoading = false;
         state.error         = action.payload;
       });
 
-    // ── CREATE DISCOUNT ──────────────────────────────────────────────────
     builder
       .addCase(createDiscount.pending, (state) => {
         state.actionLoading = true;
@@ -467,15 +371,16 @@ const adminDiscountSlice = createSlice({
         state.actionLoading = false;
         state.success       = true;
         state.message       = action.payload.message;
-        // Prepend so the new code appears at the top of the admin list
-        state.discounts.unshift(action.payload.discount);
+        if (action.payload.discount) state.discounts.unshift(action.payload.discount);
+        // FIX: stats are now stale — null forces re-fetch on next stats mount
+        state.stats         = null;
+        state.categoryStats = [];
       })
       .addCase(createDiscount.rejected, (state, action) => {
         state.actionLoading = false;
         state.error         = action.payload;
       });
 
-    // ── UPDATE DISCOUNT ──────────────────────────────────────────────────
     builder
       .addCase(updateDiscount.pending, (state) => {
         state.actionLoading = true;
@@ -485,15 +390,15 @@ const adminDiscountSlice = createSlice({
         state.actionLoading = false;
         state.success       = true;
         state.message       = action.payload.message;
-
         const updated = action.payload.discount;
-
-        // Sync list row in-place — no refetch needed
+        if (!updated) return;
         const idx = state.discounts.findIndex((d) => d._id === updated._id);
-        if (idx !== -1) state.discounts[idx] = updated;
-
-        // Sync detail view if the drawer is open for this discount
+        if (idx !== -1) {
+          // FIX: replace entirely rather than shallow-merge to preserve nested fields
+          state.discounts[idx] = updated;
+        }
         if (state.currentDiscount?._id === updated._id) {
+          // FIX: replace entirely — shallow merge drops populated sub-documents
           state.currentDiscount = updated;
         }
       })
@@ -502,72 +407,107 @@ const adminDiscountSlice = createSlice({
         state.error         = action.payload;
       });
 
-    // ── DELETE DISCOUNT (soft) ───────────────────────────────────────────
     builder
       .addCase(deleteDiscount.pending, (state) => {
-        state.actionLoading         = true;
-        state.error                 = null;
+        state.actionLoading        = true;
+        state.error                = null;
         state.deleteProtectionError = null;
       })
       .addCase(deleteDiscount.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.success       = true;
         state.message       = action.payload.message;
-
-        // Reflect soft-delete — keep the row but flip status to inactive
-        const idx = state.discounts.findIndex(
-          (d) => d._id === action.payload.id
-        );
-        if (idx !== -1) state.discounts[idx].status = "inactive";
+        // FIX: only mutate local status if something actually changed
+        if (!action.payload.alreadyInactive) {
+          const idx = state.discounts.findIndex((d) => d._id === action.payload.id);
+          if (idx !== -1) state.discounts[idx] = { ...state.discounts[idx], status: "inactive" };
+          if (state.currentDiscount?._id === action.payload.id) {
+            state.currentDiscount = { ...state.currentDiscount, status: "inactive" };
+          }
+          // FIX: stats stale after real deactivation
+          state.stats         = null;
+          state.categoryStats = [];
+        }
       })
       .addCase(deleteDiscount.rejected, (state, action) => {
         state.actionLoading = false;
-
         if (action.payload?.status === 403) {
-          // Fraud-protection window — surface unlock date, not a generic error
+          // FIX: deletionEligibleAt removed — not present in backend 403 body
           state.deleteProtectionError = {
-            message:            action.payload.message,
-            deletionEligibleAt: action.payload.deletionEligibleAt,
+            message: action.payload.message,
           };
         } else {
-          state.error = action.payload?.message || action.payload;
+          state.error = action.payload?.message ?? action.payload;
         }
       });
 
-    // ── CREATE COMPENSATION DISCOUNT ─────────────────────────────────────
     builder
       .addCase(createCompensationDiscount.pending, (state) => {
-        state.actionLoading = true;
-        state.error         = null;
+        state.actionLoading        = true;
+        state.error                = null;
+        state.compensationConflict = null;
       })
       .addCase(createCompensationDiscount.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.success       = true;
         state.message       = action.payload.message;
-        state.discounts.unshift(action.payload.discount);
+        if (action.payload.discount) state.discounts.unshift(action.payload.discount);
+        // FIX: stats stale after new discount creation
+        state.stats         = null;
+        state.categoryStats = [];
       })
       .addCase(createCompensationDiscount.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error         = action.payload;
+        if (action.payload?.status === 409) {
+          state.compensationConflict = {
+            message:            action.payload.message,
+            existingCode:       action.payload.existingCode,
+            existingDiscountId: action.payload.existingDiscountId,
+          };
+        } else {
+          state.error = action.payload?.message ?? action.payload;
+        }
       });
 
-    // ── GET DISCOUNT STATS ───────────────────────────────────────────────
+    builder
+      .addCase(createDiscountForUsers.pending, (state) => {
+        state.vipLoading             = true;
+        state.vipError               = null;
+        state.vipSuccess             = false;
+        state.lastCreatedVipDiscount = null;
+        state.lastVipEligibleCount   = null;
+      })
+      .addCase(createDiscountForUsers.fulfilled, (state, action) => {
+        state.vipLoading             = false;
+        state.vipSuccess             = true;
+        state.lastCreatedVipDiscount = action.payload.discount          ?? null;
+        state.lastVipEligibleCount   = action.payload.eligibleUserCount ?? null;
+        if (action.payload.discount) state.discounts.unshift(action.payload.discount);
+        // FIX: stats stale after new VIP discount creation
+        state.stats         = null;
+        state.categoryStats = [];
+      })
+      .addCase(createDiscountForUsers.rejected, (state, action) => {
+        state.vipLoading = false;
+        state.vipError   = action.payload;
+      });
+
     builder
       .addCase(getDiscountStats.pending, (state) => {
         state.statsLoading = true;
         state.error        = null;
       })
       .addCase(getDiscountStats.fulfilled, (state, action) => {
-        state.statsLoading  = false;
-        state.categoryStats = action.payload.stats;
-        state.stats         = action.payload.overall;
+        state.statsLoading   = false;
+        state.stats          = action.payload.overall   ?? null;
+        state.categoryStats  = action.payload.stats     ?? [];
+        state.statsFromCache = action.payload.fromCache === true;
       })
       .addCase(getDiscountStats.rejected, (state, action) => {
         state.statsLoading = false;
         state.error        = action.payload;
       });
 
-    // ── TRIGGER CLEANUP ──────────────────────────────────────────────────
     builder
       .addCase(triggerCleanup.pending, (state) => {
         state.actionLoading = true;
@@ -578,35 +518,41 @@ const adminDiscountSlice = createSlice({
         state.success       = true;
         state.message       = action.payload.message;
         state.cleanupResult = {
-          expired: action.payload.expired,
-          deleted: action.payload.deleted,
+          expired: action.payload.expired ?? 0,
+          deleted: action.payload.deleted ?? 0,
         };
+        // FIX: cleanup hard-deletes expired discounts and bulk-expires actives —
+        // both the discount list and stats are now stale
+        state.discounts     = [];
+        state.pagination    = null;
+        state.stats         = null;
+        state.categoryStats = [];
       })
       .addCase(triggerCleanup.rejected, (state, action) => {
         state.actionLoading = false;
         state.error         = action.payload;
       });
 
-    // ── GET FULL AUDIT LOG ───────────────────────────────────────────────
-    // First page replaces auditLogs entirely.
-    // Subsequent pages: component calls getAuditLog with cursor,
-    // then dispatches appendAuditLogs with the result payload.
+    // getAuditLog
+    // FIX: cursor flag read from payload._isCursorPage
+    // FIX: auditPagination reset on fresh fetch to clear stale nextCursor
     builder
       .addCase(getAuditLog.pending, (state) => {
         state.auditLoading = true;
         state.error        = null;
       })
       .addCase(getAuditLog.fulfilled, (state, action) => {
-        state.auditLoading    = false;
-        state.auditLogs       = action.payload.auditLogs;
-        state.auditPagination = action.payload.pagination;
+        state.auditLoading = false;
+        if (!action.payload._isCursorPage) {
+          state.auditLogs       = action.payload.auditLogs  ?? [];
+          state.auditPagination = action.payload.pagination ?? null;
+        }
       })
       .addCase(getAuditLog.rejected, (state, action) => {
         state.auditLoading = false;
         state.error        = action.payload;
       });
 
-    // ── GET DISCOUNT AUDIT LOG (drawer) ──────────────────────────────────
     builder
       .addCase(getDiscountAuditLog.pending, (state) => {
         state.discountAuditLoading = true;
@@ -614,14 +560,13 @@ const adminDiscountSlice = createSlice({
       })
       .addCase(getDiscountAuditLog.fulfilled, (state, action) => {
         state.discountAuditLoading = false;
-        state.discountAuditLogs    = action.payload.auditLogs;
+        state.discountAuditLogs    = action.payload.auditLogs ?? [];
       })
       .addCase(getDiscountAuditLog.rejected, (state, action) => {
         state.discountAuditLoading = false;
         state.error                = action.payload;
       });
 
-    // ── GET PURGE LOG ────────────────────────────────────────────────────
     builder
       .addCase(getPurgeLog.pending, (state) => {
         state.purgeLogLoading = true;
@@ -629,9 +574,9 @@ const adminDiscountSlice = createSlice({
       })
       .addCase(getPurgeLog.fulfilled, (state, action) => {
         state.purgeLogLoading = false;
-        state.purgeLog        = action.payload.purgeLog;
-        state.latestPurge     = action.payload.latestPurge;
-        state.showPurgeBanner = action.payload.showBanner;
+        state.purgeLog        = action.payload.purgeLog    ?? [];
+        state.latestPurge     = action.payload.latestPurge ?? null;
+        state.showBanner      = action.payload.showBanner  === true;
       })
       .addCase(getPurgeLog.rejected, (state, action) => {
         state.purgeLogLoading = false;
@@ -640,6 +585,8 @@ const adminDiscountSlice = createSlice({
   },
 });
 
+// ─── EXPORTS ─────────────────────────────────────────────────────────────────
+
 export const {
   clearAdminDiscountState,
   clearCurrentDiscount,
@@ -647,6 +594,9 @@ export const {
   clearDeleteProtectionError,
   clearDiscountAuditLogs,
   dismissPurgeBanner,
+  clearCompensationConflict,
+  clearVipState,
+  resetDiscountList,
   appendDiscounts,
   appendAuditLogs,
 } = adminDiscountSlice.actions;
