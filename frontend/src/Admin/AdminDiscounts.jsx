@@ -1,1392 +1,1499 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, {
+  useState, useEffect, useCallback, useMemo, useRef,
+} from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import {
-  Search,
-  Refresh,
-  Visibility,
-  Add,
-  Edit,
-  Delete,
-  LocalOffer,
-  CheckCircle,
-  Schedule,
-  ArrowBack,
-  Warning,
-  ContentCopy,
-  Done,
-  BarChart,
-  FilterList,
-  Close,
-  HourglassEmpty,
-  AutoFixHigh,
-  TrendingUp,
-} from '@mui/icons-material';
-
 import {
   getAllDiscounts,
-  getSingleDiscount,
   createDiscount,
   updateDiscount,
   deleteDiscount,
+  createCompensationDiscount,
   getDiscountStats,
   triggerCleanup,
+  getAuditLog,
+  getDiscountAuditLog,
+  getPurgeLog,
   clearAdminDiscountState,
-  clearCurrentDiscount,
-  clearCleanupResult,
+  clearDiscountAuditLogs,
+  appendDiscounts,
+  appendAuditLogs,
 } from '../features/admin/adminDiscountSlice';
+import '../pageStyles/AdminDiscounts.css';
 
-import Navbar from '../components/Navbar';
-import Footer from '../components/footer';
-import '../AdminStyles/AdminDiscounts.css';
+// ─────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────
 
-// ── Debounce hook ─────────────────────────────────────────────────────────────
-function useDebounce(value, delay) {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return debounced;
-}
+const ACTION_META = {
+  created:              { label: 'Created',           color: '#059669', bg: '#D1FAE5' },
+  updated:              { label: 'Updated',           color: '#0369A1', bg: '#E0F2FE' },
+  used:                 { label: 'Used',              color: '#7C3AED', bg: '#EDE9FE' },
+  deactivated:          { label: 'Deactivated',       color: '#DC2626', bg: '#FEE2E2' },
+  deactivation_blocked: { label: 'Block Attempt',     color: '#D97706', bg: '#FEF3C7' },
+  sweep_run:            { label: 'Sweep Run',         color: '#6B7280', bg: '#F3F4F6' },
+  sweep_auto_deleted:   { label: 'Auto-Deleted',      color: '#991B1B', bg: '#FEE2E2' },
+  sweep_window_expired: { label: 'Window Expired',    color: '#6B7280', bg: '#F3F4F6' },
+};
 
-// ── Copy to clipboard hook ────────────────────────────────────────────────────
-function useCopyCode() {
-  const [copiedId, setCopiedId] = useState(null);
-  const copy = useCallback((code, id) => {
-    navigator.clipboard.writeText(code).then(() => {
-      setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    });
-  }, []);
-  return { copiedId, copy };
-}
+const CATEGORY_OPTIONS = ['promo', 'refund', 'return', 'loyalty', 'affiliate', 'support'];
+const TYPE_OPTIONS     = ['percentage', 'fixed', 'freeShipping', 'buyXgetY'];
+const STATUS_OPTIONS   = ['active', 'expired', 'inactive'];
 
-// ── Pure helpers ──────────────────────────────────────────────────────────────
-const fmtCurrency = (n) => `$${(typeof n === 'number' ? n : 0).toFixed(2)}`;
-const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
-const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+const fmtDate = (d) =>
+  d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
-const getDaysUntil = (date) => {
+const fmtDateTime = (d) =>
+  d ? new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+
+const fmtCurrency = (n) =>
+  typeof n === 'number' ? `$${n.toFixed(2)}` : '—';
+
+const getDaysUntilEligible = (date) => {
   if (!date) return null;
-  const diff = new Date(date) - new Date();
-  return Math.ceil(diff / 86400000);
+  return Math.ceil((new Date(date) - new Date()) / 86400000);
 };
 
-const getExpiryUrgency = (date) => {
-  const days = getDaysUntil(date);
-  if (days === null) return 'none';
-  if (days < 0) return 'expired';
-  if (days <= 2) return 'critical';
-  if (days <= 7) return 'warning';
-  return 'safe';
+// ─────────────────────────────────────────────
+// SMALL ATOMS
+// ─────────────────────────────────────────────
+
+const StatusBadge = ({ status }) => {
+  const map = {
+    active:   { label: 'Active',   cls: 'ad-badge--active'   },
+    expired:  { label: 'Expired',  cls: 'ad-badge--expired'  },
+    inactive: { label: 'Inactive', cls: 'ad-badge--inactive' },
+    pending_deletion: { label: 'Pending Del.', cls: 'ad-badge--pending' },
+  };
+  const m = map[status] ?? { label: status, cls: '' };
+  return <span className={`ad-badge ${m.cls}`}>{m.label}</span>;
 };
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-const STATUS_FILTERS = [
-  { value: '',         label: 'All'      },
-  { value: 'active',   label: 'Active'   },
-  { value: 'inactive', label: 'Inactive' },
-  { value: 'expired',  label: 'Expired'  },
-];
+const AudienceBadge = ({ audience }) =>
+  audience === 'all' ? (
+    <span className="ad-audience-badge">All users</span>
+  ) : null;
 
-const CATEGORY_FILTERS = [
-  { value: '',          label: 'All Categories' },
-  { value: 'promo',     label: 'Promo'          },
-  { value: 'refund',    label: 'Refund'         },
-  { value: 'return',    label: 'Return'         },
-  { value: 'loyalty',   label: 'Loyalty'        },
-  { value: 'affiliate', label: 'Affiliate'      },
-  { value: 'support',   label: 'Support'        },
-];
-
-const TYPE_OPTIONS = [
-  { value: 'percentage', label: 'Percentage (%)' },
-  { value: 'fixed',      label: 'Fixed ($)'      },
-];
-
-const CATEGORY_OPTIONS = [
-  { value: 'promo',     label: 'Promo'     },
-  { value: 'refund',    label: 'Refund'    },
-  { value: 'return',    label: 'Return'    },
-  { value: 'loyalty',   label: 'Loyalty'   },
-  { value: 'affiliate', label: 'Affiliate' },
-  { value: 'support',   label: 'Support'   },
-];
-
-const CATEGORY_COLOR = {
-  promo:     'promo',
-  refund:    'refund',
-  return:    'return',
-  loyalty:   'loyalty',
-  affiliate: 'affiliate',
-  support:   'support',
+const ActionBadge = ({ action }) => {
+  const m = ACTION_META[action] ?? { label: action, color: '#6B7280', bg: '#F3F4F6' };
+  return (
+    <span
+      className="ad-action-badge"
+      style={{ color: m.color, background: m.bg }}
+    >
+      {m.label}
+    </span>
+  );
 };
 
-const EMPTY_FORM = {
-  code: '', description: '', type: 'percentage', value: '',
-  category: 'promo', validFrom: '', validUntil: '',
-  usageLimit: { totalUses: '', usesPerUser: 1 },
-  conditions: {
-    minPurchaseAmount: 0, maxDiscountAmount: '',
-    excludeSaleItems: false, firstOrderOnly: false,
-  },
-  notes: '',
-};
+const LockIcon = ({ title }) => (
+  <span className="ad-lock-icon" title={title} aria-label={title}>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" strokeWidth="2.5"
+      strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+  </span>
+);
 
-// ── Component ─────────────────────────────────────────────────────────────────
-const AdminDiscounts = () => {
-  const dispatch   = useDispatch();
-  const navigate   = useNavigate();
-  const location   = useLocation();
-  const { copiedId, copy } = useCopyCode();
+const Spinner = ({ size = 18 }) => (
+  <span className="ad-spinner" style={{ width: size, height: size }} />
+);
 
-  const {
-    currentDiscount,
-    stats,
-    categoryStats,
-    cleanupResult,
-    discountsLoading,
-    actionLoading,
-    statsLoading,
-    error,
-    success,
-    message: successMessage,
-  } = useSelector((state) => state.adminDiscount);
+// ─────────────────────────────────────────────
+// EMPTY STATE
+// ─────────────────────────────────────────────
 
-  // ── Return flow pre-fill ──────────────────────────────────────────────────
-  const fromReturn   = location.state?.fromReturn   ?? false;
-  const returnData   = location.state?.returnData   ?? null;
+const EmptyState = ({ icon, title, desc }) => (
+  <div className="ad-empty">
+    <div className="ad-empty-icon">{icon}</div>
+    <p className="ad-empty-title">{title}</p>
+    {desc && <p className="ad-empty-desc">{desc}</p>}
+  </div>
+);
 
-  // ── Filter / search state ─────────────────────────────────────────────────
-  const [filterStatus,   setFilterStatus]   = useState('');
-  const [filterCategory, setFilterCategory] = useState('');
-  const [searchQuery,    setSearchQuery]    = useState('');
-  const [cursor,         setCursor]         = useState(null);
-  const [allDiscounts,   setAllDiscounts]   = useState([]);
-  const [hasMore,        setHasMore]        = useState(false);
+// ─────────────────────────────────────────────
+// AUDIT TIMELINE ENTRY (used in both drawer + full tab)
+// ─────────────────────────────────────────────
 
-  // ── UI state ──────────────────────────────────────────────────────────────
-  const [activeTab,        setActiveTab]        = useState('list');
-  const [showCreateModal,  setShowCreateModal]  = useState(false);
-  const [showDetailDrawer, setShowDetailDrawer] = useState(false);
-  const [showDeleteConfirm,setShowDeleteConfirm]= useState(null);
-  const [showCleanupModal, setShowCleanupModal] = useState(false);
-  const [isEditing,        setIsEditing]        = useState(false);
-  const [cleanupDays,      setCleanupDays]      = useState(90);
+const AuditEntry = ({ entry, compact = false }) => {
+  const [expanded, setExpanded] = useState(false);
+  const isSystem = entry.performedBy?.system === true;
 
-  // ── Form state ────────────────────────────────────────────────────────────
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [formErrors, setFormErrors] = useState({});
+  const actor = isSystem
+    ? 'System (CRON)'
+    : entry.performedBy?.firstName
+      ? `${entry.performedBy.firstName} ${entry.performedBy.lastName ?? ''}`.trim()
+      : entry.performedBy?.email ?? 'Unknown';
 
-  const searchDebounced = useDebounce(searchQuery, 400);
-  const filtersRef = useRef({});
-  filtersRef.current = { filterStatus, filterCategory, searchDebounced };
+  const hasMeta = entry.meta && Object.keys(entry.meta).length > 0;
 
-  // ── Initial load ──────────────────────────────────────────────────────────
-  useEffect(() => {
-    dispatch(getDiscountStats());
-    fetchFirstPage();
-    if (fromReturn && returnData) {
-      prefillFromReturn(returnData);
-      setShowCreateModal(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    fetchFirstPage();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterStatus, filterCategory, searchDebounced]);
-
-  const buildParams = useCallback((cursorVal = null) => {
-    const f = filtersRef.current;
-    const p = { limit: 20 };
-    if (f.filterStatus)   p.status   = f.filterStatus;
-    if (f.filterCategory) p.category = f.filterCategory;
-    if (f.searchDebounced.trim()) p.search = f.searchDebounced.trim();
-    if (cursorVal) p.cursor = cursorVal;
-    return p;
-  }, []);
-
-  const fetchFirstPage = useCallback(async () => {
-    setCursor(null);
-    setAllDiscounts([]);
-    const result = await dispatch(getAllDiscounts(buildParams(null)));
-    if (getAllDiscounts.fulfilled.match(result)) {
-      setAllDiscounts(result.payload.discounts ?? []);
-      setHasMore(result.payload.pagination?.hasNextPage ?? false);
-      setCursor(result.payload.pagination?.nextCursor ?? null);
-    }
-  }, [dispatch, buildParams]);
-
-  const fetchNextPage = useCallback(async () => {
-    if (!cursor || !hasMore || discountsLoading) return;
-    const result = await dispatch(getAllDiscounts(buildParams(cursor)));
-    if (getAllDiscounts.fulfilled.match(result)) {
-      setAllDiscounts((prev) => [...prev, ...(result.payload.discounts ?? [])]);
-      setHasMore(result.payload.pagination?.hasNextPage ?? false);
-      setCursor(result.payload.pagination?.nextCursor ?? null);
-    }
-  }, [cursor, hasMore, discountsLoading, dispatch, buildParams]);
-
-  // ── Pre-fill from return flow ─────────────────────────────────────────────
-  const prefillFromReturn = useCallback((data) => {
-    if (!data) return;
-    setForm({
-      ...EMPTY_FORM,
-      description: `Return compensation — Order ref: ${data.orderReference ?? ''}`,
-      type: 'fixed',
-      value: data.discountValue ?? '',
-      category: 'return',
-      validUntil: (() => {
-        const d = new Date();
-        d.setDate(d.getDate() + 30);
-        return d.toISOString().split('T')[0];
-      })(),
-      notes: `Auto-generated from return. Customer: ${data.customerName ?? ''} (${data.customerEmail ?? ''})`,
-    });
-  }, []);
-
-  // ── Toast auto-dismiss ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!success) return;
-    const t = setTimeout(() => dispatch(clearAdminDiscountState()), 3000);
-    return () => clearTimeout(t);
-  }, [success, dispatch]);
-
-  useEffect(() => {
-    if (!error) return;
-    const t = setTimeout(() => dispatch(clearAdminDiscountState()), 5000);
-    return () => clearTimeout(t);
-  }, [error, dispatch]);
-
-  // ── Form helpers ──────────────────────────────────────────────────────────
-  const setField = (path, value) => {
-    setForm((prev) => {
-      const next = { ...prev };
-      const parts = path.split('.');
-      let cur = next;
-      for (let i = 0; i < parts.length - 1; i++) {
-        cur[parts[i]] = { ...cur[parts[i]] };
-        cur = cur[parts[i]];
-      }
-      cur[parts[parts.length - 1]] = value;
-      return next;
-    });
-    setFormErrors((prev) => {
-      const next = { ...prev };
-      delete next[path];
-      return next;
-    });
-  };
-
-  const validateForm = () => {
-    const errs = {};
-    if (!form.code.trim() && !isEditing) errs.code = 'Code is required';
-    if (!form.description.trim()) errs.description = 'Description is required';
-    if (!form.value || isNaN(Number(form.value)) || Number(form.value) <= 0)
-      errs.value = 'Value must be a positive number';
-    if (form.type === 'percentage' && Number(form.value) > 100)
-      errs.value = 'Percentage cannot exceed 100';
-    if (!form.validUntil) errs.validUntil = 'Expiry date is required';
-    if (form.validFrom && form.validUntil && new Date(form.validFrom) >= new Date(form.validUntil))
-      errs.validUntil = 'Expiry must be after start date';
-    setFormErrors(errs);
-    return Object.keys(errs).length === 0;
-  };
-
-  // ── Handlers ──────────────────────────────────────────────────────────────
-  const handleOpenCreate = () => {
-    setForm(EMPTY_FORM);
-    setFormErrors({});
-    setIsEditing(false);
-    setShowCreateModal(true);
-  };
-
-  const handleOpenEdit = (discount) => {
-    setForm({
-      code: discount.code ?? '',
-      description: discount.description ?? '',
-      type: discount.type ?? 'percentage',
-      value: discount.value ?? '',
-      category: discount.category ?? 'promo',
-      validFrom: discount.validFrom ? discount.validFrom.split('T')[0] : '',
-      validUntil: discount.validUntil ? discount.validUntil.split('T')[0] : '',
-      usageLimit: {
-        totalUses: discount.usageLimit?.totalUses ?? '',
-        usesPerUser: discount.usageLimit?.usesPerUser ?? 1,
-      },
-      conditions: {
-        minPurchaseAmount: discount.conditions?.minPurchaseAmount ?? 0,
-        maxDiscountAmount: discount.conditions?.maxDiscountAmount ?? '',
-        excludeSaleItems: discount.conditions?.excludeSaleItems ?? false,
-        firstOrderOnly: discount.conditions?.firstOrderOnly ?? false,
-      },
-      notes: discount.notes ?? '',
-    });
-    setFormErrors({});
-    setIsEditing(true);
-    setShowCreateModal(true);
-  };
-
-  const handleSubmitForm = async () => {
-    if (!validateForm()) return;
-
-    const payload = {
-      ...form,
-      value: Number(form.value),
-      usageLimit: {
-        totalUses: form.usageLimit.totalUses ? Number(form.usageLimit.totalUses) : null,
-        usesPerUser: Number(form.usageLimit.usesPerUser) || 1,
-      },
-      conditions: {
-        ...form.conditions,
-        minPurchaseAmount: Number(form.conditions.minPurchaseAmount) || 0,
-        maxDiscountAmount: form.conditions.maxDiscountAmount
-          ? Number(form.conditions.maxDiscountAmount)
-          : null,
-      },
-    };
-
-    let result;
-    if (isEditing && currentDiscount) {
-      result = await dispatch(updateDiscount({ id: currentDiscount._id, discountData: payload }));
-    } else {
-      result = await dispatch(createDiscount(payload));
-    }
-
-    if (createDiscount.fulfilled.match(result) || updateDiscount.fulfilled.match(result)) {
-      setShowCreateModal(false);
-      dispatch(clearCurrentDiscount());
-      fetchFirstPage();
-      dispatch(getDiscountStats());
-    }
-  };
-
-  const handleViewDetail = async (id) => {
-    setShowDetailDrawer(true);
-    await dispatch(getSingleDiscount(id));
-  };
-
-  const handleDelete = async (id) => {
-    const result = await dispatch(deleteDiscount(id));
-    if (deleteDiscount.fulfilled.match(result)) {
-      setShowDeleteConfirm(null);
-      fetchFirstPage();
-      dispatch(getDiscountStats());
-    }
-  };
-
-  const handleCleanup = async () => {
-    const result = await dispatch(triggerCleanup({ daysOld: cleanupDays }));
-    if (triggerCleanup.fulfilled.match(result)) {
-      setShowCleanupModal(false);
-      fetchFirstPage();
-      dispatch(getDiscountStats());
-    }
-  };
-
-  const handleCloseDrawer = () => {
-    setShowDetailDrawer(false);
-    dispatch(clearCurrentDiscount());
-  };
-
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const overallStats = useMemo(() => ({
-    total:      stats?.total      ?? 0,
-    active:     stats?.active     ?? 0,
-    expired:    stats?.expired    ?? 0,
-    totalUses:  stats?.totalUses  ?? 0,
-  }), [stats]);
-
-  // ── Render: KPI cards ─────────────────────────────────────────────────────
-  const renderKPIs = () => {
-    if (statsLoading) {
-      return Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="ad-kpi">
-          <div className="ad-skel" style={{ width: 40, height: 40, borderRadius: 10, marginBottom: 14 }} />
-          <div className="ad-skel" style={{ width: '50%', height: 10, marginBottom: 8 }} />
-          <div className="ad-skel" style={{ width: '70%', height: 28 }} />
-        </div>
-      ));
-    }
-    const cards = [
-      { label: 'Total Codes',  value: overallStats.total,    icon: LocalOffer,    color: '#6366F1' },
-      { label: 'Active',       value: overallStats.active,   icon: CheckCircle,   color: '#10B981' },
-      { label: 'Expired',      value: overallStats.expired,  icon: HourglassEmpty,color: '#F59E0B' },
-      { label: 'Total Uses',   value: overallStats.totalUses,icon: TrendingUp,    color: '#0EA5E9' },
-    ];
-    return cards.map((c) => (
-      <div key={c.label} className="ad-kpi" style={{ '--kpi-color': c.color }}>
-        <div className="ad-kpi-top">
-          <span className="ad-kpi-icon" style={{ background: `${c.color}18`, color: c.color }}>
-            <c.icon style={{ fontSize: 20 }} />
+  return (
+    <div className={`ad-audit-entry ${isSystem ? 'ad-audit-entry--system' : ''} ${compact ? 'ad-audit-entry--compact' : ''}`}>
+      <div className="ad-audit-entry-dot" />
+      <div className="ad-audit-entry-body">
+        <div className="ad-audit-entry-row">
+          <ActionBadge action={entry.action} />
+          {!compact && (
+            <span className="ad-audit-code">{entry.discountCode}</span>
+          )}
+          <span className={`ad-audit-actor ${isSystem ? 'ad-audit-actor--system' : ''}`}>
+            {isSystem && (
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="3" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14" />
+              </svg>
+            )}
+            {actor}
           </span>
-        </div>
-        <div className="ad-kpi-label">{c.label}</div>
-        <div className="ad-kpi-value">{c.value.toLocaleString()}</div>
-      </div>
-    ));
-  };
-
-  // ── Render: category stats table ──────────────────────────────────────────
-  const renderCategoryStats = () => {
-    if (statsLoading) {
-      return (
-        <div className="ad-card">
-          <div className="ad-card-hd"><h3 className="ad-card-title">Usage by Category</h3></div>
-          <div className="ad-card-body">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-                {Array.from({ length: 4 }).map((__, j) => (
-                  <div key={j} className="ad-skel" style={{ height: 14, flex: 1 }} />
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      );
-    }
-    if (!categoryStats?.length) return null;
-    return (
-      <div className="ad-card">
-        <div className="ad-card-hd">
-          <div>
-            <h3 className="ad-card-title">
-              <BarChart style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
-              Usage by Category
-            </h3>
-            <p className="ad-card-sub">Discount performance across all categories</p>
-          </div>
-        </div>
-        <div className="ad-card-body--np">
-          <div className="ad-tbl-wrap">
-            <table className="ad-tbl">
-              <thead>
-                <tr>
-                  <th>Category</th>
-                  <th>Total</th>
-                  <th>Active</th>
-                  <th>Uses</th>
-                  <th>Value Given</th>
-                </tr>
-              </thead>
-              <tbody>
-                {categoryStats.map((row) => (
-                  <tr key={row._id}>
-                    <td>
-                      <span className={`ad-category ad-category--${CATEGORY_COLOR[row._id] ?? 'promo'}`}>
-                        {row._id}
-                      </span>
-                    </td>
-                    <td className="ad-td-num">{row.totalDiscounts}</td>
-                    <td className="ad-td-num">{row.activeDiscounts}</td>
-                    <td className="ad-td-num">{row.totalUses}</td>
-                    <td className="ad-td-money">{fmtCurrency(row.totalDiscountValue)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Render: discount table ────────────────────────────────────────────────
-  const renderTable = () => {
-    if (discountsLoading && allDiscounts.length === 0) {
-      return (
-        <div style={{ padding: 20 }}>
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-              {Array.from({ length: 7 }).map((__, j) => (
-                <div key={j} className="ad-skel" style={{ height: 16, flex: 1 }} />
-              ))}
-            </div>
-          ))}
-        </div>
-      );
-    }
-
-    if (!discountsLoading && allDiscounts.length === 0) {
-      return (
-        <div className="ad-empty">
-          <LocalOffer style={{ fontSize: 36, color: '#D1D5DB' }} />
-          <span>No discount codes found</span>
-          <button type="button" className="ad-btn ad-btn--primary" onClick={handleOpenCreate}>
-            <Add style={{ fontSize: 15 }} /> Create First Code
-          </button>
-        </div>
-      );
-    }
-
-    return (
-      <div className="ad-tbl-wrap">
-        {discountsLoading && allDiscounts.length > 0 && <div className="ad-loading-bar" />}
-        <table className="ad-tbl">
-          <thead>
-            <tr>
-              <th>Code</th>
-              <th>Type</th>
-              <th>Category</th>
-              <th>Value</th>
-              <th>Uses</th>
-              <th>Expires</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {allDiscounts.map((d) => {
-              const urgency = getExpiryUrgency(d.validUntil);
-              const remaining = d.usageLimit?.totalUses != null
-                ? `${d.usageLimit.currentUses ?? 0} / ${d.usageLimit.totalUses}`
-                : `${d.usageLimit?.currentUses ?? 0} / ∞`;
-              return (
-                <tr key={d._id}>
-                  <td>
-                    <div className="ad-code-cell">
-                      <span className="ad-code-text">{d.code}</span>
-                      <button
-                        type="button"
-                        className="ad-copy-btn"
-                        onClick={() => copy(d.code, d._id)}
-                        title="Copy code"
-                      >
-                        {copiedId === d._id
-                          ? <Done style={{ fontSize: 13 }} />
-                          : <ContentCopy style={{ fontSize: 13 }} />}
-                      </button>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`ad-type-badge ad-type-badge--${d.type}`}>
-                      {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`ad-category ad-category--${CATEGORY_COLOR[d.category] ?? 'promo'}`}>
-                      {d.category}
-                    </span>
-                  </td>
-                  <td className="ad-td-money">
-                    {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
-                  </td>
-                  <td className="ad-td-num ad-td-mono">{remaining}</td>
-                  <td>
-                    <span className={`ad-expiry ad-expiry--${urgency}`}>
-                      {urgency === 'expired' ? 'Expired' : fmtDate(d.validUntil)}
-                    </span>
-                  </td>
-                  <td>
-                    <span className={`ad-status ad-status--${d.status}`}>
-                      {d.status}
-                    </span>
-                  </td>
-                  <td>
-                    <div className="ad-action-btns">
-                      <button
-                        type="button"
-                        className="ad-icon-btn"
-                        onClick={() => handleViewDetail(d._id)}
-                        title="View Details"
-                      >
-                        <Visibility style={{ fontSize: 15 }} />
-                      </button>
-                      <button
-                        type="button"
-                        className="ad-icon-btn"
-                        onClick={() => {
-                          dispatch(getSingleDiscount(d._id)).then((res) => {
-                            if (getSingleDiscount.fulfilled.match(res)) handleOpenEdit(res.payload.discount);
-                          });
-                        }}
-                        title="Edit"
-                      >
-                        <Edit style={{ fontSize: 15 }} />
-                      </button>
-                      <button
-                        type="button"
-                        className="ad-icon-btn ad-icon-btn--danger"
-                        onClick={() => setShowDeleteConfirm(d._id)}
-                        title="Delete"
-                        disabled={d.status === 'inactive'}
-                      >
-                        <Delete style={{ fontSize: 15 }} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-
-        {hasMore && (
-          <div className="ad-load-more">
+          <span className="ad-audit-time">{fmtDateTime(entry.performedAt)}</span>
+          {hasMeta && (
             <button
               type="button"
-              className="ad-btn ad-btn--secondary"
-              onClick={fetchNextPage}
-              disabled={discountsLoading}
+              className="ad-audit-expand"
+              onClick={() => setExpanded(!expanded)}
+              aria-label={expanded ? 'Collapse meta' : 'Expand meta'}
             >
-              {discountsLoading ? 'Loading…' : 'Load More'}
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                style={{ transform: expanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
             </button>
-            <span className="ad-load-more-hint">Showing {allDiscounts.length} codes</span>
-          </div>
+          )}
+        </div>
+        {expanded && hasMeta && (
+          <pre className="ad-audit-meta">{JSON.stringify(entry.meta, null, 2)}</pre>
         )}
       </div>
-    );
-  };
+    </div>
+  );
+};
 
-  // ── Render: create / edit modal ───────────────────────────────────────────
-  const renderModal = () => {
-    if (!showCreateModal) return null;
-    return (
-      <div className="ad-modal-overlay" onClick={() => setShowCreateModal(false)} role="presentation">
-        <div className="ad-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-          <div className="ad-modal-hd">
-            <div className="ad-modal-hd-left">
-              {fromReturn && !isEditing && (
-                <span className="ad-return-badge">
-                  <AutoFixHigh style={{ fontSize: 13 }} />
-                  From Return
-                </span>
-              )}
-              <h2 className="ad-modal-title">
-                {isEditing ? 'Edit Discount Code' : 'Create Discount Code'}
-              </h2>
-            </div>
-            <button type="button" className="ad-modal-close" onClick={() => setShowCreateModal(false)} aria-label="Close">
-              <Close style={{ fontSize: 18 }} />
-            </button>
+// ─────────────────────────────────────────────
+// DETAIL DRAWER
+// ─────────────────────────────────────────────
+
+const DetailDrawer = ({ discount, auditLogs, auditLoading, onClose, onEdit, onDelete }) => {
+  const daysLeft  = getDaysUntilEligible(discount.deletionEligibleAt);
+  const isLocked  = discount.usageLimit?.currentUses >= 1 &&
+                    discount.deletionEligibleAt &&
+                    new Date(discount.deletionEligibleAt) > new Date();
+
+  return (
+    <div className="ad-drawer-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="ad-drawer">
+        <div className="ad-drawer-header">
+          <div className="ad-drawer-header-left">
+            <span className="ad-drawer-code">{discount.code}</span>
+            <StatusBadge status={discount.status} />
+            <AudienceBadge audience={discount.audience} />
           </div>
+          <button type="button" className="ad-drawer-close" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6"  x2="6"  y2="18" />
+              <line x1="6"  y1="6"  x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
 
-          <div className="ad-modal-body">
-            {fromReturn && !isEditing && returnData && (
-              <div className="ad-info-banner ad-info-banner--return">
-                <AutoFixHigh style={{ fontSize: 15, flexShrink: 0 }} />
+        <div className="ad-drawer-body">
+
+          {/* Core details */}
+          <section className="ad-drawer-section">
+            <h4 className="ad-drawer-section-title">Details</h4>
+            <div className="ad-drawer-grid">
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Type</span>
+                <span className="ad-drawer-value">{discount.type}</span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Value</span>
+                <span className="ad-drawer-value ad-drawer-value--bold">
+                  {discount.type === 'percentage' ? `${discount.value}%` : fmtCurrency(discount.value)}
+                </span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Category</span>
+                <span className="ad-drawer-value">{discount.category}</span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Audience</span>
+                <span className="ad-drawer-value">
+                  {discount.audience === 'all' ? 'All users (broadcast)' : 'Specific users'}
+                </span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Valid from</span>
+                <span className="ad-drawer-value">{fmtDate(discount.validFrom)}</span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Valid until</span>
+                <span className="ad-drawer-value">{fmtDate(discount.validUntil)}</span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Uses</span>
+                <span className="ad-drawer-value">
+                  {discount.usageLimit?.currentUses ?? 0}
+                  {discount.usageLimit?.totalUses ? ` / ${discount.usageLimit.totalUses}` : ' / ∞'}
+                </span>
+              </div>
+              <div className="ad-drawer-field">
+                <span className="ad-drawer-label">Per user</span>
+                <span className="ad-drawer-value">
+                  {discount.usageLimit?.usesPerUser ?? '∞'}
+                </span>
+              </div>
+            </div>
+            {discount.description && (
+              <p className="ad-drawer-desc">{discount.description}</p>
+            )}
+            {discount.notes && (
+              <p className="ad-drawer-notes">📝 {discount.notes}</p>
+            )}
+          </section>
+
+          {/* Fraud protection status */}
+          {isLocked ? (
+            <section className="ad-drawer-section ad-drawer-section--locked">
+              <div className="ad-lock-banner">
+                <LockIcon title="Protected" />
                 <div>
-                  <strong>Pre-filled from return</strong>
-                  <p>
-                    Customer: {returnData.customerName} · Order: {returnData.orderReference} · Value: {fmtCurrency(returnData.discountValue)}
+                  <p className="ad-lock-banner-title">Fraud protection active</p>
+                  <p className="ad-lock-banner-desc">
+                    This discount was used on {fmtDate(discount.lockedAt)}.
+                    Deactivation is locked for 30 days to protect the audit trail.
+                    Eligible for deactivation on <strong>{fmtDate(discount.deletionEligibleAt)}</strong>
+                    {daysLeft !== null && ` (${daysLeft} day${daysLeft !== 1 ? 's' : ''} remaining)`}.
                   </p>
                 </div>
               </div>
+            </section>
+          ) : discount.lockedAt ? (
+            <section className="ad-drawer-section">
+              <div className="ad-lock-banner ad-lock-banner--cleared">
+                <div>
+                  <p className="ad-lock-banner-title">Protection window passed</p>
+                  <p className="ad-lock-banner-desc">
+                    First used {fmtDate(discount.lockedAt)}. Protection window ended {fmtDate(discount.deletionEligibleAt)}.
+                  </p>
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {/* Audit trail — last 20 for this discount */}
+          <section className="ad-drawer-section">
+            <h4 className="ad-drawer-section-title">
+              Audit trail
+              <span className="ad-drawer-section-hint">Last 20 entries</span>
+            </h4>
+            {auditLoading ? (
+              <div className="ad-drawer-audit-loading">
+                <Spinner size={16} />
+                <span>Loading audit trail…</span>
+              </div>
+            ) : auditLogs.length === 0 ? (
+              <p className="ad-drawer-no-audit">No audit entries yet.</p>
+            ) : (
+              <div className="ad-audit-timeline">
+                {auditLogs.map((entry) => (
+                  <AuditEntry key={entry._id} entry={entry} compact />
+                ))}
+              </div>
             )}
+          </section>
+        </div>
 
-            <div className="ad-form-grid">
-              {!isEditing && (
-                <div className="ad-form-group ad-form-group--full">
-                  <label className="ad-form-label" htmlFor="ad-code">Discount Code *</label>
-                  <input
-                    id="ad-code"
-                    type="text"
-                    className={`ad-form-input ad-form-input--mono${formErrors.code ? ' ad-form-input--error' : ''}`}
-                    value={form.code}
-                    onChange={(e) => setField('code', e.target.value.toUpperCase())}
-                    placeholder="e.g. SUMMER20"
-                    maxLength={30}
-                  />
-                  {formErrors.code && <span className="ad-form-error">{formErrors.code}</span>}
-                </div>
-              )}
+        {/* Drawer actions */}
+        <div className="ad-drawer-footer">
+          <button
+            type="button"
+            className="ad-btn ad-btn--outline"
+            onClick={() => onEdit(discount)}
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            className={`ad-btn ${isLocked ? 'ad-btn--locked' : 'ad-btn--danger'}`}
+            onClick={() => !isLocked && onDelete(discount)}
+            disabled={isLocked}
+            title={isLocked ? `Protected until ${fmtDate(discount.deletionEligibleAt)}` : 'Deactivate discount'}
+          >
+            {isLocked ? (
+              <><LockIcon /> Protected until {fmtDate(discount.deletionEligibleAt)}</>
+            ) : (
+              'Deactivate'
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
-              <div className="ad-form-group ad-form-group--full">
-                <label className="ad-form-label" htmlFor="ad-desc">Description *</label>
-                <input
-                  id="ad-desc"
-                  type="text"
-                  className={`ad-form-input${formErrors.description ? ' ad-form-input--error' : ''}`}
-                  value={form.description}
-                  onChange={(e) => setField('description', e.target.value)}
-                  placeholder="Discount description…"
-                />
-                {formErrors.description && <span className="ad-form-error">{formErrors.description}</span>}
-              </div>
+// ─────────────────────────────────────────────
+// CREATE / EDIT MODAL
+// ─────────────────────────────────────────────
 
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-type">Type *</label>
-                <select
-                  id="ad-type"
-                  className="ad-form-select"
-                  value={form.type}
-                  onChange={(e) => setField('type', e.target.value)}
-                  disabled={fromReturn && !isEditing}
-                >
-                  {TYPE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
+const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit, onClose }) => {
+  const [form, setForm] = useState({
+    code:        initial.code        ?? '',
+    description: initial.description ?? '',
+    type:        initial.type        ?? 'percentage',
+    value:       initial.value       ?? '',
+    category:    initial.category    ?? 'promo',
+    audience:    initial.audience    ?? 'specific',
+    validFrom:   initial.validFrom   ? initial.validFrom.slice(0, 10) : '',
+    validUntil:  initial.validUntil  ? initial.validUntil.slice(0, 10) : '',
+    usageLimit:  initial.usageLimit  ?? { totalUses: '', usesPerUser: 1 },
+    conditions:  initial.conditions  ?? { minPurchaseAmount: 0, firstOrderOnly: false },
+    notes:       initial.notes       ?? '',
+  });
 
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-value">
-                  Value {form.type === 'percentage' ? '(%)' : '($)'} *
-                </label>
-                <input
-                  id="ad-value"
-                  type="number"
-                  className={`ad-form-input${formErrors.value ? ' ad-form-input--error' : ''}`}
-                  value={form.value}
-                  onChange={(e) => setField('value', e.target.value)}
-                  placeholder={form.type === 'percentage' ? '0–100' : '0.00'}
-                  min={0}
-                  max={form.type === 'percentage' ? 100 : undefined}
-                  step={form.type === 'percentage' ? 1 : 0.01}
-                  readOnly={fromReturn && !isEditing}
-                />
-                {formErrors.value && <span className="ad-form-error">{formErrors.value}</span>}
-              </div>
+  const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
 
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-category">Category *</label>
-                <select
-                  id="ad-category"
-                  className="ad-form-select"
-                  value={form.category}
-                  onChange={(e) => setField('category', e.target.value)}
-                  disabled={fromReturn && !isEditing}
-                >
-                  {CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-              </div>
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSubmit(form);
+  };
 
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-from">Valid From</label>
-                <input
-                  id="ad-from"
-                  type="date"
-                  className="ad-form-input"
-                  value={form.validFrom}
-                  onChange={(e) => setField('validFrom', e.target.value)}
-                />
-              </div>
+  return (
+    <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="ad-modal">
+        <div className="ad-modal-header">
+          <h2 className="ad-modal-title">
+            {mode === 'create' ? 'New Discount Code' : 'Edit Discount'}
+          </h2>
+          <button type="button" className="ad-modal-close" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6"  x2="6"  y2="18" />
+              <line x1="6"  y1="6"  x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
 
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-until">Expires *</label>
-                <input
-                  id="ad-until"
-                  type="date"
-                  className={`ad-form-input${formErrors.validUntil ? ' ad-form-input--error' : ''}`}
-                  value={form.validUntil}
-                  onChange={(e) => setField('validUntil', e.target.value)}
-                />
-                {formErrors.validUntil && <span className="ad-form-error">{formErrors.validUntil}</span>}
-              </div>
+        <form className="ad-modal-form" onSubmit={handleSubmit}>
 
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-total-uses">Total Uses (blank = unlimited)</label>
-                <input
-                  id="ad-total-uses"
-                  type="number"
-                  className="ad-form-input"
-                  value={form.usageLimit.totalUses}
-                  onChange={(e) => setField('usageLimit.totalUses', e.target.value)}
-                  placeholder="Unlimited"
-                  min={1}
-                />
-              </div>
-
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-per-user">Uses Per User</label>
-                <input
-                  id="ad-per-user"
-                  type="number"
-                  className="ad-form-input"
-                  value={form.usageLimit.usesPerUser}
-                  onChange={(e) => setField('usageLimit.usesPerUser', e.target.value)}
-                  min={1}
-                />
-              </div>
-
-              <div className="ad-form-group">
-                <label className="ad-form-label" htmlFor="ad-min-purchase">Min Purchase ($)</label>
-                <input
-                  id="ad-min-purchase"
-                  type="number"
-                  className="ad-form-input"
-                  value={form.conditions.minPurchaseAmount}
-                  onChange={(e) => setField('conditions.minPurchaseAmount', e.target.value)}
-                  min={0}
-                  step={0.01}
-                />
-              </div>
-
-              {form.type === 'percentage' && (
-                <div className="ad-form-group">
-                  <label className="ad-form-label" htmlFor="ad-max-discount">Max Discount Cap ($)</label>
-                  <input
-                    id="ad-max-discount"
-                    type="number"
-                    className="ad-form-input"
-                    value={form.conditions.maxDiscountAmount}
-                    onChange={(e) => setField('conditions.maxDiscountAmount', e.target.value)}
-                    placeholder="No cap"
-                    min={0}
-                    step={0.01}
-                  />
-                </div>
-              )}
-
-              <div className="ad-form-group ad-form-group--full">
-                <div className="ad-checkbox-row">
-                  <label className="ad-checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={form.conditions.excludeSaleItems}
-                      onChange={(e) => setField('conditions.excludeSaleItems', e.target.checked)}
-                      className="ad-checkbox"
-                    />
-                    <span>Exclude sale items</span>
-                  </label>
-                  <label className="ad-checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={form.conditions.firstOrderOnly}
-                      onChange={(e) => setField('conditions.firstOrderOnly', e.target.checked)}
-                      className="ad-checkbox"
-                    />
-                    <span>First order only</span>
-                  </label>
-                </div>
-              </div>
-
-              <div className="ad-form-group ad-form-group--full">
-                <label className="ad-form-label" htmlFor="ad-notes">Notes</label>
-                <textarea
-                  id="ad-notes"
-                  className="ad-form-textarea"
-                  rows={2}
-                  value={form.notes}
-                  onChange={(e) => setField('notes', e.target.value)}
-                  placeholder="Internal admin notes…"
-                />
-              </div>
+          {error && (
+            <div className="ad-modal-error" role="alert">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8"  x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              {error}
             </div>
+          )}
+
+          {/* Audience toggle — at the very top so admin sees scope first */}
+          <div className="ad-form-field">
+            <label className="ad-form-label">Audience</label>
+            <div className="ad-audience-toggle">
+              {['specific', 'all'].map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className={`ad-audience-opt ${form.audience === opt ? 'ad-audience-opt--active' : ''}`}
+                  onClick={() => set('audience', opt)}
+                  disabled={mode === 'edit'}
+                >
+                  {opt === 'all' ? (
+                    <>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                      All users (broadcast)
+                    </>
+                  ) : (
+                    <>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                        <circle cx="12" cy="7" r="4" />
+                      </svg>
+                      Specific users
+                    </>
+                  )}
+                </button>
+              ))}
+            </div>
+            {form.audience === 'all' && (
+              <p className="ad-form-hint ad-form-hint--info">
+                This code will be visible to all logged-in users and will trigger the Navbar notification dot.
+              </p>
+            )}
+          </div>
+
+          {/* Code — hidden in edit mode */}
+          {mode === 'create' && (
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-code">Code</label>
+              <input
+                id="ad-code"
+                className="ad-form-input"
+                type="text"
+                placeholder="e.g. SUMMER25"
+                value={form.code}
+                onChange={(e) => set('code', e.target.value.toUpperCase())}
+                required
+                maxLength={40}
+              />
+            </div>
+          )}
+
+          <div className="ad-form-row">
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-type">Type</label>
+              <select
+                id="ad-type"
+                className="ad-form-select"
+                value={form.type}
+                onChange={(e) => set('type', e.target.value)}
+                disabled={mode === 'edit'}
+              >
+                {TYPE_OPTIONS.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-value">Value</label>
+              <input
+                id="ad-value"
+                className="ad-form-input"
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={form.type === 'percentage' ? '20' : '10.00'}
+                value={form.value}
+                onChange={(e) => set('value', e.target.value)}
+                required={mode === 'create'}
+                disabled={mode === 'edit'}
+              />
+            </div>
+          </div>
+
+          <div className="ad-form-row">
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-category">Category</label>
+              <select
+                id="ad-category"
+                className="ad-form-select"
+                value={form.category}
+                onChange={(e) => set('category', e.target.value)}
+                disabled={mode === 'edit'}
+              >
+                {CATEGORY_OPTIONS.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="ad-form-field">
+            <label className="ad-form-label" htmlFor="ad-desc">Description</label>
+            <textarea
+              id="ad-desc"
+              className="ad-form-textarea"
+              rows={2}
+              placeholder="What is this discount for?"
+              value={form.description}
+              onChange={(e) => set('description', e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="ad-form-row">
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-from">Valid from</label>
+              <input
+                id="ad-from"
+                className="ad-form-input"
+                type="date"
+                value={form.validFrom}
+                onChange={(e) => set('validFrom', e.target.value)}
+              />
+            </div>
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-until">Valid until</label>
+              <input
+                id="ad-until"
+                className="ad-form-input"
+                type="date"
+                value={form.validUntil}
+                onChange={(e) => set('validUntil', e.target.value)}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="ad-form-row">
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-total-uses">Total uses limit</label>
+              <input
+                id="ad-total-uses"
+                className="ad-form-input"
+                type="number"
+                min="1"
+                placeholder="∞ unlimited"
+                value={form.usageLimit.totalUses}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    usageLimit: { ...p.usageLimit, totalUses: e.target.value },
+                  }))
+                }
+              />
+            </div>
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="ad-per-user">Uses per user</label>
+              <input
+                id="ad-per-user"
+                className="ad-form-input"
+                type="number"
+                min="1"
+                value={form.usageLimit.usesPerUser}
+                onChange={(e) =>
+                  setForm((p) => ({
+                    ...p,
+                    usageLimit: { ...p.usageLimit, usesPerUser: e.target.value },
+                  }))
+                }
+              />
+            </div>
+          </div>
+
+          <div className="ad-form-field">
+            <label className="ad-form-label" htmlFor="ad-notes">Notes (internal)</label>
+            <input
+              id="ad-notes"
+              className="ad-form-input"
+              type="text"
+              placeholder="Internal reference note"
+              value={form.notes}
+              onChange={(e) => set('notes', e.target.value)}
+            />
           </div>
 
           <div className="ad-modal-footer">
-            <button type="button" className="ad-btn ad-btn--secondary" onClick={() => setShowCreateModal(false)}>
+            <button type="button" className="ad-btn ad-btn--ghost" onClick={onClose}>
               Cancel
             </button>
-            <button
-              type="button"
-              className="ad-btn ad-btn--primary"
-              onClick={handleSubmitForm}
-              disabled={actionLoading}
-            >
-              {actionLoading
-                ? (isEditing ? 'Saving…' : 'Creating…')
-                : (isEditing ? 'Save Changes' : 'Create Discount')}
+            <button type="submit" className="ad-btn ad-btn--primary" disabled={loading}>
+              {loading ? <Spinner size={15} /> : mode === 'create' ? 'Create discount' : 'Save changes'}
             </button>
           </div>
-        </div>
+        </form>
       </div>
-    );
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// COMPENSATION DISCOUNT MODAL
+// ─────────────────────────────────────────────
+
+const CompensationModal = ({ loading, error, onSubmit, onClose }) => {
+  const [form, setForm] = useState({
+    userId:        '',
+    amount:        '',
+    reason:        '',
+    category:      'refund',
+    validDays:     30,
+    relatedOrder:  '',
+    relatedReturn: '',
+  });
+
+  const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onSubmit(form);
   };
 
-  // ── Render: detail drawer ─────────────────────────────────────────────────
-  const renderDetailDrawer = () => {
-    if (!showDetailDrawer) return null;
-    if (!currentDiscount) {
-      return (
-        <div className="ad-drawer-overlay" onClick={handleCloseDrawer} role="presentation">
-          <div className="ad-drawer" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-            <div className="ad-drawer-hd">
-              <h2 className="ad-drawer-title">Loading…</h2>
-              <button type="button" className="ad-drawer-close" onClick={handleCloseDrawer}>
-                <Close style={{ fontSize: 18 }} />
-              </button>
-            </div>
-            <div className="ad-drawer-body">
-              <div className="ad-loading"><div className="ad-spinner" /><span>Fetching discount…</span></div>
-            </div>
-          </div>
+  return (
+    <div className="ad-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="ad-modal">
+        <div className="ad-modal-header">
+          <h2 className="ad-modal-title">Create Compensation Discount</h2>
+          <button type="button" className="ad-modal-close" onClick={onClose}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6"  x2="6"  y2="18" />
+              <line x1="6"  y1="6"  x2="18" y2="18" />
+            </svg>
+          </button>
         </div>
-      );
-    }
-
-    const d = currentDiscount;
-    const urgency = getExpiryUrgency(d.validUntil);
-    const daysLeft = getDaysUntil(d.validUntil);
-    const usagePercent = d.usageLimit?.totalUses
-      ? Math.min(100, ((d.usageLimit.currentUses ?? 0) / d.usageLimit.totalUses) * 100)
-      : null;
-
-    return (
-      <div className="ad-drawer-overlay" onClick={handleCloseDrawer} role="presentation">
-        <div className="ad-drawer" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-          <div className="ad-drawer-hd">
-            <div className="ad-drawer-hd-left">
-              <div className="ad-code-display">
-                <span className="ad-code-display-text">{d.code}</span>
-                <button
-                  type="button"
-                  className="ad-copy-btn ad-copy-btn--lg"
-                  onClick={() => copy(d.code, d._id)}
-                  title="Copy code"
-                >
-                  {copiedId === d._id ? <Done style={{ fontSize: 14 }} /> : <ContentCopy style={{ fontSize: 14 }} />}
-                </button>
-              </div>
-              <span className={`ad-status ad-status--${d.status}`}>{d.status}</span>
-            </div>
-            <button type="button" className="ad-drawer-close" onClick={handleCloseDrawer} aria-label="Close">
-              <Close style={{ fontSize: 18 }} />
-            </button>
-          </div>
-
-          <div className="ad-drawer-body">
-            <div className="ad-value-hero">
-              <div className="ad-value-hero-amount">
-                {d.type === 'percentage' ? `${d.value}% OFF` : `${fmtCurrency(d.value)} OFF`}
-              </div>
-              <div className="ad-value-hero-meta">
-                <span className={`ad-category ad-category--${CATEGORY_COLOR[d.category] ?? 'promo'}`}>{d.category}</span>
-                {d.conditions?.minPurchaseAmount > 0 && (
-                  <span className="ad-value-hero-condition">Min. {fmtCurrency(d.conditions.minPurchaseAmount)}</span>
-                )}
-              </div>
-            </div>
-
-            <div className={`ad-expiry-block ad-expiry-block--${urgency}`}>
-              <Schedule style={{ fontSize: 15, flexShrink: 0 }} />
-              <div>
-                <span className="ad-expiry-block-label">
-                  {urgency === 'expired' ? 'Expired' : urgency === 'critical' ? 'Expires very soon!' : urgency === 'warning' ? 'Expiring soon' : 'Valid until'}
-                </span>
-                <span className="ad-expiry-block-date">{fmtDate(d.validUntil)}</span>
-                {daysLeft !== null && daysLeft > 0 && (
-                  <span className="ad-expiry-block-days">{daysLeft} days remaining</span>
-                )}
-              </div>
-            </div>
-
-            {usagePercent !== null && (
-              <div className="ad-usage-block">
-                <div className="ad-usage-row">
-                  <span className="ad-usage-label">Usage</span>
-                  <span className="ad-usage-count">
-                    {d.usageLimit.currentUses ?? 0} / {d.usageLimit.totalUses}
-                  </span>
-                </div>
-                <div className="ad-usage-bar">
-                  <div
-                    className={`ad-usage-fill${usagePercent >= 90 ? ' ad-usage-fill--full' : ''}`}
-                    style={{ width: `${usagePercent}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="ad-section"><span className="ad-section-text">Details</span><span className="ad-section-line" /></div>
-            <div className="ad-card">
-              <div className="ad-card-body">
-                {[
-                  ['Description',    d.description],
-                  ['Type',           d.type],
-                  ['Valid From',     fmtDate(d.validFrom)],
-                  ['Per-user Limit', d.usageLimit?.usesPerUser ?? 1],
-                  ['Created By',     d.createdBy?.firstName ? `${d.createdBy.firstName} ${d.createdBy.lastName ?? ''}` : '—'],
-                  ['Created',        fmtDateTime(d.createdAt)],
-                ].map(([label, val]) => (
-                  <div key={label} className="ad-metric-row">
-                    <span className="ad-metric-label">{label}</span>
-                    <span className="ad-metric-val">{val}</span>
-                  </div>
-                ))}
-                {d.conditions?.maxDiscountAmount && (
-                  <div className="ad-metric-row">
-                    <span className="ad-metric-label">Max Discount Cap</span>
-                    <span className="ad-metric-val">{fmtCurrency(d.conditions.maxDiscountAmount)}</span>
-                  </div>
-                )}
-                {(d.conditions?.excludeSaleItems || d.conditions?.firstOrderOnly) && (
-                  <div className="ad-metric-row">
-                    <span className="ad-metric-label">Restrictions</span>
-                    <span className="ad-metric-val">
-                      {[
-                        d.conditions.excludeSaleItems && 'Excludes sale items',
-                        d.conditions.firstOrderOnly   && 'First order only',
-                      ].filter(Boolean).join(' · ')}
-                    </span>
-                  </div>
-                )}
-                {d.notes && (
-                  <div className="ad-metric-row">
-                    <span className="ad-metric-label">Notes</span>
-                    <span className="ad-metric-val">{d.notes}</span>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {d.relatedReturn && (
-              <>
-                <div className="ad-section"><span className="ad-section-text">Linked Return</span><span className="ad-section-line" /></div>
-                <div className="ad-card">
-                  <div className="ad-card-body">
-                    <div className="ad-metric-row">
-                      <span className="ad-metric-label">RMA / Return ID</span>
-                      <span className="ad-metric-val ad-td-mono">
-                        {d.relatedReturn?.returnInfo?.rmaNumber ?? d.relatedReturn?.toString?.().slice(-8).toUpperCase() ?? '—'}
-                      </span>
-                    </div>
-                    {d.relatedReturn?.returnInfo?.status && (
-                      <div className="ad-metric-row">
-                        <span className="ad-metric-label">Return Status</span>
-                        <span className="ad-metric-val">{d.relatedReturn.returnInfo.status.replace(/_/g, ' ')}</span>
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      className="ad-btn ad-btn--ghost ad-btn--sm"
-                      style={{ marginTop: 8 }}
-                      onClick={() => navigate('/admin/returns', {
-                        state: { highlightId: typeof d.relatedReturn === 'string' ? d.relatedReturn : d.relatedReturn?._id }
-                      })}
-                    >
-                      View Return →
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-
-            {d.usageHistory?.length > 0 && (
-              <>
-                <div className="ad-section"><span className="ad-section-text">Usage History</span><span className="ad-section-line" /></div>
-                <div className="ad-card">
-                  <div className="ad-card-body--np">
-                    <div className="ad-tbl-wrap">
-                      <table className="ad-tbl">
-                        <thead>
-                          <tr>
-                            <th>Customer</th>
-                            <th>Order</th>
-                            <th>Amount</th>
-                            <th>Used At</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {d.usageHistory.slice(0, 10).map((h, i) => (
-                            <tr key={h._id ?? i}>
-                              <td>{h.user?.firstName ? `${h.user.firstName} ${h.user.lastName ?? ''}` : '—'}</td>
-                              <td className="ad-td-mono">{h.order?.orderNumber ?? '—'}</td>
-                              <td className="ad-td-money">{fmtCurrency(h.discountAmount)}</td>
-                              <td className="ad-td-muted">{fmtDate(h.usedAt)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-
-          <div className="ad-drawer-footer">
-            <button
-              type="button"
-              className="ad-btn ad-btn--primary"
-              onClick={() => { handleCloseDrawer(); handleOpenEdit(d); }}
-            >
-              <Edit style={{ fontSize: 14, marginRight: 5 }} /> Edit
-            </button>
-            <button
-              type="button"
-              className="ad-btn ad-btn--danger"
-              onClick={() => { handleCloseDrawer(); setShowDeleteConfirm(d._id); }}
-              disabled={d.status === 'inactive'}
-            >
-              <Delete style={{ fontSize: 14, marginRight: 5 }} /> Deactivate
-            </button>
-            <button type="button" className="ad-btn ad-btn--secondary" onClick={handleCloseDrawer}>
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Render: delete confirm ────────────────────────────────────────────────
-  const renderDeleteConfirm = () => {
-    if (!showDeleteConfirm) return null;
-    return (
-      <div className="ad-modal-overlay" onClick={() => setShowDeleteConfirm(null)} role="presentation">
-        <div className="ad-confirm-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-          <div className="ad-confirm-icon">
-            <Warning style={{ fontSize: 28, color: '#EF4444' }} />
-          </div>
-          <h3 className="ad-confirm-title">Deactivate Discount?</h3>
-          <p className="ad-confirm-desc">
-            This will mark the discount as inactive. It cannot be used in any new transactions.
-            This action can be reversed by editing the discount status.
-          </p>
-          <div className="ad-confirm-actions">
-            <button type="button" className="ad-btn ad-btn--secondary" onClick={() => setShowDeleteConfirm(null)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="ad-btn ad-btn--danger"
-              onClick={() => handleDelete(showDeleteConfirm)}
-              disabled={actionLoading}
-            >
-              {actionLoading ? 'Processing…' : 'Deactivate'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ── Render: cleanup modal ─────────────────────────────────────────────────
-  const renderCleanupModal = () => {
-    if (!showCleanupModal) return null;
-    return (
-      <div className="ad-modal-overlay" onClick={() => setShowCleanupModal(false)} role="presentation">
-        <div className="ad-confirm-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-          <div className="ad-confirm-icon ad-confirm-icon--warning">
-            <AutoFixHigh style={{ fontSize: 28, color: '#F59E0B' }} />
-          </div>
-          <h3 className="ad-confirm-title">Run Cleanup</h3>
-          <p className="ad-confirm-desc">
-            Step 1: All active discounts past their expiry date will be marked as expired.<br />
-            Step 2: Expired discounts older than the threshold below will be permanently deleted.
-          </p>
-          <div className="ad-form-group" style={{ textAlign: 'left', marginBottom: 0 }}>
-            <label className="ad-form-label" htmlFor="ad-cleanup-days">Hard-delete after (days)</label>
-            <input
-              id="ad-cleanup-days"
-              type="number"
-              className="ad-form-input"
-              value={cleanupDays}
-              onChange={(e) => setCleanupDays(Number(e.target.value))}
-              min={1}
-            />
-          </div>
-          {cleanupResult && (
-            <div className="ad-cleanup-result">
-              <span>✓ Expired: <strong>{cleanupResult.expired}</strong></span>
-              <span>✓ Deleted: <strong>{cleanupResult.deleted}</strong></span>
+        <form className="ad-modal-form" onSubmit={handleSubmit}>
+          {error && (
+            <div className="ad-modal-error" role="alert">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8"  x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              {error}
             </div>
           )}
-          <div className="ad-confirm-actions">
-            <button type="button" className="ad-btn ad-btn--secondary" onClick={() => { setShowCleanupModal(false); dispatch(clearCleanupResult()); }}>
-              Close
-            </button>
-            <button
-              type="button"
-              className="ad-btn ad-btn--warning"
-              onClick={handleCleanup}
-              disabled={actionLoading}
-            >
-              {actionLoading ? 'Running…' : 'Run Cleanup'}
+          <div className="ad-form-field">
+            <label className="ad-form-label" htmlFor="comp-userId">User ID</label>
+            <input
+              id="comp-userId"
+              className="ad-form-input"
+              type="text"
+              placeholder="MongoDB ObjectId of the user"
+              value={form.userId}
+              onChange={(e) => set('userId', e.target.value.trim())}
+              required
+            />
+          </div>
+          <div className="ad-form-row">
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="comp-category">Category</label>
+              <select
+                id="comp-category"
+                className="ad-form-select"
+                value={form.category}
+                onChange={(e) => set('category', e.target.value)}
+              >
+                {['refund', 'return', 'loyalty', 'support'].map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="comp-validDays">Valid for (days)</label>
+              <input
+                id="comp-validDays"
+                className="ad-form-input"
+                type="number"
+                min="1"
+                max="365"
+                value={form.validDays}
+                onChange={(e) => set('validDays', e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="ad-form-field">
+            <label className="ad-form-label" htmlFor="comp-amount">
+              Amount ($) <span className="ad-form-hint" style={{ display: 'inline', textTransform: 'none' }}>— ignored if relatedReturn is set</span>
+            </label>
+            <input
+              id="comp-amount"
+              className="ad-form-input"
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="e.g. 15.00"
+              value={form.amount}
+              onChange={(e) => set('amount', e.target.value)}
+            />
+          </div>
+          <div className="ad-form-field">
+            <label className="ad-form-label" htmlFor="comp-reason">Reason (internal note)</label>
+            <textarea
+              id="comp-reason"
+              className="ad-form-textarea"
+              rows={2}
+              placeholder="Why is this compensation being issued?"
+              value={form.reason}
+              onChange={(e) => set('reason', e.target.value)}
+            />
+          </div>
+          <div className="ad-form-row">
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="comp-relatedOrder">Related Order ID</label>
+              <input
+                id="comp-relatedOrder"
+                className="ad-form-input"
+                type="text"
+                placeholder="Optional"
+                value={form.relatedOrder}
+                onChange={(e) => set('relatedOrder', e.target.value.trim())}
+              />
+            </div>
+            <div className="ad-form-field">
+              <label className="ad-form-label" htmlFor="comp-relatedReturn">Related Return ID</label>
+              <input
+                id="comp-relatedReturn"
+                className="ad-form-input"
+                type="text"
+                placeholder="Optional — overrides amount"
+                value={form.relatedReturn}
+                onChange={(e) => set('relatedReturn', e.target.value.trim())}
+              />
+            </div>
+          </div>
+          <div className="ad-modal-footer">
+            <button type="button" className="ad-btn ad-btn--ghost" onClick={onClose}>Cancel</button>
+            <button type="submit" className="ad-btn ad-btn--primary" disabled={loading}>
+              {loading ? <Spinner size={15} /> : 'Create compensation'}
             </button>
           </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// PURGE RECEIPT BANNER
+// ─────────────────────────────────────────────
+
+const PurgeBanner = ({ purge, onDismiss }) => {
+  if (!purge) return null;
+  return (
+    <div className="ad-purge-banner" role="status">
+      <div className="ad-purge-banner-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      </div>
+      <div className="ad-purge-banner-body">
+        <span className="ad-purge-banner-title">Audit purge completed</span>
+        <span className="ad-purge-banner-desc">
+          {purge.actualDeletedCount ?? purge.recordCount} records deleted on {fmtDate(purge.purgedAt)},
+          covering {fmtDate(purge.dateRangeFrom)} – {fmtDate(purge.dateRangeTo)}.
+          {purge.notes && ` Note: ${purge.notes}`}
+        </span>
+      </div>
+      <button
+        type="button"
+        className="ad-purge-banner-dismiss"
+        onClick={onDismiss}
+        aria-label="Dismiss"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+          <line x1="18" y1="6"  x2="6"  y2="18" />
+          <line x1="6"  y1="6"  x2="18" y2="18" />
+        </svg>
+      </button>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────
+// MAIN PAGE
+// ─────────────────────────────────────────────
+
+const AdminDiscounts = () => {
+  const dispatch = useDispatch();
+
+  const {
+    discounts, pagination,
+    stats, categoryStats,
+    auditLogs, auditPagination,
+    discountAuditLogs, discountAuditLoading,
+    purgeLog, latestPurge, showBanner,
+    discountsLoading, actionLoading, statsLoading,
+    auditLoading,
+    error,
+  } = useSelector((state) => state.adminDiscount);
+
+  // ── Local UI state ──────────────────────────────────────────────────────
+  const [activeTab,       setActiveTab]       = useState('codes');
+  const [drawerDiscount,  setDrawerDiscount]  = useState(null);
+  const [modalMode,       setModalMode]       = useState(null);      // 'create' | 'edit' | null
+  const [editTarget,      setEditTarget]      = useState(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [toast,           setToast]           = useState(null);
+  const [showCompModal,   setShowCompModal]   = useState(false);
+  const [cleanupRunning,  setCleanupRunning]  = useState(false);
+
+  // ── Filters: codes tab ──────────────────────────────────────────────────
+  const [codesFilters, setCodesFilters] = useState({ status: '', category: '', type: '', search: '' });
+
+  // ── Filters: audit tab ─────────────────────────────────────────────────
+  const [auditFilters, setAuditFilters] = useState({
+    action: '', discountCode: '', dateFrom: '', dateTo: '',
+  });
+
+  // ─── Toast helper ─────────────────────────────────────────────────────
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  }, []);
+
+  // ─── Initial fetches ──────────────────────────────────────────────────
+  useEffect(() => {
+    dispatch(getAllDiscounts({}));
+    dispatch(getDiscountStats());
+  }, [dispatch]);
+
+  // Fetch audit log when audit tab first opens
+  const auditFetchedRef = useRef(false);
+  useEffect(() => {
+    if (activeTab === 'audit' && !auditFetchedRef.current) {
+      auditFetchedRef.current = true;
+      dispatch(getAuditLog({}));
+      dispatch(getPurgeLog());
+    }
+  }, [activeTab, dispatch]);
+
+  // ─── Open drawer ──────────────────────────────────────────────────────
+  const openDrawer = useCallback((discount) => {
+    setDrawerDiscount(discount);
+    dispatch(clearDiscountAuditLogs());
+    dispatch(getDiscountAuditLog(discount._id));
+  }, [dispatch]);
+
+  const closeDrawer = useCallback(() => {
+    setDrawerDiscount(null);
+    dispatch(clearDiscountAuditLogs());
+  }, [dispatch]);
+
+  // ─── Edit ─────────────────────────────────────────────────────────────
+  const handleEdit = useCallback((discount) => {
+    setEditTarget(discount);
+    setModalMode('edit');
+    closeDrawer();
+  }, [closeDrawer]);
+
+  // ─── Delete ───────────────────────────────────────────────────────────
+  const handleDelete = useCallback((discount) => {
+    if (!window.confirm(`Deactivate ${discount.code}? This cannot be undone.`)) return;
+    dispatch(deleteDiscount(discount._id))
+      .unwrap()
+      .then(() => {
+        closeDrawer();
+        dispatch(clearAdminDiscountState());
+        showToast('Discount deactivated.');
+      })
+      .catch((err) => {
+        dispatch(clearAdminDiscountState());
+        showToast(typeof err === 'string' ? err : err?.message ?? 'Failed to deactivate discount.', 'error');
+      });
+  }, [dispatch, closeDrawer, showToast]);
+
+  // ─── Create / update submit ───────────────────────────────────────────
+  const handleModalSubmit = useCallback((formData) => {
+    if (modalMode === 'create') {
+      dispatch(createDiscount(formData))
+        .unwrap()
+        .then(() => {
+          setModalMode(null);
+          dispatch(clearAdminDiscountState());
+          showToast('Discount created.');
+        })
+        .catch(() => {});
+    } else {
+      dispatch(updateDiscount({ id: editTarget._id, discountData: formData }))
+        .unwrap()
+        .then(() => {
+          setModalMode(null);
+          setEditTarget(null);
+          dispatch(clearAdminDiscountState());
+          showToast('Discount updated.');
+        })
+        .catch(() => {});
+    }
+  }, [dispatch, modalMode, editTarget, showToast]);
+
+  // ─── Compensation submit ──────────────────────────────────────────────
+  const handleCompensationSubmit = useCallback((formData) => {
+    dispatch(createCompensationDiscount(formData))
+      .unwrap()
+      .then(() => {
+        setShowCompModal(false);
+        dispatch(clearAdminDiscountState());
+        showToast('Compensation discount created.');
+      })
+      .catch(() => {});
+  }, [dispatch, showToast]);
+
+  // ─── Manual cleanup trigger ───────────────────────────────────────────
+  const handleCleanup = useCallback(() => {
+    if (!window.confirm('Run manual cleanup? This will expire stale codes and delete old ones outside the fraud-protection window.')) return;
+    setCleanupRunning(true);
+    dispatch(triggerCleanup({}))
+      .unwrap()
+      .then((data) => {
+        dispatch(clearAdminDiscountState());
+        showToast(`Cleanup done — ${data.expired} expired, ${data.deleted} deleted.`);
+      })
+      .catch((err) => {
+        dispatch(clearAdminDiscountState());
+        showToast(typeof err === 'string' ? err : err?.message ?? 'Cleanup failed.', 'error');
+      })
+      .finally(() => setCleanupRunning(false));
+  }, [dispatch, showToast]);
+
+  // ─── Codes filter apply ───────────────────────────────────────────────
+  const applyCodesFilters = useCallback(() => {
+    const params = {};
+    Object.entries(codesFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+    dispatch(getAllDiscounts(params));
+  }, [dispatch, codesFilters]);
+
+  const loadMoreCodes = useCallback(() => {
+    if (!pagination?.nextCursor) return;
+    const params = { cursor: pagination.nextCursor };
+    Object.entries(codesFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+    dispatch(getAllDiscounts(params))
+      .unwrap()
+      .then((data) => dispatch(appendDiscounts(data)));
+  }, [dispatch, pagination, codesFilters]);
+
+  // ─── Audit filter apply ───────────────────────────────────────────────
+  const applyAuditFilters = useCallback(() => {
+    const params = {};
+    Object.entries(auditFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+    dispatch(getAuditLog(params));
+  }, [dispatch, auditFilters]);
+
+  const loadMoreAudit = useCallback(() => {
+    if (!auditPagination?.nextCursor) return;
+    const params = { cursor: auditPagination.nextCursor };
+    Object.entries(auditFilters).forEach(([k, v]) => { if (v) params[k] = v; });
+    dispatch(getAuditLog(params))
+      .unwrap()
+      .then((data) => dispatch(appendAuditLogs(data)));
+  }, [dispatch, auditPagination, auditFilters]);
+
+  // ─── Stats ────────────────────────────────────────────────────────────
+  const broadcastCount = useMemo(
+    () => discounts.filter((d) => d.audience === 'all' && d.status === 'active').length,
+    [discounts]
+  );
+
+  // ─── Render ───────────────────────────────────────────────────────────
+  return (
+    <div className="ad-page">
+
+      {/* ── Toast ───────────────────────────────────────────────────── */}
+      {toast && (
+        <div className={`ad-toast ad-toast--${toast.type}`} role="alert">
+          {toast.type === 'success' ? (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          )}
+          {toast.msg}
+        </div>
+      )}
+
+      {/* ── Page header ─────────────────────────────────────────────── */}
+      <div className="ad-page-header">
+        <div className="ad-page-header-left">
+          <h1 className="ad-page-title">Discount Codes</h1>
+          <p className="ad-page-sub">
+            Create, manage, and audit all discount codes. All changes are permanently logged.
+          </p>
+        </div>
+        <div className="ad-page-header-actions">
+          <button
+            type="button"
+            className="ad-btn ad-btn--outline"
+            onClick={handleCleanup}
+            disabled={cleanupRunning}
+            title="Expire stale codes and delete old ones outside the fraud-protection window"
+          >
+            {cleanupRunning ? <Spinner size={14} /> : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <polyline points="1 4 1 10 7 10" />
+                <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
+              </svg>
+            )}
+            Run cleanup
+          </button>
+          <button
+            type="button"
+            className="ad-btn ad-btn--outline"
+            onClick={() => setShowCompModal(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M20 12V22H4V12" />
+              <path d="M22 7H2v5h20V7z" />
+              <path d="M12 22V7" />
+              <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
+              <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
+            </svg>
+            Compensation
+          </button>
+          <button
+            type="button"
+            className="ad-btn ad-btn--primary"
+            onClick={() => setModalMode('create')}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5"  y1="12" x2="19" y2="12" />
+            </svg>
+            New discount
+          </button>
         </div>
       </div>
-    );
-  };
 
-  // ── Main render ───────────────────────────────────────────────────────────
-  return (
-    <>
-      <Navbar />
-      <div className="ad-page">
-        <div className="ad-body">
+      {/* ── Tabs ────────────────────────────────────────────────────── */}
+      <div className="ad-tabs">
+        {[
+          { key: 'codes', label: 'All Codes', count: discounts.length },
+          { key: 'stats', label: 'Analytics' },
+          { key: 'audit', label: 'Audit Log' },
+        ].map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            className={`ad-tab ${activeTab === tab.key ? 'ad-tab--active' : ''}`}
+            onClick={() => setActiveTab(tab.key)}
+          >
+            {tab.label}
+            {tab.count !== undefined && tab.count > 0 && (
+              <span className="ad-tab-count">{tab.count}</span>
+            )}
+          </button>
+        ))}
+      </div>
 
-          <Link to="/admin/dashboard" className="ad-back-btn">
-            <ArrowBack style={{ fontSize: 15 }} /> Dashboard
-          </Link>
+      {/* ════════════════════════════════════════════════════
+          TAB: ALL CODES
+      ════════════════════════════════════════════════════ */}
+      {activeTab === 'codes' && (
+        <div className="ad-tab-panel">
 
-          <div className="ad-hd">
-            <div className="ad-hd-left">
-              <span className="ad-hd-icon">
-                <LocalOffer style={{ fontSize: 24 }} />
-              </span>
-              <div>
-                <h1 className="ad-hd-title">Discounts</h1>
-                <p className="ad-hd-sub">Create, manage and analyse discount codes</p>
-              </div>
-            </div>
-            <div className="ad-hd-right">
-              <button
-                type="button"
-                className="ad-btn ad-btn--ghost ad-btn--sm"
-                onClick={() => setShowCleanupModal(true)}
-                title="Run cleanup"
-              >
-                <AutoFixHigh style={{ fontSize: 14, marginRight: 5 }} />
-                Cleanup
-              </button>
-              <button
-                type="button"
-                className={`ad-icon-btn${discountsLoading ? ' ad-icon-btn--spin' : ''}`}
-                onClick={() => { fetchFirstPage(); dispatch(getDiscountStats()); }}
-                disabled={discountsLoading}
-                title="Refresh"
-              >
-                <Refresh style={{ fontSize: 18 }} />
-              </button>
-              <button type="button" className="ad-btn ad-btn--primary" onClick={handleOpenCreate}>
-                <Add style={{ fontSize: 16, marginRight: 4 }} /> New Discount
-              </button>
-            </div>
+          {/* Filter bar */}
+          <div className="ad-filter-bar">
+            <input
+              type="text"
+              className="ad-filter-input"
+              placeholder="Search code or description…"
+              value={codesFilters.search}
+              onChange={(e) => setCodesFilters((p) => ({ ...p, search: e.target.value }))}
+              onKeyDown={(e) => e.key === 'Enter' && applyCodesFilters()}
+            />
+            <select
+              className="ad-filter-select"
+              value={codesFilters.status}
+              onChange={(e) => setCodesFilters((p) => ({ ...p, status: e.target.value }))}
+            >
+              <option value="">All statuses</option>
+              {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select
+              className="ad-filter-select"
+              value={codesFilters.category}
+              onChange={(e) => setCodesFilters((p) => ({ ...p, category: e.target.value }))}
+            >
+              <option value="">All categories</option>
+              {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select
+              className="ad-filter-select"
+              value={codesFilters.type}
+              onChange={(e) => setCodesFilters((p) => ({ ...p, type: e.target.value }))}
+            >
+              <option value="">All types</option>
+              {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <button
+              type="button"
+              className="ad-btn ad-btn--outline"
+              onClick={applyCodesFilters}
+              disabled={discountsLoading}
+            >
+              {discountsLoading ? <Spinner size={14} /> : 'Filter'}
+            </button>
           </div>
 
-          <div className="ad-kpi-grid">{renderKPIs()}</div>
-
-          <div className="ad-tabs">
-            {[
-              { id: 'list',  label: 'All Codes', icon: LocalOffer },
-              { id: 'stats', label: 'Analytics',  icon: BarChart  },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`ad-tab-btn${activeTab === tab.id ? ' ad-tab-btn--active' : ''}`}
-                onClick={() => setActiveTab(tab.id)}
-              >
-                <tab.icon style={{ fontSize: 15 }} />
-                {tab.label}
-              </button>
-            ))}
-          </div>
-
-          {activeTab === 'list' && (
+          {/* Codes table */}
+          {discountsLoading && discounts.length === 0 ? (
+            <div className="ad-loading-row">
+              <Spinner /> Loading discounts…
+            </div>
+          ) : discounts.length === 0 ? (
+            <EmptyState
+              icon={
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                  <line x1="7" y1="7" x2="7.01" y2="7" />
+                </svg>
+              }
+              title="No discount codes found"
+              desc="Create a new discount code to get started."
+            />
+          ) : (
             <>
-              <div className="ad-filters">
-                <div className="ad-search-wrap">
-                  <Search className="ad-search-icon" style={{ fontSize: 16 }} />
-                  <input
-                    type="text"
-                    className="ad-search-input"
-                    placeholder="Search code or description…"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    aria-label="Search discounts"
-                  />
-                  {searchQuery && (
-                    <button type="button" className="ad-search-clear" onClick={() => setSearchQuery('')} aria-label="Clear search">
-                      <Close style={{ fontSize: 14 }} />
-                    </button>
-                  )}
-                </div>
-                <div className="ad-tf ad-filter-pills">
-                  {STATUS_FILTERS.map((opt) => (
-                    <button
-                      key={opt.value || 'all'}
-                      type="button"
-                      className={`ad-tf-btn${filterStatus === opt.value ? ' ad-tf-btn--active' : ''}`}
-                      onClick={() => setFilterStatus(opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-                <select
-                  className="ad-form-select ad-filter-select"
-                  value={filterCategory}
-                  onChange={(e) => setFilterCategory(e.target.value)}
-                  aria-label="Filter by category"
-                >
-                  {CATEGORY_FILTERS.map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
+              <div className="ad-table-wrap">
+                <table className="ad-table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Type / Value</th>
+                      <th>Category</th>
+                      <th>Audience</th>
+                      <th>Uses</th>
+                      <th>Valid until</th>
+                      <th>Status</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {discounts.map((d) => {
+                      const locked = d.usageLimit?.currentUses >= 1 &&
+                        d.deletionEligibleAt &&
+                        new Date(d.deletionEligibleAt) > new Date();
+
+                      return (
+                        <tr
+                          key={d._id}
+                          className={`ad-table-row ${locked ? 'ad-table-row--locked' : ''}`}
+                          onClick={() => openDrawer(d)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <td>
+                            <div className="ad-code-cell">
+                              <span className="ad-code-mono">{d.code}</span>
+                              {locked && (
+                                <LockIcon title={`Protected until ${fmtDate(d.deletionEligibleAt)}`} />
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            <span className="ad-type-val">
+                              {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
+                              <span className="ad-type-label">{d.type}</span>
+                            </span>
+                          </td>
+                          <td>{d.category}</td>
+                          <td>
+                            <AudienceBadge audience={d.audience} />
+                            {d.audience !== 'all' && (
+                              <span className="ad-specific-label">Specific</span>
+                            )}
+                          </td>
+                          <td>
+                            {d.usageLimit?.currentUses ?? 0}
+                            {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
+                          </td>
+                          <td>{fmtDate(d.validUntil)}</td>
+                          <td><StatusBadge status={d.status} /></td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            <div className="ad-row-actions">
+                              <button
+                                type="button"
+                                className="ad-row-btn"
+                                onClick={() => handleEdit(d)}
+                                title="Edit"
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
+                                className={`ad-row-btn ad-row-btn--danger ${locked ? 'ad-row-btn--disabled' : ''}`}
+                                onClick={() => !locked && handleDelete(d)}
+                                disabled={locked}
+                                title={locked
+                                  ? `Protected until ${fmtDate(d.deletionEligibleAt)}`
+                                  : 'Deactivate'}
+                              >
+                                {locked
+                                  ? <LockIcon />
+                                  : (
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                      <polyline points="3 6 5 6 21 6" />
+                                      <path d="M19 6l-1 14H6L5 6" />
+                                      <path d="M10 11v6M14 11v6" />
+                                      <path d="M9 6V4h6v2" />
+                                    </svg>
+                                  )}
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
 
-              {error && (
-                <div className="ad-error-banner" role="alert">
-                  <Warning style={{ fontSize: 18, flexShrink: 0 }} />
-                  <div>
-                    <strong>Error</strong>
-                    <p>{error}</p>
+              {pagination?.hasNextPage && (
+                <div className="ad-load-more">
+                  <button
+                    type="button"
+                    className="ad-btn ad-btn--outline"
+                    onClick={loadMoreCodes}
+                    disabled={discountsLoading}
+                  >
+                    {discountsLoading ? <Spinner size={14} /> : 'Load more'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════
+          TAB: ANALYTICS / STATS
+      ════════════════════════════════════════════════════ */}
+      {activeTab === 'stats' && (
+        <div className="ad-tab-panel">
+          {statsLoading ? (
+            <div className="ad-loading-row"><Spinner /> Loading stats…</div>
+          ) : (
+            <>
+              {/* KPI cards */}
+              <div className="ad-kpi-grid">
+                {[
+                  { label: 'Total codes',        value: stats?.total    ?? 0 },
+                  { label: 'Active',             value: stats?.active   ?? 0, accent: true },
+                  { label: 'Expired',            value: stats?.expired  ?? 0 },
+                  { label: 'Total uses',         value: stats?.totalUses ?? 0 },
+                  { label: 'Broadcast active',   value: broadcastCount,         accent: broadcastCount > 0 },
+                ].map((kpi) => (
+                  <div key={kpi.label} className={`ad-kpi ${kpi.accent ? 'ad-kpi--accent' : ''}`}>
+                    <span className="ad-kpi-label">{kpi.label}</span>
+                    <span className="ad-kpi-value">{kpi.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Category breakdown */}
+              {categoryStats?.length > 0 && (
+                <div className="ad-stats-section">
+                  <h3 className="ad-stats-title">By category</h3>
+                  <div className="ad-stats-table-wrap">
+                    <table className="ad-table">
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Total codes</th>
+                          <th>Active</th>
+                          <th>Total uses</th>
+                          <th>Discount value given</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {categoryStats.map((row) => (
+                          <tr key={row._id} className="ad-table-row">
+                            <td className="ad-category-cell">{row._id}</td>
+                            <td>{row.totalDiscounts}</td>
+                            <td>{row.activeDiscounts}</td>
+                            <td>{row.totalUses}</td>
+                            <td>{fmtCurrency(row.totalDiscountValue)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
+            </>
+          )}
+        </div>
+      )}
 
-              <div className="ad-card">
-                <div className="ad-card-hd">
-                  <div>
-                    <h3 className="ad-card-title">Discount Codes</h3>
-                    <p className="ad-card-sub">
-                      {discountsLoading ? 'Loading…' : `${allDiscounts.length} codes loaded`}
-                    </p>
-                  </div>
-                  <div className="ad-card-hd-right">
-                    <FilterList style={{ fontSize: 16, color: '#9CA3AF' }} />
-                  </div>
+      {/* ════════════════════════════════════════════════════
+          TAB: AUDIT LOG
+      ════════════════════════════════════════════════════ */}
+      {activeTab === 'audit' && (
+        <div className="ad-tab-panel">
+
+          {/* Purge receipt banner */}
+          {showBanner && !bannerDismissed && (
+            <PurgeBanner
+              purge={latestPurge}
+              onDismiss={() => setBannerDismissed(true)}
+            />
+          )}
+
+          {/* Audit filter bar */}
+          <div className="ad-filter-bar">
+            <input
+              type="text"
+              className="ad-filter-input"
+              placeholder="Filter by discount code…"
+              value={auditFilters.discountCode}
+              onChange={(e) =>
+                setAuditFilters((p) => ({ ...p, discountCode: e.target.value.toUpperCase() }))
+              }
+            />
+            <select
+              className="ad-filter-select"
+              value={auditFilters.action}
+              onChange={(e) => setAuditFilters((p) => ({ ...p, action: e.target.value }))}
+            >
+              <option value="">All actions</option>
+              {Object.keys(ACTION_META).map((a) => (
+                <option key={a} value={a}>{ACTION_META[a].label}</option>
+              ))}
+            </select>
+            <input
+              type="date"
+              className="ad-filter-input ad-filter-input--date"
+              value={auditFilters.dateFrom}
+              onChange={(e) => setAuditFilters((p) => ({ ...p, dateFrom: e.target.value }))}
+              title="From date"
+            />
+            <input
+              type="date"
+              className="ad-filter-input ad-filter-input--date"
+              value={auditFilters.dateTo}
+              onChange={(e) => setAuditFilters((p) => ({ ...p, dateTo: e.target.value }))}
+              title="To date"
+            />
+            <button
+              type="button"
+              className="ad-btn ad-btn--outline"
+              onClick={applyAuditFilters}
+              disabled={auditLoading}
+            >
+              {auditLoading ? <Spinner size={14} /> : 'Filter'}
+            </button>
+          </div>
+
+          {/* Audit entries */}
+          {auditLoading && auditLogs.length === 0 ? (
+            <div className="ad-loading-row"><Spinner /> Loading audit log…</div>
+          ) : auditLogs.length === 0 ? (
+            <EmptyState
+              icon={
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                  <polyline points="10 9 9 9 8 9" />
+                </svg>
+              }
+              title="No audit entries"
+              desc="Audit entries will appear here as discounts are created, used, and modified."
+            />
+          ) : (
+            <>
+              <div className="ad-audit-table-wrap">
+                <div className="ad-audit-full-timeline">
+                  {auditLogs.map((entry) => (
+                    <AuditEntry key={entry._id} entry={entry} compact={false} />
+                  ))}
                 </div>
-                <div className="ad-card-body--np">{renderTable()}</div>
               </div>
+
+              {auditPagination?.hasNextPage && (
+                <div className="ad-load-more">
+                  <button
+                    type="button"
+                    className="ad-btn ad-btn--outline"
+                    onClick={loadMoreAudit}
+                    disabled={auditLoading}
+                  >
+                    {auditLoading ? <Spinner size={14} /> : 'Load more'}
+                  </button>
+                </div>
+              )}
             </>
           )}
 
-          {activeTab === 'stats' && (
-            <div className="ad-stats-grid">
-              {renderCategoryStats()}
-              {categoryStats?.length > 0 && (
-                <div className="ad-card">
-                  <div className="ad-card-hd">
-                    <div>
-                      <h3 className="ad-card-title">
-                        <TrendingUp style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />
-                        Category Breakdown
-                      </h3>
-                      <p className="ad-card-sub">Visual distribution of discount categories</p>
-                    </div>
-                  </div>
-                  <div className="ad-card-body">
-                    {categoryStats.map((row) => {
-                      const pct = overallStats.total > 0 ? (row.totalDiscounts / overallStats.total) * 100 : 0;
-                      return (
-                        <div key={row._id} className="ad-bar-row">
-                          <span className={`ad-category ad-category--${CATEGORY_COLOR[row._id] ?? 'promo'}`} style={{ minWidth: 80 }}>
-                            {row._id}
-                          </span>
-                          <div className="ad-bar-track">
-                            <div
-                              className={`ad-bar-fill ad-bar-fill--${CATEGORY_COLOR[row._id] ?? 'promo'}`}
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                          <span className="ad-bar-pct">{pct.toFixed(1)}%</span>
-                          <span className="ad-bar-count">{row.totalDiscounts}</span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {success && successMessage && (
-            <div className="ad-toast-wrap" role="status" aria-live="polite">
-              <div className="ad-toast ad-toast--success">
-                <CheckCircle style={{ fontSize: 18 }} />
-                <div>
-                  <strong>Success</strong>
-                  <p>{successMessage}</p>
-                </div>
+          {/* ── Deletion receipts ──────────────────────────────────── */}
+          {purgeLog?.length > 0 && (
+            <div className="ad-purge-receipts">
+              <h3 className="ad-purge-receipts-title">
+                Deletion receipts
+                <span className="ad-purge-receipts-hint">
+                  Permanent — these records are never deleted
+                </span>
+              </h3>
+              <div className="ad-table-wrap">
+                <table className="ad-table">
+                  <thead>
+                    <tr>
+                      <th>Purged at</th>
+                      <th>Records</th>
+                      <th>Date range covered</th>
+                      <th>Codes affected</th>
+                      <th>Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {purgeLog.map((receipt) => (
+                      <tr key={receipt._id} className="ad-table-row">
+                        <td>{fmtDateTime(receipt.purgedAt)}</td>
+                        <td>
+                          {receipt.actualDeletedCount ?? receipt.recordCount}
+                          {receipt.actualDeletedCount !== receipt.recordCount && (
+                            <span className="ad-purge-anomaly" title="Count mismatch — check notes">
+                              ⚠
+                            </span>
+                          )}
+                        </td>
+                        <td>
+                          {fmtDate(receipt.dateRangeFrom)} – {fmtDate(receipt.dateRangeTo)}
+                        </td>
+                        <td>{receipt.discountCodesAffected?.length ?? 0} codes</td>
+                        <td className="ad-purge-notes">{receipt.notes ?? '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
-      {renderModal()}
-      {renderDetailDrawer()}
-      {renderDeleteConfirm()}
-      {renderCleanupModal()}
-      <Footer />
-    </>
+      {/* ── Drawers & Modals ─────────────────────────────────────── */}
+      {drawerDiscount && (
+        <DetailDrawer
+          discount={drawerDiscount}
+          auditLogs={discountAuditLogs}
+          auditLoading={discountAuditLoading}
+          onClose={closeDrawer}
+          onEdit={handleEdit}
+          onDelete={handleDelete}
+        />
+      )}
+
+      {showCompModal && (
+        <CompensationModal
+          loading={actionLoading}
+          error={error}
+          onSubmit={handleCompensationSubmit}
+          onClose={() => { setShowCompModal(false); dispatch(clearAdminDiscountState()); }}
+        />
+      )}
+
+      {modalMode && (
+        <DiscountModal
+          mode={modalMode}
+          initial={modalMode === 'edit' ? editTarget : {}}
+          loading={actionLoading}
+          error={error}
+          onSubmit={handleModalSubmit}
+          onClose={() => { setModalMode(null); setEditTarget(null); dispatch(clearAdminDiscountState()); }}
+        />
+      )}
+    </div>
   );
 };
 
