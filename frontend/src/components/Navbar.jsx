@@ -19,7 +19,7 @@ import {
 } from '@mui/icons-material';
 import { useSelector, useDispatch } from 'react-redux';
 import { logout, removeSuccess } from '../features/products/userSlice';
-import { checkNewDiscounts } from '../features/discount/userDiscountSlice';
+import { checkNewDiscounts } from '../features/discount/discountSlice';
 import { toast } from 'react-toastify';
 
 const getUserDisplayName = (user) => {

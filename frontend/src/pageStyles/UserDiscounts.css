@@ -1,839 +1,1079 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 /* ================================================================
-   USER DISCOUNTS  —  UserDiscounts.css
-   Aesthetic: editorial warmth — cream, charcoal, saffron accents
-   Prefix: ud-  |  Fully responsive
+   USER DISCOUNTS — UserDiscounts.css
+   Unified with Navbar.css token system (nb- variables)
+
+   Design direction: Same product skin as the Navbar.
+   ─ Font:       Plus Jakarta Sans (matches Navbar exactly)
+   ─ Accent:     #ff3c3c coral (single brand accent, matches Navbar)
+   ─ Background: #F9FAFB surface (matches Navbar --nb-surface)
+   ─ Borders:    #D1D5DB (matches Navbar --nb-border)
+   ─ Shadows:    same shadow tokens as Navbar
+   ─ Radius:     12px / 8px / 6px (matches Navbar --nb-radius scale)
+   ─ Hero dark:  #111827 (Navbar's --nb-text — intentional callback)
+   ─ Amber:      retained ONLY for expiry/promo badge secondary tints,
+                 NOT as a primary accent
+
+   Prefix: ud-  |  Fully responsive  |  Scoped reset
+   ================================================================
+
+   TABLE OF CONTENTS
+   ────────────────────────────────────────────────────────────────
+    1.  Design Tokens (mirrors nb- variables)
+    2.  Scoped Reset
+    3.  Page Shell
+    4.  Hero Band
+    5.  Code Checker
+         5a. Input Wrap & States
+         5b. Buttons & Spinner
+         5c. Validation Result
+    6.  Body Container
+    7.  Alert
+    8.  Tabs
+    9.  Section Headings
+   10.  Card Grid
+   11.  Discount Card
+         11a. Urgency / State Variants
+         11b. Card Strip & Inner
+         11c. Top Row — chips, audience badge, expiry pill
+         11d. Value Display
+         11e. Description & Conditions
+         11f. Code Box & Copy / Shop Actions
+         11g. Valid-Until Footer
+   12.  Skeleton Card
+   13.  Empty State
+   14.  How-To Section
+   15.  Animations / Keyframes
+   16.  Responsive
    ================================================================ */
 
-/* ── Reset & base ───────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; }
 
+/* ================================================================
+   1. DESIGN TOKENS
+   Scoped to .ud-page so they don't collide with :root nb- vars.
+   Values are intentionally matched to the nb- system.
+   ================================================================ */
 .ud-page {
-  min-height: 100vh;
-  background: #FAF8F5;
-  font-family: 'Georgia', 'Times New Roman', 'Charter', serif;
-  color: #1C1917;
-  display: flex;
+  /* ── Typography ── */
+  --ud-font:        'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+
+  /* ── Palette ── */
+  --ud-bg:          #F9FAFB;       /* nb-surface */
+  --ud-bg-white:    #FFFFFF;       /* nb-bg — cards, inputs */
+  --ud-text:        #111827;       /* nb-text */
+  --ud-text-sec:    #374151;       /* nb-text-sec */
+  --ud-text-muted:  #6B7280;       /* nb-text-muted */
+  --ud-border:      #D1D5DB;       /* nb-border */
+  --ud-border-md:   #9CA3AF;       /* nb-border-md */
+
+  /* ── Brand accent ── */
+  --ud-coral:       #ff3c3c;       /* nb-coral — primary accent */
+  --ud-coral-light: rgba(255, 60, 60, 0.08);
+  --ud-coral-mid:   rgba(255, 60, 60, 0.15);
+  --ud-coral-deep:  #e02020;       /* hover darken */
+
+  /* ── Hero dark band ── */
+  --ud-hero-bg:     #111827;       /* nb-text — intentional callback */
+  --ud-hero-fg:     #F9FAFB;
+
+  /* ── Secondary tints (amber, only for badges) ── */
+  --ud-amber:       #D97706;
+  --ud-amber-light: #FEF3C7;
+  --ud-amber-text:  #92400E;
+
+  /* ── Status ── */
+  --ud-success:     #10B981;
+  --ud-success-bg:  #ECFDF5;
+  --ud-error:       #EF4444;
+  --ud-error-bg:    #FEF2F2;
+  --ud-error-border:#FECACA;
+
+  /* ── Shadows (nb- scale) ── */
+  --ud-shadow-sm:   0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --ud-shadow:      0 4px 12px rgba(0,0,0,0.10);
+  --ud-shadow-lg:   0 12px 32px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.06);
+
+  /* ── Radius (nb- scale) ── */
+  --ud-radius:      12px;
+  --ud-radius-sm:   8px;
+  --ud-radius-xs:   6px;
+
+  /* ── Transitions ── */
+  --ud-transition:  all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+
+/* ================================================================
+   2. SCOPED RESET
+   Contained within .ud-page — will not bleed into Navbar or Footer.
+   ================================================================ */
+.ud-page *,
+.ud-page *::before,
+.ud-page *::after {
+  box-sizing: border-box;
+}
+
+
+/* ================================================================
+   3. PAGE SHELL
+   ================================================================ */
+.ud-page {
+  min-height:     100vh;
+  background:     var(--ud-bg);
+  font-family:    var(--ud-font);
+  color:          var(--ud-text);
+  display:        flex;
   flex-direction: column;
 }
 
-/* ── Hero band ──────────────────────────────────────────────── */
+
+/* ================================================================
+   4. HERO BAND
+   Uses --ud-hero-bg (#111827 = Navbar's own text colour) so the
+   transition from white navbar → dark hero reads as intentional
+   brand continuity rather than a clash.
+   ================================================================ */
 .ud-hero {
-  background: #1C1917;
-  color: #FAF8F5;
-  padding: 56px 32px 48px;
-  position: relative;
-  overflow: hidden;
+  background: var(--ud-hero-bg);
+  color:      var(--ud-hero-fg);
+  padding:    56px 32px 52px;
+  position:   relative;
+  overflow:   hidden;
+  z-index:    1; /* stays below Navbar z-index:900 */
 }
 
-/* Subtle grid texture */
+/* Fine dot-grid texture — echoes the clean grid language of the Navbar */
 .ud-hero::before {
-  content: '';
-  position: absolute;
-  inset: 0;
+  content:    '';
+  position:   absolute;
+  inset:      0;
   background-image:
-    linear-gradient(rgba(250,248,245,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(250,248,245,0.03) 1px, transparent 1px);
-  background-size: 40px 40px;
+    radial-gradient(circle, rgba(255,255,255,0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
   pointer-events: none;
+  z-index:    0;
 }
 
-/* Warm glow blob */
+/* Coral glow — ties hero to the navbar's coral accent */
 .ud-hero::after {
-  content: '';
-  position: absolute;
-  top: -80px;
-  right: -80px;
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, #D97706 0%, transparent 65%);
-  opacity: 0.12;
+  content:    '';
+  position:   absolute;
+  top:        -100px;
+  right:      -100px;
+  width:      500px;
+  height:     500px;
+  background: radial-gradient(circle, var(--ud-coral) 0%, transparent 60%);
+  opacity:    0.07;
   pointer-events: none;
+  z-index:    0;
 }
 
 .ud-hero-inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  display: flex;
-  align-items: flex-start;
+  max-width:       1200px;
+  margin:          0 auto;
+  display:         flex;
+  align-items:     flex-start;
   justify-content: space-between;
-  gap: 40px;
-  position: relative;
-  z-index: 1;
+  gap:             48px;
+  position:        relative;
+  z-index:         1;
 }
 
-.ud-hero-text { flex: 1; min-width: 0; }
+.ud-hero-text {
+  flex:      1;
+  min-width: 0;
+}
 
 .ud-hero-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 1.4px;
+  display:        inline-flex;
+  align-items:    center;
+  gap:            7px;
+  font-size:      10.5px;
+  font-weight:    700;
+  letter-spacing: 1.6px;
   text-transform: uppercase;
-  color: #D97706;
-  margin-bottom: 14px;
+  color:          var(--ud-coral);
+  margin-bottom:  16px;
+  padding:        5px 10px 5px 8px;
+  background:     var(--ud-coral-light);
+  border:         1px solid rgba(255,60,60,0.2);
+  border-radius:  var(--ud-radius-xs);
 }
 
 .ud-hero-title {
-  font-size: clamp(28px, 5vw, 48px);
-  font-weight: 700;
-  line-height: 1.12;
-  letter-spacing: -0.8px;
-  color: #FAF8F5;
-  margin: 0 0 14px;
+  font-size:      clamp(28px, 5vw, 46px);
+  font-weight:    800;
+  line-height:    1.1;
+  letter-spacing: -1px;
+  color:          var(--ud-hero-fg);
+  margin:         0 0 14px;
+}
+
+/* Coral underline on last word — mirrors the .nb-logo-accent pattern */
+.ud-hero-title em {
+  font-style: normal;
+  color:      var(--ud-coral);
 }
 
 .ud-hero-sub {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 15px;
-  color: rgba(250,248,245,0.6);
-  margin: 0;
-  line-height: 1.6;
+  font-size:   15px;
   font-weight: 400;
+  color:       rgba(249,250,251,0.55);
+  margin:      0;
+  line-height: 1.65;
 }
 
-/* ── Code checker ───────────────────────────────────────────── */
+
+/* ================================================================
+   5. CODE CHECKER
+   ================================================================ */
 .ud-checker {
-  background: rgba(250,248,245,0.06);
-  border: 1px solid rgba(250,248,245,0.12);
-  border-radius: 16px;
-  padding: 22px 22px 20px;
-  width: 340px;
-  flex-shrink: 0;
-  backdrop-filter: blur(8px);
+  background:      rgba(255,255,255,0.05);
+  border:          1px solid rgba(255,255,255,0.1);
+  border-radius:   var(--ud-radius);
+  padding:         22px;
+  width:           340px;
+  flex-shrink:     0;
+  backdrop-filter: blur(12px);
 }
 
 .ud-checker-label {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(250,248,245,0.55);
-  margin: 0 0 10px;
-  letter-spacing: 0.3px;
+  font-size:      11.5px;
+  font-weight:    700;
+  color:          rgba(249,250,251,0.45);
+  margin:         0 0 10px;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
 }
 
+/* 5a. Input Wrap & States */
 .ud-checker-input-wrap {
-  display: flex;
-  align-items: center;
-  background: rgba(250,248,245,0.08);
-  border: 1.5px solid rgba(250,248,245,0.15);
-  border-radius: 10px;
-  overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s;
-  position: relative;
+  display:       flex;
+  align-items:   center;
+  background:    rgba(255,255,255,0.07);
+  border:        1.5px solid rgba(255,255,255,0.12);
+  border-radius: var(--ud-radius-sm);
+  overflow:      hidden;
+  transition:    border-color 0.2s, box-shadow 0.2s;
+  position:      relative;
 }
-.ud-checker-input-wrap--focused  { border-color: #D97706; box-shadow: 0 0 0 3px rgba(217,119,6,0.18); }
-.ud-checker-input-wrap--error    { border-color: #EF4444; box-shadow: 0 0 0 3px rgba(239,68,68,0.14); }
-.ud-checker-input-wrap--success  { border-color: #10B981; box-shadow: 0 0 0 3px rgba(16,185,129,0.14); }
+
+.ud-checker-input-wrap--focused {
+  border-color: var(--ud-coral);
+  box-shadow:   0 0 0 3px rgba(255,60,60,0.18);
+}
+
+.ud-checker-input-wrap--error {
+  border-color: var(--ud-error);
+  box-shadow:   0 0 0 3px rgba(239,68,68,0.14);
+}
+
+.ud-checker-input-wrap--success {
+  border-color: var(--ud-success);
+  box-shadow:   0 0 0 3px rgba(16,185,129,0.14);
+}
 
 .ud-checker-icon {
-  color: rgba(250,248,245,0.35);
+  color:       rgba(249,250,251,0.3);
   flex-shrink: 0;
   margin-left: 12px;
 }
 
 .ud-checker-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  padding: 10px 8px 10px 10px;
+  flex:        1;
+  background:  transparent;
+  border:      none;
+  outline:     none;
+  padding:     10px 8px 10px 10px;
   font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
-  font-size: 13px;
+  font-size:   13px;
   font-weight: 700;
-  letter-spacing: 1px;
-  color: #FAF8F5;
-  min-width: 0;
+  letter-spacing: 1.5px;
+  color:       var(--ud-hero-fg);
+  min-width:   0;
 }
-.ud-checker-input::placeholder { color: rgba(250,248,245,0.3); font-weight: 400; letter-spacing: 0.3px; }
+
+.ud-checker-input::placeholder {
+  color:          rgba(249,250,251,0.25);
+  font-weight:    400;
+  letter-spacing: 0.3px;
+  font-family:    var(--ud-font);
+}
 
 .ud-checker-clear {
-  background: none;
-  border: none;
-  color: rgba(250,248,245,0.35);
-  cursor: pointer;
-  padding: 4px 6px;
-  display: flex;
+  background:  none;
+  border:      none;
+  color:       rgba(249,250,251,0.3);
+  cursor:      pointer;
+  padding:     4px 6px;
+  display:     flex;
   align-items: center;
-  transition: color 0.15s;
+  transition:  color 0.15s;
 }
-.ud-checker-clear:hover { color: rgba(250,248,245,0.7); }
 
+.ud-checker-clear:hover { color: rgba(249,250,251,0.7); }
+
+/* 5b. Buttons & Spinner */
 .ud-checker-btn {
-  background: #D97706;
-  color: #fff;
-  border: none;
-  padding: 10px 16px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 12.5px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s;
-  display: flex;
-  align-items: center;
+  background:      var(--ud-coral);
+  color:           #fff;
+  border:          none;
+  padding:         10px 16px;
+  font-family:     var(--ud-font);
+  font-size:       12.5px;
+  font-weight:     700;
+  letter-spacing:  0.3px;
+  cursor:          pointer;
+  white-space:     nowrap;
+  transition:      background 0.15s;
+  display:         flex;
+  align-items:     center;
   justify-content: center;
-  min-width: 56px;
-  height: 100%;
+  min-width:       56px;
+  height:          100%;
 }
-.ud-checker-btn:hover:not(:disabled) { background: #B45309; }
-.ud-checker-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ud-checker-btn:hover:not(:disabled) { background: var(--ud-coral-deep); }
+.ud-checker-btn:disabled             { opacity: 0.45; cursor: not-allowed; }
 
 .ud-checker-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border: 2px solid rgba(255,255,255,0.4);
+  display:       inline-block;
+  width:         14px;
+  height:        14px;
+  border:        2px solid rgba(255,255,255,0.35);
   border-top-color: #fff;
   border-radius: 50%;
-  animation: ud-spin 0.65s linear infinite;
+  animation:     ud-spin 0.65s linear infinite;
 }
-@keyframes ud-spin { to { transform: rotate(360deg); } }
 
-/* Checker result */
+/* 5c. Validation Result */
 .ud-checker-result {
-  margin-top: 10px;
-  padding: 11px 13px;
-  border-radius: 8px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13px;
-  animation: ud-fade-drop 0.2s ease;
+  margin-top:  10px;
+  padding:     11px 13px;
+  border-radius: var(--ud-radius-sm);
+  font-size:   13px;
+  animation:   ud-fade-drop 0.2s ease;
 }
-@keyframes ud-fade-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 
 .ud-checker-result--error {
-  display: flex;
+  display:     flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(239,68,68,0.15);
-  border: 1px solid rgba(239,68,68,0.3);
-  color: #FCA5A5;
+  gap:         8px;
+  background:  rgba(239,68,68,0.14);
+  border:      1px solid rgba(239,68,68,0.28);
+  color:       #FCA5A5;
   font-weight: 500;
 }
 
 .ud-checker-result--success {
   background: rgba(16,185,129,0.12);
-  border: 1px solid rgba(16,185,129,0.28);
-  color: #6EE7B7;
+  border:     1px solid rgba(16,185,129,0.25);
+  color:      #6EE7B7;
 }
 
 .ud-checker-success-row {
-  display: flex;
+  display:     flex;
   align-items: flex-start;
-  gap: 9px;
+  gap:         9px;
   margin-bottom: 10px;
 }
+
 .ud-checker-success-row > svg { flex-shrink: 0; margin-top: 2px; }
-.ud-checker-success-label { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.6px; opacity: 0.7; margin-bottom: 2px; }
-.ud-checker-success-value { display: block; font-size: 16px; font-weight: 800; color: #fff; letter-spacing: -0.3px; }
-.ud-checker-success-desc  { display: block; font-size: 12px; opacity: 0.6; margin-top: 3px; }
+
+.ud-checker-success-label {
+  display:        block;
+  font-size:      10px;
+  font-weight:    700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  opacity:        0.6;
+  margin-bottom:  3px;
+}
+
+.ud-checker-success-value {
+  display:        block;
+  font-size:      17px;
+  font-weight:    800;
+  color:          #fff;
+  letter-spacing: -0.3px;
+}
+
+.ud-checker-success-desc {
+  display:     block;
+  font-size:   12px;
+  opacity:     0.55;
+  margin-top:  3px;
+}
 
 .ud-checker-apply-btn {
-  width: 100%;
-  background: #10B981;
-  color: #fff;
-  border: none;
-  padding: 9px 14px;
-  border-radius: 7px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background 0.15s;
+  width:         100%;
+  background:    var(--ud-success);
+  color:         #fff;
+  border:        none;
+  padding:       9px 14px;
+  border-radius: var(--ud-radius-xs);
+  font-family:   var(--ud-font);
+  font-size:     13px;
+  font-weight:   700;
+  cursor:        pointer;
+  transition:    background 0.15s;
+  letter-spacing: 0.2px;
 }
+
 .ud-checker-apply-btn:hover { background: #059669; }
 
-/* ── Body ───────────────────────────────────────────────────── */
+
+/* ================================================================
+   6. BODY CONTAINER
+   ================================================================ */
 .ud-body {
-  flex: 1;
-  max-width: 1200px;
-  width: 100%;
-  margin: 0 auto;
-  padding: 32px 32px 64px;
+  flex:       1;
+  max-width:  1200px;
+  width:      100%;
+  margin:     0 auto;
+  padding:    36px 32px 72px;
 }
 
-/* ── Alert ──────────────────────────────────────────────────── */
+
+/* ================================================================
+   7. ALERT
+   ================================================================ */
 .ud-alert {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13.5px;
-  font-weight: 500;
+  display:      flex;
+  align-items:  center;
+  gap:          10px;
+  padding:      12px 16px;
+  border-radius: var(--ud-radius-sm);
+  font-size:    13.5px;
+  font-weight:  500;
   margin-bottom: 20px;
 }
-.ud-alert--error { background: #FEF2F2; border: 1px solid #FECACA; color: #B91C1C; }
 
-/* ── Tabs ───────────────────────────────────────────────────── */
+.ud-alert--error {
+  background: var(--ud-error-bg);
+  border:     1px solid var(--ud-error-border);
+  color:      #B91C1C;
+}
+
+
+/* ================================================================
+   8. TABS
+   Uses coral as the active indicator — exact match to Navbar's
+   active link underline (same colour, same intent).
+   ================================================================ */
 .ud-tabs-wrap {
-  margin-bottom: 28px;
-  border-bottom: 2px solid #E7E2DA;
+  margin-bottom: 32px;
+  border-bottom: 1.5px solid var(--ud-border);
 }
 
 .ud-tabs {
   display: flex;
-  gap: 0;
+  gap:     0;
 }
 
 .ud-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 12px 4px;
-  margin-right: 28px;
-  background: none;
-  border: none;
-  border-bottom: 2.5px solid transparent;
-  margin-bottom: -2px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
-  font-weight: 600;
-  color: #78716C;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-  white-space: nowrap;
+  display:        inline-flex;
+  align-items:    center;
+  gap:            7px;
+  padding:        12px 4px;
+  margin-right:   28px;
+  background:     none;
+  border:         none;
+  border-bottom:  2.5px solid transparent;
+  margin-bottom:  -1.5px;
+  font-family:    var(--ud-font);
+  font-size:      14px;
+  font-weight:    600;
+  color:          var(--ud-text-muted);
+  cursor:         pointer;
+  transition:     color 0.15s, border-color 0.15s;
+  white-space:    nowrap;
+  letter-spacing: 0.2px;
 }
-.ud-tab:hover    { color: #1C1917; }
-.ud-tab--active  { color: #1C1917; border-bottom-color: #D97706; }
-.ud-tab svg      { opacity: 0.7; }
-.ud-tab--active svg { opacity: 1; }
+
+.ud-tab:hover   { color: var(--ud-text); }
+.ud-tab--active { color: var(--ud-text); border-bottom-color: var(--ud-coral); }
+.ud-tab svg     { opacity: 0.6; transition: opacity 0.15s; }
+.ud-tab--active svg,
+.ud-tab:hover svg { opacity: 1; }
 
 .ud-tab-count {
-  display: inline-flex;
-  align-items: center;
+  display:         inline-flex;
+  align-items:     center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: #1C1917;
-  color: #FAF8F5;
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
+  min-width:       20px;
+  height:          20px;
+  padding:         0 5px;
+  border-radius:   999px;
+  background:      var(--ud-text);
+  color:           #fff;
+  font-size:       10.5px;
+  font-weight:     700;
+  line-height:     1;
 }
-.ud-tab-count--promo { background: #D97706; }
 
-/* ── Section heading ────────────────────────────────────────── */
+/* Promo tab count uses coral — same as the Navbar notification dot */
+.ud-tab-count--promo { background: var(--ud-coral); }
+
+
+/* ================================================================
+   9. SECTION HEADINGS
+   ================================================================ */
 .ud-section-hd {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display:       flex;
+  align-items:   center;
+  gap:           10px;
   margin-bottom: 16px;
 }
-.ud-section-hd--muted { margin-top: 40px; }
+
+.ud-section-hd--muted { margin-top: 44px; }
 
 .ud-section-title {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 12px;
-  font-weight: 700;
+  font-size:      11px;
+  font-weight:    700;
   text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: #78716C;
+  letter-spacing: 1px;
+  color:          var(--ud-text-muted);
 }
-.ud-section-hd--muted .ud-section-title { color: #A8A29E; }
+
+.ud-section-hd--muted .ud-section-title { color: var(--ud-border-md); }
 
 .ud-section-count {
-  display: inline-flex;
-  align-items: center;
+  display:         inline-flex;
+  align-items:     center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #1C1917;
-  color: #FAF8F5;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11px;
-  font-weight: 700;
+  width:           22px;
+  height:          22px;
+  border-radius:   50%;
+  background:      var(--ud-text);
+  color:           #fff;
+  font-size:       10.5px;
+  font-weight:     700;
 }
-.ud-section-count--muted { background: #D6D3D1; color: #78716C; }
 
-/* ── Card grid ──────────────────────────────────────────────── */
+.ud-section-count--muted {
+  background: var(--ud-border);
+  color:      var(--ud-text-muted);
+}
+
+
+/* ================================================================
+   10. CARD GRID
+   ================================================================ */
 .ud-grid {
-  display: grid;
+  display:               grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 18px;
-  margin-bottom: 12px;
+  gap:                   18px;
+  margin-bottom:         12px;
 }
-.ud-grid--faded { opacity: 0.6; }
 
-/* ── Discount card ──────────────────────────────────────────── */
+.ud-grid--faded { opacity: 0.55; }
+
+/* ── 10a. Urgency / State Variants ── */
+.ud-card--critical { border-color: #FCA5A5 !important; }
+.ud-card--warning  { border-color: #FDE68A !important; }
+.ud-card--expired  { background: var(--ud-bg) !important; }
+
+/* ── 10b. Card Shell ── */
 .ud-card {
-  display: flex;
-  background: #fff;
-  border: 1px solid #E7E2DA;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 2px 8px rgba(28,25,23,0.04), 0 1px 2px rgba(28,25,23,0.06);
-  transition: box-shadow 0.22s, transform 0.22s, border-color 0.22s;
-  animation: ud-card-enter 0.35s ease both;
-  position: relative;
+  display:       flex;
+  background:    var(--ud-bg-white);
+  border:        1px solid var(--ud-border);
+  border-radius: var(--ud-radius); /* matches nb-radius */
+  overflow:      hidden;
+  box-shadow:    var(--ud-shadow-sm);
+  transition:    var(--ud-transition);
+  animation:     ud-card-enter 0.35s ease both;
+  position:      relative;
 }
-@keyframes ud-card-enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
 .ud-card:hover:not(.ud-card--expired):not(.ud-card--skeleton) {
-  box-shadow: 0 12px 32px rgba(28,25,23,0.1), 0 4px 8px rgba(28,25,23,0.06);
-  transform: translateY(-3px);
-  border-color: #D6D3D1;
+  box-shadow:    var(--ud-shadow-lg);
+  transform:     translateY(-3px);
+  border-color:  var(--ud-border-md);
 }
-
-/* Urgency border tints */
-.ud-card--critical { border-color: #FCA5A5; }
-.ud-card--warning  { border-color: #FDE68A; }
-.ud-card--expired  { background: #FAFAF9; }
 
 /* Left accent strip */
 .ud-card-strip {
-  width: 5px;
+  width:       4px;
   flex-shrink: 0;
-  background: #E7E2DA;
+  background:  var(--ud-border);
+  transition:  background 0.22s;
 }
+
+/* Coral strip on active non-expired cards */
+.ud-card:not(.ud-card--expired):not(.ud-card--skeleton) .ud-card-strip {
+  background: var(--ud-coral);
+  opacity:    0.6;
+}
+
+.ud-card--critical .ud-card-strip { background: #F87171; opacity: 1; }
+.ud-card--warning  .ud-card-strip { background: #FBBF24; opacity: 1; }
 
 .ud-card-inner {
-  flex: 1;
-  padding: 18px 18px 16px;
-  display: flex;
+  flex:           1;
+  padding:        18px 18px 16px;
+  display:        flex;
   flex-direction: column;
-  min-width: 0;
+  min-width:      0;
 }
 
-/* Card top row */
+/* ── 10c. Top Row ── */
 .ud-card-top {
-  display: flex;
-  align-items: center;
+  display:         flex;
+  align-items:     center;
   justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
+  gap:             8px;
+  margin-bottom:   14px;
+  flex-wrap:       wrap;
 }
-.ud-card-top-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.ud-card-top-left {
+  display:     flex;
+  align-items: center;
+  gap:         5px;
+  flex-wrap:   wrap;
+}
 
 /* Category chip */
 .ud-category-chip {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+  font-size:      10px;
+  font-weight:    700;
+  letter-spacing: 0.6px;
   text-transform: uppercase;
-  padding: 3px 9px;
-  border-radius: 20px;
+  padding:        3px 9px;
+  border-radius:  var(--ud-radius-xs);
+  /* colour set inline via CATEGORY_META */
 }
 
+/* First order chip */
 .ud-first-order-chip {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 10px;
+  font-size:   10px;
   font-weight: 600;
-  color: #5B21B6;
-  background: #EDE9FE;
-  padding: 3px 8px;
-  border-radius: 20px;
+  color:       var(--ud-coral);
+  background:  var(--ud-coral-light);
+  border:      1px solid rgba(255,60,60,0.15);
+  padding:     3px 8px;
+  border-radius: var(--ud-radius-xs);
+}
+
+/* Audience badge — broadcast promos */
+.ud-audience-badge {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            4px;
+  padding:        2px 7px;
+  border-radius:  var(--ud-radius-xs);
+  font-size:      10px;
+  font-weight:    600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color:          #0369A1;
+  background:     #E0F2FE;
+  border:         1px solid #BAE6FD;
+  white-space:    nowrap;
+  flex-shrink:    0;
+  line-height:    1;
+}
+
+.ud-audience-badge svg { flex-shrink: 0; opacity: 0.8; }
+
+/* Expired override */
+.ud-card--expired .ud-audience-badge {
+  color:        var(--ud-text-muted);
+  background:   var(--ud-bg);
+  border-color: var(--ud-border);
 }
 
 /* Expiry pill */
 .ud-expiry {
-  display: inline-flex;
+  display:     inline-flex;
   align-items: center;
-  gap: 5px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11px;
+  gap:         5px;
+  font-size:   10.5px;
   font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 20px;
+  padding:     3px 9px;
+  border-radius: var(--ud-radius-xs);
   white-space: nowrap;
 }
+
 .ud-expiry--safe     { background: #F0FDF4; color: #15803D; }
-.ud-expiry--warning  { background: #FFFBEB; color: #92400E; }
-.ud-expiry--critical { background: #FEF2F2; color: #B91C1C; }
-.ud-expiry--expired  { background: #F5F5F4; color: #A8A29E; text-decoration: line-through; }
-.ud-expiry--none     { display: none; }
+.ud-expiry--warning  { background: #FFFBEB; color: var(--ud-amber-text); }
+.ud-expiry--critical { background: var(--ud-error-bg); color: #B91C1C; }
+.ud-expiry--expired  { background: var(--ud-bg); color: var(--ud-border-md); text-decoration: line-through; }
 
 .ud-expiry-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
+  display:       inline-block;
+  width:         6px;
+  height:        6px;
   border-radius: 50%;
-  background: currentColor;
-  animation: ud-pulse 1.4s infinite;
+  background:    currentColor;
+  animation:     ud-pulse 1.4s infinite;
 }
-@keyframes ud-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.4; transform: scale(0.8); } }
 
-/* Value display */
-.ud-value {
-  margin-bottom: 10px;
-}
-.ud-value--expired .ud-value-amount { color: #A8A29E; }
+/* ── 10d. Value Display ── */
+.ud-value { margin-bottom: 10px; }
 
 .ud-value-amount {
-  display: block;
-  font-size: clamp(28px, 5vw, 38px);
-  font-weight: 700;
-  color: #1C1917;
-  letter-spacing: -1px;
-  line-height: 1.05;
-  margin-bottom: 3px;
+  display:        block;
+  font-size:      clamp(28px, 5vw, 38px);
+  font-weight:    800;
+  color:          var(--ud-text);
+  letter-spacing: -1.5px;
+  line-height:    1.05;
+  margin-bottom:  3px;
 }
+
+.ud-value--expired .ud-value-amount { color: var(--ud-border-md); }
 
 .ud-value-label {
-  display: block;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 12px;
-  color: #78716C;
+  display:     block;
+  font-size:   12px;
   font-weight: 500;
+  color:       var(--ud-text-muted);
 }
 
-/* Description & conditions */
+/* ── 10e. Description & Conditions ── */
 .ud-card-desc {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13px;
-  color: #57534E;
-  margin: 0 0 6px;
-  line-height: 1.5;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.ud-card-condition {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11.5px;
-  color: #A8A29E;
-  margin: 0 0 4px;
-  font-weight: 500;
+  font-size:            13px;
+  font-weight:          400;
+  color:                var(--ud-text-sec);
+  margin:               0 0 6px;
+  line-height:          1.55;
+  display:              -webkit-box;
+  -webkit-line-clamp:   2;
+  -webkit-box-orient:   vertical;
+  overflow:             hidden;
 }
 
-/* Code box */
+.ud-card-condition {
+  font-size:   11.5px;
+  font-weight: 500;
+  color:       var(--ud-border-md);
+  margin:      0 0 4px;
+}
+
+/* ── 10f. Code Box & Actions ── */
 .ud-card-footer {
-  display: flex;
+  display:     flex;
   align-items: center;
-  gap: 8px;
-  margin-top: auto;
+  gap:         8px;
+  margin-top:  auto;
   padding-top: 14px;
-  flex-wrap: wrap;
+  flex-wrap:   wrap;
 }
 
 .ud-code-box {
-  display: flex;
-  align-items: center;
-  background: #FAF8F5;
-  border: 1.5px dashed #D6D3D1;
-  border-radius: 8px;
-  overflow: hidden;
-  flex: 1;
-  min-width: 0;
-  transition: border-color 0.15s;
+  display:       flex;
+  align-items:   center;
+  background:    var(--ud-bg);
+  border:        1.5px dashed var(--ud-border);
+  border-radius: var(--ud-radius-xs);
+  overflow:      hidden;
+  flex:          1;
+  min-width:     0;
+  transition:    border-color 0.15s;
 }
-.ud-code-box:hover { border-color: #A8A29E; }
+
+.ud-code-box:hover { border-color: var(--ud-border-md); }
 
 .ud-code {
-  flex: 1;
-  padding: 9px 10px;
-  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
-  font-size: 12.5px;
-  font-weight: 700;
-  color: #1C1917;
+  flex:           1;
+  padding:        9px 10px;
+  font-family:    'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
+  font-size:      12.5px;
+  font-weight:    700;
+  color:          var(--ud-text);
   letter-spacing: 1.2px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
+  overflow:       hidden;
+  text-overflow:  ellipsis;
+  white-space:    nowrap;
+  min-width:      0;
 }
 
 .ud-copy-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 9px 12px;
-  background: #1C1917;
-  color: #FAF8F5;
-  border: none;
-  cursor: pointer;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11.5px;
-  font-weight: 700;
-  white-space: nowrap;
-  transition: background 0.15s;
-  flex-shrink: 0;
+  display:         flex;
+  align-items:     center;
+  gap:             5px;
+  padding:         9px 12px;
+  background:      var(--ud-text);
+  color:           #fff;
+  border:          none;
+  cursor:          pointer;
+  font-family:     var(--ud-font);
+  font-size:       11px;
+  font-weight:     700;
+  white-space:     nowrap;
+  transition:      background 0.15s;
+  flex-shrink:     0;
+  letter-spacing:  0.3px;
 }
-.ud-copy-btn:hover:not(:disabled) { background: #292524; }
-.ud-copy-btn:disabled              { opacity: 0.35; cursor: not-allowed; }
-.ud-copy-btn--done                 { background: #10B981; }
-.ud-copy-btn--done:hover           { background: #059669; }
+
+.ud-copy-btn:hover:not(:disabled) { background: #374151; }
+.ud-copy-btn:disabled             { opacity: 0.3; cursor: not-allowed; }
+.ud-copy-btn--done                { background: var(--ud-success); }
+.ud-copy-btn--done:hover          { background: #059669; }
 
 .ud-shop-btn {
-  padding: 9px 14px;
-  background: #D97706;
-  color: #fff;
-  border: none;
-  border-radius: 8px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 12.5px;
-  font-weight: 700;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.15s, transform 0.1s;
-  flex-shrink: 0;
+  padding:        9px 16px;
+  background:     var(--ud-coral);
+  color:          #fff;
+  border:         none;
+  border-radius:  var(--ud-radius-xs);
+  font-family:    var(--ud-font);
+  font-size:      12.5px;
+  font-weight:    700;
+  cursor:         pointer;
+  white-space:    nowrap;
+  transition:     background 0.15s, transform 0.1s;
+  flex-shrink:    0;
+  letter-spacing: 0.2px;
 }
-.ud-shop-btn:hover { background: #B45309; transform: scale(1.02); }
 
+.ud-shop-btn:hover { background: var(--ud-coral-deep); transform: scale(1.02); }
+
+/* ── 10g. Valid-Until Footer ── */
 .ud-valid-until {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 11px;
-  color: #A8A29E;
-  margin: 10px 0 0;
+  font-size:   11px;
   font-weight: 500;
+  color:       var(--ud-border-md);
+  margin:      10px 0 0;
 }
 
-/* ── Skeleton card ──────────────────────────────────────────── */
+
+/* ================================================================
+   11. SKELETON CARD
+   ================================================================ */
 .ud-card--skeleton {
   pointer-events: none;
-  animation: ud-card-enter 0.3s ease both;
+  animation:      ud-card-enter 0.3s ease both;
 }
 
 .ud-skel {
-  display: block;
-  background: linear-gradient(90deg, #F0EDE8 25%, #FAF8F5 50%, #F0EDE8 75%);
+  display:         block;
+  background:      linear-gradient(
+    90deg,
+    var(--ud-bg)    25%,
+    var(--ud-bg-white) 50%,
+    var(--ud-bg)    75%
+  );
   background-size: 200% 100%;
-  animation: ud-shimmer 1.5s infinite;
-  border-radius: 6px;
+  animation:       ud-shimmer 1.6s infinite;
+  border-radius:   var(--ud-radius-xs);
 }
-@keyframes ud-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
-/* ── Empty state ────────────────────────────────────────────── */
+
+/* ================================================================
+   12. EMPTY STATE
+   ================================================================ */
 .ud-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display:         flex;
+  flex-direction:  column;
+  align-items:     center;
   justify-content: center;
-  text-align: center;
-  padding: 72px 24px;
+  text-align:      center;
+  padding:         80px 24px;
 }
 
 .ud-empty-icon {
-  width: 72px;
-  height: 72px;
-  border-radius: 20px;
-  background: #F5F0E8;
-  border: 1.5px solid #E7E2DA;
-  display: flex;
-  align-items: center;
+  width:         72px;
+  height:        72px;
+  border-radius: var(--ud-radius);
+  background:    var(--ud-bg-white);
+  border:        1.5px solid var(--ud-border);
+  box-shadow:    var(--ud-shadow-sm);
+  display:       flex;
+  align-items:   center;
   justify-content: center;
-  color: #A8A29E;
+  color:         var(--ud-border-md);
   margin-bottom: 20px;
 }
 
 .ud-empty-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1C1917;
-  margin: 0 0 10px;
+  font-size:      18px;
+  font-weight:    700;
+  color:          var(--ud-text);
+  margin:         0 0 10px;
   letter-spacing: -0.3px;
 }
 
 .ud-empty-desc {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
-  color: #78716C;
-  max-width: 320px;
-  line-height: 1.6;
-  margin: 0 0 20px;
+  font-size:   14px;
+  font-weight: 400;
+  color:       var(--ud-text-muted);
+  max-width:   320px;
+  line-height: 1.65;
+  margin:      0 0 20px;
 }
 
 .ud-empty-link {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13.5px;
-  font-weight: 700;
-  color: #D97706;
+  font-size:       13.5px;
+  font-weight:     700;
+  color:           var(--ud-coral);
   text-decoration: none;
-  border-bottom: 1.5px solid transparent;
-  transition: border-color 0.15s;
+  display:         inline-flex;
+  align-items:     center;
+  gap:             4px;
+  border-bottom:   1.5px solid transparent;
+  transition:      border-color 0.15s;
+  padding-bottom:  1px;
 }
-.ud-empty-link:hover { border-bottom-color: #D97706; }
 
-/* ── How to use ─────────────────────────────────────────────── */
+.ud-empty-link:hover { border-bottom-color: var(--ud-coral); }
+
+
+/* ================================================================
+   13. HOW-TO SECTION
+   Matches the card aesthetic — white bg, nb-border, nb-radius.
+   ================================================================ */
 .ud-how {
-  margin-top: 56px;
-  padding: 36px 40px;
-  background: #fff;
-  border: 1px solid #E7E2DA;
-  border-radius: 20px;
+  margin-top:    60px;
+  padding:       36px 40px;
+  background:    var(--ud-bg-white);
+  border:        1px solid var(--ud-border);
+  border-radius: var(--ud-radius);
+  box-shadow:    var(--ud-shadow-sm);
 }
 
 .ud-how-title {
-  font-size: 18px;
-  font-weight: 700;
-  color: #1C1917;
-  margin: 0 0 28px;
+  font-size:      17px;
+  font-weight:    700;
+  color:          var(--ud-text);
+  margin:         0 0 28px;
   letter-spacing: -0.3px;
 }
 
 .ud-how-steps {
-  display: grid;
+  display:               grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 32px;
+  gap:                   32px;
 }
 
 .ud-how-step {
-  display: flex;
+  display:     flex;
   align-items: flex-start;
-  gap: 16px;
+  gap:         16px;
 }
 
 .ud-how-num {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  background: #1C1917;
-  color: #FAF8F5;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
+  width:           36px;
+  height:          36px;
+  border-radius:   var(--ud-radius-xs);
+  background:      var(--ud-coral);   /* coral instead of black — brand tie-in */
+  color:           #fff;
+  font-size:       14px;
+  font-weight:     800;
+  display:         flex;
+  align-items:     center;
   justify-content: center;
-  flex-shrink: 0;
+  flex-shrink:     0;
 }
 
 .ud-how-step-title {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 14px;
-  font-weight: 700;
-  color: #1C1917;
-  margin: 0 0 6px;
+  font-size:      13.5px;
+  font-weight:    700;
+  color:          var(--ud-text);
+  margin:         0 0 5px;
+  letter-spacing: -0.2px;
 }
 
 .ud-how-step-desc {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  font-size: 13px;
-  color: #78716C;
-  margin: 0;
+  font-size:   13px;
+  font-weight: 400;
+  color:       var(--ud-text-muted);
+  margin:      0;
   line-height: 1.6;
 }
 
-/* ═══════════════════════════════════════════════════════════
-   RESPONSIVE
-═══════════════════════════════════════════════════════════ */
 
-/* ── 1024px and below ───────────────────────────────────────── */
+/* ================================================================
+   14. ANIMATIONS / KEYFRAMES
+   ================================================================ */
+@keyframes ud-card-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes ud-fade-drop {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes ud-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes ud-shimmer {
+  0%   { background-position:  200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@keyframes ud-pulse {
+  0%, 100% { opacity: 1; transform: scale(1);   }
+  50%       { opacity: 0.4; transform: scale(0.8); }
+}
+
+
+/* ================================================================
+   15. RESPONSIVE
+   ================================================================ */
+
+/* ── 1024px ── */
 @media (max-width: 1024px) {
-  .ud-hero         { padding: 44px 24px 40px; }
-  .ud-hero-inner   { gap: 28px; }
+  .ud-hero         { padding: 44px 24px 44px; }
+  .ud-hero-inner   { gap: 32px; }
   .ud-checker      { width: 300px; }
-  .ud-body         { padding: 28px 24px 56px; }
-  .ud-how          { padding: 28px 28px; }
+  .ud-body         { padding: 28px 24px 60px; }
+  .ud-how          { padding: 28px; }
   .ud-how-steps    { gap: 20px; }
 }
 
-/* ── 860px — stack hero ─────────────────────────────────────── */
+/* ── 860px — stack hero ── */
 @media (max-width: 860px) {
-  .ud-hero-inner {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .ud-checker { width: 100%; }
-  .ud-how-steps { grid-template-columns: 1fr; gap: 20px; }
-  .ud-how-step  { align-items: flex-start; }
+  .ud-hero-inner   { flex-direction: column; align-items: stretch; }
+  .ud-checker      { width: 100%; }
+  .ud-how-steps    { grid-template-columns: 1fr; gap: 20px; }
 }
 
-/* ── 768px ──────────────────────────────────────────────────── */
+/* ── 768px ── */
 @media (max-width: 768px) {
-  .ud-hero   { padding: 36px 20px 32px; }
-  .ud-body   { padding: 24px 20px 48px; }
-  .ud-grid   { grid-template-columns: 1fr; gap: 14px; }
-  .ud-how    { padding: 24px 20px; border-radius: 16px; }
-  .ud-how-title { font-size: 16px; }
+  .ud-hero         { padding: 36px 20px 36px; }
+  .ud-body         { padding: 24px 20px 52px; }
+  .ud-grid         { grid-template-columns: 1fr; gap: 14px; }
+  .ud-how          { padding: 24px 20px; border-radius: var(--ud-radius-sm); }
+  .ud-how-title    { font-size: 15px; }
 }
 
-/* ── 640px ──────────────────────────────────────────────────── */
+/* ── 640px ── */
 @media (max-width: 640px) {
-  .ud-hero-title  { font-size: 26px; letter-spacing: -0.5px; }
-  .ud-hero-sub    { font-size: 14px; }
-  .ud-tab         { font-size: 13px; margin-right: 20px; padding: 10px 0; }
-  .ud-card-footer { gap: 6px; }
-  .ud-shop-btn    { width: 100%; text-align: center; justify-content: center; }
-  .ud-card-footer { flex-direction: column; }
-  .ud-code-box    { width: 100%; }
+  .ud-hero-title   { font-size: 26px; letter-spacing: -0.5px; }
+  .ud-hero-sub     { font-size: 14px; }
+  .ud-tab          { font-size: 13px; margin-right: 20px; padding: 10px 0; }
+  .ud-card-footer  { flex-direction: column; gap: 6px; }
+  .ud-code-box     { width: 100%; }
+  .ud-shop-btn     { width: 100%; justify-content: center; }
 }
 
-/* ── 480px ──────────────────────────────────────────────────── */
+/* ── 480px ── */
 @media (max-width: 480px) {
-  .ud-hero      { padding: 28px 16px 28px; }
-  .ud-body      { padding: 20px 16px 40px; }
-  .ud-checker   { padding: 16px; border-radius: 12px; }
-  .ud-how       { margin-top: 40px; padding: 20px 16px; }
-  .ud-empty     { padding: 52px 16px; }
-  .ud-card-inner { padding: 16px 14px 14px; }
+  .ud-hero         { padding: 28px 16px; }
+  .ud-body         { padding: 20px 16px 44px; }
+  .ud-checker      { padding: 16px; border-radius: var(--ud-radius-sm); }
+  .ud-how          { margin-top: 44px; padding: 20px 16px; }
+  .ud-empty        { padding: 56px 16px; }
+  .ud-card-inner   { padding: 16px 14px 14px; }
   .ud-value-amount { font-size: 30px; }
-  .ud-tabs-wrap  { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .ud-tabs       { width: max-content; min-width: 100%; }
-  .ud-hero::after { display: none; }
+  .ud-tabs-wrap    { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .ud-tabs         { width: max-content; min-width: 100%; }
+  /* Hide hero glow blob on small screens — avoids overflow artifacts */
+  .ud-hero::after  { display: none; }
 }
 
-/* ── 360px ──────────────────────────────────────────────────── */
+/* ── 360px ── */
 @media (max-width: 360px) {
-  .ud-hero-title { font-size: 22px; }
-  .ud-grid       { gap: 12px; }
-  .ud-section-hd { margin-bottom: 12px; }
-  .ud-how-num    { width: 30px; height: 30px; font-size: 13px; }
-}
-
-
-/* ============================================================
-   UserDiscounts.css — ADDITIONS ONLY
-   Append these rules to your existing pageStyles/UserDiscounts.css
-   Do not replace the existing file — these are new selectors only.
-   ============================================================ */
-
-/* ── Audience badge ──────────────────────────────────────────────────────────
-   Shown on broadcast (audience:'all') discount cards.
-   Sits in the top-left row alongside the category chip.
-   Communicates to the user that this is a sitewide promo,
-   not a personal compensation code.
-   ──────────────────────────────────────────────────────────────────────────── */
-.ud-audience-badge {
-  display:       inline-flex;
-  align-items:   center;
-  gap:           4px;
-  padding:       2px 7px;
-  border-radius: 20px;
-  font-size:     10px;
-  font-weight:   600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-
-  /* Neutral teal — distinct from category chip colours,
-     clearly informational rather than categorical */
-  color:      #0F766E;
-  background: #CCFBF1;
-  border:     1px solid #99F6E4;
-
-  /* Sits at the same vertical rhythm as the category chip */
-  line-height: 1;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.ud-audience-badge svg {
-  flex-shrink: 0;
-  opacity: 0.85;
-}
-
-/* Expired card variant — desaturate to match the expired card state */
-.ud-card--expired .ud-audience-badge {
-  color:      #9CA3AF;
-  background: #F3F4F6;
-  border-color: #E5E7EB;
-}
-
-/* ── Card top-left wrap ───────────────────────────────────────────────────────
-   The existing .ud-card-top-left likely uses display:flex.
-   Ensure wrapping is enabled when both category chip + audience badge
-   + first-order chip are present simultaneously on narrow cards.
-   ──────────────────────────────────────────────────────────────────────────── */
-.ud-card-top-left {
-  flex-wrap: wrap;
-  gap:       4px;
+  .ud-hero-title   { font-size: 22px; }
+  .ud-grid         { gap: 12px; }
+  .ud-section-hd   { margin-bottom: 12px; }
+  .ud-how-num      { width: 30px; height: 30px; font-size: 13px; border-radius: 6px; }
 }

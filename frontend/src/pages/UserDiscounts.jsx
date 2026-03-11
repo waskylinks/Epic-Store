@@ -7,7 +7,7 @@ import {
   validateDiscountCode,
   clearValidatedDiscount,
   clearUserDiscountError,
-} from '../features/discount/userDiscountSlice';
+} from '../features/discount/discountSlice';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import '../pageStyles/UserDiscounts.css';
@@ -282,7 +282,7 @@ const EmptyState = ({ type }) => (
         : 'Check back soon — we regularly add new promotional offers.'}
     </p>
     {type === 'personal' && (
-      <Link to="/orders" className="ud-empty-link">
+      <Link to="/orders/user" className="ud-empty-link">
         View my orders →
       </Link>
     )}
