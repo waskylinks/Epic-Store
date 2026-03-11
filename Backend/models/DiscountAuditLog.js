@@ -195,8 +195,7 @@ discountAuditLogSchema.index(
   { partialFilterExpression: { status: "active" } }
 );
 
-// Full audit tab cursor pagination
-discountAuditLogSchema.index({ _id: -1 });
+
 
 // Action filter in audit tab UI
 discountAuditLogSchema.index({ action: 1 });
