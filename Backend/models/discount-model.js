@@ -5,39 +5,37 @@ import mongoose from "mongoose";
 //
 // Changelog from previous version:
 //
-//  1. audience field (NEW)
+//  1. audience field
 //     'specific' — personalised discount, eligibleUsers enforced.
 //     'all'      — broadcast to every logged-in user. eligibleUsers
-//                  ignored during validation. Used for seasonal promos.
+//                  ignored during validation.
 //
-//  2. lockedAt (NEW)
+//  2. lockedAt
 //     Set the moment currentUses transitions 0 → 1 (first use).
 //     Never updated after that. Used by the delete protection guard.
 //
-//  3. deletionEligibleAt (NEW)
+//  3. deletionEligibleAt
 //     Set at same moment as lockedAt: lockedAt + 30 days.
 //     deleteDiscount controller blocks soft-deletion until this date.
 //     Cleanup job exclusion filter also references this field.
 //
-//  4. canUserUse() updated
-//     audience:'all' bypasses eligibleUsers check entirely.
-//     usesPerUser limit still applies — a broadcast promo with no
-//     per-user cap is a financial risk regardless of audience.
+//  4. canUserUse() — FIX #14
+//     For discounts with large usageHistory arrays (> USAGE_SCAN_THRESHOLD),
+//     a DB-level aggregate is used to count the user's prior uses instead
+//     of an O(n) JavaScript filter over the already-loaded array.
+//     This prevents memory exhaustion on high-use broadcast codes.
 //
-//  5. getActivePromos() updated
-//     Filters on audience:'all' instead of eligibleUsers:{$size:0}.
-//     Cleaner, explicit, and future-proof.
-//
-//  6. getUserDiscounts() — stays narrow (eligibleUsers-scoped only).
-//     The controller (getMyDiscounts) owns the combined query that
-//     merges audience:'all' + personal discounts in one response.
-//
-//  7. deleteOldExpired() updated
-//     Excludes discounts within their fraud-protection window
-//     (deletionEligibleAt exists AND deletionEligibleAt > now).
-//     Closes the backdoor where the cleanup job hard-deletes a
-//     recently-used discount before the 30-day protection window ends.
+//  5. deleteOldExpired() — FIX #15
+//     An _id ceiling is captured before the loop starts. This bounds the
+//     working set to documents that existed when the job began, preventing
+//     an unbounded loop if new records age into the eligibility window
+//     mid-run (e.g. a long-running job on a busy cluster).
 // ============================================
+
+// Threshold above which canUserUse() switches from an in-memory filter
+// to a server-side aggregate count. Set conservatively at 500 to ensure
+// even moderately popular broadcast codes stay responsive.
+const USAGE_SCAN_THRESHOLD = 500;
 
 const discountSchema = new mongoose.Schema(
   {
@@ -76,11 +74,6 @@ const discountSchema = new mongoose.Schema(
     // ============================================
     // AUDIENCE
     // ============================================
-    // 'specific' — personalised code scoped to eligibleUsers list.
-    //              Compensation, refund, loyalty, affiliate codes.
-    // 'all'      — broadcast to every authenticated user.
-    //              Seasonal promos, sitewide sales.
-    //              eligibleUsers is ignored during validation when this is set.
     audience: {
       type: String,
       enum: ["specific", "all"],
@@ -117,18 +110,14 @@ const discountSchema = new mongoose.Schema(
       required: true,
     },
 
-    // Usage limits
     usageLimit: {
       totalUses: {
         type: Number,
-        default: null, // null = unlimited
+        default: null,
       },
       usesPerUser: {
         type: Number,
         default: 1,
-        // Applies to ALL discounts regardless of audience.
-        // A broadcast promo still enforces one use per user
-        // to prevent a single customer exhausting a sitewide offer.
       },
       currentUses: {
         type: Number,
@@ -155,8 +144,6 @@ const discountSchema = new mongoose.Schema(
         },
       ],
       eligibleCategories: [{ type: String }],
-      // Sparse: only populated for personalised discounts (~small %).
-      // Ignored during validation when audience === 'all'.
       eligibleUsers: [
         {
           type: mongoose.Schema.Types.ObjectId,
@@ -179,7 +166,7 @@ const discountSchema = new mongoose.Schema(
     // separate DiscountUsage collection to avoid unbounded document growth.
     // Each usage record here adds ~100 bytes; a high-use promo code with
     // 100k uses would push a single document to ~10 MB, hitting MongoDB's
-    // 16 MB document limit. The TODO below wires the separate collection.
+    // 16 MB document limit.
     // ============================================
     usageHistory: [
       {
@@ -191,22 +178,13 @@ const discountSchema = new mongoose.Schema(
     ],
 
     // ============================================
-    // FRAUD PROTECTION FIELDS (NEW)
+    // FRAUD PROTECTION FIELDS
     // ============================================
-
-    // Set when currentUses transitions 0 → 1 (first use of this code).
-    // Never updated after that point.
-    // Used as the reference timestamp for deletionEligibleAt.
     lockedAt: {
       type: Date,
       default: null,
     },
 
-    // lockedAt + 30 days. Set at same time as lockedAt.
-    // deleteDiscount controller rejects soft-deletion requests before
-    // this date to prevent post-use cover-up.
-    // deleteOldExpired cleanup job excludes discounts where
-    // deletionEligibleAt > now for the same reason.
     deletionEligibleAt: {
       type: Date,
       default: null,
@@ -242,71 +220,32 @@ const discountSchema = new mongoose.Schema(
 
 // ============================================
 // INDEXES
-// Designed for 100M+ documents.
-//
-// Key decisions:
-//  1. (code, status) — primary lookup path for validate endpoint.
-//     Both fields always present; selectivity is high on `code`.
-//
-//  2. (status, category, validFrom, validUntil) — covers the admin
-//     list query which almost always filters by status + category,
-//     then sorts/ranges on dates. Partial index on status:"active"
-//     cuts index size ~60-70% since expired/inactive docs are rarely
-//     queried live.
-//
-//  3. (audience, status, validUntil) — NEW. Powers:
-//       - getActivePromos() static (audience:'all')
-//       - hasNewDiscounts controller (audience:'all', status:'active')
-//       - getMyDiscounts controller combined query
-//     Partial on status:'active' keeps it lean.
-//
-//  4. (conditions.eligibleUsers, status) — sparse so it only indexes
-//     documents that actually have eligible users (personalised
-//     discounts are a tiny fraction of total volume).
-//
-//  5. (validUntil, status) — used exclusively by the cleanup job to
-//     find expired-but-still-marked-active documents efficiently.
-//
-//  6. (deletionEligibleAt) — NEW. Used by deleteOldExpired() exclusion
-//     filter to skip recently-used discounts in the cleanup pass.
-//     Sparse because null values (never-used discounts) don't need
-//     to participate in this index.
-//
-//  7. createdAt desc — default sort for admin list view.
 // ============================================
 
-// Primary lookup — validate cart flow
 discountSchema.index({ code: 1, status: 1 });
 
-// Admin list + date range queries; partial keeps it lean
 discountSchema.index(
   { status: 1, category: 1, validFrom: 1, validUntil: 1 },
   { partialFilterExpression: { status: "active" } }
 );
 
-// Broadcast promo queries (hasNewDiscounts, getActivePromos, getMyDiscounts)
 discountSchema.index(
   { audience: 1, status: 1, validUntil: 1 },
   { partialFilterExpression: { status: "active" } }
 );
 
-// Personalised discount lookup — sparse skips docs without eligibleUsers
 discountSchema.index(
   { "conditions.eligibleUsers": 1, status: 1 },
   { sparse: true }
 );
 
-// Cleanup job — find active docs past their validUntil
 discountSchema.index({ validUntil: 1, status: 1 });
 
-// Fraud protection exclusion filter in deleteOldExpired()
-// Sparse: null values (never-used discounts) are excluded from the index
 discountSchema.index(
   { deletionEligibleAt: 1 },
   { sparse: true }
 );
 
-// Default admin list sort
 discountSchema.index({ createdAt: -1 });
 
 // ============================================
@@ -333,8 +272,6 @@ discountSchema.virtual("remainingUses").get(function () {
   return Math.max(0, this.usageLimit.totalUses - this.usageLimit.currentUses);
 });
 
-// Whether the discount is currently within its fraud-protection window.
-// Used by the admin UI to show the lock icon and disable the deactivate button.
 discountSchema.virtual("isProtected").get(function () {
   if (!this.deletionEligibleAt) return false;
   return new Date() < this.deletionEligibleAt;
@@ -363,15 +300,17 @@ discountSchema.methods.calculateDiscount = function (cartTotal, items = []) {
 // ============================================
 // canUserUse()
 //
-// audience:'all' — skips eligibleUsers check entirely.
-//                  usesPerUser still enforced (financial protection).
+// FIX #14 — the original implementation used Array.prototype.filter() over
+// the fully-loaded usageHistory array to count a user's prior uses.
+// For a broadcast code with 50,000 uses this scans 50,000 elements in JS memory
+// on every validate request.
 //
-// audience:'specific' — original behaviour: checks eligibleUsers first,
-//                        then per-user usage count.
+// Fix: when usageHistory.length exceeds USAGE_SCAN_THRESHOLD, fall back to a
+// server-side MongoDB aggregate that counts only the requesting user's entries.
+// This avoids loading the full array while the TODO migration to a dedicated
+// DiscountUsage collection is pending.
 // ============================================
 discountSchema.methods.canUserUse = async function (userId) {
-  // Only enforce eligibleUsers for 'specific' audience discounts.
-  // Broadcast discounts are open to all authenticated users.
   if (this.audience === "specific" && this.conditions.eligibleUsers.length > 0) {
     const isEligible = this.conditions.eligibleUsers.some(
       (u) => u.toString() === userId.toString()
@@ -381,12 +320,41 @@ discountSchema.methods.canUserUse = async function (userId) {
     }
   }
 
-  // Per-user usage cap applies regardless of audience.
-  // Prevents a single user from using a broadcast promo multiple times.
   if (userId) {
-    const userUsageCount = this.usageHistory.filter(
-      (usage) => usage.user && usage.user.toString() === userId.toString()
-    ).length;
+    let userUsageCount;
+
+    if (this.usageHistory.length > USAGE_SCAN_THRESHOLD) {
+      // FIX #14 — use a server-side aggregate to avoid O(n) JS scan.
+      // The $filter + $size pipeline evaluates entirely in MongoDB, returning
+      // only a single count integer rather than loading the full array.
+      const result = await this.constructor.aggregate([
+        { $match: { _id: this._id } },
+        {
+          $project: {
+            count: {
+              $size: {
+                $filter: {
+                  input: "$usageHistory",
+                  as:    "entry",
+                  cond:  {
+                    $eq: [
+                      "$$entry.user",
+                      new mongoose.Types.ObjectId(userId.toString()),
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ]);
+      userUsageCount = result[0]?.count ?? 0;
+    } else {
+      // For small arrays (< USAGE_SCAN_THRESHOLD) the already-loaded array is fine.
+      userUsageCount = this.usageHistory.filter(
+        (usage) => usage.user && usage.user.toString() === userId.toString()
+      ).length;
+    }
 
     if (userUsageCount >= this.usageLimit.usesPerUser) {
       return {
@@ -416,8 +384,10 @@ discountSchema.methods.validateCart = function (cartTotal, items = [], userId = 
 // recordUsage()
 //
 // Sets lockedAt and deletionEligibleAt on first use (currentUses 0 → 1).
-// These fields are immutable after being set — subsequent calls to
-// recordUsage() will not overwrite them.
+// These fields are immutable after being set.
+//
+// NOTE (FIX #1 context): orderId will always be null when called from the
+// /validate endpoint — the order does not exist at validation time.
 // ============================================
 discountSchema.methods.recordUsage = async function (userId, orderId, discountAmount) {
   const isFirstUse = this.usageLimit.currentUses === 0;
@@ -425,8 +395,6 @@ discountSchema.methods.recordUsage = async function (userId, orderId, discountAm
   this.usageHistory.push({ user: userId, order: orderId, discountAmount, usedAt: new Date() });
   this.usageLimit.currentUses += 1;
 
-  // Lock the discount against premature deletion on first use only.
-  // lockedAt and deletionEligibleAt are set once and never changed.
   if (isFirstUse) {
     const now = new Date();
     this.lockedAt = now;
@@ -435,8 +403,6 @@ discountSchema.methods.recordUsage = async function (userId, orderId, discountAm
 
   await this.save();
 
-  // Return whether this was the first use so the controller can
-  // include it in the DiscountAuditLog 'used' entry meta.
   return { isFirstUse };
 };
 
@@ -448,13 +414,6 @@ discountSchema.statics.findActiveByCode = async function (code) {
   return this.findOne({ code: code.toUpperCase(), status: "active" });
 };
 
-// ============================================
-// getActivePromos()
-//
-// Updated: filters on audience:'all' instead of
-// eligibleUsers:{$size:0}. Semantically correct and uses the new
-// (audience, status, validUntil) index directly.
-// ============================================
 discountSchema.statics.getActivePromos = async function () {
   const now = new Date();
   return this.find({
@@ -467,13 +426,6 @@ discountSchema.statics.getActivePromos = async function () {
     .lean();
 };
 
-// ============================================
-// getUserDiscounts()
-//
-// Intentionally narrow — returns eligibleUsers-scoped discounts only.
-// The getMyDiscounts controller merges this result with audience:'all'
-// discounts and stamps lastSeenDiscountsAt on the user.
-// ============================================
 discountSchema.statics.getUserDiscounts = async function (userId) {
   const now = new Date();
   return this.find({
@@ -487,11 +439,6 @@ discountSchema.statics.getUserDiscounts = async function (userId) {
     .lean();
 };
 
-// ============================================
-// STATIC: BULK EXPIRE (used by cleanup job)
-// Uses updateMany — a single atomic write across matched docs.
-// Far cheaper than loading + saving each document individually.
-// ============================================
 discountSchema.statics.bulkExpireStale = async function () {
   const result = await this.updateMany(
     {
@@ -506,34 +453,38 @@ discountSchema.statics.bulkExpireStale = async function () {
 // ============================================
 // STATIC: DELETE OLD EXPIRED DISCOUNTS
 //
-// Hard-deletes expired discounts older than `daysOld` days.
-// Runs in batches to avoid locking the collection on large datasets.
+// FIX #15 — the original while(true) loop re-queried from scratch on every
+// iteration. If a long-running batch run allowed new documents to age into
+// eligibility mid-run, the loop could process them immediately — potentially
+// running indefinitely on a very active cluster.
 //
-// FRAUD PROTECTION GUARD (NEW):
-//   Excludes any discount where deletionEligibleAt > now.
-//   This prevents the cleanup job from hard-deleting a recently-used
-//   discount that is still within its 30-day protection window —
-//   closing the backdoor where cleanup is used as a proxy delete
-//   to hide evidence of a suspicious compensation code being used.
+// Fix: capture an ObjectId ceiling _before_ the loop begins. All find()
+// calls inside the loop add _id: { $lt: ceiling }, bounding the working set
+// to documents that existed when the job started. Newly eligible documents
+// are processed on the next scheduled run.
+//
+// FRAUD PROTECTION GUARD (unchanged):
+//   Excludes discounts where deletionEligibleAt > now (within 30-day window).
 // ============================================
 discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSize = 1000) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - daysOld);
 
   const now = new Date();
+
+  // FIX #15 — capture the working-set ceiling BEFORE the loop.
+  // Uses ObjectId as a timestamp proxy (ObjectIds are monotonically increasing).
+  // Documents inserted after this point will NOT be processed in this run.
+  const runCeiling = new mongoose.Types.ObjectId();
+
   let totalDeleted = 0;
 
   while (true) {
-    // Find a batch of IDs first — avoids holding a write lock across
-    // the full result set.
     const batch = await this.find(
       {
-        status: "expired",
+        status:     "expired",
         validUntil: { $lt: cutoff },
-        // Fraud protection exclusion:
-        // Skip discounts still within their 30-day post-use protection window.
-        // $not with $gt means: deletionEligibleAt does not exist OR
-        // deletionEligibleAt is null OR deletionEligibleAt <= now.
+        _id:        { $lt: runCeiling }, // FIX #15 — bounded working set
         deletionEligibleAt: { $not: { $gt: now } },
       },
       { _id: 1 }
@@ -547,7 +498,6 @@ discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSiz
     const { deletedCount } = await this.deleteMany({ _id: { $in: ids } });
     totalDeleted += deletedCount;
 
-    // Yield the event loop between batches so other queries aren't starved
     await new Promise((resolve) => setImmediate(resolve));
   }
 

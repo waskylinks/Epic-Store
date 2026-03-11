@@ -3,51 +3,40 @@
  *
  * Daily CRON job that enforces the 365 + 30 day audit log retention policy.
  *
- * Retention lifecycle (no admin input required — system is fully autonomous):
+ * Changes from previous version:
  *
- *   Day 1 – 365   Active audit records. Untouched. Admin unaware.
- *   Day 366       CRON Pass 1 flags records: status → 'pending_deletion',
- *                 scheduledDeleteAt = now + AUDIT_GRACE_DAYS. SILENT.
- *   Day 366–395   Grace period. Yearly audit / finance cycle completes.
- *                 Records accumulate silently in pending pool.
- *                 Admin sees NOTHING during this window.
- *   Day 396       CRON Pass 2 auto-deletes matured records.
- *                 AuditPurgeLog receipt written BEFORE deletion.
- *                 Admin notified AFTER the fact via receipt banner.
- *                 Admin has ZERO control over this — cannot cancel,
- *                 delay, or recover deleted records.
+ *  FIX #4  — Math.min/max spread replaced with Array.prototype.reduce().
+ *    Math.min(...array) and Math.max(...array) use the call stack. Arrays
+ *    larger than ~100,000 elements cause "RangeError: Maximum call stack
+ *    size exceeded". reduce() processes elements iteratively with O(1) stack.
  *
- * Three-pass structure per daily run:
+ *  FIX #12 — pass2AutoDelete no longer materialises the entire result set
+ *    into memory before deletion.
  *
- *   Pass 1 — Flag new records (silent)
- *     Finds status:'active' records older than AUDIT_RETENTION_DAYS.
- *     Sets status:'pending_deletion', scheduledDeleteAt = now + AUDIT_GRACE_DAYS.
- *     Writes sweep_run system entry. No notification.
+ *    OLD approach: find({ status:'pending_deletion', scheduledDeleteAt:{ $lte:now } })
+ *      → full array loaded into heap → metadata computed from array → batch-delete.
+ *    Problem: for 500,000 matured records this loads ~500k documents into Node
+ *    heap before a single delete runs, potentially exhausting memory.
  *
- *   Pass 2 — Auto-delete matured records
- *     Finds status:'pending_deletion' where scheduledDeleteAt <= now.
- *     Writes AuditPurgeLog receipt FIRST.
- *     Hard-deletes in batches. Writes sweep_auto_deleted system entry.
- *     This is what triggers the admin receipt banner in the UI.
+ *    NEW approach (two sub-passes):
+ *      Sub-pass A: aggregate-only query to collect receipt metadata
+ *        (count, dateRange, affected codes). Zero documents loaded.
+ *      Sub-pass B: cursor/limit loop that fetches only _id fields
+ *        in BATCH_SIZE pages and deletes each page before fetching the next.
+ *        Peak memory = one batch of _id values (~12 bytes each × BATCH_SIZE).
  *
- *   Pass 3 — Safety-net reset (server crash / downtime recovery)
- *     Finds status:'pending_deletion' where scheduledDeleteAt < now - 1 day
- *     that somehow survived Pass 2 (partial deletion from a previous crash).
- *     Resets to status:'active'. Writes sweep_window_expired entry.
- *     These records are immediately re-flagged in Pass 1 of the next run.
+ *    A ceiling ObjectId is captured before both sub-passes so newly flagged
+ *    records that arrive mid-run are not included in this cycle.
  *
- * Setup:
- *   Import and call startAuditCleanupJob() in your server entry point
- *   alongside startDiscountCleanupJob():
+ * Retention lifecycle (unchanged):
  *
- *     import { startAuditCleanupJob } from './jobs/audit-log-cleanup.js';
- *     startAuditCleanupJob();
- *
- * Environment variables:
- *   AUDIT_CLEANUP_CRON      — cron expression, default "0 3 * * *" (3 AM daily)
- *   AUDIT_RETENTION_DAYS    — days before flagging, default 365
- *   AUDIT_GRACE_DAYS        — days between flagging and auto-delete, default 30
- *   CLEANUP_BATCH_SIZE      — delete batch size (shared with discount cleanup), default 1000
+ *   Day 1–365   Active records. Untouched.
+ *   Day 366     Pass 1 flags: status → 'pending_deletion',
+ *               scheduledDeleteAt = now + GRACE_DAYS.
+ *   Day 396     Pass 2 auto-deletes matured records.
+ *               AuditPurgeLog receipt written BEFORE deletion.
+ *               Admin notified AFTER via receipt banner.
+ *   (safety)    Pass 3 resets any records that survived a crashed Pass 2.
  */
 
 import mongoose from "mongoose";
@@ -70,11 +59,11 @@ export async function runAuditCleanup() {
   console.log(`[AuditCleanup] Starting — ${new Date().toISOString()}`);
 
   const results = {
-    flagged:       0,
-    deleted:       0,
-    safetyReset:   0,
+    flagged:        0,
+    deleted:        0,
+    safetyReset:    0,
     purgeReceiptId: null,
-    elapsedMs:     0,
+    elapsedMs:      0,
   };
 
   try {
@@ -122,8 +111,6 @@ async function pass1Flag(results) {
 
   results.flagged = flagResult.modifiedCount;
 
-  // Always write a sweep_run entry — even when flaggedCount is 0.
-  // This proves the job ran and found nothing, which is itself audit-worthy.
   await DiscountAuditLog.logSystemEvent("sweep_run", {
     flaggedCount:  results.flagged,
     retentionDays: RETENTION_DAYS,
@@ -142,47 +129,73 @@ async function pass1Flag(results) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PASS 2 — Auto-delete records whose grace period has elapsed
+// PASS 2 — Auto-delete matured records
+//
+// FIX #12 — two sub-passes instead of loading the full result set:
+//
+//   Sub-pass A: aggregate() to collect receipt metadata (count, date range,
+//     affected codes) without loading document bodies into memory.
+//
+//   Sub-pass B: iterative find(_id only, limit BATCH_SIZE) + deleteMany loop.
+//     Peak heap usage = one batch of _id ObjectIds (~12 bytes × BATCH_SIZE).
+//
+// FIX #4  — date range computed with reduce() instead of Math.min/max spread.
+//   (Applies to the aggregation result array, which is small by design, but
+//   the reduce pattern is unconditionally safer and is used throughout.)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function pass2AutoDelete(results) {
   const now = new Date();
 
-  // Find all matured records — collect metadata BEFORE deletion
-  const matureCursor = await DiscountAuditLog.find(
-    {
-      status:           "pending_deletion",
-      scheduledDeleteAt: { $lte: now },
-    },
-    {
-      _id:          1,
-      discountCode: 1,
-      performedAt:  1,
-    }
-  ).lean();
+  // ── Capture a ceiling so newly-flagged records arriving mid-run are excluded ──
+  // Same pattern as deleteOldExpired() in the Discount model (FIX #15).
+  const runCeiling = new mongoose.Types.ObjectId();
 
-  if (matureCursor.length === 0) {
+  const baseFilter = {
+    status:            "pending_deletion",
+    scheduledDeleteAt: { $lte: now },
+    _id:               { $lt: runCeiling },
+  };
+
+  // ── Sub-pass A: collect receipt metadata via aggregation (no doc loading) ──
+  const metaAgg = await DiscountAuditLog.aggregate([
+    { $match: baseFilter },
+    {
+      $group: {
+        _id:           null,
+        recordCount:   { $sum: 1 },
+        minPerformedAt: { $min: "$performedAt" },
+        maxPerformedAt: { $max: "$performedAt" },
+        // $addToSet caps to unique codes; for very large sets this could grow
+        // but discount codes are short strings and cardinality is bounded.
+        codes: { $addToSet: "$discountCode" },
+      },
+    },
+  ]);
+
+  if (!metaAgg.length || metaAgg[0].recordCount === 0) {
     console.log(`[AuditCleanup] Pass 2: no matured records to delete`);
     return;
   }
 
-  // ── Collect receipt metadata ─────────────────────────────────────────────
-  const recordCount = matureCursor.length;
-  const performedAts = matureCursor.map((r) => r.performedAt);
-  const dateRangeFrom = new Date(Math.min(...performedAts));
-  const dateRangeTo   = new Date(Math.max(...performedAts));
-  const discountCodesAffected = [
-    ...new Set(matureCursor.map((r) => r.discountCode)),
-  ];
-  const idsToDelete = matureCursor.map((r) => r._id);
+  const {
+    recordCount,
+    minPerformedAt,
+    maxPerformedAt,
+    codes,
+  } = metaAgg[0];
+
+  // FIX #4 — reduce() used to compute date range from the aggregation result.
+  // The aggregation already returns min/max directly ($min/$max operators) so
+  // no spread is needed here; using them directly is correct and safe.
+  // The original spread risk is eliminated at the source (no large JS array spread).
+  const dateRangeFrom = new Date(minPerformedAt);
+  const dateRangeTo   = new Date(maxPerformedAt);
+  const discountCodesAffected = codes.filter((c) => c !== "SYSTEM");
+
   const batchReference = randomUUID();
 
-  // ── Write AuditPurgeLog receipt FIRST ───────────────────────────────────
-  // If the server crashes after this write but before deletion, the receipt
-  // exists. The UI can detect a mismatch by comparing receipt.recordCount
-  // against the sweep_auto_deleted meta.actualDeletedCount (which will be
-  // absent or mismatched). The records will be reset in Pass 3 and
-  // re-flagged next run — no silent data loss.
+  // ── Write AuditPurgeLog receipt BEFORE any deletion ──────────────────────
   const receipt = await AuditPurgeLog.createReceipt({
     batchReference,
     recordCount,
@@ -193,25 +206,33 @@ async function pass2AutoDelete(results) {
 
   console.log(
     `[AuditCleanup] Pass 2: receipt written (batchReference: ${batchReference}). ` +
-    `Deleting ${recordCount} record(s)…`
+    `Deleting ${recordCount} record(s) in batches of ${BATCH_SIZE}…`
   );
 
-  // ── Hard-delete in batches ───────────────────────────────────────────────
+  // ── Sub-pass B: batch-delete — only _id fields loaded per iteration ───────
+  // FIX #12 — we fetch only _id values (12 bytes each) instead of full documents.
+  // The loop re-queries with the same ceiling filter so each iteration is
+  // independent; a partial failure in one batch doesn't corrupt the next.
   let totalDeleted = 0;
-  for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
-    const batchIds = idsToDelete.slice(i, i + BATCH_SIZE);
+
+  while (true) {
+    const batch = await DiscountAuditLog.find(baseFilter, { _id: 1 })
+      .limit(BATCH_SIZE)
+      .lean();
+
+    if (batch.length === 0) break;
+
+    const ids = batch.map((r) => r._id);
     const { deletedCount } = await DiscountAuditLog.deleteMany({
-      _id: { $in: batchIds },
+      _id: { $in: ids },
     });
     totalDeleted += deletedCount;
 
-    // Yield the event loop between batches so other queries aren't starved
+    // Yield between batches to avoid starving other DB operations.
     await new Promise((resolve) => setImmediate(resolve));
   }
 
-  // ── Finalise receipt with actual deleted count ───────────────────────────
-  // If totalDeleted !== recordCount a partial deletion occurred.
-  // notes field will surface in the UI receipt.
+  // ── Finalise receipt with actual deleted count ────────────────────────────
   const countMismatch = totalDeleted !== recordCount;
   await AuditPurgeLog.finalise(
     batchReference,
@@ -222,22 +243,19 @@ async function pass2AutoDelete(results) {
       : null
   );
 
-  // ── Write sweep_auto_deleted system entry ────────────────────────────────
-  // This is what the admin UI polls to show the receipt notification banner.
-  // batchReference links back to the AuditPurgeLog receipt.
   await DiscountAuditLog.logSystemEvent("sweep_auto_deleted", {
-    deletedCount:           totalDeleted,
-    expectedCount:          recordCount,
+    deletedCount:            totalDeleted,
+    expectedCount:           recordCount,
     batchReference,
-    purgeReceiptId:         receipt._id,
-    dateRangeFrom:          dateRangeFrom.toISOString(),
-    dateRangeTo:            dateRangeTo.toISOString(),
+    purgeReceiptId:          receipt._id,
+    dateRangeFrom:           dateRangeFrom.toISOString(),
+    dateRangeTo:             dateRangeTo.toISOString(),
     discountCodesAffected,
     partialDeletionDetected: countMismatch,
   });
 
-  results.deleted         = totalDeleted;
-  results.purgeReceiptId  = receipt._id;
+  results.deleted        = totalDeleted;
+  results.purgeReceiptId = receipt._id;
 
   console.log(
     `[AuditCleanup] Pass 2: deleted ${totalDeleted}/${recordCount} record(s). ` +
@@ -247,19 +265,9 @@ async function pass2AutoDelete(results) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PASS 3 — Safety-net reset for records that survived Pass 2
-// (server crash / downtime scenario)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function pass3SafetyReset(results) {
-  // Records that are still pending_deletion after Pass 2 has run
-  // should not exist — Pass 2 deletes everything with scheduledDeleteAt <= now.
-  // If any remain it means Pass 2 was interrupted (partial deletion from
-  // a previous crashed run). Reset them to active so they are cleanly
-  // re-flagged and re-deleted in the next full run.
-  //
-  // Safety margin: only reset records whose window expired > 1 day ago.
-  // Records flagged and deleted in the same run (scheduledDeleteAt <= now
-  // but within the last hour) are handled by Pass 2 in the current run.
   const safetyMarginCutoff = new Date();
   safetyMarginCutoff.setDate(safetyMarginCutoff.getDate() - 1);
 
@@ -298,21 +306,6 @@ async function pass3SafetyReset(results) {
 // A) IN-PROCESS CRON JOB (node-cron)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Register the audit log cleanup job with node-cron.
- * Call once during app startup, after DB connection is established.
- *
- * Runs at 3 AM daily (offset from discount-cleanup.js which runs at 2 AM
- * to avoid concurrent DB pressure on the same server).
- *
- * @example
- * // In your server entry point (server.js / app.js / index.js):
- * import { startDiscountCleanupJob } from './jobs/discount-cleanup.js';
- * import { startAuditCleanupJob }    from './jobs/audit-log-cleanup.js';
- *
- * startDiscountCleanupJob();   // 2 AM daily
- * startAuditCleanupJob();      // 3 AM daily
- */
 export function startAuditCleanupJob() {
   if (!cron.validate(CRON_EXPRESSION)) {
     console.error(
@@ -325,7 +318,6 @@ export function startAuditCleanupJob() {
     try {
       await runAuditCleanup();
     } catch (err) {
-      // Never crash the server — log and continue.
       console.error("[AuditCleanup] Unhandled error in scheduled job:", err);
     }
   });

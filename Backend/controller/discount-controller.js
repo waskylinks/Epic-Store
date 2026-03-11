@@ -6,12 +6,17 @@ import DiscountAuditLog from "../models/DiscountAuditLog.js";
 import AuditPurgeLog from "../models/AuditPurgeLog.js";
 import crypto from "crypto";
 import Order from "../models/order-model.js";
+import mongoose from "mongoose";
+import redis from "../utils/redis.js";
 
 // ============================================
-// AUDIT HELPER
-// Builds a clean performedBy snapshot from req.user.
-// Called by every controller that writes an audit entry.
+// HELPERS
 // ============================================
+
+/**
+ * Builds a clean performedBy snapshot from req.user.
+ * Called by every controller that writes an audit entry.
+ */
 const auditActor = (user) => ({
   _id:       user._id,
   firstName: user.firstName ?? null,
@@ -19,6 +24,32 @@ const auditActor = (user) => ({
   email:     user.email     ?? null,
   system:    false,
 });
+
+/**
+ * Escapes a string for safe use inside a MongoDB $regex query.
+ * Prevents ReDoS attacks via user-controlled search parameters.
+ * FIX #9
+ */
+const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Returns true only when s is a valid 24-hex-char MongoDB ObjectId string.
+ * FIX #8, #20
+ */
+const isValidObjectId = (s) => mongoose.Types.ObjectId.isValid(s);
+
+/**
+ * Invalidates the stats cache so the next getDiscountStats call re-aggregates.
+ * Called by any controller that mutates the discount collection.
+ * FIX #13 (cache-invalidation side)
+ */
+const invalidateStatsCache = async () => {
+  try {
+    await redis.del("discount:stats");
+  } catch {
+    // Redis failure must never block a discount write — swallow silently.
+  }
+};
 
 // ============================================
 // ADMIN: CREATE DISCOUNT
@@ -40,10 +71,18 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Missing required fields", 400));
   }
 
-  // audience:'all' discounts are not scoped to specific users.
-  // audience:'specific' is the default for personalised codes.
+  // FIX #8 — validate optional ObjectId fields before any DB call
+  if (relatedOrder && !isValidObjectId(relatedOrder)) {
+    return next(new HandleError("Invalid relatedOrder id", 400));
+  }
+  if (relatedReturn && !isValidObjectId(relatedReturn)) {
+    return next(new HandleError("Invalid relatedReturn id", 400));
+  }
+
   const resolvedAudience = audience === "all" ? "all" : "specific";
 
+  // Pre-flight uniqueness check — still useful as an early 400, but we no longer
+  // rely on it as the sole guard (race condition handled by try/catch below).
   const existingDiscount = await Discount.findOne({
     code: code.toUpperCase(),
   }).lean();
@@ -51,19 +90,28 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Discount code already exists", 400));
   }
 
-  const discount = await Discount.create({
-    code: code.toUpperCase(),
-    description, type, value, category,
-    audience: resolvedAudience,
-    validFrom: validFrom || Date.now(),
-    validUntil,
-    usageLimit: usageLimit || {},
-    conditions: conditions || {},
-    notes, relatedOrder, relatedReturn,
-    createdBy: req.user._id,
-  });
+  let discount;
+  try {
+    // FIX #6 — wrap create() so a concurrent duplicate-key race returns a clean 400
+    // rather than an unhandled MongoServerError 11000 bubbling to the global handler.
+    discount = await Discount.create({
+      code: code.toUpperCase(),
+      description, type, value, category,
+      audience: resolvedAudience,
+      validFrom: validFrom || Date.now(),
+      validUntil,
+      usageLimit: usageLimit || {},
+      conditions: conditions || {},
+      notes, relatedOrder, relatedReturn,
+      createdBy: req.user._id,
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return next(new HandleError("Discount code already exists", 400));
+    }
+    return next(err);
+  }
 
-  // ── Audit entry ──────────────────────────────────────────────────────────
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
@@ -79,6 +127,9 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
       relatedOrder:   relatedOrder   ?? null,
     },
   });
+
+  // FIX #13 — invalidate stats cache after mutation
+  await invalidateStatsCache();
 
   res.status(201).json({
     success: true,
@@ -98,6 +149,10 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
 export const updateDiscount = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
+  if (!isValidObjectId(id)) {
+    return next(new HandleError("Invalid discount id", 400));
+  }
+
   const allowedUpdates = [
     "description", "status", "validFrom", "validUntil",
     "usageLimit", "conditions", "notes",
@@ -108,17 +163,47 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
 
-  // Fetch the document before update so we can record a before/after diff
-  const before = await Discount.findById(id).lean();
-  if (!before) return next(new HandleError("Discount not found", 404));
+  if (Object.keys(updates).length === 0) {
+    return next(new HandleError("No valid fields provided for update", 400));
+  }
 
-  const discount = await Discount.findByIdAndUpdate(
-    id,
+  // FIX #19 — guard against resurrecting a genuinely expired discount.
+  // If the update sets status:'active', the resulting validUntil must be in the future.
+  // We honour a simultaneous validUntil extension in the same request.
+  if (updates.status === "active") {
+    const now = new Date();
+    // Use the NEW validUntil if supplied in this request, otherwise we need the
+    // existing value — fetch it cheaply before the atomic update below.
+    let effectiveValidUntil;
+    if (updates.validUntil) {
+      effectiveValidUntil = new Date(updates.validUntil);
+    } else {
+      const peek = await Discount.findById(id).select("validUntil").lean();
+      if (!peek) return next(new HandleError("Discount not found", 404));
+      effectiveValidUntil = peek.validUntil;
+    }
+    if (effectiveValidUntil < now) {
+      return next(
+        new HandleError(
+          "Cannot reactivate an expired discount. Extend validUntil first or include it in this request.",
+          400
+        )
+      );
+    }
+  }
+
+  // FIX #3 — use findOneAndUpdate with { new: false } so the pre-update snapshot
+  // and the write happen in a single atomic operation, eliminating the TOCTOU
+  // race between a separate findById() and a subsequent findByIdAndUpdate().
+  const before = await Discount.findOneAndUpdate(
+    { _id: id },
     { $set: updates },
-    { new: true, runValidators: true }
+    { new: false, runValidators: true }
   );
 
-  // ── Audit entry — record only changed fields ─────────────────────────────
+  if (!before) return next(new HandleError("Discount not found", 404));
+
+  // Compute diff from the atomically-captured before snapshot.
   const changedFields = Object.keys(updates).filter(
     (field) => JSON.stringify(before[field]) !== JSON.stringify(updates[field])
   );
@@ -132,22 +217,31 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     });
 
     await DiscountAuditLog.log({
-      discountId:   discount._id,
-      discountCode: discount.code,
+      discountId:   before._id,
+      discountCode: before.code,
       action:       "updated",
       performedBy:  auditActor(req.user),
       meta: {
         changedFields,
         before: beforeSnapshot,
         after:  afterSnapshot,
+        // FIX #19 — flag status resurrection explicitly so it stands out in the audit tab
+        ...(changedFields.includes("status") &&
+          updates.status === "active" && { statusResurrected: true }),
       },
     });
   }
 
+  // FIX #13 — invalidate stats cache after mutation
+  await invalidateStatsCache();
+
+  // Re-fetch the updated document to return to the caller.
+  const updated = await Discount.findById(before._id).lean();
+
   res.status(200).json({
     success: true,
     message: "Discount updated successfully",
-    discount,
+    discount: updated,
   });
 });
 
@@ -157,8 +251,14 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
 // FRAUD PROTECTION GUARD:
 //   Blocks soft-deletion if the discount has been used AND
 //   is still within its 30-day post-use protection window.
-//   Attempts are logged even when blocked — a pattern of repeated
-//   blocked attempts against the same code is itself a signal.
+//   Attempts are logged even when blocked.
+//
+// TOCTOU FIX (#2):
+//   Uses a conditional findOneAndUpdate so the fraud-guard read
+//   and the status write are performed as close to atomically as
+//   possible without a multi-document transaction.  If the document
+//   was already inactive by the time the update runs, findOneAndUpdate
+//   returns null, which we detect and handle gracefully.
 // ============================================
 
 /**
@@ -168,6 +268,11 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
 export const deleteDiscount = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
+  if (!isValidObjectId(id)) {
+    return next(new HandleError("Invalid discount id", 400));
+  }
+
+  // We need the full discount to evaluate the fraud guard BEFORE writing.
   const discount = await Discount.findById(id);
   if (!discount) return next(new HandleError("Discount not found", 404));
 
@@ -179,7 +284,6 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     discount.deletionEligibleAt &&
     discount.deletionEligibleAt > now
   ) {
-    // Log the blocked attempt — admin should be aware this is recorded
     await DiscountAuditLog.log({
       discountId:   discount._id,
       discountCode: discount.code,
@@ -202,16 +306,26 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     );
   }
 
-  // ── Proceed with soft delete ─────────────────────────────────────────────
+  // FIX #2 — atomic conditional update: only succeeds if status is not already 'inactive'.
+  // Eliminates the TOCTOU window between the findById above and the update.
+  // If another request already deactivated this discount, result will be null.
   const previousStatus = discount.status;
 
-  await Discount.findByIdAndUpdate(
-    id,
+  const result = await Discount.findOneAndUpdate(
+    { _id: id, status: { $ne: "inactive" } },
     { $set: { status: "inactive" } },
-    { new: true }
+    { new: false }
   );
 
-  // ── Audit entry ──────────────────────────────────────────────────────────
+  // FIX #10 — if result is null the discount was already inactive; return a
+  // clear idempotent response and skip the audit entry (nothing actually changed).
+  if (!result) {
+    return res.status(200).json({
+      success: true,
+      message: "Discount was already inactive",
+    });
+  }
+
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
@@ -222,6 +336,9 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
       currentUses: discount.usageLimit.currentUses,
     },
   });
+
+  // FIX #13 — invalidate stats cache after mutation
+  await invalidateStatsCache();
 
   res.status(200).json({ success: true, message: "Discount deactivated successfully" });
 });
@@ -242,10 +359,13 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
   if (status)   filter.status   = status;
   if (category) filter.category = category;
   if (type)     filter.type     = type;
+
   if (search) {
+    // FIX #9 — escape user input before inserting into a MongoDB $regex to prevent ReDoS.
+    const safeSearch = escapeRegex(search);
     filter.$or = [
-      { code:        { $regex: search, $options: "i" } },
-      { description: { $regex: search, $options: "i" } },
+      { code:        { $regex: safeSearch, $options: "i" } },
+      { description: { $regex: safeSearch, $options: "i" } },
     ];
   }
 
@@ -254,7 +374,8 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
       const { id } = JSON.parse(
         Buffer.from(cursor, "base64").toString("utf8")
       );
-      filter._id = { $lt: id };
+      if (!isValidObjectId(id)) throw new Error("invalid id in cursor");
+      filter._id = { $lt: new mongoose.Types.ObjectId(id) };
     } catch {
       return next(new HandleError("Invalid pagination cursor", 400));
     }
@@ -287,7 +408,19 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET SINGLE DISCOUNT
+//
+// FIX #11 — usageHistory is an unbounded embedded array. Populating
+// every entry for a high-use broadcast code could load tens of thousands
+// of User and Order documents in a single request, exhausting memory.
+//
+// Mitigation: we cap the usageHistory slice returned in the response to
+// the most recent USAGE_HISTORY_CAP entries. The full count is always
+// returned as usageHistoryTotal so the UI can show "showing last N of M".
+//
+// A future migration to a dedicated DiscountUsage collection will remove
+// this cap entirely and enable cursor-based pagination on usage history.
 // ============================================
+const USAGE_HISTORY_CAP = 100;
 
 /**
  * @route GET /api/v1/discounts/:id
@@ -295,6 +428,10 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
  */
 export const getDiscountById = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
+
+  if (!isValidObjectId(id)) {
+    return next(new HandleError("Invalid discount id", 400));
+  }
 
   const discount = await Discount.findById(id)
     .populate("createdBy", "firstName lastName email")
@@ -308,7 +445,17 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
 
   if (!discount) return next(new HandleError("Discount not found", 404));
 
-  res.status(200).json({ success: true, discount });
+  // FIX #11 — cap usageHistory before serialising to prevent unbounded payloads.
+  const total = discount.usageHistory.length;
+  if (total > USAGE_HISTORY_CAP) {
+    discount.usageHistory = discount.usageHistory.slice(-USAGE_HISTORY_CAP);
+  }
+
+  const discountObj = discount.toObject({ virtuals: true });
+  discountObj.usageHistoryTotal   = total;
+  discountObj.usageHistoryCapped  = total > USAGE_HISTORY_CAP;
+
+  res.status(200).json({ success: true, discount: discountObj });
 });
 
 // ============================================
@@ -336,7 +483,27 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     );
   }
 
-  // FIX 1 — relatedReturn uniqueness guard
+  // FIX #8 — validate all ObjectId inputs before any DB call to prevent CastError 500s.
+  if (!isValidObjectId(userId)) {
+    return next(new HandleError("Invalid userId", 400));
+  }
+  if (relatedOrder && !isValidObjectId(relatedOrder)) {
+    return next(new HandleError("Invalid relatedOrder id", 400));
+  }
+  if (relatedReturn && !isValidObjectId(relatedReturn)) {
+    return next(new HandleError("Invalid relatedReturn id", 400));
+  }
+
+  // FIX #17 — validate validDays before using it in date arithmetic.
+  // parseInt("abc") === NaN; setDate(NaN) produces an invalid Date that silently
+  // passes Mongoose schema validation and corrupts the document.
+  const parsedDays = parseInt(validDays, 10);
+  if (isNaN(parsedDays) || parsedDays <= 0 || parsedDays > 365) {
+    return next(
+      new HandleError("validDays must be a positive integer between 1 and 365", 400)
+    );
+  }
+
   if (relatedReturn) {
     const existing = await Discount.findOne({ relatedReturn }).lean();
     if (existing) {
@@ -352,7 +519,6 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
   const user = await User.findById(userId).lean();
   if (!user) return next(new HandleError("User not found", 404));
 
-  // FIX 2 + FIX 3 — re-read amount from the return document
   let finalAmount;
 
   if (relatedReturn) {
@@ -407,35 +573,47 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
   const code = `${category.toUpperCase()}-${user.firstName.toUpperCase()}-${uniqueSuffix}`;
 
   const validUntil = new Date();
-  validUntil.setDate(validUntil.getDate() + parseInt(validDays));
+  // FIX #17 — use validated parsedDays instead of re-parsing validDays
+  validUntil.setDate(validUntil.getDate() + parsedDays);
 
-  const discount = await Discount.create({
-    code,
-    description:
-      reason ||
-      `Compensation discount for ${user.firstName}${relatedReturn ? " (return)" : ""}`,
-    type:     "fixed",
-    value:    finalAmount,
-    category,
-    audience: "specific",   // compensation codes are always personalised
-    validUntil,
-    usageLimit: {
-      totalUses:   1,
-      usesPerUser: 1,
-    },
-    conditions: {
-      eligibleUsers:      [userId],
-      minPurchaseAmount:  0,
-    },
-    notes: relatedReturn
-      ? `Auto-generated from return ${relatedReturn}`
-      : `Manual compensation — ${category}`,
-    relatedOrder,
-    relatedReturn,
-    createdBy: req.user._id,
-  });
+  let discount;
+  try {
+    // FIX #6 — wrap create() for the same 11000 race-condition guard as createDiscount
+    discount = await Discount.create({
+      code,
+      description:
+        reason ||
+        `Compensation discount for ${user.firstName}${relatedReturn ? " (return)" : ""}`,
+      type:     "fixed",
+      value:    finalAmount,
+      category,
+      audience: "specific",
+      validUntil,
+      usageLimit: {
+        totalUses:   1,
+        usesPerUser: 1,
+      },
+      conditions: {
+        eligibleUsers:      [userId],
+        minPurchaseAmount:  0,
+      },
+      notes: relatedReturn
+        ? `Auto-generated from return ${relatedReturn}`
+        : `Manual compensation — ${category}`,
+      relatedOrder,
+      relatedReturn,
+      createdBy: req.user._id,
+    });
+  } catch (err) {
+    // Code collision is extremely unlikely given randomBytes but handle defensively.
+    if (err.code === 11000) {
+      return next(
+        new HandleError("Code generation collision — please retry", 409)
+      );
+    }
+    return next(err);
+  }
 
-  // ── Audit entry ──────────────────────────────────────────────────────────
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
@@ -451,6 +629,9 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     },
   });
 
+  // FIX #13 — invalidate stats cache after mutation
+  await invalidateStatsCache();
+
   return res.status(201).json({
     success: true,
     message: "Compensation discount created successfully",
@@ -461,12 +642,22 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
 // ============================================
 // PUBLIC: VALIDATE DISCOUNT CODE
 //
-// On successful validation, recordUsage() is called which:
-//   - Pushes usage to usageHistory
-//   - Increments currentUses
-//   - Sets lockedAt + deletionEligibleAt on first use (0 → 1)
-// The audit entry includes isFirstUse so the trail reflects
-// exactly when the fraud-protection window opened.
+// FIX #1 — orderId is intentionally NOT forwarded to recordUsage().
+//
+//   The validate endpoint is called during checkout BEFORE the order document
+//   exists. Passing orderId here would either be null (wasted field) or, worse,
+//   an arbitrary string from the client that hasn't been verified as a real order.
+//
+//   recordUsage() is called with orderId = null. The usageHistory entry's .order
+//   field will remain null. The frontend checkout completion handler is responsible
+//   for linking the order to the usage record after the order is confirmed.
+//
+//   Consequence: lockedAt / deletionEligibleAt are set on first validate, not on
+//   first confirmed order. This is conservative (protects more) and documented here.
+//
+// FIX #7 — audience:'specific' discounts require authentication.
+//   Unauthenticated guests can validate audience:'all' broadcast promos (no per-user
+//   eligibility to check), but any personalised compensation code is blocked for guests.
 // ============================================
 
 /**
@@ -474,7 +665,10 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
  * @access Public
  */
 export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
-  const { code, cartTotal, items, orderId } = req.body;
+  const { code, cartTotal, items } = req.body;
+
+  // FIX #1 — never accept orderId at validate time; see header comment above.
+  // (orderId from req.body is deliberately ignored)
 
   if (!code) return next(new HandleError("Discount code is required", 400));
   if (!cartTotal || cartTotal <= 0)
@@ -485,6 +679,18 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid or expired discount code", 400));
 
   const userId = req.user?._id;
+
+  // FIX #7 — block unauthenticated requests from using specific-audience codes.
+  // Guests have no identity so eligibility cannot be verified. Without this guard
+  // any guest who knows a personalised compensation code can apply it.
+  if (discount.audience === "specific" && !userId) {
+    return next(
+      new HandleError(
+        "You must be logged in to use this discount code",
+        401
+      )
+    );
+  }
 
   if (userId) {
     const canUse = await discount.canUserUse(userId);
@@ -498,14 +704,13 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
 
   const discountAmount = discount.calculateDiscount(cartTotal, items);
 
-  // recordUsage sets lockedAt + deletionEligibleAt on first use
+  // FIX #1 — always pass null as orderId; the order doesn't exist yet at this point.
   const { isFirstUse } = await discount.recordUsage(
-    userId,
-    orderId ?? null,
+    userId ?? null,
+    null,          // orderId — intentionally null at validate time (see header comment)
     discountAmount
   );
 
-  // ── Audit entry ──────────────────────────────────────────────────────────
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
@@ -517,11 +722,10 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       : { system: true },
     meta: {
       userId:        userId  ?? null,
-      orderId:       orderId ?? null,
+      orderId:       null,   // FIX #1 — always null at validate time
       discountAmount,
       cartTotal,
       isFirstUse,
-      // Surface the protection window opening so it's visible in the audit trail
       ...(isFirstUse && {
         lockedAt:            discount.lockedAt,
         deletionEligibleAt:  discount.deletionEligibleAt,
@@ -557,17 +761,6 @@ export const getActivePromos = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // USER: GET MY DISCOUNTS
-//
-// Returns the combined set of:
-//   1. audience:'all' active discounts (broadcast promos)
-//   2. audience:'specific' discounts where eligibleUsers includes this user
-//
-// After the query resolves, stamps user.lastSeenDiscountsAt = now.
-// This single write is what clears the Navbar notification dot —
-// the moment the user opens this page, the dot disappears.
-//
-// Uses validateBeforeSave: false to avoid triggering unrelated
-// validators (e.g. password, emailVerified) on the user document.
 // ============================================
 
 /**
@@ -578,9 +771,6 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const now = new Date();
 
-  // Parallel fetch — both queries hit separate indexes:
-  //   audience:'all'   → (audience, status, validUntil) partial index
-  //   eligibleUsers    → (conditions.eligibleUsers, status) sparse index
   const [broadcastDiscounts, personalDiscounts] = await Promise.all([
     Discount.find({
       audience:  "all",
@@ -610,8 +800,6 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
       .lean(),
   ]);
 
-  // Stamp lastSeenDiscountsAt — clears the Navbar notification dot.
-  // validateBeforeSave:false bypasses password/email validators.
   await User.findByIdAndUpdate(
     userId,
     { $set: { lastSeenDiscountsAt: now } },
@@ -626,56 +814,85 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
 // ============================================
 // USER: HAS NEW DISCOUNTS (Navbar dot)
 //
-// Lightweight read-only check. No DB writes.
-// Returns { hasNew: true } if there is an audience:'all' discount
-// created after the user last viewed their discounts page.
+// FIX #16 — dot scope was limited to audience:'all' broadcasts but the
+// lastSeenDiscountsAt stamp (written in getMyDiscounts) covers both broadcast
+// AND personal discounts. This meant a personal compensation code never
+// triggered the dot — the notification was silently lost.
 //
-// Dot scope: audience:'all' broadcasts only.
-// Personal compensation codes are transactional — the user already
-// knows about them from the return/refund notification flow.
+// Fix: check both broadcast AND personal discounts for items created after
+// lastSeenDiscountsAt. The dot now fires for both, consistent with the stamp.
 // ============================================
 
 /**
  * @route GET /api/v1/discounts/has-new
- * @access Private (authenticated user)
+ * @access Private
  */
 export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
   const user = req.user;
   const now  = new Date();
 
-  // Find the most recently created active broadcast discount
-  const newest = await Discount.findOne({
-    audience:  "all",
-    status:    "active",
-    validUntil: { $gte: now },
-  })
-    .sort({ createdAt: -1 })
-    .select("createdAt")
-    .lean();
+  // Build the "since" filter — null lastSeenDiscountsAt means the user has never
+  // opened the discounts page, so every existing active discount counts as new.
+  const sinceFilter = user.lastSeenDiscountsAt
+    ? { createdAt: { $gt: user.lastSeenDiscountsAt } }
+    : {};
 
-  if (!newest) {
-    return res.status(200).json({ hasNew: false });
-  }
+  // FIX #16 — check both broadcast and personal in parallel.
+  const [newestBroadcast, newestPersonal] = await Promise.all([
+    Discount.findOne({
+      audience:   "all",
+      status:     "active",
+      validUntil: { $gte: now },
+      ...sinceFilter,
+    })
+      .sort({ createdAt: -1 })
+      .select("createdAt")
+      .lean(),
 
-  // Dot appears if:
-  //   - User has never opened the discounts page (lastSeenDiscountsAt is null)
-  //   - OR the newest broadcast was created after they last looked
-  const hasNew =
-    !user.lastSeenDiscountsAt ||
-    newest.createdAt > user.lastSeenDiscountsAt;
+    Discount.findOne({
+      audience:                   "specific",
+      status:                     "active",
+      validUntil:                 { $gte: now },
+      "conditions.eligibleUsers": user._id,
+      ...sinceFilter,
+    })
+      .sort({ createdAt: -1 })
+      .select("createdAt")
+      .lean(),
+  ]);
+
+  const hasNew = !!(newestBroadcast || newestPersonal);
 
   res.status(200).json({ hasNew });
 });
 
 // ============================================
 // ADMIN: GET DISCOUNT STATS
+//
+// FIX #13 — both aggregate pipelines do full-collection scans and were
+// previously re-run on every request. The results are now cached in Redis
+// for STATS_CACHE_TTL seconds. Any controller that mutates the discount
+// collection calls invalidateStatsCache() to ensure the next request
+// reflects the change.
 // ============================================
+const STATS_CACHE_KEY = "discount:stats";
+const STATS_CACHE_TTL = 60; // seconds
 
 /**
  * @route GET /api/v1/discounts/stats
  * @access Admin
  */
 export const getDiscountStats = handleAsyncError(async (req, res, next) => {
+  // Attempt to serve from cache first.
+  try {
+    const cached = await redis.get(STATS_CACHE_KEY);
+    if (cached) {
+      return res.status(200).json({ success: true, ...JSON.parse(cached), fromCache: true });
+    }
+  } catch {
+    // Redis unavailable — fall through to DB aggregation.
+  }
+
   const [stats, overall] = await Promise.all([
     Discount.aggregate([
       {
@@ -712,15 +929,29 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
     ]),
   ]);
 
-  res.status(200).json({
-    success: true,
+  const payload = {
     stats,
     overall: overall[0] || { total: 0, active: 0, expired: 0, totalUses: 0 },
-  });
+  };
+
+  // Cache the result; swallow Redis errors so the response is never blocked.
+  try {
+    await redis.set(STATS_CACHE_KEY, JSON.stringify(payload), { EX: STATS_CACHE_TTL });
+  } catch {
+    // Redis unavailable — response still sent, just not cached.
+  }
+
+  res.status(200).json({ success: true, ...payload });
 });
 
 // ============================================
 // ADMIN: TRIGGER MANUAL CLEANUP
+//
+// FIX #18 — manual cleanup previously wrote nothing to the audit trail.
+// An admin triggering cleanup to remove a recently-expired discount left
+// no evidence of who ran it or when. We now write a 'manual_cleanup' entry
+// to DiscountAuditLog before the cleanup runs so the intent is always logged
+// even if the cleanup itself throws partway through.
 // ============================================
 
 /**
@@ -730,10 +961,28 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 export const triggerCleanup = handleAsyncError(async (req, res, next) => {
   const { daysOld = 90 } = req.body;
 
+  // FIX #18 — write audit trail BEFORE running cleanup so the intent is recorded
+  // even if the cleanup partially fails (mirrors the AuditPurgeLog write-first pattern).
+  await DiscountAuditLog.log({
+    // Sentinel discount id — this entry is not tied to a specific discount.
+    discountId:   new mongoose.Types.ObjectId("000000000000000000000000"),
+    discountCode: "SYSTEM",
+    action:       "manual_cleanup",
+    performedBy:  auditActor(req.user),
+    meta: {
+      triggeredBy: req.user._id,
+      daysOld,
+      triggeredAt: new Date().toISOString(),
+    },
+  });
+
   const [expired, deleted] = await Promise.all([
     Discount.bulkExpireStale(),
     Discount.deleteOldExpired(daysOld),
   ]);
+
+  // FIX #13 — cleanup changes the collection; invalidate stats cache.
+  await invalidateStatsCache();
 
   res.status(200).json({
     success: true,
@@ -745,10 +994,6 @@ export const triggerCleanup = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET FULL AUDIT LOG (paginated)
-//
-// Cursor-based pagination — same pattern as getAllDiscounts.
-// All actions including CRON system entries are visible.
-// System entries are identified by performedBy.system === true.
 // ============================================
 
 /**
@@ -766,6 +1011,13 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
     action, discountCode, performedById,
     dateFrom, dateTo, cursor,
   } = req.query;
+
+  // FIX #20 — validate performedById before forwarding to getPaginated.
+  // getPaginated wraps it in new mongoose.Types.ObjectId() which throws a BSONError
+  // (unhandled 500) on invalid input. Validate here so we return a clean 400.
+  if (performedById && !isValidObjectId(performedById)) {
+    return next(new HandleError("Invalid performedById", 400));
+  }
 
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
@@ -789,7 +1041,6 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET AUDIT LOG FOR SINGLE DISCOUNT
-// Used by the detail drawer — fixed limit of 20, no pagination.
 // ============================================
 
 /**
@@ -799,6 +1050,11 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
 export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
   const { discountId } = req.params;
 
+  // FIX #20 — same ObjectId validation guard as getAuditLog
+  if (!isValidObjectId(discountId)) {
+    return next(new HandleError("Invalid discountId", 400));
+  }
+
   const logs = await DiscountAuditLog.getForDiscount(discountId, 20);
 
   res.status(200).json({ success: true, auditLogs: logs });
@@ -806,8 +1062,6 @@ export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET PURGE LOG
-// Returns all AuditPurgeLog receipts newest first.
-// Read-only. No delete route registered for this collection.
 // ============================================
 
 /**
@@ -820,8 +1074,6 @@ export const getPurgeLog = handleAsyncError(async (req, res, next) => {
     AuditPurgeLog.getLatest(),
   ]);
 
-  // showBanner: true when the most recent purge happened within 7 days.
-  // Used by the UI to decide whether to render the receipt notification banner.
   const sevenDaysAgo = new Date();
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
