@@ -7,6 +7,7 @@ import {
   getAllDiscounts,
   getDiscountById,
   createCompensationDiscount,
+  createDiscountForUsers,
   validateDiscountCode,
   getActivePromos,
   getMyDiscounts,
@@ -24,16 +25,16 @@ const router = express.Router();
 // ROUTE ORDER MATTERS
 //
 // Express matches routes top-to-bottom. All named routes
-// (/stats, /audit, /has-new, etc.) MUST be registered before
-// the /:id and /audit/:discountId param routes, otherwise Express
-// will match "stats", "audit", "has-new" etc. as ID values and
-// call the wrong controller.
+// (/stats, /audit, /has-new, /create-for-user, etc.) MUST be
+// registered before the /:id and /audit/:discountId param routes,
+// otherwise Express will match those literal strings as ID values
+// and call the wrong controller.
 //
 // Order:
 //   1. Public routes (no auth)
 //   2. User routes  (verifyUserAuth only)
-//   3. Admin named routes (verifyUserAuth + roleBaseAccess)
-//   4. Admin param routes /:id  — always last
+//   3. Admin named routes (verifyUserAuth + roleBaseAccess) — always before /:id
+//   4. Admin param routes /:id — always last
 // ============================================
 
 // ============================================
@@ -41,7 +42,8 @@ const router = express.Router();
 // ============================================
 
 // Validate a discount code at checkout (auth optional — logged-in users
-// get per-user eligibility checks; guests get basic validation only)
+// get per-user eligibility checks; guests get basic validation only).
+// Note: audience:'specific' codes require authentication (enforced in controller).
 router.post("/validate", validateDiscountCode);
 
 // Public promo listing — audience:'all' active discounts only
@@ -56,8 +58,8 @@ router.get("/promos", getActivePromos);
 router.get("/my-discounts", verifyUserAuth, getMyDiscounts);
 
 // Lightweight dot check — called by Navbar on mount.
-// Returns { hasNew: true/false } based on audience:'all' discounts
-// created after user.lastSeenDiscountsAt.
+// Returns { hasNew: true/false } based on new audience:'all' or personal
+// discounts created after user.lastSeenDiscountsAt.
 // No DB writes — read-only.
 router.get("/has-new", verifyUserAuth, hasNewDiscounts);
 
@@ -74,7 +76,8 @@ router.get(
   getDiscountStats
 );
 
-// Create compensation discount (return / refund flow)
+// Create compensation discount (return / refund flow).
+// Fixed type, single user, tied to a return or order context.
 router.post(
   "/create-compensation",
   verifyUserAuth,
@@ -82,7 +85,20 @@ router.post(
   createCompensationDiscount
 );
 
-// Manual cleanup trigger (on-demand for admin UI)
+// Create a VIP / targeted user discount.
+// Supports multiple users (by userId and/or email), both percentage and fixed
+// types, and flexible usage limits. No return/order linkage required.
+// audience is hardcoded to 'specific' — not configurable on this route.
+router.post(
+  "/create-for-user",
+  verifyUserAuth,
+  roleBaseAccess("admin"),
+  createDiscountForUsers
+);
+
+// Manual cleanup trigger (on-demand for admin UI).
+// Writes a manual_cleanup audit entry before running so the triggering
+// admin is always recorded.
 router.post(
   "/cleanup",
   verifyUserAuth,
@@ -91,10 +107,11 @@ router.post(
 );
 
 // ── Audit routes ─────────────────────────────────────────────────────────────
-// /audit/purge-log must come before /audit/:discountId to prevent
-// Express matching "purge-log" as a discountId param.
+// /audit/purge-log MUST come before /audit/:discountId to prevent
+// Express matching "purge-log" as a discountId param value.
 
-// All audit logs — paginated, filterable.
+// All audit logs — paginated, filterable by action / discountCode /
+// performedById / dateFrom / dateTo.
 // Includes CRON system entries (performedBy.system === true).
 router.get(
   "/audit",
@@ -135,7 +152,9 @@ router.get(
   getAllDiscounts
 );
 
-// Create a new discount code
+// Create a new broadcast or general discount code.
+// For user-scoped discounts prefer /create-for-user (validated eligibleUsers)
+// or /create-compensation (return/refund flow).
 router.post(
   "/",
   verifyUserAuth,
@@ -143,7 +162,8 @@ router.post(
   createDiscount
 );
 
-// Get single discount — includes usageHistory, relatedReturn, relatedOrder
+// Get single discount — includes usageHistory (capped to last 100),
+// relatedReturn, relatedOrder, createdBy.
 router.get(
   "/:id",
   verifyUserAuth,
@@ -152,7 +172,8 @@ router.get(
 );
 
 // Update allowed fields only (description, status, validFrom,
-// validUntil, usageLimit, conditions, notes)
+// validUntil, usageLimit, conditions, notes).
+// Status resurrection to 'active' is guarded — validUntil must be future.
 router.put(
   "/:id",
   verifyUserAuth,

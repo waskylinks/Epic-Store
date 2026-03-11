@@ -883,7 +883,6 @@ const STATS_CACHE_TTL = 60; // seconds
  * @access Admin
  */
 export const getDiscountStats = handleAsyncError(async (req, res, next) => {
-  // Attempt to serve from cache first.
   try {
     const cached = await redis.get(STATS_CACHE_KEY);
     if (cached) {
@@ -922,6 +921,7 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
           _id:      null,
           total:    { $sum: 1 },
           active:   { $sum: { $cond: [{ $eq: ["$status", "active"]   }, 1, 0] } },
+          inactive: { $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } },
           expired:  { $sum: { $cond: [{ $eq: ["$status", "expired"]  }, 1, 0] } },
           totalUses:{ $sum: "$usageLimit.currentUses" },
         },
@@ -931,10 +931,9 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 
   const payload = {
     stats,
-    overall: overall[0] || { total: 0, active: 0, expired: 0, totalUses: 0 },
+    overall: overall[0] || { total: 0, active: 0, inactive: 0, expired: 0, totalUses: 0 },
   };
 
-  // Cache the result; swallow Redis errors so the response is never blocked.
   try {
     await redis.set(STATS_CACHE_KEY, JSON.stringify(payload), { EX: STATS_CACHE_TTL });
   } catch {
@@ -943,7 +942,6 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 
   res.status(200).json({ success: true, ...payload });
 });
-
 // ============================================
 // ADMIN: TRIGGER MANUAL CLEANUP
 //
@@ -1058,6 +1056,342 @@ export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
   const logs = await DiscountAuditLog.getForDiscount(discountId, 20);
 
   res.status(200).json({ success: true, auditLogs: logs });
+});
+
+// ============================================
+// ADMIN: CREATE VIP / TARGETED USER DISCOUNT
+//
+// Creates a personalised discount scoped to one or more specific users.
+// Users can be identified by userId, email, or a mix of both in the same
+// request. All inputs are resolved to ObjectIds before any document is
+// written — emails are never persisted anywhere (audit log included).
+//
+// Distinct from createCompensationDiscount in three ways:
+//   1. Supports multiple target users (1 code → N users)
+//   2. Supports both 'percentage' and 'fixed' types
+//   3. Has no dependency on a return or order — pure business decision
+//
+// Code generation:
+//   - Custom code accepted if provided (uniqueness enforced)
+//   - Auto-generated pattern: {CATEGORY}-VIP-{8-HEX} when omitted
+//     Keeps VIP codes visually distinct from compensation codes in logs.
+//
+// PII boundary:
+//   Emails are used only to resolve userIds during this request.
+//   Only ObjectIds are stored in conditions.eligibleUsers and in the
+//   audit log meta. This satisfies right-to-erasure requirements — once
+//   a user is deleted their ObjectId in the audit log is an opaque
+//   reference with no personal data attached.
+// ============================================
+
+const MAX_ELIGIBLE_USERS = 500;
+
+/**
+ * @route POST /api/v1/discounts/create-for-user
+ * @access Admin
+ */
+export const createDiscountForUsers = handleAsyncError(async (req, res, next) => {
+  const {
+    userIds      = [],
+    emails       = [],
+    code,
+    description,
+    type,
+    value,
+    category,
+    validUntil,
+    validDays,
+    validFrom,
+    usesPerUser  = 1,
+    totalUses,
+    minPurchaseAmount = 0,
+    firstOrderOnly    = false,
+    excludeSaleItems  = false,
+    notes,
+    audience,
+  } = req.body;
+
+  // ── Step 1: Basic field validation ────────────────────────────────────────
+
+  // audience:'all' is never valid here — this route exists specifically to
+  // scope discounts to identified individuals. Reject explicitly so the caller
+  // gets a clear message rather than a silent override.
+  if (audience === "all") {
+    return next(
+      new HandleError(
+        "audience:'all' is not permitted on this route. " +
+        "Use POST /api/v1/discounts for broadcast promotions.",
+        400
+      )
+    );
+  }
+
+  if (!description || !type || value === undefined || value === null || !category) {
+    return next(
+      new HandleError(
+        "Missing required fields: description, type, value, category",
+        400
+      )
+    );
+  }
+
+  // Type must be one of the two model values — catch early for a cleaner 400.
+  if (!["percentage", "fixed"].includes(type)) {
+    return next(new HandleError("type must be 'percentage' or 'fixed'", 400));
+  }
+
+  const numericValue = Number(value);
+  if (isNaN(numericValue) || numericValue <= 0) {
+    return next(new HandleError("value must be a positive number", 400));
+  }
+  if (type === "percentage" && numericValue > 100) {
+    return next(
+      new HandleError("Percentage discount value cannot exceed 100", 400)
+    );
+  }
+
+  // At least one user must be targeted.
+  const hasUserIds = Array.isArray(userIds) && userIds.length > 0;
+  const hasEmails  = Array.isArray(emails)  && emails.length  > 0;
+  if (!hasUserIds && !hasEmails) {
+    return next(
+      new HandleError(
+        "At least one target user is required. Provide userIds, emails, or both.",
+        400
+      )
+    );
+  }
+
+  // ── Step 2: usesPerUser validation ────────────────────────────────────────
+  const parsedUsesPerUser = parseInt(usesPerUser, 10);
+  if (isNaN(parsedUsesPerUser) || parsedUsesPerUser < 1) {
+    return next(
+      new HandleError("usesPerUser must be a positive integer", 400)
+    );
+  }
+
+  // ── Step 3: totalUses validation ──────────────────────────────────────────
+  let parsedTotalUses = null;
+  if (totalUses !== undefined && totalUses !== null) {
+    parsedTotalUses = parseInt(totalUses, 10);
+    if (isNaN(parsedTotalUses) || parsedTotalUses < 1) {
+      return next(
+        new HandleError("totalUses must be a positive integer when provided", 400)
+      );
+    }
+  }
+
+  // ── Step 4: validUntil / validDays resolution ─────────────────────────────
+  // validUntil takes precedence if both are supplied.
+  let resolvedValidUntil;
+
+  if (validUntil) {
+    resolvedValidUntil = new Date(validUntil);
+    if (isNaN(resolvedValidUntil.getTime())) {
+      return next(new HandleError("validUntil is not a valid date", 400));
+    }
+    if (resolvedValidUntil <= new Date()) {
+      return next(new HandleError("validUntil must be a future date", 400));
+    }
+  } else if (validDays !== undefined) {
+    const parsedDays = parseInt(validDays, 10);
+    if (isNaN(parsedDays) || parsedDays < 1 || parsedDays > 365) {
+      return next(
+        new HandleError(
+          "validDays must be a positive integer between 1 and 365",
+          400
+        )
+      );
+    }
+    resolvedValidUntil = new Date();
+    resolvedValidUntil.setDate(resolvedValidUntil.getDate() + parsedDays);
+  } else {
+    return next(
+      new HandleError(
+        "Either validUntil or validDays is required",
+        400
+      )
+    );
+  }
+
+  // ── Step 5: ObjectId format validation on raw userIds ─────────────────────
+  // Collect ALL invalid ids before returning so the admin can fix everything
+  // in one go rather than playing whack-a-mole with sequential 400s.
+  if (hasUserIds) {
+    const invalidIds = userIds.filter((id) => !isValidObjectId(id));
+    if (invalidIds.length > 0) {
+      return next(
+        new HandleError(
+          `Invalid ObjectId format in userIds: ${invalidIds.join(", ")}`,
+          400
+        )
+      );
+    }
+  }
+
+  // ── Step 6: Email → ObjectId resolution ───────────────────────────────────
+  // Emails are used here and discarded — they never reach the DB document
+  // or the audit log. Only the resolved ObjectIds are carried forward.
+  let emailIds = [];
+
+  if (hasEmails) {
+    const foundByEmail = await User.find({ email: { $in: emails } })
+      .select("_id email")
+      .lean();
+
+    const resolvedEmailMap = new Map(
+      foundByEmail.map((u) => [u.email.toLowerCase(), u._id])
+    );
+
+    // Hard error on any unresolved email — silent omissions are worse than a
+    // clear failure. The admin can correct their list and resubmit.
+    const unresolvedEmails = emails.filter(
+      (e) => !resolvedEmailMap.has(e.toLowerCase())
+    );
+    if (unresolvedEmails.length > 0) {
+      return next(
+        new HandleError(
+          `The following emails do not match any user account: ${unresolvedEmails.join(", ")}`,
+          400
+        )
+      );
+    }
+
+    emailIds = foundByEmail.map((u) => u._id);
+  }
+
+  // ── Step 7: Merge + deduplicate ───────────────────────────────────────────
+  // Both raw userIds (strings) and emailIds (ObjectId objects) are normalised
+  // to strings for the Set dedup, then re-cast to ObjectId for DB use.
+  const rawIdStrings = hasUserIds ? userIds.map((id) => id.toString()) : [];
+  const emailIdStrings = emailIds.map((id) => id.toString());
+
+  const uniqueIdStrings = [...new Set([...rawIdStrings, ...emailIdStrings])];
+  const mergedIds = uniqueIdStrings.map(
+    (s) => new mongoose.Types.ObjectId(s)
+  );
+
+  // Redundant guard — both source arrays were non-empty and validated, but
+  // defend against an impossible-but-catastrophic empty-eligibleUsers create.
+  if (mergedIds.length === 0) {
+    return next(new HandleError("No valid target users after deduplication", 400));
+  }
+
+  // Cap to prevent document bloat. 500 ObjectIds ≈ 6KB added to the discount
+  // document. Beyond this, a separate campaign/segment system is more appropriate.
+  if (mergedIds.length > MAX_ELIGIBLE_USERS) {
+    return next(
+      new HandleError(
+        `Maximum ${MAX_ELIGIBLE_USERS} eligible users per discount code. ` +
+        `${mergedIds.length} provided after deduplication.`,
+        400
+      )
+    );
+  }
+
+  // ── Step 8: DB existence validation for all merged ids ───────────────────
+  // Email-sourced ids were confirmed in step 6. This catches raw userIds that
+  // passed ObjectId format validation but don't exist in the database.
+  const foundUsers = await User.find({ _id: { $in: mergedIds } })
+    .select("_id")
+    .lean();
+
+  if (foundUsers.length !== mergedIds.length) {
+    const foundSet  = new Set(foundUsers.map((u) => u._id.toString()));
+    const missingIds = mergedIds
+      .filter((id) => !foundSet.has(id.toString()))
+      .map((id) => id.toString());
+
+    return next(
+      new HandleError(
+        `The following userIds do not exist: ${missingIds.join(", ")}`,
+        400
+      )
+    );
+  }
+
+  // ── Step 9: Code resolution ───────────────────────────────────────────────
+  let resolvedCode;
+
+  if (code) {
+    resolvedCode = code.toUpperCase();
+    const existing = await Discount.findOne({ code: resolvedCode }).lean();
+    if (existing) {
+      return next(new HandleError("Discount code already exists", 400));
+    }
+  } else {
+    // Auto-generate: {CATEGORY}-VIP-{8-HEX}
+    // Pattern is visually distinct from compensation codes ({CATEGORY}-{NAME}-{8-HEX})
+    // making them easy to distinguish in the audit log and admin UI.
+    const suffix = crypto.randomBytes(4).toString("hex").toUpperCase();
+    resolvedCode = `${category.toUpperCase()}-VIP-${suffix}`;
+  }
+
+  // ── Step 10: Create the discount ─────────────────────────────────────────
+  let discount;
+  try {
+    discount = await Discount.create({
+      code:        resolvedCode,
+      description,
+      type,
+      value:       numericValue,
+      category,
+      audience:    "specific",      // hardcoded — non-negotiable on this route
+      validFrom:   validFrom ? new Date(validFrom) : new Date(),
+      validUntil:  resolvedValidUntil,
+      usageLimit: {
+        totalUses:   parsedTotalUses,
+        usesPerUser: parsedUsesPerUser,
+      },
+      conditions: {
+        eligibleUsers:     mergedIds,  // ObjectIds only — emails were discarded above
+        minPurchaseAmount: Number(minPurchaseAmount) || 0,
+        firstOrderOnly:    Boolean(firstOrderOnly),
+        excludeSaleItems:  Boolean(excludeSaleItems),
+      },
+      notes,
+      createdBy: req.user._id,
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return next(new HandleError("Discount code already exists", 400));
+    }
+    return next(err);
+  }
+
+  // ── Step 11: Audit entry ──────────────────────────────────────────────────
+  // PII boundary: only ObjectIds recorded — emails are never written here.
+  // vipDiscount: true flag allows the audit tab to filter VIP-origin creates
+  // separately from compensation and general creates.
+  await DiscountAuditLog.log({
+    discountId:   discount._id,
+    discountCode: discount.code,
+    action:       "created",
+    performedBy:  auditActor(req.user),
+    meta: {
+      audience:          "specific",
+      vipDiscount:       true,
+      type,
+      value:             numericValue,
+      category,
+      validUntil:        resolvedValidUntil,
+      eligibleUsers:     mergedIds,          // ObjectIds only
+      eligibleCount:     mergedIds.length,
+      usesPerUser:       parsedUsesPerUser,
+      totalUses:         parsedTotalUses,
+      autoGeneratedCode: !code,
+    },
+  });
+
+  // ── Step 12: Cache invalidation ───────────────────────────────────────────
+  await invalidateStatsCache();
+
+  return res.status(201).json({
+    success:           true,
+    message:           "VIP discount created successfully",
+    discount,
+    eligibleUserCount: mergedIds.length,
+  });
 });
 
 // ============================================
