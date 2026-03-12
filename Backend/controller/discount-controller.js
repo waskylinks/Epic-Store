@@ -1,6 +1,6 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
-import Discount from "../models/discount-model.js";
+import Discount, { PRODUCT_CATEGORIES } from "../models/discount-model.js";
 import User from "../models/userModel.js";
 import DiscountAuditLog from "../models/DiscountAuditLog.js";
 import AuditPurgeLog from "../models/AuditPurgeLog.js";
@@ -28,20 +28,32 @@ const auditActor = (user) => ({
 /**
  * Escapes a string for safe use inside a MongoDB $regex query.
  * Prevents ReDoS attacks via user-controlled search parameters.
- * FIX #9
  */
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Returns true only when s is a valid 24-hex-char MongoDB ObjectId string.
- * FIX #8, #20
  */
 const isValidObjectId = (s) => mongoose.Types.ObjectId.isValid(s);
 
 /**
+ * Validates an array of product category strings against the canonical list.
+ * Returns { valid: true } or { valid: false, invalid: [...] }.
+ *
+ * NEW — used by createDiscount and createDiscountForUsers to guard
+ * eligibleProductCategories before any DB write.
+ */
+const validateProductCategories = (cats) => {
+  if (!Array.isArray(cats) || cats.length === 0) {
+    return { valid: true, invalid: [] };
+  }
+  const invalid = cats.filter((c) => !PRODUCT_CATEGORIES.includes(c));
+  return { valid: invalid.length === 0, invalid };
+};
+
+/**
  * Invalidates the stats cache so the next getDiscountStats call re-aggregates.
  * Called by any controller that mutates the discount collection.
- * FIX #13 (cache-invalidation side)
  */
 const invalidateStatsCache = async () => {
   try {
@@ -58,6 +70,12 @@ const invalidateStatsCache = async () => {
 /**
  * @route POST /api/v1/discounts
  * @access Admin
+ *
+ * NEW field accepted in request body:
+ *   eligibleProductCategories {String[]} — optional; restricts the discount
+ *     to carts that contain at least one item from the listed product
+ *     categories. Must be a subset of the canonical PRODUCT_CATEGORIES list.
+ *     Omit (or pass []) for no category restriction.
  */
 export const createDiscount = handleAsyncError(async (req, res, next) => {
   const {
@@ -65,18 +83,40 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
     audience,
     validFrom, validUntil, usageLimit, conditions, notes,
     relatedOrder, relatedReturn,
+    eligibleProductCategories,   // NEW
   } = req.body;
 
   if (!code || !description || !type || !value || !category || !validUntil) {
     return next(new HandleError("Missing required fields", 400));
   }
 
-  // FIX #8 — validate optional ObjectId fields before any DB call
+  // Validate optional ObjectId fields before any DB call
   if (relatedOrder && !isValidObjectId(relatedOrder)) {
     return next(new HandleError("Invalid relatedOrder id", 400));
   }
   if (relatedReturn && !isValidObjectId(relatedReturn)) {
     return next(new HandleError("Invalid relatedReturn id", 400));
+  }
+
+  // NEW — validate product category restriction if supplied
+  let resolvedEligibleProductCategories = [];
+  if (eligibleProductCategories !== undefined && eligibleProductCategories !== null) {
+    if (!Array.isArray(eligibleProductCategories)) {
+      return next(
+        new HandleError("eligibleProductCategories must be an array of strings", 400)
+      );
+    }
+    const catCheck = validateProductCategories(eligibleProductCategories);
+    if (!catCheck.valid) {
+      return next(
+        new HandleError(
+          `Invalid product categories: ${catCheck.invalid.join(", ")}. ` +
+          `Valid categories are: ${PRODUCT_CATEGORIES.join(", ")}`,
+          400
+        )
+      );
+    }
+    resolvedEligibleProductCategories = eligibleProductCategories;
   }
 
   const resolvedAudience = audience === "all" ? "all" : "specific";
@@ -90,10 +130,17 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Discount code already exists", 400));
   }
 
+  // Merge incoming conditions with the new eligibleProductCategories so
+  // other condition fields (e.g. minPurchaseAmount from `conditions`) are
+  // preserved.  eligibleProductCategories is hoisted to the top level of
+  // req.body to keep the API surface explicit and avoid deeply nested input.
+  const mergedConditions = {
+    ...(conditions || {}),
+    eligibleProductCategories: resolvedEligibleProductCategories,
+  };
+
   let discount;
   try {
-    // FIX #6 — wrap create() so a concurrent duplicate-key race returns a clean 400
-    // rather than an unhandled MongoServerError 11000 bubbling to the global handler.
     discount = await Discount.create({
       code: code.toUpperCase(),
       description, type, value, category,
@@ -101,7 +148,7 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
       validFrom: validFrom || Date.now(),
       validUntil,
       usageLimit: usageLimit || {},
-      conditions: conditions || {},
+      conditions: mergedConditions,
       notes, relatedOrder, relatedReturn,
       createdBy: req.user._id,
     });
@@ -125,10 +172,11 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
       validUntil,
       relatedReturn:  relatedReturn  ?? null,
       relatedOrder:   relatedOrder   ?? null,
+      // NEW — log which product categories are restricted (empty = unrestricted)
+      eligibleProductCategories: resolvedEligibleProductCategories,
     },
   });
 
-  // FIX #13 — invalidate stats cache after mutation
   await invalidateStatsCache();
 
   res.status(201).json({
@@ -145,6 +193,10 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
 /**
  * @route PUT /api/v1/discounts/:id
  * @access Admin
+ *
+ * NEW: 'eligibleProductCategories' is now an allowed update field.
+ * Pass [] to remove a product-category restriction.
+ * Pass a valid subset of PRODUCT_CATEGORIES to set or change it.
  */
 export const updateDiscount = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
@@ -156,6 +208,7 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
   const allowedUpdates = [
     "description", "status", "validFrom", "validUntil",
     "usageLimit", "conditions", "notes",
+    "eligibleProductCategories",   // NEW top-level alias
   ];
 
   const updates = {};
@@ -163,17 +216,84 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
 
+  // NEW — eligibleProductCategories handling.
+  //
+  // Admins may supply it in two ways:
+  //   A) Top-level key:  { eligibleProductCategories: [...] }
+  //   B) Inside conditions object: { conditions: { eligibleProductCategories: [...] } }
+  //
+  // CRITICAL PATH-COLLISION FIX:
+  //   MongoDB's $set operator rejects a document that contains BOTH a dotted path
+  //   ('conditions.eligibleProductCategories') AND its parent object ('conditions')
+  //   in the same operation:
+  //     MongoServerError: Updating the path 'conditions' would create a conflict
+  //     at 'conditions.eligibleProductCategories'
+  //
+  //   Resolution strategy:
+  //   - If top-level alias is supplied AND conditions object is also supplied,
+  //     merge eligibleProductCategories into the conditions object and use $set
+  //     on 'conditions' only (no dotted-path key).
+  //   - If only the top-level alias is supplied (no conditions object), use the
+  //     dotted path 'conditions.eligibleProductCategories' for a surgical update.
+  //   - If only conditions object is supplied, validate the nested value if present.
+  //   Either way, delete the top-level 'eligibleProductCategories' key so it never
+  //   reaches the $set call.
+
+  if (updates.eligibleProductCategories !== undefined) {
+    if (!Array.isArray(updates.eligibleProductCategories)) {
+      return next(
+        new HandleError("eligibleProductCategories must be an array of strings", 400)
+      );
+    }
+    const catCheck = validateProductCategories(updates.eligibleProductCategories);
+    if (!catCheck.valid) {
+      return next(
+        new HandleError(
+          `Invalid product categories: ${catCheck.invalid.join(", ")}. ` +
+          `Valid categories are: ${PRODUCT_CATEGORIES.join(", ")}`,
+          400
+        )
+      );
+    }
+
+    if (updates.conditions !== undefined) {
+      // Both supplied — merge into the conditions object to avoid path collision.
+      updates.conditions.eligibleProductCategories = updates.eligibleProductCategories;
+    } else {
+      // Only top-level alias supplied — use dotted path for surgical $set.
+      updates["conditions.eligibleProductCategories"] = updates.eligibleProductCategories;
+    }
+    // Remove the top-level key regardless — it must never reach $set directly.
+    delete updates.eligibleProductCategories;
+  }
+
+  // If conditions object is supplied (with or without the top-level alias),
+  // validate eligibleProductCategories within it if present.
+  if (
+    updates.conditions !== undefined &&
+    updates.conditions.eligibleProductCategories !== undefined
+  ) {
+    const catCheck = validateProductCategories(
+      updates.conditions.eligibleProductCategories
+    );
+    if (!catCheck.valid) {
+      return next(
+        new HandleError(
+          `Invalid product categories in conditions: ${catCheck.invalid.join(", ")}. ` +
+          `Valid categories are: ${PRODUCT_CATEGORIES.join(", ")}`,
+          400
+        )
+      );
+    }
+  }
+
   if (Object.keys(updates).length === 0) {
     return next(new HandleError("No valid fields provided for update", 400));
   }
 
-  // FIX #19 — guard against resurrecting a genuinely expired discount.
-  // If the update sets status:'active', the resulting validUntil must be in the future.
-  // We honour a simultaneous validUntil extension in the same request.
+  // Guard against resurrecting a genuinely expired discount.
   if (updates.status === "active") {
     const now = new Date();
-    // Use the NEW validUntil if supplied in this request, otherwise we need the
-    // existing value — fetch it cheaply before the atomic update below.
     let effectiveValidUntil;
     if (updates.validUntil) {
       effectiveValidUntil = new Date(updates.validUntil);
@@ -192,9 +312,7 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // FIX #3 — use findOneAndUpdate with { new: false } so the pre-update snapshot
-  // and the write happen in a single atomic operation, eliminating the TOCTOU
-  // race between a separate findById() and a subsequent findByIdAndUpdate().
+  // Atomic update — pre-image captured, no TOCTOU race.
   const before = await Discount.findOneAndUpdate(
     { _id: id },
     { $set: updates },
@@ -203,7 +321,6 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
 
   if (!before) return next(new HandleError("Discount not found", 404));
 
-  // Compute diff from the atomically-captured before snapshot.
   const changedFields = Object.keys(updates).filter(
     (field) => JSON.stringify(before[field]) !== JSON.stringify(updates[field])
   );
@@ -225,17 +342,14 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
         changedFields,
         before: beforeSnapshot,
         after:  afterSnapshot,
-        // FIX #19 — flag status resurrection explicitly so it stands out in the audit tab
         ...(changedFields.includes("status") &&
           updates.status === "active" && { statusResurrected: true }),
       },
     });
   }
 
-  // FIX #13 — invalidate stats cache after mutation
   await invalidateStatsCache();
 
-  // Re-fetch the updated document to return to the caller.
   const updated = await Discount.findById(before._id).lean();
 
   res.status(200).json({
@@ -247,18 +361,6 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: DELETE DISCOUNT (soft)
-//
-// FRAUD PROTECTION GUARD:
-//   Blocks soft-deletion if the discount has been used AND
-//   is still within its 30-day post-use protection window.
-//   Attempts are logged even when blocked.
-//
-// TOCTOU FIX (#2):
-//   Uses a conditional findOneAndUpdate so the fraud-guard read
-//   and the status write are performed as close to atomically as
-//   possible without a multi-document transaction.  If the document
-//   was already inactive by the time the update runs, findOneAndUpdate
-//   returns null, which we detect and handle gracefully.
 // ============================================
 
 /**
@@ -272,13 +374,11 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid discount id", 400));
   }
 
-  // We need the full discount to evaluate the fraud guard BEFORE writing.
   const discount = await Discount.findById(id);
   if (!discount) return next(new HandleError("Discount not found", 404));
 
   const now = new Date();
 
-  // ── Fraud protection check ───────────────────────────────────────────────
   if (
     discount.usageLimit.currentUses >= 1 &&
     discount.deletionEligibleAt &&
@@ -306,9 +406,6 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     );
   }
 
-  // FIX #2 — atomic conditional update: only succeeds if status is not already 'inactive'.
-  // Eliminates the TOCTOU window between the findById above and the update.
-  // If another request already deactivated this discount, result will be null.
   const previousStatus = discount.status;
 
   const result = await Discount.findOneAndUpdate(
@@ -317,8 +414,6 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     { new: false }
   );
 
-  // FIX #10 — if result is null the discount was already inactive; return a
-  // clear idempotent response and skip the audit entry (nothing actually changed).
   if (!result) {
     return res.status(200).json({
       success: true,
@@ -337,7 +432,6 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
     },
   });
 
-  // FIX #13 — invalidate stats cache after mutation
   await invalidateStatsCache();
 
   res.status(200).json({ success: true, message: "Discount deactivated successfully" });
@@ -350,9 +444,13 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
 /**
  * @route GET /api/v1/discounts
  * @access Admin
+ *
+ * NEW query param:
+ *   productCategory {String} — filter discounts that include a specific
+ *     product category in their eligibleProductCategories restriction.
  */
 export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
-  const { status, category, type, search, cursor } = req.query;
+  const { status, category, type, search, cursor, productCategory } = req.query;
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
   const filter = {};
@@ -360,8 +458,21 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
   if (category) filter.category = category;
   if (type)     filter.type     = type;
 
+  // NEW — filter by product category restriction
+  if (productCategory) {
+    if (!PRODUCT_CATEGORIES.includes(productCategory)) {
+      return next(
+        new HandleError(
+          `Invalid productCategory filter: "${productCategory}". ` +
+          `Valid options are: ${PRODUCT_CATEGORIES.join(", ")}`,
+          400
+        )
+      );
+    }
+    filter["conditions.eligibleProductCategories"] = productCategory;
+  }
+
   if (search) {
-    // FIX #9 — escape user input before inserting into a MongoDB $regex to prevent ReDoS.
     const safeSearch = escapeRegex(search);
     filter.$or = [
       { code:        { $regex: safeSearch, $options: "i" } },
@@ -408,17 +519,6 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET SINGLE DISCOUNT
-//
-// FIX #11 — usageHistory is an unbounded embedded array. Populating
-// every entry for a high-use broadcast code could load tens of thousands
-// of User and Order documents in a single request, exhausting memory.
-//
-// Mitigation: we cap the usageHistory slice returned in the response to
-// the most recent USAGE_HISTORY_CAP entries. The full count is always
-// returned as usageHistoryTotal so the UI can show "showing last N of M".
-//
-// A future migration to a dedicated DiscountUsage collection will remove
-// this cap entirely and enable cursor-based pagination on usage history.
 // ============================================
 const USAGE_HISTORY_CAP = 100;
 
@@ -445,7 +545,6 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
 
   if (!discount) return next(new HandleError("Discount not found", 404));
 
-  // FIX #11 — cap usageHistory before serialising to prevent unbounded payloads.
   const total = discount.usageHistory.length;
   if (total > USAGE_HISTORY_CAP) {
     discount.usageHistory = discount.usageHistory.slice(-USAGE_HISTORY_CAP);
@@ -483,7 +582,6 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     );
   }
 
-  // FIX #8 — validate all ObjectId inputs before any DB call to prevent CastError 500s.
   if (!isValidObjectId(userId)) {
     return next(new HandleError("Invalid userId", 400));
   }
@@ -494,9 +592,6 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     return next(new HandleError("Invalid relatedReturn id", 400));
   }
 
-  // FIX #17 — validate validDays before using it in date arithmetic.
-  // parseInt("abc") === NaN; setDate(NaN) produces an invalid Date that silently
-  // passes Mongoose schema validation and corrupts the document.
   const parsedDays = parseInt(validDays, 10);
   if (isNaN(parsedDays) || parsedDays <= 0 || parsedDays > 365) {
     return next(
@@ -573,12 +668,10 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
   const code = `${category.toUpperCase()}-${user.firstName.toUpperCase()}-${uniqueSuffix}`;
 
   const validUntil = new Date();
-  // FIX #17 — use validated parsedDays instead of re-parsing validDays
   validUntil.setDate(validUntil.getDate() + parsedDays);
 
   let discount;
   try {
-    // FIX #6 — wrap create() for the same 11000 race-condition guard as createDiscount
     discount = await Discount.create({
       code,
       description:
@@ -594,8 +687,12 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
         usesPerUser: 1,
       },
       conditions: {
-        eligibleUsers:      [userId],
-        minPurchaseAmount:  0,
+        eligibleUsers:              [userId],
+        minPurchaseAmount:          0,
+        // Compensation discounts are never category-restricted —
+        // they compensate the user for a specific loss and should
+        // be usable on any purchase.
+        eligibleProductCategories: [],
       },
       notes: relatedReturn
         ? `Auto-generated from return ${relatedReturn}`
@@ -605,7 +702,6 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
       createdBy: req.user._id,
     });
   } catch (err) {
-    // Code collision is extremely unlikely given randomBytes but handle defensively.
     if (err.code === 11000) {
       return next(
         new HandleError("Code generation collision — please retry", 409)
@@ -629,7 +725,6 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     },
   });
 
-  // FIX #13 — invalidate stats cache after mutation
   await invalidateStatsCache();
 
   return res.status(201).json({
@@ -641,38 +736,29 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
 
 // ============================================
 // PUBLIC: VALIDATE DISCOUNT CODE
-//
-// FIX #1 — orderId is intentionally NOT forwarded to recordUsage().
-//
-//   The validate endpoint is called during checkout BEFORE the order document
-//   exists. Passing orderId here would either be null (wasted field) or, worse,
-//   an arbitrary string from the client that hasn't been verified as a real order.
-//
-//   recordUsage() is called with orderId = null. The usageHistory entry's .order
-//   field will remain null. The frontend checkout completion handler is responsible
-//   for linking the order to the usage record after the order is confirmed.
-//
-//   Consequence: lockedAt / deletionEligibleAt are set on first validate, not on
-//   first confirmed order. This is conservative (protects more) and documented here.
-//
-// FIX #7 — audience:'specific' discounts require authentication.
-//   Unauthenticated guests can validate audience:'all' broadcast promos (no per-user
-//   eligibility to check), but any personalised compensation code is blocked for guests.
 // ============================================
 
 /**
  * @route POST /api/v1/discounts/validate
  * @access Public
+ *
+ * NEW: items[] is now required for category-restricted discount codes.
+ * Each item must have the shape: { category: String, price: Number, quantity: Number }
+ *
+ * For unrestricted codes, items[] remains optional (pass [] or omit entirely).
  */
 export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
   const { code, cartTotal, items } = req.body;
 
-  // FIX #1 — never accept orderId at validate time; see header comment above.
-  // (orderId from req.body is deliberately ignored)
-
   if (!code) return next(new HandleError("Discount code is required", 400));
   if (!cartTotal || cartTotal <= 0)
     return next(new HandleError("Invalid cart total", 400));
+
+  // NEW — normalise items to an array regardless of what the caller sends.
+  // validateCart() and calculateDiscount() both default to [] when items is
+  // absent, so this normalisation ensures consistent behaviour and prevents
+  // a non-array from being forwarded to those methods.
+  const normalizedItems = Array.isArray(items) ? items : [];
 
   const discount = await Discount.findActiveByCode(code);
   if (!discount)
@@ -680,9 +766,6 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
 
   const userId = req.user?._id;
 
-  // FIX #7 — block unauthenticated requests from using specific-audience codes.
-  // Guests have no identity so eligibility cannot be verified. Without this guard
-  // any guest who knows a personalised compensation code can apply it.
   if (discount.audience === "specific" && !userId) {
     return next(
       new HandleError(
@@ -698,16 +781,16 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       return next(new HandleError(canUse.reason, 400));
   }
 
-  const validation = discount.validateCart(cartTotal, items, userId);
+  // Pass normalizedItems so category-restricted codes can be validated.
+  const validation = discount.validateCart(cartTotal, normalizedItems, userId);
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
 
-  const discountAmount = discount.calculateDiscount(cartTotal, items);
+  const discountAmount = discount.calculateDiscount(cartTotal, normalizedItems);
 
-  // FIX #1 — always pass null as orderId; the order doesn't exist yet at this point.
   const { isFirstUse } = await discount.recordUsage(
     userId ?? null,
-    null,          // orderId — intentionally null at validate time (see header comment)
+    null,
     discountAmount
   );
 
@@ -722,10 +805,16 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       : { system: true },
     meta: {
       userId:        userId  ?? null,
-      orderId:       null,   // FIX #1 — always null at validate time
+      orderId:       null,
       discountAmount,
       cartTotal,
       isFirstUse,
+      // NEW — log which item categories were in the cart at validation time
+      // (useful for auditing that the category restriction was correctly applied)
+      itemCategories: normalizedItems
+        .map((i) => i?.category)
+        .filter(Boolean)
+        .filter((v, idx, arr) => arr.indexOf(v) === idx), // dedupe
       ...(isFirstUse && {
         lockedAt:            discount.lockedAt,
         deletionEligibleAt:  discount.deletionEligibleAt,
@@ -742,6 +831,9 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       value:          discount.value,
       discountAmount,
       description:    discount.description,
+      // NEW — expose restriction so the frontend can surface it to the user
+      eligibleProductCategories:
+        discount.conditions?.eligibleProductCategories ?? [],
     },
   });
 });
@@ -773,15 +865,16 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
 
   const [broadcastDiscounts, personalDiscounts] = await Promise.all([
     Discount.find({
-      audience:  "all",
-      status:    "active",
-      validFrom: { $lte: now },
+      audience:   "all",
+      status:     "active",
+      validFrom:  { $lte: now },
       validUntil: { $gte: now },
     })
       .select(
         "code description type value category audience validUntil " +
         "conditions.minPurchaseAmount conditions.maxDiscountAmount " +
-        "conditions.firstOrderOnly usageLimit.currentUses usageLimit.totalUses"
+        "conditions.firstOrderOnly conditions.eligibleProductCategories " +
+        "usageLimit.currentUses usageLimit.totalUses"
       )
       .lean(),
 
@@ -795,6 +888,7 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
       .select(
         "code description type value category audience validUntil " +
         "conditions.minPurchaseAmount conditions.firstOrderOnly " +
+        "conditions.eligibleProductCategories " +
         "usageLimit.currentUses usageLimit.totalUses"
       )
       .lean(),
@@ -813,14 +907,6 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // USER: HAS NEW DISCOUNTS (Navbar dot)
-//
-// FIX #16 — dot scope was limited to audience:'all' broadcasts but the
-// lastSeenDiscountsAt stamp (written in getMyDiscounts) covers both broadcast
-// AND personal discounts. This meant a personal compensation code never
-// triggered the dot — the notification was silently lost.
-//
-// Fix: check both broadcast AND personal discounts for items created after
-// lastSeenDiscountsAt. The dot now fires for both, consistent with the stamp.
 // ============================================
 
 /**
@@ -831,13 +917,10 @@ export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
   const user = req.user;
   const now  = new Date();
 
-  // Build the "since" filter — null lastSeenDiscountsAt means the user has never
-  // opened the discounts page, so every existing active discount counts as new.
   const sinceFilter = user.lastSeenDiscountsAt
     ? { createdAt: { $gt: user.lastSeenDiscountsAt } }
     : {};
 
-  // FIX #16 — check both broadcast and personal in parallel.
   const [newestBroadcast, newestPersonal] = await Promise.all([
     Discount.findOne({
       audience:   "all",
@@ -868,12 +951,6 @@ export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: GET DISCOUNT STATS
-//
-// FIX #13 — both aggregate pipelines do full-collection scans and were
-// previously re-run on every request. The results are now cached in Redis
-// for STATS_CACHE_TTL seconds. Any controller that mutates the discount
-// collection calls invalidateStatsCache() to ensure the next request
-// reflects the change.
 // ============================================
 const STATS_CACHE_KEY = "discount:stats";
 const STATS_CACHE_TTL = 60; // seconds
@@ -918,12 +995,12 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
     Discount.aggregate([
       {
         $group: {
-          _id:      null,
-          total:    { $sum: 1 },
-          active:   { $sum: { $cond: [{ $eq: ["$status", "active"]   }, 1, 0] } },
-          inactive: { $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } },
-          expired:  { $sum: { $cond: [{ $eq: ["$status", "expired"]  }, 1, 0] } },
-          totalUses:{ $sum: "$usageLimit.currentUses" },
+          _id:       null,
+          total:     { $sum: 1 },
+          active:    { $sum: { $cond: [{ $eq: ["$status", "active"]   }, 1, 0] } },
+          inactive:  { $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } },
+          expired:   { $sum: { $cond: [{ $eq: ["$status", "expired"]  }, 1, 0] } },
+          totalUses: { $sum: "$usageLimit.currentUses" },
         },
       },
     ]),
@@ -942,14 +1019,9 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 
   res.status(200).json({ success: true, ...payload });
 });
+
 // ============================================
 // ADMIN: TRIGGER MANUAL CLEANUP
-//
-// FIX #18 — manual cleanup previously wrote nothing to the audit trail.
-// An admin triggering cleanup to remove a recently-expired discount left
-// no evidence of who ran it or when. We now write a 'manual_cleanup' entry
-// to DiscountAuditLog before the cleanup runs so the intent is always logged
-// even if the cleanup itself throws partway through.
 // ============================================
 
 /**
@@ -959,10 +1031,7 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 export const triggerCleanup = handleAsyncError(async (req, res, next) => {
   const { daysOld = 90 } = req.body;
 
-  // FIX #18 — write audit trail BEFORE running cleanup so the intent is recorded
-  // even if the cleanup partially fails (mirrors the AuditPurgeLog write-first pattern).
   await DiscountAuditLog.log({
-    // Sentinel discount id — this entry is not tied to a specific discount.
     discountId:   new mongoose.Types.ObjectId("000000000000000000000000"),
     discountCode: "SYSTEM",
     action:       "manual_cleanup",
@@ -979,7 +1048,6 @@ export const triggerCleanup = handleAsyncError(async (req, res, next) => {
     Discount.deleteOldExpired(daysOld),
   ]);
 
-  // FIX #13 — cleanup changes the collection; invalidate stats cache.
   await invalidateStatsCache();
 
   res.status(200).json({
@@ -997,12 +1065,6 @@ export const triggerCleanup = handleAsyncError(async (req, res, next) => {
 /**
  * @route GET /api/v1/discounts/audit
  * @access Admin
- *
- * Query params:
- *   action, discountCode, performedById — filters
- *   dateFrom, dateTo                    — date range
- *   limit                               — page size (default 20, max 100)
- *   cursor                              — pagination token
  */
 export const getAuditLog = handleAsyncError(async (req, res, next) => {
   const {
@@ -1010,9 +1072,6 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
     dateFrom, dateTo, cursor,
   } = req.query;
 
-  // FIX #20 — validate performedById before forwarding to getPaginated.
-  // getPaginated wraps it in new mongoose.Types.ObjectId() which throws a BSONError
-  // (unhandled 500) on invalid input. Validate here so we return a clean 400.
   if (performedById && !isValidObjectId(performedById)) {
     return next(new HandleError("Invalid performedById", 400));
   }
@@ -1048,7 +1107,6 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
 export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
   const { discountId } = req.params;
 
-  // FIX #20 — same ObjectId validation guard as getAuditLog
   if (!isValidObjectId(discountId)) {
     return next(new HandleError("Invalid discountId", 400));
   }
@@ -1060,28 +1118,6 @@ export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN: CREATE VIP / TARGETED USER DISCOUNT
-//
-// Creates a personalised discount scoped to one or more specific users.
-// Users can be identified by userId, email, or a mix of both in the same
-// request. All inputs are resolved to ObjectIds before any document is
-// written — emails are never persisted anywhere (audit log included).
-//
-// Distinct from createCompensationDiscount in three ways:
-//   1. Supports multiple target users (1 code → N users)
-//   2. Supports both 'percentage' and 'fixed' types
-//   3. Has no dependency on a return or order — pure business decision
-//
-// Code generation:
-//   - Custom code accepted if provided (uniqueness enforced)
-//   - Auto-generated pattern: {CATEGORY}-VIP-{8-HEX} when omitted
-//     Keeps VIP codes visually distinct from compensation codes in logs.
-//
-// PII boundary:
-//   Emails are used only to resolve userIds during this request.
-//   Only ObjectIds are stored in conditions.eligibleUsers and in the
-//   audit log meta. This satisfies right-to-erasure requirements — once
-//   a user is deleted their ObjectId in the audit log is an opaque
-//   reference with no personal data attached.
 // ============================================
 
 const MAX_ELIGIBLE_USERS = 500;
@@ -1089,6 +1125,12 @@ const MAX_ELIGIBLE_USERS = 500;
 /**
  * @route POST /api/v1/discounts/create-for-user
  * @access Admin
+ *
+ * NEW field accepted in request body:
+ *   eligibleProductCategories {String[]} — optional; restricts the discount
+ *     to carts that contain at least one item from the listed product
+ *     categories. Must be a subset of PRODUCT_CATEGORIES.
+ *     Omit (or pass []) for no category restriction.
  */
 export const createDiscountForUsers = handleAsyncError(async (req, res, next) => {
   const {
@@ -1104,18 +1146,16 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     validFrom,
     usesPerUser  = 1,
     totalUses,
-    minPurchaseAmount = 0,
-    firstOrderOnly    = false,
-    excludeSaleItems  = false,
+    minPurchaseAmount    = 0,
+    firstOrderOnly       = false,
+    excludeSaleItems     = false,
     notes,
     audience,
+    eligibleProductCategories,   // NEW
   } = req.body;
 
   // ── Step 1: Basic field validation ────────────────────────────────────────
 
-  // audience:'all' is never valid here — this route exists specifically to
-  // scope discounts to identified individuals. Reject explicitly so the caller
-  // gets a clear message rather than a silent override.
   if (audience === "all") {
     return next(
       new HandleError(
@@ -1135,7 +1175,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     );
   }
 
-  // Type must be one of the two model values — catch early for a cleaner 400.
   if (!["percentage", "fixed"].includes(type)) {
     return next(new HandleError("type must be 'percentage' or 'fixed'", 400));
   }
@@ -1150,7 +1189,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     );
   }
 
-  // At least one user must be targeted.
   const hasUserIds = Array.isArray(userIds) && userIds.length > 0;
   const hasEmails  = Array.isArray(emails)  && emails.length  > 0;
   if (!hasUserIds && !hasEmails) {
@@ -1182,7 +1220,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   }
 
   // ── Step 4: validUntil / validDays resolution ─────────────────────────────
-  // validUntil takes precedence if both are supplied.
   let resolvedValidUntil;
 
   if (validUntil) {
@@ -1214,9 +1251,28 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     );
   }
 
+  // ── Step 4b: eligibleProductCategories validation (NEW) ───────────────────
+  let resolvedEligibleProductCategories = [];
+  if (eligibleProductCategories !== undefined && eligibleProductCategories !== null) {
+    if (!Array.isArray(eligibleProductCategories)) {
+      return next(
+        new HandleError("eligibleProductCategories must be an array of strings", 400)
+      );
+    }
+    const catCheck = validateProductCategories(eligibleProductCategories);
+    if (!catCheck.valid) {
+      return next(
+        new HandleError(
+          `Invalid product categories: ${catCheck.invalid.join(", ")}. ` +
+          `Valid categories are: ${PRODUCT_CATEGORIES.join(", ")}`,
+          400
+        )
+      );
+    }
+    resolvedEligibleProductCategories = eligibleProductCategories;
+  }
+
   // ── Step 5: ObjectId format validation on raw userIds ─────────────────────
-  // Collect ALL invalid ids before returning so the admin can fix everything
-  // in one go rather than playing whack-a-mole with sequential 400s.
   if (hasUserIds) {
     const invalidIds = userIds.filter((id) => !isValidObjectId(id));
     if (invalidIds.length > 0) {
@@ -1230,8 +1286,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   }
 
   // ── Step 6: Email → ObjectId resolution ───────────────────────────────────
-  // Emails are used here and discarded — they never reach the DB document
-  // or the audit log. Only the resolved ObjectIds are carried forward.
   let emailIds = [];
 
   if (hasEmails) {
@@ -1243,8 +1297,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
       foundByEmail.map((u) => [u.email.toLowerCase(), u._id])
     );
 
-    // Hard error on any unresolved email — silent omissions are worse than a
-    // clear failure. The admin can correct their list and resubmit.
     const unresolvedEmails = emails.filter(
       (e) => !resolvedEmailMap.has(e.toLowerCase())
     );
@@ -1261,9 +1313,7 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   }
 
   // ── Step 7: Merge + deduplicate ───────────────────────────────────────────
-  // Both raw userIds (strings) and emailIds (ObjectId objects) are normalised
-  // to strings for the Set dedup, then re-cast to ObjectId for DB use.
-  const rawIdStrings = hasUserIds ? userIds.map((id) => id.toString()) : [];
+  const rawIdStrings   = hasUserIds ? userIds.map((id) => id.toString()) : [];
   const emailIdStrings = emailIds.map((id) => id.toString());
 
   const uniqueIdStrings = [...new Set([...rawIdStrings, ...emailIdStrings])];
@@ -1271,14 +1321,10 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     (s) => new mongoose.Types.ObjectId(s)
   );
 
-  // Redundant guard — both source arrays were non-empty and validated, but
-  // defend against an impossible-but-catastrophic empty-eligibleUsers create.
   if (mergedIds.length === 0) {
     return next(new HandleError("No valid target users after deduplication", 400));
   }
 
-  // Cap to prevent document bloat. 500 ObjectIds ≈ 6KB added to the discount
-  // document. Beyond this, a separate campaign/segment system is more appropriate.
   if (mergedIds.length > MAX_ELIGIBLE_USERS) {
     return next(
       new HandleError(
@@ -1290,14 +1336,12 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   }
 
   // ── Step 8: DB existence validation for all merged ids ───────────────────
-  // Email-sourced ids were confirmed in step 6. This catches raw userIds that
-  // passed ObjectId format validation but don't exist in the database.
   const foundUsers = await User.find({ _id: { $in: mergedIds } })
     .select("_id")
     .lean();
 
   if (foundUsers.length !== mergedIds.length) {
-    const foundSet  = new Set(foundUsers.map((u) => u._id.toString()));
+    const foundSet   = new Set(foundUsers.map((u) => u._id.toString()));
     const missingIds = mergedIds
       .filter((id) => !foundSet.has(id.toString()))
       .map((id) => id.toString());
@@ -1320,9 +1364,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
       return next(new HandleError("Discount code already exists", 400));
     }
   } else {
-    // Auto-generate: {CATEGORY}-VIP-{8-HEX}
-    // Pattern is visually distinct from compensation codes ({CATEGORY}-{NAME}-{8-HEX})
-    // making them easy to distinguish in the audit log and admin UI.
     const suffix = crypto.randomBytes(4).toString("hex").toUpperCase();
     resolvedCode = `${category.toUpperCase()}-VIP-${suffix}`;
   }
@@ -1336,7 +1377,7 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
       type,
       value:       numericValue,
       category,
-      audience:    "specific",      // hardcoded — non-negotiable on this route
+      audience:    "specific",
       validFrom:   validFrom ? new Date(validFrom) : new Date(),
       validUntil:  resolvedValidUntil,
       usageLimit: {
@@ -1344,10 +1385,11 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
         usesPerUser: parsedUsesPerUser,
       },
       conditions: {
-        eligibleUsers:     mergedIds,  // ObjectIds only — emails were discarded above
-        minPurchaseAmount: Number(minPurchaseAmount) || 0,
-        firstOrderOnly:    Boolean(firstOrderOnly),
-        excludeSaleItems:  Boolean(excludeSaleItems),
+        eligibleUsers:             mergedIds,
+        minPurchaseAmount:         Number(minPurchaseAmount) || 0,
+        firstOrderOnly:            Boolean(firstOrderOnly),
+        excludeSaleItems:          Boolean(excludeSaleItems),
+        eligibleProductCategories: resolvedEligibleProductCategories,  // NEW
       },
       notes,
       createdBy: req.user._id,
@@ -1360,26 +1402,25 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   }
 
   // ── Step 11: Audit entry ──────────────────────────────────────────────────
-  // PII boundary: only ObjectIds recorded — emails are never written here.
-  // vipDiscount: true flag allows the audit tab to filter VIP-origin creates
-  // separately from compensation and general creates.
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
     action:       "created",
     performedBy:  auditActor(req.user),
     meta: {
-      audience:          "specific",
-      vipDiscount:       true,
+      audience:                  "specific",
+      vipDiscount:               true,
       type,
-      value:             numericValue,
+      value:                     numericValue,
       category,
-      validUntil:        resolvedValidUntil,
-      eligibleUsers:     mergedIds,          // ObjectIds only
-      eligibleCount:     mergedIds.length,
-      usesPerUser:       parsedUsesPerUser,
-      totalUses:         parsedTotalUses,
-      autoGeneratedCode: !code,
+      validUntil:                resolvedValidUntil,
+      eligibleUsers:             mergedIds,
+      eligibleCount:             mergedIds.length,
+      usesPerUser:               parsedUsesPerUser,
+      totalUses:                 parsedTotalUses,
+      autoGeneratedCode:         !code,
+      // NEW — log category restriction in audit trail
+      eligibleProductCategories: resolvedEligibleProductCategories,
     },
   });
 

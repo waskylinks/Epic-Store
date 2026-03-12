@@ -30,12 +30,42 @@ import mongoose from "mongoose";
 //     working set to documents that existed when the job began, preventing
 //     an unbounded loop if new records age into the eligibility window
 //     mid-run (e.g. a long-running job on a busy cluster).
+//
+//  6. conditions.eligibleProductCategories — NEW
+//     Optional array of product category strings. When non-empty, the
+//     discount only applies if at least one cart item belongs to an
+//     eligible category. An empty array (default) means no category
+//     restriction — all products are eligible.
+//
+//     validateCart() now evaluates this restriction against the items
+//     array supplied by the caller. Each item must carry a `category`
+//     string field. If eligibleProductCategories is set but no items
+//     are provided, or no items match, validation fails with a clear
+//     message rather than silently passing or throwing.
+//
+//     calculateDiscount() for 'percentage' type now sums only the
+//     subtotals of eligible items when eligibleProductCategories is
+//     set, rather than applying the percentage to the whole cartTotal.
+//     For 'fixed' type the full fixed amount is still deducted from
+//     cartTotal (capped at cartTotal), consistent with prior behaviour.
 // ============================================
 
 // Threshold above which canUserUse() switches from an in-memory filter
 // to a server-side aggregate count. Set conservatively at 500 to ensure
 // even moderately popular broadcast codes stay responsive.
 const USAGE_SCAN_THRESHOLD = 500;
+
+// Canonical list of product categories (mirrors Product model enum).
+// Stored here as a single source of truth for the discount model validator.
+const PRODUCT_CATEGORIES = [
+  "Electronics",
+  "Clothing & Apparel",
+  "Home & Living",
+  "Sports & Outdoors",
+  "Beauty & Personal Care",
+  "Books & Media",
+  "Food & Beverages",
+];
 
 const discountSchema = new mongoose.Schema(
   {
@@ -144,6 +174,17 @@ const discountSchema = new mongoose.Schema(
         },
       ],
       eligibleCategories: [{ type: String }],
+
+      // NEW — product-category restriction.
+      // Empty array (default) = no restriction, discount applies to all products.
+      // Non-empty = discount only valid when at least one cart item belongs to
+      // one of the listed categories.
+      // Values must come from PRODUCT_CATEGORIES above (validated in controller).
+      eligibleProductCategories: {
+        type: [String],
+        default: [],
+      },
+
       eligibleUsers: [
         {
           type: mongoose.Schema.Types.ObjectId,
@@ -239,6 +280,14 @@ discountSchema.index(
   { sparse: true }
 );
 
+// NEW — sparse index: only present on documents that actually restrict
+// by product category. Sparse avoids indexing the large majority of
+// documents where the array is empty.
+discountSchema.index(
+  { "conditions.eligibleProductCategories": 1 },
+  { sparse: true }
+);
+
 discountSchema.index({ validUntil: 1, status: 1 });
 
 discountSchema.index(
@@ -281,18 +330,59 @@ discountSchema.virtual("isProtected").get(function () {
 // METHODS
 // ============================================
 
+// ============================================
+// calculateDiscount()
+//
+// NEW behaviour when eligibleProductCategories is set:
+//   - 'percentage': applies the percentage only to the subtotal of
+//     eligible-category items, not the whole cartTotal.
+//     If no items are supplied the full cartTotal is used as a
+//     conservative fallback (the frontend must supply items for
+//     accurate calculation — this path should not be hit in production
+//     because validateCart() will have already rejected item-less
+//     requests for category-restricted codes).
+//   - 'fixed': unchanged — deduct the fixed amount from cartTotal
+//     regardless of which items triggered eligibility.
+//     This matches standard fixed-code behaviour on all platforms.
+// ============================================
 discountSchema.methods.calculateDiscount = function (cartTotal, items = []) {
+  const eligibleCats = this.conditions?.eligibleProductCategories ?? [];
   let discountAmount = 0;
 
   if (this.type === "percentage") {
-    discountAmount = (cartTotal * this.value) / 100;
+    // If a product-category restriction is active, base the percentage
+    // only on the qualifying items' subtotal.
+    let base = cartTotal;
+    if (eligibleCats.length > 0 && Array.isArray(items) && items.length > 0) {
+      base = items
+        .filter(
+          (item) =>
+            item &&
+            typeof item.category === "string" &&
+            eligibleCats.includes(item.category)
+        )
+        .reduce((sum, item) => {
+          const price = Number(item.price) || 0;
+          const qty   = Number(item.quantity) || 1;
+          return sum + price * qty;
+        }, 0);
+
+      // Guard: if the eligible subtotal somehow exceeds cartTotal
+      // (e.g. caller passed inconsistent data) cap it to cartTotal.
+      base = Math.min(base, cartTotal);
+    }
+
+    discountAmount = (base * this.value) / 100;
+
     if (this.conditions.maxDiscountAmount) {
       discountAmount = Math.min(discountAmount, this.conditions.maxDiscountAmount);
     }
   } else {
+    // Fixed discount — always deduct the full fixed value.
     discountAmount = this.value;
   }
 
+  // Discount can never exceed the cart total.
   discountAmount = Math.min(discountAmount, cartTotal);
   return Math.round(discountAmount * 100) / 100;
 };
@@ -325,8 +415,6 @@ discountSchema.methods.canUserUse = async function (userId) {
 
     if (this.usageHistory.length > USAGE_SCAN_THRESHOLD) {
       // FIX #14 — use a server-side aggregate to avoid O(n) JS scan.
-      // The $filter + $size pipeline evaluates entirely in MongoDB, returning
-      // only a single count integer rather than loading the full array.
       const result = await this.constructor.aggregate([
         { $match: { _id: this._id } },
         {
@@ -350,7 +438,6 @@ discountSchema.methods.canUserUse = async function (userId) {
       ]);
       userUsageCount = result[0]?.count ?? 0;
     } else {
-      // For small arrays (< USAGE_SCAN_THRESHOLD) the already-loaded array is fine.
       userUsageCount = this.usageHistory.filter(
         (usage) => usage.user && usage.user.toString() === userId.toString()
       ).length;
@@ -367,16 +454,64 @@ discountSchema.methods.canUserUse = async function (userId) {
   return { canUse: true };
 };
 
+// ============================================
+// validateCart()
+//
+// NEW — product-category restriction check.
+//
+// When conditions.eligibleProductCategories is non-empty:
+//   1. items must be a non-empty array (callers that omit items for a
+//      category-restricted code get a clear actionable error, not a
+//      silent pass or an unhandled exception).
+//   2. At least one item must belong to an eligible category. If none
+//      match the discount is not applicable to this cart.
+//
+// Each item is expected to have the shape:
+//   { category: String, price: Number, quantity: Number }
+// Missing or non-string category fields are treated as non-matching
+// (safe default — never accidentally grant a discount).
+// ============================================
 discountSchema.methods.validateCart = function (cartTotal, items = [], userId = null) {
   if (!this.isValid) {
     return { valid: false, reason: "Discount code is not valid or has expired" };
   }
+
   if (cartTotal < this.conditions.minPurchaseAmount) {
     return {
       valid: false,
       reason: `Minimum purchase amount of $${this.conditions.minPurchaseAmount} required`,
     };
   }
+
+  // NEW — product-category restriction
+  const eligibleCats = this.conditions?.eligibleProductCategories ?? [];
+  if (eligibleCats.length > 0) {
+    // items must be supplied for category-restricted codes.
+    if (!Array.isArray(items) || items.length === 0) {
+      return {
+        valid: false,
+        reason:
+          "This discount is only valid for specific product categories. " +
+          "Cart item details are required to validate eligibility.",
+      };
+    }
+
+    const hasEligibleItem = items.some(
+      (item) =>
+        item &&
+        typeof item.category === "string" &&
+        eligibleCats.includes(item.category)
+    );
+
+    if (!hasEligibleItem) {
+      const catList = eligibleCats.join(", ");
+      return {
+        valid: false,
+        reason: `This discount is only valid for the following product categories: ${catList}.`,
+      };
+    }
+  }
+
   return { valid: true };
 };
 
@@ -417,32 +552,38 @@ discountSchema.statics.findActiveByCode = async function (code) {
 discountSchema.statics.getActivePromos = async function () {
   const now = new Date();
   return this.find({
-    audience: "all",
-    status: "active",
-    validFrom: { $lte: now },
+    audience:   "all",
+    status:     "active",
+    validFrom:  { $lte: now },
     validUntil: { $gte: now },
   })
-    .select("code description type value validUntil conditions.minPurchaseAmount audience")
+    .select(
+      "code description type value validUntil " +
+      "conditions.minPurchaseAmount conditions.eligibleProductCategories audience"
+    )
     .lean();
 };
 
 discountSchema.statics.getUserDiscounts = async function (userId) {
   const now = new Date();
   return this.find({
-    audience: "specific",
-    status: "active",
-    validFrom: { $lte: now },
+    audience:   "specific",
+    status:     "active",
+    validFrom:  { $lte: now },
     validUntil: { $gte: now },
     "conditions.eligibleUsers": userId,
   })
-    .select("code description type value category validUntil audience")
+    .select(
+      "code description type value category validUntil audience " +
+      "conditions.eligibleProductCategories"
+    )
     .lean();
 };
 
 discountSchema.statics.bulkExpireStale = async function () {
   const result = await this.updateMany(
     {
-      status: "active",
+      status:     "active",
       validUntil: { $lt: new Date() },
     },
     { $set: { status: "expired" } }
@@ -473,8 +614,6 @@ discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSiz
   const now = new Date();
 
   // FIX #15 — capture the working-set ceiling BEFORE the loop.
-  // Uses ObjectId as a timestamp proxy (ObjectIds are monotonically increasing).
-  // Documents inserted after this point will NOT be processed in this run.
   const runCeiling = new mongoose.Types.ObjectId();
 
   let totalDeleted = 0;
@@ -484,7 +623,7 @@ discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSiz
       {
         status:     "expired",
         validUntil: { $lt: cutoff },
-        _id:        { $lt: runCeiling }, // FIX #15 — bounded working set
+        _id:        { $lt: runCeiling },
         deletionEligibleAt: { $not: { $gt: now } },
       },
       { _id: 1 }
@@ -503,6 +642,11 @@ discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSiz
 
   return totalDeleted;
 };
+
+// ============================================
+// EXPORTS (for use in controllers)
+// ============================================
+export { PRODUCT_CATEGORIES };
 
 // ============================================
 // PRE-SAVE MIDDLEWARE
