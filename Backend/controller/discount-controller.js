@@ -916,25 +916,28 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
 export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
   const user = req.user;
   const now  = new Date();
-
-  const sinceFilter = user.lastSeenDiscountsAt
-    ? { createdAt: { $gt: user.lastSeenDiscountsAt } }
-    : {};
-
+ 
+  // FIX 2: fall back to user.createdAt instead of {} so a brand-new user
+  // doesn't see a dot for every discount that predates their account.
+  const since = user.lastSeenDiscountsAt ?? user.createdAt ?? now;
+  const sinceFilter = { createdAt: { $gt: since } };
+ 
   const [newestBroadcast, newestPersonal] = await Promise.all([
     Discount.findOne({
       audience:   "all",
       status:     "active",
+      validFrom:  { $lte: now },   // FIX 1: must already be active
       validUntil: { $gte: now },
       ...sinceFilter,
     })
       .sort({ createdAt: -1 })
       .select("createdAt")
       .lean(),
-
+ 
     Discount.findOne({
       audience:                   "specific",
       status:                     "active",
+      validFrom:                  { $lte: now },   // FIX 1: must already be active
       validUntil:                 { $gte: now },
       "conditions.eligibleUsers": user._id,
       ...sinceFilter,
@@ -943,9 +946,9 @@ export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
       .select("createdAt")
       .lean(),
   ]);
-
+ 
   const hasNew = !!(newestBroadcast || newestPersonal);
-
+ 
   res.status(200).json({ hasNew });
 });
 
