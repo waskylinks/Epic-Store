@@ -56,55 +56,38 @@ const getUserInitials = (user) => {
   return 'U';
 };
 
-// ── Notification Dot ──────────────────────────────────────────────────────────
-// Rendered alongside the Discounts menu item when hasNewDiscount is true.
-// Scope: audience:'all' broadcast discounts only (confirmed design decision).
-// Dot disappears automatically when user opens /my-discounts because
-// getMyDiscounts.fulfilled sets hasNewDiscount = false in the slice.
+// Shown next to Discounts when the user has unseen broadcast or personal discounts.
+// Cleared automatically when the user opens /my-discounts (getMyDiscounts.fulfilled
+// sets hasNewDiscount = false in the slice).
 const NotificationDot = () => (
   <span className="nb-notif-dot" aria-label="New discounts available" />
 );
 
 function Navbar() {
-  const [isMenuOpen,       setIsMenuOpen]       = useState(false);
-  const [isSearchOpen,     setIsSearchOpen]      = useState(false);
-  const [searchQuery,      setSearchQuery]       = useState('');
-  const [isScrolled,       setIsScrolled]        = useState(false);
-  const [isProfileMenuOpen,setIsProfileMenuOpen] = useState(false);
+  const [isMenuOpen,        setIsMenuOpen]        = useState(false);
+  const [isSearchOpen,      setIsSearchOpen]       = useState(false);
+  const [searchQuery,       setSearchQuery]        = useState('');
+  const [isScrolled,        setIsScrolled]         = useState(false);
+  const [isProfileMenuOpen, setIsProfileMenuOpen]  = useState(false);
 
-  const { count: wishlistCount } = useSelector((state) => state.wishlist);
+  const { count: wishlistCount }       = useSelector((state) => state.wishlist);
   const { isAuthenticated, user, loading } = useSelector((state) => state.user);
-  const { cartItems }      = useSelector((state) => state.cart);
-  const { hasNewDiscount } = useSelector((state) => state.discount);
+  const { cartItems }                  = useSelector((state) => state.cart);
+  const { hasNewDiscount }             = useSelector((state) => state.userDiscount);
 
-  const navigate        = useNavigate();
-  const location        = useLocation();
-  const dispatch        = useDispatch();
-  const profileMenuRef  = useRef(null);
+  const navigate       = useNavigate();
+  const location       = useLocation();
+  const dispatch       = useDispatch();
+  const profileMenuRef = useRef(null);
 
-  // ── Check for new broadcast discounts on mount (authenticated only) ────────
-  // Single read-only request — no polling, no interval.
-  // Dot clears automatically via getMyDiscounts.fulfilled when user
-  // navigates to /my-discounts. No cleanup needed here.
+  // Single read-only check on mount for authenticated users.
+  // Checks both broadcast and personal discounts (backend hasNewDiscounts FIX #16).
+  // Dot clears via getMyDiscounts.fulfilled when user opens /my-discounts.
   useEffect(() => {
     if (isAuthenticated) {
       dispatch(checkNewDiscounts());
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (user) {
-      console.log('👤 Navbar - User data received:', {
-        firstName:   user.firstName,
-        lastName:    user.lastName,
-        email:       user.email,
-        avatar:      user.avatar,
-        displayName: getUserDisplayName(user),
-        initials:    getUserInitials(user),
-      });
-    }
-  }, [user]);
+  }, [isAuthenticated, dispatch]);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 20);
@@ -138,7 +121,7 @@ function Navbar() {
   }, [isMenuOpen]);
 
   const toggleSearch = () => {
-    setIsSearchOpen(!isSearchOpen);
+    setIsSearchOpen((prev) => !prev);
     if (!isSearchOpen) {
       setTimeout(
         () => document.querySelector('.nb-search-input')?.focus(),
@@ -147,8 +130,8 @@ function Navbar() {
     }
   };
 
-  const toggleMenu        = () => setIsMenuOpen(!isMenuOpen);
-  const toggleProfileMenu = () => setIsProfileMenuOpen(!isProfileMenuOpen);
+  const toggleMenu        = () => setIsMenuOpen((prev) => !prev);
+  const toggleProfileMenu = () => setIsProfileMenuOpen((prev) => !prev);
 
   const handleSearchSubmit = (e) => {
     e.preventDefault();
@@ -159,12 +142,16 @@ function Navbar() {
     }
   };
 
+  const handleSearchKeyDown = (e) => {
+    if (e.key === 'Enter') handleSearchSubmit(e);
+  };
+
   const handleLogout = () => {
     dispatch(logout())
       .unwrap()
       .then(() => {
         toast.success('Logout Successfully', {
-          position: 'top-center',
+          position:  'top-center',
           autoClose: 2000,
         });
         dispatch(removeSuccess());
@@ -173,20 +160,20 @@ function Navbar() {
       })
       .catch((error) => {
         toast.error(error?.message || 'Logout Failed', {
-          position: 'top-center',
+          position:  'top-center',
           autoClose: 2000,
         });
       });
   };
 
   const navLinks = [
-    { path: '/',           label: 'Home'        },
-    { path: '/products',   label: 'Shop'        },
+    { path: '/',             label: 'Home'         },
+    { path: '/products',     label: 'Shop'         },
     { path: '/new-arrivals', label: 'New Arrivals' },
-    { path: '/categories', label: 'Categories'  },
-    { path: '/sale',       label: 'Sale', highlight: true },
-    { path: '/about-us',   label: 'About'       },
-    { path: '/contact-us', label: 'Contact'     },
+    { path: '/categories',   label: 'Categories'   },
+    { path: '/sale',         label: 'Sale', highlight: true },
+    { path: '/about-us',     label: 'About'        },
+    { path: '/contact-us',   label: 'Contact'      },
   ];
 
   const profileMenuOptions = [
@@ -197,20 +184,19 @@ function Navbar() {
           action: () => navigate('/admin/dashboard'),
         }]
       : []),
-    { name: 'Account', icon: <PersonIcon />,       action: () => navigate('/profile') },
+    { name: 'Account',            icon: <PersonIcon />,       action: () => navigate('/profile') },
     {
       name:   `Cart (${cartItems.length})`,
       icon:   <ShoppingCartIcon />,
       action: () => navigate('/cart'),
       badge:  cartItems.length,
     },
-    { name: 'Orders',           icon: <OrdersIcon />,  action: () => navigate('/orders/user') },
+    { name: 'Orders',             icon: <OrdersIcon />,       action: () => navigate('/orders/user') },
     {
-      // Discounts menu item — dot is rendered inline when hasNewDiscount is true
-      name:        'Discounts',
-      icon:        <OfferIcon />,
-      action:      () => navigate('/my-discounts'),
-      hasNewDot:   hasNewDiscount,
+      name:      'Discounts',
+      icon:      <OfferIcon />,
+      action:    () => navigate('/my-discounts'),
+      hasNewDot: hasNewDiscount,
     },
     {
       name:   'Refunds & Returns',
@@ -296,7 +282,6 @@ function Navbar() {
                       className={`nb-mobile-menu-action ${option.isDanger ? 'nb-danger' : ''}`}
                       onClick={() => { option.action(); setIsMenuOpen(false); }}
                     >
-                      {/* Icon wrapper — positions the dot relative to the icon */}
                       <span className="nb-mobile-icon-wrap">
                         {option.icon}
                         {option.hasNewDot && <NotificationDot />}
@@ -324,7 +309,7 @@ function Navbar() {
                 placeholder="Search products..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSearchSubmit(e)}
+                onKeyDown={handleSearchKeyDown}
                 className={`nb-search-input ${isSearchOpen ? 'nb-active' : ''}`}
               />
               <button
@@ -413,7 +398,6 @@ function Navbar() {
                         className={`nb-profile-menu-option ${option.isDanger ? 'nb-danger' : ''}`}
                         onClick={option.action}
                       >
-                        {/* Icon wrapper — positions the dot relative to the icon */}
                         <span className="nb-menu-option-icon-wrap">
                           {option.icon}
                           {option.hasNewDot && <NotificationDot />}
@@ -445,7 +429,6 @@ function Navbar() {
         </div>
       </div>
 
-      {/* Overlay for mobile menu */}
       {isMenuOpen && <div className="nb-overlay" onClick={toggleMenu} />}
     </nav>
   );

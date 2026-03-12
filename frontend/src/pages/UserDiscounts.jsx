@@ -5,7 +5,7 @@ import {
   getActivePromos,
   getMyDiscounts,
   clearUserDiscountError,
-} from '../features/discount/userDiscountSlice';
+} from '../features/discount/discountSlice';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import '../pageStyles/UserDiscounts.css';
@@ -296,7 +296,7 @@ const UserDiscounts = () => {
 
   // Local checker result — searched client-side from already-loaded discounts.
   // No network call: avoids triggering recordUsage outside of checkout.
-  const [checkerResult, setCheckerResult] = useState(null); // 'found' | 'not-found' | null
+  const [checkerResult, setCheckerResult] = useState(null); // discount object | 'not-found' | null
 
   useEffect(() => {
     dispatch(getMyDiscounts());
@@ -312,6 +312,10 @@ const UserDiscounts = () => {
   }, [codeInput]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+
+  // FIX: allLoaded includes broadcastDiscounts so the checker finds broadcast codes.
+  // Previously broadcastDiscounts was populated in Redux but never merged here,
+  // causing broadcast codes to always return "not found" in the checker.
   const allLoaded = useMemo(
     () => [...broadcastDiscounts, ...personalDiscounts, ...(activePromos ?? [])],
     [broadcastDiscounts, personalDiscounts, activePromos]
@@ -336,16 +340,25 @@ const UserDiscounts = () => {
     navigate('/cart', { state: { applyCode: code } });
   }, [navigate]);
 
-  // ── Derived: split personal discounts into active / expired ───────────────
+  // ── Derived: merge broadcast + personal, then split active / expired ───────
+  //
+  // FIX: broadcastDiscounts (audience:'all') were fetched and stored in Redux
+  // correctly by getMyDiscounts, but were NEVER rendered — the previous code
+  // only iterated over personalDiscounts. Merging them here means all codes
+  // a user is eligible for appear in the "My Discounts" tab.
+  //
+  // AudienceBadge inside DiscountCard already renders "Available to all" for
+  // broadcast codes so users can visually distinguish them.
   const { activePersonal, expiredPersonal } = useMemo(() => {
-    const active  = personalDiscounts.filter(
+    const all = [...broadcastDiscounts, ...personalDiscounts];
+    const active = all.filter(
       (d) => getUrgency(d.validUntil) !== 'expired' && d.status !== 'inactive'
     );
-    const expired = personalDiscounts.filter(
+    const expired = all.filter(
       (d) => getUrgency(d.validUntil) === 'expired' || d.status === 'inactive'
     );
     return { activePersonal: active, expiredPersonal: expired };
-  }, [personalDiscounts]);
+  }, [broadcastDiscounts, personalDiscounts]);
 
   const totalActive = activePersonal.length + (activePromos?.length ?? 0);
 

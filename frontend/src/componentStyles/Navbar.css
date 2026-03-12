@@ -95,11 +95,6 @@
   border-bottom-color: var(--nb-border-md);
 }
 
-/* Scrolled state — keep dot border synced to navbar bg */
-.nb-navbar.nb-scrolled .nb-notif-dot {
-  border-color: #fff; /* Adjust if scrolled navbar bg differs */
-}
-
 .nb-navbar-container {
   max-width:   1400px;
   margin:      0 auto;
@@ -115,16 +110,16 @@
    4. LOGO
    ============================================================ */
 .nb-navbar-logo {
-  flex-shrink: 0;
+  flex-shrink:  0;
   margin-right: 32px;
 }
 
 .nb-navbar-logo a {
-  display:     flex;
-  align-items: center;
-  gap:         8px;
+  display:         flex;
+  align-items:     center;
+  gap:             8px;
   text-decoration: none;
-  transition:  var(--nb-transition);
+  transition:      var(--nb-transition);
 }
 
 .nb-navbar-logo a:hover { opacity: 0.85; }
@@ -167,20 +162,20 @@
 .nb-mobile-menu-footer { display: none; }
 
 .nb-nav-link {
-  display:        flex;
-  align-items:    center;
-  gap:            5px;
+  display:         flex;
+  align-items:     center;
+  gap:             5px;
   text-decoration: none;
-  color:          var(--nb-text-sec);
-  font-size:      13px;
-  font-weight:    500;
-  padding:        7px 12px;
-  border-radius:  var(--nb-radius-xs);
-  transition:     var(--nb-transition);
-  position:       relative;
-  white-space:    nowrap;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
+  color:           var(--nb-text-sec);
+  font-size:       13px;
+  font-weight:     500;
+  padding:         7px 12px;
+  border-radius:   var(--nb-radius-xs);
+  transition:      var(--nb-transition);
+  position:        relative;
+  white-space:     nowrap;
+  letter-spacing:  0.3px;
+  text-transform:  uppercase;
 }
 
 .nb-nav-link:hover {
@@ -210,9 +205,7 @@
   font-weight: 600;
 }
 
-.nb-nav-link.nb-highlight:hover {
-  background: var(--nb-coral-light);
-}
+.nb-nav-link.nb-highlight:hover { background: var(--nb-coral-light); }
 
 .nb-sale-icon {
   font-size: 0.65rem !important;
@@ -244,17 +237,17 @@
 }
 
 .nb-search-input {
-  width:       0;
-  padding:     0;
-  border:      1px solid transparent;
+  width:         0;
+  padding:       0;
+  border:        1px solid transparent;
   border-radius: 7px;
-  font-size:   13px;
-  font-family: var(--nb-font);
-  background:  transparent;
-  color:       var(--nb-text);
-  outline:     none;
-  opacity:     0;
-  transition:  all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size:     13px;
+  font-family:   var(--nb-font);
+  background:    transparent;
+  color:         var(--nb-text);
+  outline:       none;
+  opacity:       0;
+  transition:    all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .nb-search-input.nb-active {
@@ -322,16 +315,16 @@
    9. WISHLIST / CART / GENERIC ICON LINKS
    ============================================================ */
 .nb-icon-link {
-  display:        flex;
-  flex-direction: column;
-  align-items:    center;
-  gap:            2px;
+  display:         flex;
+  flex-direction:  column;
+  align-items:     center;
+  gap:             2px;
   text-decoration: none;
-  color:          var(--nb-text-sec);
-  padding:        7px 10px;
-  border-radius:  var(--nb-radius-xs);
-  transition:     var(--nb-transition);
-  position:       relative;
+  color:           var(--nb-text-sec);
+  padding:         7px 10px;
+  border-radius:   var(--nb-radius-xs);
+  transition:      var(--nb-transition);
+  position:        relative;
 }
 
 .nb-icon-link:hover {
@@ -339,9 +332,7 @@
   background: var(--nb-surface);
 }
 
-.nb-icon {
-  font-size: 1.35rem !important;
-}
+.nb-icon { font-size: 1.35rem !important; }
 
 .nb-icon-label {
   font-size:      10px;
@@ -358,10 +349,10 @@
    10. NAV DIVIDER
    ============================================================ */
 .nb-nav-divider {
-  width:      1px;
-  height:     24px;
-  background: var(--nb-border);
-  margin:     0 8px;
+  width:       1px;
+  height:      24px;
+  background:  var(--nb-border);
+  margin:      0 8px;
   flex-shrink: 0;
 }
 
@@ -374,16 +365,16 @@
 .nb-profile-dropdown { position: relative; }
 
 .nb-profile-trigger {
-  display:     flex;
-  align-items: center;
-  gap:         6px;
-  background:  none;
-  border:      1px solid var(--nb-border);
+  display:       flex;
+  align-items:   center;
+  gap:           6px;
+  background:    none;
+  border:        1px solid var(--nb-border);
   border-radius: var(--nb-radius-sm);
-  cursor:      pointer;
-  padding:     5px 10px 5px 5px;
-  transition:  var(--nb-transition);
-  outline:     none;
+  cursor:        pointer;
+  padding:       5px 10px 5px 5px;
+  transition:    var(--nb-transition);
+  outline:       none;
 }
 
 .nb-profile-trigger:hover:not(:disabled) {
@@ -402,24 +393,24 @@
 }
 
 .nb-profile-img-wrapper {
-  width:        28px;
-  height:       28px;
+  width:         28px;
+  height:        28px;
   border-radius: 6px;
-  overflow:     hidden;
-  flex-shrink:  0;
-  background:   var(--nb-surface);
+  overflow:      hidden;
+  flex-shrink:   0;
+  background:    var(--nb-surface);
 }
 
 .nb-profile-img {
-  width:        100% !important;
-  height:       100% !important;
-  object-fit:   cover !important;
-  display:      block !important;
+  width:         100% !important;
+  height:        100% !important;
+  object-fit:    cover !important;
+  display:       block !important;
   border-radius: 0 !important;
-  border:       none !important;
-  background:   transparent !important;
-  padding:      0 !important;
-  margin:       0 !important;
+  border:        none !important;
+  background:    transparent !important;
+  padding:       0 !important;
+  margin:        0 !important;
 }
 
 .nb-profile-arrow {
@@ -432,18 +423,18 @@
 
 /* 11b. Dropdown Panel */
 .nb-profile-menu {
-  position:   absolute;
-  top:        calc(100% + 8px);
-  right:      0;
-  background: #fff;
-  border:     1px solid var(--nb-border);
+  position:      absolute;
+  top:           calc(100% + 8px);
+  right:         0;
+  background:    #fff;
+  border:        1px solid var(--nb-border);
   border-radius: var(--nb-radius);
-  box-shadow: var(--nb-shadow);
-  min-width:  260px;
-  max-width:  calc(100vw - 24px);
-  z-index:    1100;
-  animation:  nb-slideDown 0.18s cubic-bezier(0.4, 0, 0.2, 1);
-  overflow:   hidden;
+  box-shadow:    var(--nb-shadow);
+  min-width:     260px;
+  max-width:     calc(100vw - 24px);
+  z-index:       1100;
+  animation:     nb-slideDown 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow:      hidden;
 }
 
 .nb-profile-menu-header {
@@ -529,10 +520,10 @@
 }
 
 .nb-profile-menu-option svg {
-  font-size:  1.15rem !important;
-  color:      var(--nb-text-muted);
+  font-size:   1.15rem !important;
+  color:       var(--nb-text-muted);
   flex-shrink: 0;
-  transition: var(--nb-transition);
+  transition:  var(--nb-transition);
 }
 
 .nb-profile-menu-option:hover {
@@ -562,7 +553,7 @@
   display:         inline-flex;
   align-items:     center;
   justify-content: center;
-  width:           24px; /* matches MUI icon natural size */
+  width:           24px;
   height:          24px;
   flex-shrink:     0;
   flex-grow:       0;
@@ -571,9 +562,6 @@
 
 /* ============================================================
    12. NOTIFICATION DOT
-   Rendered alongside "Discounts" when hasNewDiscount is true.
-   Shared between desktop (.nb-menu-option-icon-wrap) and
-   mobile (.nb-mobile-icon-wrap) wrappers.
    ============================================================ */
 .nb-notif-dot {
   position:       absolute;
@@ -582,17 +570,12 @@
   width:          8px;
   height:         8px;
   border-radius:  50%;
-  background:     #EF4444;        /* Red-500 — urgency signal          */
-  border:         2px solid #fff; /* White ring separates from icon    */
+  background:     #EF4444;
+  border:         2px solid #fff;
   display:        block;
   flex-shrink:    0;
-  pointer-events: none;           /* Decorative — not interactive      */
+  pointer-events: none;
   animation:      nb-dot-pulse 2.4s ease-in-out infinite;
-}
-
-/* Dark navbar variant — override border to match bg */
-.nb-navbar.nb-dark .nb-notif-dot {
-  border-color: #1a1a2e; /* Replace with your actual dark navbar bg */
 }
 
 
@@ -600,7 +583,7 @@
    13. HAMBURGER BUTTON
    ============================================================ */
 .nb-hamburger {
-  display:         none; /* shown via media query */
+  display:         none;
   width:           36px;
   height:          36px;
   background:      none;
@@ -615,9 +598,9 @@
 }
 
 .nb-hamburger:hover {
-  background:    var(--nb-surface);
-  border-color:  var(--nb-border-md);
-  color:         var(--nb-text);
+  background:   var(--nb-surface);
+  border-color: var(--nb-border-md);
+  color:        var(--nb-text);
 }
 
 
@@ -668,9 +651,9 @@
 .nb-profile-trigger:focus-visible,
 .nb-profile-menu-option:focus-visible,
 .nb-mobile-menu-action:focus-visible {
-  outline:       2px solid var(--nb-coral);
+  outline:        2px solid var(--nb-coral);
   outline-offset: 2px;
-  border-radius: var(--nb-radius-xs);
+  border-radius:  var(--nb-radius-xs);
 }
 
 
@@ -692,7 +675,6 @@
 
 /* ============================================================
    18. RESPONSIVE — DRAWER BREAKPOINT (≤900px)
-   Nav links collapse into a slide-in drawer.
    ============================================================ */
 @media (max-width: 900px) {
 
@@ -723,7 +705,7 @@
 
   .nb-navbar-links.nb-active { right: 0; }
 
-  /* 18b. Mobile Menu Header — floating X only, no logo/title */
+  /* 18b. Mobile Menu Header */
   .nb-mobile-menu-header {
     display:         flex;
     align-items:     center;
@@ -736,24 +718,24 @@
   }
 
   .nb-mobile-close {
-    width:         32px;
-    height:        32px;
-    background:    #fff;
-    border:        1px solid var(--nb-border);
-    border-radius: var(--nb-radius-xs);
-    cursor:        pointer;
-    display:       flex;
-    align-items:   center;
+    width:           32px;
+    height:          32px;
+    background:      #fff;
+    border:          1px solid var(--nb-border);
+    border-radius:   var(--nb-radius-xs);
+    cursor:          pointer;
+    display:         flex;
+    align-items:     center;
     justify-content: center;
-    color:         var(--nb-text-sec);
-    transition:    var(--nb-transition);
-    box-shadow:    var(--nb-shadow-sm);
+    color:           var(--nb-text-sec);
+    transition:      var(--nb-transition);
+    box-shadow:      var(--nb-shadow-sm);
   }
 
   .nb-mobile-close:hover {
-    background:    var(--nb-surface);
-    border-color:  var(--nb-border-md);
-    color:         var(--nb-text);
+    background:   var(--nb-surface);
+    border-color: var(--nb-border-md);
+    color:        var(--nb-text);
   }
 
   /* 18c. Mobile Nav Links */
@@ -777,17 +759,17 @@
     background:     transparent;
   }
 
-  .nb-nav-link:hover         { background: rgba(0,0,0,0.05); }
-  .nb-nav-link.nb-active     { background: #fff; border: 1px solid var(--nb-border); }
-  .nb-nav-link.nb-active::after { display: none; }
+  .nb-nav-link:hover             { background: rgba(0,0,0,0.05); }
+  .nb-nav-link.nb-active         { background: #fff; border: 1px solid var(--nb-border); }
+  .nb-nav-link.nb-active::after  { display: none; }
 
   /* 18d. Mobile Menu Footer */
   .nb-mobile-menu-footer {
-    display:       block;
-    padding:       16px;
-    border-top:    1px solid var(--nb-border);
-    margin-top:    auto;
-    background:    #F3F4F6;
+    display:    block;
+    padding:    16px;
+    border-top: 1px solid var(--nb-border);
+    margin-top: auto;
+    background: #F3F4F6;
   }
 
   .nb-mobile-auth-btn {
@@ -900,8 +882,8 @@
   }
 
   .nb-mobile-menu-action svg {
-    font-size:  1.15rem !important;
-    color:      var(--nb-text-muted);
+    font-size:   1.15rem !important;
+    color:       var(--nb-text-muted);
     flex-shrink: 0;
   }
 
@@ -910,8 +892,8 @@
     color:      var(--nb-text);
   }
 
-  .nb-mobile-menu-action:hover svg    { color: var(--nb-coral); }
-  .nb-mobile-menu-action.nb-danger    { color: #DC2626; }
+  .nb-mobile-menu-action:hover svg     { color: var(--nb-coral); }
+  .nb-mobile-menu-action.nb-danger     { color: #DC2626; }
   .nb-mobile-menu-action.nb-danger svg { color: #DC2626; }
   .nb-mobile-menu-action.nb-danger:hover { background: #FEF2F2; }
 
@@ -934,7 +916,7 @@
     width:           24px;
     height:          24px;
     flex-shrink:     0;
-    flex-grow:       0; /* prevents inherited flex-grow from action row */
+    flex-grow:       0;
   }
 
   /* 18g. Mobile Overlay */
@@ -948,8 +930,6 @@
     animation:       nb-fadeIn 0.2s ease;
   }
 
-  /* Hide desktop-only elements inside drawer */
-  .nb-icon-label    { display: none; }
   .nb-profile-arrow { display: none; }
 
   .nb-search-input.nb-active { width: 160px; }
@@ -971,7 +951,6 @@
 
   .nb-navbar-icons { gap: 2px; }
 
-  /* Wishlist hidden — accessible via drawer */
   .nb-wishlist-link { display: none; }
 
   .nb-search-input.nb-active {
@@ -979,14 +958,8 @@
     font-size: 12px;
   }
 
-  .nb-profile-trigger {
-    padding: 4px 6px 4px 4px;
-  }
-
-  .nb-profile-img-wrapper {
-    width:  26px;
-    height: 26px;
-  }
+  .nb-profile-trigger      { padding: 4px 6px 4px 4px; }
+  .nb-profile-img-wrapper  { width: 26px; height: 26px; }
 
   .nb-icon-link { padding: 7px; }
   .nb-icon      { font-size: 1.2rem !important; }
@@ -997,14 +970,12 @@
    20. RESPONSIVE — SMALL MOBILE (≤380px)
    ============================================================ */
 @media (max-width: 380px) {
-  .nb-navbar-container   { padding: 0 10px; }
-  .nb-logo-text          { font-size: 1.1rem; }
+  .nb-navbar-container       { padding: 0 10px; }
+  .nb-logo-text              { font-size: 1.1rem; }
   .nb-search-input.nb-active { width: 110px; font-size: 11px; }
-  .nb-navbar-links       { width: 100%; max-width: 100vw; border-left: none; }
-  .nb-profile-trigger    { padding: 4px; }
-
-  /* Cart hidden at smallest size — accessible via drawer */
-  .nb-cart-link          { display: none; }
+  .nb-navbar-links           { width: 100%; max-width: 100vw; border-left: none; }
+  .nb-profile-trigger        { padding: 4px; }
+  .nb-cart-link              { display: none; }
 }
 
 
@@ -1015,12 +986,9 @@
   *,
   *::before,
   *::after {
-    animation-duration: 0.01ms !important;
+    animation-duration:  0.01ms !important;
     transition-duration: 0.01ms !important;
   }
 
-  /* Static dot — no pulse for motion-sensitive users */
-  .nb-notif-dot {
-    animation: none;
-  }
+  .nb-notif-dot { animation: none; }
 }

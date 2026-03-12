@@ -71,9 +71,9 @@ const initialState = {
   // Shape: { code, type, value, discountAmount, description }
   validatedDiscount: null,
 
-  activePromos:        [],
-  broadcastDiscounts:  [],
-  personalDiscounts:   [],
+  activePromos:       [],
+  broadcastDiscounts: [],
+  personalDiscounts:  [],
 
   // Set by checkNewDiscounts; cleared when user opens the discounts page (getMyDiscounts).
   // Preserved on network failure so a transient error never hides a real notification.
@@ -159,6 +159,9 @@ const userDiscountSlice = createSlice({
       .addCase(getMyDiscounts.fulfilled, (state, action) => {
         state.myDiscountsLoading = false;
         const all = action.payload.discounts ?? [];
+        // FIX: split into broadcast (audience:'all') and personal (audience:'specific')
+        // Both are fetched by getMyDiscounts and must be stored separately so the
+        // UI can merge them into the "My Discounts" tab correctly.
         state.broadcastDiscounts = all.filter((d) => d.audience === "all");
         state.personalDiscounts  = all.filter((d) => d.audience === "specific");
         state.hasNewDiscount     = false;

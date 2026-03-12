@@ -42,7 +42,6 @@ const ACTION_META = {
   used:                 { label: 'Used',           color: '#7C3AED', bg: '#EDE9FE' },
   deactivated:          { label: 'Deactivated',    color: '#DC2626', bg: '#FEE2E2' },
   deactivation_blocked: { label: 'Block Attempt',  color: '#D97706', bg: '#FEF3C7' },
-  // FIX: manual_cleanup was missing — backend action enum includes it
   manual_cleanup:       { label: 'Manual Cleanup', color: '#D97706', bg: '#FEF3C7' },
   sweep_run:            { label: 'Sweep Run',      color: '#6B7280', bg: '#F3F4F6' },
   sweep_auto_deleted:   { label: 'Auto-Deleted',   color: '#991B1B', bg: '#FEE2E2' },
@@ -50,10 +49,8 @@ const ACTION_META = {
 };
 
 const CATEGORY_OPTIONS = ['promo', 'refund', 'return', 'loyalty', 'affiliate', 'support'];
-// FIX: removed 'freeShipping' and 'buyXgetY' — not in backend enum (percentage | fixed only)
 const TYPE_OPTIONS     = ['percentage', 'fixed'];
 const STATUS_OPTIONS   = ['active', 'expired', 'inactive'];
-// Status options allowed in the edit form — backend allowedUpdates includes status
 const EDIT_STATUS_OPTIONS = ['active', 'inactive'];
 
 const fmtDate = (d) =>
@@ -85,8 +82,6 @@ const StatusBadge = ({ status }) => {
   return <span className={`addisc-badge ${m.cls}`}>{m.label}</span>;
 };
 
-// FIX: AudienceBadge now renders for both audience values so "Specific" is
-// always shown explicitly rather than falling back to scattered inline text
 const AudienceBadge = ({ audience }) => {
   if (audience === 'all') return <span className="addisc-audience-badge addisc-audience-badge--all">All users</span>;
   return <span className="addisc-audience-badge addisc-audience-badge--specific">Specific</span>;
@@ -196,7 +191,6 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => (
       </div>
 
       <div className="addisc-cleanup-body">
-        {/* FIX: show cleanup result inside modal after run completes */}
         {result ? (
           <div className="addisc-cleanup-result">
             <div className="addisc-cleanup-result-icon">
@@ -281,10 +275,6 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => (
 
 // ─────────────────────────────────────────────
 // DETAIL DRAWER
-// FIX: now calls getSingleDiscount to load full populated document
-// (usageHistory, relatedOrder, relatedReturn, createdBy).
-// Shows usageHistoryTotal/usageHistoryCapped from slice.
-// FIX: deleteProtectionError surfaced here with proper message.
 // ─────────────────────────────────────────────
 
 const DetailDrawer = ({
@@ -300,7 +290,6 @@ const DetailDrawer = ({
   onEdit,
   onDelete,
 }) => {
-  // Use the fully populated currentDiscount if loaded, else fall back to list snapshot
   const d = currentDiscount ?? discount;
 
   const daysLeft = getDaysUntilEligible(d.deletionEligibleAt);
@@ -396,7 +385,6 @@ const DetailDrawer = ({
             {d.notes && <p className="addisc-drawer-notes">📝 {d.notes}</p>}
           </section>
 
-          {/* FIX: usage history with capped indicator from slice */}
           {d.usageHistory?.length > 0 && (
             <section className="addisc-drawer-section">
               <h4 className="addisc-drawer-section-title">
@@ -423,7 +411,6 @@ const DetailDrawer = ({
             </section>
           )}
 
-          {/* FIX: deleteProtectionError surfaced here */}
           {deleteProtectionError && (
             <section className="addisc-drawer-section">
               <div className="addisc-modal-error" role="alert">
@@ -509,8 +496,11 @@ const DetailDrawer = ({
 
 // ─────────────────────────────────────────────
 // CREATE / EDIT MODAL
-// FIX: status field added to edit form (backend allowedUpdates includes it)
-// FIX: TYPE_OPTIONS restricted to backend enum values only
+//
+// FIX: General discount creation no longer offers a "Specific users" audience
+// option — that path is now exclusively handled by the VIP discount flow.
+// Create mode always sends audience:'all' (broadcast).
+// Edit mode shows the existing audience as read-only (audience is immutable).
 // ─────────────────────────────────────────────
 
 const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit, onClose }) => {
@@ -520,7 +510,8 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
     type:        initial.type        ?? 'percentage',
     value:       initial.value       ?? '',
     category:    initial.category    ?? 'promo',
-    audience:    initial.audience    ?? 'specific',
+    // FIX: create always defaults to 'all' — 'specific' removed from this flow
+    audience:    initial.audience    ?? 'all',
     status:      initial.status      ?? 'active',
     validFrom:   initial.validFrom   ? initial.validFrom.slice(0, 10) : '',
     validUntil:  initial.validUntil  ? initial.validUntil.slice(0, 10) : '',
@@ -536,7 +527,7 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
       <div className="addisc-modal">
         <div className="addisc-modal-header">
           <h2 className="addisc-modal-title">
-            {mode === 'create' ? 'New Discount Code' : 'Edit Discount'}
+            {mode === 'create' ? 'New Broadcast Discount' : 'Edit Discount'}
           </h2>
           <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -560,43 +551,57 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           )}
 
-          {/* Audience toggle — disabled in edit mode, audience is immutable */}
+          {/*
+            FIX: Audience field behaviour by mode:
+            - create: locked to 'all' (broadcast). Specific-user codes are
+              created exclusively via the VIP discount flow. Show informational
+              banner instead of a toggle.
+            - edit: show current audience value as read-only; audience is
+              immutable after creation.
+          */}
           <div className="addisc-form-field">
             <label className="addisc-form-label">Audience</label>
-            <div className="addisc-audience-toggle">
-              {['specific', 'all'].map((opt) => (
-                <button key={opt} type="button"
-                  className={`addisc-audience-opt ${form.audience === opt ? 'addisc-audience-opt--active' : ''}`}
-                  onClick={() => set('audience', opt)}
-                  disabled={mode === 'edit'}>
-                  {opt === 'all' ? (
-                    <>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                        <circle cx="9" cy="7" r="4" />
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                      </svg>
-                      All users (broadcast)
-                    </>
-                  ) : (
-                    <>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                        <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                        <circle cx="12" cy="7" r="4" />
-                      </svg>
-                      Specific users
-                    </>
-                  )}
-                </button>
-              ))}
-            </div>
-            {form.audience === 'all' && (
-              <p className="addisc-form-hint addisc-form-hint--info">
-                This code will be visible to all logged-in users and will trigger the Navbar notification dot.
-              </p>
+            {mode === 'create' ? (
+              <div className="addisc-audience-fixed">
+                <div className="addisc-audience-opt addisc-audience-opt--active addisc-audience-opt--locked">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                  All users (broadcast)
+                </div>
+                <p className="addisc-form-hint addisc-form-hint--info">
+                  This code will be visible to all users and trigger the navbar notification dot.
+                  To target specific users, use the <strong>VIP discount</strong> button instead.
+                </p>
+              </div>
+            ) : (
+              <div className="addisc-audience-opt addisc-audience-opt--active addisc-audience-opt--locked">
+                {form.audience === 'all' ? (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    All users (broadcast)
+                  </>
+                ) : (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                    Specific users
+                  </>
+                )}
+              </div>
             )}
           </div>
 
@@ -635,7 +640,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
                 {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </div>
-            {/* FIX: status field in edit form — backend allowedUpdates includes status */}
             {mode === 'edit' && (
               <div className="addisc-form-field">
                 <label className="addisc-form-label" htmlFor="addisc-status">Status</label>
@@ -709,7 +713,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
 
 // ─────────────────────────────────────────────
 // COMPENSATION MODAL
-// FIX: compensationConflict surfaced with dedicated conflict UI
 // ─────────────────────────────────────────────
 
 const CompensationModal = ({ loading, error, compensationConflict, onViewExisting, onSubmit, onClose }) => {
@@ -733,7 +736,6 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
           </button>
         </div>
         <form className="addisc-modal-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}>
-          {/* FIX: show 409 conflict as a distinct UI block with action button */}
           {compensationConflict ? (
             <div className="addisc-modal-conflict" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -835,27 +837,24 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
 
 // ─────────────────────────────────────────────
 // VIP DISCOUNT MODAL
-// FIX: entirely new — createDiscountForUsers thunk was never surfaced
-// Supports userIds array, emails array, percentage + fixed types,
-// validUntil or validDays, usesPerUser, totalUses, minPurchaseAmount
 // ─────────────────────────────────────────────
 
 const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipEligibleCount, onSubmit, onClose }) => {
   const [form, setForm] = useState({
-    userIdsRaw:       '',   // newline-separated raw input → split to array on submit
-    emailsRaw:        '',   // newline-separated raw input → split to array on submit
-    description:      '',
-    type:             'percentage',
-    value:            '',
-    category:         'loyalty',
-    validDays:        30,
-    validUntil:       '',
-    usesPerUser:      1,
-    totalUses:        '',
+    userIdsRaw:        '',
+    emailsRaw:         '',
+    description:       '',
+    type:              'percentage',
+    value:             '',
+    category:          'loyalty',
+    validDays:         30,
+    validUntil:        '',
+    usesPerUser:       1,
+    totalUses:         '',
     minPurchaseAmount: 0,
-    firstOrderOnly:   false,
-    code:             '',   // optional custom code; auto-generated if blank
-    notes:            '',
+    firstOrderOnly:    false,
+    code:              '',
+    notes:             '',
   });
 
   const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
@@ -873,11 +872,10 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
       minPurchaseAmount: form.minPurchaseAmount,
       firstOrderOnly:    form.firstOrderOnly,
       notes:             form.notes || undefined,
-      code:              form.code || undefined,
+      code:              form.code  || undefined,
     };
     if (userIds.length) payload.userIds = userIds;
     if (emails.length)  payload.emails  = emails;
-    // validUntil takes precedence over validDays
     if (form.validUntil) {
       payload.validUntil = form.validUntil;
     } else {
@@ -1139,7 +1137,7 @@ const AdminDiscounts = () => {
 
   const [activeTab,        setActiveTab]        = useState('codes');
   const [drawerDiscount,   setDrawerDiscount]   = useState(null);
-  const [modalMode,        setModalMode]        = useState(null);   // 'create' | 'edit' | null
+  const [modalMode,        setModalMode]        = useState(null);
   const [editTarget,       setEditTarget]       = useState(null);
   const [toast,            setToast]            = useState(null);
   const [showCompModal,    setShowCompModal]    = useState(false);
@@ -1154,16 +1152,11 @@ const AdminDiscounts = () => {
     setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // Initial data load
   useEffect(() => {
     dispatch(getAllDiscounts({}));
     dispatch(getDiscountStats());
   }, [dispatch]);
 
-  // FIX: audit tab fetch — auditFetchedRef removed.
-  // Re-fetch when returning to the audit tab so filters applied
-  // in a previous visit are honoured and stale data is not shown.
-  // getPurgeLog only fetched once since it is permanent/append-only.
   const purgeFetchedRef = useRef(false);
   useEffect(() => {
     if (activeTab === 'audit') {
@@ -1178,7 +1171,6 @@ const AdminDiscounts = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, dispatch]);
 
-  // FIX: stats tab — refetch when stats were nulled by a mutation
   useEffect(() => {
     if (activeTab === 'stats' && stats === null && !statsLoading) {
       dispatch(getDiscountStats());
@@ -1190,7 +1182,6 @@ const AdminDiscounts = () => {
     dispatch(clearDiscountAuditLogs());
     dispatch(clearCurrentDiscount());
     dispatch(clearDeleteProtectionError());
-    // FIX: fetch full populated document — list items are partial
     dispatch(getSingleDiscount(discount._id));
     dispatch(getDiscountAuditLog(discount._id));
   }, [dispatch]);
@@ -1217,26 +1208,30 @@ const AdminDiscounts = () => {
         showToast('Discount deactivated.');
       })
       .catch((err) => {
-        // FIX: deleteProtectionError is now shown inside the drawer
-        // via the slice state — only show toast for non-403 errors
         if (err?.status !== 403) {
           showToast(typeof err === 'string' ? err : err?.message ?? 'Failed.', 'error');
           dispatch(clearAdminDiscountState());
         }
-        // 403: leave drawer open so user sees the protection error banner
       });
   }, [dispatch, closeDrawer, showToast]);
 
+  // FIX: .catch now surfaces errors as toasts so silent failures are visible.
+  // Previously the catch block was empty, meaning a failed create showed no
+  // feedback — the modal just sat there with a spinner or closed silently.
   const handleModalSubmit = useCallback((formData) => {
     if (modalMode === 'create') {
       dispatch(createDiscount(formData)).unwrap()
         .then(() => {
           setModalMode(null);
           dispatch(clearAdminDiscountState());
+          // Refresh list so newly created broadcast discount appears immediately
+          dispatch(getAllDiscounts({}));
           showToast('Discount created.');
         })
-        .catch(() => {
-          // error shown inside modal via slice error state
+        .catch((err) => {
+          // Error is also shown inside the modal via slice error state,
+          // but toast ensures it's visible if the modal closes unexpectedly.
+          showToast(typeof err === 'string' ? err : err?.message ?? 'Failed to create discount.', 'error');
         });
     } else {
       dispatch(updateDiscount({ id: editTarget._id, discountData: formData })).unwrap()
@@ -1246,8 +1241,8 @@ const AdminDiscounts = () => {
           dispatch(clearAdminDiscountState());
           showToast('Discount updated.');
         })
-        .catch(() => {
-          // error shown inside modal via slice error state
+        .catch((err) => {
+          showToast(typeof err === 'string' ? err : err?.message ?? 'Failed to update discount.', 'error');
         });
     }
   }, [dispatch, modalMode, editTarget, showToast]);
@@ -1260,17 +1255,13 @@ const AdminDiscounts = () => {
         dispatch(clearCompensationConflict());
         showToast('Compensation discount created.');
       })
-      .catch(() => {
-        // error / conflict shown inside modal via slice state
-      });
+      .catch(() => {});
   }, [dispatch, showToast]);
 
-  // FIX: view existing discount from compensation conflict — opens drawer
   const handleViewExistingFromConflict = useCallback((discountId) => {
     setShowCompModal(false);
     dispatch(clearCompensationConflict());
     dispatch(clearAdminDiscountState());
-    // Find in current list or fetch by id
     const existing = discounts.find((d) => d._id === discountId);
     if (existing) {
       openDrawer(existing);
@@ -1285,16 +1276,12 @@ const AdminDiscounts = () => {
 
   const handleVipSubmit = useCallback((payload) => {
     dispatch(createDiscountForUsers(payload));
-    // success state handled by vipSuccess in slice — modal reacts directly
   }, [dispatch]);
 
   const handleCleanupConfirm = useCallback(() => {
     setCleanupRunning(true);
     dispatch(triggerCleanup({})).unwrap()
-      .then(() => {
-        // FIX: result shown inside modal via cleanupResult slice state
-        // No toast here — modal shows the result in-place
-      })
+      .then(() => {})
       .catch((err) => {
         dispatch(clearAdminDiscountState());
         showToast(typeof err === 'string' ? err : err?.message ?? 'Cleanup failed.', 'error');
@@ -1312,7 +1299,6 @@ const AdminDiscounts = () => {
   const applyCodesFilters = useCallback(() => {
     const params = {};
     Object.entries(codesFilters).forEach(([k, v]) => { if (v) params[k] = v; });
-    // FIX: reset list before fresh filter fetch so Load More doesn't show stale cursor
     dispatch(resetDiscountList());
     dispatch(getAllDiscounts(params));
   }, [dispatch, codesFilters]);
@@ -1341,20 +1327,17 @@ const AdminDiscounts = () => {
       .catch(() => {});
   }, [dispatch, auditPagination, auditFilters]);
 
-  // FIX: broadcastCount derived from discounts list — uses audience:'all' correctly
   const broadcastCount = useMemo(
     () => discounts.filter((d) => d.audience === 'all' && d.status === 'active').length,
     [discounts],
   );
 
-  // ─── Render ───────────────────────────────────────────────────
   return (
     <>
       <Navbar />
 
       <div className="addisc-page">
 
-        {/* Toast */}
         {toast && (
           <div className={`addisc-toast addisc-toast--${toast.type}`} role="alert">
             {toast.type === 'success' ? (
@@ -1385,7 +1368,6 @@ const AdminDiscounts = () => {
             Dashboard
           </Link>
 
-          {/* Page header */}
           <div className="addisc-page-header">
             <div className="addisc-page-header-left">
               <h1 className="addisc-page-title">Discount Codes</h1>
@@ -1396,8 +1378,7 @@ const AdminDiscounts = () => {
             <div className="addisc-page-header-actions">
               <button type="button" className="addisc-btn addisc-btn--outline"
                 onClick={() => setShowCleanupModal(true)}
-                disabled={cleanupRunning}
-                title="Expire stale codes and delete old ones outside the fraud-protection window">
+                disabled={cleanupRunning}>
                 {cleanupRunning ? <Spinner size={14} /> : (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -1419,7 +1400,6 @@ const AdminDiscounts = () => {
                 </svg>
                 Compensation
               </button>
-              {/* FIX: VIP button added */}
               <button type="button" className="addisc-btn addisc-btn--outline"
                 onClick={() => setShowVipModal(true)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -1440,13 +1420,11 @@ const AdminDiscounts = () => {
             </div>
           </div>
 
-          {/* Section: Overview */}
           <div className="addisc-section-divider">
             <span className="addisc-section-divider-text">Overview</span>
             <span className="addisc-section-divider-line" />
           </div>
 
-          {/* KPI Grid — FIX: removed dead kpi.accent condition */}
           <div className="addisc-kpi-grid">
             {[
               { label: 'Total codes',      value: stats?.total     ?? 0, color: '#6366F1' },
@@ -1456,24 +1434,18 @@ const AdminDiscounts = () => {
               { label: 'Total uses',       value: stats?.totalUses ?? 0, color: '#10B981' },
               { label: 'Broadcast active', value: broadcastCount,         color: '#0369A1' },
             ].map((kpi) => (
-              <div
-                key={kpi.label}
-                className="addisc-kpi"
-                style={{ '--addisc-kpi-color': kpi.color }}
-              >
+              <div key={kpi.label} className="addisc-kpi" style={{ '--addisc-kpi-color': kpi.color }}>
                 <span className="addisc-kpi-label">{kpi.label}</span>
                 <span className="addisc-kpi-value">{kpi.value}</span>
               </div>
             ))}
           </div>
 
-          {/* Section: Management */}
           <div className="addisc-section-divider">
             <span className="addisc-section-divider-text">Management</span>
             <span className="addisc-section-divider-line" />
           </div>
 
-          {/* Tabs */}
           <div className="addisc-tabs">
             {[
               { key: 'codes', label: 'All Codes',  count: discounts.length },
@@ -1491,7 +1463,6 @@ const AdminDiscounts = () => {
             ))}
           </div>
 
-          {/* ════ TAB: ALL CODES ════ */}
           {activeTab === 'codes' && (
             <div className="addisc-tab-panel">
               <div className="addisc-filter-bar">
@@ -1568,9 +1539,7 @@ const AdminDiscounts = () => {
                                   </div>
                                 </td>
                                 <td>{d.category}</td>
-                                <td>
-                                  <AudienceBadge audience={d.audience} />
-                                </td>
+                                <td><AudienceBadge audience={d.audience} /></td>
                                 <td>
                                   {d.usageLimit?.currentUses ?? 0}
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
@@ -1624,7 +1593,6 @@ const AdminDiscounts = () => {
             </div>
           )}
 
-          {/* ════ TAB: ANALYTICS ════ */}
           {activeTab === 'stats' && (
             <div className="addisc-tab-panel">
               {statsLoading ? (
@@ -1674,10 +1642,8 @@ const AdminDiscounts = () => {
             </div>
           )}
 
-          {/* ════ TAB: AUDIT LOG ════ */}
           {activeTab === 'audit' && (
             <div className="addisc-tab-panel">
-              {/* FIX: dismiss now dispatches dismissPurgeBanner to redux — survives remount */}
               {showBanner && (
                 <PurgeBanner
                   purge={latestPurge}
@@ -1699,12 +1665,10 @@ const AdminDiscounts = () => {
                 </select>
                 <input type="date" className="addisc-filter-input addisc-filter-input--date"
                   value={auditFilters.dateFrom}
-                  onChange={(e) => setAuditFilters((p) => ({ ...p, dateFrom: e.target.value }))}
-                  title="From date" />
+                  onChange={(e) => setAuditFilters((p) => ({ ...p, dateFrom: e.target.value }))} />
                 <input type="date" className="addisc-filter-input addisc-filter-input--date"
                   value={auditFilters.dateTo}
-                  onChange={(e) => setAuditFilters((p) => ({ ...p, dateTo: e.target.value }))}
-                  title="To date" />
+                  onChange={(e) => setAuditFilters((p) => ({ ...p, dateTo: e.target.value }))} />
                 <button type="button" className="addisc-btn addisc-btn--outline"
                   onClick={applyAuditFilters} disabled={auditLoading}>
                   {auditLoading ? <Spinner size={14} /> : 'Filter'}
@@ -1715,7 +1679,7 @@ const AdminDiscounts = () => {
                 <div className="addisc-loading-row"><Spinner /> Loading audit log…</div>
               ) : auditLogs.length === 0 ? (
                 <EmptyState
-                  icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="16" y1="13" x2="8" y2="13" /><line x1="16" y1="17" x2="8" y2="17" /></svg>}
+                  icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /></svg>}
                   title="No audit entries"
                   desc="Audit entries will appear here as discounts are created, used, and modified."
                 />
@@ -1782,10 +1746,8 @@ const AdminDiscounts = () => {
             </div>
           )}
 
-        </div>{/* /addisc-body */}
-      </div>{/* /addisc-page */}
-
-      {/* ── Overlays ── */}
+        </div>
+      </div>
 
       {drawerDiscount && (
         <DetailDrawer

@@ -17,7 +17,7 @@ import returnReducer from '../features/returns/returnSlice';
 import analyticsReducer from '../features/analytics/analyticsSlice';
 import adminProductReducer from '../features/admin/adminProductSlice';
 import adminDiscountReducer from '../features/admin/adminDiscountSlice';
-import discountReducer from '../features/discount/discountSlice';
+import userDiscountReducer from '../features/discount/discountSlice';
 
 
 
@@ -41,7 +41,7 @@ export const store = configureStore({
         return: returnReducer,
         analytics: analyticsReducer,
         adminDiscount: adminDiscountReducer,
-        discount: discountReducer,
+        userDiscount: userDiscountReducer,
 
     }
 });

@@ -50,11 +50,35 @@ export const getSingleDiscount = createAsyncThunk(
   }
 );
 
+// FIX: Sanitize usageLimit before POST to prevent a silent Mongoose CastError.
+// The admin create form sends usageLimit.totalUses as "" when left blank.
+// Mongoose schema type Number coerces "" → NaN → CastError, meaning the
+// discount is never saved but no error surfaces to the UI (catch was empty).
+// Also strip empty validFrom so the backend default (Date.now()) applies.
 export const createDiscount = createAsyncThunk(
   "adminDiscount/createDiscount",
   async (discountData, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post("/api/v1/discounts", discountData, { withCredentials: true });
+      const payload = { ...discountData };
+
+      if (payload.usageLimit) {
+        payload.usageLimit = { ...payload.usageLimit };
+        const t = payload.usageLimit.totalUses;
+        if (t === "" || t === null || t === undefined) {
+          // Omitting totalUses lets the backend treat the code as unlimited
+          delete payload.usageLimit.totalUses;
+        } else {
+          payload.usageLimit.totalUses = Number(t);
+        }
+        if (payload.usageLimit.usesPerUser !== undefined) {
+          payload.usageLimit.usesPerUser = Number(payload.usageLimit.usesPerUser);
+        }
+      }
+
+      // Empty string validFrom triggers backend default (Date.now()); don't send it
+      if (!payload.validFrom) delete payload.validFrom;
+
+      const { data } = await axios.post("/api/v1/discounts", payload, { withCredentials: true });
       return data;
     } catch (err) {
       return rejectWithValue(err.response?.data?.message ?? "Failed to create discount");
@@ -100,11 +124,6 @@ export const deleteDiscount = createAsyncThunk(
   }
 );
 
-// FIX: Backend returns 409 as res.status(409).json(...) — NOT an axios error.
-// Axios resolves 2xx/non-throw status. 409 is a non-2xx so axios DOES throw.
-// But backend uses res.status(409).json() which axios treats as an error (>=400).
-// rejectWithValue mapping is correct. No change needed in thunk.
-// FIX: existingDiscountId field name confirmed matching backend response.
 export const createCompensationDiscount = createAsyncThunk(
   "adminDiscount/createCompensationDiscount",
   async (compensationData, { rejectWithValue }) => {
@@ -154,8 +173,6 @@ export const getDiscountStats = createAsyncThunk(
   }
 );
 
-// FIX: daysOld is a meaningful param — callers should pass { daysOld: N }.
-// Forwarded as-is to backend. Default of 90 applied server-side if omitted.
 export const triggerCleanup = createAsyncThunk(
   "adminDiscount/triggerCleanup",
   async (payload = {}, { rejectWithValue }) => {
@@ -168,7 +185,6 @@ export const triggerCleanup = createAsyncThunk(
   }
 );
 
-// FIX: cursor flag now carried inside return value, not read from meta.arg in reducer.
 export const getAuditLog = createAsyncThunk(
   "adminDiscount/getAuditLog",
   async (filters = {}, { rejectWithValue }) => {
@@ -218,8 +234,6 @@ const initialState = {
   pagination: null,
 
   currentDiscount: null,
-  // FIX: store usageHistoryTotal and usageHistoryCapped from getDiscountById
-  // so UI can show "displaying last 100 of N" when history is capped.
   usageHistoryTotal:  null,
   usageHistoryCapped: false,
 
@@ -256,8 +270,6 @@ const initialState = {
   success: false,
   message: null,
 
-  // FIX: deletionEligibleAt removed — backend 403 does not send this field.
-  // Only message is available from HandleError responses.
   deleteProtectionError: null,
   compensationConflict:  null,
 };
@@ -297,14 +309,11 @@ const adminDiscountSlice = createSlice({
       state.lastVipEligibleCount   = null;
     },
 
-    // FIX: reset pagination when called with a non-cursor (fresh filter) fetch
-    // to avoid stale nextCursor surviving into a new filter session.
     resetDiscountList: (state) => {
       state.discounts  = [];
       state.pagination = null;
     },
 
-    // Sole writer for page 2+ discount list pages. Deduplicates by _id.
     appendDiscounts: (state, action) => {
       const existingIds = new Set(state.discounts.map((d) => d._id));
       const fresh       = (action.payload?.discounts ?? []).filter((d) => !existingIds.has(d._id));
@@ -312,7 +321,6 @@ const adminDiscountSlice = createSlice({
       state.pagination  = action.payload?.pagination ?? state.pagination;
     },
 
-    // Sole writer for page 2+ audit log pages. Deduplicates by _id.
     appendAuditLogs: (state, action) => {
       const existingIds     = new Set(state.auditLogs.map((l) => l._id));
       const fresh           = (action.payload?.auditLogs ?? []).filter((l) => !existingIds.has(l._id));
@@ -323,9 +331,6 @@ const adminDiscountSlice = createSlice({
 
   extraReducers: (builder) => {
 
-    // getAllDiscounts
-    // FIX: cursor flag now read from payload._isCursorPage instead of meta.arg.cursor
-    // FIX: auditPagination reset when fresh (non-cursor) fetch arrives — clears stale nextCursor
     builder
       .addCase(getAllDiscounts.pending, (state) => {
         state.discountsLoading = true;
@@ -345,15 +350,14 @@ const adminDiscountSlice = createSlice({
 
     builder
       .addCase(getSingleDiscount.pending, (state) => {
-        state.detailLoading    = true;
-        state.error            = null;
+        state.detailLoading      = true;
+        state.error              = null;
         state.usageHistoryTotal  = null;
         state.usageHistoryCapped = false;
       })
       .addCase(getSingleDiscount.fulfilled, (state, action) => {
         state.detailLoading      = false;
         state.currentDiscount    = action.payload.discount ?? null;
-        // FIX: capture capped usage history metadata from backend
         state.usageHistoryTotal  = action.payload.discount?.usageHistoryTotal  ?? null;
         state.usageHistoryCapped = action.payload.discount?.usageHistoryCapped ?? false;
       })
@@ -372,7 +376,6 @@ const adminDiscountSlice = createSlice({
         state.success       = true;
         state.message       = action.payload.message;
         if (action.payload.discount) state.discounts.unshift(action.payload.discount);
-        // FIX: stats are now stale — null forces re-fetch on next stats mount
         state.stats         = null;
         state.categoryStats = [];
       })
@@ -393,14 +396,8 @@ const adminDiscountSlice = createSlice({
         const updated = action.payload.discount;
         if (!updated) return;
         const idx = state.discounts.findIndex((d) => d._id === updated._id);
-        if (idx !== -1) {
-          // FIX: replace entirely rather than shallow-merge to preserve nested fields
-          state.discounts[idx] = updated;
-        }
-        if (state.currentDiscount?._id === updated._id) {
-          // FIX: replace entirely — shallow merge drops populated sub-documents
-          state.currentDiscount = updated;
-        }
+        if (idx !== -1) state.discounts[idx] = updated;
+        if (state.currentDiscount?._id === updated._id) state.currentDiscount = updated;
       })
       .addCase(updateDiscount.rejected, (state, action) => {
         state.actionLoading = false;
@@ -409,22 +406,20 @@ const adminDiscountSlice = createSlice({
 
     builder
       .addCase(deleteDiscount.pending, (state) => {
-        state.actionLoading        = true;
-        state.error                = null;
+        state.actionLoading         = true;
+        state.error                 = null;
         state.deleteProtectionError = null;
       })
       .addCase(deleteDiscount.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.success       = true;
         state.message       = action.payload.message;
-        // FIX: only mutate local status if something actually changed
         if (!action.payload.alreadyInactive) {
           const idx = state.discounts.findIndex((d) => d._id === action.payload.id);
           if (idx !== -1) state.discounts[idx] = { ...state.discounts[idx], status: "inactive" };
           if (state.currentDiscount?._id === action.payload.id) {
             state.currentDiscount = { ...state.currentDiscount, status: "inactive" };
           }
-          // FIX: stats stale after real deactivation
           state.stats         = null;
           state.categoryStats = [];
         }
@@ -432,10 +427,7 @@ const adminDiscountSlice = createSlice({
       .addCase(deleteDiscount.rejected, (state, action) => {
         state.actionLoading = false;
         if (action.payload?.status === 403) {
-          // FIX: deletionEligibleAt removed — not present in backend 403 body
-          state.deleteProtectionError = {
-            message: action.payload.message,
-          };
+          state.deleteProtectionError = { message: action.payload.message };
         } else {
           state.error = action.payload?.message ?? action.payload;
         }
@@ -452,7 +444,6 @@ const adminDiscountSlice = createSlice({
         state.success       = true;
         state.message       = action.payload.message;
         if (action.payload.discount) state.discounts.unshift(action.payload.discount);
-        // FIX: stats stale after new discount creation
         state.stats         = null;
         state.categoryStats = [];
       })
@@ -483,7 +474,6 @@ const adminDiscountSlice = createSlice({
         state.lastCreatedVipDiscount = action.payload.discount          ?? null;
         state.lastVipEligibleCount   = action.payload.eligibleUserCount ?? null;
         if (action.payload.discount) state.discounts.unshift(action.payload.discount);
-        // FIX: stats stale after new VIP discount creation
         state.stats         = null;
         state.categoryStats = [];
       })
@@ -521,8 +511,6 @@ const adminDiscountSlice = createSlice({
           expired: action.payload.expired ?? 0,
           deleted: action.payload.deleted ?? 0,
         };
-        // FIX: cleanup hard-deletes expired discounts and bulk-expires actives —
-        // both the discount list and stats are now stale
         state.discounts     = [];
         state.pagination    = null;
         state.stats         = null;
@@ -533,9 +521,6 @@ const adminDiscountSlice = createSlice({
         state.error         = action.payload;
       });
 
-    // getAuditLog
-    // FIX: cursor flag read from payload._isCursorPage
-    // FIX: auditPagination reset on fresh fetch to clear stale nextCursor
     builder
       .addCase(getAuditLog.pending, (state) => {
         state.auditLoading = true;
