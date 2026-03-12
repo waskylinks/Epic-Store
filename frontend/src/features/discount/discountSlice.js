@@ -75,8 +75,12 @@ const initialState = {
   broadcastDiscounts: [],
   personalDiscounts:  [],
 
-  // Set by checkNewDiscounts; cleared when user opens the discounts page (getMyDiscounts).
-  // Preserved on network failure so a transient error never hides a real notification.
+  // Set by checkNewDiscounts.
+  // Cleared when:
+  //   A) user navigates to /my-discounts (getMyDiscounts.fulfilled)
+  //   B) user is already on /my-discounts when a new discount arrives
+  //      (clearNewDiscountDot dispatched by the page on mount/re-render)
+  // Preserved on network failure so a transient error never hides a real dot.
   hasNewDiscount: false,
 
   validationLoading:   false,
@@ -159,12 +163,12 @@ const userDiscountSlice = createSlice({
       .addCase(getMyDiscounts.fulfilled, (state, action) => {
         state.myDiscountsLoading = false;
         const all = action.payload.discounts ?? [];
-        // FIX: split into broadcast (audience:'all') and personal (audience:'specific')
-        // Both are fetched by getMyDiscounts and must be stored separately so the
-        // UI can merge them into the "My Discounts" tab correctly.
         state.broadcastDiscounts = all.filter((d) => d.audience === "all");
         state.personalDiscounts  = all.filter((d) => d.audience === "specific");
-        state.hasNewDiscount     = false;
+        // FIX: clear the dot — user has now seen their discounts.
+        // Backend also updates lastSeenDiscountsAt so the next
+        // checkNewDiscounts poll won't re-trigger for already-seen discounts.
+        state.hasNewDiscount = false;
       })
       .addCase(getMyDiscounts.rejected, (state, action) => {
         state.myDiscountsLoading = false;
@@ -177,7 +181,13 @@ const userDiscountSlice = createSlice({
       })
       .addCase(checkNewDiscounts.fulfilled, (state, action) => {
         state.checkingNewDiscount = false;
-        state.hasNewDiscount      = action.payload.hasNew === true;
+        // Only ever SET the dot to true here — never clear it.
+        // Clearing is the job of getMyDiscounts.fulfilled and clearNewDiscountDot.
+        // This prevents a race where the poll fires just after getMyDiscounts
+        // (before lastSeenDiscountsAt propagates) and incorrectly re-shows the dot.
+        if (action.payload.hasNew === true) {
+          state.hasNewDiscount = true;
+        }
       })
       .addCase(checkNewDiscounts.rejected, (state) => {
         state.checkingNewDiscount = false;

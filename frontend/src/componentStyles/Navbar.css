@@ -392,11 +392,13 @@
   cursor:  not-allowed;
 }
 
+/* Avatar wrapper — positioning context for the trigger dot */
 .nb-profile-img-wrapper {
+  position:      relative;
   width:         28px;
   height:        28px;
   border-radius: 6px;
-  overflow:      hidden;
+  overflow:      visible; /* must be visible so the dot isn't clipped */
   flex-shrink:   0;
   background:    var(--nb-surface);
 }
@@ -406,11 +408,31 @@
   height:        100% !important;
   object-fit:    cover !important;
   display:       block !important;
-  border-radius: 0 !important;
+  border-radius: 6px !important;
   border:        none !important;
   background:    transparent !important;
   padding:       0 !important;
   margin:        0 !important;
+}
+
+/* Corner dot on avatar — visible on desktop before the menu opens */
+.nb-profile-trigger-dot {
+  position:       absolute;
+  top:            -3px;
+  right:          -3px;
+  width:          10px;
+  height:         10px;
+  border-radius:  50%;
+  background:     #EF4444;
+  border:         2px solid #fff;
+  display:        block;
+  pointer-events: none;
+  z-index:        2;
+  animation:      nb-dot-pulse 2.4s ease-in-out infinite;
+}
+
+.nb-profile-trigger.nb-active .nb-profile-trigger-dot {
+  border-color: var(--nb-coral-light);
 }
 
 .nb-profile-arrow {
@@ -502,6 +524,7 @@
 .nb-profile-menu-options { padding: 6px; }
 
 .nb-profile-menu-option {
+  position:      relative; /* positioning context for .nb-notif-dot */
   width:         100%;
   padding:       9px 10px;
   background:    none;
@@ -547,9 +570,10 @@
   font-weight:   700;
 }
 
-/* Icon + dot wrapper — desktop dropdown */
+/* Icon wrap — desktop dropdown.
+   position:static so it never traps the .nb-notif-dot inside it. */
 .nb-menu-option-icon-wrap {
-  position:        relative;
+  position:        static;
   display:         inline-flex;
   align-items:     center;
   justify-content: center;
@@ -563,10 +587,15 @@
 /* ============================================================
    12. NOTIFICATION DOT
    ============================================================ */
+
+/* Dot rendered as a direct child of .nb-profile-menu-option or
+   .nb-mobile-menu-action (NOT inside the icon wrap).
+   Positions at the far right of the row, vertically centred.  */
 .nb-notif-dot {
   position:       absolute;
-  top:            -2px;
-  right:          -2px;
+  top:            50%;
+  right:          10px;
+  transform:      translateY(-50%);
   width:          8px;
   height:         8px;
   border-radius:  50%;
@@ -865,6 +894,7 @@
   }
 
   .nb-mobile-menu-action {
+    position:      relative; /* positioning context for .nb-notif-dot */
     width:         100%;
     padding:       10px 12px;
     background:    #fff;
@@ -892,9 +922,9 @@
     color:      var(--nb-text);
   }
 
-  .nb-mobile-menu-action:hover svg     { color: var(--nb-coral); }
-  .nb-mobile-menu-action.nb-danger     { color: #DC2626; }
-  .nb-mobile-menu-action.nb-danger svg { color: #DC2626; }
+  .nb-mobile-menu-action:hover svg       { color: var(--nb-coral); }
+  .nb-mobile-menu-action.nb-danger       { color: #DC2626; }
+  .nb-mobile-menu-action.nb-danger svg   { color: #DC2626; }
   .nb-mobile-menu-action.nb-danger:hover { background: #FEF2F2; }
 
   .nb-mobile-action-badge {
@@ -907,9 +937,10 @@
     font-weight:   700;
   }
 
-  /* Icon + dot wrapper — mobile menu actions */
+  /* Icon wrap — mobile drawer.
+     position:static so it never traps .nb-notif-dot inside it. */
   .nb-mobile-icon-wrap {
-    position:        relative;
+    position:        static;
     display:         inline-flex;
     align-items:     center;
     justify-content: center;
@@ -958,8 +989,8 @@
     font-size: 12px;
   }
 
-  .nb-profile-trigger      { padding: 4px 6px 4px 4px; }
-  .nb-profile-img-wrapper  { width: 26px; height: 26px; }
+  .nb-profile-trigger     { padding: 4px 6px 4px 4px; }
+  .nb-profile-img-wrapper { width: 26px; height: 26px; }
 
   .nb-icon-link { padding: 7px; }
   .nb-icon      { font-size: 1.2rem !important; }
@@ -990,5 +1021,6 @@
     transition-duration: 0.01ms !important;
   }
 
-  .nb-notif-dot { animation: none; }
+  .nb-notif-dot,
+  .nb-profile-trigger-dot { animation: none; }
 }
