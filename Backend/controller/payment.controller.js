@@ -211,27 +211,56 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       const canUse = await discount.canUserUse(userId);
       if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
 
-      const validation = discount.validateCart(validatedOrder.itemPrice, cartItems, userId);
+      // FIX BUG-PC1: The original code passed raw req.body.cartItems to both
+      // validateCart() and calculateDiscount(). Raw cartItems only carry
+      // { product: ObjectId, quantity: N } — no category field. This silently
+      // bypassed all eligibleProductCategories restrictions, identical to the
+      // BUG-01 found and fixed in cart-controller.js.
+      //
+      // Fix: use validatedOrder.orderItems, which are fully resolved product
+      // objects built by validateAndCalculateOrder(). These carry name,
+      // unitPrice, itemTotal, and — critically — category, so the discount
+      // model's category restriction check works correctly.
+      //
+      // Note: the original itemPrice (pre-discount) is preserved in a separate
+      // variable so the session can store both the gross and net amounts,
+      // enabling future audit or refund calculations.
+      const originalItemPrice = validatedOrder.itemPrice;
+
+      const validation = discount.validateCart(
+        originalItemPrice,
+        validatedOrder.orderItems,   // FIX: was cartItems (raw) — now resolved items with category
+        userId
+      );
       if (!validation.valid) return next(new HandleError(validation.reason, 400));
 
-      const discountAmount = discount.calculateDiscount(validatedOrder.itemPrice, cartItems);
-      const discountedItemPrice = Math.max(0, validatedOrder.itemPrice - discountAmount);
+      const discountAmount = discount.calculateDiscount(
+        originalItemPrice,
+        validatedOrder.orderItems    // FIX: was cartItems (raw) — now resolved items with category
+      );
+      const discountedItemPrice = Math.max(0, originalItemPrice - discountAmount);
       const taxPrice = Math.round(discountedItemPrice * 0.18 * 100) / 100;
       const shippingPrice = discountedItemPrice >= 500 ? 0 : 50;
 
       discountInfo = {
-        code: discount.code,
-        discountId: discount._id,
-        type: discount.type,
-        value: discount.value,
+        code:           discount.code,
+        discountId:     discount._id,
+        type:           discount.type,
+        value:          discount.value,
         discountAmount: Math.round(discountAmount * 100) / 100,
-        description: discount.description
+        description:    discount.description,
+        // FIX BUG-PC2 (audit): Preserve original itemPrice in the session so
+        // the order record can reflect both gross and net amounts. Previously
+        // the original was overwritten and permanently lost.
+        originalItemPrice: Math.round(originalItemPrice * 100) / 100,
       };
 
-      validatedOrder.itemPrice = Math.round(discountedItemPrice * 100) / 100;
-      validatedOrder.taxPrice = taxPrice;
+      // Mutate validatedOrder pricing to reflect the discount for session storage
+      // and gateway charge amount.
+      validatedOrder.itemPrice    = Math.round(discountedItemPrice * 100) / 100;
+      validatedOrder.taxPrice     = taxPrice;
       validatedOrder.shippingPrice = shippingPrice;
-      validatedOrder.totalPrice = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
+      validatedOrder.totalPrice   = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
     } catch (err) {
       if (err instanceof HandleError) return next(err);
       return next(new HandleError('Failed to apply discount code. Please try again.', 500));
@@ -318,7 +347,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       taxPrice: validatedOrder.taxPrice,
       shippingPrice: validatedOrder.shippingPrice,
       totalPrice: validatedOrder.totalPrice,
-      ...(discountInfo && { discount: { code: discountInfo.code, amount: discountInfo.discountAmount } })
+      ...(discountInfo && {
+        discount: {
+          code:               discountInfo.code,
+          amount:             discountInfo.discountAmount,
+          originalItemPrice:  discountInfo.originalItemPrice,
+        }
+      })
     }
   };
 
@@ -516,9 +551,13 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ...(session.discount && {
       discounts: {
         codes: [{
-          code: session.discount.code,
+          code:   session.discount.code,
           amount: session.discount.discountAmount,
-          type: session.discount.type
+          type:   session.discount.type,
+          // FIX BUG-PC2 (audit): surface originalItemPrice on the order record
+          // so the pre-discount gross amount is auditable and refund logic has
+          // a correct base to work from.
+          originalItemPrice: session.discount.originalItemPrice ?? null,
         }],
         totalDiscount: session.discount.discountAmount
       }
@@ -578,7 +617,11 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // POST-ORDER — all fire-and-forget, failures are swallowed
   // ═══════════════════════════════════════════════════════════════════
 
-  // 16. Record discount usage
+  // 16. Record discount usage — this is the single authoritative point where
+  // usage is counted across the entire discount flow:
+  //   applyDiscountCode (cart):    preview only, no recordUsage
+  //   initializePaymentController: validation only, no recordUsage
+  //   verifyPaymentController:     ← HERE, exactly once, after order is committed
   if (session.discount?.discountId) {
     Discount.findById(session.discount.discountId)
       .then(discount => discount?.recordUsage(userId, order._id, session.discount.discountAmount))
