@@ -65,7 +65,6 @@ export const createDiscount = createAsyncThunk(
         payload.usageLimit = { ...payload.usageLimit };
         const t = payload.usageLimit.totalUses;
         if (t === "" || t === null || t === undefined) {
-          // Omitting totalUses lets the backend treat the code as unlimited
           delete payload.usageLimit.totalUses;
         } else {
           payload.usageLimit.totalUses = Number(t);
@@ -75,8 +74,17 @@ export const createDiscount = createAsyncThunk(
         }
       }
 
-      // Empty string validFrom triggers backend default (Date.now()); don't send it
       if (!payload.validFrom) delete payload.validFrom;
+
+      if (payload.eligibleProductCategories !== undefined) {
+        if (!Array.isArray(payload.eligibleProductCategories)) {
+          payload.eligibleProductCategories =
+            payload.eligibleProductCategories === "" ? [] : [payload.eligibleProductCategories];
+        }
+        if (payload.eligibleProductCategories.length === 0) {
+          delete payload.eligibleProductCategories;
+        }
+      }
 
       const { data } = await axios.post("/api/v1/discounts", payload, { withCredentials: true });
       return data;
@@ -149,9 +157,21 @@ export const createDiscountForUsers = createAsyncThunk(
   "adminDiscount/createDiscountForUsers",
   async (payload, { rejectWithValue }) => {
     try {
+      const sanitized = { ...payload };
+
+      if (sanitized.eligibleProductCategories !== undefined) {
+        if (!Array.isArray(sanitized.eligibleProductCategories)) {
+          sanitized.eligibleProductCategories =
+            sanitized.eligibleProductCategories === "" ? [] : [sanitized.eligibleProductCategories];
+        }
+        if (sanitized.eligibleProductCategories.length === 0) {
+          delete sanitized.eligibleProductCategories;
+        }
+      }
+
       const { data } = await axios.post(
         "/api/v1/discounts/create-for-user",
-        payload,
+        sanitized,
         { withCredentials: true }
       );
       return data;

@@ -53,6 +53,16 @@ const TYPE_OPTIONS     = ['percentage', 'fixed'];
 const STATUS_OPTIONS   = ['active', 'expired', 'inactive'];
 const EDIT_STATUS_OPTIONS = ['active', 'inactive'];
 
+const PRODUCT_CATEGORIES = [
+  'Electronics',
+  'Clothing & Apparel',
+  'Home & Living',
+  'Sports & Outdoors',
+  'Beauty & Personal Care',
+  'Books & Media',
+  'Food & Beverages',
+];
+
 const fmtDate = (d) =>
   d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 
@@ -117,6 +127,49 @@ const EmptyState = ({ icon, title, desc }) => (
     {desc && <p className="addisc-empty-desc">{desc}</p>}
   </div>
 );
+
+// ─────────────────────────────────────────────
+// PRODUCT CATEGORY CHIPS
+// ─────────────────────────────────────────────
+
+const ProductCategoryChips = ({ selected = [], onChange, mode = 'select', disabled = false }) => {
+  if (mode === 'display') {
+    if (!selected || selected.length === 0) {
+      return <span className="addisc-prodcat-none">All products</span>;
+    }
+    return (
+      <div className="addisc-prodcat-chips">
+        {selected.map((cat) => (
+          <span key={cat} className="addisc-prodcat-chip addisc-prodcat-chip--display">{cat}</span>
+        ))}
+      </div>
+    );
+  }
+
+  const toggle = (cat) => {
+    if (disabled) return;
+    const next = selected.includes(cat)
+      ? selected.filter((c) => c !== cat)
+      : [...selected, cat];
+    onChange(next);
+  };
+
+  return (
+    <div className="addisc-prodcat-chips">
+      {PRODUCT_CATEGORIES.map((cat) => (
+        <button
+          key={cat}
+          type="button"
+          disabled={disabled}
+          onClick={() => toggle(cat)}
+          className={`addisc-prodcat-chip ${selected.includes(cat) ? 'addisc-prodcat-chip--active' : ''} ${disabled ? 'addisc-prodcat-chip--disabled' : ''}`}
+        >
+          {cat}
+        </button>
+      ))}
+    </div>
+  );
+};
 
 // ─────────────────────────────────────────────
 // AUDIT TIMELINE ENTRY
@@ -190,67 +243,69 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => (
         </button>
       </div>
 
-      <div className="addisc-cleanup-body">
-        {result ? (
-          <div className="addisc-cleanup-result">
-            <div className="addisc-cleanup-result-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+      <div className="addisc-modal-form">
+        <div className="addisc-cleanup-body">
+          {result ? (
+            <div className="addisc-cleanup-result">
+              <div className="addisc-cleanup-result-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <p className="addisc-cleanup-result-title">Cleanup complete</p>
+              <p className="addisc-cleanup-result-desc">
+                <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} expired &nbsp;·&nbsp;
+                <strong>{result.deleted}</strong> code{result.deleted !== 1 ? 's' : ''} permanently deleted
+              </p>
             </div>
-            <p className="addisc-cleanup-result-title">Cleanup complete</p>
-            <p className="addisc-cleanup-result-desc">
-              <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} expired &nbsp;·&nbsp;
-              <strong>{result.deleted}</strong> code{result.deleted !== 1 ? 's' : ''} permanently deleted
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="addisc-cleanup-icon">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <polyline points="1 4 1 10 7 10" />
-                <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
-              </svg>
-            </div>
-            <p className="addisc-cleanup-desc">
-              This will scan all discount codes and apply automated maintenance rules. This action cannot be undone.
-            </p>
-            <ul className="addisc-cleanup-checklist">
-              <li>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+          ) : (
+            <>
+              <div className="addisc-cleanup-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                  <polyline points="1 4 1 10 7 10" />
+                  <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
                 </svg>
-                Expire codes whose <strong>validUntil</strong> date has passed
-              </li>
-              <li>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                Delete expired codes outside the 30-day fraud-protection window
-              </li>
-              <li>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                Codes inside the fraud-protection window will <strong>not</strong> be deleted
-              </li>
-            </ul>
-          </>
-        )}
+              </div>
+              <p className="addisc-cleanup-desc">
+                This will scan all discount codes and apply automated maintenance rules. This action cannot be undone.
+              </p>
+              <ul className="addisc-cleanup-checklist">
+                <li>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  Expire codes whose validUntil date has passed
+                </li>
+                <li>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  Delete expired codes outside the 30-day fraud-protection window
+                </li>
+                <li>
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  Codes inside the fraud-protection window will not be deleted
+                </li>
+              </ul>
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="addisc-cleanup-footer">
+      <div className="addisc-modal-footer addisc-cleanup-footer">
         <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose} disabled={running}>
           {result ? 'Close' : 'Cancel'}
         </button>
@@ -296,6 +351,8 @@ const DetailDrawer = ({
   const isLocked = (d.usageLimit?.currentUses ?? 0) >= 1 &&
                    d.deletionEligibleAt &&
                    new Date(d.deletionEligibleAt) > new Date();
+
+  const eligibleProductCategories = d.conditions?.eligibleProductCategories ?? [];
 
   return (
     <div className="addisc-drawer-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
@@ -380,6 +437,14 @@ const DetailDrawer = ({
                   <span className="addisc-drawer-value">{d.relatedOrder.orderNumber ?? d.relatedOrder}</span>
                 </div>
               )}
+
+              <div className="addisc-drawer-field addisc-drawer-field--full">
+                <span className="addisc-drawer-label">Product categories</span>
+                <ProductCategoryChips
+                  selected={eligibleProductCategories}
+                  mode="display"
+                />
+              </div>
             </div>
             {d.description && <p className="addisc-drawer-desc">{d.description}</p>}
             {d.notes && <p className="addisc-drawer-notes">📝 {d.notes}</p>}
@@ -496,39 +561,63 @@ const DetailDrawer = ({
 
 // ─────────────────────────────────────────────
 // CREATE / EDIT MODAL
-//
-// FIX: General discount creation no longer offers a "Specific users" audience
-// option — that path is now exclusively handled by the VIP discount flow.
-// Create mode always sends audience:'all' (broadcast).
-// Edit mode shows the existing audience as read-only (audience is immutable).
 // ─────────────────────────────────────────────
 
 const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit, onClose }) => {
   const [form, setForm] = useState({
-    code:        initial.code        ?? '',
-    description: initial.description ?? '',
-    type:        initial.type        ?? 'percentage',
-    value:       initial.value       ?? '',
-    category:    initial.category    ?? 'promo',
-    // FIX: create always defaults to 'all' — 'specific' removed from this flow
-    audience:    initial.audience    ?? 'all',
-    status:      initial.status      ?? 'active',
-    validFrom:   initial.validFrom   ? initial.validFrom.slice(0, 10) : '',
-    validUntil:  initial.validUntil  ? initial.validUntil.slice(0, 10) : '',
-    usageLimit:  initial.usageLimit  ?? { totalUses: '', usesPerUser: 1 },
-    conditions:  initial.conditions  ?? { minPurchaseAmount: 0, firstOrderOnly: false },
-    notes:       initial.notes       ?? '',
+    code:                      initial.code        ?? '',
+    description:               initial.description ?? '',
+    type:                      initial.type        ?? 'percentage',
+    value:                     initial.value       ?? '',
+    category:                  initial.category    ?? 'promo',
+    audience:                  initial.audience    ?? 'all',
+    status:                    initial.status      ?? 'active',
+    validFrom:                 initial.validFrom   ? initial.validFrom.slice(0, 10) : '',
+    validUntil:                initial.validUntil  ? initial.validUntil.slice(0, 10) : '',
+    usageLimit:                initial.usageLimit  ?? { totalUses: '', usesPerUser: 1 },
+    conditions:                initial.conditions  ?? { minPurchaseAmount: 0, firstOrderOnly: false },
+    notes:                     initial.notes       ?? '',
+    eligibleProductCategories: initial.conditions?.eligibleProductCategories ?? [],
   });
 
   const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
 
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    const payload = { ...form };
+    if (payload.eligibleProductCategories.length === 0) {
+      delete payload.eligibleProductCategories;
+    }
+    onSubmit(payload);
+  };
+
+  const isEditRestricted = mode === 'edit' && form.eligibleProductCategories.length > 0;
+
   return (
     <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="addisc-modal">
+
+        {/* ── Header ── */}
         <div className="addisc-modal-header">
-          <h2 className="addisc-modal-title">
-            {mode === 'create' ? 'New Broadcast Discount' : 'Edit Discount'}
-          </h2>
+          <div className="addisc-modal-header-left">
+            <div className="addisc-modal-title-icon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                <line x1="7" y1="7" x2="7.01" y2="7" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="addisc-modal-title">
+                {mode === 'create' ? 'New Broadcast Discount' : `Edit — ${initial.code}`}
+              </h2>
+              <p className="addisc-modal-subtitle">
+                {mode === 'create'
+                  ? 'Visible to all users · triggers navbar notification'
+                  : 'Update editable fields. Type, value, and category are locked after creation.'}
+              </p>
+            </div>
+          </div>
           <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -538,7 +627,9 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
           </button>
         </div>
 
-        <form className="addisc-modal-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}>
+        {/* ── Scrollable form body ── */}
+        <form className="addisc-modal-form" onSubmit={handleSubmit}>
+
           {error && (
             <div className="addisc-modal-error" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
@@ -551,165 +642,221 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           )}
 
-          {/*
-            FIX: Audience field behaviour by mode:
-            - create: locked to 'all' (broadcast). Specific-user codes are
-              created exclusively via the VIP discount flow. Show informational
-              banner instead of a toggle.
-            - edit: show current audience value as read-only; audience is
-              immutable after creation.
-          */}
-          <div className="addisc-form-field">
-            <label className="addisc-form-label">Audience</label>
-            {mode === 'create' ? (
-              <div className="addisc-audience-fixed">
-                <div className="addisc-audience-opt addisc-audience-opt--active addisc-audience-opt--locked">
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+          {/* ── SECTION: Audience ── */}
+          <div className="addisc-form-section">
+            <div className="addisc-form-section-label">Audience</div>
+            <div className={`addisc-audience-display ${form.audience === 'all' ? 'addisc-audience-display--broadcast' : 'addisc-audience-display--specific'}`}>
+              <div className="addisc-audience-display-icon">
+                {form.audience === 'all' ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                     <circle cx="9" cy="7" r="4" />
                     <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
                     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
-                  All users (broadcast)
-                </div>
-                <p className="addisc-form-hint addisc-form-hint--info">
-                  This code will be visible to all users and trigger the navbar notification dot.
-                  To target specific users, use the <strong>VIP discount</strong> button instead.
-                </p>
-              </div>
-            ) : (
-              <div className="addisc-audience-opt addisc-audience-opt--active addisc-audience-opt--locked">
-                {form.audience === 'all' ? (
-                  <>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                      <circle cx="9" cy="7" r="4" />
-                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                    </svg>
-                    All users (broadcast)
-                  </>
                 ) : (
-                  <>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                    Specific users
-                  </>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
                 )}
               </div>
-            )}
-          </div>
-
-          {mode === 'create' && (
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-code">Code</label>
-              <input id="addisc-code" className="addisc-form-input" type="text"
-                placeholder="e.g. SUMMER25"
-                value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())}
-                required maxLength={40} />
-            </div>
-          )}
-
-          <div className="addisc-form-row">
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-type">Type</label>
-              <select id="addisc-type" className="addisc-form-select" value={form.type}
-                onChange={(e) => set('type', e.target.value)} disabled={mode === 'edit'}>
-                {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-value">Value</label>
-              <input id="addisc-value" className="addisc-form-input" type="number" min="0" step="0.01"
-                placeholder={form.type === 'percentage' ? '20' : '10.00'}
-                value={form.value} onChange={(e) => set('value', e.target.value)}
-                required={mode === 'create'} disabled={mode === 'edit'} />
+              <div className="addisc-audience-display-text">
+                <span className="addisc-audience-display-name">
+                  {form.audience === 'all' ? 'All users (broadcast)' : 'Specific users'}
+                </span>
+                {mode === 'create' && (
+                  <span className="addisc-audience-display-hint">
+                    To target specific users, use the <strong>VIP discount</strong> button instead.
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="addisc-form-row">
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-category">Category</label>
-              <select id="addisc-category" className="addisc-form-select" value={form.category}
-                onChange={(e) => set('category', e.target.value)} disabled={mode === 'edit'}>
-                {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            {mode === 'edit' && (
+          {/* ── SECTION: Identity ── */}
+          <div className="addisc-form-section">
+            <div className="addisc-form-section-label">Identity</div>
+
+            {mode === 'create' && (
               <div className="addisc-form-field">
-                <label className="addisc-form-label" htmlFor="addisc-status">Status</label>
-                <select id="addisc-status" className="addisc-form-select" value={form.status}
-                  onChange={(e) => set('status', e.target.value)}>
-                  {EDIT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-                {form.status === 'active' && (
-                  <p className="addisc-form-hint addisc-form-hint--warn">
-                    Reactivating requires a future validUntil date.
-                  </p>
-                )}
+                <label className="addisc-form-label" htmlFor="addisc-code">Discount code</label>
+                <input id="addisc-code" className="addisc-form-input" type="text"
+                  placeholder="e.g. SUMMER25"
+                  value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())}
+                  required maxLength={40} />
+                <span className="addisc-form-hint">Customers will enter this code at checkout.</span>
               </div>
+            )}
+
+            <div className="addisc-form-field">
+              <label className="addisc-form-label" htmlFor="addisc-desc">Description <span className="addisc-form-label-required">*</span></label>
+              <textarea id="addisc-desc" className="addisc-form-textarea" rows={2}
+                placeholder="e.g. Summer sale — 20% off all orders"
+                value={form.description} onChange={(e) => set('description', e.target.value)} required />
+              <span className="addisc-form-hint">Shown to customers in their cart and order details.</span>
+            </div>
+          </div>
+
+          {/* ── SECTION: Discount value ── */}
+          <div className="addisc-form-section">
+            <div className="addisc-form-section-label">Discount value</div>
+
+            <div className="addisc-form-row">
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-type">Type</label>
+                <select id="addisc-type" className="addisc-form-select" value={form.type}
+                  onChange={(e) => set('type', e.target.value)} disabled={mode === 'edit'}>
+                  <option value="percentage">Percentage (%)</option>
+                  <option value="fixed">Fixed amount ($)</option>
+                </select>
+                {mode === 'edit' && <span className="addisc-form-hint addisc-form-hint--locked">Locked after creation</span>}
+              </div>
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-value">
+                  Value {form.type === 'percentage' ? '(%)' : '($)'}
+                </label>
+                <input id="addisc-value" className="addisc-form-input" type="number" min="0" step="0.01"
+                  placeholder={form.type === 'percentage' ? '20' : '10.00'}
+                  value={form.value} onChange={(e) => set('value', e.target.value)}
+                  required={mode === 'create'} disabled={mode === 'edit'} />
+                {mode === 'edit' && <span className="addisc-form-hint addisc-form-hint--locked">Locked after creation</span>}
+              </div>
+            </div>
+
+            <div className="addisc-form-row">
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-category">Category</label>
+                <select id="addisc-category" className="addisc-form-select" value={form.category}
+                  onChange={(e) => set('category', e.target.value)} disabled={mode === 'edit'}>
+                  {CATEGORY_OPTIONS.map((c) => <option key={c} value={c} style={{ textTransform: 'capitalize' }}>{c}</option>)}
+                </select>
+                {mode === 'edit' && <span className="addisc-form-hint addisc-form-hint--locked">Locked after creation</span>}
+              </div>
+              {mode === 'edit' && (
+                <div className="addisc-form-field">
+                  <label className="addisc-form-label" htmlFor="addisc-status">Status</label>
+                  <select id="addisc-status" className="addisc-form-select" value={form.status}
+                    onChange={(e) => set('status', e.target.value)}>
+                    {EDIT_STATUS_OPTIONS.map((s) => <option key={s} value={s} style={{ textTransform: 'capitalize' }}>{s}</option>)}
+                  </select>
+                  {form.status === 'active' && (
+                    <span className="addisc-form-hint addisc-form-hint--warn">
+                      Reactivating requires a future validUntil date.
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── SECTION: Validity window ── */}
+          <div className="addisc-form-section">
+            <div className="addisc-form-section-label">Validity window</div>
+            <div className="addisc-form-row">
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-from">Active from</label>
+                <input id="addisc-from" className="addisc-form-input" type="date"
+                  value={form.validFrom} onChange={(e) => set('validFrom', e.target.value)} />
+                <span className="addisc-form-hint">Leave blank to activate immediately.</span>
+              </div>
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-until">
+                  Expires on <span className="addisc-form-label-required">*</span>
+                </label>
+                <input id="addisc-until" className="addisc-form-input" type="date"
+                  value={form.validUntil} onChange={(e) => set('validUntil', e.target.value)} required />
+              </div>
+            </div>
+          </div>
+
+          {/* ── SECTION: Usage limits ── */}
+          <div className="addisc-form-section">
+            <div className="addisc-form-section-label">Usage limits</div>
+            <div className="addisc-form-row">
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-total-uses">Total uses cap</label>
+                <input id="addisc-total-uses" className="addisc-form-input" type="number" min="1"
+                  placeholder="∞ unlimited"
+                  value={form.usageLimit.totalUses}
+                  onChange={(e) => setForm((p) => ({ ...p, usageLimit: { ...p.usageLimit, totalUses: e.target.value } }))} />
+                <span className="addisc-form-hint">Max redemptions across all users.</span>
+              </div>
+              <div className="addisc-form-field">
+                <label className="addisc-form-label" htmlFor="addisc-per-user">Uses per user</label>
+                <input id="addisc-per-user" className="addisc-form-input" type="number" min="1"
+                  value={form.usageLimit.usesPerUser}
+                  onChange={(e) => setForm((p) => ({ ...p, usageLimit: { ...p.usageLimit, usesPerUser: e.target.value } }))} />
+                <span className="addisc-form-hint">How many times one user can redeem.</span>
+              </div>
+            </div>
+          </div>
+
+          {/* ── SECTION: Product restrictions ── */}
+          <div className="addisc-form-section">
+            <div className="addisc-form-section-label">
+              Product category restriction
+              <span className="addisc-form-section-optional">optional</span>
+            </div>
+            <p className="addisc-form-section-desc">
+              Select categories to limit which products this discount applies to. Leave all unchecked to apply to the entire cart.
+            </p>
+            <ProductCategoryChips
+              selected={form.eligibleProductCategories}
+              onChange={(cats) => set('eligibleProductCategories', cats)}
+              mode="select"
+              disabled={mode === 'edit'}
+            />
+            {mode === 'edit' && isEditRestricted && (
+              <span className="addisc-form-hint addisc-form-hint--warn" style={{ display: 'block', marginTop: 10 }}>
+                Category restriction is read-only after creation. Deactivate and recreate to change it.
+              </span>
+            )}
+            {mode === 'create' && form.eligibleProductCategories.length > 0 && (
+              <span className="addisc-form-hint addisc-form-hint--info" style={{ display: 'block', marginTop: 10 }}>
+                Discount only applies to carts containing items from{' '}
+                <strong>{form.eligibleProductCategories.join(', ')}</strong>.
+                {form.type === 'percentage' && ' Percentage is calculated on eligible item subtotals only.'}
+              </span>
             )}
           </div>
 
-          <div className="addisc-form-field">
-            <label className="addisc-form-label" htmlFor="addisc-desc">Description</label>
-            <textarea id="addisc-desc" className="addisc-form-textarea" rows={2}
-              placeholder="What is this discount for?"
-              value={form.description} onChange={(e) => set('description', e.target.value)} required />
-          </div>
-
-          <div className="addisc-form-row">
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-from">Valid from</label>
-              <input id="addisc-from" className="addisc-form-input" type="date"
-                value={form.validFrom} onChange={(e) => set('validFrom', e.target.value)} />
+          {/* ── SECTION: Internal notes ── */}
+          <div className="addisc-form-section addisc-form-section--last">
+            <div className="addisc-form-section-label">
+              Internal notes
+              <span className="addisc-form-section-optional">optional</span>
             </div>
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-until">Valid until</label>
-              <input id="addisc-until" className="addisc-form-input" type="date"
-                value={form.validUntil} onChange={(e) => set('validUntil', e.target.value)} required />
+            <div className="addisc-form-field" style={{ marginBottom: 0 }}>
+              <input id="addisc-notes" className="addisc-form-input" type="text"
+                placeholder="e.g. Created for Q3 email campaign"
+                value={form.notes} onChange={(e) => set('notes', e.target.value)} />
+              <span className="addisc-form-hint">Not visible to customers. Admin reference only.</span>
             </div>
           </div>
 
-          <div className="addisc-form-row">
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-total-uses">Total uses limit</label>
-              <input id="addisc-total-uses" className="addisc-form-input" type="number" min="1"
-                placeholder="∞ unlimited"
-                value={form.usageLimit.totalUses}
-                onChange={(e) => setForm((p) => ({ ...p, usageLimit: { ...p.usageLimit, totalUses: e.target.value } }))} />
-            </div>
-            <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-per-user">Uses per user</label>
-              <input id="addisc-per-user" className="addisc-form-input" type="number" min="1"
-                value={form.usageLimit.usesPerUser}
-                onChange={(e) => setForm((p) => ({ ...p, usageLimit: { ...p.usageLimit, usesPerUser: e.target.value } }))} />
-            </div>
-          </div>
-
-          <div className="addisc-form-field">
-            <label className="addisc-form-label" htmlFor="addisc-notes">Notes (internal)</label>
-            <input id="addisc-notes" className="addisc-form-input" type="text"
-              placeholder="Internal reference note"
-              value={form.notes} onChange={(e) => set('notes', e.target.value)} />
-          </div>
-
-          <div className="addisc-modal-footer">
-            <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose}>Cancel</button>
-            <button type="submit" className="addisc-btn addisc-btn--primary" disabled={loading}>
-              {loading ? <Spinner size={15} /> : mode === 'create' ? 'Create discount' : 'Save changes'}
-            </button>
-          </div>
         </form>
+
+        {/* ── Sticky footer ── */}
+        <div className="addisc-modal-footer">
+          <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose}>Cancel</button>
+          <button
+            type="submit"
+            form="addisc-discount-form"
+            className="addisc-btn addisc-btn--primary"
+            disabled={loading}
+            onClick={handleSubmit}
+          >
+            {loading ? <Spinner size={15} /> : mode === 'create' ? 'Create discount' : 'Save changes'}
+          </button>
+        </div>
       </div>
     </div>
   );
 };
+
 
 // ─────────────────────────────────────────────
 // COMPENSATION MODAL
@@ -841,20 +988,21 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
 
 const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipEligibleCount, onSubmit, onClose }) => {
   const [form, setForm] = useState({
-    userIdsRaw:        '',
-    emailsRaw:         '',
-    description:       '',
-    type:              'percentage',
-    value:             '',
-    category:          'loyalty',
-    validDays:         30,
-    validUntil:        '',
-    usesPerUser:       1,
-    totalUses:         '',
-    minPurchaseAmount: 0,
-    firstOrderOnly:    false,
-    code:              '',
-    notes:             '',
+    userIdsRaw:                '',
+    emailsRaw:                 '',
+    description:               '',
+    type:                      'percentage',
+    value:                     '',
+    category:                  'loyalty',
+    validDays:                 30,
+    validUntil:                '',
+    usesPerUser:               1,
+    totalUses:                 '',
+    minPurchaseAmount:         0,
+    firstOrderOnly:            false,
+    code:                      '',
+    notes:                     '',
+    eligibleProductCategories: [],
   });
 
   const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
@@ -882,6 +1030,9 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
       payload.validDays = form.validDays;
     }
     if (form.totalUses) payload.totalUses = form.totalUses;
+    if (form.eligibleProductCategories.length > 0) {
+      payload.eligibleProductCategories = form.eligibleProductCategories;
+    }
     onSubmit(payload);
   };
 
@@ -899,18 +1050,25 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
               </svg>
             </button>
           </div>
-          <div className="addisc-vip-success">
-            <div className="addisc-vip-success-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+          <div className="addisc-modal-form">
+            <div className="addisc-vip-success">
+              <div className="addisc-vip-success-icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none"
+                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+              <p className="addisc-vip-success-code">{lastCreatedVipDiscount.code}</p>
+              <p className="addisc-vip-success-desc">
+                Issued to <strong>{lastVipEligibleCount}</strong> user{lastVipEligibleCount !== 1 ? 's' : ''}.
+                Valid until {fmtDate(lastCreatedVipDiscount.validUntil)}.
+              </p>
+              {lastCreatedVipDiscount.conditions?.eligibleProductCategories?.length > 0 && (
+                <p className="addisc-vip-success-cats">
+                  Restricted to: {lastCreatedVipDiscount.conditions.eligibleProductCategories.join(', ')}
+                </p>
+              )}
             </div>
-            <p className="addisc-vip-success-code">{lastCreatedVipDiscount.code}</p>
-            <p className="addisc-vip-success-desc">
-              Issued to <strong>{lastVipEligibleCount}</strong> user{lastVipEligibleCount !== 1 ? 's' : ''}.
-              Valid until {fmtDate(lastCreatedVipDiscount.validUntil)}.
-            </p>
           </div>
           <div className="addisc-modal-footer">
             <button type="button" className="addisc-btn addisc-btn--primary" onClick={onClose}>Done</button>
@@ -1052,6 +1210,24 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
             </label>
           </div>
 
+          <div className="addisc-form-field">
+            <label className="addisc-form-label">
+              Product category restriction
+              <span className="addisc-form-label-hint"> — leave unchecked for no restriction</span>
+            </label>
+            <ProductCategoryChips
+              selected={form.eligibleProductCategories}
+              onChange={(cats) => set('eligibleProductCategories', cats)}
+              mode="select"
+            />
+            {form.eligibleProductCategories.length > 0 && (
+              <p className="addisc-form-hint addisc-form-hint--info">
+                Discount only applies to carts containing items from the selected {form.eligibleProductCategories.length === 1 ? 'category' : 'categories'}.
+                {form.type === 'percentage' && ' The percentage is calculated on eligible item subtotals only.'}
+              </p>
+            )}
+          </div>
+
           <div className="addisc-modal-footer">
             <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose}>Cancel</button>
             <button type="submit" className="addisc-btn addisc-btn--primary" disabled={loading}>
@@ -1109,7 +1285,6 @@ const AdminDiscounts = () => {
     pagination,
     currentDiscount,
     stats,
-    categoryStats,
     auditLogs,
     auditPagination,
     discountAuditLogs,
@@ -1120,7 +1295,6 @@ const AdminDiscounts = () => {
     discountsLoading,
     detailLoading,
     actionLoading,
-    statsLoading,
     auditLoading,
     error,
     deleteProtectionError,
@@ -1144,8 +1318,13 @@ const AdminDiscounts = () => {
   const [showVipModal,     setShowVipModal]     = useState(false);
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [cleanupRunning,   setCleanupRunning]   = useState(false);
-  const [codesFilters,     setCodesFilters]     = useState({ status: '', category: '', type: '', search: '' });
-  const [auditFilters,     setAuditFilters]     = useState({ action: '', discountCode: '', dateFrom: '', dateTo: '' });
+
+  const [codesFilters, setCodesFilters] = useState({
+    status: '', category: '', type: '', search: '', productCategory: '',
+  });
+  const [auditFilters, setAuditFilters] = useState({
+    action: '', discountCode: '', dateFrom: '', dateTo: '',
+  });
 
   const showToast = useCallback((msg, type = 'success') => {
     setToast({ msg, type });
@@ -1170,12 +1349,6 @@ const AdminDiscounts = () => {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, dispatch]);
-
-  useEffect(() => {
-    if (activeTab === 'stats' && stats === null && !statsLoading) {
-      dispatch(getDiscountStats());
-    }
-  }, [activeTab, stats, statsLoading, dispatch]);
 
   const openDrawer = useCallback((discount) => {
     setDrawerDiscount(discount);
@@ -1215,22 +1388,16 @@ const AdminDiscounts = () => {
       });
   }, [dispatch, closeDrawer, showToast]);
 
-  // FIX: .catch now surfaces errors as toasts so silent failures are visible.
-  // Previously the catch block was empty, meaning a failed create showed no
-  // feedback — the modal just sat there with a spinner or closed silently.
   const handleModalSubmit = useCallback((formData) => {
     if (modalMode === 'create') {
       dispatch(createDiscount(formData)).unwrap()
         .then(() => {
           setModalMode(null);
           dispatch(clearAdminDiscountState());
-          // Refresh list so newly created broadcast discount appears immediately
           dispatch(getAllDiscounts({}));
           showToast('Discount created.');
         })
         .catch((err) => {
-          // Error is also shown inside the modal via slice error state,
-          // but toast ensures it's visible if the modal closes unexpectedly.
           showToast(typeof err === 'string' ? err : err?.message ?? 'Failed to create discount.', 'error');
         });
     } else {
@@ -1446,10 +1613,10 @@ const AdminDiscounts = () => {
             <span className="addisc-section-divider-line" />
           </div>
 
+          {/* ── Tabs: Analytics removed — KPI cards cover it ── */}
           <div className="addisc-tabs">
             {[
               { key: 'codes', label: 'All Codes',  count: discounts.length },
-              { key: 'stats', label: 'Analytics' },
               { key: 'audit', label: 'Audit Log' },
             ].map((tab) => (
               <button key={tab.key} type="button"
@@ -1486,6 +1653,11 @@ const AdminDiscounts = () => {
                   <option value="">All types</option>
                   {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
+                <select className="addisc-filter-select" value={codesFilters.productCategory}
+                  onChange={(e) => setCodesFilters((p) => ({ ...p, productCategory: e.target.value }))}>
+                  <option value="">All product cats</option>
+                  {PRODUCT_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
                 <button type="button" className="addisc-btn addisc-btn--outline"
                   onClick={applyCodesFilters} disabled={discountsLoading}>
                   {discountsLoading ? <Spinner size={14} /> : 'Filter'}
@@ -1511,6 +1683,7 @@ const AdminDiscounts = () => {
                             <th>Type / Value</th>
                             <th>Category</th>
                             <th>Audience</th>
+                            <th>Product cats</th>
                             <th>Uses</th>
                             <th>Valid until</th>
                             <th>Status</th>
@@ -1522,6 +1695,7 @@ const AdminDiscounts = () => {
                             const locked = (d.usageLimit?.currentUses ?? 0) >= 1 &&
                               d.deletionEligibleAt &&
                               new Date(d.deletionEligibleAt) > new Date();
+                            const prodCats = d.conditions?.eligibleProductCategories ?? [];
                             return (
                               <tr key={d._id}
                                 className={`addisc-table-row ${locked ? 'addisc-table-row--locked' : ''}`}
@@ -1540,6 +1714,17 @@ const AdminDiscounts = () => {
                                 </td>
                                 <td>{d.category}</td>
                                 <td><AudienceBadge audience={d.audience} /></td>
+                                <td>
+                                  {prodCats.length > 0 ? (
+                                    <span className="addisc-prodcat-table-cell" title={prodCats.join(', ')}>
+                                      {prodCats.length === 1
+                                        ? prodCats[0]
+                                        : `${prodCats[0]} +${prodCats.length - 1}`}
+                                    </span>
+                                  ) : (
+                                    <span className="addisc-prodcat-table-all">All</span>
+                                  )}
+                                </td>
                                 <td>
                                   {d.usageLimit?.currentUses ?? 0}
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
@@ -1587,55 +1772,6 @@ const AdminDiscounts = () => {
                         {discountsLoading ? <Spinner size={14} /> : 'Load more'}
                       </button>
                     </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'stats' && (
-            <div className="addisc-tab-panel">
-              {statsLoading ? (
-                <div className="addisc-loading-row"><Spinner /> Loading stats…</div>
-              ) : (
-                <>
-                  <div className="addisc-section-divider">
-                    <span className="addisc-section-divider-text">By category</span>
-                    <span className="addisc-section-divider-line" />
-                  </div>
-                  {categoryStats?.length > 0 ? (
-                    <div className="addisc-table-wrap">
-                      <div className="addisc-tbl-scroll">
-                        <table className="addisc-table">
-                          <thead>
-                            <tr>
-                              <th>Category</th>
-                              <th>Total codes</th>
-                              <th>Active</th>
-                              <th>Total uses</th>
-                              <th>Discount value given</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {categoryStats.map((row) => (
-                              <tr key={row._id} className="addisc-table-row">
-                                <td style={{ fontWeight: 600, textTransform: 'capitalize' }}>{row._id}</td>
-                                <td>{row.totalDiscounts}</td>
-                                <td>{row.activeDiscounts}</td>
-                                <td>{row.totalUses}</td>
-                                <td>{fmtCurrency(row.totalDiscountValue)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  ) : (
-                    <EmptyState
-                      icon={<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" /></svg>}
-                      title="No analytics data yet"
-                      desc="Stats will appear once discount codes are created."
-                    />
                   )}
                 </>
               )}

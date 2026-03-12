@@ -2,25 +2,9 @@
 
 /* ================================================================
    ADMIN DISCOUNTS  —  Full stylesheet
-   
-   TOKEN SCOPE STRATEGY
-   ─────────────────────
-   All modals / drawers / toasts render *outside* .addisc-page in
-   the JSX ("Overlays — outside addisc-page so they stack correctly").
-   CSS custom properties cascade down the DOM tree only, so elements
-   outside .addisc-page receive no tokens.
-   
-   FIX: tokens are declared on three roots:
-     1. .addisc-page          → page body + tabs + table
-     2. .addisc-modal-overlay → every modal (z-index 1100)
-     3. .addisc-drawer-overlay → detail drawer (z-index 1000)
-   
-   The .addisc-toast has no wrapping overlay so it inherits from
-   :root via a minimal fallback set below.
-   No values differ between the three declarations.
    ================================================================ */
 
-/* ─── 0. Shared token block (mixin via cascade) ─── */
+/* ─── 0. Shared token block ─── */
 :root {
   --addisc-font:         'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --addisc-font-mono:    'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
@@ -30,7 +14,7 @@
 }
 
 /* ================================================================
-   1.  DESIGN TOKENS  (three scope roots — see header note)
+   1.  DESIGN TOKENS
    ================================================================ */
 .addisc-page,
 .addisc-modal-overlay,
@@ -38,30 +22,25 @@
   --addisc-font:         'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --addisc-font-mono:    'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
 
-  /* surfaces */
   --addisc-bg:           #F0F2F5;
   --addisc-surface:      #FFFFFF;
   --addisc-surface-soft: #F9FAFB;
   --addisc-surface-hover:#F4F5F7;
 
-  /* borders */
   --addisc-border:       #E5E7EB;
   --addisc-border-soft:  #F3F4F6;
   --addisc-border-md:    #9CA3AF;
 
-  /* text */
   --addisc-text:         #111827;
   --addisc-text-sec:     #374151;
-  --addisc-text-muted:   #6B7280;
-  --addisc-text-xmuted:  #9CA3AF;
+  --addisc-text-muted:   #545a66;
+  --addisc-text-xmuted:  #858d9c;
 
-  /* brand */
   --addisc-coral:        #ff3c3c;
   --addisc-coral-light:  rgba(255, 60, 60, 0.09);
   --addisc-coral-deep:   #e02020;
   --addisc-coral-subtle: #FFF5F5;
 
-  /* semantic */
   --addisc-green:        #059669;
   --addisc-green-bg:     #D1FAE5;
   --addisc-red:          #DC2626;
@@ -76,20 +55,17 @@
   --addisc-teal-bg:      #CCFBF1;
   --addisc-teal-border:  #99F6E4;
 
-  /* shape */
   --addisc-radius:       12px;
   --addisc-radius-sm:    8px;
   --addisc-radius-xs:    6px;
   --addisc-radius-pill:  999px;
 
-  /* shadow */
   --addisc-shadow-xs:    0 1px 2px rgba(0, 0, 0, .06);
   --addisc-shadow-sm:    0 1px 3px rgba(0, 0, 0, .08), 0 1px 2px rgba(0, 0, 0, .05);
   --addisc-shadow:       0 4px 12px rgba(0, 0, 0, .10), 0 1px 3px rgba(0, 0, 0, .06);
   --addisc-shadow-lg:    0 12px 32px rgba(0, 0, 0, .14), 0 4px 8px rgba(0, 0, 0, .06);
   --addisc-shadow-xl:    0 24px 64px rgba(0, 0, 0, .18);
 
-  /* motion */
   --addisc-ease:         cubic-bezier(0.4, 0, 0.2, 1);
   --addisc-transition:   all 0.2s var(--addisc-ease);
 }
@@ -230,7 +206,6 @@
   overflow-x:    auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
-  /* fade-out right edge to hint scrollability */
   -webkit-mask-image: linear-gradient(to right, black calc(100% - 40px), transparent 100%);
   mask-image:          linear-gradient(to right, black calc(100% - 40px), transparent 100%);
   padding-right: 40px;
@@ -424,7 +399,6 @@
   position:      relative;
   overflow:      hidden;
 }
-/* colour accent bar on top */
 .addisc-kpi::before {
   content:    '';
   position:   absolute;
@@ -432,7 +406,6 @@
   height:     3px;
   background: var(--addisc-kpi-color, var(--addisc-border));
 }
-/* subtle gradient wash */
 .addisc-kpi::after {
   content:    '';
   position:   absolute;
@@ -475,7 +448,6 @@
   overflow:      hidden;
   box-shadow:    var(--addisc-shadow-sm);
 }
-/* scroll shadow to indicate overflow */
 .addisc-tbl-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -571,7 +543,6 @@
 /* ================================================================
    11.  BADGES & CHIPS
    ================================================================ */
-/* ── Status badge ── */
 .addisc-badge {
   display:        inline-flex;
   align-items:    center;
@@ -589,7 +560,6 @@
 .addisc-badge--inactive { color: var(--addisc-text-xmuted); background: var(--addisc-border-soft); border: 1px solid var(--addisc-border); }
 .addisc-badge--pending  { color: var(--addisc-red); background: var(--addisc-red-bg); border: 1px solid #FECACA; }
 
-/* ── Audience badge — both variants ── */
 .addisc-audience-badge {
   display:        inline-flex;
   align-items:    center;
@@ -603,20 +573,17 @@
   white-space:    nowrap;
   line-height:    1.6;
 }
-/* broadcast — teal */
 .addisc-audience-badge--all {
   color:      #0F766E;
   background: #CCFBF1;
   border:     1px solid #99F6E4;
 }
-/* specific user — soft indigo */
 .addisc-audience-badge--specific {
   color:      #4338CA;
   background: #EEF2FF;
   border:     1px solid #C7D2FE;
 }
 
-/* ── Audit action badge ── */
 .addisc-action-badge {
   display:        inline-flex;
   align-items:    center;
@@ -667,7 +634,6 @@
 }
 .addisc-audit-entry:last-child { border-bottom: none; }
 .addisc-audit-entry:hover      { background: #FAFBFC; }
-/* system entries slightly dimmed but readable */
 .addisc-audit-entry--system    { opacity: 0.8; background: #FBFBFC; }
 .addisc-audit-entry--compact   { padding: 10px 16px; }
 
@@ -834,7 +800,7 @@
 
 
 /* ================================================================
-   15.  DETAIL DRAWER  (z-index 1000)
+   15.  DETAIL DRAWER
    ================================================================ */
 .addisc-drawer-overlay {
   position:        fixed;
@@ -972,7 +938,6 @@
   border-left: 3px solid var(--addisc-border-md);
 }
 
-/* ── Fraud protection lock banner ── */
 .addisc-lock-banner {
   display:     flex;
   gap:         12px;
@@ -994,7 +959,6 @@
 .addisc-lock-banner--cleared .addisc-lock-banner-title { color: var(--addisc-text-muted); }
 .addisc-lock-banner--cleared .addisc-lock-banner-desc  { color: var(--addisc-text-xmuted); }
 
-/* ── Drawer loading states ── */
 .addisc-drawer-detail-loading,
 .addisc-drawer-audit-loading {
   display:     flex;
@@ -1015,7 +979,6 @@
 }
 .addisc-drawer-no-audit { font-size: 13px; font-weight: 500; color: var(--addisc-text-muted); margin: 0; }
 
-/* ── Usage history ── */
 .addisc-usage-list {
   display:       flex;
   flex-direction: column;
@@ -1046,7 +1009,6 @@
 }
 .addisc-usage-date  { font-size: 11.5px; font-weight: 500; color: var(--addisc-text-xmuted); white-space: nowrap; }
 
-/* ── Drawer footer ── */
 .addisc-drawer-footer {
   display:         flex;
   gap:             8px;
@@ -1059,14 +1021,7 @@
 
 
 /* ================================================================
-   16.  MODAL ARCHITECTURE  (z-index 1100)
-   
-   Key decisions:
-   • Overlay is the flex centering container — no overflow
-   • .addisc-modal is a flex column with a capped height
-   • Only .addisc-modal-form scrolls inside the modal (not the whole modal)
-   • Header and footer are sticky within the modal flex column
-   • On mobile: modal anchors to bottom as a sheet
+   16.  MODAL ARCHITECTURE
    ================================================================ */
 .addisc-modal-overlay {
   position:         fixed;
@@ -1079,43 +1034,75 @@
   padding:          24px;
   backdrop-filter:  blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  overflow-y:       auto;           /* fallback if modal taller than viewport */
+  overflow-y:       auto;
 }
 
 .addisc-modal {
   background:    #FFFFFF;
   border-radius: var(--addisc-radius);
   width:         100%;
-  max-width:     540px;
-  /* flex column so header/footer are sticky, body scrolls */
+  max-width:     560px;
   display:       flex;
   flex-direction: column;
-  /* cap total height so it never overflows the viewport */
   max-height:    min(90vh, 900px);
   box-shadow:    var(--addisc-shadow-xl);
   animation:     addisc-modal-in 0.22s var(--addisc-ease);
   isolation:     isolate;
-  /* DO NOT put overflow-y:auto here — only the form body scrolls */
 }
 
-/* ── sticky header ── */
+/* ── Modal header — now supports icon + subtitle ── */
 .addisc-modal-header {
   display:         flex;
-  align-items:     center;
+  align-items:     flex-start;
   justify-content: space-between;
+  gap:             12px;
   padding:         18px 24px;
   border-bottom:   1px solid var(--addisc-border);
   background:      #FAFAFA;
   border-radius:   var(--addisc-radius) var(--addisc-radius) 0 0;
-  flex-shrink:     0;               /* never squish */
+  flex-shrink:     0;
 }
+
+/* left side: icon + title stack */
+.addisc-modal-header-left {
+  display:     flex;
+  align-items: flex-start;
+  gap:         12px;
+  min-width:   0;
+}
+
+.addisc-modal-title-icon {
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  width:           34px;
+  height:          34px;
+  background:      var(--addisc-coral-light);
+  border:          1px solid rgba(255, 60, 60, 0.18);
+  border-radius:   var(--addisc-radius-sm);
+  color:           var(--addisc-coral);
+  flex-shrink:     0;
+  margin-top:      1px;
+}
+
 .addisc-modal-title {
-  font-size:      17px;
+  font-size:      16px;
   font-weight:    800;
   color:          var(--addisc-text);
-  margin:         0;
+  margin:         0 0 2px;
   letter-spacing: -0.3px;
+  line-height:    1.3;
 }
+
+/* subtitle below title in modal header */
+.addisc-modal-subtitle {
+  font-size:   12px;
+  font-weight: 500;
+  color:       #4B5563;
+  margin:      0;
+  line-height: 1.5;
+}
+
 .addisc-modal-close {
   display:       flex;
   align-items:   center;
@@ -1127,25 +1114,63 @@
   border-radius: var(--addisc-radius-xs);
   transition:    var(--addisc-transition);
   flex-shrink:   0;
+  margin-top:    2px;
 }
 .addisc-modal-close:hover { color: var(--addisc-text); background: var(--addisc-border-soft); }
 
-/* ── scrollable form body ── */
+/* ── Scrollable form body ── */
 .addisc-modal-form {
-  flex:          1;              /* take remaining height */
-  overflow-y:    auto;           /* this part scrolls */
-  padding:       24px;
+  flex:          1;
+  overflow-y:    auto;
+  padding: 20px 24px;
   background:    #FFFFFF;
   display:       flex;
   flex-direction: column;
-  gap:           0;
   scrollbar-width: thin;
   scrollbar-color: var(--addisc-border) transparent;
 }
 .addisc-modal-form::-webkit-scrollbar { width: 4px; }
 .addisc-modal-form::-webkit-scrollbar-thumb { background: var(--addisc-border); border-radius: 4px; }
 
-/* ── error / conflict alerts in form ── */
+/* ── Form section grouping ── */
+.addisc-form-section {
+  padding:       20px 24px;
+  border-bottom: 1px solid var(--addisc-border-soft);
+}
+.addisc-form-section--last { border-bottom: none; }
+
+.addisc-form-section-label {
+  display:        flex;
+  align-items:    center;
+  gap:            8px;
+  font-size:      10px;
+  font-weight:    800;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color:          #4B5563;
+  margin-bottom:  14px;
+}
+
+.addisc-form-section-optional {
+  font-size:      9.5px;
+  font-weight:    600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color:          #fff;
+  background:     #6B7280; 
+  padding:        1px 6px;
+  border-radius:  var(--addisc-radius-pill);
+}
+
+.addisc-form-section-desc {
+  font-size:     12.5px;
+  font-weight:   500;
+  color:         var(--addisc-text-muted);
+  line-height:   1.6;
+  margin:        -6px 0 14px;
+}
+
+/* ── Error / conflict alerts ── */
 .addisc-modal-error,
 .addisc-modal-conflict {
   display:       flex;
@@ -1155,7 +1180,7 @@
   padding:       11px 13px;
   font-size:     13px;
   font-weight:   500;
-  margin-bottom: 20px;
+  margin:        20px 24px 0;
   line-height:   1.55;
 }
 .addisc-modal-error {
@@ -1163,7 +1188,6 @@
   border:       1px solid #FECACA;
   color:        var(--addisc-red);
 }
-/* conflict = amber, not red — it's not an error, it's a notice */
 .addisc-modal-conflict {
   background:   #FFFBEB;
   border:       1px solid #FDE68A;
@@ -1197,7 +1221,7 @@
 }
 .addisc-conflict-view-btn:hover { opacity: 0.7; }
 
-/* ── sticky footer ── */
+/* ── Sticky footer ── */
 .addisc-modal-footer {
   display:         flex;
   justify-content: flex-end;
@@ -1211,7 +1235,81 @@
 
 
 /* ================================================================
-   17.  CLEANUP MODAL  (amber warning variant)
+   16b.  AUDIENCE DISPLAY BLOCK  (replaces addisc-audience-fixed)
+   
+   A read-only banner showing who the discount targets.
+   Used inside .addisc-form-section so it inherits section padding.
+   ================================================================ */
+.addisc-audience-display {
+  display:       flex;
+  align-items:   flex-start;
+  gap:           12px;
+  padding:       12px 14px;
+  border-radius: var(--addisc-radius-sm);
+  border:        1.5px solid var(--addisc-border);
+  background:    var(--addisc-surface-soft);
+}
+
+/* broadcast = teal tint */
+.addisc-audience-display--broadcast {
+  background:   #F0FDFA;
+  border-color: #99F6E4;
+}
+
+/* specific = indigo tint */
+.addisc-audience-display--specific {
+  background:   #F5F3FF;
+  border-color: #C4B5FD;
+}
+
+.addisc-audience-display-icon {
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  width:           32px;
+  height:          32px;
+  border-radius:   var(--addisc-radius-xs);
+  flex-shrink:     0;
+}
+.addisc-audience-display--broadcast .addisc-audience-display-icon {
+  background: #CCFBF1;
+  color:      #0F766E;
+  border:     1px solid #99F6E4;
+}
+.addisc-audience-display--specific .addisc-audience-display-icon {
+  background: #EDE9FE;
+  color:      #7C3AED;
+  border:     1px solid #C4B5FD;
+}
+
+.addisc-audience-display-text {
+  display:        flex;
+  flex-direction: column;
+  gap:            3px;
+  min-width:      0;
+}
+
+.addisc-audience-display-name {
+  font-size:   13.5px;
+  font-weight: 700;
+  color:       var(--addisc-text);
+  line-height: 1.3;
+}
+
+.addisc-audience-display-hint {
+  font-size:   12px;
+  font-weight: 500;
+  color:       var(--addisc-text-muted);
+  line-height: 1.55;
+}
+.addisc-audience-display-hint strong {
+  color:       var(--addisc-text-sec);
+  font-weight: 700;
+}
+
+
+/* ================================================================
+   17.  CLEANUP MODAL
    ================================================================ */
 .addisc-cleanup-modal { max-width: 440px; }
 
@@ -1225,8 +1323,7 @@
   border-color: #FDE68A;
 }
 
-/* cleanup body lives inside addisc-modal-form */
-.addisc-cleanup-body { padding: 0; }
+.addisc-cleanup-body { padding: 24px; }
 
 .addisc-cleanup-icon {
   display:         flex;
@@ -1258,21 +1355,22 @@
   list-style:    none;
 }
 .addisc-cleanup-checklist li {
-  display:       flex;
-  align-items:   flex-start;
+  display:       grid;
+  grid-template-columns: 13px 1fr;  /* icon col + text col */
   gap:           10px;
   font-size:     13px;
   font-weight:   500;
   color:         #92400E;
   padding:       10px 0;
-  line-height:   1.65;
+  line-height:   1.55;
   border-bottom: 1px solid rgba(253, 230, 138, 0.5);
 }
 .addisc-cleanup-checklist li:last-child { border-bottom: none; }
 .addisc-cleanup-checklist li svg {
-  flex-shrink: 0;
-  margin-top:  3px;
-  color:       var(--addisc-amber);
+  margin-top: 2px;
+  color:      var(--addisc-amber);
+  width:      13px;
+  height:     13px;
 }
 .addisc-cleanup-checklist strong {
   display:     inline;
@@ -1280,7 +1378,6 @@
   color:       #78350F;
 }
 
-/* ── cleanup result (post-run success screen) ── */
 .addisc-cleanup-result {
   display:        flex;
   flex-direction: column;
@@ -1325,7 +1422,8 @@
 /* ================================================================
    18.  FORM FIELDS
    ================================================================ */
-.addisc-form-field  { margin-bottom: 18px; }
+.addisc-form-field  { margin-bottom: 16px; }
+.addisc-form-field:last-child { margin-bottom: 0; }
 .addisc-form-row    { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
 .addisc-form-label {
@@ -1339,7 +1437,6 @@
   color:          var(--addisc-text-sec);
   margin-bottom:  7px;
 }
-/* ── label hint (small grey suffix) ── */
 .addisc-form-label-hint {
   font-size:      10.5px;
   font-weight:    400;
@@ -1348,7 +1445,12 @@
   color:          var(--addisc-text-xmuted);
   margin-left:    2px;
 }
-/* ── checkbox label ── */
+/* Required asterisk */
+.addisc-form-label-required {
+  color:       var(--addisc-coral);
+  font-size:   12px;
+  font-weight: 700;
+}
 .addisc-form-label--checkbox {
   display:     inline-flex;
   align-items: center;
@@ -1412,7 +1514,6 @@
   border-color: var(--addisc-border);
 }
 
-/* mono code input */
 input#addisc-code {
   font-family:    var(--addisc-font-mono);
   font-size:      14px;
@@ -1420,13 +1521,11 @@ input#addisc-code {
   text-transform: uppercase;
   font-weight:    700;
 }
-/* userId ObjectId mono */
 input#comp-userId {
   font-family:    var(--addisc-font-mono);
   font-size:      12.5px;
   letter-spacing: 0.3px;
 }
-/* validDays centered large number */
 input#comp-validDays {
   text-align:  center;
   font-weight: 700;
@@ -1441,10 +1540,21 @@ input#comp-validDays {
 }
 
 /* hints */
-.addisc-form-hint { font-size: 11.5px; font-weight: 500; color: var(--addisc-text-xmuted); margin-top: 5px; }
+.addisc-form-hint {
+  font-size:   11.5px;
+  font-weight: 500;
+  color:       #6B7280;
+  margin-top:  5px;
+  display:     block;
+}
+
+/* locked field hint — gray italic */
+.addisc-form-hint--locked {
+  color:      var(--addisc-text-xmuted);
+  font-style: italic;
+}
 
 .addisc-form-hint--info {
-  display:       block;
   margin-top:    10px;
   padding:       10px 13px;
   background:    #EFF6FF;
@@ -1455,9 +1565,7 @@ input#comp-validDays {
   color:         #1D4ED8;
   line-height:   1.65;
 }
-/* warn variant — amber */
 .addisc-form-hint--warn {
-  display:       block;
   margin-top:    10px;
   padding:       10px 13px;
   background:    #FFFBEB;
@@ -1471,7 +1579,7 @@ input#comp-validDays {
 
 
 /* ================================================================
-   19.  AUDIENCE TOGGLE  (card grid)
+   19.  AUDIENCE TOGGLE  (card grid — kept for VIP / Comp if needed)
    ================================================================ */
 .addisc-audience-toggle {
   display:               grid;
@@ -1535,6 +1643,18 @@ input#comp-validDays {
 }
 .addisc-audience-opt:disabled { opacity: 0.45; cursor: not-allowed; pointer-events: none; }
 
+/* Locked / read-only variant used in create mode */
+.addisc-audience-opt--locked {
+  cursor:  default;
+  pointer-events: none;
+  flex-direction: row;
+  gap:            10px;
+  padding:        12px 16px;
+  text-align:     left;
+  border-radius:  var(--addisc-radius-sm);
+}
+.addisc-audience-opt--locked svg { width: 16px; height: 16px; opacity: 1; }
+
 
 /* ================================================================
    20.  VIP SUCCESS SCREEN
@@ -1544,7 +1664,7 @@ input#comp-validDays {
   flex-direction: column;
   align-items:    center;
   text-align:     center;
-  padding:        8px 0 8px;
+  padding:        24px 24px 8px;
 }
 .addisc-vip-success-icon {
   display:         flex;
@@ -1580,7 +1700,7 @@ input#comp-validDays {
 
 
 /* ================================================================
-   21.  TOAST  (z-index 1200; no wrapping overlay, tokens from :root)
+   21.  TOAST
    ================================================================ */
 .addisc-toast {
   position:      fixed;
@@ -1681,62 +1801,170 @@ input#comp-validDays {
 
 
 /* ================================================================
-   25.  RESPONSIVE
-   
-   Breakpoints:
-   1280px  — wide desktop: KPI 6-column → 3-column
-   1024px  — laptop:       padding, 4-button header wraps
-    768px  — tablet:       page header stacks, KPI 2-col, drawer full
-    600px  — large phone:  filter bar stacks, modals sheet
-    480px  — phone:        1-col KPI opt-in, drawer grid collapses
-    360px  — small phone:  micro-adjustments
+   25.  PRODUCT CATEGORY CHIPS
+   ================================================================ */
+.addisc-prodcat-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.addisc-prodcat-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  cursor: pointer;
+  border: 1.5px solid #E5E7EB;
+  background: #F9FAFB;
+  color: #6B7280;
+  transition: border-color 0.15s, background 0.15s, color 0.15s, box-shadow 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.addisc-prodcat-chip:hover:not(.addisc-prodcat-chip--disabled) {
+  border-color: #A5B4FC;
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+.addisc-prodcat-chip--active {
+  border-color: #6366F1;
+  background: #EEF2FF;
+  color: #4338CA;
+  box-shadow: 0 0 0 1px #6366F1;
+}
+
+.addisc-prodcat-chip--active:hover:not(.addisc-prodcat-chip--disabled) {
+  border-color: #4338CA;
+  background: #E0E7FF;
+}
+
+.addisc-prodcat-chip--disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.addisc-prodcat-chip--display {
+  cursor: default;
+  border-color: #C7D2FE;
+  background: #EEF2FF;
+  color: #4338CA;
+  font-size: 11.5px;
+}
+
+.addisc-prodcat-chip--display:hover {
+  border-color: #C7D2FE;
+  background: #EEF2FF;
+  color: #4338CA;
+  box-shadow: none;
+}
+
+.addisc-prodcat-none {
+  display:       inline-flex;
+  align-items:   center;
+  padding:       4px 10px;
+  border-radius: 20px;
+  font-size:     12px;
+  font-weight:   500;
+  font-style:    normal;           
+  color:         #6B7280;
+  background:    #F3F4F6;
+  border:        1.5px dashed #D1D5DB;
+}
+
+
+/* ================================================================
+   26.  TABLE: PRODUCT CATS COLUMN
+   ================================================================ */
+.addisc-prodcat-table-cell {
+  display: inline-block;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4338CA;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 4px;
+  padding: 2px 7px;
+  vertical-align: middle;
+  cursor: default;
+}
+
+.addisc-prodcat-table-all {
+  display:       inline-flex;
+  align-items:   center;
+  padding:       2px 7px;
+  border-radius: 4px;
+  font-size:     12px;
+  font-weight:   500;
+  font-style:    normal;
+  color:         #4d535f;
+  background:    #F3F4F6;
+  border:        1px dashed #D1D5DB;
+}
+
+.addisc-drawer-field--full {
+  grid-column: 1 / -1;
+}
+
+.addisc-vip-success-cats {
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: #6B7280;
+  text-align: center;
+}
+
+.addisc-vip-success-cats strong {
+  color: #4338CA;
+}
+
+
+/* ================================================================
+   27.  RESPONSIVE
    ================================================================ */
 
-/* ── 1280px: tighten KPI ── */
 @media (max-width: 1280px) {
   .addisc-kpi-grid { grid-template-columns: repeat(3, 1fr); }
   .addisc-body     { padding: 20px 24px 56px; }
 }
 
-/* ── 1024px: laptop ── */
 @media (max-width: 1024px) {
   .addisc-body        { padding: 18px 20px 48px; }
   .addisc-kpi-grid    { grid-template-columns: repeat(3, 1fr); }
   .addisc-page-header { gap: 12px; }
   .addisc-page-header-actions { gap: 6px; }
-  /* slightly smaller header buttons */
   .addisc-page-header-actions .addisc-btn { font-size: 12.5px; padding: 7px 13px; }
 }
 
-/* ── 768px: tablet ── */
 @media (max-width: 768px) {
   .addisc-body { padding: 16px 16px 40px; }
 
-  /* page header stacks vertically */
   .addisc-page-header         { flex-direction: column; align-items: stretch; }
   .addisc-page-header-actions { flex-wrap: wrap; justify-content: flex-start; }
   .addisc-page-title          { font-size: 20px; }
 
-  /* KPI 2 per row */
   .addisc-kpi-grid  { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .addisc-kpi       { padding: 14px 16px; }
   .addisc-kpi-value { font-size: 20px; }
 
-  /* tabs: tighter spacing */
   .addisc-tab { margin-right: 16px; font-size: 13px; }
 
-  /* filter bar stacks */
   .addisc-filter-bar { flex-direction: column; align-items: stretch; }
   .addisc-filter-input,
   .addisc-filter-select       { min-width: 0; width: 100%; }
   .addisc-filter-input--date  { min-width: 0; width: 100%; flex: 1; }
 
-  /* form 2-col → 1-col */
   .addisc-form-row  { grid-template-columns: 1fr; gap: 0; }
 
-  /* audience toggle stays 2-col (intentional) */
-
-  /* drawer: full width slide-up on tablet */
   .addisc-drawer {
     width:          100%;
     max-width:      100%;
@@ -1746,7 +1974,6 @@ input#comp-validDays {
   }
   .addisc-drawer-overlay { align-items: flex-end; }
 
-  /* modal: bottom sheet on tablet */
   .addisc-modal-overlay {
     padding:     0;
     align-items: flex-end;
@@ -1760,7 +1987,6 @@ input#comp-validDays {
   }
   .addisc-cleanup-modal { max-width: 100%; }
 
-  /* toast: full width at bottom */
   .addisc-toast {
     top:       auto;
     bottom:    80px;
@@ -1770,74 +1996,61 @@ input#comp-validDays {
     font-size: 13px;
   }
 
-  /* section divider tighter */
   .addisc-section-divider { margin: 20px 0 14px; }
 }
 
-/* ── 600px: large phone ── */
 @media (max-width: 600px) {
   .addisc-body  { padding: 14px 14px 36px; }
 
   .addisc-page-title { font-size: 18px; }
   .addisc-page-sub   { font-size: 12px; }
 
-  /* KPI: still 2-col but even more compact */
   .addisc-kpi       { padding: 12px 14px; }
   .addisc-kpi-value { font-size: 18px; }
   .addisc-kpi-label { font-size: 10px; }
 
-  /* slightly smaller primary buttons in header */
   .addisc-btn { font-size: 12px; padding: 7px 12px; }
 
-  .addisc-modal-form   { padding: 18px; }
-  .addisc-cleanup-body { padding: 0; }
+  .addisc-form-section { padding: 16px 18px; }
+  .addisc-cleanup-body { padding: 18px; }
 
-  /* audit entries wrap tighter */
   .addisc-audit-time { margin-left: 0; }
 
-  /* purge receipts: compress */
   .addisc-purge-receipts { margin-top: 28px; padding-top: 20px; }
 }
 
-/* ── 480px: phone ── */
 @media (max-width: 480px) {
   .addisc-body  { padding: 12px 12px 32px; }
 
-  /* 1-col KPI grid */
   .addisc-kpi-grid { grid-template-columns: 1fr 1fr; }
 
-  /* drawer grid 1-col */
   .addisc-drawer-grid { grid-template-columns: 1fr; }
   .addisc-drawer-body { padding: 0 18px 24px; }
   .addisc-drawer-header { padding: 14px 18px; }
   .addisc-drawer-footer { padding: 12px 18px; }
 
-  .addisc-modal-form   { padding: 16px; }
+  .addisc-form-section { padding: 14px 16px; }
   .addisc-modal-footer { padding: 12px 16px; }
   .addisc-modal-header { padding: 14px 16px; }
-  .addisc-modal-title  { font-size: 15px; }
+  .addisc-modal-title  { font-size: 14px; }
+  .addisc-modal-subtitle { font-size: 11px; }
+  .addisc-modal-title-icon { width: 28px; height: 28px; }
   .addisc-cleanup-icon { width: 44px; height: 44px; }
 
-  /* tabs: very compact */
   .addisc-tab { margin-right: 12px; font-size: 12.5px; }
 
-  /* back btn */
   .addisc-back-btn { font-size: 12px; padding: 5px 10px; }
 
-  /* audience toggle: 1-col on tiny screens */
   .addisc-audience-toggle    { grid-template-columns: 1fr 1fr; }
   .addisc-audience-opt       { padding: 14px 10px; font-size: 12px; }
 
-  /* usage list: hide date on small */
   .addisc-usage-date { display: none; }
   .addisc-usage-entry { grid-template-columns: 1fr auto; }
 
-  /* page header actions: tighter */
   .addisc-page-header-actions { gap: 5px; }
   .addisc-page-header-actions .addisc-btn { font-size: 11.5px; padding: 6px 10px; }
 }
 
-/* ── 360px: very small phones ── */
 @media (max-width: 360px) {
   .addisc-body             { padding: 10px 10px 28px; }
   .addisc-kpi-grid         { grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -1850,7 +2063,6 @@ input#comp-validDays {
   .addisc-audience-toggle  { grid-template-columns: 1fr 1fr; }
 }
 
-/* ── Extra: drawer slide-up animation for tablet/mobile ── */
 @keyframes addisc-slide-up {
   from { transform: translateY(32px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
@@ -1860,7 +2072,6 @@ input#comp-validDays {
   to   { transform: translateY(0);    opacity: 1; }
 }
 
-/* ── Print: hide overlays and controls ── */
 @media print {
   .addisc-modal-overlay,
   .addisc-drawer-overlay,
