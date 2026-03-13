@@ -81,14 +81,20 @@ const getDaysUntilEligible = (date) => {
 // SMALL ATOMS
 // ─────────────────────────────────────────────
 
-const StatusBadge = ({ status }) => {
+// REPLACE in AdminDiscounts.jsx
+const StatusBadge = ({ status, validUntil }) => {
+  const effectiveStatus =
+    status === "active" && validUntil && new Date(validUntil) < new Date()
+      ? "expired"
+      : status;
+
   const map = {
-    active:           { label: 'Active',       cls: 'addisc-badge--active'   },
-    expired:          { label: 'Expired',      cls: 'addisc-badge--expired'  },
-    inactive:         { label: 'Inactive',     cls: 'addisc-badge--inactive' },
-    pending_deletion: { label: 'Pending Del.', cls: 'addisc-badge--pending'  },
+    active:           { label: "Active",       cls: "addisc-badge--active"   },
+    expired:          { label: "Expired",      cls: "addisc-badge--expired"  },
+    inactive:         { label: "Inactive",     cls: "addisc-badge--inactive" },
+    pending_deletion: { label: "Pending Del.", cls: "addisc-badge--pending"  },
   };
-  const m = map[status] ?? { label: status, cls: '' };
+  const m = map[effectiveStatus] ?? { label: effectiveStatus, cls: "" };
   return <span className={`addisc-badge ${m.cls}`}>{m.label}</span>;
 };
 
@@ -360,7 +366,7 @@ const DetailDrawer = ({
         <div className="addisc-drawer-header">
           <div className="addisc-drawer-header-left">
             <span className="addisc-drawer-code">{d.code}</span>
-            <StatusBadge status={d.status} />
+            <StatusBadge status={d.status} validUntil={d.validUntil} />
             <AudienceBadge audience={d.audience} />
           </div>
           <button type="button" className="addisc-drawer-close" onClick={onClose} aria-label="Close">
@@ -1730,7 +1736,7 @@ const AdminDiscounts = () => {
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
                                 </td>
                                 <td>{fmtDate(d.validUntil)}</td>
-                                <td><StatusBadge status={d.status} /></td>
+                                <td><StatusBadge status={d.status} validUntil={d.validUntil} /></td>
                                 <td onClick={(e) => e.stopPropagation()}>
                                   <div className="addisc-row-actions">
                                     <button type="button" className="addisc-row-btn"

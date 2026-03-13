@@ -11,15 +11,25 @@ import axios from "axios";
  */
 export const createCheckoutSession = createAsyncThunk(
   "checkout/createSession",
-  async ({ items, shippingInfo }, { rejectWithValue }) => {
+  async ({ items, shippingInfo }, { getState, rejectWithValue }) => {
     try {
+      const { discount } = getState().cart;
+      const hasDiscount =
+        discount.applied &&
+        discount.code &&
+        discount.discountAmount > 0;
+
       const { data } = await axios.post("/api/v1/checkout/create", {
         items,
-        shippingInfo
+        shippingInfo,
+        ...(hasDiscount && {
+          discountCode:   discount.code,
+          discountAmount: discount.discountAmount,
+        }),
       }, {
         withCredentials: true
       });
-      
+
       return data.checkout;
     } catch (error) {
       return rejectWithValue(

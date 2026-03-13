@@ -341,29 +341,25 @@ function Payment() {
 
   const selectedGatewayConfig = gateways.find((g) => g.value === selectedGateway);
 
-  // Prefer paymentData.breakdown (server-authoritative, post-initialization)
-  // over checkoutPricing (pre-payment estimate from checkout session).
-  // discountInfo from paymentSlice holds { code, discountAmount, originalItemPrice }
-  // set by the server when a discountCode was applied during initialization.
-  // Before initialization, fall back to cart state for the discount display.
-  const orderSummary = paymentData?.breakdown
-    ? {
-        subtotal:       paymentData.breakdown.itemPrice     || 0,
-        tax:            paymentData.breakdown.taxPrice      || 0,
-        shipping:       paymentData.breakdown.shippingPrice || 0,
-        total:          paymentData.breakdown.totalPrice    || 0,
-        discountAmount: discountInfo?.discountAmount        || 0,
-        discountCode:   discountInfo?.code                  || null
-      }
-    : {
-        subtotal:       checkoutPricing?.itemPrice     || 0,
-        tax:            checkoutPricing?.taxPrice      || 0,
-        shipping:       checkoutPricing?.shippingPrice || 0,
-        total:          checkoutPricing?.totalPrice    || 0,
-        discountAmount: discount.applied ? discount.discountAmount : 0,
-        discountCode:   discount.applied ? discount.code : null
-      };
+const orderSummary = paymentData?.breakdown
+  ? {
+      subtotal:       paymentData.breakdown.itemPrice     || 0,
+      tax:            paymentData.breakdown.taxPrice      || 0,
+      shipping:       paymentData.breakdown.shippingPrice || 0,
+      total:          paymentData.breakdown.totalPrice    || 0,
+      discountAmount: discountInfo?.discountAmount        || 0,
+      discountCode:   discountInfo?.code                  || null,
+    }
+  : {
+      subtotal:       checkoutPricing?.itemPrice     || 0,
+      tax:            checkoutPricing?.taxPrice      || 0,
+      shipping:       checkoutPricing?.shippingPrice || 0,
+      total:          checkoutPricing?.totalPrice    || 0,
+      discountAmount: discount.applied ? discount.discountAmount : 0,
+      discountCode:   discount.applied ? discount.code           : null,
+    };
 
+    
   return (
     <>
       <PageTitle title="Payment" />

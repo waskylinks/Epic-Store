@@ -50,11 +50,6 @@ export const getSingleDiscount = createAsyncThunk(
   }
 );
 
-// FIX: Sanitize usageLimit before POST to prevent a silent Mongoose CastError.
-// The admin create form sends usageLimit.totalUses as "" when left blank.
-// Mongoose schema type Number coerces "" → NaN → CastError, meaning the
-// discount is never saved but no error surfaces to the UI (catch was empty).
-// Also strip empty validFrom so the backend default (Date.now()) applies.
 export const createDiscount = createAsyncThunk(
   "adminDiscount/createDiscount",
   async (discountData, { rejectWithValue }) => {
@@ -74,7 +69,15 @@ export const createDiscount = createAsyncThunk(
         }
       }
 
-      if (!payload.validFrom) delete payload.validFrom;
+      if (!payload.validFrom) {
+        delete payload.validFrom;
+      } else if (!payload.validFrom.includes("T")) {
+        payload.validFrom = payload.validFrom + "T00:00:00.000Z";
+      }
+
+      if (payload.validUntil && !payload.validUntil.includes("T")) {
+        payload.validUntil = payload.validUntil + "T23:59:59.000Z";
+      }
 
       if (payload.eligibleProductCategories !== undefined) {
         if (!Array.isArray(payload.eligibleProductCategories)) {
@@ -109,9 +112,6 @@ export const updateDiscount = createAsyncThunk(
   }
 );
 
-// FIX: Backend sends 403 via HandleError which only includes `message`.
-// `deletionEligibleAt` is NOT in the error body — removed false read.
-// FIX: `alreadyInactive` flag now checked in reducer before mutating state.
 export const deleteDiscount = createAsyncThunk(
   "adminDiscount/deleteDiscount",
   async (id, { rejectWithValue }) => {
@@ -153,11 +153,16 @@ export const createCompensationDiscount = createAsyncThunk(
   }
 );
 
+
 export const createDiscountForUsers = createAsyncThunk(
   "adminDiscount/createDiscountForUsers",
   async (payload, { rejectWithValue }) => {
     try {
       const sanitized = { ...payload };
+
+      if (sanitized.validUntil && !sanitized.validUntil.includes("T")) {
+        sanitized.validUntil = sanitized.validUntil + "T23:59:59.000Z";
+      }
 
       if (sanitized.eligibleProductCategories !== undefined) {
         if (!Array.isArray(sanitized.eligibleProductCategories)) {

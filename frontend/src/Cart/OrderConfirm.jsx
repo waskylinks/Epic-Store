@@ -96,40 +96,40 @@ function OrderConfirm() {
     : null;
   // ─────────────────────────────────────────────────────────────────────────
 
-  const proceedToPayment = async () => {
-    if (!selectedShippingAddress) {
-      toast.error('Please select a shipping address', { position: 'top-center', autoClose: 2000 });
-      navigate('/shipping');
-      return;
-    }
+const proceedToPayment = async () => {
+  if (!selectedShippingAddress) {
+    toast.error('Please select a shipping address', { position: 'top-center', autoClose: 2000 });
+    navigate('/shipping');
+    return;
+  }
 
-    setIsProcessing(true);
-    try {
-      const items = cartDetails.map(item => ({
-        product: item.product,
-        quantity: item.quantity
-      }));
+  setIsProcessing(true);
+  try {
+    const items = cartDetails.map(item => ({
+      product:  item.product,
+      quantity: item.quantity
+    }));
 
-      const shippingInfo = {
-        firstName: user?.firstName || user?.name?.split(' ')[0] || 'User',
-        lastName:  user?.lastName  || user?.name?.split(' ').slice(1).join(' ') || '',
-        address:   selectedShippingAddress.address,
-        city:      selectedShippingAddress.city,
-        state:     selectedShippingAddress.state,
-        pinCode:   selectedShippingAddress.pinCode,
-        country:   selectedShippingAddress.country,
-        phoneNo:   selectedShippingAddress.phoneNo
-      };
+    const shippingInfo = {
+      firstName: user?.firstName || user?.name?.split(' ')[0] || 'User',
+      lastName:  user?.lastName  || user?.name?.split(' ').slice(1).join(' ') || '',
+      address:   selectedShippingAddress.address,
+      city:      selectedShippingAddress.city,
+      state:     selectedShippingAddress.state,
+      pinCode:   selectedShippingAddress.pinCode,
+      country:   selectedShippingAddress.country,
+      phoneNo:   selectedShippingAddress.phoneNo
+    };
 
-      await dispatch(createCheckoutSession({ items, shippingInfo })).unwrap();
-      navigate('/process/payment');
-    } catch (err) {
-      toast.error(err.message || 'Failed to create checkout session', {
-        position: 'top-center', autoClose: 3000
-      });
-      setIsProcessing(false);
-    }
-  };
+    await dispatch(createCheckoutSession({ items, shippingInfo })).unwrap();
+    navigate('/process/payment');
+  } catch (err) {
+    toast.error(err.message || 'Failed to create checkout session', {
+      position: 'top-center', autoClose: 3000
+    });
+    setIsProcessing(false);
+  }
+};
 
   if ((cartLoading && cartDetails.length === 0) || checkoutLoading || !addressChecked) {
     return (
