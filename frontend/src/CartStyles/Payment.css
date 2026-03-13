@@ -561,3 +561,28 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+
+/* Discount row in the order summary sidebar */
+.ep-summary-discount {
+  color: #10b981;
+}
+
+.ep-summary-discount .ep-summary-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #10b981;
+}
+
+/* Small tag icon inside the label */
+.ep-tag-icon {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+}
+
+/* Discount value (negative amount) */
+.ep-discount-value {
+  color: #10b981 !important;
+  font-weight: 600;
+}

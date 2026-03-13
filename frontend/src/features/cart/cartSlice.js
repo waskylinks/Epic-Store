@@ -38,9 +38,6 @@ export const addItemsToCart = createAsyncThunk(
         quantity
       });
 
-      // Return both the original id and the full server response.
-      // The reducer uses data.item.quantity (server-clamped) not the
-      // raw requested quantity.
       return {
         product: id,
         serverData: data,
@@ -65,7 +62,6 @@ export const updateCartItemQuantity = createAsyncThunk(
 
       return {
         productId,
-        // Use server-returned quantity — it may be clamped to stock.
         quantity: data.item?.quantity ?? quantity,
       };
     } catch (error) {
@@ -76,12 +72,6 @@ export const updateCartItemQuantity = createAsyncThunk(
   }
 );
 
-/**
- * Remove item from cart.
- *
- * Slice sends:    DELETE /api/v1/cart/remove/:productId
- * Controller ret: { success, message, productId }
- */
 export const removeCartItem = createAsyncThunk(
   "cart/removeCartItem",
   async (productId, { rejectWithValue }) => {
@@ -173,6 +163,12 @@ const initialDiscount = {
   value:                     null,
   description:               null,
   discountAmount:            0,
+  // The subtotal the discount was actually computed against.
+  // For unrestricted codes this equals the full cart itemPrice.
+  // For category-restricted codes this is the sum of qualifying items only.
+  eligibleSubtotal:          0,
+  // The portion of the cart that did not qualify. Zero for unrestricted codes.
+  ineligibleSubtotal:        0,
   eligibleProductCategories: [],
   appliedPending:            false,
   applied:                   false,
@@ -231,11 +227,11 @@ const cartSlice = createSlice({
     },
 
     clearCart: (state) => {
-      state.cartItems   = [];
-      state.cartDetails = [];
+      state.cartItems    = [];
+      state.cartDetails  = [];
       state.shippingInfo = {};
-      state.pricing     = initialPricing;
-      state.discount    = initialDiscount;
+      state.pricing      = initialPricing;
+      state.discount     = initialDiscount;
 
       localStorage.removeItem("cartItems");
       localStorage.removeItem("shippingInfo");
@@ -300,8 +296,6 @@ const cartSlice = createSlice({
 
         localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
 
-        // BUG-CS1 FIX: state.loading was never reset to false on fulfilled.
-        // The spinner remained active indefinitely after a successful add.
         state.loading = false;
         state.success = true;
       })
@@ -370,11 +364,11 @@ const cartSlice = createSlice({
         state.error   = null;
       })
       .addCase(clearEntireCart.fulfilled, (state) => {
-        state.cartItems  = [];
-        state.cartDetails = [];
+        state.cartItems    = [];
+        state.cartDetails  = [];
         state.shippingInfo = {};
-        state.pricing    = initialPricing;
-        state.discount   = initialDiscount;
+        state.pricing      = initialPricing;
+        state.discount     = initialDiscount;
 
         localStorage.removeItem("cartItems");
         localStorage.removeItem("shippingInfo");
@@ -390,6 +384,19 @@ const cartSlice = createSlice({
 
     // ──────────────────────────────────────────────
     // VALIDATE CHECKOUT
+    // FIX: previously reset state.discount = initialDiscount here, which
+    // wiped the applied discount before the user reached OrderConfirm.
+    // By the time OrderConfirm mounted, discount.applied was false and
+    // discountAmount was 0 — so no discount was shown on the confirm page.
+    //
+    // Fix: preserve state.discount entirely. validateCheckout only confirms
+    // stock availability and computes base pricing — it has no knowledge of
+    // the discount and must not touch it. The discount stays in state until
+    // the user explicitly removes it, clears the cart, or completes the order.
+    //
+    // pricing is also preserved from the applyDiscountCode response rather
+    // than being overwritten with the non-discounted validateCheckout pricing,
+    // which would cause the totals on OrderConfirm to lose the discount.
     // ──────────────────────────────────────────────
     builder
       .addCase(validateCheckout.pending, (state) => {
@@ -399,8 +406,15 @@ const cartSlice = createSlice({
         state.message  = null;
       })
       .addCase(validateCheckout.fulfilled, (state, action) => {
-        state.pricing  = action.payload.pricing;
-        state.discount = initialDiscount;
+        // FIX: only update pricing from validateCheckout when no discount is
+        // active. If a discount is applied, the pricing in state was already
+        // set correctly by applyDiscountCode and must not be overwritten with
+        // the non-discounted server pricing from validateCheckout.
+        if (!state.discount.applied) {
+          state.pricing = action.payload.pricing;
+        }
+
+        // FIX: do NOT reset state.discount here — see note above.
         state.loading  = false;
         state.success  = true;
         state.message  = "Cart validated — ready to checkout";
@@ -409,8 +423,6 @@ const cartSlice = createSlice({
         state.loading = false;
         state.error   = action.payload?.message || "Validation failed";
 
-        // Remove invalid items from local state if the server identifies them.
-        // The server 400 body is: { success, isValid, invalidItems, message }
         if (action.payload?.invalidItems) {
           const invalidIds = new Set(
             action.payload.invalidItems.map((item) => String(item.productId))
@@ -441,6 +453,9 @@ const cartSlice = createSlice({
           value:                     discount.value,
           description:               discount.description,
           discountAmount:            discount.discountAmount,
+          // NEW — store the breakdown from the server response
+          eligibleSubtotal:          discount.eligibleSubtotal   ?? 0,
+          ineligibleSubtotal:        discount.ineligibleSubtotal ?? 0,
           eligibleProductCategories: discount.eligibleProductCategories ?? [],
           appliedPending:            appliedPending ?? true,
           applied:                   true,
@@ -457,15 +472,10 @@ const cartSlice = createSlice({
       })
       .addCase(applyDiscountCode.rejected, (state, action) => {
         state.loading                 = false;
-        // R10 FIX: action.payload is now the full error response object
-        // (not just a message string), so we can read message and invalidItems.
         state.error                   = action.payload?.message || "Invalid discount code";
         state.discount.applied        = false;
         state.discount.appliedPending = false;
 
-        // If the server identified invalid/unavailable items (the controller's
-        // BUG-05 guard), prune them from local state so the cart is consistent
-        // before the user attempts to apply a code again.
         if (action.payload?.invalidItems) {
           const invalidIds = new Set(
             action.payload.invalidItems.map((item) => String(item.productId))
@@ -507,16 +517,16 @@ export const {
 // ============================================
 // SELECTORS
 // ============================================
-export const selectCartItems    = (state) => state.cart.cartItems;
-export const selectCartDetails  = (state) => state.cart.cartDetails;
-export const selectCartCount    = (state) =>
+export const selectCartItems       = (state) => state.cart.cartItems;
+export const selectCartDetails     = (state) => state.cart.cartDetails;
+export const selectCartCount       = (state) =>
   state.cart.cartItems.reduce((sum, item) => sum + item.quantity, 0);
-export const selectCartPricing  = (state) => state.cart.pricing;
-export const selectDiscount     = (state) => state.cart.discount;
-export const selectShippingInfo = (state) => state.cart.shippingInfo;
+export const selectCartPricing     = (state) => state.cart.pricing;
+export const selectDiscount        = (state) => state.cart.discount;
+export const selectShippingInfo    = (state) => state.cart.shippingInfo;
 
 // Derived selectors
-export const selectHasDiscount  = (state) => state.cart.discount.applied;
+export const selectHasDiscount     = (state) => state.cart.discount.applied;
 export const selectDiscountPending = (state) => state.cart.discount.appliedPending;
 
 // ============================================

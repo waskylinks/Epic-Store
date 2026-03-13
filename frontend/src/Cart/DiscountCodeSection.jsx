@@ -12,10 +12,9 @@ function DiscountCodeSection() {
   const dispatch = useDispatch();
   const { discount, loading } = useSelector(state => state.cart);
   
-  const [code, setCode] = useState('');
+  const [code, setCode]           = useState('');
   const [isApplying, setIsApplying] = useState(false);
 
-  // Handle apply discount
   const handleApplyDiscount = async (e) => {
     e.preventDefault();
     
@@ -28,24 +27,31 @@ function DiscountCodeSection() {
     }
 
     setIsApplying(true);
-    
     try {
       await dispatch(applyDiscountCode({ code: code.trim().toUpperCase() })).unwrap();
-      // Success message is handled by the cart slice
       setCode('');
     } catch (error) {
-      // Error message is handled by the cart slice
       console.error('Discount error:', error);
     } finally {
       setIsApplying(false);
     }
   };
 
-  // Handle remove discount
   const handleRemoveDiscount = () => {
     dispatch(clearDiscount());
     setCode('');
   };
+
+  // Build a concise category restriction label for display inside the
+  // applied state pill, e.g. "Electronics only" or "Electronics & Clothing only".
+  // When eligibleProductCategories is empty the discount is unrestricted
+  // and no extra label is needed.
+  const categoryLabel = (() => {
+    const cats = discount.eligibleProductCategories ?? [];
+    if (cats.length === 0) return null;
+    if (cats.length === 1) return `${cats[0]} only`;
+    return `${cats.slice(0, -1).join(', ')} & ${cats[cats.length - 1]} only`;
+  })();
 
   return (
     <div className="discount-section">
@@ -76,9 +82,22 @@ function DiscountCodeSection() {
             <FiCheck className="discount-check-icon" />
             <div className="discount-applied-details">
               <span className="discount-applied-code">{discount.code}</span>
-              {discount.description && (
+
+              {/* Show description when no category restriction —
+                  it's the most useful context in that case */}
+              {!categoryLabel && discount.description && (
                 <span className="discount-applied-description">
                   {discount.description}
+                </span>
+              )}
+
+              {/* When category-restricted, the restriction IS the key context.
+                  Show it in place of the generic description so the user
+                  immediately understands which items qualified. */}
+              {categoryLabel && (
+                <span className="discount-category-label">
+                  <FiTag />
+                  {categoryLabel}
                 </span>
               )}
             </div>

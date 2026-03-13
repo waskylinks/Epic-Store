@@ -12,7 +12,7 @@ import {
   optimisticAdd,
   optimisticRemove
 } from '../features/products/wishlistSlice';
-import { FiMinus, FiPlus, FiTrash2, FiHeart } from 'react-icons/fi';
+import { FiMinus, FiPlus, FiTrash2, FiHeart, FiTag } from 'react-icons/fi';
 import { toast } from 'react-toastify';
 
 function CartItem({ item }) {
@@ -20,6 +20,7 @@ function CartItem({ item }) {
   
   const wishlistItems = useSelector(state => state.wishlist.items);
   const itemLoading   = useSelector(state => state.wishlist.itemLoading);
+  const discount      = useSelector(state => state.cart.discount);
   
   const [quantity, setQuantity]     = useState(item.quantity);
   const [hasChanges, setHasChanges] = useState(false);
@@ -29,6 +30,35 @@ function CartItem({ item }) {
     setQuantity(item.quantity);
     setHasChanges(false);
   }, [item.quantity]);
+
+  // ── Discount eligibility ───────────────────────────────────────────────────
+  // A category restriction is active when:
+  //   1. A discount is applied
+  //   2. eligibleProductCategories is a non-empty array (meaning the code is
+  //      not a blanket discount — it targets specific product categories)
+  //
+  // When the restriction is active, each item is checked against the list.
+  // If eligibleProductCategories is empty the discount applies to all items
+  // and no badge is needed — the summary line already communicates the saving.
+  //
+  // We deliberately do NOT show a per-item discounted price here.
+  // The authoritative discount amount comes from the server. Reproducing that
+  // math per-item on the frontend risks drift (e.g. maxDiscountAmount caps,
+  // future conditions) and would create a trust gap right before payment.
+  // The badge tells the user WHICH items qualified; the Order Summary tells
+  // them HOW MUCH was saved — clean separation of concerns.
+  const isCategoryRestricted =
+    discount.applied &&
+    Array.isArray(discount.eligibleProductCategories) &&
+    discount.eligibleProductCategories.length > 0;
+
+  const isEligible =
+    isCategoryRestricted &&
+    typeof item.category === 'string' &&
+    discount.eligibleProductCategories.includes(item.category);
+
+  const isIneligible = isCategoryRestricted && !isEligible;
+  // ──────────────────────────────────────────────────────────────────────────
 
   const isInWishlist = wishlistItems.some(wishItem => {
     const wishlistProductId = wishItem.product?._id || wishItem.product;
@@ -169,7 +199,7 @@ function CartItem({ item }) {
   const itemTotal = item.price * quantity;
 
   return (
-    <div className="ec-item">
+    <div className={`ec-item${isIneligible ? ' ec-item--ineligible' : ''}`}>
       <div className="ec-item-info">
         <Link to={`/product/${item.product}`}>
           <img 
@@ -188,6 +218,20 @@ function CartItem({ item }) {
           <p className={`ec-item-stock ${item.stock > 0 ? 'ec-in-stock' : 'ec-out-stock'}`}>
             {item.stock > 0 ? `${item.stock} in stock` : 'Out of stock'}
           </p>
+
+          {/* ── Discount eligibility badge ─────────────────────────────── */}
+          {isEligible && (
+            <span className="ec-item-discount-badge">
+              <FiTag />
+              {discount.code} applied
+            </span>
+          )}
+          {isIneligible && (
+            <span className="ec-item-ineligible-badge">
+              Not eligible for {discount.code}
+            </span>
+          )}
+          {/* ─────────────────────────────────────────────────────────────── */}
         </div>
       </div>
 
@@ -229,6 +273,9 @@ function CartItem({ item }) {
         </button>
       </div>
 
+      {/* Item total — always shows original undiscounted price.
+          The per-item discounted price is intentionally NOT shown here.
+          See discount eligibility comment above for rationale. */}
       <div className="ec-item-total">
         <span className="ec-item-total-price">
           {formatUSD(itemTotal)}

@@ -1,6 +1,5 @@
 /* ============================================================
    Cart.css — ec- prefix
-   Matches full design system
    Coral: #FF6B6B | Page bg: #F0F2F5 | Surface: #FFFFFF
    Font: Plus Jakarta Sans
    Danger red preserved for remove/clear actions
@@ -30,7 +29,6 @@
   --ec-coral-glow:   rgba(255,107,107,0.28);
   --ec-coral-mid:    rgba(255,107,107,0.12);
 
-  /* Danger — preserved for remove/clear/confirm actions */
   --ec-danger:       #dc3545;
   --ec-danger-dark:  #c82333;
   --ec-danger-bg:    #FEE2E2;
@@ -150,7 +148,6 @@
   font-size: 1.2rem;
 }
 
-/* Clear Cart Button — danger red preserved */
 .ec-clear-cart-btn {
   display: inline-flex;
   align-items: center;
@@ -246,6 +243,16 @@
 .ec-item:hover    { background: var(--ec-surface-2); }
 .ec-item:last-child { border-bottom: none; }
 
+/* Ineligible item — subtle muted background so it reads as inactive
+   without being jarring or implying the item is broken/unavailable. */
+.ec-item--ineligible {
+  opacity: 0.72;
+}
+
+.ec-item--ineligible:hover {
+  background: var(--ec-surface-2);
+}
+
 /* Item Info */
 .ec-item-info {
   display: flex;
@@ -305,7 +312,58 @@
 .ec-in-stock  { color: var(--ec-green); }
 .ec-out-stock { color: var(--ec-danger); }
 
-/* Quantity Controls */
+/* ── Discount eligibility badges ────────────────────────────── */
+
+/* Green pill — shown on items whose category qualified for the discount */
+.ec-item-discount-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  padding: 2px 8px;
+  background: var(--ec-green-bg);
+  color: var(--ec-green);
+  border: 1px solid var(--ec-green-border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  width: fit-content;
+}
+
+.ec-item-discount-badge svg {
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+/* Muted pill — shown on items that did NOT qualify when a category-
+   restricted discount is active. Kept subtle so it doesn't distract
+   from eligible items but still answers "why didn't this get cheaper?" */
+.ec-item-ineligible-badge {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 2px;
+  padding: 2px 8px;
+  background: #F3F4F6;
+  color: var(--ec-text-xs);
+  border: 1px solid var(--ec-border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  width: fit-content;
+}
+
+/* ── Discount summary label (category-aware) ────────────────── */
+/* Allows the label to wrap gracefully on narrow summaries without
+   pushing the value off-screen */
+.ec-discount-label {
+  flex: 1;
+  padding-right: 8px;
+  line-height: 1.4;
+  color: var(--ec-green) !important;
+}
+
+/* ── Quantity Controls ──────────────────────────────────────── */
 .ec-item-qty-controls {
   display: flex;
   align-items: center;
@@ -435,7 +493,6 @@
 
 .ec-item-save-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-/* Remove button — danger preserved */
 .ec-item-remove-btn:hover:not(:disabled) {
   border-color: var(--ec-danger);
   color: var(--ec-danger);
@@ -492,9 +549,10 @@
 .ec-summary-item {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   padding: 9px 0;
   border-bottom: 1px solid var(--ec-border);
+  gap: 8px;
 }
 
 .ec-summary-label {
@@ -507,6 +565,7 @@
   font-size: 13.5px;
   font-weight: 700;
   color: var(--ec-text);
+  flex-shrink: 0;
 }
 
 .ec-free-shipping {
@@ -526,7 +585,6 @@
 
 .ec-summary-note svg { color: var(--ec-amber); flex-shrink: 0; }
 
-.ec-discount-applied .ec-summary-label,
 .ec-discount-applied .ec-summary-value { color: var(--ec-green) !important; }
 
 .ec-summary-divider {
@@ -555,7 +613,6 @@
   letter-spacing: -0.5px;
 }
 
-/* Checkout Button — coral */
 .ec-checkout-btn {
   width: 100%;
   padding: 13px;
@@ -585,7 +642,6 @@
 
 .ec-checkout-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
-/* Continue Shopping */
 .ec-continue-shopping {
   display: flex;
   align-items: center;
@@ -702,29 +758,19 @@
 /* ── Responsive — Mobile (≤768px) ──────────────────────────── */
 @media (max-width: 768px) {
   .ec-page { padding: 16px 16px 36px; }
-
   .ec-table-header { display: none; }
-
   .ec-item {
     grid-template-columns: 1fr;
     gap: 12px;
     padding: 14px 16px;
   }
-
   .ec-item-info { flex-direction: row; align-items: flex-start; }
-
   .ec-item-image { width: 64px; height: 64px; }
-
   .ec-item-qty-controls { justify-content: flex-start; }
-
   .ec-item-action { flex-direction: row; flex-wrap: wrap; }
-
   .ec-item-update-btn { flex: 1; }
-
   .ec-items-header { flex-direction: column; align-items: flex-start; }
-
   .ec-header-actions { width: 100%; flex-direction: column; }
-
   .ec-validate-btn,
   .ec-sync-btn,
   .ec-clear-cart-btn { width: 100%; justify-content: center; }
@@ -733,32 +779,21 @@
 /* ── Responsive — Small Mobile (≤480px) ────────────────────── */
 @media (max-width: 480px) {
   .ec-page { padding: 12px 12px 28px; }
-
   .ec-items-heading { font-size: 14.5px; }
-
   .ec-item { padding: 12px; }
-
   .ec-item-image { width: 56px; height: 56px; }
-
   .ec-summary { padding: 16px; }
-
   .ec-total-value { font-size: 20px; }
-
   .ec-checkout-btn { font-size: 13.5px; padding: 12px; }
 }
 
 /* ── Responsive — Very Small (≤360px) ──────────────────────── */
 @media (max-width: 360px) {
   .ec-page { padding: 10px 10px 24px; }
-
   .ec-item { padding: 10px; gap: 10px; }
-
   .ec-item-image { width: 52px; height: 52px; }
-
   .ec-item-action { flex-direction: column; }
-
   .ec-item-secondary-actions { flex-direction: row; }
-
   .ec-summary { padding: 14px; }
 }
 

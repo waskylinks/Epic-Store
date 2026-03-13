@@ -1,56 +1,48 @@
 /* ============================================================
    OrderConfirm.css — eoc- prefix
-   Matches full design system
    Coral: #FF6B6B | Page bg: #F0F2F5 | Surface: #FFFFFF
    Font: Plus Jakarta Sans
-   Fully responsive
+   Fully responsive — all breakpoints
    ============================================================ */
 
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
 
 /* ── Tokens ─────────────────────────────────────────────────── */
 :root {
-  --eoc-font:         'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-
-  --eoc-bg:           #F0F2F5;
-  --eoc-surface:      #FFFFFF;
-  --eoc-surface-2:    #F9FAFB;
-  --eoc-border:       #D1D5DB;
-  --eoc-border-md:    #9CA3AF;
-
-  --eoc-text:         #111827;
-  --eoc-text-sec:     #374151;
-  --eoc-text-muted:   #6B7280;
-  --eoc-text-xs:      #9CA3AF;
-
-  /* Coral — full strength */
-  --eoc-coral:        #FF6B6B;
-  --eoc-coral-dark:   #e05555;
-  --eoc-coral-bg:     #FFF0F0;
-  --eoc-coral-border: #FECACA;
-  --eoc-coral-glow:   rgba(255, 107, 107, 0.28);
-
-  --eoc-green:        #16a34a;
-  --eoc-green-bg:     #DCFCE7;
-  --eoc-green-border: #BBF7D0;
-
-  --eoc-blue:         #2563EB;
-  --eoc-blue-bg:      #DBEAFE;
-  --eoc-blue-border:  #BFDBFE;
-
-  --eoc-radius:       12px;
-  --eoc-radius-sm:    8px;
-  --eoc-radius-xs:    6px;
-  --eoc-shadow-sm:    0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
-  --eoc-shadow:       0 4px 12px rgba(0,0,0,0.09);
-  --eoc-transition:   all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  --eoc-font:          'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --eoc-bg:            #F0F2F5;
+  --eoc-surface:       #FFFFFF;
+  --eoc-surface-2:     #F9FAFB;
+  --eoc-border:        #D1D5DB;
+  --eoc-border-md:     #9CA3AF;
+  --eoc-text:          #111827;
+  --eoc-text-sec:      #374151;
+  --eoc-text-muted:    #6B7280;
+  --eoc-text-xs:       #9CA3AF;
+  --eoc-coral:         #FF6B6B;
+  --eoc-coral-dark:    #e05555;
+  --eoc-coral-bg:      #FFF0F0;
+  --eoc-coral-border:  #FECACA;
+  --eoc-coral-glow:    rgba(255, 107, 107, 0.28);
+  --eoc-green:         #16a34a;
+  --eoc-green-bg:      #DCFCE7;
+  --eoc-green-border:  #BBF7D0;
+  --eoc-green-dark:    #047857;
+  --eoc-blue:          #2563EB;
+  --eoc-blue-bg:       #DBEAFE;
+  --eoc-blue-border:   #BFDBFE;
+  --eoc-radius:        12px;
+  --eoc-radius-sm:     8px;
+  --eoc-radius-xs:     6px;
+  --eoc-shadow-sm:     0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05);
+  --eoc-transition:    all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ── Container ──────────────────────────────────────────────── */
 .eoc-container {
-  max-width: 1100px;
+  max-width: 860px;
   margin: 0 auto;
-  padding: 24px 28px 48px;
+  padding: 28px 28px 56px;
   min-height: 60vh;
   font-family: var(--eoc-font);
   background: var(--eoc-bg);
@@ -88,7 +80,7 @@
 
 .eoc-info-banner svg {
   color: var(--eoc-blue);
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   flex-shrink: 0;
 }
 
@@ -100,7 +92,7 @@
   font-family: var(--eoc-font);
 }
 
-/* ── Content ────────────────────────────────────────────────── */
+/* ── Content stack ──────────────────────────────────────────── */
 .eoc-content {
   display: flex;
   flex-direction: column;
@@ -117,112 +109,259 @@
 }
 
 .eoc-section-title {
-  font-size: 13.5px;
+  font-size: 11px;
   font-weight: 800;
-  color: var(--eoc-text);
+  color: var(--eoc-text-muted);
   margin: 0;
-  padding: 14px 20px;
+  padding: 13px 20px;
   background: var(--eoc-surface-2);
   border-bottom: 1px solid var(--eoc-border);
-  letter-spacing: -0.1px;
   text-transform: uppercase;
-  font-size: 11px;
   letter-spacing: 0.7px;
-  color: var(--eoc-text-muted);
 }
 
-.eoc-table-container {
-  padding: 0;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
+/* ── Shipping card (key/value rows, no table) ───────────────── */
+/* Replaces the old <table> so it reflows gracefully on any screen
+   without horizontal scrolling. */
+.eoc-shipping-card {
+  padding: 4px 0;
 }
 
-/* ── Tables ─────────────────────────────────────────────────── */
-.eoc-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-family: var(--eoc-font);
-}
-
-.eoc-table thead {
-  background: var(--eoc-surface-2);
-}
-
-.eoc-table th {
+.eoc-shipping-row {
+  display: flex;
+  gap: 12px;
   padding: 11px 20px;
-  text-align: left;
+  border-bottom: 1px solid var(--eoc-border);
+  align-items: baseline;
+}
+
+.eoc-shipping-row:last-child {
+  border-bottom: none;
+}
+
+.eoc-shipping-label {
   font-size: 11px;
   font-weight: 700;
   color: var(--eoc-text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.6px;
-  border-bottom: 1px solid var(--eoc-border);
-  white-space: nowrap;
+  letter-spacing: 0.5px;
+  min-width: 68px;
+  flex-shrink: 0;
 }
 
-.eoc-table td {
-  padding: 13px 20px;
-  border-bottom: 1px solid var(--eoc-border);
-  color: var(--eoc-text-sec);
+.eoc-shipping-value {
   font-size: 13.5px;
   font-weight: 500;
-  vertical-align: middle;
+  color: var(--eoc-text-sec);
+  line-height: 1.5;
 }
 
-.eoc-table tbody tr:last-child td { border-bottom: none; }
+/* ── Order Items list ───────────────────────────────────────── */
+/* Flexbox rows instead of a table — no horizontal scroll on mobile */
+.eoc-items-list {
+  padding: 4px 0;
+}
 
-.eoc-table tbody tr:hover { background: var(--eoc-surface-2); }
+.eoc-item-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--eoc-border);
+  transition: var(--eoc-transition);
+}
 
-/* Product image — contain so full product visible */
-.eoc-product-image {
-  width: 56px;
-  height: 56px;
+.eoc-item-row:last-child {
+  border-bottom: none;
+}
+
+.eoc-item-row:hover {
+  background: var(--eoc-surface-2);
+}
+
+.eoc-item-image {
+  width: 60px;
+  height: 60px;
   object-fit: contain;
   border-radius: var(--eoc-radius-xs);
   border: 1px solid var(--eoc-border);
   background: var(--eoc-surface-2);
   padding: 4px;
-  display: block;
+  flex-shrink: 0;
 }
 
-.eoc-product-name {
+.eoc-item-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.eoc-item-name {
+  font-size: 13.5px;
   font-weight: 700;
   color: var(--eoc-text);
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 
-/* Item total — coral, full strength */
-.eoc-item-total {
-  font-weight: 800 !important;
-  color: var(--eoc-coral) !important;
-  font-size: 14px !important;
-}
-
-/* Summary table centering */
-.eoc-summary-table th { text-align: center; }
-
-.eoc-summary-table td {
-  text-align: center;
+/* Green badge — mirrors the Cart page badge exactly */
+.eoc-item-discount-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--eoc-green-bg);
+  color: var(--eoc-green);
+  border: 1px solid var(--eoc-green-border);
+  border-radius: 999px;
+  font-size: 11px;
   font-weight: 700;
-  font-size: 14px;
+  width: fit-content;
+  letter-spacing: 0.1px;
 }
 
-/* Grand total — large coral */
-.eoc-total-amount {
-  color: var(--eoc-coral) !important;
-  font-size: 18px !important;
-  font-weight: 800 !important;
+.eoc-item-discount-badge svg {
+  font-size: 0.65rem;
+  flex-shrink: 0;
+}
+
+.eoc-item-meta {
+  font-size: 12px;
+  color: var(--eoc-text-muted);
+  font-weight: 500;
+}
+
+.eoc-item-total {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--eoc-coral);
   letter-spacing: -0.3px;
+  flex-shrink: 0;
+  text-align: right;
+  min-width: 72px;
 }
 
+/* ── Order Summary rows ─────────────────────────────────────── */
+/* Key/value rows replace the old summary <table> for the same
+   reason as shipping — no scroll, natural wrap on any width. */
+.eoc-summary-rows {
+  padding: 4px 0;
+}
+
+.eoc-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--eoc-border);
+  gap: 12px;
+}
+
+.eoc-summary-row:last-child {
+  border-bottom: none;
+}
+
+.eoc-summary-label {
+  font-size: 13px;
+  color: var(--eoc-text-muted);
+  font-weight: 500;
+}
+
+.eoc-summary-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--eoc-text);
+  flex-shrink: 0;
+}
+
+/* Discount row */
+.eoc-summary-row--discount {
+  background: #f0fdf4;
+  align-items: flex-start;
+}
+
+.eoc-discount-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Code pill inside the discount label */
+.eoc-discount-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--eoc-green-bg);
+  color: var(--eoc-green);
+  border: 1px solid var(--eoc-green-border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  width: fit-content;
+}
+
+.eoc-discount-pill svg {
+  font-size: 0.7rem;
+  flex-shrink: 0;
+}
+
+/* Category restriction note below the pill */
+.eoc-discount-cat {
+  font-size: 11.5px;
+  color: var(--eoc-green-dark);
+  font-weight: 600;
+  padding-left: 2px;
+}
+
+.eoc-discount-value {
+  color: var(--eoc-green) !important;
+  padding-top: 2px;
+}
+
+/* Free shipping badge */
 .eoc-free-shipping {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   color: var(--eoc-green);
   font-weight: 800;
   background: var(--eoc-green-bg);
   padding: 2px 10px;
   border-radius: 999px;
   border: 1px solid var(--eoc-green-border);
-  font-size: 11.5px;
-  display: inline-block;
+  font-size: 12px;
+}
+
+/* Total row */
+.eoc-summary-row--total {
+  padding: 16px 20px;
+  background: var(--eoc-surface-2);
+  border-top: 2px solid var(--eoc-border);
+  border-bottom: none;
+}
+
+.eoc-total-label {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--eoc-text);
+  letter-spacing: -0.2px;
+}
+
+.eoc-total-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--eoc-coral);
+  letter-spacing: -0.5px;
 }
 
 /* ── Actions ────────────────────────────────────────────────── */
@@ -231,14 +370,14 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  margin-top: 20px;
+  margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--eoc-border);
 }
 
 .eoc-back-btn,
 .eoc-proceed-btn {
-  padding: 12px 24px;
+  padding: 13px 24px;
   font-family: var(--eoc-font);
   font-size: 13.5px;
   font-weight: 700;
@@ -252,11 +391,11 @@
   box-shadow: var(--eoc-shadow-sm);
 }
 
-/* Back — neutral */
 .eoc-back-btn {
   background: var(--eoc-surface);
   border-color: var(--eoc-border);
   color: var(--eoc-text-muted);
+  flex-shrink: 0;
 }
 
 .eoc-back-btn:hover:not(:disabled) {
@@ -265,7 +404,6 @@
   background: var(--eoc-surface-2);
 }
 
-/* Proceed — coral, full strength */
 .eoc-proceed-btn {
   background: var(--eoc-coral);
   color: #ffffff;
@@ -291,7 +429,6 @@
   box-shadow: none;
 }
 
-/* Focus states */
 .eoc-back-btn:focus-visible,
 .eoc-proceed-btn:focus-visible {
   outline: 2px solid var(--eoc-coral);
@@ -300,52 +437,207 @@
 
 /* ── Responsive — Tablet (≤1024px) ─────────────────────────── */
 @media (max-width: 1024px) {
-  .eoc-container { padding: 20px 20px 40px; }
+  .eoc-container {
+    max-width: 100%;
+    padding: 20px 24px 48px;
+  }
 }
 
 /* ── Responsive — Mobile (≤768px) ──────────────────────────── */
 @media (max-width: 768px) {
-  .eoc-container { padding: 16px 16px 32px; }
+  .eoc-container {
+    padding: 16px 16px 40px;
+  }
 
-  .eoc-header { font-size: 19px; gap: 10px; }
-  .eoc-header svg { font-size: 1.4rem; }
+  .eoc-header {
+    font-size: 19px;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
 
-  .eoc-table th,
-  .eoc-table td { padding: 10px 14px; }
+  .eoc-header svg {
+    font-size: 1.4rem;
+  }
 
-  .eoc-product-image { width: 48px; height: 48px; }
+  .eoc-info-banner {
+    padding: 11px 14px;
+    margin-bottom: 16px;
+  }
 
-  .eoc-actions { flex-direction: column; }
+  .eoc-info-banner p {
+    font-size: 12.5px;
+  }
 
-  .eoc-proceed-btn { max-width: 100%; width: 100%; }
-  .eoc-back-btn { width: 100%; justify-content: center; }
+  .eoc-section-title {
+    padding: 11px 16px;
+  }
+
+  /* Shipping */
+  .eoc-shipping-row {
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 16px;
+  }
+
+  .eoc-shipping-label {
+    min-width: unset;
+  }
+
+  /* Items */
+  .eoc-item-row {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .eoc-item-image {
+    width: 52px;
+    height: 52px;
+  }
+
+  .eoc-item-name {
+    font-size: 13px;
+  }
+
+  .eoc-item-total {
+    font-size: 14px;
+    min-width: 60px;
+  }
+
+  /* Summary */
+  .eoc-summary-row {
+    padding: 11px 16px;
+  }
+
+  .eoc-summary-row--total {
+    padding: 14px 16px;
+  }
+
+  .eoc-total-value {
+    font-size: 20px;
+  }
+
+  /* Actions */
+  .eoc-actions {
+    flex-direction: column;
+    margin-top: 20px;
+  }
+
+  .eoc-proceed-btn {
+    max-width: 100%;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .eoc-back-btn {
+    width: 100%;
+    justify-content: center;
+    order: 2;
+  }
+
+  .eoc-proceed-btn {
+    order: 1;
+  }
 }
 
 /* ── Responsive — Small Mobile (≤480px) ────────────────────── */
 @media (max-width: 480px) {
-  .eoc-container { padding: 12px 12px 28px; }
+  .eoc-container {
+    padding: 12px 12px 32px;
+  }
 
-  .eoc-header { font-size: 17px; }
+  .eoc-header {
+    font-size: 17px;
+    margin-bottom: 14px;
+  }
 
-  .eoc-table th { font-size: 10px; padding: 9px 12px; }
-  .eoc-table td { font-size: 12.5px; padding: 10px 12px; }
+  .eoc-item-row {
+    padding: 10px 12px;
+    gap: 10px;
+  }
 
-  .eoc-product-image { width: 42px; height: 42px; }
+  .eoc-item-image {
+    width: 46px;
+    height: 46px;
+  }
 
-  .eoc-total-amount { font-size: 16px !important; }
+  .eoc-item-name {
+    font-size: 12.5px;
+  }
 
-  .eoc-info-banner p { font-size: 12.5px; }
+  .eoc-item-meta {
+    font-size: 11.5px;
+  }
+
+  .eoc-item-total {
+    font-size: 13.5px;
+    min-width: 52px;
+  }
+
+  .eoc-summary-row {
+    padding: 10px 12px;
+  }
+
+  .eoc-summary-row--total {
+    padding: 13px 12px;
+  }
+
+  .eoc-total-label {
+    font-size: 14px;
+  }
+
+  .eoc-total-value {
+    font-size: 18px;
+  }
+
+  .eoc-shipping-row {
+    padding: 9px 12px;
+  }
+
+  .eoc-section-title {
+    padding: 10px 12px;
+  }
+
+  .eoc-back-btn,
+  .eoc-proceed-btn {
+    padding: 12px 16px;
+    font-size: 13px;
+  }
 }
 
 /* ── Responsive — Very Small (≤360px) ──────────────────────── */
 @media (max-width: 360px) {
-  .eoc-container { padding: 10px 10px 24px; }
+  .eoc-container {
+    padding: 10px 10px 28px;
+  }
 
-  .eoc-table th,
-  .eoc-table td { padding: 8px 10px; }
+  .eoc-header {
+    font-size: 15.5px;
+    gap: 8px;
+  }
 
-  .eoc-proceed-btn,
-  .eoc-back-btn { padding: 11px 16px; font-size: 13px; }
+  .eoc-item-row {
+    padding: 9px 10px;
+    gap: 8px;
+  }
+
+  .eoc-item-image {
+    width: 42px;
+    height: 42px;
+  }
+
+  .eoc-item-name {
+    font-size: 12px;
+    -webkit-line-clamp: 3;
+  }
+
+  .eoc-total-value {
+    font-size: 17px;
+  }
+
+  .eoc-discount-pill {
+    font-size: 11px;
+    padding: 2px 8px;
+  }
 }
 
 /* ── Accessibility ──────────────────────────────────────────── */
@@ -354,73 +646,4 @@
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
-}
-
-/* ─── OrderConfirm.css additions ─────────────────────────────────────────── */
-
-/* Strikethrough original price in the summary table subtotal cell */
-.eoc-original-price {
-  text-decoration: line-through;
-  color: #9ca3af;
-  margin-right: 6px;
-  font-size: 0.875rem;
-}
-
-/* Discount column cell */
-.eoc-discount-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: flex-start;
-}
-
-/* Pill badge showing the code */
-.eoc-discount-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: #d1fae5;
-  color: #065f46;
-  border: 1px solid #6ee7b7;
-  border-radius: 999px;
-  padding: 2px 10px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-}
-
-/* The deducted amount in green */
-.eoc-discount-amount {
-  color: #10b981;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-
-/* ─── Payment.css additions ───────────────────────────────────────────────── */
-
-/* Discount row in the order summary sidebar */
-.ep-summary-discount {
-  color: #10b981;
-}
-
-.ep-summary-discount .ep-summary-label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: #10b981;
-}
-
-/* Small tag icon inside the label */
-.ep-tag-icon {
-  flex-shrink: 0;
-  font-size: 0.85rem;
-}
-
-/* Discount value (negative amount) */
-.ep-discount-value {
-  color: #10b981 !important;
-  font-weight: 600;
 }

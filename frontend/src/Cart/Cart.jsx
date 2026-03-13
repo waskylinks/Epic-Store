@@ -94,21 +94,15 @@ function Cart() {
   // has arrived yet (e.g. on first mount before validateCheckout or
   // applyDiscountCode has been called).
   //
-  // IMPORTANT: once the slice has real server pricing (pricing.totalPrice > 0,
-  // which is set by applyDiscountCode or validateCheckout), we always prefer
-  // it — it is the authoritative source. The local calc is only a display
-  // fallback so the summary isn't blank while items are visible.
-  //
-  // The local calc derives originalItemPrice from cartDetails so the
-  // strikethrough subtotal works even before a server round-trip.
+  // Once the slice has real server pricing (pricing.totalPrice > 0, set by
+  // applyDiscountCode or validateCheckout) we always prefer it — it is the
+  // authoritative source. The local calc is only a display fallback so the
+  // summary isn't blank while items are visible.
   const getDisplayPricing = () => {
     const localItemPrice = cartDetails.reduce(
       (acc, item) => acc + item.price * item.quantity, 0
     );
 
-    // If server pricing is populated, use it directly.
-    // Augment with originalItemPrice for the strikethrough display when a
-    // discount is active (server pricing.itemPrice is the discounted value).
     if (pricing.totalPrice > 0) {
       return {
         ...pricing,
@@ -119,12 +113,11 @@ function Cart() {
       };
     }
 
-    // Fallback: derive everything locally from cartDetails.
-    const discountAmount   = discount.applied ? discount.discountAmount : 0;
+    const discountAmount      = discount.applied ? discount.discountAmount : 0;
     const discountedItemPrice = Math.max(0, localItemPrice - discountAmount);
-    const taxPrice         = discountedItemPrice * 0.18;
-    const shippingPrice    = discountedItemPrice >= 500 ? 0 : 50;
-    const totalPrice       = discountedItemPrice + taxPrice + shippingPrice;
+    const taxPrice            = discountedItemPrice * 0.18;
+    const shippingPrice       = discountedItemPrice >= 500 ? 0 : 50;
+    const totalPrice          = discountedItemPrice + taxPrice + shippingPrice;
 
     return {
       originalItemPrice: localItemPrice,
@@ -138,6 +131,22 @@ function Cart() {
   };
 
   const displayPricing = cartDetails.length > 0 ? getDisplayPricing() : pricing;
+
+  // ── Discount summary label ─────────────────────────────────────────────────
+  // When the code is category-restricted, append the qualifying category names
+  // to the summary line so the user knows exactly which items were discounted.
+  // e.g. "Discount (VIP28) — Electronics only: -$223.50"
+  // For unrestricted codes the label is just "Discount (CODE):".
+  const discountSummaryLabel = (() => {
+    if (!discount.applied) return null;
+    const cats = discount.eligibleProductCategories ?? [];
+    if (cats.length === 0) return `Discount (${discount.code}):`;
+    const catLabel = cats.length === 1
+      ? `${cats[0]} only`
+      : `${cats.slice(0, -1).join(', ')} & ${cats[cats.length - 1]} only`;
+    return `Discount (${discount.code}) — ${catLabel}:`;
+  })();
+  // ──────────────────────────────────────────────────────────────────────────
 
   const handleProceedToCheckout = async () => {
     setIsValidating(true);
@@ -159,15 +168,8 @@ function Cart() {
     }
   };
 
-  const handleOpenClearModal = () => {
-    setShowClearModal(true);
-  };
-
-  const handleCloseClearModal = () => {
-    if (!isClearing) {
-      setShowClearModal(false);
-    }
-  };
+  const handleOpenClearModal  = () => setShowClearModal(true);
+  const handleCloseClearModal = () => { if (!isClearing) setShowClearModal(false); };
 
   const handleConfirmClearCart = async () => {
     setIsClearing(true);
@@ -268,10 +270,11 @@ function Cart() {
 
                 <DiscountCodeSection />
 
+                {/* Discount line — label includes category restriction when active */}
                 {discount.applied && (
                   <div className="ec-summary-item ec-discount-applied">
-                    <span className="ec-summary-label" style={{ color: '#10b981' }}>
-                      Discount ({discount.code}):
+                    <span className="ec-summary-label ec-discount-label">
+                      {discountSummaryLabel}
                     </span>
                     <span className="ec-summary-value" style={{ color: '#10b981' }}>
                       -{formatUSD(displayPricing.discountAmount || 0)}

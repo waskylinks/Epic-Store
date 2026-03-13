@@ -15,13 +15,13 @@ import {
 import { selectSelectedAddress } from '../features/shipping/shippingSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
-import { FiCheckCircle, FiLock, FiTag } from 'react-icons/fi';
+import { FiCheckCircle, FiLock, FiTag, FiTruck } from 'react-icons/fi';
 
 function OrderConfirm() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  const { cartItems, cartDetails, discount, loading: cartLoading } = useSelector(state => state.cart);
+  const { cartItems, cartDetails, pricing, discount, loading: cartLoading } = useSelector(state => state.cart);
   const { user } = useSelector(state => state.user);
   const selectedShippingAddress = useSelector(selectSelectedAddress);
   const { 
@@ -32,35 +32,7 @@ function OrderConfirm() {
   } = useSelector(state => state.checkout);
 
   const [isProcessing, setIsProcessing] = useState(false);
-  // Defers the redirect guard by one tick so Redux state settles after
-  // navigation from the Shipping page.
   const [addressChecked, setAddressChecked] = useState(false);
-
-  // Derive display pricing from cartDetails, honouring any active discount
-  // from cart state. OrderConfirm does not re-call validateCheckout or
-  // applyDiscountCode, so it calculates its own totals to stay in sync with
-  // what the user saw on the Cart page.
-  const calculatePricing = () => {
-    const grossItemPrice  = cartDetails.reduce(
-      (acc, item) => acc + item.price * item.quantity, 0
-    );
-    const discountAmount  = discount.applied ? discount.discountAmount : 0;
-    const discountedPrice = Math.max(0, grossItemPrice - discountAmount);
-    const taxPrice        = discountedPrice * 0.18;
-    const shippingPrice   = discountedPrice >= 500 ? 0 : 50;
-    const totalPrice      = discountedPrice + taxPrice + shippingPrice;
-
-    return { grossItemPrice, itemPrice: discountedPrice, discountAmount, taxPrice, shippingPrice, totalPrice };
-  };
-
-  const displayPricing = cartDetails.length > 0
-    ? calculatePricing()
-    : { grossItemPrice: 0, itemPrice: 0, discountAmount: 0, taxPrice: 0, shippingPrice: 0, totalPrice: 0 };
-
-  const getUserFullName = () => {
-    if (user?.firstName && user?.lastName) return `${user.firstName} ${user.lastName}`;
-    return user?.name || 'N/A';
-  };
 
   useEffect(() => {
     if (cartItems.length > 0) {
@@ -100,6 +72,29 @@ function OrderConfirm() {
       style: 'currency', currency: 'USD', minimumFractionDigits: 2
     }).format(amount);
   };
+
+  const getUserFullName = () => {
+    if (user?.firstName && user?.lastName) return `${user.firstName} ${user.lastName}`;
+    return user?.name || 'N/A';
+  };
+
+  // ── Pricing ───────────────────────────────────────────────────────────────
+  // Read directly from Redux pricing — set authoritatively by applyDiscountCode
+  // (or validateCheckout when no discount is active). No local recalculation.
+  // pricing.itemPrice is already the post-discount discounted subtotal.
+  const displayPricing = pricing;
+
+  // ── Discount context ──────────────────────────────────────────────────────
+  const hasDiscount    = discount.applied && discount.discountAmount > 0;
+  const eligibleCats   = discount.eligibleProductCategories ?? [];
+  const isCategoryCode = eligibleCats.length > 0;
+
+  const categoryLabel = isCategoryCode
+    ? eligibleCats.length === 1
+      ? `${eligibleCats[0]} only`
+      : `${eligibleCats.slice(0, -1).join(', ')} & ${eligibleCats[eligibleCats.length - 1]} only`
+    : null;
+  // ─────────────────────────────────────────────────────────────────────────
 
   const proceedToPayment = async () => {
     if (!selectedShippingAddress) {
@@ -156,6 +151,7 @@ function OrderConfirm() {
       <CheckoutPath activePath={1} />
 
       <div className="eoc-container">
+
         <h1 className="eoc-header">
           <FiCheckCircle />
           Confirm Your Order
@@ -168,121 +164,128 @@ function OrderConfirm() {
 
         <div className="eoc-content">
 
-          {/* Shipping Information */}
+          {/* ── Shipping Information ────────────────────────────────────── */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Shipping Information</h2>
-            <div className="eoc-table-container">
-              <table className="eoc-table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Phone</th>
-                    <th>Address</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>{getUserFullName()}</td>
-                    <td>{selectedShippingAddress?.phoneNo || 'N/A'}</td>
-                    <td>
-                      {selectedShippingAddress?.address}, {selectedShippingAddress?.city},{' '}
-                      {selectedShippingAddress?.state}, {selectedShippingAddress?.country}{' '}
-                      - {selectedShippingAddress?.pinCode}
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="eoc-shipping-card">
+              <div className="eoc-shipping-row">
+                <span className="eoc-shipping-label">Name</span>
+                <span className="eoc-shipping-value">{getUserFullName()}</span>
+              </div>
+              <div className="eoc-shipping-row">
+                <span className="eoc-shipping-label">Phone</span>
+                <span className="eoc-shipping-value">{selectedShippingAddress?.phoneNo || 'N/A'}</span>
+              </div>
+              <div className="eoc-shipping-row">
+                <span className="eoc-shipping-label">Address</span>
+                <span className="eoc-shipping-value">
+                  {selectedShippingAddress?.address}, {selectedShippingAddress?.city},{' '}
+                  {selectedShippingAddress?.state}, {selectedShippingAddress?.country}{' '}
+                  — {selectedShippingAddress?.pinCode}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Cart Items */}
+          {/* ── Order Items ─────────────────────────────────────────────── */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Order Items</h2>
-            <div className="eoc-table-container">
-              <table className="eoc-table eoc-cart-table">
-                <thead>
-                  <tr>
-                    <th>Image</th>
-                    <th>Product Name</th>
-                    <th>Price</th>
-                    <th>Quantity</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cartDetails.map(item => (
-                    <tr key={item.product}>
-                      <td>
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className='eoc-product-image'
-                          onError={(e) => { e.target.src = '/images/placeholder.png'; }}
-                        />
-                      </td>
-                      <td className="eoc-product-name">{item.name}</td>
-                      <td>{formatUSD(item.price)}</td>
-                      <td>{item.quantity}</td>
-                      <td className="eoc-item-total">{formatUSD(item.price * item.quantity)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="eoc-items-list">
+              {cartDetails.map(item => {
+                const isEligible =
+                  hasDiscount &&
+                  isCategoryCode &&
+                  typeof item.category === 'string' &&
+                  eligibleCats.includes(item.category);
+
+                return (
+                  <div key={item.product} className="eoc-item-row">
+                    <img
+                      src={item.image}
+                      alt={item.name}
+                      className="eoc-item-image"
+                      onError={(e) => { e.target.src = '/images/placeholder.png'; }}
+                    />
+                    <div className="eoc-item-info">
+                      <span className="eoc-item-name">{item.name}</span>
+                      {isEligible && (
+                        <span className="eoc-item-discount-badge">
+                          <FiTag /> {discount.code} applied
+                        </span>
+                      )}
+                      <span className="eoc-item-meta">
+                        {formatUSD(item.price)} × {item.quantity}
+                      </span>
+                    </div>
+                    <span className="eoc-item-total">
+                      {formatUSD(item.price * item.quantity)}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          {/* Order Summary */}
+          {/* ── Order Summary ────────────────────────────────────────────── */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Order Summary</h2>
-            <div className="eoc-table-container">
-              <table className="eoc-table eoc-summary-table">
-                <thead>
-                  <tr>
-                    <th>Subtotal</th>
-                    {discount.applied && <th>Discount</th>}
-                    <th>Shipping</th>
-                    <th>Tax (18%)</th>
-                    <th>Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>
-                      {discount.applied ? (
-                        <>
-                          <span className="eoc-original-price">
-                            {formatUSD(displayPricing.grossItemPrice)}
-                          </span>{' '}
-                          {formatUSD(displayPricing.itemPrice)}
-                        </>
-                      ) : (
-                        formatUSD(displayPricing.itemPrice || 0)
-                      )}
-                    </td>
+            <div className="eoc-summary-rows">
 
-                    {discount.applied && (
-                      <td className="eoc-discount-cell">
-                        <span className="eoc-discount-badge">
-                          <FiTag /> {discount.code}
-                        </span>
-                        <span className="eoc-discount-amount">
-                          -{formatUSD(displayPricing.discountAmount)}
-                        </span>
-                      </td>
+              <div className="eoc-summary-row">
+                <span className="eoc-summary-label">Subtotal</span>
+                {/* Single clean value — no strikethrough.
+                    pricing.itemPrice is already the post-discount subtotal.
+                    The user processed the discount on the Cart page; this
+                    page is for confirmation, not price discovery. */}
+                <span className="eoc-summary-value">
+                  {formatUSD(displayPricing.itemPrice || 0)}
+                </span>
+              </div>
+
+              {hasDiscount && (
+                <div className="eoc-summary-row eoc-summary-row--discount">
+                  <span className="eoc-summary-label eoc-discount-label">
+                    <span className="eoc-discount-pill">
+                      <FiTag />
+                      {discount.code}
+                    </span>
+                    {categoryLabel && (
+                      <span className="eoc-discount-cat">{categoryLabel}</span>
                     )}
+                  </span>
+                  <span className="eoc-summary-value eoc-discount-value">
+                    -{formatUSD(discount.discountAmount)}
+                  </span>
+                </div>
+              )}
 
-                    <td>
-                      {displayPricing.shippingPrice === 0 ? (
-                        <span className="eoc-free-shipping">FREE</span>
-                      ) : (
-                        formatUSD(displayPricing.shippingPrice || 0)
-                      )}
-                    </td>
-                    <td>{formatUSD(displayPricing.taxPrice || 0)}</td>
-                    <td className="eoc-total-amount">{formatUSD(displayPricing.totalPrice || 0)}</td>
-                  </tr>
-                </tbody>
-              </table>
+              <div className="eoc-summary-row">
+                <span className="eoc-summary-label">Tax (18%)</span>
+                <span className="eoc-summary-value">
+                  {formatUSD(displayPricing.taxPrice || 0)}
+                </span>
+              </div>
+
+              <div className="eoc-summary-row">
+                <span className="eoc-summary-label">Shipping</span>
+                <span className="eoc-summary-value">
+                  {displayPricing.shippingPrice === 0 ? (
+                    <span className="eoc-free-shipping">
+                      <FiTruck /> FREE
+                    </span>
+                  ) : (
+                    formatUSD(displayPricing.shippingPrice || 0)
+                  )}
+                </span>
+              </div>
+
+              <div className="eoc-summary-row eoc-summary-row--total">
+                <span className="eoc-total-label">Total</span>
+                <span className="eoc-total-value">
+                  {formatUSD(displayPricing.totalPrice || 0)}
+                </span>
+              </div>
+
             </div>
           </div>
 
@@ -306,6 +309,7 @@ function OrderConfirm() {
             {isProcessing ? 'Creating Session...' : 'Proceed to Payment'}
           </button>
         </div>
+
       </div>
 
       <Footer />
