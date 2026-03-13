@@ -33,17 +33,15 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("User not authenticated", 401));
   }
 
-  const { items, shippingInfo } = req.body;
+  const { items, shippingInfo, discountCode, discountAmount } = req.body;
 
   if (!items || items.length === 0) {
     return next(new HandleError("Cart is empty", 400));
   }
 
-  // Validate shipping info structure if provided
   if (shippingInfo) {
     const requiredFields = ['address', 'city', 'state', 'country', 'phoneNo'];
     const missingFields = requiredFields.filter(field => !shippingInfo[field]);
-
     if (missingFields.length > 0) {
       return next(new HandleError(
         `Missing required shipping fields: ${missingFields.join(', ')}`,
@@ -52,27 +50,23 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // Calculate pricing
   let itemPrice = 0;
   const validItems = [];
 
   for (const item of items) {
     const product = await Product.findById(item.product);
-
-    if (!product || product.status !== 'published') {
-      continue;
-    }
+    if (!product || product.status !== 'published') continue;
 
     const unitPrice = product.pricing?.sale || product.pricing?.regular || 0;
     const itemTotal = unitPrice * item.quantity;
     itemPrice += itemTotal;
 
     validItems.push({
-      product: product._id,
-      name: product.name,
-      price: unitPrice,
+      product:  product._id,
+      name:     product.name,
+      price:    unitPrice,
       quantity: item.quantity,
-      image: product.images?.[0]?.url
+      image:    product.images?.[0]?.url
     });
   }
 
@@ -80,29 +74,42 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("No valid items in cart", 400));
   }
 
-  const taxPrice      = Math.round(itemPrice * 0.18 * 100) / 100;
-  const shippingPrice = itemPrice >= 500 ? 0 : 50;
-  const totalPrice    = Math.round((itemPrice + taxPrice + shippingPrice) * 100) / 100;
+  // ── Pricing with optional discount ───────────────────────────────────────
+  
+  const resolvedDiscount =
+    discountCode &&
+    typeof discountAmount === 'number' &&
+    discountAmount > 0
+      ? Math.min(discountAmount, itemPrice) // never let discount exceed itemPrice
+      : 0;
 
-  // Check if user has an active checkout
-  let checkout = await Checkout.findOne({
-    user: userId,
-    status: 'pending'
-  });
+  const discountedItemPrice = Math.max(0, itemPrice - resolvedDiscount);
+  const taxPrice            = Math.round(discountedItemPrice * 0.18 * 100) / 100;
+  const shippingPrice       = discountedItemPrice >= 500 ? 0 : 50;
+  const totalPrice          = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
+
+  const pricingPayload = {
+    itemPrice:      Math.round(discountedItemPrice * 100) / 100,
+    taxPrice,
+    shippingPrice,
+    totalPrice,
+    currency:       'USD',
+    ...(resolvedDiscount > 0 && {
+      discountCode,
+      discountAmount:  Math.round(resolvedDiscount * 100) / 100,
+      grossItemPrice:  Math.round(itemPrice * 100) / 100,
+    }),
+  };
+  // ─────────────────────────────────────────────────────────────────────────
+
+  let checkout = await Checkout.findOne({ user: userId, status: 'pending' });
 
   const attributionData = req.attributionData || {};
   const deviceInfo      = req.deviceInfo      || {};
 
   if (checkout) {
-    // Update existing checkout
-    checkout.items = validItems;
-    checkout.pricing = {
-      itemPrice: Math.round(itemPrice * 100) / 100,
-      taxPrice,
-      shippingPrice,
-      totalPrice,
-      currency: 'USD'
-    };
+    checkout.items   = validItems;
+    checkout.pricing = pricingPayload;
 
     if (shippingInfo) {
       checkout.shippingInfo = {
@@ -120,18 +127,11 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     checkout.lastActivityAt = new Date();
     checkout.updateStep('shipping_info');
   } else {
-    // Create new checkout
     checkout = new Checkout({
       user:  userId,
       email: req.user.email,
       items: validItems,
-      pricing: {
-        itemPrice: Math.round(itemPrice * 100) / 100,
-        taxPrice,
-        shippingPrice,
-        totalPrice,
-        currency: 'USD'
-      },
+      pricing: pricingPayload,
       shippingInfo: shippingInfo ? {
         firstName: shippingInfo.firstName,
         lastName:  shippingInfo.lastName,
@@ -144,7 +144,7 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
       } : undefined,
       currentStep: 'shipping_info',
       analytics: {
-        source:      attributionData.source || 'email', // recovered carts come via email link
+        source:      attributionData.source || 'email',
         medium:      attributionData.medium,
         campaign:    attributionData.campaign,
         referrer:    attributionData.referrer,
@@ -173,7 +173,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     }
   });
 });
-
 // ============================================
 // UPDATE CHECKOUT STEP
 // ============================================

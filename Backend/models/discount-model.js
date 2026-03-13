@@ -546,7 +546,13 @@ discountSchema.methods.recordUsage = async function (userId, orderId, discountAm
 // ============================================
 
 discountSchema.statics.findActiveByCode = async function (code) {
-  return this.findOne({ code: code.toUpperCase(), status: "active" });
+  const now = new Date();
+  return this.findOne({
+    code:       code.toUpperCase(),
+    status:     "active",
+    validFrom:  { $lte: now },
+    validUntil: { $gte: now },
+  });
 };
 
 discountSchema.statics.getActivePromos = async function () {
