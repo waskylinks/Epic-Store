@@ -9,6 +9,8 @@ import {
   applyDiscountCode
 } from '../controller/cart-controller.js';
 
+import { verifyUserAuth } from '../middleware/user-auth.js';
+
 const router = express.Router();
 
 // ============================================
@@ -66,6 +68,6 @@ router.post('/checkout/validate', validateCheckout);
  * @route POST /api/v1/cart/apply-discount
  * @access Public
  */
-router.post('/apply-discount', applyDiscountCode);
+router.post('/apply-discount', verifyUserAuth, applyDiscountCode);
 
 export default router;

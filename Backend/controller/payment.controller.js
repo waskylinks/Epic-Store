@@ -211,20 +211,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       const canUse = await discount.canUserUse(userId);
       if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
 
-      // FIX BUG-PC1: The original code passed raw req.body.cartItems to both
-      // validateCart() and calculateDiscount(). Raw cartItems only carry
-      // { product: ObjectId, quantity: N } — no category field. This silently
-      // bypassed all eligibleProductCategories restrictions, identical to the
-      // BUG-01 found and fixed in cart-controller.js.
-      //
-      // Fix: use validatedOrder.orderItems, which are fully resolved product
-      // objects built by validateAndCalculateOrder(). These carry name,
-      // unitPrice, itemTotal, and — critically — category, so the discount
-      // model's category restriction check works correctly.
-      //
-      // Note: the original itemPrice (pre-discount) is preserved in a separate
-      // variable so the session can store both the gross and net amounts,
-      // enabling future audit or refund calculations.
       const originalItemPrice = validatedOrder.itemPrice;
 
       const validation = discount.validateCart(
@@ -350,7 +336,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       ...(discountInfo && {
         discount: {
           code:               discountInfo.code,
-          amount:             discountInfo.discountAmount,
+          discountAmount:     discountInfo.discountAmount,
           originalItemPrice:  discountInfo.originalItemPrice,
         }
       })
@@ -380,16 +366,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
 /**
  * Verify Payment — confirms gateway charge, creates order.
- *
- * FIX: Removed MongoDB transaction entirely. The previous implementation used
- * mongoose.startSession() + startTransaction() which caused infinite hangs when:
- *   1. MongoDB connection was in a recovering state (seen in logs)
- *   2. The stock validation loop inside the transaction timed out waiting for locks
- *
- * Since stock deduction is handled by the admin fulfillment flow (not at payment
- * time), there is no multi-document write that requires atomicity here.
- * Order.create() is a single atomic document write — it either succeeds or fails,
- * no transaction needed.
  *
  * @route POST /api/v1/payment/verify
  * @access Private
@@ -431,9 +407,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // The order reference is the ORD-xxx identifier stored in the session.
-  // `reference` in the request body may be a Stripe payment_intent_id,
-  // so we must always use session.reference for the order record.
   const orderReference = session.reference;
 
   // 2. Verify the session belongs to the authenticated user
@@ -477,10 +450,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
   }
 
-  // 6. Verify the charge with the gateway
-  // For Flutterwave: pass transactionId (numeric, from frontend callback) so the
-  // service can call GET /v3/transactions/:id/verify directly, bypassing the
-  // unreliable tx_ref search endpoint.
   let gatewayData;
   try {
     gatewayData = await verifyWithGateway(paymentService, gateway, reference, transactionId || null);
@@ -554,9 +523,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
           code:   session.discount.code,
           amount: session.discount.discountAmount,
           type:   session.discount.type,
-          // FIX BUG-PC2 (audit): surface originalItemPrice on the order record
-          // so the pre-discount gross amount is auditable and refund logic has
-          // a correct base to work from.
           originalItemPrice: session.discount.originalItemPrice ?? null,
         }],
         totalDiscount: session.discount.discountAmount
@@ -613,15 +579,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     })
     .catch(() => {});
 
-  // ═══════════════════════════════════════════════════════════════════
-  // POST-ORDER — all fire-and-forget, failures are swallowed
-  // ═══════════════════════════════════════════════════════════════════
-
-  // 16. Record discount usage — this is the single authoritative point where
-  // usage is counted across the entire discount flow:
-  //   applyDiscountCode (cart):    preview only, no recordUsage
-  //   initializePaymentController: validation only, no recordUsage
-  //   verifyPaymentController:     ← HERE, exactly once, after order is committed
   if (session.discount?.discountId) {
     Discount.findById(session.discount.discountId)
       .then(discount => discount?.recordUsage(userId, order._id, session.discount.discountAmount))
