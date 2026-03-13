@@ -5,15 +5,12 @@ import axios from "axios";
 // ASYNC THUNKS - SERVER-SIDE CART OPERATIONS
 // ============================================
 
-/**
- * Get cart details with fresh product data from server
- */
 export const getCartDetails = createAsyncThunk(
   "cart/getCartDetails",
   async (_, { getState, rejectWithValue }) => {
     try {
       const { cartItems } = getState().cart;
-      
+
       if (cartItems.length === 0) {
         return { cartItems: [] };
       }
@@ -21,7 +18,7 @@ export const getCartDetails = createAsyncThunk(
       const { data } = await axios.post("/api/v1/cart/details", {
         items: cartItems
       });
-      
+
       return data;
     } catch (error) {
       return rejectWithValue(
@@ -31,9 +28,7 @@ export const getCartDetails = createAsyncThunk(
   }
 );
 
-/**
- * Add item to cart (server validates stock and price)
- */
+
 export const addItemsToCart = createAsyncThunk(
   "cart/addItemsToCart",
   async ({ id, quantity }, { rejectWithValue }) => {
@@ -42,11 +37,13 @@ export const addItemsToCart = createAsyncThunk(
         product: id,
         quantity
       });
-      
+
+      // Return both the original id and the full server response.
+      // The reducer uses data.item.quantity (server-clamped) not the
+      // raw requested quantity.
       return {
         product: id,
-        quantity,
-        serverData: data
+        serverData: data,
       };
     } catch (error) {
       return rejectWithValue(
@@ -56,19 +53,21 @@ export const addItemsToCart = createAsyncThunk(
   }
 );
 
-/**
- * Update cart item quantity (server validates)
- */
+
 export const updateCartItemQuantity = createAsyncThunk(
   "cart/updateCartItemQuantity",
   async ({ productId, quantity }, { rejectWithValue }) => {
     try {
-      await axios.put("/api/v1/cart/update", {
+      const { data } = await axios.put("/api/v1/cart/update", {
         product: productId,
         quantity
       });
-      
-      return { productId, quantity };
+
+      return {
+        productId,
+        // Use server-returned quantity — it may be clamped to stock.
+        quantity: data.item?.quantity ?? quantity,
+      };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to update cart"
@@ -78,14 +77,16 @@ export const updateCartItemQuantity = createAsyncThunk(
 );
 
 /**
- * Remove item from cart
+ * Remove item from cart.
+ *
+ * Slice sends:    DELETE /api/v1/cart/remove/:productId
+ * Controller ret: { success, message, productId }
  */
 export const removeCartItem = createAsyncThunk(
   "cart/removeCartItem",
   async (productId, { rejectWithValue }) => {
     try {
       await axios.delete(`/api/v1/cart/remove/${productId}`);
-      
       return productId;
     } catch (error) {
       return rejectWithValue(
@@ -95,15 +96,17 @@ export const removeCartItem = createAsyncThunk(
   }
 );
 
-/**
- * Clear entire cart
- */
+
 export const clearEntireCart = createAsyncThunk(
   "cart/clearEntireCart",
-  async (_, { rejectWithValue }) => {
+  async (_, { getState, rejectWithValue }) => {
     try {
-      await axios.delete("/api/v1/cart/clear");
-      
+      const { cartItems } = getState().cart;
+
+      await axios.delete("/api/v1/cart/clear", {
+        data: { items: cartItems },
+      });
+
       return {};
     } catch (error) {
       return rejectWithValue(
@@ -113,19 +116,17 @@ export const clearEntireCart = createAsyncThunk(
   }
 );
 
-/**
- * Validate cart before checkout
- */
+
 export const validateCheckout = createAsyncThunk(
   "cart/validateCheckout",
   async (_, { getState, rejectWithValue }) => {
     try {
       const { cartItems } = getState().cart;
-      
+
       const { data } = await axios.post("/api/v1/cart/checkout/validate", {
         items: cartItems
       });
-      
+
       return data;
     } catch (error) {
       return rejectWithValue(
@@ -135,75 +136,77 @@ export const validateCheckout = createAsyncThunk(
   }
 );
 
-/**
- * Apply discount code
- */
+
 export const applyDiscountCode = createAsyncThunk(
   "cart/applyDiscountCode",
   async ({ code }, { getState, rejectWithValue }) => {
     try {
       const { cartItems } = getState().cart;
-      
+
       const { data } = await axios.post("/api/v1/cart/apply-discount", {
         code,
         items: cartItems
       });
-      
+
       return data;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Invalid discount code"
+        error.response?.data || { message: "Invalid discount code" }
       );
     }
   }
 );
 
-/**
- * Remove discount code
- */
+
 export const removeDiscountCode = createAsyncThunk(
   "cart/removeDiscountCode",
-  async () => {
-    return { success: true };
-  }
+  async () => ({ success: true })
 );
 
 // ============================================
 // INITIAL STATE
 // ============================================
+
+const initialDiscount = {
+  code:                      null,
+  type:                      null,
+  value:                     null,
+  description:               null,
+  discountAmount:            0,
+  eligibleProductCategories: [],
+  appliedPending:            false,
+  applied:                   false,
+};
+
+const initialPricing = {
+  itemPrice:    0,
+  taxPrice:     0,
+  shippingPrice: 0,
+  totalPrice:   0,
+  currency:     'USD',
+};
+
 const initialState = {
-  // Minimal cart data stored in localStorage: [{product: "id", quantity: 2}]
+  // Minimal cart data persisted to localStorage: [{ product: "id", quantity: N }]
   cartItems: JSON.parse(localStorage.getItem("cartItems")) || [],
-  
+
   // Full product details fetched from server
   cartDetails: [],
-  
+
   // Pricing from server validation
-  pricing: {
-    itemPrice: 0,
-    taxPrice: 0,
-    shippingPrice: 0,
-    totalPrice: 0,
-    currency: 'USD'
-  },
-  
-  // Discount info
-  discount: {
-    code: null,
-    discountAmount: 0,
-    type: null,
-    description: null,
-    applied: false
-  },
-  
+  pricing: initialPricing,
+
+  // Active discount
+  discount: initialDiscount,
+
   // UI state
-  loading: false,
-  error: null,
-  success: false,
-  message: null,
-  
+  loading:  false,
+  error:    null,
+  success:  false,
+  message:  null,
+
   // Shipping info
-  shippingInfo: JSON.parse(localStorage.getItem("shippingInfo")) || {}
+  shippingInfo: JSON.parse(localStorage.getItem("shippingInfo")) || {},
 };
 
 // ============================================
@@ -228,212 +231,266 @@ const cartSlice = createSlice({
     },
 
     clearCart: (state) => {
-      state.cartItems = [];
+      state.cartItems   = [];
       state.cartDetails = [];
       state.shippingInfo = {};
-      state.pricing = initialState.pricing;
-      state.discount = initialState.discount;
-      
+      state.pricing     = initialPricing;
+      state.discount    = initialDiscount;
+
       localStorage.removeItem("cartItems");
       localStorage.removeItem("shippingInfo");
-      
+
       state.message = "Cart cleared";
       state.success = true;
     },
 
     clearDiscount: (state) => {
-      state.discount = initialState.discount;
-      state.message = "Discount removed";
-      state.success = true;
-    }
+      state.discount = initialDiscount;
+      state.pricing  = initialPricing;
+      state.message  = "Discount removed";
+      state.success  = true;
+    },
   },
 
   extraReducers: (builder) => {
-    // ============================================
+    // ──────────────────────────────────────────────
     // GET CART DETAILS
-    // ============================================
+    // ──────────────────────────────────────────────
     builder
       .addCase(getCartDetails.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(getCartDetails.fulfilled, (state, action) => {
         state.cartDetails = action.payload.cartItems || [];
-        state.loading = false;
+        state.loading     = false;
       })
       .addCase(getCartDetails.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || "Failed to load cart";
+        state.error   = action.payload || "Failed to load cart";
       });
 
-    // ============================================
+    // ──────────────────────────────────────────────
     // ADD ITEM TO CART
-    // ============================================
+    // ──────────────────────────────────────────────
     builder
       .addCase(addItemsToCart.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(addItemsToCart.fulfilled, (state, action) => {
-        const { product, quantity } = action.payload;
+        const { product } = action.payload;
+        const serverQuantity = action.payload.serverData?.item?.quantity;
+
+        if (serverQuantity === undefined) {
+          state.loading = false;
+          state.error   = "Unexpected server response — item quantity missing";
+          return;
+        }
+
         const existingItem = state.cartItems.find((i) => i.product === product);
 
         if (existingItem) {
-          existingItem.quantity = quantity;
+          existingItem.quantity = serverQuantity;
           state.message = "Cart updated";
         } else {
-          state.cartItems.push({ product, quantity });
+          state.cartItems.push({ product, quantity: serverQuantity });
           state.message = "Added to cart";
         }
 
         localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
-        
+
+        // BUG-CS1 FIX: state.loading was never reset to false on fulfilled.
+        // The spinner remained active indefinitely after a successful add.
+        state.loading = false;
+        state.success = true;
       })
       .addCase(addItemsToCart.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || "Failed to add to cart";
+        state.error   = action.payload || "Failed to add to cart";
       });
 
-    // ============================================
+    // ──────────────────────────────────────────────
     // UPDATE CART ITEM QUANTITY
-    // ============================================
+    // ──────────────────────────────────────────────
     builder
       .addCase(updateCartItemQuantity.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(updateCartItemQuantity.fulfilled, (state, action) => {
         const { productId, quantity } = action.payload;
         const item = state.cartItems.find((i) => i.product === productId);
-        
         if (item) {
           item.quantity = quantity;
           localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
         }
-        
+
         state.message = "Quantity updated";
         state.success = true;
         state.loading = false;
       })
       .addCase(updateCartItemQuantity.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || "Failed to update quantity";
+        state.error   = action.payload || "Failed to update quantity";
       });
 
-    // ============================================
+    // ──────────────────────────────────────────────
     // REMOVE CART ITEM
-    // ============================================
+    // ──────────────────────────────────────────────
     builder
       .addCase(removeCartItem.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(removeCartItem.fulfilled, (state, action) => {
         const productId = action.payload;
-        state.cartItems = state.cartItems.filter((item) => item.product !== productId);
-        state.cartDetails = state.cartDetails.filter((item) => item.product !== productId);
-        
+        state.cartItems   = state.cartItems.filter((item) => item.product !== productId);
+        state.cartDetails = state.cartDetails.filter((item) =>
+          String(item.product) !== String(productId)
+        );
+
         localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
-        
+
         state.message = "Item removed from cart";
         state.success = true;
         state.loading = false;
       })
       .addCase(removeCartItem.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || "Failed to remove item";
+        state.error   = action.payload || "Failed to remove item";
       });
 
-    // ============================================
+    // ──────────────────────────────────────────────
     // CLEAR ENTIRE CART
-    // ============================================
+    // ──────────────────────────────────────────────
     builder
       .addCase(clearEntireCart.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(clearEntireCart.fulfilled, (state) => {
-        state.cartItems = [];
+        state.cartItems  = [];
         state.cartDetails = [];
         state.shippingInfo = {};
-        state.pricing = initialState.pricing;
-        state.discount = initialState.discount;
-        
+        state.pricing    = initialPricing;
+        state.discount   = initialDiscount;
+
         localStorage.removeItem("cartItems");
         localStorage.removeItem("shippingInfo");
-        
+
         state.message = "Cart cleared successfully";
         state.success = true;
         state.loading = false;
       })
       .addCase(clearEntireCart.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload || "Failed to clear cart";
+        state.error   = action.payload || "Failed to clear cart";
       });
 
-    // ============================================
+    // ──────────────────────────────────────────────
     // VALIDATE CHECKOUT
-    // ============================================
+    // ──────────────────────────────────────────────
     builder
       .addCase(validateCheckout.pending, (state) => {
-        state.loading = true;
-        state.error = null;
+        state.loading  = true;
+        state.error    = null;
+        state.success  = false;
+        state.message  = null;
       })
       .addCase(validateCheckout.fulfilled, (state, action) => {
-        state.pricing = action.payload.pricing;
-        state.loading = false;
+        state.pricing  = action.payload.pricing;
+        state.discount = initialDiscount;
+        state.loading  = false;
+        state.success  = true;
+        state.message  = "Cart validated — ready to checkout";
       })
       .addCase(validateCheckout.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message || "Validation failed";
-        
-        // Remove invalid items if present
+        state.error   = action.payload?.message || "Validation failed";
+
+        // Remove invalid items from local state if the server identifies them.
+        // The server 400 body is: { success, isValid, invalidItems, message }
         if (action.payload?.invalidItems) {
-          const invalidIds = action.payload.invalidItems.map(item => item.productId);
-          state.cartItems = state.cartItems.filter(
-            item => !invalidIds.includes(item.product)
+          const invalidIds = new Set(
+            action.payload.invalidItems.map((item) => String(item.productId))
+          );
+          state.cartItems   = state.cartItems.filter(
+            (item) => !invalidIds.has(String(item.product))
+          );
+          state.cartDetails = state.cartDetails.filter(
+            (item) => !invalidIds.has(String(item.product))
           );
           localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
         }
       });
 
-    // ============================================
-    // APPLY DISCOUNT
-    // ============================================
+    // ──────────────────────────────────────────────
+    // APPLY DISCOUNT CODE
+    // ──────────────────────────────────────────────
     builder
       .addCase(applyDiscountCode.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(applyDiscountCode.fulfilled, (state, action) => {
+        const { discount, pricing, appliedPending } = action.payload;
         state.discount = {
-          code: action.payload.discount.code,
-          discountAmount: action.payload.discount.discountAmount,
-          type: action.payload.discount.type,
-          description: action.payload.discount.description,
-          applied: true
+          code:                      discount.code,
+          type:                      discount.type,
+          value:                     discount.value,
+          description:               discount.description,
+          discountAmount:            discount.discountAmount,
+          eligibleProductCategories: discount.eligibleProductCategories ?? [],
+          appliedPending:            appliedPending ?? true,
+          applied:                   true,
         };
-        state.pricing = action.payload.pricing;
-        state.message = `Discount "${action.payload.discount.code}" applied`;
+
+        state.pricing = pricing;
+        state.message = `Discount "${discount.code}" applied — ${
+          discount.type === 'percentage'
+            ? `${discount.value}% off`
+            : `$${discount.discountAmount} off`
+        }`;
         state.loading = false;
         state.success = true;
       })
       .addCase(applyDiscountCode.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload || "Invalid discount code";
-        state.discount.applied = false;
+        state.loading                 = false;
+        // R10 FIX: action.payload is now the full error response object
+        // (not just a message string), so we can read message and invalidItems.
+        state.error                   = action.payload?.message || "Invalid discount code";
+        state.discount.applied        = false;
+        state.discount.appliedPending = false;
+
+        // If the server identified invalid/unavailable items (the controller's
+        // BUG-05 guard), prune them from local state so the cart is consistent
+        // before the user attempts to apply a code again.
+        if (action.payload?.invalidItems) {
+          const invalidIds = new Set(
+            action.payload.invalidItems.map((item) => String(item.productId))
+          );
+          state.cartItems   = state.cartItems.filter(
+            (item) => !invalidIds.has(String(item.product))
+          );
+          state.cartDetails = state.cartDetails.filter(
+            (item) => !invalidIds.has(String(item.product))
+          );
+          localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
+        }
       });
 
-    // ============================================
-    // REMOVE DISCOUNT
-    // ============================================
+    // ──────────────────────────────────────────────
+    // REMOVE DISCOUNT CODE
+    // ──────────────────────────────────────────────
     builder
       .addCase(removeDiscountCode.fulfilled, (state) => {
-        state.discount = initialState.discount;
-        state.message = "Discount removed";
-        state.success = true;
+        state.discount = initialDiscount;
+        state.pricing  = initialPricing;
+        state.message  = "Discount removed";
+        state.success  = true;
       });
-  }
+  },
 });
 
 // ============================================
@@ -444,19 +501,23 @@ export const {
   removeMessage,
   saveShippingInfo,
   clearCart,
-  clearDiscount
+  clearDiscount,
 } = cartSlice.actions;
 
 // ============================================
 // SELECTORS
 // ============================================
-export const selectCartItems = (state) => state.cart.cartItems;
-export const selectCartDetails = (state) => state.cart.cartDetails;
-export const selectCartCount = (state) => 
+export const selectCartItems    = (state) => state.cart.cartItems;
+export const selectCartDetails  = (state) => state.cart.cartDetails;
+export const selectCartCount    = (state) =>
   state.cart.cartItems.reduce((sum, item) => sum + item.quantity, 0);
-export const selectCartPricing = (state) => state.cart.pricing;
-export const selectDiscount = (state) => state.cart.discount;
+export const selectCartPricing  = (state) => state.cart.pricing;
+export const selectDiscount     = (state) => state.cart.discount;
 export const selectShippingInfo = (state) => state.cart.shippingInfo;
+
+// Derived selectors
+export const selectHasDiscount  = (state) => state.cart.discount.applied;
+export const selectDiscountPending = (state) => state.cart.discount.appliedPending;
 
 // ============================================
 // EXPORT

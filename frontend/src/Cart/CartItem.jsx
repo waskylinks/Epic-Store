@@ -18,35 +18,28 @@ import { toast } from 'react-toastify';
 function CartItem({ item }) {
   const dispatch = useDispatch();
   
-  // Use separate selectors to avoid memoization issues
   const wishlistItems = useSelector(state => state.wishlist.items);
-  const itemLoading = useSelector(state => state.wishlist.itemLoading);
+  const itemLoading   = useSelector(state => state.wishlist.itemLoading);
   
-  const [quantity, setQuantity] = useState(item.quantity);
+  const [quantity, setQuantity]     = useState(item.quantity);
   const [hasChanges, setHasChanges] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // Sync quantity when item.quantity changes
   useEffect(() => {
     setQuantity(item.quantity);
     setHasChanges(false);
   }, [item.quantity]);
 
-  // Check if item is in wishlist - check against product._id
-  const isInWishlist = wishlistItems.some(
-    wishItem => {
-      const wishlistProductId = wishItem.product?._id || wishItem.product;
-      return wishlistProductId === item.product;
-    }
-  );
+  const isInWishlist = wishlistItems.some(wishItem => {
+    const wishlistProductId = wishItem.product?._id || wishItem.product;
+    return wishlistProductId === item.product;
+  });
   
   const isWishlistLoading = itemLoading[item.product] || false;
 
-  // Handle quantity input change
   const handleQuantityChange = (e) => {
     const value = e.target.value;
     
-    // Allow empty string while typing
     if (value === '') {
       setQuantity('');
       setHasChanges(true);
@@ -55,28 +48,22 @@ function CartItem({ item }) {
 
     const numValue = parseInt(value);
     
-    // Validate quantity
     if (numValue >= 1 && numValue <= item.stock) {
       setQuantity(numValue);
       setHasChanges(numValue !== item.quantity);
     }
   };
 
-  // Handle quantity input blur (when user finishes editing)
   const handleQuantityBlur = () => {
-    // If empty or invalid, reset to original quantity
     if (quantity === '' || quantity < 1) {
       setQuantity(item.quantity);
       setHasChanges(false);
-      return;
     }
   };
 
-  // Handle increment
   const handleIncrement = () => {
     if (quantity < item.stock) {
-      const newQty = parseInt(quantity) + 1;
-      setQuantity(newQty);
+      setQuantity(prev => parseInt(prev) + 1);
       setHasChanges(true);
     } else {
       toast.warning(`Only ${item.stock} items available in stock`, {
@@ -86,74 +73,61 @@ function CartItem({ item }) {
     }
   };
 
-  // Handle decrement
   const handleDecrement = () => {
     if (quantity > 1) {
-      const newQty = parseInt(quantity) - 1;
-      setQuantity(newQty);
+      setQuantity(prev => parseInt(prev) - 1);
       setHasChanges(true);
     }
   };
 
-  // Handle update cart with backend call
   const handleUpdate = async () => {
-    if (hasChanges && quantity >= 1 && quantity <= item.stock) {
-      setIsUpdating(true);
+    if (!hasChanges || quantity < 1 || quantity > item.stock) return;
+
+    setIsUpdating(true);
+    try {
+      await dispatch(updateCartItemQuantity({ 
+        productId: item.product, 
+        quantity: parseInt(quantity) 
+      })).unwrap();
       
-      try {
-        await dispatch(updateCartItemQuantity({ 
-          productId: item.product, 
-          quantity: parseInt(quantity) 
-        })).unwrap();
-        
-        setHasChanges(false);
-        
-        // Refresh cart details to update order summary immediately
-        setTimeout(() => {
-          dispatch(getCartDetails());
-        }, 100);
-      } catch (error) {
-        toast.error(error.message || 'Failed to update cart', {
-          position: 'top-center',
-          autoClose: 2000
-        });
-        // Revert to original quantity on error
-        setQuantity(item.quantity);
-        setHasChanges(false);
-      } finally {
-        setIsUpdating(false);
-      }
+      setHasChanges(false);
+      
+      setTimeout(() => {
+        dispatch(getCartDetails());
+      }, 100);
+    } catch (err) {
+      toast.error(err.message || 'Failed to update cart', {
+        position: 'top-center',
+        autoClose: 2000
+      });
+      setQuantity(item.quantity);
+      setHasChanges(false);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
-  // Handle remove from cart with backend call
   const handleRemove = async () => {
     try {
       await dispatch(removeCartItem(item.product)).unwrap();
       
-      // Refresh cart after removal
       setTimeout(() => {
         dispatch(getCartDetails());
       }, 100);
-    } catch (error) {
-      toast.error(error.message || 'Failed to remove item', {
+    } catch (err) {
+      toast.error(err.message || 'Failed to remove item', {
         position: 'top-center',
         autoClose: 2000
       });
     }
   };
 
-  // Handle wishlist toggle - OPTIMISTIC UPDATE for instant feedback
   const handleWishlistToggle = async () => {
     if (isInWishlist) {
-      // OPTIMISTIC: Remove immediately from UI
       dispatch(optimisticRemove(item.product));
-      
-      // Then sync with server in background
       try {
         await dispatch(removeFromWishlist(item.product)).unwrap();
-      } catch (error) {
-        // If server fails, add it back (rollback)
+      } catch {
         dispatch(optimisticAdd({ 
           _id: item.product, 
           name: item.name, 
@@ -166,19 +140,15 @@ function CartItem({ item }) {
         });
       }
     } else {
-      // OPTIMISTIC: Add immediately to UI
       dispatch(optimisticAdd({ 
         _id: item.product, 
         name: item.name, 
         images: [{ url: item.image }],
         price: item.price
       }));
-      
-      // Then sync with server in background
       try {
         await dispatch(addToWishlist(item.product)).unwrap();
-      } catch (error) {
-        // If server fails, remove it (rollback)
+      } catch {
         dispatch(optimisticRemove(item.product));
         toast.error('Failed to add to wishlist', {
           position: 'top-center',
@@ -188,7 +158,6 @@ function CartItem({ item }) {
     }
   };
 
-  // Format currency
   const formatUSD = (amount) => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
@@ -201,7 +170,6 @@ function CartItem({ item }) {
 
   return (
     <div className="ec-item">
-      {/* Product Info */}
       <div className="ec-item-info">
         <Link to={`/product/${item.product}`}>
           <img 
@@ -223,7 +191,6 @@ function CartItem({ item }) {
         </div>
       </div>
 
-      {/* Quantity Controls */}
       <div className="ec-item-qty-controls">
         <button 
           className="ec-item-qty-btn"
@@ -243,9 +210,7 @@ function CartItem({ item }) {
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.target.blur();
-              if (hasChanges) {
-                handleUpdate();
-              }
+              if (hasChanges) handleUpdate();
             }
           }}
           min="1"
@@ -264,14 +229,12 @@ function CartItem({ item }) {
         </button>
       </div>
 
-      {/* Item Total */}
       <div className="ec-item-total">
         <span className="ec-item-total-price">
           {formatUSD(itemTotal)}
         </span>
       </div>
 
-      {/* Actions */}
       <div className="ec-item-action">
         <button 
           className="ec-item-update-btn"
