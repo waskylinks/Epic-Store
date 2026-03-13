@@ -47,6 +47,7 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
     cartItems.push({
       product: product._id,
       name: product.name,
+      category: product.category, 
       price: currentPrice,
       stock: availableStock,
       image: product.images?.[0]?.url || product.image?.[0]?.url,
@@ -415,6 +416,35 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
 
   const discountAmount = discount.calculateDiscount(itemPrice, validItems);
 
+  // ── NEW: compute eligibleSubtotal ─────────────────────────────────────────
+  // When a product-category restriction is active, calculate the subtotal of
+  // only the items that qualified for the discount. This is sent to the
+  // frontend so the UI can show a transparent breakdown:
+  //   e.g. "30% off $745.00 of Electronics items = -$223.50"
+  // rather than implying the entire cart total was the discount base.
+  //
+  // When there is no category restriction (eligibleProductCategories is empty),
+  // eligibleSubtotal equals the full itemPrice — the entire cart qualified.
+  const eligibleCats = discount.conditions?.eligibleProductCategories ?? [];
+
+  const eligibleSubtotal = eligibleCats.length > 0
+    ? Math.round(
+        validItems
+          .filter(
+            (item) =>
+              item.category &&
+              eligibleCats.includes(item.category)
+          )
+          .reduce((sum, item) => sum + item.itemTotal, 0)
+        * 100
+      ) / 100
+    : Math.round(itemPrice * 100) / 100;
+
+  // ineligibleSubtotal: portion of the cart the discount did NOT touch.
+  // Useful for the frontend to display "X of your cart did not qualify".
+  const ineligibleSubtotal = Math.round((itemPrice - eligibleSubtotal) * 100) / 100;
+  // ─────────────────────────────────────────────────────────────────────────
+
   const discountedItemPrice = Math.max(0, itemPrice - discountAmount);
   const taxPrice            = Math.round(discountedItemPrice * 0.18 * 100) / 100;
   const shippingPrice       = discountedItemPrice >= 500 ? 0 : 50;
@@ -435,8 +465,14 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       description:    discount.description,
       discountAmount: Math.round(discountAmount * 100) / 100,
       // Expose restriction so frontend can surface it to the user
-      eligibleProductCategories:
-        discount.conditions?.eligibleProductCategories ?? [],
+      eligibleProductCategories: eligibleCats,
+      // NEW — the subtotal the discount was actually computed against.
+      // For unrestricted codes this equals the full cart itemPrice.
+      // For category-restricted codes this is the sum of qualifying items only.
+      eligibleSubtotal,
+      // NEW — the portion of the cart that did not qualify.
+      // Zero for unrestricted codes.
+      ineligibleSubtotal,
     },
     pricing: {
       itemPrice:           Math.round(itemPrice * 100) / 100,

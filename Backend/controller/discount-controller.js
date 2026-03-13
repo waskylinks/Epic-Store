@@ -754,7 +754,7 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
   if (!cartTotal || cartTotal <= 0)
     return next(new HandleError("Invalid cart total", 400));
 
-  // NEW — normalise items to an array regardless of what the caller sends.
+  // Normalise items to an array regardless of what the caller sends.
   // validateCart() and calculateDiscount() both default to [] when items is
   // absent, so this normalisation ensures consistent behaviour and prevents
   // a non-array from being forwarded to those methods.
@@ -781,12 +781,38 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       return next(new HandleError(canUse.reason, 400));
   }
 
-  // Pass normalizedItems so category-restricted codes can be validated.
   const validation = discount.validateCart(cartTotal, normalizedItems, userId);
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
 
   const discountAmount = discount.calculateDiscount(cartTotal, normalizedItems);
+
+  // ── NEW: compute eligibleSubtotal / ineligibleSubtotal ───────────────────
+  // Mirrors the same calculation in cart-controller applyDiscountCode.
+  // When eligibleProductCategories is set, eligibleSubtotal is the sum of
+  // only the qualifying items — the actual base the percentage was applied to.
+  // For unrestricted codes it equals cartTotal (entire cart qualified).
+  const eligibleCats = discount.conditions?.eligibleProductCategories ?? [];
+
+  const eligibleSubtotal = eligibleCats.length > 0 && normalizedItems.length > 0
+    ? Math.round(
+        normalizedItems
+          .filter(
+            (item) =>
+              item?.category &&
+              eligibleCats.includes(item.category)
+          )
+          .reduce((sum, item) => {
+            const price = Number(item.price) || 0;
+            const qty   = Number(item.quantity) || 1;
+            return sum + price * qty;
+          }, 0)
+        * 100
+      ) / 100
+    : Math.round(cartTotal * 100) / 100;
+
+  const ineligibleSubtotal = Math.round((cartTotal - eligibleSubtotal) * 100) / 100;
+  // ─────────────────────────────────────────────────────────────────────────
 
   const { isFirstUse } = await discount.recordUsage(
     userId ?? null,
@@ -809,12 +835,10 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       discountAmount,
       cartTotal,
       isFirstUse,
-      // NEW — log which item categories were in the cart at validation time
-      // (useful for auditing that the category restriction was correctly applied)
       itemCategories: normalizedItems
         .map((i) => i?.category)
         .filter(Boolean)
-        .filter((v, idx, arr) => arr.indexOf(v) === idx), // dedupe
+        .filter((v, idx, arr) => arr.indexOf(v) === idx),
       ...(isFirstUse && {
         lockedAt:            discount.lockedAt,
         deletionEligibleAt:  discount.deletionEligibleAt,
@@ -831,9 +855,9 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       value:          discount.value,
       discountAmount,
       description:    discount.description,
-      // NEW — expose restriction so the frontend can surface it to the user
-      eligibleProductCategories:
-        discount.conditions?.eligibleProductCategories ?? [],
+      eligibleProductCategories: eligibleCats,
+      eligibleSubtotal,
+      ineligibleSubtotal,
     },
   });
 });
