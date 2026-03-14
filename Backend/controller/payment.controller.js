@@ -325,6 +325,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       discountAmount:    Number(discountSnapshot.discountAmount)    || 0,
       originalItemPrice: Number(discountSnapshot.originalItemPrice) || itemPrice,
       description:       discountSnapshot.description || null,
+      // FIX: carry eligibleProductCategories into the session so the audit
+      // trail is complete and any downstream logic has the full discount context.
+      // Previously omitted — category-restricted discounts lost their category
+      // info the moment the snapshot was stored in Redis.
+      eligibleProductCategories: Array.isArray(discountSnapshot.eligibleProductCategories)
+        ? discountSnapshot.eligibleProductCategories
+        : [],
     };
   }
 
@@ -646,13 +653,34 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // (stores discountId). This block also falls back to a code-based lookup to
   // handle any sessions created before those fixes were deployed.
   if (session.discount) {
+    // FIX: fetch by _id when available (direct, no status filter — the discount
+    // may be inactive/expired by verify time if it was single-use, and that is
+    // valid; we still need to record that it was used).
+    // Fallback to code lookup for sessions created before the discountId fix.
+    // Both lookups intentionally skip status filtering — findActiveByCode would
+    // silently return null for an already-exhausted code, causing recordUsage
+    // to be skipped entirely which is the root cause of usage not showing in admin.
     const discountLookup = session.discount.discountId
       ? Discount.findById(session.discount.discountId)
       : Discount.findOne({ code: session.discount.code?.toUpperCase() });
 
     discountLookup
-      .then(discount => discount?.recordUsage(userId, order._id, session.discount.discountAmount))
-      .catch(() => {});
+      .then(discount => {
+        if (!discount) {
+          console.error(
+            `[payment] recordUsage skipped — discount not found. ` +
+            `id=${session.discount.discountId} code=${session.discount.code}`
+          );
+          return;
+        }
+        return discount.recordUsage(userId, order._id, session.discount.discountAmount);
+      })
+      .catch((err) => {
+        // Log but never let discount recording failure affect the order response.
+        // Category-restricted discounts were previously silent here — any save()
+        // failure (concurrent write, validator, network) would vanish entirely.
+        console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err);
+      });
   }
 
   // 17. Populate product details (non-fatal)
@@ -674,7 +702,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     totalPrice:     order.totalPrice,
     shippingInfo:   order.shippingInfo,
     currency:       order.paymentInfo.currency,
-    paymentGateway: gateway
+    paymentGateway: gateway,
+    // FIX: forward discount snapshot so the receipt model stores it and
+    // generateReceiptPDF / generateInvoicePDF can render a discount row.
+    // Previously omitted — receipts showed the discounted total with no
+    // explanation, and OrderSuccess.jsx had no discount data to display.
+    ...(order.discounts?.codes?.[0] && {
+      discount: {
+        code:              order.discounts.codes[0].code,
+        discountAmount:    order.discounts.codes[0].amount,
+        type:              order.discounts.codes[0].type              ?? null,
+        originalItemPrice: order.discounts.codes[0].originalItemPrice ?? null,
+      }
+    }),
   }).catch(() => {});
 
   Promise.all([

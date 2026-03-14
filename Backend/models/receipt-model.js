@@ -26,7 +26,6 @@ const receiptSchema = new mongoose.Schema(
       phoneNo: String
     },
 
-    // Shipping information snapshot
     shippingInfo: {
       address: String,
       city: String,
@@ -43,10 +42,21 @@ const receiptSchema = new mongoose.Schema(
       }
     ],
 
-    itemPrice: Number,
-    taxPrice: Number,
+    itemPrice:    Number,
+    taxPrice:     Number,
     shippingPrice: Number,
-    totalPrice: Number,
+    totalPrice:   Number,
+
+    // FIX: discount snapshot for receipt display and PDF generation.
+    // Previously absent — receipts and PDFs showed the discounted subtotal
+    // with no explanation of why it was lower than the sum of line items,
+    // and createReceiptIfNotExists never forwarded discount data here.
+    discount: {
+      code:           { type: String, default: null },
+      discountAmount: { type: Number, default: 0    },
+      type:           { type: String, default: null },  // 'percentage' | 'fixed'
+      originalItemPrice: { type: Number, default: null }, // gross before discount
+    },
 
     currency: {
       type: String,
@@ -55,7 +65,6 @@ const receiptSchema = new mongoose.Schema(
       required: true
     },
 
-    // Payment gateway used for this transaction
     paymentGateway: {
       type: String,
       enum: ["paystack", "flutterwave", "stripe", "manual"],
@@ -68,49 +77,40 @@ const receiptSchema = new mongoose.Schema(
       default: "paid"
     },
 
-    // Gateway-specific receipt metadata
     receiptMeta: {
       type: Map,
       of: mongoose.Schema.Types.Mixed,
       default: {}
     },
 
-    // Refund tracking in receipt
     refundInfo: {
-      amount: {
-        type: Number,
-        default: 0
-      },
-      reason: String,
+      amount:     { type: Number, default: 0 },
+      reason:     String,
       refundedAt: Date
     },
 
-    paidAt: { 
-      type: Date, 
-      default: Date.now 
+    paidAt: {
+      type: Date,
+      default: Date.now
     }
   },
   { timestamps: true, strict: true }
 );
 
-// Indexes for query performance
 receiptSchema.index({ user: 1, createdAt: -1 });
 receiptSchema.index({ order: 1 });
 receiptSchema.index({ paymentGateway: 1 });
 receiptSchema.index({ paymentStatus: 1 });
 
-// Virtual for checking if receipt has been refunded
-receiptSchema.virtual("isRefunded").get(function() {
+receiptSchema.virtual("isRefunded").get(function () {
   return this.paymentStatus === "refunded" || this.paymentStatus === "partially_refunded";
 });
 
-// Virtual for net amount (after refunds)
-receiptSchema.virtual("netAmount").get(function() {
+receiptSchema.virtual("netAmount").get(function () {
   return this.totalPrice - (this.refundInfo.amount || 0);
 });
 
-// Ensure virtuals are included in JSON/Object conversions
-receiptSchema.set("toJSON", { virtuals: true });
+receiptSchema.set("toJSON",   { virtuals: true });
 receiptSchema.set("toObject", { virtuals: true });
 receiptSchema.set("strictQuery", true);
 
