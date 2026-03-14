@@ -2,57 +2,8 @@ import mongoose from "mongoose";
 
 // ============================================
 // DISCOUNT MODEL
-//
-// Changelog from previous version:
-//
-//  1. audience field
-//     'specific' — personalised discount, eligibleUsers enforced.
-//     'all'      — broadcast to every logged-in user. eligibleUsers
-//                  ignored during validation.
-//
-//  2. lockedAt
-//     Set the moment currentUses transitions 0 → 1 (first use).
-//     Never updated after that. Used by the delete protection guard.
-//
-//  3. deletionEligibleAt
-//     Set at same moment as lockedAt: lockedAt + 30 days.
-//     deleteDiscount controller blocks soft-deletion until this date.
-//     Cleanup job exclusion filter also references this field.
-//
-//  4. canUserUse() — FIX #14
-//     For discounts with large usageHistory arrays (> USAGE_SCAN_THRESHOLD),
-//     a DB-level aggregate is used to count the user's prior uses instead
-//     of an O(n) JavaScript filter over the already-loaded array.
-//     This prevents memory exhaustion on high-use broadcast codes.
-//
-//  5. deleteOldExpired() — FIX #15
-//     An _id ceiling is captured before the loop starts. This bounds the
-//     working set to documents that existed when the job began, preventing
-//     an unbounded loop if new records age into the eligibility window
-//     mid-run (e.g. a long-running job on a busy cluster).
-//
-//  6. conditions.eligibleProductCategories — NEW
-//     Optional array of product category strings. When non-empty, the
-//     discount only applies if at least one cart item belongs to an
-//     eligible category. An empty array (default) means no category
-//     restriction — all products are eligible.
-//
-//     validateCart() now evaluates this restriction against the items
-//     array supplied by the caller. Each item must carry a `category`
-//     string field. If eligibleProductCategories is set but no items
-//     are provided, or no items match, validation fails with a clear
-//     message rather than silently passing or throwing.
-//
-//     calculateDiscount() for 'percentage' type now sums only the
-//     subtotals of eligible items when eligibleProductCategories is
-//     set, rather than applying the percentage to the whole cartTotal.
-//     For 'fixed' type the full fixed amount is still deducted from
-//     cartTotal (capped at cartTotal), consistent with prior behaviour.
 // ============================================
 
-// Threshold above which canUserUse() switches from an in-memory filter
-// to a server-side aggregate count. Set conservatively at 500 to ensure
-// even moderately popular broadcast codes stay responsive.
 const USAGE_SCAN_THRESHOLD = 500;
 
 // Canonical list of product categories (mirrors Product model enum).
@@ -330,21 +281,6 @@ discountSchema.virtual("isProtected").get(function () {
 // METHODS
 // ============================================
 
-// ============================================
-// calculateDiscount()
-//
-// NEW behaviour when eligibleProductCategories is set:
-//   - 'percentage': applies the percentage only to the subtotal of
-//     eligible-category items, not the whole cartTotal.
-//     If no items are supplied the full cartTotal is used as a
-//     conservative fallback (the frontend must supply items for
-//     accurate calculation — this path should not be hit in production
-//     because validateCart() will have already rejected item-less
-//     requests for category-restricted codes).
-//   - 'fixed': unchanged — deduct the fixed amount from cartTotal
-//     regardless of which items triggered eligibility.
-//     This matches standard fixed-code behaviour on all platforms.
-// ============================================
 discountSchema.methods.calculateDiscount = function (cartTotal, items = []) {
   const eligibleCats = this.conditions?.eligibleProductCategories ?? [];
   let discountAmount = 0;

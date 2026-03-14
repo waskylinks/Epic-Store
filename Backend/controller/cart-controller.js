@@ -8,12 +8,6 @@ import { deleteCachePattern } from '../utils/redis.js';
 // SHARED PRICE RESOLUTION
 // ============================================
 
-// FIX CC1: Centralised price resolution so the product.price dead field is
-// removed in exactly one place. Product model schema has pricing.sale and
-// pricing.regular; there is no top-level product.price field — it is always
-// undefined. The old fallback chain leaked undefined into arithmetic, silently
-// returning NaN totals or triggering the "no valid price" 500 error for
-// products that do have a valid pricing.regular value.
 const resolveProductPrice = (product) => {
   if (product.pricing?.sale > 0) return product.pricing.sale;
   if (product.pricing?.regular > 0) return product.pricing.regular;
@@ -176,22 +170,10 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 export const clearCart = handleAsyncError(async (req, res, next) => {
-  // FIX CC3: DELETE requests do not guarantee a body — many HTTP clients,
-  // proxies, and the Express body-parser itself may leave req.body as
-  // undefined when no Content-Type / body is sent. Destructuring directly
-  // from undefined throws:
-  //   TypeError: Cannot destructure property 'items' of 'req.body'
-  //   as it is undefined.
-  // Guard with nullish coalescing so items defaults to undefined
-  // (handled by the truthy check below) instead of crashing.
   const { items } = req.body ?? {};
 
   if (items && items.length > 0) {
     try {
-      // FIX CC2: Original code did updateMany with $inc: -1 regardless of item
-      // quantity, which (a) decremented by 1 even when 5 units were added, and
-      // (b) had no floor — repeated clears pushed the counter below zero.
-      // Fix: decrement per item by its actual quantity, clamped at 0.
       for (const item of items) {
         await Product.findByIdAndUpdate(
           item.product,
@@ -268,19 +250,19 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
       continue;
     }
 
-    const unitPrice = resolveProductPrice(product);
-    if (unitPrice === 0) {
+    const price = resolveProductPrice(product);
+    if (price === 0) {
       return next(new HandleError(`Product "${product.name}" has no valid price`, 500));
     }
 
-    const itemTotal = unitPrice * item.quantity;
+    const itemTotal = price * item.quantity;
     itemPrice += itemTotal;
 
     validItems.push({
       product: product._id,
       name: product.name,
       quantity: item.quantity,
-      unitPrice,
+      price,
       itemTotal
     });
   }
@@ -327,10 +309,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   if (!discount)
     return next(new HandleError('Invalid or expired discount code', 400));
 
-  // FIX BUG-03: Reject unauthenticated users for audience-specific codes
-  // before any cart validation occurs. Previously only canUserUse() was
-  // guarded behind userId — validateCart() and calculateDiscount() were
-  // still reached, letting guests preview user-targeted codes.
   const userId = req.user?._id;
   if (discount.audience === 'specific' && !userId) {
     return next(
@@ -345,10 +323,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   for (const item of items) {
     const product = await Product.findById(item.product);
 
-    // FIX BUG-05: Track invalid/unavailable items instead of silently
-    // skipping them. Silent skips produced a ghost cart total — the discount
-    // was computed on a smaller-than-real sum, under-applying percentage
-    // discounts and potentially producing false minPurchaseAmount failures.
     if (!product) {
       invalidItems.push({ productId: item.product, reason: 'Product not found' });
       continue;
@@ -362,12 +336,9 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       continue;
     }
 
-    const unitPrice = resolveProductPrice(product);
+    const price = resolveProductPrice(product);
 
-    // Guard: a product with no valid price would silently contribute $0 to
-    // itemPrice, producing the same ghost-total problem as BUG-05. Treat it
-    // as an invalid item so the caller refreshes their cart.
-    if (unitPrice === 0) {
+    if (price === 0) {
       invalidItems.push({
         productId: product._id,
         name: product.name,
@@ -376,25 +347,19 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       continue;
     }
 
-    const itemTotal = unitPrice * item.quantity;
+    const itemTotal = price * item.quantity;
     itemPrice += itemTotal;
 
-    // FIX BUG-01: Include product.category in each validItem.
-    // validateCart() and calculateDiscount() both inspect item.category to
-    // enforce eligibleProductCategories restrictions. Without this field
-    // every category-scoped discount code was redeemable on any cart,
-    // silently bypassing the restriction entirely.
     validItems.push({
       product:  product._id,
       name:     product.name,
-      category: product.category,   // was missing — broke category-scoped codes
+      category: product.category,
       quantity: item.quantity,
-      unitPrice,
+      price,
       itemTotal,
     });
   }
 
-  // FIX BUG-05 (continued): Abort before discount math if cart is stale.
   if (invalidItems.length > 0) {
     return res.status(400).json({
       success:      false,
@@ -408,23 +373,12 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
   }
 
-  // FIX BUG-02: validItems now carries category (BUG-01 fix), so
-  // validateCart() correctly enforces eligibleProductCategories.
   const validation = discount.validateCart(itemPrice, validItems, userId);
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
 
   const discountAmount = discount.calculateDiscount(itemPrice, validItems);
 
-  // ── NEW: compute eligibleSubtotal ─────────────────────────────────────────
-  // When a product-category restriction is active, calculate the subtotal of
-  // only the items that qualified for the discount. This is sent to the
-  // frontend so the UI can show a transparent breakdown:
-  //   e.g. "30% off $745.00 of Electronics items = -$223.50"
-  // rather than implying the entire cart total was the discount base.
-  //
-  // When there is no category restriction (eligibleProductCategories is empty),
-  // eligibleSubtotal equals the full itemPrice — the entire cart qualified.
   const eligibleCats = discount.conditions?.eligibleProductCategories ?? [];
 
   const eligibleSubtotal = eligibleCats.length > 0
@@ -440,8 +394,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       ) / 100
     : Math.round(itemPrice * 100) / 100;
 
-  // ineligibleSubtotal: portion of the cart the discount did NOT touch.
-  // Useful for the frontend to display "X of your cart did not qualify".
   const ineligibleSubtotal = Math.round((itemPrice - eligibleSubtotal) * 100) / 100;
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -451,10 +403,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   const totalPrice          =
     Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
 
-  // NOTE BUG-04: Usage is intentionally NOT recorded here — this endpoint
-  // is a preview/price-calculation step. Usage must be recorded by the order
-  // creation flow via POST /api/v1/discounts/validate. appliedPending: true
-  // signals to the caller that the code is valid but not yet consumed.
   return res.status(200).json({
     success:        true,
     appliedPending: true,
@@ -464,14 +412,8 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       value:          discount.value,
       description:    discount.description,
       discountAmount: Math.round(discountAmount * 100) / 100,
-      // Expose restriction so frontend can surface it to the user
       eligibleProductCategories: eligibleCats,
-      // NEW — the subtotal the discount was actually computed against.
-      // For unrestricted codes this equals the full cart itemPrice.
-      // For category-restricted codes this is the sum of qualifying items only.
       eligibleSubtotal,
-      // NEW — the portion of the cart that did not qualify.
-      // Zero for unrestricted codes.
       ineligibleSubtotal,
     },
     pricing: {

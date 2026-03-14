@@ -127,6 +127,7 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
         price: dbPrice,
         quantity: quantity,
         image: product.images?.[0]?.url || product.images?.[0] || ''
+        category: product.category,  
       });
     }
 
