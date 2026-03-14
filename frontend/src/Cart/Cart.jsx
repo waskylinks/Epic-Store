@@ -254,13 +254,14 @@ function Cart() {
 
                 <div className="ec-summary-item">
                   <span className="ec-summary-label">Subtotal:</span>
+                 
                   <span className="ec-summary-value">
-                    {discount.applied && displayPricing.originalItemPrice > displayPricing.itemPrice ? (
+                    {discount.applied ? (
                       <>
                         <span style={{ textDecoration: 'line-through', marginRight: '8px', color: '#999' }}>
-                          {formatUSD(displayPricing.originalItemPrice || 0)}
+                          {formatUSD(displayPricing.originalItemPrice || displayPricing.itemPrice || 0)}
                         </span>
-                        {formatUSD(displayPricing.itemPrice || 0)}
+                        {formatUSD((displayPricing.originalItemPrice || 0) - (displayPricing.discountAmount || 0))}
                       </>
                     ) : (
                       formatUSD(displayPricing.itemPrice || 0)

@@ -278,9 +278,25 @@ function CartItem({ item }) {
           See discount eligibility comment above for rationale. */}
       <div className="ec-item-total">
         <span className="ec-item-total-price">
-          {formatUSD(itemTotal)}
+        {isEligible && discount.type === 'percentage' ? (
+          <>
+            <span style={{ 
+              textDecoration: 'line-through', 
+              fontSize: '12px',
+              color: '#999',
+              display: 'block'
+            }}>
+              {formatUSD(itemTotal)}
+            </span>
+            <span>
+              {formatUSD(itemTotal * (1 - discount.value / 100))}
+            </span>
+          </>
+        ) : (
+          formatUSD(itemTotal)
+        )}
         </span>
-      </div>
+     </div>
 
       <div className="ec-item-action">
         <button 
