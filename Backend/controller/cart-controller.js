@@ -19,9 +19,6 @@ const resolveProductPrice = (product) => {
 // ============================================
 
 export const getCartDetails = handleAsyncError(async (req, res, next) => {
-  // FIX GCD-1: Guard against missing body (e.g. middleware not applied,
-  // or caller sends a body-less request). Destructure from req.body ?? {}
-  // so items defaults to undefined rather than throwing a TypeError.
   const { items } = req.body ?? {};
 
   if (!items || items.length === 0) {
@@ -35,16 +32,16 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
 
     if (!product || product.status !== 'published') continue;
 
-    const currentPrice = resolveProductPrice(product);
+    const currentPrice   = resolveProductPrice(product);
     const availableStock = product.inventory?.stock ?? product.stock ?? 0;
 
     cartItems.push({
-      product: product._id,
-      name: product.name,
-      category: product.category, 
-      price: currentPrice,
-      stock: availableStock,
-      image: product.images?.[0]?.url || product.image?.[0]?.url,
+      product:  product._id,
+      name:     product.name,
+      category: product.category,
+      price:    currentPrice,
+      stock:    availableStock,
+      image:    product.images?.[0]?.url || product.image?.[0]?.url,
       quantity: Math.min(item.quantity, availableStock)
     });
   }
@@ -85,7 +82,6 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     // Analytics failure must not abort the cart operation
   }
 
-  // Invalidate product analytics caches (fire-and-forget)
   Promise.all([
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
@@ -95,12 +91,12 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     success: true,
     message: 'Item added to cart',
     item: {
-      product: product._id,
-      name: product.name,
-      price: currentPrice,
+      product:  product._id,
+      name:     product.name,
+      price:    currentPrice,
       quantity,
-      image: product.images?.[0]?.url || product.image?.[0]?.url,
-      stock: availableStock
+      image:    product.images?.[0]?.url || product.image?.[0]?.url,
+      stock:    availableStock
     }
   });
 });
@@ -132,7 +128,7 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
     success: true,
     message: 'Cart updated',
     item: {
-      product: product._id,
+      product:  product._id,
       quantity: Math.min(quantity, availableStock)
     }
   });
@@ -159,8 +155,8 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
   deleteCachePattern('product_conversion*').catch(() => {});
 
   return res.status(200).json({
-    success: true,
-    message: 'Item removed from cart',
+    success:   true,
+    message:   'Item removed from cart',
     productId
   });
 });
@@ -213,7 +209,7 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
   }
 
   let itemPrice = 0;
-  const validItems = [];
+  const validItems   = [];
   const invalidItems = [];
 
   for (const item of items) {
@@ -221,8 +217,8 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
 
     if (!product) {
       invalidItems.push({
-        productId: item.product,
-        reason: 'Product not found',
+        productId:         item.product,
+        reason:            'Product not found',
         requestedQuantity: item.quantity
       });
       continue;
@@ -230,9 +226,9 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
 
     if (product.status !== 'published') {
       invalidItems.push({
-        productId: product._id,
-        name: product.name,
-        reason: 'Product unavailable',
+        productId:         product._id,
+        name:              product.name,
+        reason:            'Product unavailable',
         requestedQuantity: item.quantity
       });
       continue;
@@ -241,9 +237,9 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
     const availableStock = product.inventory?.stock || product.stock || 0;
     if (availableStock < item.quantity) {
       invalidItems.push({
-        productId: product._id,
-        name: product.name,
-        reason: 'Insufficient stock',
+        productId:         product._id,
+        name:              product.name,
+        reason:            'Insufficient stock',
         requestedQuantity: item.quantity,
         availableQuantity: availableStock
       });
@@ -259,9 +255,9 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
     itemPrice += itemTotal;
 
     validItems.push({
-      product: product._id,
-      name: product.name,
-      quantity: item.quantity,
+      product:   product._id,
+      name:      product.name,
+      quantity:  item.quantity,
       price,
       itemTotal
     });
@@ -269,22 +265,22 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
 
   if (invalidItems.length > 0) {
     return res.status(400).json({
-      success: false,
-      isValid: false,
+      success:      false,
+      isValid:      false,
       invalidItems,
-      message: `${invalidItems.length} item(s) are no longer available`
+      message:      `${invalidItems.length} item(s) are no longer available`
     });
   }
 
-  const taxPrice = Math.round(itemPrice * 0.18 * 100) / 100;
+  const taxPrice      = Math.round(itemPrice * 0.18 * 100) / 100;
   const shippingPrice = itemPrice >= 500 ? 0 : 50;
-  const totalPrice = Math.round((itemPrice + taxPrice + shippingPrice) * 100) / 100;
+  const totalPrice    = Math.round((itemPrice + taxPrice + shippingPrice) * 100) / 100;
 
   return res.status(200).json({
     success: true,
     isValid: true,
     pricing: {
-      itemPrice: Math.round(itemPrice * 100) / 100,
+      itemPrice:    Math.round(itemPrice * 100) / 100,
       taxPrice,
       shippingPrice,
       totalPrice,
@@ -330,8 +326,8 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     if (product.status !== 'published') {
       invalidItems.push({
         productId: product._id,
-        name: product.name,
-        reason: 'Product unavailable',
+        name:      product.name,
+        reason:    'Product unavailable',
       });
       continue;
     }
@@ -341,8 +337,8 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     if (price === 0) {
       invalidItems.push({
         productId: product._id,
-        name: product.name,
-        reason: 'Product has no valid price',
+        name:      product.name,
+        reason:    'Product has no valid price',
       });
       continue;
     }
@@ -394,19 +390,23 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       ) / 100
     : Math.round(itemPrice * 100) / 100;
 
-  const ineligibleSubtotal = Math.round((itemPrice - eligibleSubtotal) * 100) / 100;
-  // ─────────────────────────────────────────────────────────────────────────
-
-  const discountedItemPrice = Math.max(0, itemPrice - discountAmount);
-  const taxPrice            = Math.round(discountedItemPrice * 0.18 * 100) / 100;
-  const shippingPrice       = discountedItemPrice >= 500 ? 0 : 50;
-  const totalPrice          =
+  const ineligibleSubtotal    = Math.round((itemPrice - eligibleSubtotal) * 100) / 100;
+  const discountedItemPrice   = Math.max(0, itemPrice - discountAmount);
+  const taxPrice              = Math.round(discountedItemPrice * 0.18 * 100) / 100;
+  const shippingPrice         = discountedItemPrice >= 500 ? 0 : 50;
+  const totalPrice            =
     Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
 
   return res.status(200).json({
     success:        true,
     appliedPending: true,
     discount: {
+      // FIX: include the discount document's _id so the cart Redux state
+      // can store it and forward it in the discountSnapshot to the payment
+      // controller. Without this, session.discount.discountId is always null
+      // and recordUsage() is never called after a successful payment —
+      // meaning usage counts and usageHistory never update.
+      id:             discount._id.toString(),
       code:           discount.code,
       type:           discount.type,
       value:          discount.value,

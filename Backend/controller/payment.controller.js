@@ -636,8 +636,21 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     .catch(() => {});
 
   // 16. Record discount usage (fire-and-forget)
-  if (session.discount?.discountId) {
-    Discount.findById(session.discount.discountId)
+  // FIX: previously this guard only checked discountId, which was always null
+  // because the cart controller never returned discount._id in its response.
+  // The broken chain: cart controller omits _id → cartSlice stores no discountId
+  // → discountSnapshot.discountId = null → session.discount.discountId = null
+  // → this guard fails → recordUsage() never called → admin page shows 0 uses.
+  //
+  // Now fixed in cart.controller.js (returns discount.id) and cartSlice.js
+  // (stores discountId). This block also falls back to a code-based lookup to
+  // handle any sessions created before those fixes were deployed.
+  if (session.discount) {
+    const discountLookup = session.discount.discountId
+      ? Discount.findById(session.discount.discountId)
+      : Discount.findOne({ code: session.discount.code?.toUpperCase() });
+
+    discountLookup
       .then(discount => discount?.recordUsage(userId, order._id, session.discount.discountAmount))
       .catch(() => {});
   }
