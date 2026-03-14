@@ -24,6 +24,10 @@ import {
   selectCheckoutPricing,
   selectCheckoutId
 } from "../features/checkout/checkoutSlice";
+import {
+  selectCartPricing,
+  selectDiscount,
+} from "../features/cart/cartSlice";
 
 import {
   FiCreditCard,
@@ -41,7 +45,7 @@ const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
 const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
 
 function StripeCheckout({ clientSecret, onSuccess }) {
-  const stripe = useStripe();
+  const stripe   = useStripe();
   const elements = useElements();
   const [processing, setProcessing] = useState(false);
 
@@ -84,14 +88,26 @@ function Payment() {
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  const { user }                = useSelector((state) => state.user);
-  const { cartItems, discount } = useSelector((state) => state.cart);
-  const checkoutSession         = useSelector(selectCheckoutSession);
-  const checkoutPricing         = useSelector(selectCheckoutPricing);
-  const checkoutId              = useSelector(selectCheckoutId);
-  const { loading, initLoading, error, message, paymentData, discountInfo } = useSelector(
-    (state) => state.payment
-  );
+  const { user }          = useSelector((state) => state.user);
+  const { cartItems }     = useSelector((state) => state.cart);
+  const checkoutSession   = useSelector(selectCheckoutSession);
+  const checkoutPricing   = useSelector(selectCheckoutPricing);
+  const checkoutId        = useSelector(selectCheckoutId);
+
+  // FIX: read the cart's computed pricing and discount state directly from
+  // their dedicated Redux slices — these are set by the cart controller
+  // (applyDiscountCode / validateCheckout) and are the single source of truth.
+  const cartPricing = useSelector(selectCartPricing);
+  const discount    = useSelector(selectDiscount);
+
+  const {
+    loading,
+    initLoading,
+    error,
+    message,
+    paymentData,
+    discountInfo
+  } = useSelector((state) => state.payment);
 
   const [selectedGateway, setSelectedGateway]   = useState("paystack");
   const [selectedCurrency, setSelectedCurrency] = useState("USD");
@@ -121,7 +137,7 @@ function Payment() {
   useEffect(() => {
     if (selectedGateway === "paystack" && !window.PaystackPop) {
       const script = document.createElement("script");
-      script.src = "https://js.paystack.co/v1/inline.js";
+      script.src   = "https://js.paystack.co/v1/inline.js";
       script.async = true;
       script.onerror = () => toast.error("Failed to load Paystack");
       document.body.appendChild(script);
@@ -154,7 +170,7 @@ function Payment() {
   const openPaystackPopup = useCallback(() => {
     if (!window.PaystackPop) { toast.error("Paystack SDK not loaded"); return; }
     const key = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
-    if (!key) { toast.error("Paystack public key missing"); return; }
+    if (!key)  { toast.error("Paystack public key missing"); return; }
 
     const handler = window.PaystackPop.setup({
       key,
@@ -263,12 +279,62 @@ function Payment() {
     }
   }, [paymentData, selectedGateway, flutterwaveConfig, openPaystackPopup, triggerFlutterwavePayment]);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // FIX: handleInitializePayment now forwards cartPricing and discountSnapshot
+  // instead of forwarding only a discountCode string.
+  //
+  // Previously the flow was:
+  //   Frontend → send discountCode string
+  //   Backend  → re-run validateAndCalculateOrder() + re-apply discount
+  //
+  // This caused the bug: if discountCode was falsy for any reason (empty
+  // string, undefined, stale state), the backend silently skipped the entire
+  // discount block and charged the full price.
+  //
+  // The new flow is:
+  //   Frontend → send cartPricing (already computed by cart controller)
+  //              + discountSnapshot (the full discount object the cart stored)
+  //   Backend  → trust cartPricing, skip all re-calculation, use
+  //              discountSnapshot for session/order record keeping only.
+  //
+  // The cart controller (applyDiscountCode) is the single point of
+  // calculation. Everyone downstream just reads its output.
+  // ─────────────────────────────────────────────────────────────────────────
   const handleInitializePayment = async () => {
     if (!checkoutSession)                                                                    { toast.error("No checkout session found"); return; }
     if (cartItems.length === 0)                                                              { toast.error("Cart is empty"); return; }
     if (selectedGateway === "stripe"      && !STRIPE_KEY)                                   { toast.error("Stripe is not configured"); return; }
     if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)  { toast.error("Flutterwave is not configured"); return; }
     if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)     { toast.error("Paystack is not configured"); return; }
+
+    // FIX: Resolve which pricing to forward. Prefer cartPricing from the
+    // cart slice (populated by applyDiscountCode or validateCheckout).
+    // Fall back to checkoutPricing if cartPricing is zero-initialised,
+    // which can happen if the user navigated directly to /payment.
+    const pricingToSend = (cartPricing?.totalPrice > 0)
+      ? cartPricing
+      : checkoutPricing;
+
+    if (!pricingToSend || !pricingToSend.totalPrice) {
+      toast.error("Pricing information is missing. Please return to your cart.");
+      return;
+    }
+
+    // FIX: Build the discount snapshot from the Redux cart state.
+    // This is the full object the cart controller computed and stored —
+    // not just the code string. Sending the full snapshot means the backend
+    // can record the discount accurately without needing to re-derive it.
+    const discountSnapshot = (discount.applied && discount.code)
+      ? {
+          code:              discount.code,
+          discountId:        discount.discountId  || null,
+          type:              discount.type        || null,
+          value:             discount.value       || null,
+          discountAmount:    discount.discountAmount    || 0,
+          originalItemPrice: pricingToSend.itemPrice,   // gross itemPrice before discount
+          description:       discount.description || null,
+        }
+      : null;
 
     paystackTriggered.current    = false;
     flutterwaveTriggered.current = false;
@@ -283,10 +349,13 @@ function Payment() {
           product:  item.product,
           quantity: item.qty || item.quantity || 1
         })),
-        // Forward the active discount code so the payment controller applies
-        // it server-side. Omitted when no discount is active so the
-        // controller's `if (discountCode)` guard is not entered.
-        ...(discount.applied && discount.code && { discountCode: discount.code })
+        // FIX: forward pre-computed pricing instead of letting the backend
+        // recalculate from scratch. This is the root-cause fix.
+        cartPricing: pricingToSend,
+        // FIX: forward the full discount snapshot (not just the code string)
+        // so the backend has everything it needs for the session and order
+        // document without re-running validation or calculation.
+        ...(discountSnapshot && { discountSnapshot }),
       })
     )
       .unwrap()
@@ -341,25 +410,30 @@ function Payment() {
 
   const selectedGatewayConfig = gateways.find((g) => g.value === selectedGateway);
 
-const orderSummary = paymentData?.breakdown
-  ? {
-      subtotal:       paymentData.breakdown.itemPrice     || 0,
-      tax:            paymentData.breakdown.taxPrice      || 0,
-      shipping:       paymentData.breakdown.shippingPrice || 0,
-      total:          paymentData.breakdown.totalPrice    || 0,
-      discountAmount: discountInfo?.discountAmount        || 0,
-      discountCode:   discountInfo?.code                  || null,
-    }
-  : {
-      subtotal:       checkoutPricing?.itemPrice     || 0,
-      tax:            checkoutPricing?.taxPrice      || 0,
-      shipping:       checkoutPricing?.shippingPrice || 0,
-      total:          checkoutPricing?.totalPrice    || 0,
-      discountAmount: discount.applied ? discount.discountAmount : 0,
-      discountCode:   discount.applied ? discount.code           : null,
-    };
+  // FIX: orderSummary resolution — after initialize succeeds, use the
+  // server-confirmed breakdown (which mirrors cartPricing). Before initialize,
+  // use cartPricing directly. This means the displayed total is always
+  // sourced from the cart controller, never from client-side recalculation.
+  const orderSummary = paymentData?.breakdown
+    ? {
+        subtotal:       paymentData.breakdown.itemPrice     || 0,
+        tax:            paymentData.breakdown.taxPrice      || 0,
+        shipping:       paymentData.breakdown.shippingPrice || 0,
+        total:          paymentData.breakdown.totalPrice    || 0,
+        discountAmount: discountInfo?.discountAmount        || 0,
+        discountCode:   discountInfo?.code                  || null,
+      }
+    : {
+        // FIX: source from cartPricing (set by cart controller) with
+        // checkoutPricing as fallback — never from client-computed values.
+        subtotal:       cartPricing?.itemPrice     || checkoutPricing?.itemPrice     || 0,
+        tax:            cartPricing?.taxPrice      || checkoutPricing?.taxPrice      || 0,
+        shipping:       cartPricing?.shippingPrice || checkoutPricing?.shippingPrice || 0,
+        total:          cartPricing?.totalPrice    || checkoutPricing?.totalPrice    || 0,
+        discountAmount: discount.applied ? (discount.discountAmount || 0) : 0,
+        discountCode:   discount.applied ? discount.code : null,
+      };
 
-    
   return (
     <>
       <PageTitle title="Payment" />

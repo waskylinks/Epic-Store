@@ -4,21 +4,49 @@ import axios from "axios";
 // ----------------------
 // INITIALIZE PAYMENT THUNK
 // ----------------------
+
+/**
+ * FIX — Root cause change:
+ *
+ * Previously this thunk accepted `discountCode` (a string) and forwarded it
+ * to the backend which would then re-run the entire pricing calculation
+ * including discount application from scratch. This was the second pricing
+ * path and the source of the bug: if discountCode was falsy at the moment
+ * the button was clicked, the backend's `if (discountCode)` guard was never
+ * entered and the gateway was charged the full undiscounted price.
+ *
+ * The fix:
+ *  - Accept `cartPricing` (the full pricing object already computed by the
+ *    cart controller and stored in Redux) and forward it to the backend.
+ *  - Accept `discountSnapshot` (the full discount object from Redux state)
+ *    and forward it so the backend can record it accurately without
+ *    re-deriving anything.
+ *  - The backend no longer calls validateAndCalculateOrder() for totals; it
+ *    trusts cartPricing as the authoritative figure and only does a
+ *    lightweight stock/existence check per product.
+ *
+ * The cart controller (applyDiscountCode) remains the single point of
+ * calculation for all pricing including discounts.
+ */
 export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
   async (payload, { rejectWithValue }) => {
     try {
-      const { gateway, currency, shippingInfo, cartItems, discountCode } = payload;
+      const {
+        gateway,
+        currency,
+        shippingInfo,
+        cartItems,
+        // FIX: pre-computed pricing from the cart controller.
+        // Shape: { itemPrice, taxPrice, shippingPrice, totalPrice, currency }
+        cartPricing,
+        // FIX: full discount snapshot from the cart Redux state.
+        // Shape: { code, discountId, type, value, discountAmount,
+        //          originalItemPrice, description }
+        // null/undefined when no discount is active.
+        discountSnapshot,
+      } = payload;
 
-      // BUG-SL1 FIX: discountCode was destructured from payload but never
-      // forwarded in the request body. The entire server-side discount
-      // application path — canUserUse(), validateCart(),
-      // calculateDiscount(), discountInfo in session — was therefore
-      // completely unreachable from the frontend regardless of what the
-      // user entered. discountCode is now included in the POST body so
-      // the controller can apply it during payment initialisation.
-      // It is intentionally omitted when undefined so the controller's
-      // `if (discountCode)` branch is not entered for non-discount flows.
       const { data } = await axios.post(
         "/api/v1/payment/initialize",
         {
@@ -26,7 +54,11 @@ export const initializePayment = createAsyncThunk(
           currency,
           shippingInfo,
           cartItems,
-          ...(discountCode && { discountCode }),
+          // FIX: send pre-computed totals so the backend never recalculates.
+          cartPricing,
+          // FIX: send full discount snapshot (omit key entirely when null so
+          // the backend's discountSnapshot guard is not entered).
+          ...(discountSnapshot && { discountSnapshot }),
         },
         {
           headers: {
@@ -53,8 +85,6 @@ export const verifyPayment = createAsyncThunk(
     try {
       const { gateway = "paystack", reference, transactionId } = payload;
 
-      // transactionId is passed for Flutterwave to bypass the unreliable
-      // tx_ref search endpoint — backend will use it directly if present.
       const { data } = await axios.post(
         "/api/v1/payment/verify",
         { gateway, reference, transactionId },
@@ -79,16 +109,15 @@ export const verifyPayment = createAsyncThunk(
 // ----------------------
 
 /**
- * discountInfo shape (set on initializePayment.fulfilled when a discount
- * was applied by the server):
+ * discountInfo shape (set on initializePayment.fulfilled):
  *   {
- *     code:               string   — e.g. "SUMMER20"
- *     amount:             number   — amount deducted, e.g. 20.00
- *     originalItemPrice:  number   — pre-discount item subtotal
+ *     code:               string
+ *     discountAmount:     number
+ *     originalItemPrice:  number
  *   }
- * null when no discount is active.
+ * null when no discount was active during the last initialisation.
  *
- * idempotent (set on verifyPayment.fulfilled):
+ * idempotent:
  *   true  — order already existed; do NOT fire analytics / success toasts
  *   false — fresh verification; proceed normally
  */
@@ -100,11 +129,7 @@ const initialState = {
   message:      null,
   order:        null,
   paymentData:  null,
-  // BUG-SL2 FIX: dedicated discount field so components can read applied
-  // discount info without drilling into paymentData.breakdown.discount.
   discountInfo: null,
-  // BUG-SL4 FIX: expose idempotent flag so components can suppress
-  // duplicate "payment successful" toasts / analytics re-firing.
   idempotent:   false,
 };
 
@@ -119,9 +144,8 @@ const paymentSlice = createSlice({
       state.message = null;
     },
     resetPaymentState: () => initialState,
-    // BUG-SL3 FIX: clearPaymentData now also clears discountInfo so a
-    // stale discount from a previous session is not carried into the next
-    // payment attempt when only the gateway data is cleared.
+    // FIX: clearPaymentData also clears discountInfo so stale discount data
+    // from a previous session is never shown alongside fresh payment data.
     clearPaymentData: (state) => {
       state.paymentData  = null;
       state.discountInfo = null;
@@ -131,25 +155,19 @@ const paymentSlice = createSlice({
     // ── Initialize payment ──────────────────────────────────────────
     builder
       .addCase(initializePayment.pending, (state) => {
-        state.initLoading = true;
-        state.error       = null;
-        state.paymentData = null;
-        // Clear any discount from a previous attempt so a stale code
-        // is never displayed if the user changes their cart or code.
+        state.initLoading  = true;
+        state.error        = null;
+        state.paymentData  = null;
         state.discountInfo = null;
       })
       .addCase(initializePayment.fulfilled, (state, action) => {
         state.initLoading = false;
         state.paymentData = action.payload;
 
-        // BUG-SL2 FIX: extract discount info returned by the server
-        // (present only when the controller applied a valid discountCode)
-        // and surface it as a dedicated state field.
-        //
-        // action.payload is data.data from the controller response:
-        //   { reference, amount, currency, gateway, orderItems,
-        //     breakdown: { ..., discount?: { code, amount, originalItemPrice } },
-        //     authorization_url | payment_link | client_secret | ... }
+        // Extract discount info from the server-confirmed breakdown.
+        // The server echoes back what was stored in the session — this
+        // is now sourced from discountSnapshot (which came from cart Redux),
+        // so it is always accurate and consistent with the cart display.
         state.discountInfo = action.payload?.breakdown?.discount ?? null;
       })
       .addCase(initializePayment.rejected, (state, action) => {
@@ -168,13 +186,10 @@ const paymentSlice = createSlice({
         state.idempotent = false;
       })
       .addCase(verifyPayment.fulfilled, (state, action) => {
-        state.loading  = false;
-        state.success  = true;
-        state.order    = action.payload.order   ?? null;
-        state.message  = action.payload.message ?? "Payment verified successfully";
-        // BUG-SL4 FIX: store idempotent flag from controller response so
-        // components can detect a repeat-verify and skip analytics /
-        // success side-effects that must only fire once per purchase.
+        state.loading    = false;
+        state.success    = true;
+        state.order      = action.payload.order   ?? null;
+        state.message    = action.payload.message ?? "Payment verified successfully";
         state.idempotent = action.payload.idempotent ?? false;
       })
       .addCase(verifyPayment.rejected, (state, action) => {
