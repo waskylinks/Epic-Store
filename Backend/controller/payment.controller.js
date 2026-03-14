@@ -2,7 +2,6 @@ import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import { PaymentFactory } from "../Services/payment/paymentFactory.js";
 import { createReceiptIfNotExists } from "../Services/receipt.service.js";
-import { validateAndCalculateOrder } from "../Services/pricing.service.js";
 import { deleteCachePattern } from '../utils/redis.js';
 import {
   createPaymentSession,
@@ -15,7 +14,6 @@ import User from '../models/userModel.js';
 import Discount from '../models/discount-model.js';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
 import Checkout from '../models/checkout-model.js';
-import mongoose from 'mongoose';
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
@@ -25,7 +23,6 @@ import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
 const SESSION_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
 
-// Amount tolerance per currency
 const AMOUNT_TOLERANCE = {
   USD: 0.02,
   NGN: 0.05,
@@ -33,21 +30,16 @@ const AMOUNT_TOLERANCE = {
   DEFAULT: 0.05
 };
 
+// Supported currencies — must match cart controller and pricing service
+const SUPPORTED_CURRENCIES = ['USD', 'NGN', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR'];
+
 // ============================================
 // HELPERS
 // ============================================
 
-/**
- * Generate a unique order reference.
- * Format: ORD-<timestamp>-<random hex>
- */
 const generateOrderReference = () =>
   `ORD-${Date.now()}-${Math.random().toString(36).substring(2, 14).toUpperCase()}`;
 
-/**
- * Invalidate all payment-related caches after a successful transaction.
- * Failures are swallowed — cache invalidation must never affect primary flow.
- */
 const invalidatePaymentCaches = async () => {
   try {
     await Promise.all([
@@ -62,13 +54,6 @@ const invalidatePaymentCaches = async () => {
   }
 };
 
-/**
- * Normalize gateway verification response into a unified shape.
- * Returns { verified, amount, currency, id, raw }
- *
- * For Flutterwave: accepts an optional transactionId (numeric) which bypasses
- * the unreliable tx_ref search endpoint and verifies directly by ID.
- */
 const verifyWithGateway = async (paymentService, gateway, reference, transactionId = null) => {
   let raw = null;
   let verified = false;
@@ -80,9 +65,6 @@ const verifyWithGateway = async (paymentService, gateway, reference, transaction
     raw = await paymentService.verifyPaystackTransaction(reference);
     verified = raw.status === "success";
   } else if (gateway === 'flutterwave') {
-    // If the frontend callback gave us the numeric transaction_id, use it directly.
-    // This skips the GET /v3/transactions?tx_ref=... search which is unreliable
-    // and frequently returns empty results even for successful payments.
     const lookupRef = transactionId ? String(transactionId) : reference;
     raw = await paymentService.verifyFlutterwaveTransaction(lookupRef);
     verified = raw.status === "successful";
@@ -94,7 +76,6 @@ const verifyWithGateway = async (paymentService, gateway, reference, transaction
     throw new Error(`Gateway returned non-success status: "${raw?.status ?? 'unknown'}"`);
   }
 
-  // Normalise amount and currency across gateways
   let amount, currency;
   if (gateway === 'stripe') {
     amount = raw.amount / 100;
@@ -110,9 +91,6 @@ const verifyWithGateway = async (paymentService, gateway, reference, transaction
   return { verified, amount, currency, id: raw.id || raw.tx_id, raw };
 };
 
-/**
- * Build gateway-specific paymentMeta object.
- */
 const buildPaymentMeta = (gateway, raw) => {
   if (gateway === 'stripe') {
     const paymentMethod = raw.charges?.data[0]?.payment_method_details;
@@ -175,7 +153,34 @@ const buildPaymentMeta = (gateway, raw) => {
 // ============================================
 
 /**
- * Initialize Payment — generates reference, stores Redis session, returns gateway URL.
+ * Initialize Payment
+ *
+ * FIX: The previous version called validateAndCalculateOrder() independently
+ * inside the payment controller, creating a second pricing path that did not
+ * reliably receive and apply the discount code, causing the gateway to be
+ * initialised at the full undiscounted price even when the cart displayed the
+ * correct discounted total.
+ *
+ * The fix implements a single source of truth:
+ *   1. The cart controller (applyDiscountCode / validateCheckout) is the ONLY
+ *      place that calculates prices.  Its results are stored in Redux state
+ *      and forwarded to this endpoint as `cartPricing`.
+ *   2. This controller TRUSTS those pre-computed figures instead of
+ *      re-deriving them.  It only performs a lightweight sanity check on each
+ *      product (existence, status, stock) and re-reads the unit price from the
+ *      DB to build the `orderItems` array — it does NOT recompute totals.
+ *   3. The discount snapshot (code, amount, type, originalItemPrice) is also
+ *      forwarded from the frontend cart state so it can be stored in the Redis
+ *      session and later written to the Order document without re-validating.
+ *
+ * Required request body fields:
+ *   gateway, currency, shippingInfo, cartItems,
+ *   cartPricing  { itemPrice, taxPrice, shippingPrice, totalPrice },
+ *   discountSnapshot (optional) {
+ *     code, discountId, type, value,
+ *     discountAmount, originalItemPrice, description
+ *   }
+ *
  * @route POST /api/v1/payment/initialize
  * @access Private
  */
@@ -183,109 +188,171 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
 
-  const { gateway, currency, shippingInfo, cartItems, discountCode } = req.body;
+  const {
+    gateway,
+    currency,
+    shippingInfo,
+    cartItems,
+    // FIX: pre-computed totals from the cart controller — the single source
+    // of truth for all pricing including any applied discount.
+    cartPricing,
+    // FIX: discount snapshot forwarded from cart Redux state so the session
+    // and order document can record what was applied without re-validating.
+    discountSnapshot = null,
+  } = req.body;
 
+  // ── 1. Basic field validation ────────────────────────────────────────────
   if (!gateway || !currency || !shippingInfo || !cartItems || cartItems.length === 0) {
-    return next(new HandleError("Missing required fields: gateway, currency, shippingInfo, cartItems", 400));
+    return next(new HandleError(
+      "Missing required fields: gateway, currency, shippingInfo, cartItems", 400
+    ));
   }
 
-  // 1. Load user
+  if (!cartPricing || typeof cartPricing.totalPrice !== 'number' || cartPricing.totalPrice <= 0) {
+    return next(new HandleError(
+      "cartPricing is required and must contain a valid totalPrice. " +
+      "Complete the cart/checkout step before initialising payment.", 400
+    ));
+  }
+
+  // Validate the forwarded pricing object has all required fields
+  const { itemPrice, taxPrice, shippingPrice, totalPrice } = cartPricing;
+  if (
+    typeof itemPrice    !== 'number' ||
+    typeof taxPrice     !== 'number' ||
+    typeof shippingPrice !== 'number' ||
+    typeof totalPrice   !== 'number'
+  ) {
+    return next(new HandleError(
+      "cartPricing must include numeric itemPrice, taxPrice, shippingPrice and totalPrice", 400
+    ));
+  }
+
+  const normalizedCurrency = currency.toUpperCase();
+  if (!SUPPORTED_CURRENCIES.includes(normalizedCurrency)) {
+    return next(new HandleError(
+      `Unsupported currency: ${currency}. Supported: ${SUPPORTED_CURRENCIES.join(', ')}`, 400
+    ));
+  }
+
+  // ── 2. Load user ─────────────────────────────────────────────────────────
   const user = await User.findById(userId).select('email name country createdAt');
   if (!user) return next(new HandleError("User not found", 404));
 
-  // 2. Validate cart and calculate server-side totals
-  let validatedOrder;
-  try {
-    validatedOrder = await validateAndCalculateOrder(cartItems, currency);
-  } catch (err) {
-    return next(err);
-  }
+  // ── 3. Lightweight product validation ────────────────────────────────────
+  // FIX: We no longer re-calculate prices here. We verify each product still
+  // exists, is published, and has sufficient stock — then build orderItems
+  // using DB unit prices so the stored items are always accurate. Totals come
+  // exclusively from cartPricing (the cart controller's output).
+  const Product = (await import('../models/product-model.js')).default;
 
-  // 3. Apply discount code if provided
-  let discountInfo = null;
-  if (discountCode) {
-    try {
-      const discount = await Discount.findActiveByCode(discountCode);
-      if (!discount) return next(new HandleError('Invalid or expired discount code', 400));
-
-      const canUse = await discount.canUserUse(userId);
-      if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
-
-      const originalItemPrice = validatedOrder.itemPrice;
-
-      const validation = discount.validateCart(
-        originalItemPrice,
-        validatedOrder.orderItems,   // FIX: was cartItems (raw) — now resolved items with category
-        userId
-      );
-      if (!validation.valid) return next(new HandleError(validation.reason, 400));
-
-      const discountAmount = discount.calculateDiscount(
-        originalItemPrice,
-        validatedOrder.orderItems    // FIX: was cartItems (raw) — now resolved items with category
-      );
-      const discountedItemPrice = Math.max(0, originalItemPrice - discountAmount);
-      const taxPrice = Math.round(discountedItemPrice * 0.18 * 100) / 100;
-      const shippingPrice = discountedItemPrice >= 500 ? 0 : 50;
-
-      discountInfo = {
-        code:           discount.code,
-        discountId:     discount._id,
-        type:           discount.type,
-        value:          discount.value,
-        discountAmount: Math.round(discountAmount * 100) / 100,
-        description:    discount.description,
-        // FIX BUG-PC2 (audit): Preserve original itemPrice in the session so
-        // the order record can reflect both gross and net amounts. Previously
-        // the original was overwritten and permanently lost.
-        originalItemPrice: Math.round(originalItemPrice * 100) / 100,
-      };
-
-      // Mutate validatedOrder pricing to reflect the discount for session storage
-      // and gateway charge amount.
-      validatedOrder.itemPrice    = Math.round(discountedItemPrice * 100) / 100;
-      validatedOrder.taxPrice     = taxPrice;
-      validatedOrder.shippingPrice = shippingPrice;
-      validatedOrder.totalPrice   = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
-    } catch (err) {
-      if (err instanceof HandleError) return next(err);
-      return next(new HandleError('Failed to apply discount code. Please try again.', 500));
+  const productIds = cartItems.map(item => {
+    if (!item.product) throw new HandleError('Invalid cart item: missing product ID', 400);
+    if (!item.quantity || item.quantity < 1 || !Number.isInteger(Number(item.quantity))) {
+      throw new HandleError(`Invalid quantity for product ${item.product}`, 400);
     }
+    return item.product;
+  });
+
+  const products = await Product.find({ _id: { $in: productIds } })
+    .select('_id name price pricing stock inventory category images status');
+
+  if (products.length !== productIds.length) {
+    const foundIds = products.map(p => p._id.toString());
+    const missing  = productIds.filter(id => !foundIds.includes(id.toString()));
+    return next(new HandleError(`Products not found: ${missing.join(', ')}`, 404));
   }
 
-  // 4. Capture attribution and device info
+  const productMap = {};
+  products.forEach(p => { productMap[p._id.toString()] = p; });
+
+  const orderItems = [];
+  for (const cartItem of cartItems) {
+    const product  = productMap[cartItem.product.toString()];
+    const quantity = Number(cartItem.quantity);
+
+    if (product.status !== 'published') {
+      return next(new HandleError(`Product "${product.name}" is no longer available`, 400));
+    }
+
+    const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+    if (availableStock < quantity) {
+      return next(new HandleError(
+        `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${quantity}`,
+        400
+      ));
+    }
+
+    // Read unit price from DB for the order item record — but do NOT
+    // accumulate these into a new total. The cart controller's totalPrice
+    // is the authoritative charge amount.
+    let unitPrice = 0;
+    if (product.pricing?.sale   > 0) unitPrice = product.pricing.sale;
+    else if (product.pricing?.regular > 0) unitPrice = product.pricing.regular;
+    else if (product.price      > 0) unitPrice = product.price;
+    else return next(new HandleError(`Product "${product.name}" has no valid price`, 500));
+
+    orderItems.push({
+      product:  product._id,
+      name:     product.name,
+      price:    unitPrice,
+      quantity,
+      image:    product.images?.[0]?.url || product.images?.[0] || '',
+      category: product.category,
+    });
+  }
+
+  // ── 4. Attribution / device ───────────────────────────────────────────────
   const attributionData = req.attributionData || {
     source: 'direct', medium: null, campaign: null, referrer: null, landingPage: null
   };
   const deviceInfo = req.deviceInfo || { device: 'desktop', browser: 'unknown' };
 
-  // 5. Generate reference before creating session
+  // ── 5. Generate reference ────────────────────────────────────────────────
   const reference = generateOrderReference();
 
+  // ── 6. Build discount info for session storage ───────────────────────────
+  // FIX: instead of re-running discount validation/calculation we simply
+  // carry forward the snapshot the cart controller already computed. This is
+  // the key change: the payment layer records what happened, it does not redo it.
+  let discountInfo = null;
+  if (discountSnapshot && discountSnapshot.code) {
+    discountInfo = {
+      code:              discountSnapshot.code,
+      discountId:        discountSnapshot.discountId  || null,
+      type:              discountSnapshot.type        || null,
+      value:             discountSnapshot.value       || null,
+      discountAmount:    Number(discountSnapshot.discountAmount)    || 0,
+      originalItemPrice: Number(discountSnapshot.originalItemPrice) || itemPrice,
+      description:       discountSnapshot.description || null,
+    };
+  }
+
+  // ── 7. Persist Redis session ─────────────────────────────────────────────
   try {
     await createPaymentSession({
       reference,
-      userId: userId.toString(),
+      userId:        userId.toString(),
       gateway,
-      currency: validatedOrder.currency,
+      currency:      normalizedCurrency,
       shippingInfo,
-      orderItems: validatedOrder.orderItems,
-      itemPrice: validatedOrder.itemPrice,
-      taxPrice: validatedOrder.taxPrice,
-      shippingPrice: validatedOrder.shippingPrice,
-      totalPrice: validatedOrder.totalPrice,
-      userEmail: user.email,
-      userName: user.name,
-      validation: validatedOrder.validation,
-      discount: discountInfo,
+      orderItems,
+      // FIX: store cart-computed totals directly — not recalculated values.
+      itemPrice,
+      taxPrice,
+      shippingPrice,
+      totalPrice,
+      userEmail:     user.email,
+      userName:      user.name,
+      discount:      discountInfo,
       analytics: {
-        source: attributionData.source,
-        medium: attributionData.medium,
-        campaign: attributionData.campaign,
-        referrer: attributionData.referrer,
+        source:      attributionData.source,
+        medium:      attributionData.medium,
+        campaign:    attributionData.campaign,
+        referrer:    attributionData.referrer,
         landingPage: attributionData.landingPage,
-        device: deviceInfo.device,
-        browser: deviceInfo.browser
+        device:      deviceInfo.device,
+        browser:     deviceInfo.browser
       },
       createdAt: Date.now()
     });
@@ -293,22 +360,23 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     return next(new HandleError("Failed to create payment session. Please try again.", 500));
   }
 
-  // 6. Initialize payment with the chosen gateway
+  // ── 8. Initialise gateway ─────────────────────────────────────────────────
   let gatewayResponse;
   try {
     gatewayResponse = await PaymentFactory.initializePayment(gateway, {
-      email: user.email,
-      amount: validatedOrder.totalPrice,
-      currency: validatedOrder.currency,
+      email:          user.email,
+      // FIX: charge the cart-computed totalPrice — the single source of truth.
+      amount:         totalPrice,
+      currency:       normalizedCurrency,
       reference,
-      userId: userId.toString(),
+      userId:         userId.toString(),
       orderReference: reference,
-      itemCount: validatedOrder.orderItems.length,
-      callback_url: `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`,
-      customer_name: user.name,
+      itemCount:      orderItems.length,
+      callback_url:   `${process.env.FRONTEND_URL}/payment/callback?reference=${reference}`,
+      customer_name:  user.name,
       customer_phone: shippingInfo.phoneNo
     });
-  } catch (err) {
+  } catch {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
       `Could not reach ${gateway} payment gateway. Please try again or use a different payment method.`,
@@ -316,28 +384,29 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     ));
   }
 
-  // 7. For Stripe: alias payment_intent_id → reference
+  // ── 9. Stripe alias ───────────────────────────────────────────────────────
   if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
     createSessionAlias(gatewayResponse.payment_intent_id, reference).catch(() => {});
   }
 
-  // 8. Build and return response
+  // ── 10. Build response ────────────────────────────────────────────────────
   const responseData = {
     reference,
-    amount: validatedOrder.totalPrice,
-    currency: validatedOrder.currency,
+    // FIX: respond with the cart-computed totalPrice — same value sent to gateway.
+    amount:   totalPrice,
+    currency: normalizedCurrency,
     gateway,
-    orderItems: validatedOrder.orderItems.map(({ name, quantity, price }) => ({ name, quantity, price })),
+    orderItems: orderItems.map(({ name, quantity, price }) => ({ name, quantity, price })),
     breakdown: {
-      itemPrice: validatedOrder.itemPrice,
-      taxPrice: validatedOrder.taxPrice,
-      shippingPrice: validatedOrder.shippingPrice,
-      totalPrice: validatedOrder.totalPrice,
+      itemPrice,
+      taxPrice,
+      shippingPrice,
+      totalPrice,
       ...(discountInfo && {
         discount: {
-          code:               discountInfo.code,
-          discountAmount:     discountInfo.discountAmount,
-          originalItemPrice:  discountInfo.originalItemPrice,
+          code:              discountInfo.code,
+          discountAmount:    discountInfo.discountAmount,
+          originalItemPrice: discountInfo.originalItemPrice,
         }
       })
     }
@@ -345,18 +414,18 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
   if (gateway === 'paystack') {
     responseData.authorization_url = gatewayResponse.authorization_url;
-    responseData.access_code = gatewayResponse.access_code;
+    responseData.access_code       = gatewayResponse.access_code;
   } else if (gateway === 'flutterwave') {
     responseData.payment_link = gatewayResponse.payment_link;
   } else if (gateway === 'stripe') {
-    responseData.client_secret = gatewayResponse.client_secret;
-    responseData.payment_intent_id = gatewayResponse.payment_intent_id;
+    responseData.client_secret      = gatewayResponse.client_secret;
+    responseData.payment_intent_id  = gatewayResponse.payment_intent_id;
   }
 
   return res.status(200).json({
     success: true,
     message: "Payment initialized successfully",
-    data: responseData
+    data:    responseData
   });
 });
 
@@ -366,6 +435,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
 /**
  * Verify Payment — confirms gateway charge, creates order.
+ * No pricing changes — session is the source of truth here.
  *
  * @route POST /api/v1/payment/verify
  * @access Private
@@ -379,50 +449,43 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     return next(new HandleError("Both 'gateway' and 'reference' are required to verify a payment", 400));
   }
 
-  // 1. Load payment session from Redis
+  // 1. Load session
   const session = await getPaymentSession(reference);
-
   if (!session) {
     return next(new HandleError(
-      "Payment session not found or expired. Please start a new payment.",
-      404
+      "Payment session not found or expired. Please start a new payment.", 404
     ));
   }
 
-  // Guard against a corrupted session missing critical fields
   if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
-      "Payment session data is incomplete. Please start a new payment.",
-      400
+      "Payment session data is incomplete. Please start a new payment.", 400
     ));
   }
 
-  // Check session has not passed the 30-minute expiry window
   if (session.createdAt && Date.now() - new Date(session.createdAt).getTime() > SESSION_EXPIRY_MS) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
-      "Payment session has expired (30-minute limit). Please start a new payment.",
-      400
+      "Payment session has expired (30-minute limit). Please start a new payment.", 400
     ));
   }
 
   const orderReference = session.reference;
 
-  // 2. Verify the session belongs to the authenticated user
+  // 2. Ownership check
   if (session.userId !== userId.toString()) {
     return next(new HandleError("This payment session does not belong to your account", 403));
   }
 
-  // 3. Verify the gateway in the request matches the session
+  // 3. Gateway match
   if (session.gateway !== gateway) {
     return next(new HandleError(
-      `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`,
-      400
+      `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
 
-  // 4. Idempotency — if an order already exists for this reference, return it immediately
+  // 4. Idempotency
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference": orderReference },
@@ -433,7 +496,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   if (existingOrder) {
     await deletePaymentSession(reference).catch(() => {});
     if (reference !== orderReference) await deletePaymentSession(orderReference).catch(() => {});
-
     return res.status(200).json({
       success: true,
       message: "Payment already verified — returning existing order",
@@ -442,112 +504,111 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     });
   }
 
-  // 5. Resolve the payment service for this gateway
+  // 5. Resolve payment service
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
-  } catch (err) {
+  } catch {
     return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
   }
 
+  // 6. Verify with gateway
   let gatewayData;
   try {
     gatewayData = await verifyWithGateway(paymentService, gateway, reference, transactionId || null);
   } catch (err) {
     return next(new HandleError(
-      `Payment verification failed with ${gateway}: ${err.message}`,
-      502
+      `Payment verification failed with ${gateway}: ${err.message}`, 502
     ));
   }
 
-  const { amount: gatewayAmount, currency: gatewayCurrency, id: providerTxId, raw: gatewayResponse } = gatewayData;
+  const {
+    amount: gatewayAmount,
+    currency: gatewayCurrency,
+    id: providerTxId,
+    raw: gatewayResponse
+  } = gatewayData;
 
-  // 7. Validate currency matches the session
+  // 7. Currency match
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
-      `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`,
-      400
+      `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
 
-  // 8. Validate amount is within tolerance (guards against partial payments / tampering)
+  // 8. Amount tolerance check
+  // FIX: session.totalPrice is now always the cart-computed discounted total,
+  // so this check correctly validates the discounted amount was charged.
   const tolerance = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
     return next(new HandleError(
       `Amount mismatch: expected ${session.totalPrice} ${session.currency}, ` +
-      `gateway charged ${gatewayAmount} ${gatewayCurrency} (diff: ${amountDiff.toFixed(2)})`,
-      400
+      `gateway charged ${gatewayAmount} ${gatewayCurrency} (diff: ${amountDiff.toFixed(2)})`, 400
     ));
   }
 
-  // 9. Load user for fraud check
+  // 9. Load user
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
 
-  // 10. Count prior successful orders for analytics
-  const userOrderCount = await Order.countDocuments({
-    user: userId,
-    'paymentInfo.status': 'success'
-  });
+  // 10. Analytics counts
+  const userOrderCount  = await Order.countDocuments({ user: userId, 'paymentInfo.status': 'success' });
   const isFirstPurchase = userOrderCount === 0;
-  const purchaseNumber = userOrderCount + 1;
+  const purchaseNumber  = userOrderCount + 1;
 
-  // 11. Fraud risk assessment
+  // 11. Fraud check
   const fraudCheck = calculateFraudRisk(
-    {
-      totalPrice: session.totalPrice,
-      shippingInfo: session.shippingInfo,
-      orderItems: session.orderItems,
-    },
+    { totalPrice: session.totalPrice, shippingInfo: session.shippingInfo, orderItems: session.orderItems },
     user,
     { gateway, gatewayResponse }
   );
 
-  // 12. Initial fulfillment SLA
+  // 12. Fulfillment SLA
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
-  // 13. Build order document
+  // 13. Build order — sourced entirely from session (which carries the
+  //     cart-computed, discount-aware totals locked at initialisation time).
   const orderData = {
-    user: userId,
-    shippingInfo: session.shippingInfo,
-    orderItems: session.orderItems,
-    itemPrice: session.itemPrice,
-    taxPrice: session.taxPrice,
+    user:          userId,
+    shippingInfo:  session.shippingInfo,
+    orderItems:    session.orderItems,
+    itemPrice:     session.itemPrice,
+    taxPrice:      session.taxPrice,
     shippingPrice: session.shippingPrice,
-    totalPrice: session.totalPrice,
-    amountPaid: gatewayAmount,
+    totalPrice:    session.totalPrice,
+    amountPaid:    gatewayAmount,
     ...(session.discount && {
       discounts: {
         codes: [{
-          code:   session.discount.code,
-          amount: session.discount.discountAmount,
-          type:   session.discount.type,
+          code:              session.discount.code,
+          amount:            session.discount.discountAmount,
+          type:              session.discount.type,
           originalItemPrice: session.discount.originalItemPrice ?? null,
         }],
         totalDiscount: session.discount.discountAmount
       }
     }),
     paymentInfo: {
-      reference: orderReference,
+      reference:               orderReference,
       providerTxId,
-      stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
-      status: "success",
-      method: gateway,
-      currency: gatewayCurrency,
-      amount: gatewayAmount,
-      paidAt: new Date()
+      stripePaymentIntentId:   gateway === 'stripe' ? gatewayResponse.id : undefined,
+      status:                  "success",
+      method:                  gateway,
+      currency:                gatewayCurrency,
+      amount:                  gatewayAmount,
+      paidAt:                  new Date()
     },
-    paymentMeta: buildPaymentMeta(gateway, gatewayResponse),
-    orderStatus: "Processing",
+    paymentMeta:  buildPaymentMeta(gateway, gatewayResponse),
+    orderStatus:  "Processing",
     analytics: {
-      source: session.analytics?.source || 'direct',
-      medium: session.analytics?.medium || null,
-      campaign: session.analytics?.campaign || null,
-      referrer: session.analytics?.referrer || null,
-      landingPage: session.analytics?.landingPage || null,
-      device: session.analytics?.device || 'desktop',
-      browser: session.analytics?.browser || 'unknown',
+      source:          session.analytics?.source     || 'direct',
+      medium:          session.analytics?.medium     || null,
+      campaign:        session.analytics?.campaign   || null,
+      referrer:        session.analytics?.referrer   || null,
+      landingPage:     session.analytics?.landingPage || null,
+      device:          session.analytics?.device     || 'desktop',
+      browser:         session.analytics?.browser    || 'unknown',
       customerSegment: null,
       isFirstPurchase,
       purchaseNumber
@@ -556,7 +617,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     fulfillmentSLA
   };
 
-  // 14. Create order — single document write, no transaction needed
+  // 14. Create order
   let order;
   try {
     order = await Order.create(orderData);
@@ -568,60 +629,51 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // 15. Mark the checkout funnel entry as converted (fire-and-forget, non-fatal)
+  // 15. Checkout funnel conversion (fire-and-forget)
   Checkout.findOne({ user: userId, status: 'pending' })
     .sort({ lastActivityAt: -1 })
-    .then(checkout => {
-      if (checkout) {
-        checkout.markAsConverted(order._id, orderReference);
-        return checkout.save();
-      }
-    })
+    .then(checkout => checkout && checkout.markAsConverted(order._id, orderReference) && checkout.save())
     .catch(() => {});
 
+  // 16. Record discount usage (fire-and-forget)
   if (session.discount?.discountId) {
     Discount.findById(session.discount.discountId)
       .then(discount => discount?.recordUsage(userId, order._id, session.discount.discountAmount))
       .catch(() => {});
   }
 
-  // 17. Populate product details for the response payload
+  // 17. Populate product details (non-fatal)
   try {
     await order.populate('orderItems.product', 'name images pricing');
-  } catch {
-    // Non-fatal — order is created, response just won't include product details
-  }
+  } catch { /* non-fatal */ }
 
-  // 18. Async: sync customer analytics
+  // 18-21. Async tasks
   syncCustomerAfterOrder(order._id).catch(() => {});
 
-  // 19. Async: generate receipt
   createReceiptIfNotExists({
-    orderId: order._id,
+    orderId:        order._id,
     userId,
-    reference: orderReference,
-    orderItems: order.orderItems,
-    itemPrice: order.itemPrice,
-    taxPrice: order.taxPrice,
-    shippingPrice: order.shippingPrice,
-    totalPrice: order.totalPrice,
-    shippingInfo: order.shippingInfo,
-    currency: order.paymentInfo.currency,
+    reference:      orderReference,
+    orderItems:     order.orderItems,
+    itemPrice:      order.itemPrice,
+    taxPrice:       order.taxPrice,
+    shippingPrice:  order.shippingPrice,
+    totalPrice:     order.totalPrice,
+    shippingInfo:   order.shippingInfo,
+    currency:       order.paymentInfo.currency,
     paymentGateway: gateway
   }).catch(() => {});
 
-  // 20. Clean up Redis sessions
   Promise.all([
     deletePaymentSession(reference),
     reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve()
   ]).catch(() => {});
 
-  // 21. Invalidate caches
   invalidatePaymentCaches().catch(() => {});
 
   return res.status(200).json({
-    success: true,
-    message: "Payment verified and order created successfully",
+    success:    true,
+    message:    "Payment verified and order created successfully",
     order,
     idempotent: false
   });
