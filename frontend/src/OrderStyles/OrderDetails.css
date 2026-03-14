@@ -586,3 +586,41 @@
 @media (max-width: 640px) {
   .od-back-btn { font-size: 12px; padding: 6px 12px; margin-bottom: 12px; }
 }
+
+
+
+/* ============================================================
+   DISCOUNT ROW — append these rules to OrderDetails.css
+   These are the only additions needed. Nothing else changes.
+   ============================================================ */
+
+/* Discount summary row — green tint to distinguish from regular rows */
+.od-summary-item--discount {
+  background: #F0FDF4;
+  border-radius: var(--od-radius-xs);
+  padding-left: 10px;
+  padding-right: 10px;
+  margin: 0 -10px;
+  border-bottom-color: #BBF7D0 !important;
+}
+
+/* Discount label — green with tag icon */
+.od-summary-label--discount {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #059669 !important;
+  font-weight: 600 !important;
+}
+
+.od-discount-tag-icon {
+  font-size: 12px !important;
+  flex-shrink: 0;
+  color: #059669;
+}
+
+/* Discount amount — bold green */
+.od-summary-value--discount {
+  color: #059669 !important;
+  font-weight: 700 !important;
+}

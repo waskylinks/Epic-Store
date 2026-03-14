@@ -28,7 +28,6 @@ export const getCartDetails = createAsyncThunk(
   }
 );
 
-
 export const addItemsToCart = createAsyncThunk(
   "cart/addItemsToCart",
   async ({ id, quantity }, { rejectWithValue }) => {
@@ -39,7 +38,7 @@ export const addItemsToCart = createAsyncThunk(
       });
 
       return {
-        product: id,
+        product:    id,
         serverData: data,
       };
     } catch (error) {
@@ -49,7 +48,6 @@ export const addItemsToCart = createAsyncThunk(
     }
   }
 );
-
 
 export const updateCartItemQuantity = createAsyncThunk(
   "cart/updateCartItemQuantity",
@@ -86,7 +84,6 @@ export const removeCartItem = createAsyncThunk(
   }
 );
 
-
 export const clearEntireCart = createAsyncThunk(
   "cart/clearEntireCart",
   async (_, { getState, rejectWithValue }) => {
@@ -106,7 +103,6 @@ export const clearEntireCart = createAsyncThunk(
   }
 );
 
-
 export const validateCheckout = createAsyncThunk(
   "cart/validateCheckout",
   async (_, { getState, rejectWithValue }) => {
@@ -125,7 +121,6 @@ export const validateCheckout = createAsyncThunk(
     }
   }
 );
-
 
 export const applyDiscountCode = createAsyncThunk(
   "cart/applyDiscountCode",
@@ -147,7 +142,6 @@ export const applyDiscountCode = createAsyncThunk(
   }
 );
 
-
 export const removeDiscountCode = createAsyncThunk(
   "cart/removeDiscountCode",
   async () => ({ success: true })
@@ -158,16 +152,18 @@ export const removeDiscountCode = createAsyncThunk(
 // ============================================
 
 const initialDiscount = {
+  // FIX: discountId added — stores the Discount document's _id returned by
+  // the cart controller. Required so the payment controller can call
+  // recordUsage() after a successful payment and update the discount's
+  // currentUses count and usageHistory. Without this field the admin
+  // discount page never reflects real usage.
+  discountId:                null,
   code:                      null,
   type:                      null,
   value:                     null,
   description:               null,
   discountAmount:            0,
-  // The subtotal the discount was actually computed against.
-  // For unrestricted codes this equals the full cart itemPrice.
-  // For category-restricted codes this is the sum of qualifying items only.
   eligibleSubtotal:          0,
-  // The portion of the cart that did not qualify. Zero for unrestricted codes.
   ineligibleSubtotal:        0,
   eligibleProductCategories: [],
   appliedPending:            false,
@@ -175,33 +171,22 @@ const initialDiscount = {
 };
 
 const initialPricing = {
-  itemPrice:    0,
-  taxPrice:     0,
+  itemPrice:     0,
+  taxPrice:      0,
   shippingPrice: 0,
-  totalPrice:   0,
-  currency:     'USD',
+  totalPrice:    0,
+  currency:      'USD',
 };
 
 const initialState = {
-  // Minimal cart data persisted to localStorage: [{ product: "id", quantity: N }]
-  cartItems: JSON.parse(localStorage.getItem("cartItems")) || [],
-
-  // Full product details fetched from server
-  cartDetails: [],
-
-  // Pricing from server validation
-  pricing: initialPricing,
-
-  // Active discount
-  discount: initialDiscount,
-
-  // UI state
-  loading:  false,
-  error:    null,
-  success:  false,
-  message:  null,
-
-  // Shipping info
+  cartItems:    JSON.parse(localStorage.getItem("cartItems")) || [],
+  cartDetails:  [],
+  pricing:      initialPricing,
+  discount:     initialDiscount,
+  loading:      false,
+  error:        null,
+  success:      false,
+  message:      null,
   shippingInfo: JSON.parse(localStorage.getItem("shippingInfo")) || {},
 };
 
@@ -275,7 +260,7 @@ const cartSlice = createSlice({
         state.error   = null;
       })
       .addCase(addItemsToCart.fulfilled, (state, action) => {
-        const { product } = action.payload;
+        const { product }    = action.payload;
         const serverQuantity = action.payload.serverData?.item?.quantity;
 
         if (serverQuantity === undefined) {
@@ -338,7 +323,7 @@ const cartSlice = createSlice({
         state.error   = null;
       })
       .addCase(removeCartItem.fulfilled, (state, action) => {
-        const productId = action.payload;
+        const productId   = action.payload;
         state.cartItems   = state.cartItems.filter((item) => item.product !== productId);
         state.cartDetails = state.cartDetails.filter((item) =>
           String(item.product) !== String(productId)
@@ -384,19 +369,9 @@ const cartSlice = createSlice({
 
     // ──────────────────────────────────────────────
     // VALIDATE CHECKOUT
-    // FIX: previously reset state.discount = initialDiscount here, which
-    // wiped the applied discount before the user reached OrderConfirm.
-    // By the time OrderConfirm mounted, discount.applied was false and
-    // discountAmount was 0 — so no discount was shown on the confirm page.
-    //
-    // Fix: preserve state.discount entirely. validateCheckout only confirms
-    // stock availability and computes base pricing — it has no knowledge of
-    // the discount and must not touch it. The discount stays in state until
-    // the user explicitly removes it, clears the cart, or completes the order.
-    //
-    // pricing is also preserved from the applyDiscountCode response rather
-    // than being overwritten with the non-discounted validateCheckout pricing,
-    // which would cause the totals on OrderConfirm to lose the discount.
+    // FIX (pre-existing): do NOT reset state.discount here — validateCheckout
+    // has no knowledge of the discount and must not touch it. Pricing is also
+    // preserved from applyDiscountCode when a discount is active.
     // ──────────────────────────────────────────────
     builder
       .addCase(validateCheckout.pending, (state) => {
@@ -406,15 +381,9 @@ const cartSlice = createSlice({
         state.message  = null;
       })
       .addCase(validateCheckout.fulfilled, (state, action) => {
-        // FIX: only update pricing from validateCheckout when no discount is
-        // active. If a discount is applied, the pricing in state was already
-        // set correctly by applyDiscountCode and must not be overwritten with
-        // the non-discounted server pricing from validateCheckout.
         if (!state.discount.applied) {
           state.pricing = action.payload.pricing;
         }
-
-        // FIX: do NOT reset state.discount here — see note above.
         state.loading  = false;
         state.success  = true;
         state.message  = "Cart validated — ready to checkout";
@@ -448,12 +417,18 @@ const cartSlice = createSlice({
       .addCase(applyDiscountCode.fulfilled, (state, action) => {
         const { discount, pricing, appliedPending } = action.payload;
         state.discount = {
+          // FIX: store the Discount document's _id returned by the cart
+          // controller so it can be forwarded in discountSnapshot to the
+          // payment controller. The payment controller uses this to call
+          // discount.recordUsage() after successful payment, updating
+          // currentUses and usageHistory — which is what the admin
+          // discount page reads to display usage counts.
+          discountId:                discount.id   ?? null,
           code:                      discount.code,
           type:                      discount.type,
           value:                     discount.value,
           description:               discount.description,
           discountAmount:            discount.discountAmount,
-          // NEW — store the breakdown from the server response
           eligibleSubtotal:          discount.eligibleSubtotal   ?? 0,
           ineligibleSubtotal:        discount.ineligibleSubtotal ?? 0,
           eligibleProductCategories: discount.eligibleProductCategories ?? [],
@@ -525,11 +500,7 @@ export const selectCartPricing     = (state) => state.cart.pricing;
 export const selectDiscount        = (state) => state.cart.discount;
 export const selectShippingInfo    = (state) => state.cart.shippingInfo;
 
-// Derived selectors
 export const selectHasDiscount     = (state) => state.cart.discount.applied;
 export const selectDiscountPending = (state) => state.cart.discount.appliedPending;
 
-// ============================================
-// EXPORT
-// ============================================
 export default cartSlice.reducer;

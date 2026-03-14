@@ -16,28 +16,25 @@ import axios from "axios";
 function OrderSuccess() {
   const [searchParams] = useSearchParams();
   const reference = searchParams.get("reference");
-  const dispatch = useDispatch();
-  const navigate = useNavigate();
+  const dispatch  = useDispatch();
+  const navigate  = useNavigate();
 
   const { selectedReceipt, loading: receiptLoading } = useSelector((state) => state.receipt || {});
-  
-  const [orderDetails, setOrderDetails] = useState(null);
-  const [orderLoading, setOrderLoading] = useState(false);
-  const [receiptReady, setReceiptReady] = useState(false);
-  const [pollingAttempts, setPollingAttempts] = useState(0);
-  const [downloadLoading, setDownloadLoading] = useState(false);
-  const [emailLoading, setEmailLoading] = useState(false);
-  const [showAnalytics, setShowAnalytics] = useState(false);
 
-  // Clear checkout session on mount
+  const [orderDetails,     setOrderDetails]     = useState(null);
+  const [orderLoading,     setOrderLoading]      = useState(false);
+  const [receiptReady,     setReceiptReady]      = useState(false);
+  const [pollingAttempts,  setPollingAttempts]   = useState(0);
+  const [downloadLoading,  setDownloadLoading]   = useState(false);
+  const [emailLoading,     setEmailLoading]      = useState(false);
+  const [showAnalytics,    setShowAnalytics]     = useState(false);
+
   useEffect(() => {
     dispatch(clearCheckout());
   }, [dispatch]);
 
-  // Fetch order by payment reference
   const fetchOrderByReference = useCallback(async () => {
     if (!reference) return;
-    
     setOrderLoading(true);
     try {
       const { data } = await axios.get(
@@ -47,10 +44,9 @@ function OrderSuccess() {
       setOrderDetails(data.order);
     } catch (err) {
       console.error("Failed to fetch order:", err);
-      
       if (err.response?.status !== 404) {
         toast.error(
-          err.response?.data?.message || "Unable to load order details", 
+          err.response?.data?.message || "Unable to load order details",
           { position: "top-center" }
         );
       }
@@ -59,18 +55,15 @@ function OrderSuccess() {
     }
   }, [reference]);
 
-  // Validate reference on mount
   useEffect(() => {
     if (!reference || reference.trim() === "") {
       toast.error("Invalid order reference", { position: "top-center" });
       navigate("/");
       return;
     }
-
     fetchOrderByReference();
   }, [reference, navigate, fetchOrderByReference]);
 
-  // Poll for receipt availability
   useEffect(() => {
     if (!reference || receiptReady || pollingAttempts >= 10) return;
 
@@ -80,14 +73,10 @@ function OrderSuccess() {
           `/api/v1/receipts/${reference}/exists`,
           { withCredentials: true }
         );
-        
         if (response.data.exists) {
           setReceiptReady(true);
           dispatch(fetchReceiptByReference(reference));
-          
-          if (!orderDetails) {
-            fetchOrderByReference();
-          }
+          if (!orderDetails) fetchOrderByReference();
         } else {
           setPollingAttempts(prev => prev + 1);
         }
@@ -97,26 +86,14 @@ function OrderSuccess() {
       }
     };
 
-    const timerId = setTimeout(() => {
-      pollReceipt();
-    }, 2000);
-
+    const timerId = setTimeout(pollReceipt, 2000);
     return () => clearTimeout(timerId);
   }, [reference, receiptReady, pollingAttempts, dispatch, orderDetails, fetchOrderByReference]);
 
   const handleDownloadReceipt = async () => {
-    if (!reference) {
-      toast.error("Receipt not found", { position: "top-center" });
-      return;
-    }
-
-    if (!receiptReady) {
-      toast.info("Receipt is being prepared", { position: "top-center" });
-      return;
-    }
-
+    if (!reference)   { toast.error("Receipt not found", { position: "top-center" }); return; }
+    if (!receiptReady){ toast.info("Receipt is being prepared", { position: "top-center" }); return; }
     setDownloadLoading(true);
-
     try {
       await dispatch(downloadReceiptPdf({ reference })).unwrap();
       toast.success("Receipt downloaded", { position: "top-center" });
@@ -128,59 +105,34 @@ function OrderSuccess() {
   };
 
   const handleEmailReceipt = async () => {
-    if (!reference) {
-      toast.error("Invalid receipt reference", { position: "top-center" });
-      return;
-    }
-
-    if (!receiptReady) {
-      toast.info("Receipt is being prepared", { position: "top-center" });
-      return;
-    }
-
+    if (!reference)   { toast.error("Invalid receipt reference", { position: "top-center" }); return; }
+    if (!receiptReady){ toast.info("Receipt is being prepared", { position: "top-center" }); return; }
     setEmailLoading(true);
-
     try {
       const response = await axios.post(
         `/api/v1/receipts/${reference}/email`,
         {},
         { withCredentials: true }
       );
-      
-      toast.success(response.data.message || "Receipt sent to your email", {
-        position: "top-center"
-      });
+      toast.success(response.data.message || "Receipt sent to your email", { position: "top-center" });
     } catch (err) {
-      toast.error(err.response?.data?.message || "Failed to send receipt", {
-        position: "top-center"
-      });
+      toast.error(err.response?.data?.message || "Failed to send receipt", { position: "top-center" });
     } finally {
       setEmailLoading(false);
     }
   };
 
-  const formatCurrency = (amount, currency = "NGN") => {
-    const localeMap = {
-      NGN: "en-NG",
-      USD: "en-US",
-      GBP: "en-GB",
-      EUR: "en-DE",
-    };
-
+  const formatCurrency = (amount, currency = "USD") => {
+    const localeMap = { NGN: "en-NG", USD: "en-US", GBP: "en-GB", EUR: "en-DE" };
     return new Intl.NumberFormat(localeMap[currency] || "en-US", {
-      style: "currency",
-      currency: currency,
+      style:                 "currency",
+      currency,
       minimumFractionDigits: 2,
     }).format(amount);
   };
 
   const getPaymentMethodDisplay = (method) => {
-    const methods = {
-      paystack: "Paystack",
-      flutterwave: "Flutterwave",
-      stripe: "Stripe",
-      manual: "Manual",
-    };
+    const methods = { paystack: "Paystack", flutterwave: "Flutterwave", stripe: "Stripe", manual: "Manual" };
     return methods[method] || method;
   };
 
@@ -188,6 +140,13 @@ function OrderSuccess() {
     if (!dateString) return 'N/A';
     return new Date(dateString).toLocaleString();
   };
+
+  // FIX: resolve discount info from order.discounts (saved by verifyPayment).
+  // The order document stores applied discounts under order.discounts.codes[].
+  // Previously this data was never read — OrderSuccess only showed the final
+  // totalPrice with no breakdown of what was discounted or why.
+  const appliedDiscount = orderDetails?.discounts?.codes?.[0] ?? null;
+  const currency        = orderDetails?.paymentInfo?.currency ?? "USD";
 
   if (orderLoading) {
     return (
@@ -214,7 +173,8 @@ function OrderSuccess() {
 
       <div className="payment-success-container">
         <div className="success-content">
-          {/* Success Header */}
+
+          {/* ── Success Header ──────────────────────────────────────────────── */}
           <div className="success-header">
             <div className="success-icon">✓</div>
             <h1>Payment Successful!</h1>
@@ -223,17 +183,17 @@ function OrderSuccess() {
             </p>
           </div>
 
-          {/* Order Reference */}
+          {/* ── Order Reference ─────────────────────────────────────────────── */}
           <div className="order-reference-box">
             <p className="reference-label">Order Reference</p>
             <p className="reference-value">{reference}</p>
           </div>
 
-          {/* Order Details */}
+          {/* ── Order Details ───────────────────────────────────────────────── */}
           {orderDetails ? (
             <div className="order-details-section">
               <h2>Order Details</h2>
-              
+
               <div className="order-info-grid">
                 <div className="info-item">
                   <span className="info-label">Payment Method:</span>
@@ -241,38 +201,24 @@ function OrderSuccess() {
                     {getPaymentMethodDisplay(orderDetails.paymentInfo?.method)}
                   </span>
                 </div>
-
                 <div className="info-item">
                   <span className="info-label">Amount Paid:</span>
                   <span className="info-value">
-                    {formatCurrency(
-                      orderDetails.totalPrice,
-                      orderDetails.paymentInfo?.currency
-                    )}
+                    {formatCurrency(orderDetails.totalPrice, currency)}
                   </span>
                 </div>
-
                 <div className="info-item">
                   <span className="info-label">Currency:</span>
-                  <span className="info-value">
-                    {orderDetails.paymentInfo?.currency}
-                  </span>
+                  <span className="info-value">{currency}</span>
                 </div>
-
                 <div className="info-item">
                   <span className="info-label">Items:</span>
-                  <span className="info-value">
-                    {orderDetails.orderItems?.length || 0} item(s)
-                  </span>
+                  <span className="info-value">{orderDetails.orderItems?.length || 0} item(s)</span>
                 </div>
-
                 <div className="info-item">
                   <span className="info-label">Order Status:</span>
-                  <span className="info-value status-badge">
-                    {orderDetails.orderStatus}
-                  </span>
+                  <span className="info-value status-badge">{orderDetails.orderStatus}</span>
                 </div>
-
                 <div className="info-item">
                   <span className="info-label">Payment Status:</span>
                   <span className="info-value payment-status-success">
@@ -281,16 +227,15 @@ function OrderSuccess() {
                 </div>
               </div>
 
-              {/* Analytics Section - Collapsible */}
+              {/* ── Analytics (collapsible) ──────────────────────────────────── */}
               {orderDetails.analytics && (
                 <div className="analytics-section">
-                  <button 
+                  <button
                     className="analytics-toggle"
                     onClick={() => setShowAnalytics(!showAnalytics)}
                   >
                     {showAnalytics ? '▼' : '▶'} Order Analytics
                   </button>
-                  
                   {showAnalytics && (
                     <div className="analytics-details">
                       <div className="analytics-grid">
@@ -332,41 +277,26 @@ function OrderSuccess() {
                             </span>
                           </div>
                         )}
-                        {orderDetails.analytics.capturedAt && (
-                          <div className="analytics-item">
-                            <span className="analytics-label">Captured At:</span>
-                            <span className="analytics-value">
-                              {formatDate(orderDetails.analytics.capturedAt)}
-                            </span>
-                          </div>
-                        )}
                       </div>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* Order Items Preview */}
-              {orderDetails.orderItems && orderDetails.orderItems.length > 0 && (
+              {/* ── Order Items ──────────────────────────────────────────────── */}
+              {orderDetails.orderItems?.length > 0 && (
                 <div className="order-items-preview">
                   <h3>Ordered Items</h3>
                   <div className="items-list">
                     {orderDetails.orderItems.map((item, index) => (
                       <div key={index} className="item-row">
-                        <img 
-                          src={item.image} 
-                          alt={item.name} 
-                          className="item-thumbnail"
-                        />
+                        <img src={item.image} alt={item.name} className="item-thumbnail" />
                         <div className="item-details">
                           <p className="item-name">{item.name}</p>
                           <p className="item-quantity">Qty: {item.quantity}</p>
                         </div>
                         <p className="item-price">
-                          {formatCurrency(
-                            item.price * item.quantity,
-                            orderDetails.paymentInfo?.currency
-                          )}
+                          {formatCurrency(item.price * item.quantity, currency)}
                         </p>
                       </div>
                     ))}
@@ -374,63 +304,75 @@ function OrderSuccess() {
                 </div>
               )}
 
-              {/* Price Breakdown */}
+              {/* ── Price Breakdown ──────────────────────────────────────────── */}
               <div className="price-breakdown">
+
+                {/*
+                  FIX: show original (pre-discount) subtotal when a discount
+                  was applied. Previously itemPrice was already the discounted
+                  figure, so the breakdown made no sense — the numbers didn't
+                  add up visually and the discount was invisible to the customer.
+                */}
                 <div className="breakdown-row">
                   <span>Subtotal:</span>
                   <span>
                     {formatCurrency(
-                      orderDetails.itemPrice || 0,
-                      orderDetails.paymentInfo?.currency
+                      appliedDiscount?.originalItemPrice ?? orderDetails.itemPrice ?? 0,
+                      currency
                     )}
                   </span>
                 </div>
+
+                {/*
+                  FIX: discount row — only rendered when a discount was applied.
+                  Reads from order.discounts.codes[0] which is written by
+                  verifyPaymentController from the Redis session discount snapshot.
+                  Supports one or more discount codes — map over all codes if
+                  your order model ever supports multiple simultaneously.
+                */}
+                {appliedDiscount && appliedDiscount.amount > 0 && (
+                  <div className="breakdown-row breakdown-row--discount">
+                    <span>
+                      {appliedDiscount.code
+                        ? `Discount (${appliedDiscount.code}):`
+                        : 'Discount:'}
+                    </span>
+                    <span className="discount-amount">
+                      -{formatCurrency(appliedDiscount.amount, currency)}
+                    </span>
+                  </div>
+                )}
+
                 <div className="breakdown-row">
                   <span>Tax:</span>
-                  <span>
-                    {formatCurrency(
-                      orderDetails.taxPrice || 0,
-                      orderDetails.paymentInfo?.currency
-                    )}
-                  </span>
+                  <span>{formatCurrency(orderDetails.taxPrice || 0, currency)}</span>
                 </div>
+
                 <div className="breakdown-row">
                   <span>Shipping:</span>
-                  <span>
-                    {formatCurrency(
-                      orderDetails.shippingPrice || 0,
-                      orderDetails.paymentInfo?.currency
-                    )}
-                  </span>
+                  <span>{formatCurrency(orderDetails.shippingPrice || 0, currency)}</span>
                 </div>
+
                 <div className="breakdown-row total">
                   <span>Total:</span>
-                  <span>
-                    {formatCurrency(
-                      orderDetails.totalPrice || 0,
-                      orderDetails.paymentInfo?.currency
-                    )}
-                  </span>
+                  <span>{formatCurrency(orderDetails.totalPrice || 0, currency)}</span>
                 </div>
+
               </div>
             </div>
           ) : (
             <div className="order-details-error">
               <p>Your order is being processed. Details will appear shortly.</p>
-              <button 
-                className="retry-btn" 
-                onClick={fetchOrderByReference}
-                style={{ marginTop: '1rem' }}
-              >
+              <button className="retry-btn" onClick={fetchOrderByReference} style={{ marginTop: '1rem' }}>
                 Refresh Order Details
               </button>
             </div>
           )}
 
-          {/* Receipt Section */}
+          {/* ── Receipt Section ─────────────────────────────────────────────── */}
           <div className="receipt-section">
             <h2>Receipt</h2>
-            
+
             {!receiptReady && pollingAttempts < 10 && (
               <div className="receipt-preparing">
                 <div className="spinner"></div>
@@ -447,7 +389,6 @@ function OrderSuccess() {
                 >
                   {downloadLoading ? "Downloading..." : "Download Receipt (PDF)"}
                 </button>
-
                 <button
                   className="email-receipt-btn"
                   onClick={handleEmailReceipt}
@@ -463,10 +404,7 @@ function OrderSuccess() {
                 <p>Receipt generation is taking longer than expected.</p>
                 <button
                   className="retry-btn"
-                  onClick={() => {
-                    setPollingAttempts(0);
-                    setReceiptReady(false);
-                  }}
+                  onClick={() => { setPollingAttempts(0); setReceiptReady(false); }}
                 >
                   Retry
                 </button>
@@ -474,18 +412,13 @@ function OrderSuccess() {
             )}
           </div>
 
-          {/* Action Buttons */}
+          {/* ── Action Buttons ──────────────────────────────────────────────── */}
           <div className="action-buttons">
-            <Link className="view-orders-btn" to="/orders/user">
-              View All Orders
-            </Link>
-
-            <Link className="continue-shopping-btn" to="/products">
-              Continue Shopping
-            </Link>
+            <Link className="view-orders-btn" to="/orders/user">View All Orders</Link>
+            <Link className="continue-shopping-btn" to="/products">Continue Shopping</Link>
           </div>
 
-          {/* What's Next */}
+          {/* ── What's Next ─────────────────────────────────────────────────── */}
           <div className="whats-next-section">
             <h3>What happens next?</h3>
             <ul className="next-steps-list">
@@ -495,6 +428,7 @@ function OrderSuccess() {
               <li>✓ Track your order status in "My Orders"</li>
             </ul>
           </div>
+
         </div>
       </div>
 
