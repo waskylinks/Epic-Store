@@ -659,7 +659,7 @@ export { PRODUCT_CATEGORIES };
 // ============================================
 
 discountSchema.pre("save", function (next) {
-  if (this.validUntil < new Date() && this.status === "active") {
+  if (this.validUntil <= new Date() && this.status === "active") {
     this.status = "expired";
   }
   if (this.type === "percentage" && this.value > 100) {

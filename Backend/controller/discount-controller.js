@@ -895,7 +895,7 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
       validUntil: { $gte: now },
     })
       .select(
-        "code description type value category audience validUntil " +
+        "code description type value category audience status validUntil " +
         "conditions.minPurchaseAmount conditions.maxDiscountAmount " +
         "conditions.firstOrderOnly conditions.eligibleProductCategories " +
         "usageLimit.currentUses usageLimit.totalUses"
@@ -910,7 +910,7 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
       "conditions.eligibleUsers": userId,
     })
       .select(
-        "code description type value category audience validUntil " +
+        "code description type value category audience status validUntil " +
         "conditions.minPurchaseAmount conditions.firstOrderOnly " +
         "conditions.eligibleProductCategories " +
         "usageLimit.currentUses usageLimit.totalUses"
