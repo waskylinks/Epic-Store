@@ -22,7 +22,7 @@ import {
   fetchReferrerPerformance,
   fetchAttributionModels,
   fetchLandingPagePerformance,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/attributionSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/AttributionAnalytics.css';
 
@@ -121,7 +121,7 @@ export default function AttributionAnalytics() {
     channelPerformance, campaignPerformance, devicePerformance,
     browserPerformance, referrerPerformance, attributionModels,
     landingPagePerformance, error,
-  } = useSelector(s => s.analytics);
+  } = useSelector(s => s.attribution);
 
   const [activeView, setActiveView] = useState('channels');
   const [timeframe,  setTimeframe]  = useState('month');

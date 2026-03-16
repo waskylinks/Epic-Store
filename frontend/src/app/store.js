@@ -14,10 +14,16 @@ import checkoutReducer from '../features/checkout/checkoutSlice';
 import adminRefundReducer from '../features/admin/adminRefundSlice';
 import adminReturnReducer from '../features/admin/adminReturnSlice';
 import returnReducer from '../features/returns/returnSlice';
-import analyticsReducer from '../features/analytics/analyticsSlice';
 import adminProductReducer from '../features/admin/adminProductSlice';
 import adminDiscountReducer from '../features/admin/adminDiscountSlice';
 import userDiscountReducer from '../features/discount/discountSlice';
+import discountAnalyticsReducer from '../features/analytics/discountAnalyticsSlice';
+import coreAnalyticsReducer from '../features/analytics/coreAnalyticsSlice';
+import dashboardReducer from '../features/analytics/dashboardSlice';
+import reportsReducer from '../features/analytics/reportsSlice';
+import customerAnalyticsReducer from '../features/analytics/customerAnalyticsSlice';
+import attributionReducer from '../features/analytics/attributionSlice';
+import operationsReducer from '../features/analytics/operationsSlice';
 
 
 
@@ -39,9 +45,15 @@ export const store = configureStore({
         adminProducts: adminProductReducer,
         refund: refundReducer,
         return: returnReducer,
-        analytics: analyticsReducer,
         adminDiscount: adminDiscountReducer,
         userDiscount: userDiscountReducer,
+        discountAnalytics: discountAnalyticsReducer,
+        coreAnalytics:     coreAnalyticsReducer,
+        dashboard:         dashboardReducer,
+        reports:           reportsReducer,
+        customerAnalytics: customerAnalyticsReducer,
+        attribution:       attributionReducer,
+        operations:        operationsReducer,
 
     }
 });

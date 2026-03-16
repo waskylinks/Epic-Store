@@ -21,7 +21,7 @@ import {
 import {
   fetchAbandonedCheckouts,
   markRecoveryEmailSent,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/RecoveryEmailManager.css';
 
@@ -161,7 +161,7 @@ export default function RecoveryEmailManager() {
     emailSendError,
     loading,
     error,
-  } = useSelector((s) => s.analytics);
+  } = useSelector((s) => s.operations);
 
   const [activeTab,   setActiveTab]   = useState('queue');
   const [search,      setSearch]      = useState('');

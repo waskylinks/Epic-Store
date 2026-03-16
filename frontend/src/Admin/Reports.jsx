@@ -40,7 +40,7 @@ import {
   generateFinancialReport,
   exportReportCSV,
   clearReport,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/reportsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Reports.css';
 
@@ -148,7 +148,7 @@ const REPORT_TABS = [
 export default function Reports() {
   const dispatch = useDispatch();
   const { currentReport, reportType, reportLoading, error, loading } = useSelector(
-    (s) => s.analytics
+    (s) => s.reports
   );
 
   const [activeTab,  setActiveTab]  = useState('business');

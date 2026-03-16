@@ -37,7 +37,7 @@ import {
   fetchRecoveryOpportunities,
   fetchAbandonedCheckouts,
   markRecoveryEmailSent,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CheckoutAnalytics.css';
 
@@ -322,9 +322,8 @@ export default function CheckoutAnalytics() {
     emailSendLoading,
     emailSendResults,
     emailSendError,
-    loading,
     error,
-  } = useSelector((s) => s.analytics);
+  } = useSelector((s) => s.operations);
 
   const [activeView, setActiveView] = useState('abandonment');
   const [timeframe,  setTimeframe]  = useState('month');
@@ -379,7 +378,7 @@ export default function CheckoutAnalytics() {
   const recoverableRev = recoveryOpportunitiesRaw?.summary?.totalPotentialRevenue || 0;
 
   const abandoned = abandonedCheckoutsRaw?.abandonedCheckouts || [];
-  const first     = !hasFetched && loading;
+  const first     = !hasFetched;
 
   /* ── Computed KPIs ────────────────────────────────────────── */
   const completedCheckouts = stats.completedCheckouts || 0;

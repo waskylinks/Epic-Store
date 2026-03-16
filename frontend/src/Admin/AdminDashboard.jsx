@@ -38,13 +38,26 @@ import {
   fetchAdminStats,
   fetchOrderStatusBreakdown,
   fetchInventoryBreakdown,
+} from '../features/analytics/coreAnalyticsSlice';
+ 
+import {
   fetchDashboardKPIs,
   fetchRevenueTrends,
   fetchTopPerformers,
   fetchDashboardAlerts,
+  setActiveTimeframe,
+} from '../features/analytics/dashboardSlice';
+ 
+import {
   fetchCustomerOverview,
+} from '../features/analytics/customerAnalyticsSlice';
+ 
+import {
   fetchChannelPerformance,
   fetchDevicePerformance,
+} from '../features/analytics/attributionSlice';
+ 
+import {
   fetchCheckoutAbandonmentStats,
   fetchCategoryPerformance,
   fetchLowStockAlerts,
@@ -53,8 +66,7 @@ import {
   fetchSLABreaches,
   fetchReturnOverview,
   fetchRefundOverview,
-  setActiveTimeframe,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
 
@@ -255,14 +267,32 @@ export default function AdminDashboard() {
   const dispatch = useDispatch();
   const location = useLocation();
 
-  const {
-    basicStats, basicStatsFetched, ordersByStatus, inventoryStatus,
-    kpis, kpisLoading, revenueTrends, topPerformers, alerts,
-    customerOverview, channelPerformance, devicePerformance,
-    checkoutAbandonment, categoryPerformance, lowStockAlerts,
-    fulfillmentAnalytics, fraudAnalytics, slaBreaches,
-    returnOverview, refundOverview, error,
-  } = useSelector((s) => s.analytics);
+const {
+  basicStats, basicStatsFetched, ordersByStatus, inventoryStatus,
+} = useSelector((s) => s.coreAnalytics);
+ 
+const {
+  kpis, kpisLoading, revenueTrends, topPerformers, alerts,
+} = useSelector((s) => s.dashboard);
+ 
+const {
+  customerOverview,
+} = useSelector((s) => s.customerAnalytics);
+ 
+const {
+  channelPerformance, devicePerformance,
+} = useSelector((s) => s.attribution);
+ 
+const {
+  checkoutAbandonment, categoryPerformance, lowStockAlerts,
+  fulfillmentAnalytics, fraudAnalytics, slaBreaches,
+  returnOverview, refundOverview,
+} = useSelector((s) => s.operations);
+
+// error — pick whichever slice is most relevant, or combine:
+const error = useSelector(
+  (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error || null
+);
 
   const [sidebarOpen,   setSidebarOpen]   = useState(false);
   const [timeframe,     setTimeframe]     = useState('month');

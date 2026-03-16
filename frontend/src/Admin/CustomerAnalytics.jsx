@@ -43,7 +43,7 @@ import {
   fetchRepeatPurchaseAnalytics,
   fetchPurchaseFrequencyAnalytics,
   fetchAcquisitionSourceAnalytics,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/customerAnalyticsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CustomerAnalytics.css';
 
@@ -197,7 +197,7 @@ export default function CustomerAnalytics() {
     purchaseFrequencyAnalytics,
     acquisitionSources,
     error,
-  } = useSelector((s) => s.analytics);
+  } = useSelector((s) => s.customerAnalytics);
 
   const [activeView, setActiveView] = useState('overview');
   const [hasFetched, setHasFetched] = useState(false);

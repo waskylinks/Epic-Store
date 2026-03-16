@@ -29,10 +29,14 @@ import {
   fetchDashboardKPIs,
   fetchRevenueTrends,
   fetchTopPerformers,
+  fetchDashboardAlerts,
+  setActiveTimeframe,
+} from '../features/analytics/dashboardSlice';
+ 
+import {
   fetchCategoryPerformance,
   fetchChannelPerformance,
-  fetchDashboardAlerts,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/AnalyticsOverview.css';
 
@@ -154,14 +158,17 @@ function KPISkeleton() {
 // ── Main Component ────────────────────────────────────────────
 export default function AnalyticsOverview() {
   const dispatch  = useDispatch();
-  const {
-    kpis,
-    revenueTrends,
-    topPerformers,
-    categoryPerformance,
-    channelPerformance,
-    alerts,
-  } = useSelector((s) => s.analytics);
+    const {
+      kpis,
+      revenueTrends,
+      topPerformers,
+      alerts,
+    } = useSelector((s) => s.dashboard);
+    
+    const {
+      categoryPerformance,
+      channelPerformance,
+    } = useSelector((s) => s.operations);
 
   const [timeframe,  setTimeframe]  = useState('month');
   const [hasFetched, setHasFetched] = useState(false);
