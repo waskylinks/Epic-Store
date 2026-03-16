@@ -66,17 +66,16 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
     const summary = await getDiscountAnalyticsSummary();
 
     const overall = summary.overall[0] ?? {
-      totalCodes:               0,
+      totalCodes:                0,
       totalCodesWithRedemptions: 0,
-      totalRedemptions:         0,
-      totalUniqueUsers:         0,
-      totalDiscountCost:        0,
-      totalRevenueInfluenced:   0,
-      avgROI:                   null,
-      avgAOV:                   0,
+      totalRedemptions:          0,
+      totalUniqueUsers:          0,
+      totalDiscountCost:         0,
+      totalRevenueInfluenced:    0,
+      avgROI:                    null,
+      avgAOV:                    0,
     };
 
-    // Redemption rate: codes that have at least one redemption / all codes
     const redemptionRate =
       overall.totalCodes > 0
         ? Math.round(
@@ -84,7 +83,6 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
           ) / 10
         : 0;
 
-    // Overall ROI from first-principles (more accurate than avg of per-code ROIs)
     const overallROI =
       overall.totalDiscountCost > 0
         ? Math.round(

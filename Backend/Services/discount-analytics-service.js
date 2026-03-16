@@ -6,41 +6,9 @@ import CustomerAnalytics from "../models/customer-analytics-model.js";
 
 // ============================================
 // DISCOUNT ANALYTICS SERVICE
-//
-// Mirrors the structure of customer-analytics-service.js:
-//
-//   syncDiscountAnalytics(discountId)     — single code, full re-compute
-//   syncDiscountAfterRedemption(code)     — fire-and-forget hook for the
-//                                           discount controller post-validate
-//   syncAllDiscountAnalytics()            — bulk, 50-item batches, CRON / admin
-//   getDiscountAnalyticsSummary()         — single-pass $facet summary for
-//                                           the overview KPI panel
-//
-// Revenue source contract:
-//   All revenue figures come from:
-//     Order.find({ discountCode: code, "paymentInfo.status": "success" })
-//   NOT from Discount.usageHistory[].order refs, which are null at
-//   /validate time and only populated once the order document is created.
-//   This means the two counts can diverge temporarily for a redemption
-//   that happened at checkout but whose order hasn't been persisted yet —
-//   acceptable given the fire-and-forget sync model.
-//
-// Baseline contract:
-//   Store-wide AOV and avg discount amount are computed once per sync from
-//   a lightweight Order aggregate and stored in DiscountAnalytics.baseline.
-//   They are used to compute aovLiftPercent without a second DB round trip
-//   at read time.
-// ============================================
 
-// ============================================
-// CONSTANTS
-// ============================================
 
 const BATCH_SIZE = 50;
-
-// Minimum redemptions required before conversion/retention metrics are
-// computed. Below this threshold the sample is too small to be meaningful
-// and the fields are left null.
 const MIN_REDEMPTIONS_FOR_CONVERSION = 10;
 
 // Rolling window for dailyRedemptions time-series (days).
@@ -69,41 +37,39 @@ export const syncDiscountAnalytics = async (discountId) => {
   }
 
   // ── Step 1: Pull all matched orders ───────────────────────────────────────
-  // Revenue source: Order collection, not usageHistory refs (see contract above).
+
   const matchedOrders = await Order.find({
-    discountCode: discount.code,
-    "paymentInfo.status": "success",
-    orderStatus: { $ne: "Cancelled" },
+    "discounts.codes.code": discount.code,
+    "paymentInfo.status":   "success",
+    orderStatus:            { $ne: "Cancelled" },
   })
-    .select("user totalPrice discountAmount createdAt")
+    .select("user totalPrice discounts.codes discounts.totalDiscount createdAt")
     .lean();
 
   // ── Step 2: Pull usageHistory for redemption-level data ───────────────────
-  // usageHistory carries discountAmount, usedAt, and userId per redemption.
-  // We use it for cost / timing data; we never use .order refs for revenue.
   const usageHistory = discount.usageHistory ?? [];
 
   // ── Step 3: Compute each analytics block in isolation ─────────────────────
-  const meta              = buildMeta(discount);
-  const redemptionMetrics = buildRedemptionMetrics(usageHistory);
-  const financials        = buildFinancials(usageHistory, matchedOrders);
-  const conversion        = await buildConversion(discount, usageHistory, matchedOrders);
-  const categoryBreakdown = buildCategoryBreakdown(
+  const meta               = buildMeta(discount);
+  const redemptionMetrics  = buildRedemptionMetrics(usageHistory);
+  const financials         = buildFinancials(usageHistory, matchedOrders, discount.code);
+  const conversion         = await buildConversion(discount, usageHistory, matchedOrders);
+  const categoryBreakdown  = buildCategoryBreakdown(
     usageHistory,
     discount.conditions?.eligibleProductCategories ?? []
   );
-  const segmentBreakdown  = await buildSegmentBreakdown(usageHistory);
+  const segmentBreakdown   = await buildSegmentBreakdown(usageHistory);
   const valueTierBreakdown = await buildValueTierBreakdown(usageHistory);
-  const dailyRedemptions  = buildDailyRedemptions(usageHistory, matchedOrders);
-  const peakUsage         = derivePeakUsage(dailyRedemptions);
-  const baseline          = await buildBaseline(financials.avgOrderValue);
+  const dailyRedemptions   = buildDailyRedemptions(usageHistory, matchedOrders);
+  const peakUsage          = derivePeakUsage(dailyRedemptions);
+  const baseline           = await buildBaseline(financials.avgOrderValue);
 
   // ── Step 4: Upsert ────────────────────────────────────────────────────────
-  const payload = {
-    discountId:      discount._id,
-    discountCode:    discount.code,
+  const { $inc, ...setFields } = {
+    discountId:       discount._id,
+    discountCode:     discount.code,
     meta,
-    redemptions:     redemptionMetrics,
+    redemptions:      redemptionMetrics,
     financials,
     conversion,
     categoryBreakdown,
@@ -112,14 +78,11 @@ export const syncDiscountAnalytics = async (discountId) => {
     dailyRedemptions,
     peakUsage,
     baseline,
-    lastSyncedAt:    new Date(),
-    syncError:       false,
+    lastSyncedAt:     new Date(),
+    syncError:        false,
     syncErrorMessage: null,
     $inc: { syncCount: 1 },
   };
-
-  // $inc cannot coexist with $set in findOneAndUpdate — split it out.
-  const { $inc, ...setFields } = payload;
 
   return DiscountAnalytics.findOneAndUpdate(
     { discountId: discount._id },
@@ -133,15 +96,13 @@ export const syncDiscountAnalytics = async (discountId) => {
 // ============================================
 
 /**
- * Called by discount-controller.js inside validateDiscountCode after a
- * successful recordUsage() call. Errors are swallowed so a Redis or DB
- * hiccup never surfaces to the customer at checkout.
- *
- * Usage in controller:
- *   syncDiscountAfterRedemption(discount.code).catch(() => {});
  *
  * @param {string} discountCode   — the uppercased code string
  */
+// UNCHANGED — called at validate time (fire-and-forget).
+// At this point no Order document exists yet, so revenue will be $0
+// and roi will be -100% until syncDiscountAfterOrderCreated runs.
+// This is acceptable — it populates redemption counts and cost immediately.
 export const syncDiscountAfterRedemption = async (discountCode) => {
   try {
     const discount = await Discount.findOne({
@@ -155,6 +116,42 @@ export const syncDiscountAfterRedemption = async (discountCode) => {
     await syncDiscountAnalytics(discount._id);
   } catch {
     // Intentionally swallowed — analytics must never block checkout.
+  }
+};
+
+// NEW — call this from your order-creation controller after the Order
+// document has been saved and payment confirmed.
+// At this point Order.find({ "discounts.codes.code": code }) will return
+// results, so revenue and ROI will populate correctly.
+//
+// Usage in order controller (fire-and-forget):
+//   syncDiscountAfterOrderCreated(order).catch(() => {});
+//
+// @param {Object} order — the saved Order document (lean or full)
+export const syncDiscountAfterOrderCreated = async (order) => {
+  try {
+    const codes = (order?.discounts?.codes ?? [])
+      .map((c) => c.code)
+      .filter(Boolean);
+
+    if (codes.length === 0) return;
+
+    await Promise.allSettled(
+      codes.map(async (code) => {
+        const discount = await Discount.findOne({
+          code: code.toUpperCase(),
+        })
+          .select("_id")
+          .lean();
+
+        if (!discount) return;
+
+        await syncDiscountAnalytics(discount._id);
+      })
+    );
+  } catch {
+    // Swallowed — analytics must never surface to the customer or
+    // block the order confirmation response.
   }
 };
 
@@ -332,8 +329,8 @@ const buildRedemptionMetrics = (usageHistory) => {
  * @param {Array}  matchedOrders   — lean Order documents
  * @returns {Object}
  */
-const buildFinancials = (usageHistory, matchedOrders) => {
-  // Discount cost — sum across all redemptions
+const buildFinancials = (usageHistory, matchedOrders, discountCode) => {
+  // Discount cost — sum across all redemptions from usageHistory (unchanged, correct)
   const totalDiscountCost = roundCents(
     usageHistory.reduce((sum, e) => sum + (Number(e.discountAmount) || 0), 0)
   );
@@ -343,7 +340,6 @@ const buildFinancials = (usageHistory, matchedOrders) => {
       ? roundCents(totalDiscountCost / usageHistory.length)
       : 0;
 
-  // Revenue influenced — from matched orders only
   const totalRevenueInfluenced = roundCents(
     matchedOrders.reduce((sum, o) => sum + (Number(o.totalPrice) || 0), 0)
   );
@@ -353,7 +349,6 @@ const buildFinancials = (usageHistory, matchedOrders) => {
       ? roundCents(totalRevenueInfluenced / matchedOrders.length)
       : 0;
 
-  // ROI — null when cost is zero (nothing spent yet)
   const roi =
     totalDiscountCost > 0
       ? roundCents(
@@ -361,16 +356,29 @@ const buildFinancials = (usageHistory, matchedOrders) => {
         )
       : null;
 
+
+  let totalEligibleSubtotal = null;
+  if (discountCode) {
+    const codeUpper = discountCode.toUpperCase();
+    const eligibleSum = matchedOrders.reduce((sum, o) => {
+      const entry = (o.discounts?.codes ?? []).find(
+        (c) => (c.code ?? '').toUpperCase() === codeUpper
+      );
+      return sum + (Number(entry?.amount) || 0);
+    }, 0);
+    if (eligibleSum > 0) {
+      totalEligibleSubtotal = roundCents(eligibleSum);
+    }
+  }
+
   return {
     totalDiscountCost,
     avgDiscountAmount,
     totalRevenueInfluenced,
     avgOrderValue,
     roi,
-    // incrementalRevenue and totalEligibleSubtotal require external baseline /
-    // category data that is not available here — set in post-processing if needed.
     incrementalRevenue:    null,
-    totalEligibleSubtotal: null,
+    totalEligibleSubtotal,
   };
 };
 

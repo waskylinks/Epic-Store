@@ -702,136 +702,138 @@ discountAnalyticsSchema.statics.getROIByType = async function () {
  * @returns {Promise<Object>}
  */
 discountAnalyticsSchema.statics.getSummary = async function () {
-  const result = await this.aggregate([
-    {
-      $facet: {
-        // Overall store-wide discount performance
-        overall: [
-          {
-            $group: {
-              _id: null,
-              totalCodes: { $sum: 1 },
-              totalCodesWithRedemptions: {
-                $sum: { $cond: [{ $gt: ["$redemptions.total", 0] }, 1, 0] },
-              },
-              totalRedemptions: { $sum: "$redemptions.total" },
-              totalUniqueUsers: { $sum: "$redemptions.uniqueUsers" },
-              totalDiscountCost: { $sum: "$financials.totalDiscountCost" },
-              totalRevenueInfluenced: {
-                $sum: "$financials.totalRevenueInfluenced",
-              },
-              avgROI: { $avg: "$financials.roi" },
-              avgAOV: { $avg: "$financials.avgOrderValue" },
-            },
-          },
-        ],
-
-        // Breakdown by discount category
-        byCategory: [
-          { $match: { "redemptions.total": { $gt: 0 } } },
-          {
-            $group: {
-              _id: "$meta.category",
-              totalCodes: { $sum: 1 },
-              totalRedemptions: { $sum: "$redemptions.total" },
-              totalDiscountCost: { $sum: "$financials.totalDiscountCost" },
-              totalRevenueInfluenced: { $sum: "$financials.totalRevenueInfluenced" },
-              avgROI: { $avg: "$financials.roi" },
-            },
-          },
-          { $sort: { totalRevenueInfluenced: -1 } },
-        ],
-
-        // Breakdown by discount type (percentage vs fixed)
-        byType: [
-          { $match: { "redemptions.total": { $gt: 0 } } },
-          {
-            $group: {
-              _id: "$meta.type",
-              totalCodes: { $sum: 1 },
-              totalRedemptions: { $sum: "$redemptions.total" },
-              totalDiscountCost: { $sum: "$financials.totalDiscountCost" },
-              totalRevenueInfluenced: { $sum: "$financials.totalRevenueInfluenced" },
-              avgROI: { $avg: "$financials.roi" },
-              avgDiscountAmount: { $avg: "$financials.avgDiscountAmount" },
-            },
-          },
-          { $sort: { totalRevenueInfluenced: -1 } },
-        ],
-
-        // Top 5 performing codes by ROI (for overview quick-wins panel)
-        topByROI: [
-          {
-            $match: {
-              "financials.roi": { $ne: null },
-              "redemptions.total": { $gt: 0 },
-            },
-          },
-          { $sort: { "financials.roi": -1 } },
-          { $limit: 5 },
-          {
-            $project: {
-              discountCode: 1,
-              "meta.category": 1,
-              "meta.type": 1,
-              "redemptions.total": 1,
-              "financials.roi": 1,
-              "financials.totalRevenueInfluenced": 1,
-              "financials.totalDiscountCost": 1,
-            },
-          },
-        ],
-
-        // Top 5 by total revenue influenced (high-volume codes)
-        topByRevenue: [
-          { $match: { "redemptions.total": { $gt: 0 } } },
-          { $sort: { "financials.totalRevenueInfluenced": -1 } },
-          { $limit: 5 },
-          {
-            $project: {
-              discountCode: 1,
-              "meta.category": 1,
-              "meta.type": 1,
-              "redemptions.total": 1,
-              "financials.roi": 1,
-              "financials.totalRevenueInfluenced": 1,
-              "financials.totalDiscountCost": 1,
-            },
-          },
-        ],
-
-        // Codes with negative or null ROI (cost more than they influenced)
-        underperforming: [
-          {
-            $match: {
-              "redemptions.total": { $gt: 0 },
-              $or: [
-                { "financials.roi": { $lt: 0 } },
-                // Codes with discount cost but zero matched orders
-                {
-                  "financials.totalDiscountCost": { $gt: 0 },
-                  "financials.totalRevenueInfluenced": 0,
+  const [result, totalDiscountCodes] = await Promise.all([
+    this.aggregate([
+      {
+        $facet: {
+          overall: [
+            {
+              $group: {
+                _id: null,
+                // FIX: count analytics docs only for redemption tracking.
+                // True totalCodes comes from Discount collection below.
+                totalCodesWithRedemptions: {
+                  $sum: { $cond: [{ $gt: ["$redemptions.total", 0] }, 1, 0] },
                 },
-              ],
+                totalRedemptions:       { $sum: "$redemptions.total" },
+                totalUniqueUsers:       { $sum: "$redemptions.uniqueUsers" },
+                totalDiscountCost:      { $sum: "$financials.totalDiscountCost" },
+                totalRevenueInfluenced: { $sum: "$financials.totalRevenueInfluenced" },
+                avgROI:                 { $avg: "$financials.roi" },
+                avgAOV:                 { $avg: "$financials.avgOrderValue" },
+              },
             },
-          },
-          { $sort: { "financials.roi": 1 } },
-          { $limit: 5 },
-          {
-            $project: {
-              discountCode: 1,
-              "meta.category": 1,
-              "redemptions.total": 1,
-              "financials.roi": 1,
-              "financials.totalDiscountCost": 1,
+          ],
+          byCategory: [
+            { $match: { "redemptions.total": { $gt: 0 } } },
+            {
+              $group: {
+                _id:                    "$meta.category",
+                totalCodes:             { $sum: 1 },
+                totalRedemptions:       { $sum: "$redemptions.total" },
+                totalDiscountCost:      { $sum: "$financials.totalDiscountCost" },
+                totalRevenueInfluenced: { $sum: "$financials.totalRevenueInfluenced" },
+                avgROI:                 { $avg: "$financials.roi" },
+              },
             },
-          },
-        ],
+            { $sort: { totalRevenueInfluenced: -1 } },
+          ],
+          byType: [
+            { $match: { "redemptions.total": { $gt: 0 } } },
+            {
+              $group: {
+                _id:                    "$meta.type",
+                totalCodes:             { $sum: 1 },
+                totalRedemptions:       { $sum: "$redemptions.total" },
+                totalDiscountCost:      { $sum: "$financials.totalDiscountCost" },
+                totalRevenueInfluenced: { $sum: "$financials.totalRevenueInfluenced" },
+                avgROI:                 { $avg: "$financials.roi" },
+                avgDiscountAmount:      { $avg: "$financials.avgDiscountAmount" },
+              },
+            },
+            { $sort: { totalRevenueInfluenced: -1 } },
+          ],
+          topByROI: [
+            {
+              $match: {
+                "financials.roi":    { $ne: null },
+                "redemptions.total": { $gt: 0 },
+              },
+            },
+            { $sort: { "financials.roi": -1 } },
+            { $limit: 5 },
+            {
+              $project: {
+                discountCode:                        1,
+                "meta.category":                     1,
+                "meta.type":                         1,
+                "redemptions.total":                 1,
+                "financials.roi":                    1,
+                "financials.totalRevenueInfluenced": 1,
+                "financials.totalDiscountCost":      1,
+              },
+            },
+          ],
+          topByRevenue: [
+            { $match: { "redemptions.total": { $gt: 0 } } },
+            { $sort: { "financials.totalRevenueInfluenced": -1 } },
+            { $limit: 5 },
+            {
+              $project: {
+                discountCode:                        1,
+                "meta.category":                     1,
+                "meta.type":                         1,
+                "redemptions.total":                 1,
+                "financials.roi":                    1,
+                "financials.totalRevenueInfluenced": 1,
+                "financials.totalDiscountCost":      1,
+              },
+            },
+          ],
+          underperforming: [
+            {
+              $match: {
+                "redemptions.total": { $gt: 0 },
+                $or: [
+                  { "financials.roi": { $lt: 0 } },
+                  {
+                    "financials.totalDiscountCost":      { $gt: 0 },
+                    "financials.totalRevenueInfluenced": 0,
+                  },
+                ],
+              },
+            },
+            { $sort: { "financials.roi": 1 } },
+            { $limit: 5 },
+            {
+              $project: {
+                discountCode:                   1,
+                "meta.category":                1,
+                "redemptions.total":            1,
+                "financials.roi":               1,
+                "financials.totalDiscountCost": 1,
+              },
+            },
+          ],
+        },
       },
-    },
+    ]),
+    // FIX: real total from the Discount collection for accurate redemptionRate
+    mongoose.model("Discount").countDocuments(),
   ]);
 
-  return result[0];
+  const summary = result[0];
+
+  // Inject the real totalCodes into overall
+  if (summary.overall[0]) {
+    summary.overall[0].totalCodes = totalDiscountCodes;
+  } else {
+    summary.overall = [{ totalCodes: totalDiscountCodes, totalCodesWithRedemptions: 0,
+      totalRedemptions: 0, totalUniqueUsers: 0, totalDiscountCost: 0,
+      totalRevenueInfluenced: 0, avgROI: null, avgAOV: 0 }];
+  }
+
+  return summary;
 };
 
 /**

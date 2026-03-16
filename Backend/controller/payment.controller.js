@@ -13,6 +13,7 @@ import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
 import Discount from '../models/discount-model.js';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
+import { syncDiscountAfterOrderCreated } from '../Services/discount-analytics-service.js';
 import Checkout from '../models/checkout-model.js';
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
@@ -456,7 +457,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     return next(new HandleError("Both 'gateway' and 'reference' are required to verify a payment", 400));
   }
 
-  // 1. Load session
   const session = await getPaymentSession(reference);
   if (!session) {
     return next(new HandleError(
@@ -480,19 +480,16 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const orderReference = session.reference;
 
-  // 2. Ownership check
   if (session.userId !== userId.toString()) {
     return next(new HandleError("This payment session does not belong to your account", 403));
   }
 
-  // 3. Gateway match
   if (session.gateway !== gateway) {
     return next(new HandleError(
       `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
 
-  // 4. Idempotency
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference": orderReference },
@@ -511,7 +508,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     });
   }
 
-  // 5. Resolve payment service
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
@@ -519,7 +515,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
   }
 
-  // 6. Verify with gateway
   let gatewayData;
   try {
     gatewayData = await verifyWithGateway(paymentService, gateway, reference, transactionId || null);
@@ -536,17 +531,13 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     raw: gatewayResponse
   } = gatewayData;
 
-  // 7. Currency match
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
       `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
 
-  // 8. Amount tolerance check
-  // FIX: session.totalPrice is now always the cart-computed discounted total,
-  // so this check correctly validates the discounted amount was charged.
-  const tolerance = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
+  const tolerance  = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
     return next(new HandleError(
@@ -555,27 +546,21 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // 9. Load user
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
 
-  // 10. Analytics counts
   const userOrderCount  = await Order.countDocuments({ user: userId, 'paymentInfo.status': 'success' });
   const isFirstPurchase = userOrderCount === 0;
   const purchaseNumber  = userOrderCount + 1;
 
-  // 11. Fraud check
   const fraudCheck = calculateFraudRisk(
     { totalPrice: session.totalPrice, shippingInfo: session.shippingInfo, orderItems: session.orderItems },
     user,
     { gateway, gatewayResponse }
   );
 
-  // 12. Fulfillment SLA
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
-  // 13. Build order — sourced entirely from session (which carries the
-  //     cart-computed, discount-aware totals locked at initialisation time).
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -593,38 +578,37 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
           type:              session.discount.type,
           originalItemPrice: session.discount.originalItemPrice ?? null,
         }],
-        totalDiscount: session.discount.discountAmount
+        totalDiscount: session.discount.discountAmount,
       }
     }),
     paymentInfo: {
-      reference:               orderReference,
+      reference:             orderReference,
       providerTxId,
-      stripePaymentIntentId:   gateway === 'stripe' ? gatewayResponse.id : undefined,
-      status:                  "success",
-      method:                  gateway,
-      currency:                gatewayCurrency,
-      amount:                  gatewayAmount,
-      paidAt:                  new Date()
+      stripePaymentIntentId: gateway === 'stripe' ? gatewayResponse.id : undefined,
+      status:                "success",
+      method:                gateway,
+      currency:              gatewayCurrency,
+      amount:                gatewayAmount,
+      paidAt:                new Date(),
     },
     paymentMeta:  buildPaymentMeta(gateway, gatewayResponse),
     orderStatus:  "Processing",
     analytics: {
-      source:          session.analytics?.source     || 'direct',
-      medium:          session.analytics?.medium     || null,
-      campaign:        session.analytics?.campaign   || null,
-      referrer:        session.analytics?.referrer   || null,
+      source:          session.analytics?.source      || 'direct',
+      medium:          session.analytics?.medium      || null,
+      campaign:        session.analytics?.campaign    || null,
+      referrer:        session.analytics?.referrer    || null,
       landingPage:     session.analytics?.landingPage || null,
-      device:          session.analytics?.device     || 'desktop',
-      browser:         session.analytics?.browser    || 'unknown',
+      device:          session.analytics?.device      || 'desktop',
+      browser:         session.analytics?.browser     || 'unknown',
       customerSegment: null,
       isFirstPurchase,
-      purchaseNumber
+      purchaseNumber,
     },
     fraudCheck,
-    fulfillmentSLA
+    fulfillmentSLA,
   };
 
-  // 14. Create order
   let order;
   try {
     order = await Order.create(orderData);
@@ -636,30 +620,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // 15. Checkout funnel conversion (fire-and-forget)
   Checkout.findOne({ user: userId, status: 'pending' })
     .sort({ lastActivityAt: -1 })
     .then(checkout => checkout && checkout.markAsConverted(order._id, orderReference) && checkout.save())
     .catch(() => {});
 
-  // 16. Record discount usage (fire-and-forget)
-  // FIX: previously this guard only checked discountId, which was always null
-  // because the cart controller never returned discount._id in its response.
-  // The broken chain: cart controller omits _id → cartSlice stores no discountId
-  // → discountSnapshot.discountId = null → session.discount.discountId = null
-  // → this guard fails → recordUsage() never called → admin page shows 0 uses.
-  //
-  // Now fixed in cart.controller.js (returns discount.id) and cartSlice.js
-  // (stores discountId). This block also falls back to a code-based lookup to
-  // handle any sessions created before those fixes were deployed.
   if (session.discount) {
-    // FIX: fetch by _id when available (direct, no status filter — the discount
-    // may be inactive/expired by verify time if it was single-use, and that is
-    // valid; we still need to record that it was used).
-    // Fallback to code lookup for sessions created before the discountId fix.
-    // Both lookups intentionally skip status filtering — findActiveByCode would
-    // silently return null for an already-exhausted code, causing recordUsage
-    // to be skipped entirely which is the root cause of usage not showing in admin.
     const discountLookup = session.discount.discountId
       ? Discount.findById(session.discount.discountId)
       : Discount.findOne({ code: session.discount.code?.toUpperCase() });
@@ -676,20 +642,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         return discount.recordUsage(userId, order._id, session.discount.discountAmount);
       })
       .catch((err) => {
-        // Log but never let discount recording failure affect the order response.
-        // Category-restricted discounts were previously silent here — any save()
-        // failure (concurrent write, validator, network) would vanish entirely.
         console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err);
       });
   }
 
-  // 17. Populate product details (non-fatal)
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch { /* non-fatal */ }
 
-  // 18-21. Async tasks
   syncCustomerAfterOrder(order._id).catch(() => {});
+
+  if (order.discounts?.codes?.length > 0) {
+    syncDiscountAfterOrderCreated(order).catch(() => {});
+  }
 
   createReceiptIfNotExists({
     orderId:        order._id,
@@ -703,10 +668,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     shippingInfo:   order.shippingInfo,
     currency:       order.paymentInfo.currency,
     paymentGateway: gateway,
-    // FIX: forward discount snapshot so the receipt model stores it and
-    // generateReceiptPDF / generateInvoicePDF can render a discount row.
-    // Previously omitted — receipts showed the discounted total with no
-    // explanation, and OrderSuccess.jsx had no discount data to display.
     ...(order.discounts?.codes?.[0] && {
       discount: {
         code:              order.discounts.codes[0].code,
@@ -719,7 +680,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   Promise.all([
     deletePaymentSession(reference),
-    reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve()
+    reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
   ]).catch(() => {});
 
   invalidatePaymentCaches().catch(() => {});
@@ -728,6 +689,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     success:    true,
     message:    "Payment verified and order created successfully",
     order,
-    idempotent: false
+    idempotent: false,
   });
 });

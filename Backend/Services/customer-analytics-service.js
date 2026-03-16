@@ -2,6 +2,7 @@ import CustomerAnalytics from "../models/customer-analytics-model.js";
 import Order from "../models/order-model.js";
 import User from "../models/userModel.js";
 import Checkout from "../models/checkout-model.js";
+import Discount from "../models/discount-model.js";
 
 /**
  * Customer Analytics Service
@@ -49,7 +50,7 @@ export const syncCustomerAnalytics = async (userId) => {
     await calculateEngagementMetrics(customerAnalytics, userId);
  
     // ── NEW: populate discountEngagement from order history ───────────────
-    calculateDiscountEngagement(customerAnalytics, orders);
+    await calculateDiscountEngagement(customerAnalytics, orders);
  
     customerAnalytics.returnsRefunds = returnsRefunds;
  
@@ -511,9 +512,8 @@ export const getCustomerAnalyticsSummary = async () => {
   return summary[0];
 };
 
- 
- 
-const calculateDiscountEngagement = (customerAnalytics, orders) => {
+
+const calculateDiscountEngagement = async (customerAnalytics, orders) => {
   if (orders.length === 0) {
     customerAnalytics.discountEngagement = {
       totalDiscountsUsed:        0,
@@ -526,12 +526,11 @@ const calculateDiscountEngagement = (customerAnalytics, orders) => {
     };
     return;
   }
- 
-  // Identify orders that used at least one discount code
+
   const discountedOrders = orders.filter(
     (o) => (o.discounts?.codes ?? []).length > 0
   );
- 
+
   const totalDiscountsUsed   = discountedOrders.length;
   const totalDiscountSavings = Math.round(
     discountedOrders.reduce(
@@ -539,27 +538,58 @@ const calculateDiscountEngagement = (customerAnalytics, orders) => {
       0
     ) * 100
   ) / 100;
- 
+
   const avgDiscountAmount =
     totalDiscountsUsed > 0
       ? Math.round((totalDiscountSavings / totalDiscountsUsed) * 100) / 100
       : 0;
- 
+
   const discountDependencyRate =
     orders.length > 0
       ? Math.round((totalDiscountsUsed / orders.length) * 100 * 100) / 100
       : null;
 
-  const favouriteDiscountCategory = null;
- 
-  // Chronological bounds — orders are already sorted ASC by createdAt
-  const firstDiscountUsedAt = discountedOrders.length > 0
-    ? discountedOrders[0].createdAt
-    : null;
-  const lastDiscountUsedAt  = discountedOrders.length > 0
-    ? discountedOrders[discountedOrders.length - 1].createdAt
-    : null;
- 
+  let favouriteDiscountCategory = null;
+  if (discountedOrders.length > 0) {
+    // Collect every code string used across all discounted orders
+    const allCodes = discountedOrders.flatMap(
+      (o) => (o.discounts?.codes ?? []).map((c) => c.code).filter(Boolean)
+    );
+
+    if (allCodes.length > 0) {
+      const discountDocs = await Discount.find(
+        { code: { $in: allCodes.map((c) => c.toUpperCase()) } },
+        { code: 1, category: 1 }
+      ).lean();
+
+      // Map code → category
+      const codeToCategory = new Map(
+        discountDocs.map((d) => [d.code.toUpperCase(), d.category])
+      );
+
+      // Count occurrences per category across all usage
+      const categoryCount = new Map();
+      allCodes.forEach((code) => {
+        const cat = codeToCategory.get(code.toUpperCase());
+        if (cat) categoryCount.set(cat, (categoryCount.get(cat) || 0) + 1);
+      });
+
+      if (categoryCount.size > 0) {
+        favouriteDiscountCategory = [...categoryCount.entries()].reduce(
+          (best, [cat, count]) => (count > best[1] ? [cat, count] : best),
+          ['', 0]
+        )[0] || null;
+      }
+    }
+  }
+
+  const firstDiscountUsedAt =
+    discountedOrders.length > 0 ? discountedOrders[0].createdAt : null;
+  const lastDiscountUsedAt  =
+    discountedOrders.length > 0
+      ? discountedOrders[discountedOrders.length - 1].createdAt
+      : null;
+
   customerAnalytics.discountEngagement = {
     totalDiscountsUsed,
     totalDiscountSavings,
@@ -570,6 +600,7 @@ const calculateDiscountEngagement = (customerAnalytics, orders) => {
     lastDiscountUsedAt,
   };
 };
+ 
 
 export default {
   syncCustomerAnalytics,
