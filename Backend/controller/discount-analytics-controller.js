@@ -18,10 +18,6 @@ import mongoose from "mongoose";
 
 const isValidObjectId = (s) => mongoose.Types.ObjectId.isValid(s);
 
-/**
- * Safely parse a positive integer query param.
- * Returns defaultVal when the param is absent, non-numeric, or <= 0.
- */
 const parsePositiveInt = (val, defaultVal) => {
   const n = parseInt(val, 10);
   return isNaN(n) || n <= 0 ? defaultVal : n;
@@ -46,24 +42,20 @@ const CACHE = {
 // OVERVIEW KPI PANEL
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/overview
- * @access Admin
- *
- * Returns the store-wide discount performance summary used to populate
- * the overview KPI cards, top-performers panels, and underperforming list.
- *
- * Delegates entirely to DiscountAnalytics.getSummary() (single $facet
- * aggregation) so there are no per-request Order or Discount queries.
- */
 export const getDiscountAnalyticsOverview = handleAsyncError(
   async (req, res, next) => {
     const cached = await getCache(CACHE.OVERVIEW.key);
     if (cached) {
+      console.log(`[DA:overview] serving from cache`);
       return res.status(200).json({ success: true, ...cached, fromCache: true });
     }
 
+    console.log(`[DA:overview] cache miss — running getSummary`);
     const summary = await getDiscountAnalyticsSummary();
+    console.log(`[DA:overview] summary.overall=`, JSON.stringify(summary?.overall));
+    console.log(`[DA:overview] summary.byCategory.length=`, summary?.byCategory?.length);
+    console.log(`[DA:overview] summary.topByROI.length=`, summary?.topByROI?.length);
+    console.log(`[DA:overview] summary.underperforming.length=`, summary?.underperforming?.length);
 
     const overall = summary.overall[0] ?? {
       totalCodes:                0,
@@ -93,6 +85,8 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
           ) / 100
         : null;
 
+    console.log(`[DA:overview] computed redemptionRate=${redemptionRate} overallROI=${overallROI}`);
+
     const response = {
       overall: {
         ...overall,
@@ -115,15 +109,6 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
 // ROI BY DISCOUNT CATEGORY
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/roi-by-category
- * @access Admin
- *
- * Returns ROI, revenue influenced, and discount cost aggregated per
- * discount category (promo / return / loyalty / affiliate / support / refund).
- * Includes a computed overall ROI per category derived from totals rather
- * than averaging per-code ROIs, which avoids small-sample skew.
- */
 export const getROIByCategory = handleAsyncError(async (req, res, next) => {
   const cached = await getCache(CACHE.ROI_BY_CATEGORY.key);
   if (cached) {
@@ -131,6 +116,7 @@ export const getROIByCategory = handleAsyncError(async (req, res, next) => {
   }
 
   const raw = await DiscountAnalytics.getROIByCategory();
+  console.log(`[DA:roiByCategory] raw.length=${raw.length}`);
 
   const categories = raw.map((cat) => ({
     category:               cat._id,
@@ -138,7 +124,6 @@ export const getROIByCategory = handleAsyncError(async (req, res, next) => {
     totalRedemptions:       cat.totalRedemptions,
     totalDiscountCost:      Math.round(cat.totalDiscountCost * 100) / 100,
     totalRevenueInfluenced: Math.round(cat.totalRevenueInfluenced * 100) / 100,
-    // computedROI: derived from category totals (not avg of per-code ROIs)
     roi: cat.computedROI !== null && cat.computedROI !== undefined
       ? Math.round(cat.computedROI * 100) / 100
       : null,
@@ -161,14 +146,6 @@ export const getROIByCategory = handleAsyncError(async (req, res, next) => {
 // ROI BY DISCOUNT TYPE
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/roi-by-type
- * @access Admin
- *
- * Compares percentage vs fixed discount performance — ROI, avg discount
- * amount, and revenue influenced. Helps decide which discount mechanic
- * to favour in future campaigns.
- */
 export const getROIByType = handleAsyncError(async (req, res, next) => {
   const cached = await getCache(CACHE.ROI_BY_TYPE.key);
   if (cached) {
@@ -176,6 +153,7 @@ export const getROIByType = handleAsyncError(async (req, res, next) => {
   }
 
   const raw = await DiscountAnalytics.getROIByType();
+  console.log(`[DA:roiByType] raw.length=${raw.length}`);
 
   const types = raw.map((t) => {
     const roi =
@@ -210,15 +188,6 @@ export const getROIByType = handleAsyncError(async (req, res, next) => {
 // TOP PERFORMERS
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/top-performers
- * @access Admin
- *
- * Query params:
- *   limit    {number}  — max codes to return per list (default 10, max 50)
- *   category {string}  — filter to one discount category (optional)
- *   sortBy   {string}  — "roi" | "revenue" | "redemptions" (default "roi")
- */
 export const getTopPerformers = handleAsyncError(async (req, res, next) => {
   const limit    = Math.min(parsePositiveInt(req.query.limit, 10), 50);
   const category = req.query.category ?? null;
@@ -249,7 +218,6 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
   const filter = { "redemptions.total": { $gt: 0 } };
 
   if (sortBy === "roi") {
-    // Exclude codes with null ROI (no matched orders yet) from ROI leaderboard
     filter["financials.roi"] = { $ne: null };
   }
 
@@ -270,6 +238,8 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
     )
     .lean();
 
+  console.log(`[DA:topPerformers] sortBy=${sortBy} count=${topCodes.length}`);
+
   const response = {
     sortBy,
     category: category ?? "all",
@@ -285,18 +255,6 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
 // REDEMPTION TRENDS
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/trends
- * @access Admin
- *
- * Aggregates the dailyRedemptions time-series across ALL codes (or a
- * filtered subset) to produce a store-wide redemption trend chart.
- *
- * Query params:
- *   timeframe {string}  — "week" | "month" | "quarter" | "year" (default "month")
- *   category  {string}  — filter to one discount category (optional)
- *   type      {string}  — filter to "percentage" | "fixed" (optional)
- */
 export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
   const { timeframe = "month", category, type } = req.query;
 
@@ -316,8 +274,6 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
   if (category) matchFilter["meta.category"] = category;
   if (type)     matchFilter["meta.type"]     = type;
 
-  // Unwind dailyRedemptions, filter to the requested period, then
-  // group by day to produce a single merged time-series across all codes.
   const trends = await DiscountAnalytics.aggregate([
     { $match: matchFilter },
     { $unwind: "$dailyRedemptions" },
@@ -342,8 +298,6 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
         redemptions:       1,
         discountCost:      { $round: ["$discountCost",      2] },
         revenueInfluenced: { $round: ["$revenueInfluenced", 2] },
-        // Daily ROI: (revenueInfluenced - discountCost) / discountCost * 100
-        // Null when discountCost is 0 to avoid division errors in the frontend.
         dailyROI: {
           $cond: [
             { $gt: ["$discountCost", 0] },
@@ -370,7 +324,8 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
     },
   ]);
 
-  // Period-level summary for the trend header KPIs
+  console.log(`[DA:trends] timeframe=${timeframe} trends.length=${trends.length}`);
+
   const periodTotals = trends.reduce(
     (acc, day) => {
       acc.totalRedemptions       += day.redemptions;
@@ -409,16 +364,6 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
 // SINGLE DISCOUNT ANALYTICS DETAIL
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/:discountId
- * @access Admin
- *
- * Returns the full DiscountAnalytics document for one discount code,
- * including segment breakdown, value tier breakdown, daily trend, and
- * all conversion metrics.
- *
- * Populates the detail drawer in the admin discounts UI.
- */
 export const getDiscountAnalyticsDetail = handleAsyncError(
   async (req, res, next) => {
     const { discountId } = req.params;
@@ -427,12 +372,9 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-    // No cache here — detail views are low-frequency and always need
-    // the freshest sync timestamp, retention rate, and segment data.
     const analytics = await DiscountAnalytics.findOne({ discountId }).lean();
 
     if (!analytics) {
-      // Could be a new code that has never been redeemed — no analytics doc yet.
       return next(
         new HandleError(
           "No analytics found for this discount. " +
@@ -442,6 +384,8 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       );
     }
 
+    console.log(`[DA:detail] discountId=${discountId} code=${analytics.discountCode} redemptions.total=${analytics.redemptions?.total}`);
+
     res.status(200).json({ success: true, analytics });
   }
 );
@@ -450,14 +394,6 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
 // SEGMENT BREAKDOWN FOR ONE CODE
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/:discountId/segments
- * @access Admin
- *
- * Returns the segmentBreakdown and valueTierBreakdown arrays for a single
- * discount code. Useful for the "Who used this code?" panel in the detail
- * drawer without loading the full analytics document.
- */
 export const getDiscountSegmentBreakdown = handleAsyncError(
   async (req, res, next) => {
     const { discountId } = req.params;
@@ -469,17 +405,19 @@ export const getDiscountSegmentBreakdown = handleAsyncError(
     const analytics = await DiscountAnalytics.findOne(
       { discountId },
       {
-        discountCode:      1,
-        segmentBreakdown:  1,
+        discountCode:       1,
+        segmentBreakdown:   1,
         valueTierBreakdown: 1,
         "redemptions.total": 1,
-        lastSyncedAt:      1,
+        lastSyncedAt:       1,
       }
     ).lean();
 
     if (!analytics) {
       return next(new HandleError("No analytics found for this discount", 404));
     }
+
+    console.log(`[DA:segments] discountId=${discountId} segmentBreakdown.length=${analytics.segmentBreakdown?.length}`);
 
     res.status(200).json({
       success:            true,
@@ -496,19 +434,9 @@ export const getDiscountSegmentBreakdown = handleAsyncError(
 // REDEMPTION TREND FOR ONE CODE
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/:discountId/trend
- * @access Admin
- *
- * Returns the dailyRedemptions time-series for a single discount code,
- * sliced to the requested timeframe.
- *
- * Query params:
- *   timeframe {string} — "week" | "month" | "quarter" | "year" (default "month")
- */
 export const getDiscountRedemptionTrend = handleAsyncError(
   async (req, res, next) => {
-    const { discountId }     = req.params;
+    const { discountId }          = req.params;
     const { timeframe = "month" } = req.query;
 
     if (!isValidObjectId(discountId)) {
@@ -532,6 +460,8 @@ export const getDiscountRedemptionTrend = handleAsyncError(
       (entry) => new Date(entry.date) >= currentPeriodStart
     );
 
+    console.log(`[DA:codeTrend] discountId=${discountId} timeframe=${timeframe} trend.length=${trend.length}`);
+
     const periodTotals = trend.reduce(
       (acc, day) => {
         acc.totalRedemptions       += day.redemptions;
@@ -548,7 +478,7 @@ export const getDiscountRedemptionTrend = handleAsyncError(
       timeframe,
       trend,
       peakUsage:    analytics.peakUsage,
-      summary:      {
+      summary: {
         ...periodTotals,
         totalDiscountCost:      Math.round(periodTotals.totalDiscountCost      * 100) / 100,
         totalRevenueInfluenced: Math.round(periodTotals.totalRevenueInfluenced * 100) / 100,
@@ -561,23 +491,6 @@ export const getDiscountRedemptionTrend = handleAsyncError(
 // ALL CODES — PAGINATED LIST WITH ANALYTICS
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics
- * @access Admin
- *
- * Cursor-based paginated list of all DiscountAnalytics documents.
- * Mirrors the pattern in getAllDiscounts (discount-controller.js).
- *
- * Query params:
- *   limit    {number}  — default 20, max 100
- *   cursor   {string}  — base64 pagination cursor
- *   category {string}  — filter by discount category
- *   type     {string}  — filter by discount type
- *   audience {string}  — filter by audience ("all" | "specific")
- *   sortBy   {string}  — "roi" | "revenue" | "redemptions" | "cost"
- *                        (default "revenue")
- *   minRedemptions {number} — only show codes with at least N redemptions
- */
 export const getAllDiscountAnalytics = handleAsyncError(
   async (req, res, next) => {
     const {
@@ -619,7 +532,6 @@ export const getAllDiscountAnalytics = handleAsyncError(
     }
 
     if (sortBy === "roi") {
-      // Only codes with a computable ROI make sense in an ROI sort
       filter["financials.roi"] = { $ne: null };
     }
 
@@ -651,6 +563,8 @@ export const getAllDiscountAnalytics = handleAsyncError(
     const hasNextPage = docs.length > limit;
     if (hasNextPage) docs.pop();
 
+    console.log(`[DA:allAnalytics] sortBy=${sortBy} returned=${docs.length} hasNextPage=${hasNextPage}`);
+
     let nextCursor = null;
     if (hasNextPage && docs.length > 0) {
       const last = docs[docs.length - 1];
@@ -671,17 +585,6 @@ export const getAllDiscountAnalytics = handleAsyncError(
 // MANUAL SYNC — SINGLE DISCOUNT
 // ============================================
 
-/**
- * @route  POST /api/v1/discount-analytics/:discountId/sync
- * @access Admin
- *
- * Triggers an immediate full re-sync for one discount code.
- * Useful after a batch of orders is manually reconciled or when
- * the admin notices a stale analytics document.
- *
- * Invalidates all analytics cache keys on success so the next
- * overview/trends request reflects the updated data.
- */
 export const syncSingleDiscountAnalytics = handleAsyncError(
   async (req, res, next) => {
     const { discountId } = req.params;
@@ -690,7 +593,6 @@ export const syncSingleDiscountAnalytics = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-    // Verify the discount exists before attempting sync
     const discount = await Discount.findById(discountId).select("_id").lean();
     if (!discount) {
       return next(new HandleError("Discount not found", 404));
@@ -701,8 +603,8 @@ export const syncSingleDiscountAnalytics = handleAsyncError(
       await invalidateAllAnalyticsCache();
 
       res.status(200).json({
-        success:  true,
-        message:  "Discount analytics synced successfully",
+        success:   true,
+        message:   "Discount analytics synced successfully",
         analytics,
       });
     } catch (err) {
@@ -715,26 +617,13 @@ export const syncSingleDiscountAnalytics = handleAsyncError(
 // MANUAL SYNC — ALL DISCOUNTS
 // ============================================
 
-/**
- * @route  POST /api/v1/discount-analytics/sync-all
- * @access Admin
- *
- * Initiates a background bulk re-sync of all discounts with at least
- * one redemption. Returns 202 immediately — mirrors syncAllCustomers()
- * in customer-analytics-controller.js.
- *
- * The sync runs fire-and-forget; errors are counted internally and
- * surfaced via the syncError flag on individual DiscountAnalytics docs.
- */
 export const syncAllDiscounts = handleAsyncError(async (req, res, next) => {
   try {
-    // Fire and forget — do not await
     syncAllDiscountAnalytics().catch(() => {});
 
     res.status(202).json({
       success: true,
-      message:
-        "Bulk discount analytics sync initiated. This may take several minutes.",
+      message: "Bulk discount analytics sync initiated. This may take several minutes.",
     });
   } catch (err) {
     return next(new HandleError(err.message, 500));
@@ -745,27 +634,18 @@ export const syncAllDiscounts = handleAsyncError(async (req, res, next) => {
 // STALE SYNC REPORT
 // ============================================
 
-/**
- * @route  GET /api/v1/discount-analytics/stale
- * @access Admin
- *
- * Returns all DiscountAnalytics documents that are stale (lastSyncedAt
- * older than thresholdHours) or have a syncError flag set. Useful for
- * the admin to see what needs attention before triggering a manual sync.
- *
- * Query params:
- *   thresholdHours {number} — default 24
- */
 export const getStaleSyncReport = handleAsyncError(async (req, res, next) => {
   const thresholdHours = parsePositiveInt(req.query.thresholdHours, 24);
 
   const stale = await DiscountAnalytics.findStale(thresholdHours);
 
+  console.log(`[DA:stale] thresholdHours=${thresholdHours} staleCount=${stale.length}`);
+
   res.status(200).json({
-    success:         true,
-    staleCount:      stale.length,
+    success:        true,
+    staleCount:     stale.length,
     thresholdHours,
-    staleDocuments:  stale,
+    staleDocuments: stale,
   });
 });
 
@@ -773,10 +653,6 @@ export const getStaleSyncReport = handleAsyncError(async (req, res, next) => {
 // CACHE INVALIDATION HELPER
 // ============================================
 
-/**
- * Invalidates all analytics cache keys. Called after any admin-triggered
- * sync so stale totals don't persist in Redis.
- */
 const invalidateAllAnalyticsCache = async () => {
   const keys = [
     CACHE.OVERVIEW.key,
