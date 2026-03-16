@@ -1028,6 +1028,7 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
           inactive:  { $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } },
           expired:   { $sum: { $cond: [{ $eq: ["$status", "expired"]  }, 1, 0] } },
           totalUses: { $sum: "$usageLimit.currentUses" },
+          vip:       { $sum: { $cond: [{ $eq: ["$audience", "specific"] }, 1, 0] } },
         },
       },
     ]),
@@ -1035,7 +1036,7 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 
   const payload = {
     stats,
-    overall: overall[0] || { total: 0, active: 0, inactive: 0, expired: 0, totalUses: 0 },
+    overall: overall[0] || { total: 0, active: 0, inactive: 0, expired: 0, totalUses: 0 , vip: 0 },
   };
 
   try {
