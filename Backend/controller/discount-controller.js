@@ -8,6 +8,7 @@ import crypto from "crypto";
 import Order from "../models/order-model.js";
 import mongoose from "mongoose";
 import redis from "../utils/redis.js";
+import {syncDiscountAfterRedemption} from '../Services/discount-analytics-service.js'
 
 // ============================================
 // HELPERS
@@ -749,23 +750,19 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
  */
 export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
   const { code, cartTotal, items } = req.body;
-
+ 
   if (!code) return next(new HandleError("Discount code is required", 400));
   if (!cartTotal || cartTotal <= 0)
     return next(new HandleError("Invalid cart total", 400));
-
-  // Normalise items to an array regardless of what the caller sends.
-  // validateCart() and calculateDiscount() both default to [] when items is
-  // absent, so this normalisation ensures consistent behaviour and prevents
-  // a non-array from being forwarded to those methods.
+ 
   const normalizedItems = Array.isArray(items) ? items : [];
-
+ 
   const discount = await Discount.findActiveByCode(code);
   if (!discount)
     return next(new HandleError("Invalid or expired discount code", 400));
-
+ 
   const userId = req.user?._id;
-
+ 
   if (discount.audience === "specific" && !userId) {
     return next(
       new HandleError(
@@ -774,63 +771,65 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       )
     );
   }
-
+ 
   if (userId) {
     const canUse = await discount.canUserUse(userId);
     if (!canUse.canUse)
       return next(new HandleError(canUse.reason, 400));
   }
-
+ 
   const validation = discount.validateCart(cartTotal, normalizedItems, userId);
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
-
+ 
   const discountAmount = discount.calculateDiscount(cartTotal, normalizedItems);
-
-  // ── NEW: compute eligibleSubtotal / ineligibleSubtotal ───────────────────
-  // Mirrors the same calculation in cart-controller applyDiscountCode.
-  // When eligibleProductCategories is set, eligibleSubtotal is the sum of
-  // only the qualifying items — the actual base the percentage was applied to.
-  // For unrestricted codes it equals cartTotal (entire cart qualified).
+ 
   const eligibleCats = discount.conditions?.eligibleProductCategories ?? [];
-
-  const eligibleSubtotal = eligibleCats.length > 0 && normalizedItems.length > 0
-    ? Math.round(
-        normalizedItems
-          .filter(
-            (item) =>
-              item?.category &&
-              eligibleCats.includes(item.category)
-          )
-          .reduce((sum, item) => {
-            const price = Number(item.price) || 0;
-            const qty   = Number(item.quantity) || 1;
-            return sum + price * qty;
-          }, 0)
-        * 100
-      ) / 100
-    : Math.round(cartTotal * 100) / 100;
-
-  const ineligibleSubtotal = Math.round((cartTotal - eligibleSubtotal) * 100) / 100;
-  // ─────────────────────────────────────────────────────────────────────────
-
+ 
+  const eligibleSubtotal =
+    eligibleCats.length > 0 && normalizedItems.length > 0
+      ? Math.round(
+          normalizedItems
+            .filter(
+              (item) => item?.category && eligibleCats.includes(item.category)
+            )
+            .reduce((sum, item) => {
+              const price = Number(item.price) || 0;
+              const qty   = Number(item.quantity) || 1;
+              return sum + price * qty;
+            }, 0) * 100
+        ) / 100
+      : Math.round(cartTotal * 100) / 100;
+ 
+  const ineligibleSubtotal =
+    Math.round((cartTotal - eligibleSubtotal) * 100) / 100;
+ 
   const { isFirstUse } = await discount.recordUsage(
     userId ?? null,
     null,
     discountAmount
   );
-
+ 
+  // ── NEW: trigger analytics sync fire-and-forget ───────────────────────────
+  // Must fire AFTER recordUsage() so the sync sees the updated usageHistory.
+  // Errors are swallowed — analytics must never surface to the customer.
+  syncDiscountAfterRedemption(discount.code).catch(() => {});
+ 
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
     action:       "used",
     performedBy:  userId
-      ? { _id: userId, firstName: req.user?.firstName ?? null,
-          lastName: req.user?.lastName ?? null,
-          email: req.user?.email ?? null, system: false }
+      ? {
+          _id:       userId,
+          firstName: req.user?.firstName ?? null,
+          lastName:  req.user?.lastName  ?? null,
+          email:     req.user?.email     ?? null,
+          system:    false,
+        }
       : { system: true },
     meta: {
-      userId:        userId  ?? null,
+      userId:        userId ?? null,
       orderId:       null,
       discountAmount,
       cartTotal,
@@ -840,27 +839,28 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
         .filter(Boolean)
         .filter((v, idx, arr) => arr.indexOf(v) === idx),
       ...(isFirstUse && {
-        lockedAt:            discount.lockedAt,
-        deletionEligibleAt:  discount.deletionEligibleAt,
+        lockedAt:           discount.lockedAt,
+        deletionEligibleAt: discount.deletionEligibleAt,
       }),
     },
   });
-
+ 
   res.status(200).json({
     success: true,
-    valid: true,
+    valid:   true,
     discount: {
-      code:           discount.code,
-      type:           discount.type,
-      value:          discount.value,
+      code:                      discount.code,
+      type:                      discount.type,
+      value:                     discount.value,
       discountAmount,
-      description:    discount.description,
+      description:               discount.description,
       eligibleProductCategories: eligibleCats,
       eligibleSubtotal,
       ineligibleSubtotal,
     },
   });
 });
+ 
 
 // ============================================
 // PUBLIC: GET ACTIVE PROMOS

@@ -34,6 +34,7 @@ import discountRoutes from './routes/discount-routes.js';
 import checkoutRoutes from './routes/checkout-routes.js';
 import analyticsRoutes from './routes/analytics-routes-index.js';
 import adminStatsRoutes from './routes/admin-stats-routes.js';
+import discountAnalyticsRoutes from './routes/discount-analytics-routes.js';
 import seoRoutes from './routes/seo-routes.js';
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
 
@@ -59,7 +60,7 @@ app.post(
       }
       await service.handleWebhook(req, res);
     } catch (err) {
-      console.error('❌ Stripe webhook error:', err);
+      console.error('Stripe webhook error:', err);
       res.status(500).json({ message: 'Webhook processing failed' });
     }
   }
@@ -79,7 +80,7 @@ app.post(
       }
       await service.handleWebhook(req, res);
     } catch (err) {
-      console.error('❌ Paystack webhook error:', err);
+      console.error('Paystack webhook error:', err);
       res.status(500).json({ message: 'Webhook processing failed' });
     }
   }
@@ -99,7 +100,7 @@ app.post(
       }
       await service.handleWebhook(req, res);
     } catch (err) {
-      console.error('❌ Flutterwave webhook error:', err);
+      console.error('Flutterwave webhook error:', err);
       res.status(500).json({ message: 'Webhook processing failed' });
     }
   }
@@ -138,7 +139,7 @@ app.use(passport.initialize());
 if (process.env.NODE_ENV === 'development') {
   app.use((req, res, next) => {
     if (req.method === 'POST' || req.method === 'PUT') {
-      console.log('📨 Incoming Request:', {
+      console.log('Incoming Request:', {
         method: req.method,
         path: req.originalUrl,
         contentType: req.headers['content-type'],
@@ -191,12 +192,13 @@ app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1', seoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/admin', adminStatsRoutes);
+app.use("/api/v1/discount-analytics", discountAnalyticsRoutes);
 
 app.use(redirectHandler);
 
 /* ================= ERROR HANDLER ================= */
 app.use((err, req, res, next) => {
-  console.error('🔥 ERROR', {
+  console.error('ERROR', {
     method: req.method,
     path: req.originalUrl,
     message: err.message,

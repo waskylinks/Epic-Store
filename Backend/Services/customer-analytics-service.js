@@ -15,68 +15,65 @@ import Checkout from "../models/checkout-model.js";
 export const syncCustomerAnalytics = async (userId) => {
   try {
     let customerAnalytics = await CustomerAnalytics.findOne({ user: userId });
-
+ 
     if (!customerAnalytics) {
       customerAnalytics = new CustomerAnalytics({
-        user: userId,
-        lastSyncedAt: new Date()
+        user:        userId,
+        lastSyncedAt: new Date(),
       });
     }
-
+ 
     const user = await User.findById(userId);
     if (!user) {
       throw new Error(`User ${userId} not found`);
     }
-
+ 
     const orders = await Order.find({
-      user: userId,
-      orderStatus: { $in: ["Delivered", "Shipped"] },
-      "paymentInfo.status": "success"
+      user:              userId,
+      orderStatus:       { $in: ["Delivered", "Shipped"] },
+      "paymentInfo.status": "success",
     }).sort({ createdAt: 1 });
-
+ 
     const cancelledOrders = await Order.countDocuments({
-      user: userId,
-      orderStatus: "Cancelled"
+      user:        userId,
+      orderStatus: "Cancelled",
     });
-
+ 
     const returnsRefunds = await getReturnsRefundsData(userId);
-
+ 
     // FIX S1: calculatePurchaseBehavior MUST run before calculateCLVMetrics.
-    // calculateCLVMetrics reads customerAnalytics.purchaseBehavior.avgDaysBetweenPurchases
-    // to compute predictedLTV. In the original order this field hadn't been set yet,
-    // so predictedLTV always used the stale/default value (0 or 90) instead of the
-    // freshly computed one.
     await calculatePurchaseBehavior(customerAnalytics, orders);
     calculateCLVMetrics(customerAnalytics, orders);
     calculateRFMMetrics(customerAnalytics, orders);
-
+ 
     await calculateEngagementMetrics(customerAnalytics, userId);
-
+ 
+    // ── NEW: populate discountEngagement from order history ───────────────
+    calculateDiscountEngagement(customerAnalytics, orders);
+ 
     customerAnalytics.returnsRefunds = returnsRefunds;
-
+ 
     if (orders.length > 0 && !customerAnalytics.acquisition.source) {
       const firstOrder = orders[0];
-      customerAnalytics.acquisition.source =
-        firstOrder.analytics?.source || "direct";
-      customerAnalytics.acquisition.medium = firstOrder.analytics?.medium;
+      customerAnalytics.acquisition.source   = firstOrder.analytics?.source || "direct";
+      customerAnalytics.acquisition.medium   = firstOrder.analytics?.medium;
       customerAnalytics.acquisition.campaign = firstOrder.analytics?.campaign;
     }
-
-    customerAnalytics.risk.cancelledOrders = cancelledOrders;
-    customerAnalytics.risk.daysSinceLastEngagement =
+ 
+    customerAnalytics.risk.cancelledOrders          = cancelledOrders;
+    customerAnalytics.risk.daysSinceLastEngagement  =
       calculateDaysSinceLastEngagement(user);
-
+ 
     customerAnalytics.calculateRFMScores();
     customerAnalytics.calculateValueTier();
     customerAnalytics.calculateChurnRisk();
-
+ 
     customerAnalytics.lastSyncedAt = new Date();
-
+ 
     await customerAnalytics.save();
-
+ 
     return customerAnalytics;
   } catch (error) {
-    // Re-throw so callers (HTTP handlers, bulk sync) can decide how to surface it.
     throw error;
   }
 };
@@ -512,6 +509,66 @@ export const getCustomerAnalyticsSummary = async () => {
   ]);
 
   return summary[0];
+};
+
+ 
+ 
+const calculateDiscountEngagement = (customerAnalytics, orders) => {
+  if (orders.length === 0) {
+    customerAnalytics.discountEngagement = {
+      totalDiscountsUsed:        0,
+      totalDiscountSavings:      0,
+      avgDiscountAmount:         0,
+      discountDependencyRate:    null,
+      favouriteDiscountCategory: null,
+      firstDiscountUsedAt:       null,
+      lastDiscountUsedAt:        null,
+    };
+    return;
+  }
+ 
+  // Identify orders that used at least one discount code
+  const discountedOrders = orders.filter(
+    (o) => (o.discounts?.codes ?? []).length > 0
+  );
+ 
+  const totalDiscountsUsed   = discountedOrders.length;
+  const totalDiscountSavings = Math.round(
+    discountedOrders.reduce(
+      (sum, o) => sum + (Number(o.discounts?.totalDiscount) || 0),
+      0
+    ) * 100
+  ) / 100;
+ 
+  const avgDiscountAmount =
+    totalDiscountsUsed > 0
+      ? Math.round((totalDiscountSavings / totalDiscountsUsed) * 100) / 100
+      : 0;
+ 
+  const discountDependencyRate =
+    orders.length > 0
+      ? Math.round((totalDiscountsUsed / orders.length) * 100 * 100) / 100
+      : null;
+
+  const favouriteDiscountCategory = null;
+ 
+  // Chronological bounds — orders are already sorted ASC by createdAt
+  const firstDiscountUsedAt = discountedOrders.length > 0
+    ? discountedOrders[0].createdAt
+    : null;
+  const lastDiscountUsedAt  = discountedOrders.length > 0
+    ? discountedOrders[discountedOrders.length - 1].createdAt
+    : null;
+ 
+  customerAnalytics.discountEngagement = {
+    totalDiscountsUsed,
+    totalDiscountSavings,
+    avgDiscountAmount,
+    discountDependencyRate,
+    favouriteDiscountCategory,
+    firstDiscountUsedAt,
+    lastDiscountUsedAt,
+  };
 };
 
 export default {

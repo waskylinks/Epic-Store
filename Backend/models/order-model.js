@@ -676,6 +676,8 @@ orderSchema.index({ 'returnInfo.messages.isRead': 1 });
 orderSchema.index({ 'returnInfo.messages.senderType': 1 });
 orderSchema.index({ 'returnInfo.messages.createdAt': -1 });
 
+orderSchema.index({ "discounts.codes.code": 1 },{ sparse: true });
+
 // Index on pleaDeadline for efficient lazy timer-expiry queries
 orderSchema.index({ 'returnInfo.pleaDeadline': 1 });
 

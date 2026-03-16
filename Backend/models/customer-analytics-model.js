@@ -204,6 +204,60 @@ const customerAnalyticsSchema = new mongoose.Schema(
       }
     },
 
+    //discounts
+
+    discountEngagement: {
+      // Total number of times this customer has redeemed any discount code
+      totalDiscountsUsed: {
+        type:    Number,
+        default: 0,
+        min:     0,
+      },
+    
+      // Total monetary value saved across all redemptions
+      totalDiscountSavings: {
+        type:    Number,
+        default: 0,
+        min:     0,
+      },
+    
+      // Average discount amount per discounted order
+      avgDiscountAmount: {
+        type:    Number,
+        default: 0,
+        min:     0,
+      },
+    
+      // Percentage of this customer's orders that used a discount code.
+      // discountedOrders / totalOrders * 100. Null when totalOrders is 0.
+      discountDependencyRate: {
+        type:    Number,
+        default: null,
+        min:     0,
+        max:     100,
+      },
+    
+      // The discount category (promo / loyalty / return / etc.) this customer
+      // has redeemed most often. Null when totalDiscountsUsed is 0.
+      favouriteDiscountCategory: {
+        type: String,
+        enum: ["promo", "refund", "return", "loyalty", "affiliate", "support", null],
+        default: null,
+      },
+    
+      // Date of first discount redemption
+      firstDiscountUsedAt: {
+        type:    Date,
+        default: null,
+      },
+    
+      // Date of most recent discount redemption
+      lastDiscountUsedAt: {
+        type:    Date,
+        default: null,
+      },
+    },
+
     // ============================================
     // ENGAGEMENT METRICS
     // ============================================
@@ -476,6 +530,10 @@ customerAnalyticsSchema.index({ 'acquisition.source': 1, 'clv.totalRevenue': -1 
 customerAnalyticsSchema.index({ isVIP: 1, 'clv.totalRevenue': -1 });
 customerAnalyticsSchema.index({ 'rfm.rfmScore': -1 });
 customerAnalyticsSchema.index({ lastSyncedAt: 1 });
+customerAnalyticsSchema.index(
+  { "discountEngagement.totalDiscountsUsed": 1 },
+  { sparse: true }
+);
 
 // Compound indexes for complex queries
 customerAnalyticsSchema.index({ 
