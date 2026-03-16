@@ -53,6 +53,7 @@ import MyRefundsReturns from './pages/MyRefundReturns';
 import RefundAnalytics from './Admin/RefundAnalytics';
 import AdminDiscounts from './Admin/AdminDiscounts';
 import UserDiscounts from './pages/UserDiscounts';
+import DiscountAnalytics from './Admin/DiscountAnalytics';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -147,7 +148,7 @@ function App() {
         <Route path='/admin/refund-analytics' element={<ProtectedRoute element={<RefundAnalytics />} adminOnly={true} />} />
         <Route path='/admin/discounts' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
         <Route path='/admin/discounts/new' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
-        
+        <Route path='/admin/discount-analytics' element={<ProtectedRoute element={<DiscountAnalytics />} adminOnly={true} />} />
 
       
       </Routes>
