@@ -1606,6 +1606,7 @@ const AdminDiscounts = () => {
               { label: 'Inactive',         value: stats?.inactive  ?? 0, color: '#9CA3AF' },
               { label: 'Total uses',       value: stats?.totalUses ?? 0, color: '#10B981' },
               { label: 'Broadcast active', value: broadcastCount,         color: '#0369A1' },
+              { label: 'VIP', value: stats?.vip ?? 0, color: '#ed3ad5' },
             ].map((kpi) => (
               <div key={kpi.label} className="addisc-kpi" style={{ '--addisc-kpi-color': kpi.color }}>
                 <span className="addisc-kpi-label">{kpi.label}</span>
