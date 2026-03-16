@@ -414,11 +414,16 @@ const discountAnalyticsSlice = createSlice({
             .addCase(fetchAllDiscountAnalytics.fulfilled, (state, action) => {
                 state.listLoading = false;
                 const { analytics = [], pagination } = action.payload;
-                state.allAnalytics  = analytics;
+
+                const isCursorPage = Boolean(action.meta.arg?.cursor);
+                state.allAnalytics = isCursorPage
+                ? [...state.allAnalytics, ...analytics]
+                : analytics;
+
                 state.listPagination = {
-                    hasNextPage: pagination?.hasNextPage ?? false,
-                    nextCursor:  pagination?.nextCursor  ?? null,
-                    limit:       pagination?.limit       ?? 20,
+                hasNextPage: pagination?.hasNextPage ?? false,
+                nextCursor:  pagination?.nextCursor  ?? null,
+                limit:       pagination?.limit       ?? 20,
                 };
             })
             .addCase(fetchAllDiscountAnalytics.rejected, (state, action) => {
@@ -468,30 +473,34 @@ const discountAnalyticsSlice = createSlice({
         builder
             .addCase(syncSingleDiscountAnalytics.pending, (state, action) => {
                 const id = action.meta.arg;
-                state.syncLoading[id] = true;
-                delete state.syncError[id];
+                state.syncLoading = { ...state.syncLoading, [id]: true };
+                const { [id]: _removed, ...rest } = state.syncError;
+                state.syncError = rest;
             })
             .addCase(syncSingleDiscountAnalytics.fulfilled, (state, action) => {
-                const { discountId } = action.payload;
-                state.syncLoading[discountId] = false;
+                const id = action.meta.arg;
+                const { [id]: _removed, ...restLoading } = state.syncLoading;
+                state.syncLoading = restLoading;
                 state.success = true;
                 state.message = "Discount analytics synced successfully";
 
-                // Update the matching entry in the list in-place so the UI
-                // reflects fresh data without requiring a full list refetch
+                if (action.payload.analytics) {
+                const updated = action.payload.analytics;
                 const idx = state.allAnalytics.findIndex(
-                    (a) => a.discountId === discountId || a._id === discountId
+                    (a) =>
+                    a._id === updated._id ||
+                    a._id === id ||
+                    a.discountId === id
                 );
-                if (idx !== -1 && action.payload.analytics) {
-                    state.allAnalytics[idx] = action.payload.analytics;
+                if (idx !== -1) state.allAnalytics[idx] = updated;
                 }
             })
             .addCase(syncSingleDiscountAnalytics.rejected, (state, action) => {
-                // action.meta.arg is the discountId string passed to the thunk
                 const id = action.meta.arg;
-                state.syncLoading[id] = false;
-                state.syncError[id]   = action.payload;
-                state.error           = action.payload;
+                const { [id]: _removed, ...restLoading } = state.syncLoading;
+                state.syncLoading = restLoading;
+                state.syncError   = { ...state.syncError, [id]: action.payload };
+                state.error       = action.payload;
             });
 
         // ── Bulk sync ────────────────────────────────────────────────────────

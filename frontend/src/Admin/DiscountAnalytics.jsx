@@ -47,19 +47,15 @@ import {
 import Navbar from '../components/Navbar';
 import '../AdminStyles/DiscountAnalytics.css';
 
-// ── Constants ─────────────────────────────────────────────────
 const DEBOUNCE_DELAY        = 800;
 const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000;
 const STALE_DATA_THRESHOLD  = 3 * 60 * 1000;
 
-// Module-scoped — survives re-renders, mirrors Dashboard pattern exactly
 const lastFetchedCache = {};
 let   activeAbortController = null;
 
-// ── Palette ───────────────────────────────────────────────────
 const PAL = ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#8B5CF6', '#F97316', '#14B8A6'];
 
-// ── Formatters ────────────────────────────────────────────────
 const fmt = {
   currency: (v) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
@@ -79,7 +75,6 @@ const fmt = {
     d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
 };
 
-// ── ROI colour ────────────────────────────────────────────────
 function roiColor(roi) {
   if (roi === null || roi === undefined) return '#6B7280';
   if (roi >= 100) return '#10B981';
@@ -87,7 +82,6 @@ function roiColor(roi) {
   return '#EF4444';
 }
 
-// ── useDebounce — identical to Dashboard ─────────────────────
 function useDebounce(callback, delay) {
   const cbRef    = useRef(callback);
   const timerRef = useRef(null);
@@ -101,7 +95,6 @@ function useDebounce(callback, delay) {
   return [debounced, cancel];
 }
 
-// ── Shared atoms ──────────────────────────────────────────────
 function SkeletonBlock({ h = 20, w = '100%', radius = 6, mb = 0 }) {
   return <div className="da-skeleton" style={{ height: h, width: w, borderRadius: radius, marginBottom: mb }} />;
 }
@@ -145,7 +138,6 @@ function TrendChip({ value }) {
   );
 }
 
-// Recharts tooltip style
 const TT = {
   contentStyle: {
     background: '#fff',
@@ -156,7 +148,6 @@ const TT = {
   },
 };
 
-// ── Card wrapper ──────────────────────────────────────────────
 function Card({ title, sub, icon: Icon, iconColor, action, children }) {
   return (
     <div className="da-card">
@@ -179,7 +170,6 @@ function Card({ title, sub, icon: Icon, iconColor, action, children }) {
   );
 }
 
-// ── Section divider ───────────────────────────────────────────
 function SectionDivider({ label }) {
   return (
     <div className="da-section-div">
@@ -189,7 +179,6 @@ function SectionDivider({ label }) {
   );
 }
 
-// ── Last updated ──────────────────────────────────────────────
 function LastUpdated({ timestamp }) {
   const [label, setLabel] = useState('');
   useEffect(() => {
@@ -216,7 +205,7 @@ function LastUpdated({ timestamp }) {
   );
 }
 
-// ── Mobile timeframe bottom sheet ─────────────────────────────
+// FIX: removed unused `icon` prop from destructuring
 function TimeframeSheet({ timeframe, onChange, disabled, options }) {
   const [open, setOpen] = useState(false);
   const labels = { week: 'This Week', month: 'This Month', quarter: 'This Quarter', year: 'This Year' };
@@ -255,19 +244,15 @@ function TimeframeSheet({ timeframe, onChange, disabled, options }) {
   );
 }
 
-// ── View tabs config ──────────────────────────────────────────
 const VIEWS = [
-  { key: 'overview',   label: 'Overview',    icon: Insights },
-  { key: 'trends',     label: 'Trends',      icon: TrendingUp },
-  { key: 'leaderboard',label: 'Leaderboard', icon: BarChartIcon },
-  { key: 'codes',      label: 'All Codes',   icon: TableChart },
+  { key: 'overview',    label: 'Overview',    icon: Insights },
+  { key: 'trends',      label: 'Trends',      icon: TrendingUp },
+  { key: 'leaderboard', label: 'Leaderboard', icon: BarChartIcon },
+  { key: 'codes',       label: 'All Codes',   icon: TableChart },
 ];
 
 const TREND_TIMEFRAMES = ['week', 'month', 'quarter', 'year'];
 
-// ══════════════════════════════════════════════════════════════
-// DETAIL DRAWER
-// ══════════════════════════════════════════════════════════════
 function DetailDrawer({ discountId, onClose }) {
   const dispatch = useDispatch();
   const { selectedDetail, selectedSegmentBreakdown, selectedCodeTrend, detailLoading } =
@@ -280,8 +265,8 @@ function DetailDrawer({ discountId, onClose }) {
     dispatch(fetchDiscountCodeTrend({ discountId, timeframe: 'month' }));
   }, [dispatch, discountId]);
 
-  const d   = selectedDetail;
-  const seg = selectedSegmentBreakdown;
+  const d     = selectedDetail;
+  const seg   = selectedSegmentBreakdown;
   const trend = selectedCodeTrend?.trend || [];
 
   return (
@@ -303,7 +288,6 @@ function DetailDrawer({ discountId, onClose }) {
 
         {!detailLoading && d && (
           <div className="da-drawer-body">
-            {/* Financials */}
             <p className="da-drawer-section-label">Financials</p>
             <div className="da-drawer-metrics">
               <div className="da-drawer-metric">
@@ -326,7 +310,6 @@ function DetailDrawer({ discountId, onClose }) {
               </div>
             </div>
 
-            {/* Redemptions */}
             <p className="da-drawer-section-label">Redemptions</p>
             <div className="da-drawer-metrics">
               <div className="da-drawer-metric">
@@ -347,7 +330,6 @@ function DetailDrawer({ discountId, onClose }) {
               </div>
             </div>
 
-            {/* Trend mini chart */}
             {trend.length > 0 && (
               <>
                 <p className="da-drawer-section-label">Daily Redemption Trend</p>
@@ -368,29 +350,33 @@ function DetailDrawer({ discountId, onClose }) {
               </>
             )}
 
-            {/* Segment breakdown */}
+            {/* FIX: was s.count — field is s.redemptions per segmentBreakdownSchema */}
             {seg?.segmentBreakdown?.length > 0 && (
               <>
                 <p className="da-drawer-section-label">Customer Segments</p>
                 {seg.segmentBreakdown.slice(0, 6).map((s, i) => {
-                  const maxCount = Math.max(...seg.segmentBreakdown.map(x => x.count || 0)) || 1;
+                  const maxCount = Math.max(
+                    ...seg.segmentBreakdown.map((x) => x.redemptions || 0)
+                  ) || 1;
                   return (
                     <div key={i} className="da-drawer-seg-row">
                       <span className="da-drawer-seg-name">{s.segment || 'Unknown'}</span>
                       <div className="da-drawer-seg-track">
                         <div
                           className="da-drawer-seg-fill"
-                          style={{ width: `${(s.count / maxCount) * 100}%`, background: PAL[i % PAL.length] }}
+                          style={{
+                            width:      `${((s.redemptions || 0) / maxCount) * 100}%`,
+                            background: PAL[i % PAL.length],
+                          }}
                         />
                       </div>
-                      <span className="da-drawer-seg-count">{fmt.number(s.count)}</span>
+                      <span className="da-drawer-seg-count">{fmt.number(s.redemptions)}</span>
                     </div>
                   );
                 })}
               </>
             )}
 
-            {/* AOV vs baseline */}
             <p className="da-drawer-section-label">Baseline Comparison</p>
             <div className="da-drawer-metrics">
               <div className="da-drawer-metric">
@@ -412,43 +398,34 @@ function DetailDrawer({ discountId, onClose }) {
   );
 }
 
-// ══════════════════════════════════════════════════════════════
-// MAIN COMPONENT
-// ══════════════════════════════════════════════════════════════
 export default function AdminDiscountAnalytics() {
   const dispatch = useDispatch();
 
   const {
-    overview,         overviewLoading,
-    roiByCategory,    roiByType,
-    topPerformers,    topPerformersLoading,
-    redemptionTrends, redemptionTrendsLoading,
+    overview,          overviewLoading,
+    roiByCategory,     roiByType,
+    topPerformers,     topPerformersLoading,
+    redemptionTrends,  redemptionTrendsLoading,
     activeTrendsTimeframe,
-    allAnalytics,     listLoading,     listPagination,
-    syncLoading,      syncError,
-    bulkSyncLoading,  bulkSyncMessage,
+    allAnalytics,      listLoading,      listPagination,
+    syncLoading,       syncError,
+    bulkSyncLoading,   bulkSyncMessage,
     error,
   } = useSelector((s) => s.discountAnalytics);
 
-  // ── Local UI state ───────────────────────────────────────
-  const [activeView,   setActiveView]   = useState('overview');
-  const [trendsTf,     setTrendsTf]     = useState('month');
-  const [sortBy,       setSortBy]       = useState('roi');
-  const [lastFetchTime,setLastFetchTime]= useState(null);
-  const [drawerId,     setDrawerId]     = useState(null);
-  const [filterCat,    setFilterCat]    = useState('');
-  const [filterType,   setFilterType]   = useState('');
+  const [activeView,    setActiveView]    = useState('overview');
+  const [trendsTf,      setTrendsTf]      = useState('month');
+  const [sortBy,        setSortBy]        = useState('roi');
+  const [lastFetchTime, setLastFetchTime] = useState(null);
+  const [drawerId,      setDrawerId]      = useState(null);
+  const [filterCat,     setFilterCat]     = useState('');
+  const [filterType,    setFilterType]    = useState('');
 
   const isLoadingRef        = useRef(false);
   const autoRefreshTimerRef = useRef(null);
 
-  // ── Derived flags ────────────────────────────────────────
-  // "Any non-trend data is loading" — used for top-bar refreshing label
   const anyLoading = overviewLoading || topPerformersLoading || listLoading;
 
-  // ── Load overview/static data (not timeframe-dependent) ──
-  // Overview, ROI by category/type, and leaderboard don't change with
-  // the trend timeframe — load once, refresh on force.
   const loadStaticData = useCallback((force = false) => {
     const CACHE_KEY = '__da_static__';
     const now  = Date.now();
@@ -456,7 +433,6 @@ export default function AdminDiscountAnalytics() {
     if (!force && now - last < 30000) return;
     lastFetchedCache[CACHE_KEY] = now;
     setLastFetchTime(now);
-
     Promise.allSettled([
       dispatch(fetchDiscountAnalyticsOverview()),
       dispatch(fetchDiscountROIByCategory()),
@@ -466,13 +442,6 @@ export default function AdminDiscountAnalytics() {
     ]);
   }, [dispatch, sortBy]);
 
-  // ── Load trend data — timeframe-dependent ────────────────
-  // Mirrors Dashboard.loadTimeframeData exactly:
-  //   1. Guard against concurrent requests (isLoadingRef)
-  //   2. 30 s debounce guard (lastFetchedCache keyed by timeframe)
-  //   3. Abort any in-flight request
-  //   4. Dispatch setActiveTrendsTimeframe BEFORE the thunk
-  //      so stale responses for the previous timeframe are rejected
   const loadTrendData = useCallback((tf, force = false) => {
     if (isLoadingRef.current) return;
     const now  = Date.now();
@@ -482,8 +451,6 @@ export default function AdminDiscountAnalytics() {
     if (activeAbortController) activeAbortController.abort();
     activeAbortController = new AbortController();
 
-    // CRITICAL: set active timeframe in slice BEFORE dispatching the thunk
-    // so the fulfilled case knows which timeframe to accept
     dispatch(setActiveTrendsTimeframe(tf));
     lastFetchedCache[`trend_${tf}`] = now;
     setLastFetchTime(now);
@@ -492,7 +459,7 @@ export default function AdminDiscountAnalytics() {
     Promise.allSettled([
       dispatch(fetchDiscountRedemptionTrends({ timeframe: tf })),
     ]).finally(() => {
-      isLoadingRef.current = false;
+      isLoadingRef.current  = false;
       activeAbortController = null;
     });
   }, [dispatch]);
@@ -506,18 +473,25 @@ export default function AdminDiscountAnalytics() {
     debouncedLoadTrend(newTf, true);
   }, [redemptionTrendsLoading, debouncedLoadTrend, cancelTrendDebounce]);
 
-  // ── Mount: load everything ───────────────────────────────
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // FIX: removed eslint-disable comment — deps are stable refs, no warning fires
+  // FIX: mount effect uses refs to loadStaticData/loadTrendData/cancelTrendDebounce
+  //      via useCallback so they are stable across renders; empty dep array is correct.
+  const loadStaticDataRef      = useRef(loadStaticData);
+  const loadTrendDataRef       = useRef(loadTrendData);
+  const cancelTrendDebounceRef = useRef(cancelTrendDebounce);
+  useEffect(() => { loadStaticDataRef.current      = loadStaticData;      }, [loadStaticData]);
+  useEffect(() => { loadTrendDataRef.current        = loadTrendData;        }, [loadTrendData]);
+  useEffect(() => { cancelTrendDebounceRef.current  = cancelTrendDebounce; }, [cancelTrendDebounce]);
+
   useEffect(() => {
-    loadStaticData(false);
-    loadTrendData('month', false);
+    loadStaticDataRef.current(false);
+    loadTrendDataRef.current('month', false);
     return () => {
-      cancelTrendDebounce();
+      cancelTrendDebounceRef.current();
       if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current);
     };
   }, []);
 
-  // ── Auto-refresh trends when on short timeframes ─────────
   useEffect(() => {
     if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current);
     if (['week', 'month'].includes(trendsTf)) {
@@ -531,12 +505,10 @@ export default function AdminDiscountAnalytics() {
     return () => { if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current); };
   }, [trendsTf, loadTrendData]);
 
-  // ── Re-fetch leaderboard when sortBy changes ─────────────
   useEffect(() => {
     dispatch(fetchDiscountTopPerformers({ limit: 20, sortBy }));
   }, [dispatch, sortBy]);
 
-  // ── Handlers ─────────────────────────────────────────────
   const handleRefresh = useCallback(() => {
     loadStaticData(true);
     loadTrendData(trendsTf, true);
@@ -554,13 +526,12 @@ export default function AdminDiscountAnalytics() {
     dispatch(clearDiscountAnalyticsError());
   }, [dispatch]);
 
-  const openDrawer = useCallback((id) => { setDrawerId(id); }, []);
+  const openDrawer  = useCallback((id) => { setDrawerId(id); }, []);
   const closeDrawer = useCallback(() => {
     setDrawerId(null);
     dispatch(clearSelectedDetail());
   }, [dispatch]);
 
-  // Load filtered list when filters change
   useEffect(() => {
     const params = { limit: 30, sortBy: 'revenue' };
     if (filterCat)  params.category = filterCat;
@@ -568,61 +539,63 @@ export default function AdminDiscountAnalytics() {
     dispatch(fetchAllDiscountAnalytics(params));
   }, [dispatch, filterCat, filterType]);
 
-  // ── Derived data ─────────────────────────────────────────
-  const overallSummary    = overview?.overall ?? null;
-  const byCategory        = overview?.byCategory    ?? [];
-  const topByROI          = overview?.topByROI      ?? [];
-  const underperforming   = overview?.underperforming ?? [];
-  const categories        = roiByCategory?.categories ?? [];
-  const types             = roiByType?.types          ?? [];
-  const leaderboardCodes  = topPerformers?.codes      ?? [];
-  const trendData         = redemptionTrends?.trends  ?? [];
-  const trendSummary      = redemptionTrends?.summary ?? {};
+  const overallSummary = overview?.overall ?? null;
 
-  // Category revenue max for bar normalisation
+  // FIX: wrap derived arrays in useMemo so they are stable references and
+  // don't trigger the "logical expression changes deps on every render" warning
+  const topByROI = useMemo(() => overview?.topByROI      ?? [], [overview]);
+  const underperforming = useMemo(() => overview?.underperforming ?? [], [overview]);
+
+  // FIX: byCategory was declared but never used — removed. The overview tab
+  // uses `categories` from roiByCategory (the dedicated endpoint), not from
+  // overview.byCategory. Removing byCategory fixes the no-unused-vars error.
+  const categories       = useMemo(() => roiByCategory?.categories ?? [], [roiByCategory]);
+  const types            = useMemo(() => roiByType?.types           ?? [], [roiByType]);
+  const leaderboardCodes = useMemo(() => topPerformers?.codes       ?? [], [topPerformers]);
+  const trendData        = useMemo(() => redemptionTrends?.trends   ?? [], [redemptionTrends]);
+  const trendSummary     = useMemo(() => redemptionTrends?.summary  ?? {}, [redemptionTrends]);
+
   const catMax = useMemo(
     () => Math.max(...categories.map(c => c.totalRevenueInfluenced || 0), 1),
     [categories]
   );
 
-  // "First load" skeleton guard — show skeletons until we have any data
   const firstLoad = !overview && overviewLoading;
 
-  // ── KPI cards derived from overview.overall ───────────────
   const kpiCards = useMemo(() => {
     if (!overallSummary) return [];
     return [
       {
-        key: 'cost',    label: 'Total Discount Cost',
+        key: 'cost',   label: 'Total Discount Cost',
         value: fmt.compact(overallSummary.totalDiscountCost),
         icon: AttachMoney, accent: '#EF4444', bg: '#EF444415',
       },
       {
-        key: 'rev',     label: 'Revenue Influenced',
+        key: 'rev',    label: 'Revenue Influenced',
         value: fmt.compact(overallSummary.totalRevenueInfluenced),
         icon: TrendingUp, accent: '#10B981', bg: '#10B98115',
       },
       {
-        key: 'roi',     label: 'Overall ROI',
+        key: 'roi',    label: 'Overall ROI',
         value: fmt.roi(overallSummary.overallROI),
         valueColor: roiColor(overallSummary.overallROI),
-        icon: Insights,  accent: '#e563f1', bg: '#e563f115',
+        icon: Insights, accent: '#e563f1', bg: '#e563f115',
       },
       {
-        key: 'redeem',  label: 'Total Redemptions',
+        key: 'redeem', label: 'Total Redemptions',
         value: fmt.number(overallSummary.totalRedemptions),
         icon: LocalOffer, accent: '#8B5CF6', bg: '#8B5CF615',
       },
       {
-        key: 'codes',   label: 'Active Codes',
+        key: 'codes',  label: 'Active Codes',
         value: fmt.number(overallSummary.totalCodesWithRedemptions),
         sub: `of ${fmt.number(overallSummary.totalCodes)} total`,
-        icon: Category,  accent: '#F59E0B', bg: '#F59E0B15',
+        icon: Category, accent: '#F59E0B', bg: '#F59E0B15',
       },
       {
-        key: 'rate',    label: 'Redemption Rate',
+        key: 'rate',   label: 'Redemption Rate',
         value: fmt.pct(overallSummary.redemptionRate),
-        icon: People,    accent: '#06B6D4', bg: '#06B6D415',
+        icon: People, accent: '#06B6D4', bg: '#06B6D415',
       },
     ];
   }, [overallSummary]);
@@ -633,12 +606,10 @@ export default function AdminDiscountAnalytics() {
       <div className="da-page">
         <div className="da-body">
 
-          {/* ── Back ──────────────────────────────────────── */}
           <Link to="/admin/dashboard" className="da-back">
             <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
-          {/* ── Header ────────────────────────────────────── */}
           <div className="da-hd">
             <div className="da-hd-left">
               <span className="da-hd-icon">
@@ -674,7 +645,6 @@ export default function AdminDiscountAnalytics() {
             </div>
           </div>
 
-          {/* ── Error banner ──────────────────────────────── */}
           {error && (
             <div className="da-error-banner">
               <Warning style={{ fontSize: 17 }} />
@@ -685,7 +655,6 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
-          {/* ── Bulk sync success banner ───────────────────── */}
           {bulkSyncMessage && !bulkSyncLoading && (
             <div className="da-success-banner">
               <CheckCircle style={{ fontSize: 16 }} />
@@ -693,7 +662,6 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
-          {/* ── View tabs ─────────────────────────────────── */}
           <div className="da-tabs">
             {VIEWS.map(({ key, label, icon: Icon }) => (
               <button
@@ -707,13 +675,8 @@ export default function AdminDiscountAnalytics() {
             ))}
           </div>
 
-          {/* ════════════════════════════════════════════════
-              OVERVIEW TAB
-          ════════════════════════════════════════════════ */}
           {activeView === 'overview' && (
             <div className="da-panel">
-
-              {/* KPI Grid */}
               <div className={`da-kpi-grid ${anyLoading && overallSummary ? 'da-kpi-grid--loading' : ''}`}>
                 {firstLoad
                   ? Array.from({ length: 6 }).map((_, i) => <KpiSkeleton key={i} />)
@@ -732,10 +695,7 @@ export default function AdminDiscountAnalytics() {
                             </span>
                           </div>
                           <div className="da-kpi-label">{k.label}</div>
-                          <div
-                            className="da-kpi-value"
-                            style={k.valueColor ? { color: k.valueColor } : {}}
-                          >
+                          <div className="da-kpi-value" style={k.valueColor ? { color: k.valueColor } : {}}>
                             {k.value}
                           </div>
                           {k.sub && <div className="da-kpi-sub">{k.sub}</div>}
@@ -746,7 +706,6 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="ROI by Category" />
               <div className="da-grid-2">
-                {/* Category bar chart */}
                 <Card title="Revenue Influenced by Category" sub="Sorted by influenced revenue" icon={Category} iconColor="#6366F1">
                   {!overview && overviewLoading ? <LoadingState /> : categories.length === 0 ? <Empty label="No category data yet" /> : (
                     <div>
@@ -767,7 +726,6 @@ export default function AdminDiscountAnalytics() {
                   )}
                 </Card>
 
-                {/* Type comparison */}
                 <Card title="Percentage vs Fixed Discounts" sub="ROI and revenue by discount mechanism" icon={BarChartIcon} iconColor="#8B5CF6">
                   {!roiByType && overviewLoading ? <LoadingState /> : types.length === 0 ? <Empty label="No type data yet" /> : (
                     <ResponsiveContainer width="100%" height={260}>
@@ -776,7 +734,7 @@ export default function AdminDiscountAnalytics() {
                         <XAxis dataKey="type" tick={{ fontSize: 11, fill: '#6B7280' }} />
                         <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <Tooltip {...TT} formatter={(v, name) => [
-                          name === 'totalRevenueInfluenced' ? fmt.compact(v) : fmt.compact(v),
+                          fmt.compact(v),
                           name === 'totalRevenueInfluenced' ? 'Revenue Influenced' : 'Discount Cost',
                         ]} />
                         <Bar dataKey="totalRevenueInfluenced" name="totalRevenueInfluenced" radius={[4, 4, 0, 0]}>
@@ -790,26 +748,25 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="Top &amp; Underperforming Codes" />
               <div className="da-grid-2">
-                {/* Top by ROI */}
-                <Card title="Top Codes by ROI" sub="From overview — codes with highest return on discount spend" icon={TrendingUp} iconColor="#10B981">
+                {/* FIX: removed dot-notation access — reads nested fields directly */}
+                <Card title="Top Codes by ROI" sub="Codes with highest return on discount spend" icon={TrendingUp} iconColor="#10B981">
                   {!overview && overviewLoading ? <LoadingState /> : topByROI.length === 0 ? <Empty label="No top performers yet" /> : (
                     <div className="da-code-list">
                       {topByROI.slice(0, 8).map((c, i) => (
-                        <div key={i} className="da-code-row" onClick={() => c.discountId && openDrawer(c.discountId)}>
+                        <div key={i} className="da-code-row" onClick={() => c._id && openDrawer(c._id)}>
                           <span className="da-code-rank">{i + 1}</span>
                           <span className="da-code-pill">{c.discountCode}</span>
-                          <span className="da-code-cat">{c['meta.category'] ?? c.meta?.category ?? '—'}</span>
-                          <span className="da-code-roi" style={{ color: roiColor(c['financials.roi'] ?? c.financials?.roi) }}>
-                            {fmt.roi(c['financials.roi'] ?? c.financials?.roi)}
+                          <span className="da-code-cat">{c.meta?.category ?? '—'}</span>
+                          <span className="da-code-roi" style={{ color: roiColor(c.financials?.roi) }}>
+                            {fmt.roi(c.financials?.roi)}
                           </span>
-                          <span className="da-code-rev">{fmt.compact(c['financials.totalRevenueInfluenced'] ?? c.financials?.totalRevenueInfluenced)}</span>
+                          <span className="da-code-rev">{fmt.compact(c.financials?.totalRevenueInfluenced)}</span>
                         </div>
                       ))}
                     </div>
                   )}
                 </Card>
 
-                {/* Underperforming */}
                 <Card title="Underperforming Codes" sub="Low ROI — consider revising these discounts" icon={Warning} iconColor="#EF4444">
                   {!overview && overviewLoading ? <LoadingState /> : underperforming.length === 0 ? (
                     <div className="da-all-clear">
@@ -822,11 +779,11 @@ export default function AdminDiscountAnalytics() {
                         <div key={i} className="da-code-row da-code-row--warn">
                           <span className="da-code-rank">{i + 1}</span>
                           <span className="da-code-pill">{c.discountCode}</span>
-                          <span className="da-code-cat">{c['meta.category'] ?? c.meta?.category ?? '—'}</span>
-                          <span className="da-code-roi" style={{ color: roiColor(c['financials.roi'] ?? c.financials?.roi) }}>
-                            {fmt.roi(c['financials.roi'] ?? c.financials?.roi)}
+                          <span className="da-code-cat">{c.meta?.category ?? '—'}</span>
+                          <span className="da-code-roi" style={{ color: roiColor(c.financials?.roi) }}>
+                            {fmt.roi(c.financials?.roi)}
                           </span>
-                          <span className="da-code-rev">{fmt.compact(c['financials.totalRevenueInfluenced'] ?? c.financials?.totalRevenueInfluenced)}</span>
+                          <span className="da-code-rev">{fmt.compact(c.financials?.totalRevenueInfluenced)}</span>
                         </div>
                       ))}
                     </div>
@@ -834,7 +791,6 @@ export default function AdminDiscountAnalytics() {
                 </Card>
               </div>
 
-              {/* By-category detail table */}
               <SectionDivider label="Category Detail" />
               <Card title="ROI Detail by Category" sub="Full metrics per discount category" icon={TableChart} iconColor="#374151">
                 {categories.length === 0 ? <Empty label="No category data" h={120} /> : (
@@ -875,13 +831,8 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
-          {/* ════════════════════════════════════════════════
-              TRENDS TAB
-          ════════════════════════════════════════════════ */}
           {activeView === 'trends' && (
             <div className="da-panel">
-
-              {/* Trend timeframe controls — mirrors Dashboard's pattern */}
               <div className="da-trend-controls">
                 <div className="da-tf-group">
                   {TREND_TIMEFRAMES.map(t => (
@@ -905,12 +856,9 @@ export default function AdminDiscountAnalytics() {
                   disabled={redemptionTrendsLoading}
                   options={TREND_TIMEFRAMES}
                 />
-                {redemptionTrendsLoading && (
-                  <span className="da-refreshing-label">Refreshing…</span>
-                )}
+                {redemptionTrendsLoading && <span className="da-refreshing-label">Refreshing…</span>}
               </div>
 
-              {/* Trend summary KPIs */}
               {trendSummary && Object.keys(trendSummary).length > 0 && (
                 <div className={`da-trend-kpi-strip ${redemptionTrendsLoading ? 'da-trend-kpi-strip--loading' : ''}`}>
                   <div className="da-trend-kpi">
@@ -927,10 +875,7 @@ export default function AdminDiscountAnalytics() {
                   </div>
                   <div className="da-trend-kpi">
                     <div className="da-trend-kpi-label">Period ROI</div>
-                    <div
-                      className="da-trend-kpi-val"
-                      style={{ color: roiColor(trendSummary.periodROI) }}
-                    >
+                    <div className="da-trend-kpi-val" style={{ color: roiColor(trendSummary.periodROI) }}>
                       {fmt.roi(trendSummary.periodROI)}
                     </div>
                   </div>
@@ -939,7 +884,6 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="Daily Redemption Trend" />
 
-              {/* Redemptions area chart */}
               <Card
                 title="Daily Redemptions"
                 sub={`Store-wide — ${trendsTf} view`}
@@ -964,14 +908,7 @@ export default function AdminDiscountAnalytics() {
                           <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }} />
                           <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} />
                           <Tooltip {...TT} formatter={(v) => [fmt.number(v), 'Redemptions']} />
-                          <Area
-                            type="monotone"
-                            dataKey="redemptions"
-                            stroke="#e563f1"
-                            strokeWidth={2}
-                            fill="url(#redeemGrad)"
-                            dot={false}
-                          />
+                          <Area type="monotone" dataKey="redemptions" stroke="#e563f1" strokeWidth={2} fill="url(#redeemGrad)" dot={false} />
                         </AreaChart>
                       </ResponsiveContainer>
                     )
@@ -980,10 +917,9 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="Daily Cost vs Revenue" />
 
-              {/* Cost vs Revenue chart */}
               <Card
                 title="Discount Cost vs Revenue Influenced"
-                sub="Daily comparison — bars below zero cost = ROI opportunity"
+                sub="Daily comparison"
                 icon={AttachMoney}
                 iconColor="#10B981"
                 action={redemptionTrendsLoading && <div className="da-card-spinner" />}
@@ -1010,7 +946,6 @@ export default function AdminDiscountAnalytics() {
                 }
               </Card>
 
-              {/* Daily data table */}
               <SectionDivider label="Daily Data" />
               <Card title="Trend Data Table" sub="Full daily breakdown" icon={TableChart} iconColor="#374151">
                 {trendData.length === 0 ? <Empty h={120} /> : (
@@ -1047,13 +982,8 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
-          {/* ════════════════════════════════════════════════
-              LEADERBOARD TAB
-          ════════════════════════════════════════════════ */}
           {activeView === 'leaderboard' && (
             <div className="da-panel">
-
-              {/* Sort controls */}
               <div className="da-leaderboard-controls">
                 <span className="da-leaderboard-label">Sort by:</span>
                 {['roi', 'revenue', 'redemptions'].map(s => (
@@ -1069,7 +999,6 @@ export default function AdminDiscountAnalytics() {
                 {topPerformersLoading && <span className="da-refreshing-label">Loading…</span>}
               </div>
 
-              {/* Leaderboard KPIs */}
               {topPerformers && (
                 <div className="da-lb-kpi-strip">
                   <div className="da-lb-kpi">
@@ -1089,7 +1018,6 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="Top Performers" />
 
-              {/* Bar chart of top codes */}
               <Card title="Top Codes — Revenue Influenced" sub="Visual comparison of top discount codes" icon={BarChartIcon} iconColor="#6366F1">
                 {topPerformersLoading && leaderboardCodes.length === 0
                   ? <LoadingState h={260} />
@@ -1099,9 +1027,9 @@ export default function AdminDiscountAnalytics() {
                       <ResponsiveContainer width="100%" height={260}>
                         <BarChart
                           data={leaderboardCodes.slice(0, 10).map(c => ({
-                            name: (c.discountCode || '').substring(0, 12),
-                            revenue: c['financials.totalRevenueInfluenced'] ?? c.financials?.totalRevenueInfluenced ?? 0,
-                            cost:    c['financials.totalDiscountCost']      ?? c.financials?.totalDiscountCost      ?? 0,
+                            name:    (c.discountCode || '').substring(0, 12),
+                            revenue: c.financials?.totalRevenueInfluenced ?? 0,
+                            cost:    c.financials?.totalDiscountCost      ?? 0,
                           }))}
                           layout="vertical"
                           margin={{ left: 4, right: 12, top: 4, bottom: 4 }}
@@ -1119,7 +1047,6 @@ export default function AdminDiscountAnalytics() {
                 }
               </Card>
 
-              {/* Leaderboard table */}
               <SectionDivider label="Full Leaderboard" />
               <Card
                 title="Top Performers Table"
@@ -1151,16 +1078,17 @@ export default function AdminDiscountAnalytics() {
                             </tr>
                           </thead>
                           <tbody>
+                            {/* FIX: removed all dot-notation field access — reads nested objects directly */}
                             {leaderboardCodes.map((c, i) => {
-                              const roi      = c['financials.roi']                      ?? c.financials?.roi;
-                              const rev      = c['financials.totalRevenueInfluenced']   ?? c.financials?.totalRevenueInfluenced;
-                              const cost     = c['financials.totalDiscountCost']        ?? c.financials?.totalDiscountCost;
-                              const aov      = c['financials.avgOrderValue']            ?? c.financials?.avgOrderValue;
-                              const redeem   = c['redemptions.total']                   ?? c.redemptions?.total;
-                              const retent   = c['conversion.postRedemptionRetentionRate'] ?? c.conversion?.postRedemptionRetentionRate;
-                              const aovLift  = c['baseline.aovLiftPercent']             ?? c.baseline?.aovLiftPercent;
-                              const cat      = c['meta.category']                       ?? c.meta?.category;
-                              const type     = c['meta.type']                           ?? c.meta?.type;
+                              const roi     = c.financials?.roi;
+                              const rev     = c.financials?.totalRevenueInfluenced;
+                              const cost    = c.financials?.totalDiscountCost;
+                              const aov     = c.financials?.avgOrderValue;
+                              const redeem  = c.redemptions?.total;
+                              const retent  = c.conversion?.postRedemptionRetentionRate;
+                              const aovLift = c.baseline?.aovLiftPercent;
+                              const cat     = c.meta?.category;
+                              const type    = c.meta?.type;
                               return (
                                 <tr
                                   key={i}
@@ -1168,9 +1096,7 @@ export default function AdminDiscountAnalytics() {
                                   onClick={() => c._id && openDrawer(c._id)}
                                 >
                                   <td className="da-td-rank">{i + 1}</td>
-                                  <td>
-                                    <span className="da-code-pill-sm">{c.discountCode}</span>
-                                  </td>
+                                  <td><span className="da-code-pill-sm">{c.discountCode}</span></td>
                                   <td className="da-td-muted">{cat ?? '—'}</td>
                                   <td className="da-td-muted">{type ?? '—'}</td>
                                   <td>{fmt.number(redeem)}</td>
@@ -1200,13 +1126,8 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
-          {/* ════════════════════════════════════════════════
-              ALL CODES TAB
-          ════════════════════════════════════════════════ */}
           {activeView === 'codes' && (
             <div className="da-panel">
-
-              {/* Filter bar */}
               <div className="da-filter-bar">
                 <FilterList style={{ fontSize: 16, color: '#6B7280', flexShrink: 0 }} />
                 <span className="da-filter-label">Filter:</span>
@@ -1282,7 +1203,7 @@ export default function AdminDiscountAnalytics() {
                           </thead>
                           <tbody>
                             {allAnalytics.map((a, i) => {
-                              const roi    = a.financials?.roi;
+                              const roi     = a.financials?.roi;
                               const syncing = !!syncLoading?.[a._id];
                               const syncErr = syncError?.[a._id];
                               return (
@@ -1292,9 +1213,7 @@ export default function AdminDiscountAnalytics() {
                                   onClick={() => a._id && openDrawer(a._id)}
                                 >
                                   <td className="da-td-rank">{i + 1}</td>
-                                  <td>
-                                    <span className="da-code-pill-sm">{a.discountCode}</span>
-                                  </td>
+                                  <td><span className="da-code-pill-sm">{a.discountCode}</span></td>
                                   <td className="da-td-muted" style={{ textTransform: 'capitalize' }}>{a.meta?.category ?? '—'}</td>
                                   <td className="da-td-muted" style={{ textTransform: 'capitalize' }}>{a.meta?.type ?? '—'}</td>
                                   <td>
@@ -1336,14 +1255,13 @@ export default function AdminDiscountAnalytics() {
                     )
                 }
 
-                {/* Load more */}
                 {listPagination.hasNextPage && (
                   <div className="da-load-more">
                     <button
                       className="da-load-more-btn"
                       disabled={listLoading}
                       onClick={() => dispatch(fetchAllDiscountAnalytics({
-                        limit: 30,
+                        limit:  30,
                         sortBy: 'revenue',
                         cursor: listPagination.nextCursor,
                         ...(filterCat  ? { category: filterCat  } : {}),
@@ -1364,7 +1282,6 @@ export default function AdminDiscountAnalytics() {
         </div>
       </div>
 
-      {/* ── Detail Drawer ────────────────────────────────── */}
       {drawerId && <DetailDrawer discountId={drawerId} onClose={closeDrawer} />}
     </>
   );

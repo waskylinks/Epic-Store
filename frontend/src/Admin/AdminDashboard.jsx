@@ -733,8 +733,8 @@ export default function AdminDashboard() {
                           <div className="adm-discount-top-label">Top ROI Code</div>
                           <div className="adm-discount-top-row">
                             <span className="adm-discount-code-pill">{discountTopCode.discountCode}</span>
-                            <span className="adm-discount-roi-badge" style={{ color: roiColor(discountTopCode['financials.roi'] ?? discountTopCode.financials?.roi) }}>
-                              {fmt.roi(discountTopCode['financials.roi'] ?? discountTopCode.financials?.roi)}
+                            <span className="adm-discount-roi-badge" style={{ color: roiColor(discountTopCode.financials?.roi) }}>
+                              {fmt.roi(discountTopCode.financials?.roi)}
                             </span>
                           </div>
                         </div>
