@@ -189,7 +189,6 @@ const discountAnalyticsSchema = new mongoose.Schema(
       required: true,
       uppercase: true,
       trim: true,
-      index: true,
     },
 
     // Denormalised metadata — avoids a Discount lookup on every analytics read.
