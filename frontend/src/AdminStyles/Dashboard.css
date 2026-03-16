@@ -90,7 +90,6 @@
 
 .adm-nav {
   padding: 8px 10px 80px;
-
 }
 
 .adm-nav-group {
@@ -999,7 +998,6 @@
   color: #6366F1;
 }
 
-
 @media (max-width: 768px) {
   .adm-tf-mobile-trigger {
     display: flex;
@@ -1008,5 +1006,133 @@
   .adm-tf-sheet-overlay,
   .adm-tf-sheet {
     display: block;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   DISCOUNT ANALYTICS SUMMARY SECTION
+   Prefix: adm-discount-  (extends existing adm- namespace)
+════════════════════════════════════════════════════════════ */
+
+/* ── Top code highlight ──────────────────────────────────── */
+.adm-discount-top-code {
+  padding: 10px 12px;
+  background: #F9FAFB;
+  border: 1px solid var(--adm-border);
+  border-radius: var(--adm-radius-sm);
+  margin-bottom: 4px;
+}
+
+.adm-discount-top-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--adm-text-muted);
+  margin-bottom: 6px;
+}
+
+.adm-discount-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.adm-discount-code-pill {
+  font-family: 'SFMono-Regular', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #e563f1;
+  background: #e563f115;
+  border: 1px solid #e563f130;
+  padding: 3px 9px;
+  border-radius: 5px;
+  letter-spacing: 0.3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+.adm-discount-roi-badge {
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Category breakdown bars ─────────────────────────────── */
+.adm-discount-cat-row {
+  display: grid;
+  grid-template-columns: 72px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--adm-border);
+}
+
+.adm-discount-cat-row:last-child {
+  border-bottom: none;
+}
+
+.adm-discount-cat-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--adm-text-sec);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: capitalize;
+}
+
+.adm-discount-cat-bar-wrap {
+  height: 6px;
+  background: #E5E7EB;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.adm-discount-cat-bar {
+  height: 100%;
+  border-radius: 20px;
+  transition: width 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+  min-width: 3px;
+}
+
+.adm-discount-cat-val {
+  font-size: 12px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Responsive overrides for discount section ───────────── */
+@media (max-width: 768px) {
+  .adm-discount-cat-row {
+    grid-template-columns: 60px 1fr 44px;
+    gap: 8px;
+  }
+
+  .adm-discount-code-pill {
+    max-width: 110px;
+    font-size: 11.5px;
+  }
+
+  .adm-discount-roi-badge {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .adm-discount-cat-row {
+    grid-template-columns: 54px 1fr 40px;
+    gap: 6px;
+  }
+
+  .adm-discount-top-code {
+    padding: 8px 10px;
   }
 }

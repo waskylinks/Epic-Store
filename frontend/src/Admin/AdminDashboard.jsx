@@ -27,6 +27,7 @@ import {
   ShoppingCartCheckout,
   ErrorOutline,
   PersonAdd,
+  Insights,
 } from '@mui/icons-material';
 import {
   BarChart as ReChart, Bar,
@@ -34,12 +35,13 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer,
 } from 'recharts';
+
+// ── Slice imports ─────────────────────────────────────────────
 import {
   fetchAdminStats,
   fetchOrderStatusBreakdown,
   fetchInventoryBreakdown,
 } from '../features/analytics/coreAnalyticsSlice';
- 
 import {
   fetchDashboardKPIs,
   fetchRevenueTrends,
@@ -47,16 +49,13 @@ import {
   fetchDashboardAlerts,
   setActiveTimeframe,
 } from '../features/analytics/dashboardSlice';
- 
 import {
   fetchCustomerOverview,
 } from '../features/analytics/customerAnalyticsSlice';
- 
 import {
   fetchChannelPerformance,
   fetchDevicePerformance,
 } from '../features/analytics/attributionSlice';
- 
 import {
   fetchCheckoutAbandonmentStats,
   fetchCategoryPerformance,
@@ -67,31 +66,47 @@ import {
   fetchReturnOverview,
   fetchRefundOverview,
 } from '../features/analytics/operationsSlice';
+import {
+  fetchDiscountAnalyticsOverview,
+} from '../features/analytics/discountAnalyticsSlice';
+
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
 
+// ── Nav groups ────────────────────────────────────────────────
 const NAV_GROUPS = [
-  { group: 'Overview', items: [{ path: '/admin/dashboard', icon: DashboardIcon, label: 'Dashboard', color: '#6366F1' }] },
+  {
+    group: 'Overview',
+    items: [
+      { path: '/admin/dashboard', icon: DashboardIcon, label: 'Dashboard', color: '#6366F1' },
+    ],
+  },
   {
     group: 'Analytics',
     items: [
-      { path: '/admin/analytics',   icon: BarChart,             label: 'Overview',    color: '#8B5CF6' },
-      { path: '/admin/reports',     icon: Assessment,           label: 'Reports',     color: '#EC4899' },
-      { path: '/admin/customers',   icon: PersonSearch,         label: 'Customers',   color: '#06B6D4' },
-      { path: '/admin/attribution', icon: CampaignOutlined,     label: 'Attribution', color: '#F59E0B' },
-      { path: '/admin/checkout',    icon: ShoppingCartCheckout, label: 'Checkout',    color: '#10B981' },
-      { path: '/admin/refund-analytics', icon: CurrencyExchange, label: 'Refund Analytics', color: '#14B8A6' },
+      { path: '/admin/analytics',          icon: BarChart,             label: 'Overview',           color: '#8B5CF6' },
+      { path: '/admin/reports',            icon: Assessment,           label: 'Reports',             color: '#EC4899' },
+      { path: '/admin/customers',          icon: PersonSearch,         label: 'Customers',           color: '#06B6D4' },
+      { path: '/admin/attribution',        icon: CampaignOutlined,     label: 'Attribution',         color: '#F59E0B' },
+      { path: '/admin/checkout',           icon: ShoppingCartCheckout, label: 'Checkout',            color: '#10B981' },
+      { path: '/admin/refund-analytics',   icon: CurrencyExchange,     label: 'Refund Analytics',    color: '#14B8A6' },
+      { path: '/admin/discount-analytics', icon: Insights,             label: 'Discount ROI',        color: '#e563f1' },
     ],
   },
   {
     group: 'Commerce',
     items: [
-      { path: '/admin/products', icon: Inventory,    label: 'Products', color: '#3B82F6' },
-      { path: '/admin/orders',   icon: ShoppingCart, label: 'Orders',   color: '#F97316' },
-       { path: '/admin/discounts', icon: LocalOffer,  label: 'Discounts', color: '#e563f1' },
+      { path: '/admin/products',  icon: Inventory,    label: 'Products',  color: '#3B82F6' },
+      { path: '/admin/orders',    icon: ShoppingCart, label: 'Orders',    color: '#F97316' },
+      { path: '/admin/discounts', icon: LocalOffer,   label: 'Discounts', color: '#e563f1' },
     ],
   },
-  { group: 'Management', items: [{ path: '/admin/users', icon: ManageAccounts, label: 'Users', color: '#A855F7' }] },
+  {
+    group: 'Management',
+    items: [
+      { path: '/admin/users', icon: ManageAccounts, label: 'Users', color: '#A855F7' },
+    ],
+  },
   {
     group: 'Operations',
     items: [
@@ -111,6 +126,7 @@ const DEBOUNCE_DELAY        = 800;
 const lastFetchedCache = {};
 let activeAbortController = null;
 
+// ── Formatters ────────────────────────────────────────────────
 const fmt = {
   currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
   number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
@@ -120,8 +136,13 @@ const fmt = {
     if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}k`;
     return fmt.currency(v);
   },
+  roi: (v) => {
+    if (v === null || v === undefined) return '—';
+    return `${v >= 0 ? '+' : ''}${v.toFixed(0)}%`;
+  },
 };
 
+// ── Shared atoms ──────────────────────────────────────────────
 function TrendChip({ value }) {
   const isPos = value >= 0;
   return (
@@ -263,42 +284,54 @@ function useDebounce(callback, delay) {
   return [debounced, cancel];
 }
 
+// ── ROI colour helper ─────────────────────────────────────────
+function roiColor(roi) {
+  if (roi === null || roi === undefined) return '#6B7280';
+  if (roi >= 100) return '#10B981';
+  if (roi >= 0)   return '#F59E0B';
+  return '#EF4444';
+}
+
+// ══════════════════════════════════════════════════════════════
+// MAIN COMPONENT
+// ══════════════════════════════════════════════════════════════
 export default function AdminDashboard() {
   const dispatch = useDispatch();
   const location = useLocation();
 
-const {
-  basicStats, basicStatsFetched, ordersByStatus, inventoryStatus,
-} = useSelector((s) => s.coreAnalytics);
- 
-const {
-  kpis, kpisLoading, revenueTrends, topPerformers, alerts,
-} = useSelector((s) => s.dashboard);
- 
-const {
-  customerOverview,
-} = useSelector((s) => s.customerAnalytics);
- 
-const {
-  channelPerformance, devicePerformance,
-} = useSelector((s) => s.attribution);
- 
-const {
-  checkoutAbandonment, categoryPerformance, lowStockAlerts,
-  fulfillmentAnalytics, fraudAnalytics, slaBreaches,
-  returnOverview, refundOverview,
-} = useSelector((s) => s.operations);
+  // ── Selectors ────────────────────────────────────────────
+  const {
+    basicStats, basicStatsFetched, ordersByStatus, inventoryStatus,
+  } = useSelector((s) => s.coreAnalytics);
 
-// error — pick whichever slice is most relevant, or combine:
-const error = useSelector(
-  (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error || null
-);
+  const {
+    kpis, kpisLoading, revenueTrends, topPerformers, alerts,
+  } = useSelector((s) => s.dashboard);
 
+  const { customerOverview }   = useSelector((s) => s.customerAnalytics);
+  const { channelPerformance, devicePerformance } = useSelector((s) => s.attribution);
+
+  const {
+    checkoutAbandonment, categoryPerformance, lowStockAlerts,
+    fulfillmentAnalytics, fraudAnalytics, slaBreaches,
+    returnOverview, refundOverview,
+  } = useSelector((s) => s.operations);
+
+  // Discount analytics — overview only for the dashboard summary card
+  const {
+    overview:        discountOverview,
+    overviewLoading: discountOverviewLoading,
+  } = useSelector((s) => s.discountAnalytics);
+
+  const error = useSelector(
+    (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error || null
+  );
+
+  // ── Local state ──────────────────────────────────────────
   const [sidebarOpen,   setSidebarOpen]   = useState(false);
   const [timeframe,     setTimeframe]     = useState('month');
   const [lastFetchTime, setLastFetchTime] = useState(null);
 
-  // Mirrors isValidKpiPayload from the slice — never true for null/undefined/{}
   const kpisReady = (
     kpis !== null && kpis !== undefined &&
     typeof kpis === 'object' && !Array.isArray(kpis) &&
@@ -310,14 +343,20 @@ const error = useSelector(
   const isLoadingRef        = useRef(false);
   const autoRefreshTimerRef = useRef(null);
 
+  // ── Static data (one-time) ───────────────────────────────
   const loadStaticData = useCallback(() => {
     if (basicStatsFetched) return;
     Promise.allSettled([
-      fetchAdminStats(), fetchOrderStatusBreakdown(), fetchInventoryBreakdown(),
-      fetchDashboardAlerts(), fetchLowStockAlerts(), fetchCustomerOverview(),
+      fetchAdminStats(),
+      fetchOrderStatusBreakdown(),
+      fetchInventoryBreakdown(),
+      fetchDashboardAlerts(),
+      fetchLowStockAlerts(),
+      fetchCustomerOverview(),
     ].map(thunk => dispatch(thunk).unwrap().catch(() => {})));
   }, [dispatch, basicStatsFetched]);
 
+  // ── Timeframe data ───────────────────────────────────────
   const loadTimeframeData = useCallback((currentTimeframe, force = false) => {
     if (isLoadingRef.current) return;
     const now  = Date.now();
@@ -344,6 +383,9 @@ const error = useSelector(
       fetchSLABreaches(currentTimeframe),
       fetchReturnOverview(currentTimeframe),
       fetchRefundOverview(currentTimeframe),
+      // Discount overview is not timeframe-dependent — server caches it for
+      // 5 min, so dispatching on every timeframe change is cheap.
+      fetchDiscountAnalyticsOverview(),
     ].map(thunk => dispatch(thunk).unwrap().catch(() => {})))
     .finally(() => { isLoadingRef.current = false; activeAbortController = null; });
   }, [dispatch]);
@@ -357,8 +399,6 @@ const error = useSelector(
     debouncedLoadTimeframe(newTf, true);
   }, [kpisLoading, debouncedLoadTimeframe, cancelDebounce]);
 
-  // Empty deps [] — runs once on mount only.
-  // Timeframe changes handled exclusively by handleTimeframeChange.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     loadStaticData();
@@ -388,11 +428,7 @@ const error = useSelector(
     inStock: 0, lowStock: 0, outOfStock: 0, discontinued: 0, total: 0,
   }, [inventoryStatus]);
 
-  // ─── KPI CARDS — plain const, NOT useMemo ────────────────────
-  // useMemo caused the crash: stale cached arrays during React state
-  // transitions (basicStatsFetched/kpis changing simultaneously) could
-  // contain null entries, causing k.bg to throw. Plain const rebuilds
-  // fresh every render — 8 objects is trivially cheap.
+  // ── KPI Cards ────────────────────────────────────────────
   const kpiCards = [
     { key: 'revenue',       label: 'Total Revenue',    icon: AttachMoney,   accent: '#10B981', bg: '#10B98115',
       value:  kpisReady ? fmt.currency(kpis?.revenue?.current)    : null,
@@ -432,10 +468,15 @@ const error = useSelector(
     { label: 'Admins',       value: basicStats?.adminCount ?? null, color: '#A855F7', icon: ManageAccounts },
   ], [basicStats, inv]);
 
+  // ── Discount summary derived values ──────────────────────
+  const discountSummary = discountOverview?.overall ?? null;
+  const discountTopCode = discountOverview?.topByROI?.[0] ?? null;
+
   return (
     <>
       <Navbar />
       <div className="adm-wrap">
+        {/* ── Sidebar ─────────────────────────────────────── */}
         <aside className={`adm-sidebar ${sidebarOpen ? 'adm-sidebar--open' : ''}`}>
           <div className="adm-sidebar-logo">
             <span className="adm-logo-mark"><DashboardIcon style={{ fontSize: 20 }} /></span>
@@ -467,7 +508,9 @@ const error = useSelector(
 
         {sidebarOpen && <div className="adm-overlay" onClick={() => setSidebarOpen(false)} />}
 
+        {/* ── Main ────────────────────────────────────────── */}
         <div className="adm-main">
+          {/* Page header */}
           <div className="adm-page-hd">
             <div className="adm-page-hd-left">
               <button className="adm-menu-btn" onClick={() => setSidebarOpen(prev => !prev)} aria-label="Toggle menu">
@@ -495,7 +538,7 @@ const error = useSelector(
           <div className="adm-content">
             {error && <div className="adm-error-banner"><Warning style={{ fontSize: 18 }} /><span>{error}</span></div>}
 
-            {/* KPIs */}
+            {/* ── KPIs ──────────────────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -527,7 +570,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Orders & Inventory */}
+            {/* ── Orders & Inventory ────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -562,7 +605,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Revenue Analytics */}
+            {/* ── Revenue Analytics ─────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -613,7 +656,120 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Customer Analytics */}
+            {/* ── Discount ROI Summary ───────────────────────── */}
+            <div className="adm-section">
+              <div className="adm-section-hd">
+                <h2 className="adm-section-title">
+                  <span className="adm-section-icon-wrap" style={{ background: '#e563f115', color: '#e563f1' }}><Insights style={{ fontSize: 16 }} /></span>
+                  Discount Performance
+                </h2>
+                <Link to="/admin/discount-analytics" className="adm-section-link">
+                  Full ROI Analytics <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
+              </div>
+              <div className="adm-charts-row">
+                {/* Summary KPIs */}
+                <SectionCard title="Discount ROI Overview" subtitle="Store-wide discount effectiveness" icon={LocalOffer} iconColor="#e563f1" link="/admin/discount-analytics" linkLabel="View Analytics">
+                  {discountOverviewLoading || (!discountSummary && firstLoad) ? (
+                    <LoadingState label="Loading discount data..." />
+                  ) : !discountSummary ? (
+                    <div className="adm-empty">
+                      <Insights style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No discount analytics yet</span>
+                    </div>
+                  ) : (
+                    <div className="adm-metric-list">
+                      <MetricRow
+                        label="Total Discount Cost"
+                        value={fmt.compact(discountSummary.totalDiscountCost)}
+                        accent="#EF4444"
+                      />
+                      <MetricRow
+                        label="Revenue Influenced"
+                        value={fmt.compact(discountSummary.totalRevenueInfluenced)}
+                        accent="#10B981"
+                      />
+                      <MetricRow
+                        label="Overall ROI"
+                        value={
+                          <span style={{ color: roiColor(discountSummary.overallROI), fontWeight: 700 }}>
+                            {fmt.roi(discountSummary.overallROI)}
+                          </span>
+                        }
+                      />
+                      <MetricRow
+                        label="Total Redemptions"
+                        value={fmt.number(discountSummary.totalRedemptions)}
+                        accent="#8B5CF6"
+                      />
+                      <MetricRow
+                        label="Active Codes"
+                        value={fmt.number(discountSummary.totalCodesWithRedemptions)}
+                        sub={`of ${fmt.number(discountSummary.totalCodes)} total`}
+                      />
+                      <MetricRow
+                        label="Redemption Rate"
+                        value={fmt.pct(discountSummary.redemptionRate)}
+                        accent="#F59E0B"
+                      />
+                    </div>
+                  )}
+                </SectionCard>
+
+                {/* Top code by ROI + category breakdown */}
+                <SectionCard title="Top Code &amp; Category Breakdown" subtitle="Best performing discount and ROI by category" icon={BarChart} iconColor="#8B5CF6" link="/admin/discount-analytics" linkLabel="Leaderboard">
+                  {discountOverviewLoading || (!discountOverview && firstLoad) ? (
+                    <LoadingState label="Loading discount data..." />
+                  ) : !discountOverview ? (
+                    <div className="adm-empty">
+                      <BarChart style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No data available</span>
+                    </div>
+                  ) : (
+                    <>
+                      {/* Top code by ROI */}
+                      {discountTopCode && (
+                        <div className="adm-discount-top-code">
+                          <div className="adm-discount-top-label">Top ROI Code</div>
+                          <div className="adm-discount-top-row">
+                            <span className="adm-discount-code-pill">{discountTopCode.discountCode}</span>
+                            <span className="adm-discount-roi-badge" style={{ color: roiColor(discountTopCode['financials.roi'] ?? discountTopCode.financials?.roi) }}>
+                              {fmt.roi(discountTopCode['financials.roi'] ?? discountTopCode.financials?.roi)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      {/* Category breakdown bars */}
+                      <div className="adm-metric-list" style={{ marginTop: discountTopCode ? 12 : 0 }}>
+                        {(discountOverview.byCategory || []).slice(0, 5).map((cat, i) => {
+                          const maxRev = Math.max(...(discountOverview.byCategory || []).map(c => c.totalRevenueInfluenced || 0)) || 1;
+                          const pct    = maxRev > 0 ? (cat.totalRevenueInfluenced / maxRev) * 100 : 0;
+                          const color  = ['#6366F1','#10B981','#F59E0B','#EF4444','#14B8A6'][i % 5];
+                          return (
+                            <div key={cat._id || i} className="adm-discount-cat-row">
+                              <span className="adm-discount-cat-name">{cat._id || 'Unknown'}</span>
+                              <div className="adm-discount-cat-bar-wrap">
+                                <div className="adm-discount-cat-bar" style={{ width: `${pct}%`, background: color }} />
+                              </div>
+                              <span className="adm-discount-cat-val" style={{ color: roiColor(cat.avgROI) }}>
+                                {fmt.roi(cat.avgROI)}
+                              </span>
+                            </div>
+                          );
+                        })}
+                        {(!discountOverview.byCategory || discountOverview.byCategory.length === 0) && (
+                          <div className="adm-empty" style={{ padding: '16px 0' }}>
+                            <span>No category data yet</span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </SectionCard>
+              </div>
+            </div>
+
+            {/* ── Customer Analytics ────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -666,7 +822,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Marketing Attribution */}
+            {/* ── Marketing Attribution ─────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -684,8 +840,8 @@ const error = useSelector(
                       {channelData.slice(0, 6).map((ch, i) => (
                         <div key={i} className="adm-channel-row">
                           <span className="adm-channel-dot" style={{ background: ['#F59E0B','#6366F1','#10B981','#EF4444','#06B6D4','#8B5CF6'][i % 6] }} />
-                          <span className="adm-channel-name">{ch.channel || ch.name}</span>
-                          <span className="adm-channel-sessions">{fmt.number(ch.sessions)} sessions</span>
+                          <span className="adm-channel-name">{ch.channel || ch.name || ch.source}</span>
+                          <span className="adm-channel-sessions">{fmt.number(ch.sessions || ch.orders)} {ch.sessions ? 'sessions' : 'orders'}</span>
                           <span className="adm-channel-revenue" style={{ color: '#10B981' }}>{fmt.compact(ch.revenue)}</span>
                         </div>
                       ))}
@@ -710,7 +866,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Checkout Analytics */}
+            {/* ── Checkout Analytics ────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -772,7 +928,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Product Performance */}
+            {/* ── Product Performance ───────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -821,7 +977,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Operational Metrics */}
+            {/* ── Operational Metrics ───────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -871,7 +1027,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Returns Analytics */}
+            {/* ── Returns Analytics ─────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -913,7 +1069,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Refunds Analytics */}
+            {/* ── Refunds Analytics ─────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -957,7 +1113,7 @@ const error = useSelector(
               </div>
             </div>
 
-            {/* Alerts & Quick Stats */}
+            {/* ── Alerts & Quick Stats ──────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
