@@ -35,8 +35,8 @@ import {
  
 import {
   fetchCategoryPerformance,
-  fetchChannelPerformance,
 } from '../features/analytics/operationsSlice';
+import {fetchChannelPerformance} from '../features/analytics/attributionSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/AnalyticsOverview.css';
 

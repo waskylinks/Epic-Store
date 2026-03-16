@@ -36,8 +36,8 @@ import {
   fetchRefundOverview,
   fetchRefundsByPaymentMethod,
   fetchRefundTimeline,
-  setActiveTimeframe,
-} from '../features/analytics/analyticsSlice';
+} from '../features/analytics/operationsSlice';
+import { setActiveTimeframe } from '../features/analytics/dashboardSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
 import '../AdminStyles/RefundAnalytics.css';
@@ -283,7 +283,7 @@ export default function RefundAnalytics() {
     refundsByPaymentMethod,
     refundTimeline,
     error,
-  } = useSelector((s) => s.analytics);
+  } = useSelector((s) => s.operations);
 
   // breakdown.byReason is dropped by the slice before writing to Redux state.
   // Capture it directly from the thunk unwrap result and store locally.
