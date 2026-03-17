@@ -71,8 +71,14 @@ const fmt = {
     if (v === null || v === undefined) return '—';
     return `${v >= 0 ? '+' : ''}${Number(v).toFixed(0)}%`;
   },
-  date: (d) =>
-    d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
+  // FIX: removed instanceof Date check — MongoDB returns ISO strings over the
+  // wire, never Date objects. new Date(d) handles both strings and Date objects.
+  date: (d) => {
+    if (!d) return '—';
+    return new Date(d).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  },
 };
 
 function roiColor(roi) {
@@ -140,11 +146,11 @@ function TrendChip({ value }) {
 
 const TT = {
   contentStyle: {
-    background: '#fff',
-    border: '1px solid #D1D5DB',
+    background:   '#fff',
+    border:       '1px solid #D1D5DB',
     borderRadius: 8,
-    fontSize: 13,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+    fontSize:     13,
+    boxShadow:    '0 4px 12px rgba(0,0,0,0.08)',
   },
 };
 
@@ -205,7 +211,6 @@ function LastUpdated({ timestamp }) {
   );
 }
 
-// FIX: removed unused `icon` prop from destructuring
 function TimeframeSheet({ timeframe, onChange, disabled, options }) {
   const [open, setOpen] = useState(false);
   const labels = { week: 'This Week', month: 'This Month', quarter: 'This Quarter', year: 'This Year' };
@@ -253,6 +258,9 @@ const VIEWS = [
 
 const TREND_TIMEFRAMES = ['week', 'month', 'quarter', 'year'];
 
+// FIX: DetailDrawer receives the Discount's _id (discountId field on the
+// analytics doc), not the analytics doc's own _id. All three sub-endpoints
+// use findOne({ discountId }) so they need the original Discount _id.
 function DetailDrawer({ discountId, onClose }) {
   const dispatch = useDispatch();
   const { selectedDetail, selectedSegmentBreakdown, selectedCodeTrend, detailLoading } =
@@ -341,16 +349,18 @@ function DetailDrawer({ discountId, onClose }) {
                         <stop offset="95%" stopColor="#e563f1" stopOpacity={0} />
                       </linearGradient>
                     </defs>
-                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#9CA3AF' }} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9, fill: '#9CA3AF' }}
+                      tickFormatter={(d) => fmt.date(d)} />
                     <YAxis tick={{ fontSize: 9, fill: '#9CA3AF' }} />
-                    <Tooltip {...TT} formatter={(v) => [fmt.number(v), 'Redemptions']} />
+                    <Tooltip {...TT}
+                      labelFormatter={(d) => fmt.date(d)}
+                      formatter={(v) => [fmt.number(v), 'Redemptions']} />
                     <Area type="monotone" dataKey="redemptions" stroke="#e563f1" strokeWidth={2} fill="url(#drawerGrad)" dot={false} />
                   </AreaChart>
                 </ResponsiveContainer>
               </>
             )}
 
-            {/* FIX: was s.count — field is s.redemptions per segmentBreakdownSchema */}
             {seg?.segmentBreakdown?.length > 0 && (
               <>
                 <p className="da-drawer-section-label">Customer Segments</p>
@@ -473,9 +483,6 @@ export default function AdminDiscountAnalytics() {
     debouncedLoadTrend(newTf, true);
   }, [redemptionTrendsLoading, debouncedLoadTrend, cancelTrendDebounce]);
 
-  // FIX: removed eslint-disable comment — deps are stable refs, no warning fires
-  // FIX: mount effect uses refs to loadStaticData/loadTrendData/cancelTrendDebounce
-  //      via useCallback so they are stable across renders; empty dep array is correct.
   const loadStaticDataRef      = useRef(loadStaticData);
   const loadTrendDataRef       = useRef(loadTrendData);
   const cancelTrendDebounceRef = useRef(cancelTrendDebounce);
@@ -539,16 +546,9 @@ export default function AdminDiscountAnalytics() {
     dispatch(fetchAllDiscountAnalytics(params));
   }, [dispatch, filterCat, filterType]);
 
-  const overallSummary = overview?.overall ?? null;
-
-  // FIX: wrap derived arrays in useMemo so they are stable references and
-  // don't trigger the "logical expression changes deps on every render" warning
-  const topByROI = useMemo(() => overview?.topByROI      ?? [], [overview]);
-  const underperforming = useMemo(() => overview?.underperforming ?? [], [overview]);
-
-  // FIX: byCategory was declared but never used — removed. The overview tab
-  // uses `categories` from roiByCategory (the dedicated endpoint), not from
-  // overview.byCategory. Removing byCategory fixes the no-unused-vars error.
+  const overallSummary   = overview?.overall ?? null;
+  const topByROI         = useMemo(() => overview?.topByROI        ?? [], [overview]);
+  const underperforming  = useMemo(() => overview?.underperforming ?? [], [overview]);
   const categories       = useMemo(() => roiByCategory?.categories ?? [], [roiByCategory]);
   const types            = useMemo(() => roiByType?.types           ?? [], [roiByType]);
   const leaderboardCodes = useMemo(() => topPerformers?.codes       ?? [], [topPerformers]);
@@ -612,9 +612,7 @@ export default function AdminDiscountAnalytics() {
 
           <div className="da-hd">
             <div className="da-hd-left">
-              <span className="da-hd-icon">
-                <Insights style={{ fontSize: 26 }} />
-              </span>
+              <span className="da-hd-icon"><Insights style={{ fontSize: 26 }} /></span>
               <div>
                 <div className="da-hd-eyebrow">Commerce Intelligence</div>
                 <h1 className="da-hd-title">Discount Analytics</h1>
@@ -675,6 +673,7 @@ export default function AdminDiscountAnalytics() {
             ))}
           </div>
 
+          {/* ════════════ OVERVIEW ════════════ */}
           {activeView === 'overview' && (
             <div className="da-panel">
               <div className={`da-kpi-grid ${anyLoading && overallSummary ? 'da-kpi-grid--loading' : ''}`}>
@@ -748,12 +747,13 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="Top &amp; Underperforming Codes" />
               <div className="da-grid-2">
-                {/* FIX: removed dot-notation access — reads nested fields directly */}
+                {/* FIX: pass c.discountId (the Discount's _id) not c._id (analytics doc _id) */}
                 <Card title="Top Codes by ROI" sub="Codes with highest return on discount spend" icon={TrendingUp} iconColor="#10B981">
                   {!overview && overviewLoading ? <LoadingState /> : topByROI.length === 0 ? <Empty label="No top performers yet" /> : (
                     <div className="da-code-list">
                       {topByROI.slice(0, 8).map((c, i) => (
-                        <div key={i} className="da-code-row" onClick={() => c._id && openDrawer(c._id)}>
+                        <div key={i} className="da-code-row"
+                          onClick={() => (c.discountId || c._id) && openDrawer(c.discountId || c._id)}>
                           <span className="da-code-rank">{i + 1}</span>
                           <span className="da-code-pill">{c.discountCode}</span>
                           <span className="da-code-cat">{c.meta?.category ?? '—'}</span>
@@ -776,7 +776,8 @@ export default function AdminDiscountAnalytics() {
                   ) : (
                     <div className="da-code-list">
                       {underperforming.slice(0, 8).map((c, i) => (
-                        <div key={i} className="da-code-row da-code-row--warn">
+                        <div key={i} className="da-code-row da-code-row--warn"
+                          onClick={() => (c.discountId || c._id) && openDrawer(c.discountId || c._id)}>
                           <span className="da-code-rank">{i + 1}</span>
                           <span className="da-code-pill">{c.discountCode}</span>
                           <span className="da-code-cat">{c.meta?.category ?? '—'}</span>
@@ -831,6 +832,7 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
+          {/* ════════════ TRENDS ════════════ */}
           {activeView === 'trends' && (
             <div className="da-panel">
               <div className="da-trend-controls">
@@ -905,9 +907,12 @@ export default function AdminDiscountAnalytics() {
                             </linearGradient>
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                          <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }} />
+                          <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }}
+                            tickFormatter={(d) => fmt.date(d)} />
                           <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} />
-                          <Tooltip {...TT} formatter={(v) => [fmt.number(v), 'Redemptions']} />
+                          <Tooltip {...TT}
+                            labelFormatter={(d) => fmt.date(d)}
+                            formatter={(v) => [fmt.number(v), 'Redemptions']} />
                           <Area type="monotone" dataKey="redemptions" stroke="#e563f1" strokeWidth={2} fill="url(#redeemGrad)" dot={false} />
                         </AreaChart>
                       </ResponsiveContainer>
@@ -932,10 +937,11 @@ export default function AdminDiscountAnalytics() {
                       <ResponsiveContainer width="100%" height={260}>
                         <BarChart data={trendData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
-                          <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }} />
+                          <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }}
+                            tickFormatter={(d) => fmt.date(d)} />
                           <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                          <Tooltip
-                            {...TT}
+                          <Tooltip {...TT}
+                            labelFormatter={(d) => fmt.date(d)}
                             formatter={(v, name) => [fmt.compact(v), name === 'revenueInfluenced' ? 'Revenue Influenced' : 'Discount Cost']}
                           />
                           <Bar dataKey="revenueInfluenced" fill="#10B981" opacity={0.85} radius={[3, 3, 0, 0]} />
@@ -961,9 +967,10 @@ export default function AdminDiscountAnalytics() {
                         </tr>
                       </thead>
                       <tbody>
+                        {/* FIX: fmt.date now handles ISO strings directly */}
                         {trendData.map((row, i) => (
                           <tr key={i}>
-                            <td className="da-td-mono">{row.date instanceof Date ? fmt.date(row.date) : row.date}</td>
+                            <td className="da-td-mono">{fmt.date(row.date)}</td>
                             <td>{fmt.number(row.redemptions)}</td>
                             <td className="da-td-red">{fmt.compact(row.discountCost)}</td>
                             <td className="da-td-green">{fmt.compact(row.revenueInfluenced)}</td>
@@ -982,6 +989,7 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
+          {/* ════════════ LEADERBOARD ════════════ */}
           {activeView === 'leaderboard' && (
             <div className="da-panel">
               <div className="da-leaderboard-controls">
@@ -1078,7 +1086,6 @@ export default function AdminDiscountAnalytics() {
                             </tr>
                           </thead>
                           <tbody>
-                            {/* FIX: removed all dot-notation field access — reads nested objects directly */}
                             {leaderboardCodes.map((c, i) => {
                               const roi     = c.financials?.roi;
                               const rev     = c.financials?.totalRevenueInfluenced;
@@ -1093,7 +1100,7 @@ export default function AdminDiscountAnalytics() {
                                 <tr
                                   key={i}
                                   className="da-tr-clickable"
-                                  onClick={() => c._id && openDrawer(c._id)}
+                                  onClick={() => (c.discountId || c._id) && openDrawer(c.discountId || c._id)}
                                 >
                                   <td className="da-td-rank">{i + 1}</td>
                                   <td><span className="da-code-pill-sm">{c.discountCode}</span></td>
@@ -1126,6 +1133,7 @@ export default function AdminDiscountAnalytics() {
             </div>
           )}
 
+          {/* ════════════ ALL CODES ════════════ */}
           {activeView === 'codes' && (
             <div className="da-panel">
               <div className="da-filter-bar">
@@ -1210,7 +1218,7 @@ export default function AdminDiscountAnalytics() {
                                 <tr
                                   key={a._id || i}
                                   className="da-tr-clickable"
-                                  onClick={() => a._id && openDrawer(a._id)}
+                                  onClick={() => (a.discountId || a._id) && openDrawer(a.discountId || a._id)}
                                 >
                                   <td className="da-td-rank">{i + 1}</td>
                                   <td><span className="da-code-pill-sm">{a.discountCode}</span></td>
