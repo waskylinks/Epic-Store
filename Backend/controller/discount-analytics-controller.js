@@ -24,6 +24,24 @@ const parsePositiveInt = (val, defaultVal) => {
 };
 
 // ============================================
+// SHARED LOOKUP HELPER
+// ============================================
+
+// Finds a DiscountAnalytics document by either:
+//   1. discountId field  — the Discount document's _id (primary)
+//   2. analytics _id     — the DiscountAnalytics document's own _id (fallback)
+//
+// This makes every detail endpoint resilient regardless of which ID
+// the frontend sends — both the analytics doc's own _id and the
+// originating Discount's _id resolve to the correct document.
+const findAnalyticsByEitherId = (id, projection = null) => {
+  const q = { $or: [{ discountId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id }] };
+  return projection
+    ? DiscountAnalytics.findOne(q, projection).lean()
+    : DiscountAnalytics.findOne(q).lean();
+};
+
+// ============================================
 // CACHE KEYS & TTLs
 // ============================================
 
@@ -229,7 +247,7 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
     .sort(sortFieldMap[sortBy])
     .limit(limit)
     .select(
-      "discountCode meta.category meta.type meta.audience meta.status " +
+      "discountId discountCode meta.category meta.type meta.audience meta.status " +
       "redemptions.total redemptions.uniqueUsers " +
       "financials.roi financials.totalRevenueInfluenced " +
       "financials.totalDiscountCost financials.avgOrderValue " +
@@ -372,7 +390,34 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-    const analytics = await DiscountAnalytics.findOne({ discountId }).lean();
+    console.log(`[DA:detail] looking up id=${discountId}`);
+
+    // Primary lookup: try both discountId field and analytics _id
+    let analytics = await findAnalyticsByEitherId(discountId);
+    console.log(`[DA:detail] found by id=${!!analytics} code=${analytics?.discountCode}`);
+
+    // If no analytics doc exists, check if the Discount itself exists and
+    // trigger an on-demand sync so future requests succeed.
+    if (!analytics) {
+      console.log(`[DA:detail] no analytics doc — checking if discount exists for id=${discountId}`);
+
+      // Try to find the discount by either its own _id or by code lookup via
+      // a DiscountAnalytics discountCode match (handles both ID shapes)
+      const discount = await Discount.findById(discountId).select("_id code usageLimit").lean();
+      console.log(`[DA:detail] discount found=${!!discount} code=${discount?.code} uses=${discount?.usageLimit?.currentUses}`);
+
+      if (discount && discount.usageLimit?.currentUses > 0) {
+        // Discount has been used but analytics doc is missing — sync it now
+        console.log(`[DA:detail] triggering on-demand sync for discount=${discount.code}`);
+        try {
+          await syncDiscountAnalytics(discount._id);
+          analytics = await findAnalyticsByEitherId(discountId);
+          console.log(`[DA:detail] post-sync found=${!!analytics}`);
+        } catch (err) {
+          console.error(`[DA:detail] on-demand sync failed:`, err?.message);
+        }
+      }
+    }
 
     if (!analytics) {
       return next(
@@ -383,8 +428,6 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
         )
       );
     }
-
-    console.log(`[DA:detail] discountId=${discountId} code=${analytics.discountCode} redemptions.total=${analytics.redemptions?.total}`);
 
     res.status(200).json({ success: true, analytics });
   }
@@ -402,16 +445,13 @@ export const getDiscountSegmentBreakdown = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-    const analytics = await DiscountAnalytics.findOne(
-      { discountId },
-      {
-        discountCode:       1,
-        segmentBreakdown:   1,
-        valueTierBreakdown: 1,
-        "redemptions.total": 1,
-        lastSyncedAt:       1,
-      }
-    ).lean();
+    const analytics = await findAnalyticsByEitherId(discountId, {
+      discountCode:       1,
+      segmentBreakdown:   1,
+      valueTierBreakdown: 1,
+      "redemptions.total": 1,
+      lastSyncedAt:       1,
+    });
 
     if (!analytics) {
       return next(new HandleError("No analytics found for this discount", 404));
@@ -447,10 +487,11 @@ export const getDiscountRedemptionTrend = handleAsyncError(
 
     const { currentPeriodStart } = getDateRanges(timeframe);
 
-    const analytics = await DiscountAnalytics.findOne(
-      { discountId },
-      { discountCode: 1, dailyRedemptions: 1, peakUsage: 1 }
-    ).lean();
+    const analytics = await findAnalyticsByEitherId(discountId, {
+      discountCode:     1,
+      dailyRedemptions: 1,
+      peakUsage:        1,
+    });
 
     if (!analytics) {
       return next(new HandleError("No analytics found for this discount", 404));
@@ -551,7 +592,7 @@ export const getAllDiscountAnalytics = handleAsyncError(
       .sort(sortFieldMap[sortBy])
       .limit(limit + 1)
       .select(
-        "discountCode meta redemptions.total redemptions.uniqueUsers " +
+        "discountId discountCode meta redemptions.total redemptions.uniqueUsers " +
         "financials.roi financials.totalRevenueInfluenced " +
         "financials.totalDiscountCost financials.avgOrderValue " +
         "financials.avgDiscountAmount conversion.postRedemptionRetentionRate " +
