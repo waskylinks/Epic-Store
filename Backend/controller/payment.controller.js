@@ -641,9 +641,28 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         }
         return discount.recordUsage(userId, order._id, session.discount.discountAmount);
       })
+      .then(() => {
+        // FIX: syncDiscountAfterOrderCreated is chained here instead of being
+        // fired independently alongside recordUsage.
+        //
+        // Race condition this fixes:
+        //   recordUsage writes entry.user into Discount.usageHistory.
+        //   syncDiscountAfterOrderCreated reads that same usageHistory via
+        //   Discount.findById() to build uniqueRedeemers for retention rate.
+        //   Previously both were separate fire-and-forget calls so the sync
+        //   could read usageHistory before recordUsage finished writing —
+        //   leaving entry.user null and causing uniqueRedeemers to undercount,
+        //   which kept postRedemptionRetentionRate stuck at null indefinitely.
+        syncDiscountAfterOrderCreated(order).catch(() => {});
+      })
       .catch((err) => {
         console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err);
       });
+  } else {
+    // Non-discounted order — cheaply re-compute and bulk-write only the baseline
+    // subdocument across all DiscountAnalytics docs so Store Avg AOV and AOV Lift
+    // reflect the fresh storeAvgOrderValue without requiring a manual Sync All.
+    syncBaselineAfterNonDiscountedOrder().catch(() => {});
   }
  
   try {
@@ -651,20 +670,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   } catch { /* non-fatal */ }
  
   syncCustomerAfterOrder(order._id).catch(() => {});
- 
-  // FIX: baseline (storeAvgOrderValue) is stored inside every DiscountAnalytics
-  // document and only recomputes during a sync. Previously only discounted orders
-  // triggered a sync, so placing a non-discounted order never updated the stored
-  // baseline — leaving Store Avg AOV at $0 in the drawer indefinitely.
-  if (order.discounts?.codes?.length > 0) {
-    // Discounted order — full sync per code (updates ROI, revenue, and baseline)
-    syncDiscountAfterOrderCreated(order).catch(() => {});
-  } else {
-    // Non-discounted order — cheaply re-compute and bulk-write only the baseline
-    // subdocument across all DiscountAnalytics docs so AOV Lift reflects the
-    // fresh storeAvgOrderValue without requiring a manual Sync All.
-    syncBaselineAfterNonDiscountedOrder().catch(() => {});
-  }
  
   createReceiptIfNotExists({
     orderId:        order._id,
