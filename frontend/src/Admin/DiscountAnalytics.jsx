@@ -43,6 +43,7 @@ import {
   setActiveTrendsTimeframe,
   clearSelectedDetail,
   clearDiscountAnalyticsError,
+  clearDiscountAnalyticsSuccess,
 } from '../features/analytics/discountAnalyticsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/DiscountAnalytics.css';
@@ -60,7 +61,13 @@ const fmt = {
   currency: (v) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
   number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  pct:    (v) => `${(v || 0).toFixed(1)}%`,
+  // FIX: null/undefined returns '—' instead of '0.0%'.
+  // Previously (null || 0).toFixed(1) coerced null to 0, making "no data"
+  // indistinguishable from a real 0% value (e.g. retention rate, drop-off).
+  pct: (v) => {
+    if (v === null || v === undefined) return '—';
+    return `${Number(v).toFixed(1)}%`;
+  },
   compact: (v) => {
     const n = v || 0;
     if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
@@ -71,8 +78,6 @@ const fmt = {
     if (v === null || v === undefined) return '—';
     return `${v >= 0 ? '+' : ''}${Number(v).toFixed(0)}%`;
   },
-  // FIX: removed instanceof Date check — MongoDB returns ISO strings over the
-  // wire, never Date objects. new Date(d) handles both strings and Date objects.
   date: (d) => {
     if (!d) return '—';
     return new Date(d).toLocaleDateString('en-US', {
@@ -258,9 +263,6 @@ const VIEWS = [
 
 const TREND_TIMEFRAMES = ['week', 'month', 'quarter', 'year'];
 
-// FIX: DetailDrawer receives the Discount's _id (discountId field on the
-// analytics doc), not the analytics doc's own _id. All three sub-endpoints
-// use findOne({ discountId }) so they need the original Discount _id.
 function DetailDrawer({ discountId, onClose }) {
   const dispatch = useDispatch();
   const { selectedDetail, selectedSegmentBreakdown, selectedCodeTrend, detailLoading } =
@@ -334,7 +336,9 @@ function DetailDrawer({ discountId, onClose }) {
               </div>
               <div className="da-drawer-metric">
                 <div className="da-drawer-metric-label">Retention Rate</div>
-                <div className="da-drawer-metric-val">{fmt.pct(d.conversion?.postRedemptionRetentionRate)}</div>
+                <div className="da-drawer-metric-val">
+                  {fmt.pct(d.conversion?.postRedemptionRetentionRate)}
+                </div>
               </div>
             </div>
 
@@ -420,6 +424,7 @@ export default function AdminDiscountAnalytics() {
     allAnalytics,      listLoading,      listPagination,
     syncLoading,       syncError,
     bulkSyncLoading,   bulkSyncMessage,
+    success,
     error,
   } = useSelector((s) => s.discountAnalytics);
 
@@ -433,6 +438,8 @@ export default function AdminDiscountAnalytics() {
 
   const isLoadingRef        = useRef(false);
   const autoRefreshTimerRef = useRef(null);
+  // Track previous sync success so we only react to the rising edge
+  const prevSyncSuccessRef  = useRef(false);
 
   const anyLoading = overviewLoading || topPerformersLoading || listLoading;
 
@@ -516,6 +523,22 @@ export default function AdminDiscountAnalytics() {
     dispatch(fetchDiscountTopPerformers({ limit: 20, sortBy }));
   }, [dispatch, sortBy]);
 
+  // FIX: after any sync completes (single or bulk), clear the 30-second
+  // frontend cache guard and force-reload all static data so the UI reflects
+  // the fresh analytics without waiting for the guard to expire naturally.
+  // The service also invalidates Redis on the backend so the overview endpoint
+  // returns fresh data instead of the cached (up to 5-min stale) response.
+  useEffect(() => {
+    if (success && !prevSyncSuccessRef.current) {
+      delete lastFetchedCache['__da_static__'];
+      delete lastFetchedCache[`trend_${trendsTf}`];
+      loadStaticDataRef.current(true);
+      loadTrendDataRef.current(trendsTf, true);
+      dispatch(clearDiscountAnalyticsSuccess());
+    }
+    prevSyncSuccessRef.current = !!success;
+  }, [success, trendsTf, dispatch]);
+
   const handleRefresh = useCallback(() => {
     loadStaticData(true);
     loadTrendData(trendsTf, true);
@@ -567,12 +590,12 @@ export default function AdminDiscountAnalytics() {
     return [
       {
         key: 'cost',   label: 'Total Discount Cost',
-        value: fmt.compact(overallSummary.totalDiscountCost),
+        value: fmt.currency(overallSummary.totalDiscountCost),
         icon: AttachMoney, accent: '#EF4444', bg: '#EF444415',
       },
       {
         key: 'rev',    label: 'Revenue Influenced',
-        value: fmt.compact(overallSummary.totalRevenueInfluenced),
+        value: fmt.currency(overallSummary.totalRevenueInfluenced),
         icon: TrendingUp, accent: '#10B981', bg: '#10B98115',
       },
       {
@@ -747,7 +770,6 @@ export default function AdminDiscountAnalytics() {
 
               <SectionDivider label="Top &amp; Underperforming Codes" />
               <div className="da-grid-2">
-                {/* FIX: pass c.discountId (the Discount's _id) not c._id (analytics doc _id) */}
                 <Card title="Top Codes by ROI" sub="Codes with highest return on discount spend" icon={TrendingUp} iconColor="#10B981">
                   {!overview && overviewLoading ? <LoadingState /> : topByROI.length === 0 ? <Empty label="No top performers yet" /> : (
                     <div className="da-code-list">
@@ -814,8 +836,8 @@ export default function AdminDiscountAnalytics() {
                             <td className="da-td-name">{cat.category}</td>
                             <td>{fmt.number(cat.totalCodes)}</td>
                             <td>{fmt.number(cat.totalRedemptions)}</td>
-                            <td className="da-td-red">{fmt.compact(cat.totalDiscountCost)}</td>
-                            <td className="da-td-green">{fmt.compact(cat.totalRevenueInfluenced)}</td>
+                            <td className="da-td-red">{fmt.currency(cat.totalDiscountCost)}</td>
+                            <td className="da-td-green">{fmt.currency(cat.totalRevenueInfluenced)}</td>
                             <td className="da-td-mono">{fmt.currency(cat.avgAOV)}</td>
                             <td>
                               <span className="da-roi-chip" style={{ color: roiColor(cat.roi), background: `${roiColor(cat.roi)}15` }}>
@@ -869,11 +891,11 @@ export default function AdminDiscountAnalytics() {
                   </div>
                   <div className="da-trend-kpi">
                     <div className="da-trend-kpi-label">Discount Cost</div>
-                    <div className="da-trend-kpi-val da-trend-kpi-val--red">{fmt.compact(trendSummary.totalDiscountCost)}</div>
+                    <div className="da-trend-kpi-val da-trend-kpi-val--red">{fmt.currency(trendSummary.totalDiscountCost)}</div>
                   </div>
                   <div className="da-trend-kpi">
                     <div className="da-trend-kpi-label">Revenue Influenced</div>
-                    <div className="da-trend-kpi-val da-trend-kpi-val--green">{fmt.compact(trendSummary.totalRevenueInfluenced)}</div>
+                    <div className="da-trend-kpi-val da-trend-kpi-val--green">{fmt.currency(trendSummary.totalRevenueInfluenced)}</div>
                   </div>
                   <div className="da-trend-kpi">
                     <div className="da-trend-kpi-label">Period ROI</div>
@@ -967,7 +989,6 @@ export default function AdminDiscountAnalytics() {
                         </tr>
                       </thead>
                       <tbody>
-                        {/* FIX: fmt.date now handles ISO strings directly */}
                         {trendData.map((row, i) => (
                           <tr key={i}>
                             <td className="da-td-mono">{fmt.date(row.date)}</td>
