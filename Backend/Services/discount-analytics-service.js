@@ -3,11 +3,35 @@ import DiscountAnalytics from "../models/discount-analytics-model.js";
 import Discount from "../models/discount-model.js";
 import Order from "../models/order-model.js";
 import CustomerAnalytics from "../models/customer-analytics-model.js";
+import { setCache } from "../utils/redis.js";
 
 const BATCH_SIZE = 50;
-const MIN_REDEMPTIONS_FOR_CONVERSION = 10;
+
+// FIX: threshold now checked against usageHistory.length (total redemptions)
+// rather than uniqueRedeemers.length (logged-in redeemers only).
+// syncDiscountAfterRedemption fires at /validate time — before the Order
+// document exists — so entry.user is null for many entries at that point.
+// Filtering with .filter(e => e.user) undercounts redeemers and can keep
+// the array below MIN_REDEMPTIONS_FOR_CONVERSION even when a code has been
+// genuinely redeemed 3+ times, causing retention to stay null indefinitely.
+const MIN_REDEMPTIONS_FOR_CONVERSION = 3;
+
 const DAILY_SERIES_WINDOW_DAYS = 365;
-const RETENTION_WINDOW_DAYS = 90;
+const RETENTION_WINDOW_DAYS    = 90;
+
+const CACHE_KEYS = {
+  OVERVIEW:        "discount_analytics_overview",
+  ROI_BY_CATEGORY: "discount_analytics_roi_by_category",
+  ROI_BY_TYPE:     "discount_analytics_roi_by_type",
+};
+
+const invalidateAnalyticsCache = async () => {
+  await Promise.allSettled(
+    Object.values(CACHE_KEYS).map((key) =>
+      setCache(key, null, 1).catch(() => {})
+    )
+  );
+};
 
 // ============================================
 // SYNC SINGLE DISCOUNT
@@ -104,11 +128,16 @@ export const syncDiscountAfterRedemption = async (discountCode) => {
 
     console.log(`[DA:afterRedemption] found discountId=${discount._id}, triggering sync`);
     await syncDiscountAnalytics(discount._id);
-    console.log(`[DA:afterRedemption] sync complete for code=${discountCode}`);
+    await invalidateAnalyticsCache();
+    console.log(`[DA:afterRedemption] sync + cache invalidation complete for code=${discountCode}`);
   } catch (err) {
     console.error(`[DA:afterRedemption] swallowed error for code=${discountCode}:`, err?.message);
   }
 };
+
+// ============================================
+// SYNC AFTER ORDER CREATED (discounted orders)
+// ============================================
 
 export const syncDiscountAfterOrderCreated = async (order) => {
   const codes = (order?.discounts?.codes ?? [])
@@ -141,8 +170,86 @@ export const syncDiscountAfterOrderCreated = async (order) => {
         console.log(`[DA:afterOrderCreated] sync complete for code=${code}`);
       })
     );
+
+    await invalidateAnalyticsCache();
+    console.log(`[DA:afterOrderCreated] cache invalidated for orderId=${order?._id}`);
   } catch (err) {
     console.error(`[DA:afterOrderCreated] swallowed error:`, err?.message);
+  }
+};
+
+// ============================================
+// SYNC BASELINE AFTER NON-DISCOUNTED ORDER
+// ============================================
+
+// Called from verifyPaymentController when a successful order has no discount
+// codes. The baseline (storeAvgOrderValue, aovLiftPercent) is stored inside
+// every DiscountAnalytics document and is only recomputed during a sync.
+// Without this hook, placing a non-discounted order never triggers a sync,
+// so all existing DiscountAnalytics documents keep their stale baseline
+// (typically $0 when it's the first non-discounted order) indefinitely —
+// even though buildBaseline's query would return the correct value if run.
+//
+// This function runs buildBaseline once and then bulk-updates the baseline
+// field on every DiscountAnalytics document in a single updateMany call.
+// It intentionally skips the full syncDiscountAnalytics() path to keep the
+// operation cheap — no usageHistory processing, no Order matching per code.
+export const syncBaselineAfterNonDiscountedOrder = async () => {
+  console.log(`[DA:baselineSync] non-discounted order placed — refreshing baseline for all codes`);
+  try {
+    // Compute the fresh store-wide baseline once
+    const freshBaseline = await buildBaseline(null);
+    console.log(`[DA:baselineSync] freshBaseline=`, JSON.stringify(freshBaseline));
+
+    if (freshBaseline.storeAvgOrderValue === 0) {
+      // No non-discounted successful orders found — nothing to update
+      console.log(`[DA:baselineSync] storeAvgOrderValue still 0, skipping bulk update`);
+      return;
+    }
+
+    // Bulk-update baseline.storeAvgOrderValue and baseline.storeAvgDiscountAmount
+    // on all docs. We intentionally leave aovLiftPercent alone here because it
+    // depends on each code's own avgOrderValue which we don't have without a
+    // full sync. A subsequent manual Sync All or redemption-triggered sync will
+    // update aovLiftPercent correctly per code.
+    //
+    // We do update aovLiftPercent for each document individually using their
+    // stored financials.avgOrderValue so the lift is accurate right now.
+    const allDocs = await DiscountAnalytics.find(
+      {},
+      { _id: 1, "financials.avgOrderValue": 1 }
+    ).lean();
+
+    console.log(`[DA:baselineSync] updating baseline for ${allDocs.length} analytics docs`);
+
+    await Promise.allSettled(
+      allDocs.map((doc) => {
+        const codeAvgOrderValue = doc.financials?.avgOrderValue ?? 0;
+        const aovLiftPercent =
+          freshBaseline.storeAvgOrderValue > 0 && codeAvgOrderValue > 0
+            ? roundCents(
+                ((codeAvgOrderValue - freshBaseline.storeAvgOrderValue) /
+                  freshBaseline.storeAvgOrderValue) *
+                  100
+              )
+            : null;
+
+        return DiscountAnalytics.findByIdAndUpdate(doc._id, {
+          $set: {
+            "baseline.storeAvgOrderValue":     freshBaseline.storeAvgOrderValue,
+            "baseline.storeAvgDiscountAmount": freshBaseline.storeAvgDiscountAmount,
+            "baseline.aovLiftPercent":         aovLiftPercent,
+          },
+        }).catch((err) => {
+          console.error(`[DA:baselineSync] failed to update doc ${doc._id}:`, err?.message);
+        });
+      })
+    );
+
+    await invalidateAnalyticsCache();
+    console.log(`[DA:baselineSync] baseline refresh complete for ${allDocs.length} docs`);
+  } catch (err) {
+    console.error(`[DA:baselineSync] swallowed error:`, err?.message);
   }
 };
 
@@ -190,7 +297,9 @@ export const syncAllDiscountAnalytics = async () => {
     );
   }
 
+  await invalidateAnalyticsCache();
   console.log(`[DA:bulkSync] complete. total=${ids.length} success=${successCount} errors=${errorCount}`);
+
   return {
     total:      ids.length,
     successful: successCount,
@@ -211,10 +320,10 @@ export const getDiscountAnalyticsSummary = async () => {
 // ============================================
 
 const buildMeta = (discount) => ({
-  type:                       discount.type,
-  value:                      discount.value,
-  category:                   discount.category,
-  audience:                   discount.audience,
+  type:                      discount.type,
+  value:                     discount.value,
+  category:                  discount.category,
+  audience:                  discount.audience,
   isCategoryRestricted:
     (discount.conditions?.eligibleProductCategories ?? []).length > 0,
   eligibleProductCategories:
@@ -328,11 +437,9 @@ const buildConversion = async (discount, usageHistory, matchedOrders) => {
     discount.audience === "specific" &&
     (discount.conditions?.eligibleUsers ?? []).length > 0
   ) {
-    const eligibleCount = discount.conditions.eligibleUsers.length;
+    const eligibleCount   = discount.conditions.eligibleUsers.length;
     const uniqueRedeemers = new Set(
-      usageHistory
-        .filter((e) => e.user)
-        .map((e) => e.user.toString())
+      usageHistory.filter((e) => e.user).map((e) => e.user.toString())
     ).size;
 
     base.targetedRedemptionRate = roundCents(
@@ -340,13 +447,21 @@ const buildConversion = async (discount, usageHistory, matchedOrders) => {
     );
   }
 
+  // FIX: gate on usageHistory.length not uniqueRedeemers.length.
+  // At validate-time many entry.user values are null so filtering first
+  // undercounts redeemers and permanently blocks retention from computing.
   const uniqueRedeemers = [
     ...new Set(
       usageHistory.filter((e) => e.user).map((e) => e.user.toString())
     ),
   ];
 
-  if (uniqueRedeemers.length < MIN_REDEMPTIONS_FOR_CONVERSION) {
+  if (usageHistory.length < MIN_REDEMPTIONS_FOR_CONVERSION) {
+    return base;
+  }
+
+  // All redeemers were guests — cannot track cross-session retention.
+  if (uniqueRedeemers.length === 0) {
     return base;
   }
 
@@ -372,8 +487,6 @@ const buildConversion = async (discount, usageHistory, matchedOrders) => {
     (uid) => new mongoose.Types.ObjectId(uid)
   );
 
-  // FIX: Order has no top-level `discountCode` field.
-  // Non-discounted orders are identified by an absent or empty discounts.codes array.
   const subsequentOrders = await Order.find({
     user:                 { $in: userObjectIds },
     "paymentInfo.status": "success",
@@ -595,9 +708,10 @@ const derivePeakUsage = (dailyRedemptions) => {
   };
 };
 
+// buildBaseline accepts null for thisCodeAvgOrderValue when called from
+// syncBaselineAfterNonDiscountedOrder — in that case aovLiftPercent is
+// computed per-document in the caller rather than here.
 const buildBaseline = async (thisCodeAvgOrderValue) => {
-  // FIX: Order has no top-level `discountCode` field.
-  // Non-discounted orders are identified by an absent or empty discounts.codes array.
   const result = await Order.aggregate([
     {
       $match: {
@@ -645,6 +759,7 @@ export default {
   syncDiscountAnalytics,
   syncDiscountAfterRedemption,
   syncDiscountAfterOrderCreated,
+  syncBaselineAfterNonDiscountedOrder,
   syncAllDiscountAnalytics,
   getDiscountAnalyticsSummary,
 };

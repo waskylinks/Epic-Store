@@ -13,7 +13,7 @@ import Order from '../models/order-model.js';
 import User from '../models/userModel.js';
 import Discount from '../models/discount-model.js';
 import { syncCustomerAfterOrder } from '../Services/customer-analytics-service.js';
-import { syncDiscountAfterOrderCreated } from '../Services/discount-analytics-service.js';
+import { syncDiscountAfterOrderCreated, syncBaselineAfterNonDiscountedOrder } from '../Services/discount-analytics-service.js';
 import Checkout from '../models/checkout-model.js';
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
@@ -451,52 +451,52 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 export const verifyPaymentController = handleAsyncError(async (req, res, next) => {
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
-
+ 
   const { gateway, reference, transactionId } = req.body;
   if (!gateway || !reference) {
     return next(new HandleError("Both 'gateway' and 'reference' are required to verify a payment", 400));
   }
-
+ 
   const session = await getPaymentSession(reference);
   if (!session) {
     return next(new HandleError(
       "Payment session not found or expired. Please start a new payment.", 404
     ));
   }
-
+ 
   if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
       "Payment session data is incomplete. Please start a new payment.", 400
     ));
   }
-
+ 
   if (session.createdAt && Date.now() - new Date(session.createdAt).getTime() > SESSION_EXPIRY_MS) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
       "Payment session has expired (30-minute limit). Please start a new payment.", 400
     ));
   }
-
+ 
   const orderReference = session.reference;
-
+ 
   if (session.userId !== userId.toString()) {
     return next(new HandleError("This payment session does not belong to your account", 403));
   }
-
+ 
   if (session.gateway !== gateway) {
     return next(new HandleError(
       `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
-
+ 
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference": orderReference },
       { "paymentInfo.stripePaymentIntentId": reference }
     ]
   });
-
+ 
   if (existingOrder) {
     await deletePaymentSession(reference).catch(() => {});
     if (reference !== orderReference) await deletePaymentSession(orderReference).catch(() => {});
@@ -507,14 +507,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       idempotent: true
     });
   }
-
+ 
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
   } catch {
     return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
   }
-
+ 
   let gatewayData;
   try {
     gatewayData = await verifyWithGateway(paymentService, gateway, reference, transactionId || null);
@@ -523,20 +523,20 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       `Payment verification failed with ${gateway}: ${err.message}`, 502
     ));
   }
-
+ 
   const {
     amount: gatewayAmount,
     currency: gatewayCurrency,
     id: providerTxId,
     raw: gatewayResponse
   } = gatewayData;
-
+ 
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
       `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
-
+ 
   const tolerance  = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
@@ -545,22 +545,22 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       `gateway charged ${gatewayAmount} ${gatewayCurrency} (diff: ${amountDiff.toFixed(2)})`, 400
     ));
   }
-
+ 
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
-
+ 
   const userOrderCount  = await Order.countDocuments({ user: userId, 'paymentInfo.status': 'success' });
   const isFirstPurchase = userOrderCount === 0;
   const purchaseNumber  = userOrderCount + 1;
-
+ 
   const fraudCheck = calculateFraudRisk(
     { totalPrice: session.totalPrice, shippingInfo: session.shippingInfo, orderItems: session.orderItems },
     user,
     { gateway, gatewayResponse }
   );
-
+ 
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
-
+ 
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -608,7 +608,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     fraudCheck,
     fulfillmentSLA,
   };
-
+ 
   let order;
   try {
     order = await Order.create(orderData);
@@ -619,17 +619,17 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       500
     ));
   }
-
+ 
   Checkout.findOne({ user: userId, status: 'pending' })
     .sort({ lastActivityAt: -1 })
     .then(checkout => checkout && checkout.markAsConverted(order._id, orderReference) && checkout.save())
     .catch(() => {});
-
+ 
   if (session.discount) {
     const discountLookup = session.discount.discountId
       ? Discount.findById(session.discount.discountId)
       : Discount.findOne({ code: session.discount.code?.toUpperCase() });
-
+ 
     discountLookup
       .then(discount => {
         if (!discount) {
@@ -645,17 +645,27 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err);
       });
   }
-
+ 
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch { /* non-fatal */ }
-
+ 
   syncCustomerAfterOrder(order._id).catch(() => {});
-
+ 
+  // FIX: baseline (storeAvgOrderValue) is stored inside every DiscountAnalytics
+  // document and only recomputes during a sync. Previously only discounted orders
+  // triggered a sync, so placing a non-discounted order never updated the stored
+  // baseline — leaving Store Avg AOV at $0 in the drawer indefinitely.
   if (order.discounts?.codes?.length > 0) {
+    // Discounted order — full sync per code (updates ROI, revenue, and baseline)
     syncDiscountAfterOrderCreated(order).catch(() => {});
+  } else {
+    // Non-discounted order — cheaply re-compute and bulk-write only the baseline
+    // subdocument across all DiscountAnalytics docs so AOV Lift reflects the
+    // fresh storeAvgOrderValue without requiring a manual Sync All.
+    syncBaselineAfterNonDiscountedOrder().catch(() => {});
   }
-
+ 
   createReceiptIfNotExists({
     orderId:        order._id,
     userId,
@@ -677,14 +687,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       }
     }),
   }).catch(() => {});
-
+ 
   Promise.all([
     deletePaymentSession(reference),
     reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
   ]).catch(() => {});
-
+ 
   invalidatePaymentCaches().catch(() => {});
-
+ 
   return res.status(200).json({
     success:    true,
     message:    "Payment verified and order created successfully",
