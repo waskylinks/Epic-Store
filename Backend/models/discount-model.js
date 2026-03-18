@@ -67,7 +67,9 @@ const discountSchema = new mongoose.Schema(
     // ============================================
     category: {
       type: String,
-      enum: ["promo", "refund", "return", "loyalty", "affiliate", "support"],
+      // blackfriday added — seasonal campaign category for Black Friday promotions.
+      // Treated like "promo" functionally but tracked separately for analytics.
+      enum: ["promo", "refund", "return", "loyalty", "affiliate", "support", "blackfriday"],
       required: true,
     },
 
@@ -392,20 +394,6 @@ discountSchema.methods.canUserUse = async function (userId) {
 
 // ============================================
 // validateCart()
-//
-// NEW — product-category restriction check.
-//
-// When conditions.eligibleProductCategories is non-empty:
-//   1. items must be a non-empty array (callers that omit items for a
-//      category-restricted code get a clear actionable error, not a
-//      silent pass or an unhandled exception).
-//   2. At least one item must belong to an eligible category. If none
-//      match the discount is not applicable to this cart.
-//
-// Each item is expected to have the shape:
-//   { category: String, price: Number, quantity: Number }
-// Missing or non-string category fields are treated as non-matching
-// (safe default — never accidentally grant a discount).
 // ============================================
 discountSchema.methods.validateCart = function (cartTotal, items = [], userId = null) {
   if (!this.isValid) {
@@ -419,10 +407,9 @@ discountSchema.methods.validateCart = function (cartTotal, items = [], userId = 
     };
   }
 
-  // NEW — product-category restriction
+  // product-category restriction
   const eligibleCats = this.conditions?.eligibleProductCategories ?? [];
   if (eligibleCats.length > 0) {
-    // items must be supplied for category-restricted codes.
     if (!Array.isArray(items) || items.length === 0) {
       return {
         valid: false,
@@ -453,12 +440,6 @@ discountSchema.methods.validateCart = function (cartTotal, items = [], userId = 
 
 // ============================================
 // recordUsage()
-//
-// Sets lockedAt and deletionEligibleAt on first use (currentUses 0 → 1).
-// These fields are immutable after being set.
-//
-// NOTE (FIX #1 context): orderId will always be null when called from the
-// /validate endpoint — the order does not exist at validation time.
 // ============================================
 discountSchema.methods.recordUsage = async function (userId, orderId, discountAmount) {
   const isFirstUse = this.usageLimit.currentUses === 0;
@@ -535,19 +516,6 @@ discountSchema.statics.bulkExpireStale = async function () {
 
 // ============================================
 // STATIC: DELETE OLD EXPIRED DISCOUNTS
-//
-// FIX #15 — the original while(true) loop re-queried from scratch on every
-// iteration. If a long-running batch run allowed new documents to age into
-// eligibility mid-run, the loop could process them immediately — potentially
-// running indefinitely on a very active cluster.
-//
-// Fix: capture an ObjectId ceiling _before_ the loop begins. All find()
-// calls inside the loop add _id: { $lt: ceiling }, bounding the working set
-// to documents that existed when the job started. Newly eligible documents
-// are processed on the next scheduled run.
-//
-// FRAUD PROTECTION GUARD (unchanged):
-//   Excludes discounts where deletionEligibleAt > now (within 30-day window).
 // ============================================
 discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSize = 1000) {
   const cutoff = new Date();
@@ -555,7 +523,6 @@ discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSiz
 
   const now = new Date();
 
-  // FIX #15 — capture the working-set ceiling BEFORE the loop.
   const runCeiling = new mongoose.Types.ObjectId();
 
   let totalDeleted = 0;

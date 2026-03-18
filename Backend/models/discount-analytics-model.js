@@ -3,33 +3,6 @@ import { PRODUCT_CATEGORIES } from "./discount-model.js";
 
 // ============================================
 // DISCOUNT ANALYTICS MODEL
-//
-// One document per discount code. Stores pre-aggregated performance
-// snapshots so the analytics API never aggregates Discount.usageHistory
-// or Order collections on the fly.
-//
-// Sync lifecycle:
-//   - Created on first redemption via syncDiscountAfterRedemption()
-//   - Updated after every subsequent redemption (fire-and-forget)
-//   - Full re-sync available via syncAllDiscountAnalytics() (admin / CRON)
-//
-// Revenue figures come from Order documents (not usageHistory.order refs)
-// because usageHistory.order is null at /validate time and only populated
-// once the order is created. The service queries:
-//   Order.find({ discountCode: discount.code, "paymentInfo.status": "success" })
-//
-// Cross-domain integration:
-//   CustomerAnalytics.discountEngagement is populated during
-//   syncCustomerAnalytics() and provides the customer-side view of discount
-//   usage (savings, dependency, favourite category). This model holds the
-//   discount-side view (ROI, redemption rate, segment breakdown).
-// ============================================
-
-// ============================================
-// SUB-SCHEMA: Daily redemption tick
-// Used to build trend sparklines in the admin UI.
-// Capped at 365 entries (one per calendar day) — older days are dropped
-// by the service during sync to keep document size bounded.
 // ============================================
 const dailyRedemptionSchema = new mongoose.Schema(
   {
@@ -204,7 +177,7 @@ const discountAnalyticsSchema = new mongoose.Schema(
       },
       category: {
         type: String,
-        enum: ["promo", "refund", "return", "loyalty", "affiliate", "support"],
+        enum: ["promo", "refund", "return", "loyalty", "affiliate", "support", "blackfriday"],
       },
       audience: {
         type: String,
