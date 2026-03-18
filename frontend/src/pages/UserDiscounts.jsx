@@ -360,7 +360,7 @@ const UserDiscounts = () => {
     return { activePersonal: active, expiredPersonal: expired };
   }, [broadcastDiscounts, personalDiscounts]);
 
-  const totalActive = activePersonal.length + (activePromos?.length ?? 0);
+  const totalActive = activePersonal.length;
 
   const checkerIsFound   = checkerResult && checkerResult !== 'not-found';
   const checkerIsExpired = checkerIsFound && getUrgency(checkerResult.validUntil) === 'expired';

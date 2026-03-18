@@ -169,7 +169,7 @@ const PolicyGate = ({ onAccept }) => (
         </div>
         <div className="rtr-policy-statement">
           <FiXCircle className="rtr-policy-statement-icon rtr-policy-icon-red" />
-          <span>Item prices and <strong>shipping costs are non-refundable</strong>.</span>
+          <span>Item prices and shipping costs are <strong>non-refundable</strong>.</span>
         </div>
         <div className="rtr-policy-statement">
           <FiCheckCircle className="rtr-policy-statement-icon rtr-policy-icon-green" />
