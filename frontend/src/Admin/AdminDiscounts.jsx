@@ -1320,6 +1320,7 @@ const AdminDiscounts = () => {
           setEditTarget(null);
           dispatch(clearAdminDiscountState());
           dispatch(getAllDiscounts({}));
+          dispatch(getDiscountStats()); 
           showToast('Discount created.');
         })
         .catch((err) => {
