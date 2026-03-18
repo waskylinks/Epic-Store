@@ -1173,6 +1173,7 @@ export default function AdminDiscountAnalytics() {
                   <option value="affiliate">Affiliate</option>
                   <option value="support">Support</option>
                   <option value="refund">Refund</option>
+                  <option value="blackfriday">🖤 Black Friday</option>
                 </select>
                 <select
                   className="da-filter-select"

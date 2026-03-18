@@ -48,7 +48,8 @@ const ACTION_META = {
   sweep_window_expired: { label: 'Window Expired', color: '#6B7280', bg: '#F3F4F6' },
 };
 
-const CATEGORY_OPTIONS = ['promo', 'refund', 'return', 'loyalty', 'affiliate', 'support'];
+// CHANGED: added 'blackfriday' to all category constant arrays
+const CATEGORY_OPTIONS = ['promo', 'refund', 'return', 'loyalty', 'affiliate', 'support', 'blackfriday'];
 const TYPE_OPTIONS     = ['percentage', 'fixed'];
 const STATUS_OPTIONS   = ['active', 'expired', 'inactive'];
 const EDIT_STATUS_OPTIONS = ['active', 'inactive'];
@@ -81,20 +82,26 @@ const getDaysUntilEligible = (date) => {
 // SMALL ATOMS
 // ─────────────────────────────────────────────
 
-// REPLACE in AdminDiscounts.jsx
+/**
+ * BUG FIX: StatusBadge now computes the effective status client-side.
+ * A discount with status="active" but a validUntil in the past has not
+ * been swept by the cleanup CRON yet — it should display as "Expired",
+ * not "Active". This brings the badge in line with what the backend
+ * actually enforces at validation time.
+ */
 const StatusBadge = ({ status, validUntil }) => {
   const effectiveStatus =
-    status === "active" && validUntil && new Date(validUntil) < new Date()
-      ? "expired"
+    status === 'active' && validUntil && new Date(validUntil) < new Date()
+      ? 'expired'
       : status;
 
   const map = {
-    active:           { label: "Active",       cls: "addisc-badge--active"   },
-    expired:          { label: "Expired",      cls: "addisc-badge--expired"  },
-    inactive:         { label: "Inactive",     cls: "addisc-badge--inactive" },
-    pending_deletion: { label: "Pending Del.", cls: "addisc-badge--pending"  },
+    active:           { label: 'Active',       cls: 'addisc-badge--active'   },
+    expired:          { label: 'Expired',      cls: 'addisc-badge--expired'  },
+    inactive:         { label: 'Inactive',     cls: 'addisc-badge--inactive' },
+    pending_deletion: { label: 'Pending Del.', cls: 'addisc-badge--pending'  },
   };
-  const m = map[effectiveStatus] ?? { label: effectiveStatus, cls: "" };
+  const m = map[effectiveStatus] ?? { label: effectiveStatus, cls: '' };
   return <span className={`addisc-badge ${m.cls}`}>{m.label}</span>;
 };
 
@@ -281,27 +288,21 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => (
                 <li>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
                   Expire codes whose validUntil date has passed
                 </li>
                 <li>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
                   Delete expired codes outside the 30-day fraud-protection window
                 </li>
                 <li>
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                   </svg>
                   Codes inside the fraud-protection window will not be deleted
                 </li>
@@ -339,25 +340,16 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => (
 // ─────────────────────────────────────────────
 
 const DetailDrawer = ({
-  discount,
-  currentDiscount,
-  detailLoading,
-  auditLogs,
-  auditLoading,
-  deleteProtectionError,
-  usageHistoryTotal,
-  usageHistoryCapped,
-  onClose,
-  onEdit,
-  onDelete,
+  discount, currentDiscount, detailLoading,
+  auditLogs, auditLoading, deleteProtectionError,
+  usageHistoryTotal, usageHistoryCapped,
+  onClose, onEdit, onDelete,
 }) => {
   const d = currentDiscount ?? discount;
-
   const daysLeft = getDaysUntilEligible(d.deletionEligibleAt);
   const isLocked = (d.usageLimit?.currentUses ?? 0) >= 1 &&
                    d.deletionEligibleAt &&
                    new Date(d.deletionEligibleAt) > new Date();
-
   const eligibleProductCategories = d.conditions?.eligibleProductCategories ?? [];
 
   return (
@@ -366,14 +358,14 @@ const DetailDrawer = ({
         <div className="addisc-drawer-header">
           <div className="addisc-drawer-header-left">
             <span className="addisc-drawer-code">{d.code}</span>
+            {/* BUG FIX: pass validUntil so the badge shows "Expired" for unswiped codes */}
             <StatusBadge status={d.status} validUntil={d.validUntil} />
             <AudienceBadge audience={d.audience} />
           </div>
           <button type="button" className="addisc-drawer-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
@@ -400,7 +392,10 @@ const DetailDrawer = ({
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Category</span>
-                <span className="addisc-drawer-value">{d.category}</span>
+                {/* CHANGED: blackfriday gets a visual tag */}
+                <span className="addisc-drawer-value">
+                  {d.category === 'blackfriday' ? '🖤 Black Friday' : d.category}
+                </span>
               </div>
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Audience</span>
@@ -443,13 +438,9 @@ const DetailDrawer = ({
                   <span className="addisc-drawer-value">{d.relatedOrder.orderNumber ?? d.relatedOrder}</span>
                 </div>
               )}
-
               <div className="addisc-drawer-field addisc-drawer-field--full">
                 <span className="addisc-drawer-label">Product categories</span>
-                <ProductCategoryChips
-                  selected={eligibleProductCategories}
-                  mode="display"
-                />
+                <ProductCategoryChips selected={eligibleProductCategories} mode="display" />
               </div>
             </div>
             {d.description && <p className="addisc-drawer-desc">{d.description}</p>}
@@ -487,9 +478,7 @@ const DetailDrawer = ({
               <div className="addisc-modal-error" role="alert">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                  <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
                 {deleteProtectionError.message}
               </div>
@@ -599,11 +588,12 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
 
   const isEditRestricted = mode === 'edit' && form.eligibleProductCategories.length > 0;
 
+  // CHANGED: Black Friday gets a highlighted label in the category dropdown
+  const categoryLabel = (c) => c === 'blackfriday' ? '🖤 Black Friday' : c;
+
   return (
     <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
       <div className="addisc-modal">
-
-        {/* ── Header ── */}
         <div className="addisc-modal-header">
           <div className="addisc-modal-header-left">
             <div className="addisc-modal-title-icon">
@@ -627,45 +617,34 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
           <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
 
-        {/* ── Scrollable form body ── */}
         <form className="addisc-modal-form" onSubmit={handleSubmit}>
-
           {error && (
             <div className="addisc-modal-error" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               {error}
             </div>
           )}
 
-          {/* ── SECTION: Audience ── */}
           <div className="addisc-form-section">
             <div className="addisc-form-section-label">Audience</div>
             <div className={`addisc-audience-display ${form.audience === 'all' ? 'addisc-audience-display--broadcast' : 'addisc-audience-display--specific'}`}>
               <div className="addisc-audience-display-icon">
                 {form.audience === 'all' ? (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
                 ) : (
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                    <circle cx="12" cy="7" r="4" />
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" />
                   </svg>
                 )}
               </div>
@@ -682,10 +661,8 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           </div>
 
-          {/* ── SECTION: Identity ── */}
           <div className="addisc-form-section">
             <div className="addisc-form-section-label">Identity</div>
-
             {mode === 'create' && (
               <div className="addisc-form-field">
                 <label className="addisc-form-label" htmlFor="addisc-code">Discount code</label>
@@ -696,9 +673,10 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
                 <span className="addisc-form-hint">Customers will enter this code at checkout.</span>
               </div>
             )}
-
             <div className="addisc-form-field">
-              <label className="addisc-form-label" htmlFor="addisc-desc">Description <span className="addisc-form-label-required">*</span></label>
+              <label className="addisc-form-label" htmlFor="addisc-desc">
+                Description <span className="addisc-form-label-required">*</span>
+              </label>
               <textarea id="addisc-desc" className="addisc-form-textarea" rows={2}
                 placeholder="e.g. Summer sale — 20% off all orders"
                 value={form.description} onChange={(e) => set('description', e.target.value)} required />
@@ -706,10 +684,8 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           </div>
 
-          {/* ── SECTION: Discount value ── */}
           <div className="addisc-form-section">
             <div className="addisc-form-section-label">Discount value</div>
-
             <div className="addisc-form-row">
               <div className="addisc-form-field">
                 <label className="addisc-form-label" htmlFor="addisc-type">Type</label>
@@ -731,22 +707,30 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
                 {mode === 'edit' && <span className="addisc-form-hint addisc-form-hint--locked">Locked after creation</span>}
               </div>
             </div>
-
             <div className="addisc-form-row">
               <div className="addisc-form-field">
                 <label className="addisc-form-label" htmlFor="addisc-category">Category</label>
                 <select id="addisc-category" className="addisc-form-select" value={form.category}
                   onChange={(e) => set('category', e.target.value)} disabled={mode === 'edit'}>
-                  {CATEGORY_OPTIONS.map((c) => <option key={c} value={c} style={{ textTransform: 'capitalize' }}>{c}</option>)}
+                  {/* CHANGED: blackfriday option rendered via categoryLabel helper */}
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c} value={c}>{categoryLabel(c)}</option>
+                  ))}
                 </select>
                 {mode === 'edit' && <span className="addisc-form-hint addisc-form-hint--locked">Locked after creation</span>}
+                {/* CHANGED: highlight when blackfriday is selected in create mode */}
+                {mode === 'create' && form.category === 'blackfriday' && (
+                  <span className="addisc-form-hint addisc-form-hint--info" style={{ display: 'block', marginTop: 6 }}>
+                    🖤 Black Friday codes are tracked separately in analytics for campaign reporting.
+                  </span>
+                )}
               </div>
               {mode === 'edit' && (
                 <div className="addisc-form-field">
                   <label className="addisc-form-label" htmlFor="addisc-status">Status</label>
                   <select id="addisc-status" className="addisc-form-select" value={form.status}
                     onChange={(e) => set('status', e.target.value)}>
-                    {EDIT_STATUS_OPTIONS.map((s) => <option key={s} value={s} style={{ textTransform: 'capitalize' }}>{s}</option>)}
+                    {EDIT_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
                   </select>
                   {form.status === 'active' && (
                     <span className="addisc-form-hint addisc-form-hint--warn">
@@ -758,7 +742,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           </div>
 
-          {/* ── SECTION: Validity window ── */}
           <div className="addisc-form-section">
             <div className="addisc-form-section-label">Validity window</div>
             <div className="addisc-form-row">
@@ -778,7 +761,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           </div>
 
-          {/* ── SECTION: Usage limits ── */}
           <div className="addisc-form-section">
             <div className="addisc-form-section-label">Usage limits</div>
             <div className="addisc-form-row">
@@ -800,7 +782,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             </div>
           </div>
 
-          {/* ── SECTION: Product restrictions ── */}
           <div className="addisc-form-section">
             <div className="addisc-form-section-label">
               Product category restriction
@@ -829,7 +810,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
             )}
           </div>
 
-          {/* ── SECTION: Internal notes ── */}
           <div className="addisc-form-section addisc-form-section--last">
             <div className="addisc-form-section-label">
               Internal notes
@@ -842,10 +822,8 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
               <span className="addisc-form-hint">Not visible to customers. Admin reference only.</span>
             </div>
           </div>
-
         </form>
 
-        {/* ── Sticky footer ── */}
         <div className="addisc-modal-footer">
           <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose}>Cancel</button>
           <button
@@ -862,7 +840,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
     </div>
   );
 };
-
 
 // ─────────────────────────────────────────────
 // COMPENSATION MODAL
@@ -883,8 +860,7 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
           <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
@@ -893,9 +869,7 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
             <div className="addisc-modal-conflict" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               <div>
                 <p>{compensationConflict.message}</p>
@@ -916,9 +890,7 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
             <div className="addisc-modal-error" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               {error}
             </div>
@@ -994,23 +966,12 @@ const CompensationModal = ({ loading, error, compensationConflict, onViewExistin
 
 const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipEligibleCount, onSubmit, onClose }) => {
   const [form, setForm] = useState({
-    userIdsRaw:                '',
-    emailsRaw:                 '',
-    description:               '',
-    type:                      'percentage',
-    value:                     '',
-    category:                  'loyalty',
-    validDays:                 30,
-    validUntil:                '',
-    usesPerUser:               1,
-    totalUses:                 '',
-    minPurchaseAmount:         0,
-    firstOrderOnly:            false,
-    code:                      '',
-    notes:                     '',
+    userIdsRaw: '', emailsRaw: '', description: '',
+    type: 'percentage', value: '', category: 'loyalty',
+    validDays: 30, validUntil: '', usesPerUser: 1, totalUses: '',
+    minPurchaseAmount: 0, firstOrderOnly: false, code: '', notes: '',
     eligibleProductCategories: [],
   });
-
   const set = (field, val) => setForm((p) => ({ ...p, [field]: val }));
 
   const handleSubmit = (e) => {
@@ -1018,29 +979,24 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
     const userIds = form.userIdsRaw.split('\n').map((s) => s.trim()).filter(Boolean);
     const emails  = form.emailsRaw.split('\n').map((s) => s.trim()).filter(Boolean);
     const payload = {
-      description:       form.description,
-      type:              form.type,
-      value:             form.value,
-      category:          form.category,
-      usesPerUser:       form.usesPerUser,
-      minPurchaseAmount: form.minPurchaseAmount,
-      firstOrderOnly:    form.firstOrderOnly,
-      notes:             form.notes || undefined,
-      code:              form.code  || undefined,
+      description: form.description, type: form.type, value: form.value,
+      category: form.category, usesPerUser: form.usesPerUser,
+      minPurchaseAmount: form.minPurchaseAmount, firstOrderOnly: form.firstOrderOnly,
+      notes: form.notes || undefined, code: form.code || undefined,
     };
     if (userIds.length) payload.userIds = userIds;
     if (emails.length)  payload.emails  = emails;
-    if (form.validUntil) {
-      payload.validUntil = form.validUntil;
-    } else {
-      payload.validDays = form.validDays;
-    }
+    if (form.validUntil) { payload.validUntil = form.validUntil; }
+    else { payload.validDays = form.validDays; }
     if (form.totalUses) payload.totalUses = form.totalUses;
     if (form.eligibleProductCategories.length > 0) {
       payload.eligibleProductCategories = form.eligibleProductCategories;
     }
     onSubmit(payload);
   };
+
+  // CHANGED: blackfriday label helper for VIP modal category dropdown
+  const categoryLabel = (c) => c === 'blackfriday' ? '🖤 Black Friday' : c;
 
   if (vipSuccess && lastCreatedVipDiscount) {
     return (
@@ -1051,8 +1007,7 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
             <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
               </svg>
             </button>
           </div>
@@ -1092,8 +1047,7 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
           <button type="button" className="addisc-modal-close" onClick={onClose} aria-label="Close">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" />
-              <line x1="6" y1="6" x2="18" y2="18" />
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
             </svg>
           </button>
         </div>
@@ -1102,41 +1056,33 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
             <div className="addisc-modal-error" role="alert">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                 stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               {error}
             </div>
           )}
-
           <div className="addisc-form-field">
             <label className="addisc-form-label" htmlFor="vip-userIds">
-              User IDs
-              <span className="addisc-form-label-hint"> — one per line</span>
+              User IDs <span className="addisc-form-label-hint"> — one per line</span>
             </label>
             <textarea id="vip-userIds" className="addisc-form-textarea" rows={3}
               placeholder={'6659e3a...abc\n6659e3b...def'}
               value={form.userIdsRaw} onChange={(e) => set('userIdsRaw', e.target.value)} />
           </div>
-
           <div className="addisc-form-field">
             <label className="addisc-form-label" htmlFor="vip-emails">
-              Emails
-              <span className="addisc-form-label-hint"> — one per line (resolved to user IDs server-side)</span>
+              Emails <span className="addisc-form-label-hint"> — one per line (resolved to user IDs server-side)</span>
             </label>
             <textarea id="vip-emails" className="addisc-form-textarea" rows={3}
               placeholder={'user@example.com\nanother@example.com'}
               value={form.emailsRaw} onChange={(e) => set('emailsRaw', e.target.value)} />
           </div>
-
           <div className="addisc-form-field">
             <label className="addisc-form-label" htmlFor="vip-desc">Description</label>
             <textarea id="vip-desc" className="addisc-form-textarea" rows={2}
               placeholder="What is this VIP discount for?"
               value={form.description} onChange={(e) => set('description', e.target.value)} required />
           </div>
-
           <div className="addisc-form-row">
             <div className="addisc-form-field">
               <label className="addisc-form-label" htmlFor="vip-type">Type</label>
@@ -1152,13 +1098,13 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
                 value={form.value} onChange={(e) => set('value', e.target.value)} required />
             </div>
           </div>
-
           <div className="addisc-form-row">
             <div className="addisc-form-field">
               <label className="addisc-form-label" htmlFor="vip-category">Category</label>
               <select id="vip-category" className="addisc-form-select" value={form.category}
                 onChange={(e) => set('category', e.target.value)}>
-                {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                {/* CHANGED: blackfriday available in VIP modal too */}
+                {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
               </select>
             </div>
             <div className="addisc-form-field">
@@ -1167,12 +1113,10 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
                 value={form.usesPerUser} onChange={(e) => set('usesPerUser', e.target.value)} />
             </div>
           </div>
-
           <div className="addisc-form-row">
             <div className="addisc-form-field">
               <label className="addisc-form-label" htmlFor="vip-validDays">
-                Valid for (days)
-                <span className="addisc-form-label-hint"> — ignored if validUntil set</span>
+                Valid for (days) <span className="addisc-form-label-hint"> — ignored if validUntil set</span>
               </label>
               <input id="vip-validDays" className="addisc-form-input" type="number" min="1" max="365"
                 value={form.validDays} onChange={(e) => set('validDays', e.target.value)} />
@@ -1183,7 +1127,6 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
                 value={form.validUntil} onChange={(e) => set('validUntil', e.target.value)} />
             </div>
           </div>
-
           <div className="addisc-form-row">
             <div className="addisc-form-field">
               <label className="addisc-form-label" htmlFor="vip-totalUses">Total uses cap</label>
@@ -1197,17 +1140,14 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
                 value={form.minPurchaseAmount} onChange={(e) => set('minPurchaseAmount', e.target.value)} />
             </div>
           </div>
-
           <div className="addisc-form-field">
             <label className="addisc-form-label" htmlFor="vip-code">
-              Custom code
-              <span className="addisc-form-label-hint"> — auto-generated if blank</span>
+              Custom code <span className="addisc-form-label-hint"> — auto-generated if blank</span>
             </label>
             <input id="vip-code" className="addisc-form-input" type="text"
               placeholder="e.g. LOYALTY-VIP-GOLD"
               value={form.code} onChange={(e) => set('code', e.target.value.toUpperCase())} />
           </div>
-
           <div className="addisc-form-field">
             <label className="addisc-form-label addisc-form-label--checkbox">
               <input type="checkbox" checked={form.firstOrderOnly}
@@ -1215,7 +1155,6 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
               First order only
             </label>
           </div>
-
           <div className="addisc-form-field">
             <label className="addisc-form-label">
               Product category restriction
@@ -1233,7 +1172,6 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
               </p>
             )}
           </div>
-
           <div className="addisc-modal-footer">
             <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose}>Cancel</button>
             <button type="submit" className="addisc-btn addisc-btn--primary" disabled={loading}>
@@ -1271,8 +1209,7 @@ const PurgeBanner = ({ purge, onDismiss }) => {
       <button type="button" className="addisc-purge-banner-dismiss" onClick={onDismiss} aria-label="Dismiss">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <line x1="18" y1="6" x2="6" y2="18" />
-          <line x1="6" y1="6" x2="18" y2="18" />
+          <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
     </div>
@@ -1287,32 +1224,13 @@ const AdminDiscounts = () => {
   const dispatch = useDispatch();
 
   const {
-    discounts,
-    pagination,
-    currentDiscount,
-    stats,
-    auditLogs,
-    auditPagination,
-    discountAuditLogs,
-    discountAuditLoading,
-    purgeLog,
-    latestPurge,
-    showBanner,
-    discountsLoading,
-    detailLoading,
-    actionLoading,
-    auditLoading,
-    error,
-    deleteProtectionError,
-    compensationConflict,
-    cleanupResult,
-    usageHistoryTotal,
-    usageHistoryCapped,
-    vipLoading,
-    vipError,
-    vipSuccess,
-    lastCreatedVipDiscount,
-    lastVipEligibleCount,
+    discounts, pagination, currentDiscount, stats,
+    auditLogs, auditPagination, discountAuditLogs, discountAuditLoading,
+    purgeLog, latestPurge, showBanner,
+    discountsLoading, detailLoading, actionLoading, auditLoading,
+    error, deleteProtectionError, compensationConflict, cleanupResult,
+    usageHistoryTotal, usageHistoryCapped,
+    vipLoading, vipError, vipSuccess, lastCreatedVipDiscount, lastVipEligibleCount,
   } = useSelector((state) => state.adminDiscount);
 
   const [activeTab,        setActiveTab]        = useState('codes');
@@ -1399,6 +1317,7 @@ const AdminDiscounts = () => {
       dispatch(createDiscount(formData)).unwrap()
         .then(() => {
           setModalMode(null);
+          setEditTarget(null);
           dispatch(clearAdminDiscountState());
           dispatch(getAllDiscounts({}));
           showToast('Discount created.');
@@ -1440,9 +1359,7 @@ const AdminDiscounts = () => {
       openDrawer(existing);
     } else {
       dispatch(getSingleDiscount(discountId)).unwrap()
-        .then((data) => {
-          if (data.discount) setDrawerDiscount(data.discount);
-        })
+        .then((data) => { if (data.discount) setDrawerDiscount(data.discount); })
         .catch(() => {});
     }
   }, [dispatch, discounts, openDrawer]);
@@ -1501,29 +1418,27 @@ const AdminDiscounts = () => {
   }, [dispatch, auditPagination, auditFilters]);
 
   const broadcastCount = useMemo(
-    () => discounts.filter((d) => d.audience === 'all' && d.status === 'active').length,
+    () => discounts.filter((d) => d.audience === 'all' && d.status === 'active' && new Date(d.validUntil) >= new Date()).length,
     [discounts],
   );
+
+  // CHANGED: helper to make category labels human-friendly in table/filter
+  const categoryLabel = (c) => c === 'blackfriday' ? '🖤 Black Friday' : c;
 
   return (
     <>
       <Navbar />
 
       <div className="addisc-page">
-
         {toast && (
           <div className={`addisc-toast addisc-toast--${toast.type}`} role="alert">
             {toast.type === 'success' ? (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             ) : (
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+                <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
             )}
             {toast.msg}
@@ -1531,12 +1446,10 @@ const AdminDiscounts = () => {
         )}
 
         <div className="addisc-body">
-
           <Link to="/admin/dashboard" className="addisc-back-btn">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="19" y1="12" x2="5" y2="12" />
-              <polyline points="12 19 5 12 12 5" />
+              <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
             </svg>
             Dashboard
           </Link>
@@ -1550,13 +1463,11 @@ const AdminDiscounts = () => {
             </div>
             <div className="addisc-page-header-actions">
               <button type="button" className="addisc-btn addisc-btn--outline"
-                onClick={() => setShowCleanupModal(true)}
-                disabled={cleanupRunning}>
+                onClick={() => setShowCleanupModal(true)} disabled={cleanupRunning}>
                 {cleanupRunning ? <Spinner size={14} /> : (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <polyline points="1 4 1 10 7 10" />
-                    <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
+                    <polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 .49-3.27" />
                   </svg>
                 )}
                 Run cleanup
@@ -1565,9 +1476,7 @@ const AdminDiscounts = () => {
                 onClick={() => setShowCompModal(true)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <path d="M20 12V22H4V12" />
-                  <path d="M22 7H2v5h20V7z" />
-                  <path d="M12 22V7" />
+                  <path d="M20 12V22H4V12" /><path d="M22 7H2v5h20V7z" /><path d="M12 22V7" />
                   <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z" />
                   <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z" />
                 </svg>
@@ -1581,12 +1490,31 @@ const AdminDiscounts = () => {
                 </svg>
                 VIP discount
               </button>
+
+              {/* CHANGED: Black Friday quick-create button — pre-fills the modal */}
+              <button
+                type="button"
+                className="addisc-btn addisc-btn--blackfriday"
+                onClick={() => {
+                  const year = new Date().getFullYear();
+                  setEditTarget({
+                    category:    'blackfriday',
+                    audience:    'all',
+                    code:        `BLACKFRIDAY${year}`,
+                    description: `Black Friday ${year} — store-wide sale`,
+                    notes:       `Black Friday ${year} campaign`,
+                  });
+                  setModalMode('create');
+                }}
+              >
+                🖤 Black Friday
+              </button>
+
               <button type="button" className="addisc-btn addisc-btn--primary"
-                onClick={() => setModalMode('create')}>
+                onClick={() => { setEditTarget({}); setModalMode('create'); }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                   stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-                  <line x1="12" y1="5" x2="12" y2="19" />
-                  <line x1="5" y1="12" x2="19" y2="12" />
+                  <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
                 New discount
               </button>
@@ -1598,15 +1526,18 @@ const AdminDiscounts = () => {
             <span className="addisc-section-divider-line" />
           </div>
 
+          {/* CHANGED: KPI grid now includes Black Friday card */}
           <div className="addisc-kpi-grid">
             {[
-              { label: 'Total codes',      value: stats?.total     ?? 0, color: '#6366F1' },
-              { label: 'Active',           value: stats?.active    ?? 0, color: '#ff3c3c' },
-              { label: 'Expired',          value: stats?.expired   ?? 0, color: '#F59E0B' },
-              { label: 'Inactive',         value: stats?.inactive  ?? 0, color: '#9CA3AF' },
-              { label: 'Total uses',       value: stats?.totalUses ?? 0, color: '#10B981' },
-              { label: 'Broadcast active', value: broadcastCount,         color: '#0369A1' },
-              { label: 'VIP', value: stats?.vip ?? 0, color: '#ed3ad5' },
+              { label: 'Total codes',      value: stats?.total        ?? 0, color: '#6366F1' },
+              { label: 'Active',           value: stats?.active       ?? 0, color: '#ff3c3c' },
+              { label: 'Expired',          value: stats?.expired      ?? 0, color: '#F59E0B' },
+              { label: 'Inactive',         value: stats?.inactive     ?? 0, color: '#9CA3AF' },
+              { label: 'Total uses',       value: stats?.totalUses    ?? 0, color: '#10B981' },
+              { label: 'Broadcast active', value: broadcastCount,            color: '#0369A1' },
+              { label: 'VIP',              value: stats?.vip          ?? 0, color: '#ed3ad5' },
+              // CHANGED: Black Friday KPI card
+              { label: '🖤 Black Friday',  value: stats?.blackfriday  ?? 0, color: '#1a1a1a' },
             ].map((kpi) => (
               <div key={kpi.label} className="addisc-kpi" style={{ '--addisc-kpi-color': kpi.color }}>
                 <span className="addisc-kpi-label">{kpi.label}</span>
@@ -1620,7 +1551,6 @@ const AdminDiscounts = () => {
             <span className="addisc-section-divider-line" />
           </div>
 
-          {/* ── Tabs: Analytics removed — KPI cards cover it ── */}
           <div className="addisc-tabs">
             {[
               { key: 'codes', label: 'All Codes',  count: discounts.length },
@@ -1653,7 +1583,10 @@ const AdminDiscounts = () => {
                 <select className="addisc-filter-select" value={codesFilters.category}
                   onChange={(e) => setCodesFilters((p) => ({ ...p, category: e.target.value }))}>
                   <option value="">All categories</option>
-                  {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {/* CHANGED: blackfriday option in filter */}
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c} value={c}>{categoryLabel(c)}</option>
+                  ))}
                 </select>
                 <select className="addisc-filter-select" value={codesFilters.type}
                   onChange={(e) => setCodesFilters((p) => ({ ...p, type: e.target.value }))}>
@@ -1719,14 +1652,13 @@ const AdminDiscounts = () => {
                                     <span className="addisc-type-label">{d.type}</span>
                                   </div>
                                 </td>
-                                <td>{d.category}</td>
+                                {/* CHANGED: render blackfriday with emoji in table */}
+                                <td>{categoryLabel(d.category)}</td>
                                 <td><AudienceBadge audience={d.audience} /></td>
                                 <td>
                                   {prodCats.length > 0 ? (
                                     <span className="addisc-prodcat-table-cell" title={prodCats.join(', ')}>
-                                      {prodCats.length === 1
-                                        ? prodCats[0]
-                                        : `${prodCats[0]} +${prodCats.length - 1}`}
+                                      {prodCats.length === 1 ? prodCats[0] : `${prodCats[0]} +${prodCats.length - 1}`}
                                     </span>
                                   ) : (
                                     <span className="addisc-prodcat-table-all">All</span>
@@ -1737,6 +1669,7 @@ const AdminDiscounts = () => {
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
                                 </td>
                                 <td>{fmtDate(d.validUntil)}</td>
+                                {/* BUG FIX: pass validUntil to StatusBadge in table row */}
                                 <td><StatusBadge status={d.status} validUntil={d.validUntil} /></td>
                                 <td onClick={(e) => e.stopPropagation()}>
                                   <div className="addisc-row-actions">
@@ -1788,10 +1721,7 @@ const AdminDiscounts = () => {
           {activeTab === 'audit' && (
             <div className="addisc-tab-panel">
               {showBanner && (
-                <PurgeBanner
-                  purge={latestPurge}
-                  onDismiss={() => dispatch(dismissPurgeBanner())}
-                />
+                <PurgeBanner purge={latestPurge} onDismiss={() => dispatch(dismissPurgeBanner())} />
               )}
 
               <div className="addisc-filter-bar">
@@ -1857,11 +1787,8 @@ const AdminDiscounts = () => {
                       <table className="addisc-table">
                         <thead>
                           <tr>
-                            <th>Purged at</th>
-                            <th>Records</th>
-                            <th>Date range covered</th>
-                            <th>Codes affected</th>
-                            <th>Notes</th>
+                            <th>Purged at</th><th>Records</th>
+                            <th>Date range covered</th><th>Codes affected</th><th>Notes</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1888,7 +1815,6 @@ const AdminDiscounts = () => {
               )}
             </div>
           )}
-
         </div>
       </div>
 
@@ -1950,7 +1876,7 @@ const AdminDiscounts = () => {
       {modalMode && (
         <DiscountModal
           mode={modalMode}
-          initial={modalMode === 'edit' ? editTarget : {}}
+          initial={editTarget ?? {}}
           loading={actionLoading}
           error={error}
           onSubmit={handleModalSubmit}
