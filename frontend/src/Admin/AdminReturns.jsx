@@ -621,9 +621,10 @@ const AdminReturns = () => {
   }, [dispatch, triggerFetch]);
 
   // ── KPI cards ─────────────────────────────────────────────────────────────
+  // ── KPI cards ─────────────────────────────────────────────────────────────
   const renderKPICards = () => {
     if (!stats) {
-      return Array.from({ length: 8 }).map((_, i) => (
+      return Array.from({ length: 9 }).map((_, i) => (
         <div key={i} className="rt-kpi" style={{ '--kpi-color': '#E5E7EB' }}>
           <div className="rt-kpi-top"><div className="rt-skel" style={{ width: 40, height: 40, borderRadius: 10 }} /></div>
           <div className="rt-skel" style={{ width: '55%', height: 11, marginBottom: 8 }} />
@@ -636,6 +637,7 @@ const AdminReturns = () => {
       { label: 'Pending Review',    value: stats.requested         ?? 0, icon: Schedule,      color: '#F59E0B', isCount: true  },
       { label: 'Items Reviewed',    value: stats.items_reviewed    ?? 0, icon: RateReview,    color: '#3B82F6', isCount: true  },
       { label: 'Plea Submitted',    value: stats.plea_submitted    ?? 0, icon: Gavel,         color: '#8B5CF6', isCount: true  },
+      { label: 'In Transit',        value: stats.in_transit        ?? 0, icon: LocalShipping, color: '#06B6D4', isCount: true  },
       { label: 'Awaiting Discount', value: stats.awaiting_discount ?? 0, icon: PendingActions,color: '#F97316', isCount: true  },
       { label: 'Completed',         value: stats.completed         ?? 0, icon: CheckCircle,   color: '#10B981', isCount: true  },
       { label: 'Rejected',          value: stats.rejected          ?? 0, icon: Cancel,        color: '#EF4444', isCount: true  },
