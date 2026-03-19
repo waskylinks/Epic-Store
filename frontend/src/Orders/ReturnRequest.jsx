@@ -8,7 +8,7 @@ import {
   FiPackage, FiAlertCircle, FiClock, FiSend, FiPaperclip,
   FiX, FiFile, FiVideo, FiMessageSquare, FiRotateCcw, FiInfo,
   FiArrowLeft, FiBox, FiCheckCircle, FiXCircle, FiTag, FiLoader,
-  FiThumbsUp, FiThumbsDown, FiTruck,
+  FiThumbsUp, FiThumbsDown, FiTruck, FiMapPin,
 } from 'react-icons/fi';
 
 import PageTitle           from '../components/PageTitle';
@@ -27,6 +27,7 @@ import {
   cancelReturn,
   submitPlea,
   acceptDecisions,
+  confirmShipped,
   clearReturnState,
   clearReturnMessages,
   clearPendingAttachments,
@@ -34,6 +35,10 @@ import {
 } from '../features/returns/returnSlice';
 
 import '../OrderStyles/ReturnRequest.css';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CONSTANTS
+// ─────────────────────────────────────────────────────────────────────────────
 
 const RETURN_REASONS = [
   { value: 'defective_product', label: 'Defective or Damaged Product' },
@@ -47,6 +52,28 @@ const RETURN_REASONS = [
   { value: 'no_longer_needed',  label: 'No Longer Needed'              },
   { value: 'other',             label: 'Other'                         },
 ];
+
+// Couriers relevant to the Nigerian market — "Other" always last
+const COURIERS = [
+  { value: 'DHL',         label: 'DHL'              },
+  { value: 'FedEx',       label: 'FedEx'            },
+  { value: 'UPS',         label: 'UPS'              },
+  { value: 'GIG Logistics', label: 'GIG Logistics'  },
+  { value: 'Sendbox',     label: 'Sendbox'          },
+  { value: 'Aramex',      label: 'Aramex'           },
+  { value: 'GIGL',        label: 'GIGL'             },
+  { value: 'Kwik',        label: 'Kwik'             },
+  { value: 'Other',       label: 'Other (specify)'  },
+];
+
+// Store return address — used on the approved panel
+const RETURN_ADDRESS = {
+  name:    'Epic Store Returns',
+  line1:   '12 Wuse Zone 5',
+  line2:   'Abuja, FCT 900288',
+  country: 'Nigeria',
+  phone:   '+234 906 161 4369',
+};
 
 // Full lifecycle order used for timeline and status display
 const LIFECYCLE_ORDER = [
@@ -66,9 +93,10 @@ const ALLOWED_FILE_TYPES = {
   documents: ['application/pdf'],
 };
 
-// ─────────────────────────────────────────────
-// CountdownTimer
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SUB-COMPONENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
 const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
   const [timeLeft, setTimeLeft] = useState(null);
   useEffect(() => {
@@ -101,23 +129,20 @@ const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
   );
 };
 
-// ─────────────────────────────────────────────
-// ReturnStatusBadge
-// ─────────────────────────────────────────────
 const ReturnStatusBadge = ({ status }) => {
   const configs = {
-    none:              { label: 'No Return',         className: 'rtr-return-badge-none'             },
-    requested:         { label: 'Return Requested',  className: 'rtr-return-badge-requested'        },
-    items_reviewed:    { label: 'Items Reviewed',    className: 'rtr-return-badge-items-reviewed'   },
-    plea_submitted:    { label: 'Plea Submitted',    className: 'rtr-return-badge-plea-submitted'   },
-    approved:          { label: 'Approved',          className: 'rtr-return-badge-approved'         },
-    awaiting_discount: { label: 'Awaiting Discount', className: 'rtr-return-badge-awaiting-discount'},
-    in_transit:        { label: 'In Transit',        className: 'rtr-return-badge-transit'          },
-    received:          { label: 'Received',          className: 'rtr-return-badge-received'         },
-    inspected:         { label: 'Inspecting',        className: 'rtr-return-badge-inspecting'       },
-    completed:         { label: 'Completed',         className: 'rtr-return-badge-completed'        },
-    rejected:          { label: 'Rejected',          className: 'rtr-return-badge-rejected'         },
-    cancelled:         { label: 'Cancelled',         className: 'rtr-return-badge-cancelled'        },
+    none:              { label: 'No Return',         className: 'rtr-return-badge-none'              },
+    requested:         { label: 'Return Requested',  className: 'rtr-return-badge-requested'         },
+    items_reviewed:    { label: 'Items Reviewed',    className: 'rtr-return-badge-items-reviewed'    },
+    plea_submitted:    { label: 'Plea Submitted',    className: 'rtr-return-badge-plea-submitted'    },
+    approved:          { label: 'Approved',          className: 'rtr-return-badge-approved'          },
+    awaiting_discount: { label: 'Awaiting Discount', className: 'rtr-return-badge-awaiting-discount' },
+    in_transit:        { label: 'In Transit',        className: 'rtr-return-badge-transit'           },
+    received:          { label: 'Received',          className: 'rtr-return-badge-received'          },
+    inspected:         { label: 'Inspecting',        className: 'rtr-return-badge-inspecting'        },
+    completed:         { label: 'Completed',         className: 'rtr-return-badge-completed'         },
+    rejected:          { label: 'Rejected',          className: 'rtr-return-badge-rejected'          },
+    cancelled:         { label: 'Cancelled',         className: 'rtr-return-badge-cancelled'         },
   };
   const config = configs[status] ?? configs.none;
   return (
@@ -127,9 +152,6 @@ const ReturnStatusBadge = ({ status }) => {
   );
 };
 
-// ─────────────────────────────────────────────
-// PolicyGate
-// ─────────────────────────────────────────────
 const PolicyGate = ({ onAccept }) => (
   <div className="rtr-policy-gate">
     <div className="rtr-policy-gate-card">
@@ -159,40 +181,50 @@ const PolicyGate = ({ onAccept }) => (
   </div>
 );
 
-// ─────────────────────────────────────────────
-// Main component
-// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN COMPONENT
+// ─────────────────────────────────────────────────────────────────────────────
+
 function ReturnRequest() {
   const { id: orderId } = useParams();
-  const navigate        = useNavigate();
-  const dispatch        = useDispatch();
-  const fileInputRef    = useRef(null);
+  const navigate         = useNavigate();
+  const dispatch         = useDispatch();
+  const fileInputRef     = useRef(null);
   const pleaFileInputRef = useRef(null);
-  const location        = useLocation();
-  const trackingTopRef  = useRef(null);
+  const location         = useLocation();
+  const trackingTopRef   = useRef(null);
 
   const { order, loading: orderLoading } = useSelector((s) => s.order);
   const {
     messages, loading, messagesLoading, messageSendLoading,
-    uploadLoading, pleaLoading, acceptLoading, pleaError,
-    hasMoreMessages, totalMessages, messagesPage,
+    uploadLoading, pleaLoading, acceptLoading, confirmShippedLoading,
+    pleaError, hasMoreMessages, totalMessages, messagesPage,
     pendingAttachments, errorStage, error, success,
   } = useSelector((s) => s.return);
 
-  const [policyAcknowledged,    setPolicyAcknowledged]    = useState(false);
-  const [formData,              setFormData]              = useState({ reason: '', description: '', itemsToReturn: [] });
-  const [formErrors,            setFormErrors]            = useState({});
-  const [selectedFiles,         setSelectedFiles]         = useState([]);
-  const [filePreviews,          setFilePreviews]          = useState([]);
-  const [showCancelModal,       setShowCancelModal]       = useState(false);
-  const [showMessagesModal,     setShowMessagesModal]     = useState(false);
-  const [pleaText,              setPleaText]              = useState('');
-  const [pleaFiles,             setPleaFiles]             = useState([]);
-  const [pleaFilePreviews,      setPleaFilePreviews]      = useState([]);
-  const [pleaUploading,         setPleaUploading]         = useState(false);
-  // 'choice' | 'plea' | 'accept' | 'accepted' | null
-  const [itemsReviewedChoice,   setItemsReviewedChoice]   = useState(null);
-  const [showAcceptConfirm,     setShowAcceptConfirm]     = useState(false);
+  // ── Local state ───────────────────────────────────────────────────────────
+  const [policyAcknowledged,  setPolicyAcknowledged]  = useState(false);
+  const [formData,            setFormData]            = useState({ reason: '', description: '', itemsToReturn: [] });
+  const [formErrors,          setFormErrors]          = useState({});
+  const [selectedFiles,       setSelectedFiles]       = useState([]);
+  const [filePreviews,        setFilePreviews]        = useState([]);
+  const [showCancelModal,     setShowCancelModal]     = useState(false);
+  const [showMessagesModal,   setShowMessagesModal]   = useState(false);
+
+  // Plea state
+  const [pleaText,            setPleaText]            = useState('');
+  const [pleaFiles,           setPleaFiles]           = useState([]);
+  const [pleaFilePreviews,    setPleaFilePreviews]    = useState([]);
+  const [pleaUploading,       setPleaUploading]       = useState(false);
+
+  // items_reviewed choice: null | 'plea' | 'accepted'
+  const [itemsReviewedChoice, setItemsReviewedChoice] = useState(null);
+  const [showAcceptConfirm,   setShowAcceptConfirm]   = useState(false);
+
+  // confirm-shipped state
+  const [selectedCourier,     setSelectedCourier]     = useState('');
+  const [otherCourier,        setOtherCourier]        = useState('');
+  const [trackingInput,       setTrackingInput]       = useState('');
 
   // ── Derived state ─────────────────────────────────────────────────────────
   const returnInfo    = order?.returnInfo ?? null;
@@ -208,7 +240,6 @@ function ReturnRequest() {
   const rejectedItems    = returnItems.filter((i) => i.adminDecision === 'rejected');
   const hasRejectedItems = rejectedItems.length > 0;
 
-  // Plea window open: items_reviewed, no prior plea, deadline not expired
   const pleaWindowOpen = React.useMemo(
     () =>
       status === 'items_reviewed' &&
@@ -218,7 +249,6 @@ function ReturnRequest() {
     [status, pleaAttempts, pleaDeadline]
   );
 
-  // When all items are approved at items_reviewed, no choice needed — show approved state
   const allApproved = status === 'items_reviewed' && !hasRejectedItems && approvedItems.length > 0;
 
   const fromMyRefunds = location.state?.from === 'my-refunds-returns';
@@ -227,7 +257,11 @@ function ReturnRequest() {
 
   const unreadCount = messages.filter((m) => m.senderType === 'admin' && !m.isRead).length;
 
-  // ── Fetch on mount ───────────────────────────────────────────────────────
+  // Effective courier name for display — resolves 'Other' to freetext
+  const effectiveCourier = selectedCourier === 'Other' ? otherCourier.trim() : selectedCourier;
+
+  // ── Effects ───────────────────────────────────────────────────────────────
+
   useEffect(() => {
     if (orderId) dispatch(getOrderDetails(orderId));
   }, [dispatch, orderId]);
@@ -245,28 +279,26 @@ function ReturnRequest() {
     if (isTracking) fetchMessages(1);
   }, [isTracking, fetchMessages]);
 
-  // FIX: scroll to top when tracking view first appears (after submission)
+  // Scroll to top when tracking view first appears
   useEffect(() => {
     if (isTracking && trackingTopRef.current) {
       trackingTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [isTracking]);
 
-  // When all items are approved at items_reviewed, auto-advance choice to 'accepted'
-  // so the UI shows the approved state without requiring user interaction
+  // Auto-advance to accepted when all items approved
   useEffect(() => {
     if (allApproved && !itemsReviewedChoice) {
       setItemsReviewedChoice('accepted');
     }
   }, [allApproved, itemsReviewedChoice]);
 
-  // ── Pre-populate items for new-return form ───────────────────────────────
+  // Pre-populate items for new-return form
   const itemsPopulated = useRef(false);
   useEffect(() => {
     if (order?.orderItems && !isTracking && !itemsPopulated.current) {
       itemsPopulated.current = true;
       const items = order.orderItems.map((item) => ({
-        // FIX: always use product ObjectId, never the orderItem subdoc _id
         product:        item.product?._id ?? item.product,
         name:           item.product?.name ?? item.name ?? '',
         price:          item.price   || 0,
@@ -280,7 +312,7 @@ function ReturnRequest() {
     }
   }, [order?.orderItems, isTracking]);
 
-  // ── Pre-populate form when viewing existing return ───────────────────────
+  // Pre-populate form when viewing existing return
   const returnInfoPopulated = useRef(false);
   useEffect(() => {
     if (isTracking && returnInfo && !returnInfoPopulated.current) {
@@ -293,8 +325,7 @@ function ReturnRequest() {
     }
   }, [isTracking, returnInfo]);
 
-  // ── Global error/success toasts ──────────────────────────────────────────
-  // Only fires for requestReturn (success=true only set by requestReturn.fulfilled)
+  // Global error / success toasts — only fires for requestReturn
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center' });
@@ -313,7 +344,8 @@ function ReturnRequest() {
     }
   }, [pleaError, dispatch]);
 
-  // ── Form handlers ────────────────────────────────────────────────────────
+  // ── Form handlers ─────────────────────────────────────────────────────────
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -351,7 +383,8 @@ function ReturnRequest() {
     }
   };
 
-  // ── File handling ────────────────────────────────────────────────────────
+  // ── File handling ─────────────────────────────────────────────────────────
+
   const isFileTypeAllowed = (file) => {
     const all = [...ALLOWED_FILE_TYPES.images, ...ALLOWED_FILE_TYPES.videos, ...ALLOWED_FILE_TYPES.documents];
     return all.includes(file.type);
@@ -376,15 +409,16 @@ function ReturnRequest() {
   };
 
   const handleFileSelect     = (e) => { addFiles(Array.from(e.target.files), setSelectedFiles, setFilePreviews, selectedFiles.length); e.target.value = ''; };
-  const handlePleaFileSelect = (e) => { addFiles(Array.from(e.target.files), setPleaFiles, setPleaFilePreviews, pleaFiles.length);     e.target.value = ''; };
+  const handlePleaFileSelect = (e) => { addFiles(Array.from(e.target.files), setPleaFiles, setPleaFilePreviews, pleaFiles.length); e.target.value = ''; };
   const removeFile     = (i) => { setSelectedFiles((p) => p.filter((_, j) => j !== i)); setFilePreviews((p) => p.filter((_, j) => j !== i)); };
-  const removePleaFile = (i) => { setPleaFiles((p) => p.filter((_, j) => j !== i));     setPleaFilePreviews((p) => p.filter((_, j) => j !== i)); };
+  const removePleaFile = (i) => { setPleaFiles((p) => p.filter((_, j) => j !== i)); setPleaFilePreviews((p) => p.filter((_, j) => j !== i)); };
 
-  // ── Accept decisions ─────────────────────────────────────────────────────
+  // ── Accept decisions ──────────────────────────────────────────────────────
+
   const handleAcceptDecisions = async () => {
     try {
       await dispatch(acceptDecisions(orderId)).unwrap();
-      toast.success('Decisions accepted. Your return is approved — please ship your items back.', {
+      toast.success('Decisions accepted. Please ship your approved items back to us.', {
         position: 'top-center', autoClose: 5000,
       });
       setItemsReviewedChoice('accepted');
@@ -395,19 +429,43 @@ function ReturnRequest() {
     }
   };
 
-  // ── Plea submit ──────────────────────────────────────────────────────────
-  // FIX: Upload runs in parallel/background — does NOT block text submission.
-  // Plea text is submitted immediately for faster UX.
+  // ── Confirm shipped ───────────────────────────────────────────────────────
+
+  const handleConfirmShipped = async () => {
+    if (!selectedCourier) {
+      toast.error('Please select a courier.', { position: 'top-center' });
+      return;
+    }
+    if (selectedCourier === 'Other' && !otherCourier.trim()) {
+      toast.error('Please specify your courier name.', { position: 'top-center' });
+      return;
+    }
+    try {
+      await dispatch(confirmShipped({
+        orderId,
+        courierName:    effectiveCourier || undefined,
+        trackingNumber: trackingInput.trim() || undefined,
+      })).unwrap();
+      toast.success('Shipment confirmed! We will notify you when we receive your items.', {
+        position: 'top-center', autoClose: 5000,
+      });
+      dispatch(getOrderDetails(orderId));
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to confirm shipment.', { position: 'top-center' });
+    }
+  };
+
+  // ── Plea submit ───────────────────────────────────────────────────────────
+
   const handleSubmitPlea = async () => {
     if (pleaText.trim().length < MIN_PLEA_CHARS) {
       toast.error(`Plea description must be at least ${MIN_PLEA_CHARS} characters.`, { position: 'top-center' });
       return;
     }
 
-    // FIX: Fire plea text submission immediately — don't wait for file upload
+    // Fire plea text immediately — upload runs in parallel (fire-and-forget)
     const pleaPromise = dispatch(submitPlea({ orderId, pleaDescription: pleaText.trim() })).unwrap();
 
-    // Upload evidence files in parallel (fire-and-forget, best-effort)
     if (pleaFiles.length > 0) {
       setPleaUploading(true);
       const uploadFormData = new FormData();
@@ -423,7 +481,6 @@ function ReturnRequest() {
 
     try {
       await pleaPromise;
-      // FIX: single toast here only — slice no longer sets success=true
       toast.success('Plea submitted. The admin will respond within 48 hours.', {
         position: 'top-center', autoClose: 4000,
       });
@@ -437,7 +494,8 @@ function ReturnRequest() {
     }
   };
 
-  // ── Validation ───────────────────────────────────────────────────────────
+  // ── Validation ────────────────────────────────────────────────────────────
+
   const validateForm = () => {
     const errors = {};
     if (!formData.reason) errors.reason = 'Please select a return reason';
@@ -456,7 +514,8 @@ function ReturnRequest() {
     return Object.keys(errors).length === 0;
   };
 
-  // ── Submit return form ───────────────────────────────────────────────────
+  // ── Submit return form ────────────────────────────────────────────────────
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!validateForm()) {
@@ -467,7 +526,6 @@ function ReturnRequest() {
       const selectedItems = formData.itemsToReturn
         .filter((item) => item.selected)
         .map(({ product, returnQuantity, name, price, image, reason }) => ({
-          // FIX: ensure product is always a plain ObjectId string, not a nested object
           product: product?._id?.toString() ?? product?.toString() ?? product,
           quantity: returnQuantity,
           name, price, image, reason,
@@ -489,14 +547,14 @@ function ReturnRequest() {
       }
 
       dispatch(getOrderDetails(orderId));
-      // FIX: scroll to top so tracking view is immediately visible
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       toast.error(err?.message || err || 'Failed to submit return request', { position: 'top-center', autoClose: 3000 });
     }
   };
 
-  // ── Message handlers ─────────────────────────────────────────────────────
+  // ── Message handlers ──────────────────────────────────────────────────────
+
   const handleSendMessage = useCallback(
     async (content, files, pendingUrls = []) => {
       if (messageSendLoading) return;
@@ -510,7 +568,8 @@ function ReturnRequest() {
   const handleLoadMore        = useCallback(() => { if (!messagesLoading) fetchMessages(messagesPage + 1); }, [fetchMessages, messagesPage, messagesLoading]);
   const handleCloseModal      = useCallback(() => { dispatch(clearReturnMessages()); setShowMessagesModal(false); }, [dispatch]);
 
-  // ── Cancel return ────────────────────────────────────────────────────────
+  // ── Cancel return ─────────────────────────────────────────────────────────
+
   const handleCancelReturn = async () => {
     try {
       await dispatch(cancelReturn(orderId)).unwrap();
@@ -524,7 +583,8 @@ function ReturnRequest() {
     }
   };
 
-  // ── Utilities ────────────────────────────────────────────────────────────
+  // ── Utilities ─────────────────────────────────────────────────────────────
+
   const formatCurrency = (amount, currency = 'USD') =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(amount ?? 0);
 
@@ -534,14 +594,14 @@ function ReturnRequest() {
   const reasonLabel = (value) =>
     RETURN_REASONS.find((r) => r.value === value)?.label ?? value?.replace(/_/g, ' ') ?? '—';
 
-  // Returns true if the given status has been reached in the lifecycle
   const hasReached = (targetStatus) => {
     const currentIdx = LIFECYCLE_ORDER.indexOf(status);
     const targetIdx  = LIFECYCLE_ORDER.indexOf(targetStatus);
     return currentIdx >= targetIdx && targetIdx !== -1;
   };
 
-  // ── Render guards ────────────────────────────────────────────────────────
+  // ── Render guards ─────────────────────────────────────────────────────────
+
   if (orderLoading) return (<><Navbar /><Loader type="snake" size="md" /><Footer /></>);
 
   if (!order?._id) return (
@@ -571,7 +631,8 @@ function ReturnRequest() {
     </>
   );
 
-  // ── Main render ──────────────────────────────────────────────────────────
+  // ── Main render ───────────────────────────────────────────────────────────
+
   return (
     <>
       <PageTitle title={isTracking ? `Return Status - Order ${orderId}` : `Request Return - Order ${orderId}`} />
@@ -602,7 +663,9 @@ function ReturnRequest() {
 
         <div className="rtr-return-content">
 
-          {/* ── Tracking view ── */}
+          {/* ════════════════════════════════════════════════════
+              TRACKING VIEW
+          ════════════════════════════════════════════════════ */}
           {isTracking && (
             <div className="rtr-return-status-card">
               <div className="rtr-card-header">
@@ -613,11 +676,10 @@ function ReturnRequest() {
 
               <div className="rtr-status-details">
 
-                {/* ── Timeline — correct order per spec ───────────────────────
+                {/* ── Timeline ────────────────────────────────────────────────
                     requested → items_reviewed → plea_submitted → approved →
                     in_transit → received → inspected → awaiting_discount → completed */}
                 <div className="rtr-status-timeline">
-
                   <div className="rtr-timeline-item">
                     <div className="rtr-timeline-dot rtr-active" />
                     <div className="rtr-timeline-content">
@@ -646,7 +708,6 @@ function ReturnRequest() {
                     </div>
                   )}
 
-                  {/* Approved step — shown once return moves past items_reviewed phase */}
                   {hasReached('approved') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -687,7 +748,7 @@ function ReturnRequest() {
                     </div>
                   )}
 
-                  {/* FIX: awaiting_discount is LAST before completed */}
+                  {/* awaiting_discount is LAST before completed */}
                   {hasReached('awaiting_discount') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -718,7 +779,6 @@ function ReturnRequest() {
                     <span className="rtr-info-label">Items to Return:</span>
                     <span className="rtr-info-value">{returnItems.length} item(s)</span>
                   </div>
-                  {/* FIX: discountValue only shown after items are reviewed and value > 0 */}
                   {discountValue != null && discountValue > 0 && hasReached('items_reviewed') && (
                     <div className="rtr-info-item">
                       <span className="rtr-info-label">Discount Value:</span>
@@ -747,7 +807,9 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* ══ items_reviewed — decision cards + user choice ══ */}
+                {/* ══════════════════════════════════════════════════
+                    items_reviewed — decision cards + user choice
+                ══════════════════════════════════════════════════ */}
                 {status === 'items_reviewed' && returnItems.length > 0 && (
                   <div className="rtr-item-decisions">
                     <h3>Item Decisions</h3>
@@ -797,14 +859,14 @@ function ReturnRequest() {
                       />
                     )}
 
-                    {/* All items approved — no choice needed, show proceed message */}
+                    {/* All items approved — no choice needed */}
                     {!hasRejectedItems && pleaWindowOpen && (
                       <div className="rtr-accept-section">
                         <div className="rtr-accept-header">
                           <FiCheckCircle className="rtr-accept-icon" />
                           <div>
                             <h3>All Items Approved</h3>
-                            <p>All your items have been approved. Accept the decisions to begin the return process.</p>
+                            <p>All your items have been approved. Accept to begin the return process.</p>
                           </div>
                         </div>
                         <div className="rtr-accept-actions">
@@ -814,7 +876,9 @@ function ReturnRequest() {
                             onClick={() => setShowAcceptConfirm(true)}
                             disabled={acceptLoading}
                           >
-                            {acceptLoading ? <><FiClock className="rtr-spin" /> Processing…</> : <><FiCheckCircle /> Accept & Proceed</>}
+                            {acceptLoading
+                              ? <><FiClock className="rtr-spin" /> Processing…</>
+                              : <><FiCheckCircle /> Accept & Proceed</>}
                           </button>
                         </div>
                       </div>
@@ -853,7 +917,7 @@ function ReturnRequest() {
                       </div>
                     )}
 
-                    {/* Plea window expired — show info */}
+                    {/* Plea window expired */}
                     {hasRejectedItems && !pleaWindowOpen && status === 'items_reviewed' && (
                       <div className="rtr-info-banner-neutral">
                         <FiInfo />
@@ -889,7 +953,7 @@ function ReturnRequest() {
                             )}
                           </div>
                         )}
-                        <p>This action cannot be undone. You will need to ship your approved items back.</p>
+                        <p>This action cannot be undone. You will need to ship your approved items back to us.</p>
                       </div>
                       <div className="rtr-modal-actions">
                         <button onClick={() => setShowAcceptConfirm(false)} className="rtr-btn-secondary" disabled={acceptLoading}>
@@ -968,8 +1032,7 @@ function ReturnRequest() {
                       <button type="button" className="rtr-btn-primary" onClick={handleSubmitPlea} disabled={pleaLoading || pleaText.trim().length < MIN_PLEA_CHARS}>
                         {pleaLoading
                           ? <><FiClock className="rtr-spin" /> Submitting…</>
-                          : <><FiSend /> Submit Plea</>
-                        }
+                          : <><FiSend /> Submit Plea</>}
                       </button>
                     </div>
                   </div>
@@ -1016,14 +1079,29 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ══ approved — ship items back ══ */}
+                {/* ══════════════════════════════════════════════════════════
+                    approved — ship your items back
+                    Shows: return address, courier selector, tracking input,
+                    confirm shipment button.
+                    Real-world flow: customer packs, drops at courier, confirms.
+                ══════════════════════════════════════════════════════════ */}
                 {status === 'approved' && (
                   <div className="rtr-approved-panel">
-                    <FiTruck className="rtr-approved-icon" />
-                    <h3>Return Approved — Ship Your Items</h3>
-                    <p>Your return has been approved. Please ship the following items back to us.</p>
+                    <div className="rtr-approved-panel-header">
+                      <FiTruck className="rtr-approved-icon" />
+                      <div>
+                        <h3>Return Approved — Ship Your Items</h3>
+                        <p className="rtr-approved-note">
+                          Pack your approved items securely and send them to the address below.
+                          Once shipped, confirm here with your courier details.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Approved items list */}
                     {approvedItems.length > 0 && (
-                      <div className="rtr-awaiting-approved-items">
+                      <div className="rtr-awaiting-approved-items" style={{ marginBottom: 16 }}>
+                        <span className="rtr-info-label" style={{ display: 'block', marginBottom: 6 }}>Items to ship back:</span>
                         {approvedItems.map((item, i) => (
                           <span key={i} className="rtr-awaiting-item-pill">
                             {item.name || item.product?.name} ×{item.quantity}
@@ -1031,13 +1109,135 @@ function ReturnRequest() {
                         ))}
                       </div>
                     )}
-                    {returnInfo.adminNote && (
-                      <p className="rtr-approved-note"><strong>Note:</strong> {returnInfo.adminNote}</p>
-                    )}
+
+                    {/* Return address box */}
+                    <div className="rtr-approved-address-box">
+                      <div className="rtr-approved-address-header">
+                        <FiMapPin className="rtr-approved-address-icon" />
+                        <span>Return Address</span>
+                      </div>
+                      <div className="rtr-approved-address-body">
+                        <strong>{RETURN_ADDRESS.name}</strong>
+                        <span>{RETURN_ADDRESS.line1}</span>
+                        <span>{RETURN_ADDRESS.line2}</span>
+                        <span>{RETURN_ADDRESS.country}</span>
+                        <span>{RETURN_ADDRESS.phone}</span>
+                      </div>
+                    </div>
+
+                    {/* Courier selector */}
+                    <div className="rtr-form-group">
+                      <label className="rtr-form-label">Select Courier *</label>
+                      <div className="rtr-courier-list">
+                        {COURIERS.map((courier) => (
+                          <button
+                            key={courier.value}
+                            type="button"
+                            className={`rtr-courier-option${selectedCourier === courier.value ? ' rtr-courier-option--selected' : ''}`}
+                            onClick={() => { setSelectedCourier(courier.value); if (courier.value !== 'Other') setOtherCourier(''); }}
+                            disabled={confirmShippedLoading}
+                          >
+                            {courier.label}
+                          </button>
+                        ))}
+                      </div>
+                      {selectedCourier === 'Other' && (
+                        <input
+                          type="text"
+                          className="rtr-courier-other-input rtr-form-input"
+                          placeholder="Enter courier name…"
+                          value={otherCourier}
+                          onChange={(e) => setOtherCourier(e.target.value)}
+                          maxLength={80}
+                          disabled={confirmShippedLoading}
+                          style={{ marginTop: 8 }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Tracking number — optional */}
+                    <div className="rtr-form-group">
+                      <label className="rtr-form-label">
+                        Tracking Number
+                        <span className="rtr-tracking-optional"> (optional)</span>
+                      </label>
+                      <p className="rtr-helper-text">
+                        If your courier provided a tracking number, enter it here. Not all couriers give one immediately.
+                      </p>
+                      <input
+                        type="text"
+                        className="rtr-form-input rtr-tracking-input"
+                        placeholder="e.g. 1234567890"
+                        value={trackingInput}
+                        onChange={(e) => setTrackingInput(e.target.value)}
+                        maxLength={100}
+                        disabled={confirmShippedLoading}
+                      />
+                    </div>
+
+                    {/* Confirm shipment button */}
+                    <button
+                      type="button"
+                      className="rtr-btn-primary rtr-confirm-ship-btn"
+                      onClick={handleConfirmShipped}
+                      disabled={confirmShippedLoading || !selectedCourier || (selectedCourier === 'Other' && !otherCourier.trim())}
+                    >
+                      {confirmShippedLoading
+                        ? <><FiClock className="rtr-spin" /> Confirming…</>
+                        : <><FiTruck /> Confirm Shipment</>}
+                    </button>
                   </div>
                 )}
 
-                {/* ══ awaiting_discount — FIX: last step before complete ══ */}
+                {/* ══════════════════════════════════════════════════════════
+                    in_transit — package on the way
+                    Shows courier and tracking number if provided.
+                ══════════════════════════════════════════════════════════ */}
+                {status === 'in_transit' && (
+                  <div className="rtr-in-transit-panel">
+                    <div className="rtr-in-transit-header">
+                      <FiTruck className="rtr-in-transit-icon" />
+                      <div>
+                        <h3>Package In Transit</h3>
+                        <p>Your items are on their way to us. We'll notify you when we receive them.</p>
+                      </div>
+                    </div>
+                    <div className="rtr-transit-details">
+                      {(returnInfo.courierName) && (
+                        <div className="rtr-transit-detail">
+                          <span className="rtr-info-label">Courier:</span>
+                          <span className="rtr-info-value">{returnInfo.courierName}</span>
+                        </div>
+                      )}
+                      {(returnInfo.trackingNumber) && (
+                        <div className="rtr-transit-detail">
+                          <span className="rtr-info-label">Tracking Number:</span>
+                          <span className="rtr-info-value rtr-tracking">{returnInfo.trackingNumber}</span>
+                        </div>
+                      )}
+                      {returnInfo.shippedAt && (
+                        <div className="rtr-transit-detail">
+                          <span className="rtr-info-label">Shipped On:</span>
+                          <span className="rtr-info-value">{fmtDate(returnInfo.shippedAt)}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* ══ received / inspected — status info ══ */}
+                {(status === 'received' || status === 'inspected') && (
+                  <div className="rtr-info-banner-neutral">
+                    <FiInfo />
+                    <span>
+                      {status === 'received'
+                        ? 'We have received your items. They are now being inspected.'
+                        : 'Your items have been inspected. We are preparing your discount code.'}
+                    </span>
+                  </div>
+                )}
+
+                {/* ══ awaiting_discount — last step before complete ══ */}
                 {status === 'awaiting_discount' && (
                   <div className="rtr-awaiting-discount">
                     <div className="rtr-awaiting-discount-icon-wrap">
@@ -1075,8 +1275,8 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* Items list (non-decision statuses) */}
-                {!['items_reviewed', 'plea_submitted', 'approved', 'awaiting_discount', 'completed'].includes(status) && returnItems.length > 0 && (
+                {/* Items list (requested + non-decision statuses) */}
+                {!['items_reviewed', 'plea_submitted', 'approved', 'in_transit', 'awaiting_discount', 'completed'].includes(status) && returnItems.length > 0 && (
                   <div className="rtr-return-items">
                     <h3>Items Being Returned</h3>
                     <div className="rtr-items-list">
