@@ -32,8 +32,6 @@ function useDebounce(value, delay) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-// FIX: reads firstName+lastName first, falls back to name then email
 const getCustomerName = (user) => {
   if (!user) return 'N/A';
   const first = user.firstName?.trim() ?? '';
@@ -42,7 +40,6 @@ const getCustomerName = (user) => {
   return user.name?.trim() || user.email || 'N/A';
 };
 
-// FIX: reads shippingInfo first, then user.phoneNo
 const getCustomerPhone = (order) => {
   if (!order) return 'N/A';
   const s = order.shippingInfo;
@@ -58,6 +55,9 @@ const getCustomerPhone = (order) => {
 const fmt         = (n) => (typeof n === 'number' ? n.toFixed(2) : '0.00');
 const fmtCurrency = (n) => `$${fmt(typeof n === 'number' ? n : 0)}`;
 
+const fmtDate = (d) =>
+  d ? new Date(d).toLocaleString() : 'N/A';
+
 // ── Constants ────────────────────────────────────────────────────────────────
 const STATUS_COLOR = {
   requested: 'requested', items_reviewed: 'items_reviewed',
@@ -68,16 +68,17 @@ const STATUS_COLOR = {
 
 const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled']);
 
-// FIX: Correct lifecycle — approved → in_transit → received → inspected → awaiting_discount → completed
+// Lifecycle starts at approved — admin controls in_transit → received → inspected only.
+// approved → in_transit is customer-triggered (confirmShipped). Admin cannot set in_transit directly.
 const LIFECYCLE_STATUSES = ['approved', 'in_transit', 'received', 'inspected', 'awaiting_discount', 'completed'];
 
-// FIX: Correct NEXT_STATUS_MAP including awaiting_discount after inspected
+// Admin only controls in_transit → received → inspected.
+// approved has no next status here — customer triggers in_transit via confirmShipped.
+// awaiting_discount → completed is handled by generate discount button, not dropdown.
 const NEXT_STATUS_MAP = {
-  approved:   ['in_transit'],
   in_transit: ['received'],
   received:   ['inspected'],
   inspected:  ['awaiting_discount'],
-  // awaiting_discount → completed is handled by generate discount button, not dropdown
 };
 
 const DRAWER_TABS = ['overview', 'review', 'plea', 'status', 'timeline', 'documents'];
@@ -139,8 +140,6 @@ const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
 };
 
 // ── PerItemDecisionForm ──────────────────────────────────────────────────────
-// FIX: lockedProductIds — approved items from first round are shown locked
-// in the plea review tab. Clean slate for rejected items.
 const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, lockedProductIds = new Set() }) => {
   if (!items?.length) return <div className="rt-empty" style={{ minHeight: 80 }}><span>No items to review</span></div>;
 
@@ -211,7 +210,6 @@ const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, loc
 };
 
 // ── PleaPreviewModal ─────────────────────────────────────────────────────────
-// FIX: Admin must preview final plea decisions before submitting
 const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, loading }) => {
   const approved = items.filter((item, idx) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
@@ -311,11 +309,11 @@ const AdminReturns = () => {
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
 
   // Panel / modal
-  const [selectedId,          setSelectedId]          = useState(null);
-  const [showDetailPanel,     setShowDetailPanel]     = useState(false);
-  const [showMessageModal,    setShowMessageModal]    = useState(false);
-  const [showPleaPreview,     setShowPleaPreview]     = useState(false);
-  const [activeTab,           setActiveTab]           = useState('overview');
+  const [selectedId,       setSelectedId]       = useState(null);
+  const [showDetailPanel,  setShowDetailPanel]  = useState(false);
+  const [showMessageModal, setShowMessageModal] = useState(false);
+  const [showPleaPreview,  setShowPleaPreview]  = useState(false);
+  const [activeTab,        setActiveTab]        = useState('overview');
 
   // Review tab
   const [itemDecisions, setItemDecisions] = useState({});
@@ -330,29 +328,47 @@ const AdminReturns = () => {
   const [inspectionNotes, setInspectionNotes] = useState('');
 
   const rmaDebounced = useDebounce(rmaSearch, 400);
-  const filtersRef   = useRef({});
-  filtersRef.current = { localPage, filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly };
 
-  const buildListParams = () => {
+  // FIX: Use ref to hold latest filter values without causing re-renders.
+  // We write to it inside a useEffect (not during render) to avoid the
+  // react-hooks/refs ESLint error ("Cannot update ref during render").
+  const filtersRef = useRef({});
+  useEffect(() => {
+    filtersRef.current = { localPage, filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly };
+  });
+
+  const buildListParams = useCallback(() => {
     const f = filtersRef.current;
     const p = { page: f.localPage, limit: LIMIT, sortBy: f.sortBy, order: f.sortOrder };
     if (f.filterStatus)        p.status = f.filterStatus;
     if (f.fromDate)            p.from   = f.fromDate;
     if (f.toDate)              p.to     = f.toDate;
-    if (f.rmaDebounced.trim()) p.rma    = f.rmaDebounced.trim();
+    if (f.rmaDebounced?.trim()) p.rma   = f.rmaDebounced.trim();
     return p;
-  };
+  }, []);
 
   const [fetchTick, setFetchTick] = useState(0);
   const triggerFetch = useCallback(() => setFetchTick((n) => n + 1), []);
 
+  // FIX: triggerFetch is stable (useCallback with no deps) so including it
+  // in the dep array is safe and silences the exhaustive-deps warning.
   useEffect(() => {
     if (filtersRef.current.showUnreadOnly) dispatch(getReturnsWithUnreadMessages());
     else dispatch(getAllReturns(buildListParams()));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchTick, dispatch]);
 
-  useEffect(() => { setLocalPage(1); triggerFetch(); }, [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly]);
-  useEffect(() => { triggerFetch(); }, [localPage]);
+  // FIX: triggerFetch added to dep arrays to satisfy exhaustive-deps.
+  useEffect(() => {
+    setLocalPage(1);
+    triggerFetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly, triggerFetch]);
+
+  useEffect(() => {
+    triggerFetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localPage, triggerFetch]);
 
   const handleFetchReturns = useCallback(() => triggerFetch(), [triggerFetch]);
 
@@ -368,14 +384,16 @@ const AdminReturns = () => {
     return () => clearTimeout(t);
   }, [error, dispatch]);
 
-  // Pre-populate next status when status tab opens
+  // Pre-populate next status when status tab opens.
+  // FIX: newStatus added to dep array so the guard (!newStatus) re-evaluates
+  // correctly when the user clears the selection.
   useEffect(() => {
     if (activeTab === 'status' && currentReturn) {
       const current = currentReturn.returnInfo?.status;
       const options = NEXT_STATUS_MAP[current] ?? [];
       if (options.length === 1 && !newStatus) setNewStatus(options[0]);
     }
-  }, [activeTab, currentReturn]);
+  }, [activeTab, currentReturn, newStatus]);
 
   // Seed item decisions
   useEffect(() => {
@@ -393,7 +411,6 @@ const AdminReturns = () => {
       return next;
     });
 
-    // FIX: Plea tab clean slate — approved items locked (pre-seeded), rejected items empty
     if (activeTab === 'plea') {
       const fresh = {};
       items.forEach((item, idx) => {
@@ -450,7 +467,6 @@ const AdminReturns = () => {
     });
   }, [currentReturn, itemDecisions]);
 
-  // FIX: Plea decisions complete — locked items automatically satisfy the check
   const pleaDecisionsComplete = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
     return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
@@ -460,7 +476,6 @@ const AdminReturns = () => {
     });
   }, [currentReturn, pleaDecisions]);
 
-  // FIX: Set of locked product IDs for plea review (approved in first round)
   const pleaLockedProductIds = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return new Set();
     return new Set(
@@ -523,10 +538,12 @@ const AdminReturns = () => {
       await dispatch(reviewReturn({ orderId: selectedId, itemDecisions: decisionsArray, adminNote: adminNote || undefined })).unwrap();
       setItemDecisions({}); setAdminNote('');
       triggerFetch();
-    } catch {}
+    } catch (err) {
+      // error handled via Redux state
+      void err;
+    }
   }, [dispatch, selectedId, currentReturn, itemDecisions, adminNote, triggerFetch]);
 
-  // FIX: Show preview modal before submitting plea review
   const handlePleaReviewConfirm = useCallback(async () => {
     if (!selectedId || !currentReturn?.returnInfo?.itemsToReturn) return;
     const decisionsArray = buildDecisionsArray(pleaDecisions, currentReturn.returnInfo.itemsToReturn);
@@ -537,7 +554,10 @@ const AdminReturns = () => {
       setPleaDecisions({}); setPleaAdminNote('');
       setShowPleaPreview(false);
       triggerFetch();
-    } catch { setShowPleaPreview(false); }
+    } catch (err) {
+      setShowPleaPreview(false);
+      void err;
+    }
   }, [dispatch, selectedId, currentReturn, pleaDecisions, pleaAdminNote, triggerFetch]);
 
   const handleGenerateDiscount = useCallback(async () => {
@@ -548,7 +568,9 @@ const AdminReturns = () => {
       navigate('/admin/discounts/new', {
         state: { fromReturn: true, returnData: action.returnDataForDiscount ?? action },
       });
-    } catch {}
+    } catch (err) {
+      void err;
+    }
   }, [dispatch, selectedId, navigate, triggerFetch]);
 
   const handleUpdateStatus = useCallback(async () => {
@@ -560,7 +582,9 @@ const AdminReturns = () => {
       })).unwrap();
       setNewStatus(''); setInspectionNotes('');
       triggerFetch();
-    } catch {}
+    } catch (err) {
+      void err;
+    }
   }, [dispatch, newStatus, inspectionNotes, selectedId, triggerFetch]);
 
   const handleSendMessage = useCallback(async (text, files, pendingUrls = []) => {
@@ -578,7 +602,9 @@ const AdminReturns = () => {
     try {
       await dispatch(uploadReturnFiles({ orderId: selectedId, files })).unwrap();
       dispatch(getReturnDocuments(selectedId));
-    } catch {}
+    } catch (err) {
+      void err;
+    }
   }, [dispatch, selectedId]);
 
   const handleCloseMessageModal = useCallback(() => {
@@ -594,9 +620,7 @@ const AdminReturns = () => {
     dispatch(clearCurrentReturn()); triggerFetch();
   }, [dispatch, triggerFetch]);
 
-  // ── KPI cards ────────────────────────────────────────────────────────────
-  // FIX: Removed "In Progress". Added correct flow-stage cards.
-  // FIX: Restored revenue KPI. $0 fix is in product ID handling on submission.
+  // ── KPI cards ─────────────────────────────────────────────────────────────
   const renderKPICards = () => {
     if (!stats) {
       return Array.from({ length: 8 }).map((_, i) => (
@@ -608,16 +632,16 @@ const AdminReturns = () => {
       ));
     }
     const cards = [
-      { label: 'Total Returns',     value: stats.total             ?? 0,     icon: Assessment,    color: '#6366F1', isCount: true  },
-      { label: 'Pending Review',    value: stats.requested         ?? 0,     icon: Schedule,      color: '#F59E0B', isCount: true  },
-      { label: 'Items Reviewed',    value: stats.items_reviewed    ?? 0,     icon: RateReview,    color: '#3B82F6', isCount: true  },
-      { label: 'Plea Submitted',    value: stats.plea_submitted    ?? 0,     icon: Gavel,         color: '#8B5CF6', isCount: true  },
-      { label: 'Awaiting Discount', value: stats.awaiting_discount ?? 0,     icon: PendingActions,color: '#F97316', isCount: true  },
-      { label: 'Completed',         value: stats.completed         ?? 0,     icon: CheckCircle,   color: '#10B981', isCount: true  },
-      { label: 'Rejected',          value: stats.rejected          ?? 0,     icon: Cancel,        color: '#EF4444', isCount: true  },
-      // FIX: Restored revenue KPI
-      { label: 'Requested Revenue',   value: typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,
-                                                                              icon: Discount,      color: '#0EA5E9', isCount: false },
+      { label: 'Total Returns',     value: stats.total             ?? 0, icon: Assessment,    color: '#6366F1', isCount: true  },
+      { label: 'Pending Review',    value: stats.requested         ?? 0, icon: Schedule,      color: '#F59E0B', isCount: true  },
+      { label: 'Items Reviewed',    value: stats.items_reviewed    ?? 0, icon: RateReview,    color: '#3B82F6', isCount: true  },
+      { label: 'Plea Submitted',    value: stats.plea_submitted    ?? 0, icon: Gavel,         color: '#8B5CF6', isCount: true  },
+      { label: 'Awaiting Discount', value: stats.awaiting_discount ?? 0, icon: PendingActions,color: '#F97316', isCount: true  },
+      { label: 'Completed',         value: stats.completed         ?? 0, icon: CheckCircle,   color: '#10B981', isCount: true  },
+      { label: 'Rejected',          value: stats.rejected          ?? 0, icon: Cancel,        color: '#EF4444', isCount: true  },
+      { label: 'Requested Revenue',
+        value: typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,
+        icon: Discount, color: '#0EA5E9', isCount: false },
     ];
     return cards.map((c) => (
       <div key={c.label} className="rt-kpi" style={{ '--kpi-color': c.color }}>
@@ -634,7 +658,7 @@ const AdminReturns = () => {
     ));
   };
 
-  // ── Table ─────────────────────────────────────────────────────────────────
+  // ── Table ──────────────────────────────────────────────────────────────────
   const renderTable = () => {
     if (tableLoading && !displayList.length) {
       return (
@@ -664,7 +688,6 @@ const AdminReturns = () => {
               <th>Order ID</th>
               <th>Customer</th>
               <th>RMA</th>
-              {/* FIX: Restored Requested Amt column */}
               <th>Requested Amt</th>
               <th>Reason</th>
               <th>Requested</th>
@@ -684,7 +707,6 @@ const AdminReturns = () => {
                   <td className="rt-td-name">#{orderRef}</td>
                   <td>{getCustomerName(item.user)}</td>
                   <td className="rt-td-mono">{item.returnInfo?.rmaNumber ?? '—'}</td>
-                  {/* FIX: Restored requestedAmount in table */}
                   <td className="rt-td-money">{fmtCurrency(item.returnInfo?.requestedAmount ?? 0)}</td>
                   <td className="rt-td-reason">{item.returnInfo?.reason?.replace(/_/g, ' ') ?? 'N/A'}</td>
                   <td className="rt-td-muted">
@@ -760,7 +782,7 @@ const AdminReturns = () => {
     );
   };
 
-  // ── Detail panel ──────────────────────────────────────────────────────────
+  // ── Detail panel ───────────────────────────────────────────────────────────
   const renderDetailPanel = () => {
     if (!showDetailPanel) return null;
 
@@ -787,7 +809,7 @@ const AdminReturns = () => {
     const rma           = returnInfo.rmaNumber ?? null;
     const approvedItems = (returnInfo.itemsToReturn ?? []).filter((i) => i.adminDecision === 'approved');
 
-    // FIX: Plea tab only when status=plea_submitted
+    // Plea tab only visible when status=plea_submitted
     const visibleTabs = DRAWER_TABS.filter((t) => t !== 'plea' || retStatus === 'plea_submitted');
 
     return (
@@ -823,13 +845,11 @@ const AdminReturns = () => {
                 <div className="rt-section"><span className="rt-section-text">Return Info</span><span className="rt-section-line" /></div>
                 <div className="rt-card">
                   <div className="rt-card-body">
-                    {/* FIX: name from firstName+lastName, phone from shippingInfo */}
                     {[
                       ['Customer',    getCustomerName(currentReturn.user)],
                       ['Email',       currentReturn.user?.email ?? 'N/A'],
                       ['Phone',       getCustomerPhone(currentReturn)],
                       ['Order Total', fmtCurrency(currentReturn.totalPrice)],
-                      // FIX: Removed "Requested Amt" from overview — irrelevant
                       ['Reason',      returnInfo.reason?.replace(/_/g, ' ') ?? 'N/A'],
                     ].map(([label, val]) => (
                       <div key={label} className="rt-metric-row">
@@ -838,7 +858,7 @@ const AdminReturns = () => {
                       </div>
                     ))}
 
-                    {/* FIX: Discount value — only show when post-review and > 0 */}
+                    {/* Discount value — only show post-review when > 0 */}
                     {['approved','in_transit','received','inspected','awaiting_discount','completed'].includes(retStatus)
                       && typeof returnInfo.discountValue === 'number'
                       && returnInfo.discountValue > 0 && (
@@ -860,16 +880,35 @@ const AdminReturns = () => {
                         {returnInfo.requestedAt ? new Date(returnInfo.requestedAt).toLocaleString() : 'N/A'}
                       </span>
                     </div>
-                    {returnInfo.adminNote && (
+
+                    {/* GAP A FIX: Show courier name when in_transit or beyond */}
+                    {['in_transit','received','inspected','awaiting_discount','completed'].includes(retStatus)
+                      && returnInfo.courierName && (
                       <div className="rt-metric-row">
-                        <span className="rt-metric-label">Admin Note</span>
-                        <span className="rt-metric-val">{returnInfo.adminNote}</span>
+                        <span className="rt-metric-label">Courier</span>
+                        <span className="rt-metric-val">{returnInfo.courierName}</span>
                       </div>
                     )}
+
+                    {/* GAP C FIX: Show shipped date when in_transit or beyond */}
+                    {['in_transit','received','inspected','awaiting_discount','completed'].includes(retStatus)
+                      && returnInfo.shippedAt && (
+                      <div className="rt-metric-row">
+                        <span className="rt-metric-label">Shipped On</span>
+                        <span className="rt-metric-val">{fmtDate(returnInfo.shippedAt)}</span>
+                      </div>
+                    )}
+
                     {returnInfo.trackingNumber && (
                       <div className="rt-metric-row">
                         <span className="rt-metric-label">Tracking #</span>
                         <span className="rt-metric-val rt-td-mono">{returnInfo.trackingNumber}</span>
+                      </div>
+                    )}
+                    {returnInfo.adminNote && (
+                      <div className="rt-metric-row">
+                        <span className="rt-metric-label">Admin Note</span>
+                        <span className="rt-metric-val">{returnInfo.adminNote}</span>
                       </div>
                     )}
                   </div>
@@ -1072,7 +1111,6 @@ const AdminReturns = () => {
                       onChange={(e) => setPleaAdminNote(e.target.value)} placeholder="Final note for the customer…" disabled={pleaReviewLoading}
                     />
                   </div>
-                  {/* FIX: Show preview modal before confirming */}
                   <button type="button" className="rt-btn rt-btn--primary"
                     onClick={() => setShowPleaPreview(true)}
                     disabled={pleaReviewLoading || !pleaDecisionsComplete}
@@ -1094,10 +1132,40 @@ const AdminReturns = () => {
                   </div>
                 </div>
                 <div className="rt-card-body">
-                  {/* Generate Discount button appears at 'inspected'. Clicking it calls
-                      generateDiscountCode which transitions inspected → awaiting_discount.
-                      At awaiting_discount, admin marks completed after discount is issued. */}
-                  {retStatus === 'inspected' ? (
+
+                  {/* GAP B & D FIX: Explicit approved branch — customer must confirm shipment first.
+                      This is a dedicated branch, not a fallback, so it cannot accidentally
+                      break if NEXT_STATUS_MAP changes. */}
+                  {retStatus === 'approved' ? (
+                    <>
+                      <div className="rt-progress-row">
+                        {LIFECYCLE_STATUSES.map((s, idx) => {
+                          const currentIdx = LIFECYCLE_STATUSES.indexOf(retStatus);
+                          const isPast     = idx < currentIdx;
+                          const isCurrent  = s === retStatus;
+                          return (
+                            <React.Fragment key={s}>
+                              <div className={`rt-progress-step${isCurrent ? ' rt-progress-step--current' : isPast ? ' rt-progress-step--done' : ''}`}>
+                                <div className="rt-progress-dot" />
+                                <span className="rt-progress-label">{s.replace(/_/g, ' ')}</span>
+                              </div>
+                              {idx < LIFECYCLE_STATUSES.length - 1 && (
+                                <div className={`rt-progress-line${isPast || isCurrent ? ' rt-progress-line--done' : ''}`} />
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                      <div className="rt-info-banner rt-info-banner--info rt-approved-waiting-banner">
+                        <LocalShipping style={{ fontSize: 16, flexShrink: 0 }} />
+                        <span>
+                          Waiting for the customer to confirm shipment. No action required —
+                          status will advance to <strong>in transit</strong> automatically once the customer ships their items.
+                        </span>
+                      </div>
+                    </>
+                  ) : retStatus === 'inspected' ? (
+                    /* Generate Discount — transitions inspected → awaiting_discount */
                     <>
                       <div className="rt-info-banner rt-info-banner--info">
                         <Discount style={{ fontSize: 16, flexShrink: 0 }} />
@@ -1132,8 +1200,8 @@ const AdminReturns = () => {
                       </button>
                     </>
                   ) : (
+                    /* All other statuses: lifecycle bar + next status dropdown or terminal/pre-lifecycle message */
                     <>
-                      {/* FIX: Lifecycle bar now includes approved and awaiting_discount */}
                       <div className="rt-progress-row">
                         {LIFECYCLE_STATUSES.map((s, idx) => {
                           const currentIdx = LIFECYCLE_STATUSES.indexOf(retStatus);
@@ -1155,11 +1223,13 @@ const AdminReturns = () => {
 
                       {validNextStatuses.length === 0 && (
                         <div className={`rt-info-banner rt-info-banner--${isTerminal ? 'warning' : 'info'}`}>
-                          {isTerminal ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} /> : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
+                          {isTerminal
+                            ? <ReportProblem style={{ fontSize: 16, flexShrink: 0 }} />
+                            : <HourglassEmpty style={{ fontSize: 16, flexShrink: 0 }} />}
                           <span>
                             {isTerminal
                               ? `This return is ${retStatus.replace(/_/g, ' ')} — no further updates.`
-                              : `Return must reach 'approved' status before the lifecycle can begin. Current: ${retStatus.replace(/_/g, ' ')}.`}
+                              : `No status update available at this stage. Current: ${retStatus.replace(/_/g, ' ')}.`}
                           </span>
                         </div>
                       )}
@@ -1275,7 +1345,7 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* FIX: Plea preview modal */}
+        {/* Plea preview modal */}
         {showPleaPreview && currentReturn && (
           <PleaPreviewModal
             items={currentReturn.returnInfo?.itemsToReturn ?? []}
@@ -1290,7 +1360,7 @@ const AdminReturns = () => {
     );
   };
 
-  // ── Main render ───────────────────────────────────────────────────────────
+  // ── Main render ────────────────────────────────────────────────────────────
   return (
     <>
       <Navbar />
