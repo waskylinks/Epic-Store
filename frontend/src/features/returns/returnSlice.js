@@ -1,4 +1,4 @@
-// Frontend/src/features/returns/returnSlice.js
+// features/returns/returnSlice.js
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -94,10 +94,10 @@ export const cancelReturn = createAsyncThunk(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// acceptDecisions (NEW)
+// acceptDecisions
 // Customer accepts admin item decisions without dispute.
 // Calls POST /orders/:id/return/accept-decisions → status becomes 'approved'.
-// Does NOT set success=true in slice to avoid double-toast with component handler.
+// Does NOT set success=true — component fires toast.success directly.
 // ─────────────────────────────────────────────────────────────────────────────
 export const acceptDecisions = createAsyncThunk(
   "return/acceptDecisions",
@@ -117,10 +117,9 @@ export const acceptDecisions = createAsyncThunk(
 
 // ─────────────────────────────────────────────────────────────────────────────
 // submitPlea
-// FIX: No longer sets success=true on fulfilled — prevents double toast.
-// The component (ReturnRequest.jsx) fires toast.success directly.
-// FIX: File upload is now handled separately (fire-and-forget from component)
-// so this thunk ONLY submits the plea text — faster submission.
+// Does NOT set success=true on fulfilled — prevents double toast.
+// Component fires toast.success directly after unwrap().
+// File upload is handled separately (fire-and-forget from component).
 // ─────────────────────────────────────────────────────────────────────────────
 export const submitPlea = createAsyncThunk(
   "return/submitPlea",
@@ -134,6 +133,32 @@ export const submitPlea = createAsyncThunk(
       return data;
     } catch (err) {
       return rejectWithValue(err.response?.data?.message ?? "Failed to submit plea");
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// confirmShipped
+// Customer confirms they have physically shipped items back.
+// Calls POST /orders/:id/return/confirm-shipped → status becomes 'in_transit'.
+// Sends optional courierName and trackingNumber.
+// Does NOT set success=true — component fires toast.success directly.
+// ─────────────────────────────────────────────────────────────────────────────
+export const confirmShipped = createAsyncThunk(
+  "return/confirmShipped",
+  async ({ orderId, courierName, trackingNumber }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `/api/v1/orders/${orderId}/return/confirm-shipped`,
+        {
+          courierName:    courierName    || undefined,
+          trackingNumber: trackingNumber || undefined,
+        },
+        { withCredentials: true }
+      );
+      return data;
+    } catch (err) {
+      return rejectWithValue(err.response?.data?.message ?? "Failed to confirm shipment");
     }
   }
 );
@@ -243,6 +268,11 @@ const returnSlice = createSlice({
     discountValue:      null,
     acceptanceDeadline: null,
 
+    // Courier and tracking stored locally after confirmShipped so the
+    // in_transit panel can display them without a re-fetch
+    courierName:    null,
+    trackingNumber: null,
+
     messages:        [],
     messagesPage:    1,
     totalMessages:   0,
@@ -253,15 +283,16 @@ const returnSlice = createSlice({
     timeline:  [],
     documents: [],
 
-    loading:            false,
-    statusLoading:      false,
-    pleaLoading:        false,
-    acceptLoading:      false,  // NEW — for acceptDecisions
-    messageSendLoading: false,
-    messagesLoading:    false,
-    timelineLoading:    false,
-    documentsLoading:   false,
-    uploadLoading:      false,
+    loading:                false,
+    statusLoading:          false,
+    pleaLoading:            false,
+    acceptLoading:          false,
+    confirmShippedLoading:  false,
+    messageSendLoading:     false,
+    messagesLoading:        false,
+    timelineLoading:        false,
+    documentsLoading:       false,
+    uploadLoading:          false,
 
     error:      null,
     errorStage: null,
@@ -285,6 +316,8 @@ const returnSlice = createSlice({
       state.pleaAttempts       = 0;
       state.discountValue      = null;
       state.acceptanceDeadline = null;
+      state.courierName        = null;
+      state.trackingNumber     = null;
     },
 
     clearReturnMessages: (state) => {
@@ -312,6 +345,7 @@ const returnSlice = createSlice({
   },
 
   extraReducers: (builder) => {
+
     // ── requestReturn ────────────────────────────────────────────────────────
     builder
       .addCase(requestReturn.pending, (state) => {
@@ -347,6 +381,9 @@ const returnSlice = createSlice({
         state.pleaAttempts       = ri.pleaAttempts       ?? 0;
         state.discountValue      = ri.discountValue      ?? null;
         state.acceptanceDeadline = ri.acceptanceDeadline ?? null;
+        // Restore courier/tracking from server if present
+        state.courierName        = ri.courierName        ?? state.courierName  ?? null;
+        state.trackingNumber     = ri.trackingNumber     ?? state.trackingNumber ?? null;
       })
       .addCase(getReturnStatus.rejected, (state, { payload }) => {
         state.statusLoading = false;
@@ -373,9 +410,8 @@ const returnSlice = createSlice({
         state.error   = extractErrorMessage(payload, "Failed to cancel return");
       });
 
-    // ── acceptDecisions (NEW) ─────────────────────────────────────────────────
-    // FIX: Does NOT set success=true — component fires toast.success directly.
-    // Updates returnStatus to 'approved' immediately on success.
+    // ── acceptDecisions ───────────────────────────────────────────────────────
+    // Does NOT set success=true — component fires toast.success directly.
     builder
       .addCase(acceptDecisions.pending, (state) => {
         state.acceptLoading = true;
@@ -398,8 +434,7 @@ const returnSlice = createSlice({
       });
 
     // ── submitPlea ───────────────────────────────────────────────────────────
-    // FIX: Does NOT set success=true — prevents double toast.
-    // Component's handleSubmitPlea fires toast.success directly after unwrap().
+    // Does NOT set success=true — prevents double toast.
     builder
       .addCase(submitPlea.pending, (state) => {
         state.pleaLoading = true;
@@ -407,7 +442,6 @@ const returnSlice = createSlice({
       })
       .addCase(submitPlea.fulfilled, (state, { payload }) => {
         state.pleaLoading = false;
-        // FIX: success intentionally NOT set here — no global toast
         const ri = payload.returnInfo
           ? { ...payload.returnInfo, hasReturn: true }
           : state.returnStatus;
@@ -420,6 +454,31 @@ const returnSlice = createSlice({
       .addCase(submitPlea.rejected, (state, { payload }) => {
         state.pleaLoading = false;
         state.pleaError   = extractErrorMessage(payload, "Failed to submit plea");
+      });
+
+    // ── confirmShipped ────────────────────────────────────────────────────────
+    // Customer confirms shipment → status becomes in_transit.
+    // Does NOT set success=true — component fires toast.success directly.
+    // Stores courierName and trackingNumber locally so the in_transit
+    // panel can display them immediately without waiting for a re-fetch.
+    builder
+      .addCase(confirmShipped.pending, (state) => {
+        state.confirmShippedLoading = true;
+        state.error                 = null;
+      })
+      .addCase(confirmShipped.fulfilled, (state, { payload }) => {
+        state.confirmShippedLoading = false;
+        const ri = payload.returnInfo
+          ? { ...payload.returnInfo, hasReturn: true }
+          : { ...state.returnStatus, status: "in_transit", hasReturn: true };
+        state.returnStatus   = ri;
+        // Persist courier and tracking so UI can display them right away
+        state.courierName    = ri.courierName    ?? state.courierName    ?? null;
+        state.trackingNumber = ri.trackingNumber ?? state.trackingNumber ?? null;
+      })
+      .addCase(confirmShipped.rejected, (state, { payload }) => {
+        state.confirmShippedLoading = false;
+        state.error = extractErrorMessage(payload, "Failed to confirm shipment");
       });
 
     // ── sendReturnMessage ────────────────────────────────────────────────────
@@ -478,31 +537,31 @@ const returnSlice = createSlice({
 
     // ── getReturnTimeline ────────────────────────────────────────────────────
     builder
-      .addCase(getReturnTimeline.pending, (state) => { state.timelineLoading = true; state.error = null; })
+      .addCase(getReturnTimeline.pending,   (state) => { state.timelineLoading = true;  state.error = null; })
       .addCase(getReturnTimeline.fulfilled, (state, { payload }) => {
         state.timelineLoading = false;
         state.timeline        = payload.timeline ?? [];
       })
-      .addCase(getReturnTimeline.rejected, (state, { payload }) => {
+      .addCase(getReturnTimeline.rejected,  (state, { payload }) => {
         state.timelineLoading = false;
         state.error           = extractErrorMessage(payload, "Failed to fetch return timeline");
       });
 
     // ── getReturnDocuments ───────────────────────────────────────────────────
     builder
-      .addCase(getReturnDocuments.pending, (state) => { state.documentsLoading = true; state.error = null; })
+      .addCase(getReturnDocuments.pending,   (state) => { state.documentsLoading = true;  state.error = null; })
       .addCase(getReturnDocuments.fulfilled, (state, { payload }) => {
         state.documentsLoading = false;
         state.documents        = payload.documents ?? [];
       })
-      .addCase(getReturnDocuments.rejected, (state, { payload }) => {
+      .addCase(getReturnDocuments.rejected,  (state, { payload }) => {
         state.documentsLoading = false;
         state.error            = extractErrorMessage(payload, "Failed to fetch return documents");
       });
 
     // ── uploadReturnFiles ────────────────────────────────────────────────────
     builder
-      .addCase(uploadReturnFiles.pending, (state) => { state.uploadLoading = true; state.error = null; })
+      .addCase(uploadReturnFiles.pending,   (state) => { state.uploadLoading = true;  state.error = null; })
       .addCase(uploadReturnFiles.fulfilled, (state, { payload }) => {
         state.uploadLoading = false;
         state.documents     = [
@@ -510,7 +569,7 @@ const returnSlice = createSlice({
           ...(payload.files ?? []).map(normaliseDocument),
         ];
       })
-      .addCase(uploadReturnFiles.rejected, (state, { payload }) => {
+      .addCase(uploadReturnFiles.rejected,  (state, { payload }) => {
         state.uploadLoading = false;
         state.error         = extractErrorMessage(payload, "Failed to upload files");
       });
