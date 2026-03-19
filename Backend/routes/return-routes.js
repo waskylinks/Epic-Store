@@ -21,7 +21,8 @@ import {
   resolveAfterPlea,
   generateDiscountCode,
   uploadPleaFiles,
-  acceptDecisions,   // NEW
+  acceptDecisions,
+  confirmShipped,
 } from '../controller/return-controller.js';
 
 import {
@@ -44,7 +45,8 @@ import {
   validateReturnFileUpload,
   canSubmitPlea,
   canGenerateDiscount,
-  canAcceptDecisions,   // NEW
+  canAcceptDecisions,
+  canConfirmShipped,
 } from '../middleware/return-policy.middleware.js';
 
 import upload from '../middleware/multer.js';
@@ -94,10 +96,20 @@ const pleaLimiter = rateLimit({
   legacyHeaders:   false,
 });
 
+const shipLimiter = rateLimit({
+  windowMs:        60 * 1000,
+  max:             5,
+  keyGenerator:    (req) => req.user?._id?.toString() || ipKeyGenerator(req),
+  message:         { success: false, message: 'Too many shipment confirmation attempts. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders:   false,
+});
+
 /* ======================================================
    CUSTOMER ROUTES
 ====================================================== */
 
+// Submit a new return request
 router.post(
   '/orders/:id/return/request',
   verifyUserAuth,
@@ -108,38 +120,7 @@ router.post(
   requestReturn
 );
 
-router.post(
-  '/orders/:id/return/messages',
-  verifyUserAuth,
-  messageLimiter,
-  sanitizeInput,
-  validateReturnMessage,
-  canAddReturnMessage,
-  addCustomerReturnMessage
-);
-
-router.get('/orders/:id/return/status',    verifyUserAuth, getReturnStatus);
-router.get('/orders/:id/return/messages',  verifyUserAuth, getReturnMessages);
-router.get('/orders/:id/return/timeline',  verifyUserAuth, getReturnTimeline);
-router.get('/orders/:id/return/documents', verifyUserAuth, getReturnDocuments);
-
-router.post(
-  '/orders/:id/return/upload',
-  verifyUserAuth,
-  uploadLimiter,
-  upload.array('attachments', UPLOAD_LIMIT),
-  validateReturnFileUpload,
-  uploadCustomerReturnFiles
-);
-
-router.put(
-  '/orders/:id/return/cancel',
-  verifyUserAuth,
-  canCancelReturn,
-  cancelReturnRequest
-);
-
-// NEW: Customer accepts admin decisions without disputing → status → approved
+// Customer accepts admin decisions without disputing → approved
 router.post(
   '/orders/:id/return/accept-decisions',
   verifyUserAuth,
@@ -148,7 +129,7 @@ router.post(
   acceptDecisions
 );
 
-// Customer submits a plea for rejected items
+// Customer submits a plea for rejected items → plea_submitted
 router.post(
   '/orders/:id/return/plea',
   verifyUserAuth,
@@ -169,14 +150,63 @@ router.post(
   uploadPleaFiles
 );
 
+// Customer confirms they have shipped items back → in_transit
+// Real-world flow: customer packs items, drops at courier, confirms here.
+// Optionally provides courier name and tracking number.
+// Admin does NOT trigger in_transit — they have no involvement at this stage.
+router.post(
+  '/orders/:id/return/confirm-shipped',
+  verifyUserAuth,
+  shipLimiter,
+  sanitizeInput,
+  canConfirmShipped,
+  confirmShipped
+);
+
+// Messaging
+router.post(
+  '/orders/:id/return/messages',
+  verifyUserAuth,
+  messageLimiter,
+  sanitizeInput,
+  validateReturnMessage,
+  canAddReturnMessage,
+  addCustomerReturnMessage
+);
+
+// File uploads
+router.post(
+  '/orders/:id/return/upload',
+  verifyUserAuth,
+  uploadLimiter,
+  upload.array('attachments', UPLOAD_LIMIT),
+  validateReturnFileUpload,
+  uploadCustomerReturnFiles
+);
+
+// Cancel return (only at 'requested' status)
+router.put(
+  '/orders/:id/return/cancel',
+  verifyUserAuth,
+  canCancelReturn,
+  cancelReturnRequest
+);
+
+// Read-only customer routes
+router.get('/orders/:id/return/status',    verifyUserAuth, getReturnStatus);
+router.get('/orders/:id/return/messages',  verifyUserAuth, getReturnMessages);
+router.get('/orders/:id/return/timeline',  verifyUserAuth, getReturnTimeline);
+router.get('/orders/:id/return/documents', verifyUserAuth, getReturnDocuments);
+
 /* ======================================================
    ADMIN ROUTES
    NOTE: /admin/returns/unread MUST remain BEFORE /admin/returns/:id
+   to prevent Express matching 'unread' as an :id param.
 ====================================================== */
 
-router.get('/admin/returns/unread',  ...adminAuth, getReturnsWithUnreadMessages);
-router.get('/admin/returns',         ...adminAuth, getAllReturns);
-router.get('/admin/returns/:id',     ...adminAuth, getSingleReturn);
+router.get('/admin/returns/unread', ...adminAuth, getReturnsWithUnreadMessages);
+router.get('/admin/returns',        ...adminAuth, getAllReturns);
+router.get('/admin/returns/:id',    ...adminAuth, getSingleReturn);
 
 // First-round review: requested → items_reviewed
 router.put(
@@ -186,34 +216,6 @@ router.put(
   validateReturnReview,
   canReviewFirstRound,
   reviewReturnRequest
-);
-
-// Lifecycle status updates: approved→in_transit→received→inspected, awaiting_discount→completed
-router.put(
-  '/admin/orders/:id/return/status',
-  ...adminAuth,
-  sanitizeInput,
-  validateReturnStatusUpdate,
-  updateReturnStatus
-);
-
-router.post(
-  '/admin/returns/:id/messages',
-  ...adminAuth,
-  messageLimiter,
-  sanitizeInput,
-  validateReturnMessage,
-  canAddReturnMessage,
-  addReturnMessage
-);
-
-router.post(
-  '/admin/returns/:id/upload',
-  ...adminAuth,
-  uploadLimiter,
-  upload.array('attachments', UPLOAD_LIMIT),
-  validateReturnFileUpload,
-  uploadReturnFiles
 );
 
 // Second-round plea review: plea_submitted → approved
@@ -226,14 +228,47 @@ router.put(
   resolveAfterPlea
 );
 
-// FIX: Generate discount — now guarded by canGenerateDiscount which checks
-// status='inspected'. Transitions: inspected → awaiting_discount.
+// Lifecycle status updates (admin-controlled stages only):
+// received → inspected and awaiting_discount → completed
+// NOTE: approved → in_transit is customer-triggered via /confirm-shipped above.
+//       The controller hard-blocks in_transit from this endpoint as a safety net.
+router.put(
+  '/admin/orders/:id/return/status',
+  ...adminAuth,
+  sanitizeInput,
+  validateReturnStatusUpdate,
+  updateReturnStatus
+);
+
+// Generate discount code: inspected → awaiting_discount
+// The discount creation page then handles: awaiting_discount → completed
 router.post(
   '/admin/orders/:id/return/generate-discount',
   ...adminAuth,
   validateGenerateDiscount,
   canGenerateDiscount,
   generateDiscountCode
+);
+
+// Admin messaging
+router.post(
+  '/admin/returns/:id/messages',
+  ...adminAuth,
+  messageLimiter,
+  sanitizeInput,
+  validateReturnMessage,
+  canAddReturnMessage,
+  addReturnMessage
+);
+
+// Admin file uploads
+router.post(
+  '/admin/returns/:id/upload',
+  ...adminAuth,
+  uploadLimiter,
+  upload.array('attachments', UPLOAD_LIMIT),
+  validateReturnFileUpload,
+  uploadReturnFiles
 );
 
 export default router;
