@@ -14,6 +14,8 @@ export const validateObjectId = (req, res, next, id) => {
 
 // ============================================
 // checkReturnEligibility
+// Guards the initial return request submission.
+// Checks: order delivered, within 30-day window, no existing return.
 // ============================================
 export const checkReturnEligibility = async (req, res, next) => {
   try {
@@ -61,7 +63,7 @@ export const checkReturnEligibility = async (req, res, next) => {
 
 // ============================================
 // canReviewFirstRound
-// Only allows status='requested'
+// Admin only. Requires status='requested'.
 // ============================================
 export const canReviewFirstRound = async (req, res, next) => {
   try {
@@ -85,7 +87,7 @@ export const canReviewFirstRound = async (req, res, next) => {
 
 // ============================================
 // canReviewPleaRound
-// Only allows status='plea_submitted'
+// Admin only. Requires status='plea_submitted' and a plea on record.
 // ============================================
 export const canReviewPleaRound = async (req, res, next) => {
   try {
@@ -114,17 +116,18 @@ export const canReviewPleaRound = async (req, res, next) => {
 };
 
 // ============================================
-// canAcceptDecisions (NEW)
-// Guards the customer "Accept Decisions" endpoint.
-// Allows: status='items_reviewed' only, order ownership,
-// pleaAttempts must be 0 (haven't already used plea),
-// and plea deadline must not have expired (if expired,
-// checkAndExpireTimers will have auto-advanced the status anyway).
+// canAcceptDecisions
+// Customer only. Guards the explicit "Accept Decisions" endpoint.
+// Requires: status='items_reviewed', order ownership,
+// pleaAttempts === 0 (no plea already submitted).
+// If pleaDeadline has expired, checkAndExpireTimers will have already
+// auto-advanced the status to 'approved', so this middleware won't
+// even be reached in that case.
 // ============================================
 export const canAcceptDecisions = async (req, res, next) => {
   try {
-    const { id }   = req.params;
-    const userId   = req.user._id;
+    const { id }  = req.params;
+    const userId  = req.user._id;
 
     const order = await Order.findById(id);
     if (!order) return next(new HandleError('Order not found', 404));
@@ -139,8 +142,6 @@ export const canAcceptDecisions = async (req, res, next) => {
       ));
     }
 
-    // Must not have already submitted a plea — if they have, acceptDecisions
-    // is no longer valid (use the plea resolution path instead).
     if ((order.returnInfo.pleaAttempts ?? 0) > 0) {
       return next(new HandleError(
         'A plea has already been submitted for this return. Use the plea resolution path.', 400
@@ -157,6 +158,8 @@ export const canAcceptDecisions = async (req, res, next) => {
 
 // ============================================
 // canSubmitPlea
+// Customer only. Requires status='items_reviewed', no prior plea,
+// and plea deadline not yet expired.
 // ============================================
 export const canSubmitPlea = async (req, res, next) => {
   try {
@@ -198,10 +201,48 @@ export const canSubmitPlea = async (req, res, next) => {
 };
 
 // ============================================
+// canConfirmShipped
+// Customer only. Guards the confirm-shipped endpoint.
+// Requires: status='approved', order ownership.
+//
+// Real-world flow: customer physically packs items, drops at courier,
+// confirms here with optional courier name and tracking number.
+// Admin has zero involvement at this stage — they did not ship anything.
+//
+// Timer note: pleaDeadline is null by the time status reaches 'approved'.
+// There is no time limit on the customer shipping — they ship when ready.
+// ============================================
+export const canConfirmShipped = async (req, res, next) => {
+  try {
+    const { id }  = req.params;
+    const userId  = req.user._id;
+
+    const order = await Order.findById(id);
+    if (!order) return next(new HandleError('Order not found', 404));
+
+    if (order.user.toString() !== userId.toString()) {
+      return next(new HandleError('Unauthorized', 403));
+    }
+
+    if (!order.returnInfo || order.returnInfo.status !== 'approved') {
+      return next(new HandleError(
+        `Shipment can only be confirmed when return status is 'approved'. Current status: ${order.returnInfo?.status || 'none'}`, 400
+      ));
+    }
+
+    req.order = order;
+    next();
+  } catch (error) {
+    console.error('canConfirmShipped check error:', error);
+    return next(new HandleError('Failed to validate shipment confirmation', 500));
+  }
+};
+
+// ============================================
 // canGenerateDiscount
-// FIX: now guards status='inspected' (not 'awaiting_discount').
-// generateDiscountCode transitions inspected → awaiting_discount.
-// The discount creation page then transitions awaiting_discount → completed.
+// Admin only. Requires status='inspected'.
+// generateDiscountCode transitions: inspected → awaiting_discount.
+// Discount creation page then handles: awaiting_discount → completed.
 // ============================================
 export const canGenerateDiscount = async (req, res, next) => {
   try {
@@ -213,7 +254,6 @@ export const canGenerateDiscount = async (req, res, next) => {
 
     if (!order) return next(new HandleError('Order not found', 404));
 
-    // FIX: guard inspected status — discount is generated after physical inspection
     if (!order.returnInfo || order.returnInfo.status !== 'inspected') {
       return next(new HandleError(
         `Discount generation requires status 'inspected'. Current status: ${order.returnInfo?.status || 'none'}`, 400
@@ -230,11 +270,11 @@ export const canGenerateDiscount = async (req, res, next) => {
 
 // ============================================
 // canAddReturnMessage
-// FIX: updated closed statuses — 'approved' must remain OPEN so
-// customers and admins can communicate during physical return process.
-// All new-flow statuses (items_reviewed, plea_submitted, awaiting_discount,
-// approved, in_transit, received, inspected) allow messaging.
-// Only terminal statuses block messaging.
+// Both admin and customer. All active statuses allow messaging.
+// Only terminal statuses (completed, rejected, cancelled) block it.
+// 'approved', 'in_transit', 'received', 'inspected', 'awaiting_discount'
+// all remain open — both parties may need to communicate throughout
+// the entire physical return process.
 // ============================================
 export const canAddReturnMessage = async (req, res, next) => {
   try {
@@ -270,6 +310,8 @@ export const canAddReturnMessage = async (req, res, next) => {
 
 // ============================================
 // canCancelReturn
+// Customer only. Only cancellable at 'requested' status.
+// Once admin has reviewed items the process is underway.
 // ============================================
 export const canCancelReturn = async (req, res, next) => {
   try {
@@ -301,6 +343,8 @@ export const canCancelReturn = async (req, res, next) => {
 
 // ============================================
 // validateReturnFileUpload
+// Shared file validation for all upload endpoints.
+// Max 8 files, 5MB each, allowed types only.
 // ============================================
 export const validateReturnFileUpload = (req, res, next) => {
   if (!req.files || req.files.length === 0) {
