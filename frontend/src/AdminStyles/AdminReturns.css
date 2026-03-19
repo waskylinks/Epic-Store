@@ -1271,3 +1271,46 @@
   cursor: not-allowed;
   transform: none;
 }
+
+
+/* The existing auto-fill rule already handles this gracefully.
+   Override minmax slightly tighter so 7 cards fit on one row on wide screens. */
+@media (min-width: 1280px) {
+  .rt-kpi-grid {
+    grid-template-columns: repeat(7, 1fr);
+  }
+}
+ 
+@media (min-width: 900px) and (max-width: 1279px) {
+  .rt-kpi-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+ 
+/* ── Locked item card in plea review ────────────────────────────────── */
+.rt-item-decision-card--locked {
+  background: #F0FDF4;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  opacity: 0.85;
+  cursor: not-allowed;
+}
+ 
+.rt-item-decision-card--locked .rt-item-decision-meta {
+  opacity: 0.9;
+}
+ 
+/* Locked badge shown inside locked item cards */
+.rt-item-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #065F46;
+  background: #D1FAE5;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  border-radius: 20px;
+  padding: 2px 8px;
+  margin-top: 4px;
+  width: fit-content;
+}
