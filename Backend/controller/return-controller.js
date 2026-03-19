@@ -156,6 +156,11 @@ const checkAndExpireTimers = (order) => {
 // @route  GET /api/v1/admin/returns
 // @access Private/Admin
 // ============================================
+// ============================================
+// GET ALL RETURNS (Admin)
+// @route  GET /api/v1/admin/returns
+// @access Private/Admin
+// ============================================
 export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const { page = 1, limit = 20, sortBy, order } = req.query;
   const parsedPage  = Math.max(1, parseInt(page)  || 1);
@@ -203,6 +208,9 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     { $unwind: { path: '$returnInfo.requestedBy', preserveNullAndEmptyArrays: true } },
   ];
 
+  // FIX: Added shippedAt to the projection so the admin table and drawer
+  // have it available from the list endpoint, not just from getSingleReturn.
+  // courierName and trackingNumber were already projected; shippedAt was missing.
   const projectStage = {
     $project: {
       user: 1,
@@ -211,8 +219,8 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         itemsToReturn: 1, requestedAmount: 1, requestedAt: 1,
         requestedBy: 1, adminNote: 1, restockFee: 1,
         pleaDeadline: 1, pleaAttempts: 1, discountValue: 1,
-        // Include courier and tracking so admin table can display them
         courierName: 1, trackingNumber: 1,
+        shippedAt: 1,   // FIX: was missing — needed for in_transit display in admin drawer
       },
       orderStatus: 1,
       totalPrice:  1,
@@ -320,7 +328,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     })),
   });
 });
-
 // ============================================
 // GET SINGLE RETURN (Admin)
 // @route  GET /api/v1/admin/returns/:id
@@ -827,13 +834,13 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
 export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   const { id }                      = req.params;
   const { status, inspectionNotes } = req.body;
-
+ 
   const order = await Order.findById(id);
   if (!order) return next(new HandleError('Order not found', 404));
   if (!order.returnInfo || order.returnInfo.status === 'none') {
     return next(new HandleError('No return request found', 400));
   }
-
+ 
   // Hard guard: in_transit is customer-triggered only
   if (status === 'in_transit') {
     return next(new HandleError(
@@ -841,14 +848,14 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
       400
     ));
   }
-
+ 
   order.returnInfo.status = status;
-
+ 
   if (status === 'received') {
     order.returnInfo.receivedAt = new Date();
     order.addReturnTimeline('return_received', 'Return package received at warehouse', req.user._id);
   }
-
+ 
   if (status === 'inspected') {
     order.returnInfo.inspectedAt = new Date();
     order.returnInfo.inspectedBy = req.user._id;
@@ -859,14 +866,20 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
       inspectionNotes: order.returnInfo.inspectionNotes,
     });
   }
-
+ 
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
-
+ 
+    // FIX: item.condition is never set in the codebase so the previous check
+    // (item.condition !== 'damaged') was always true, meaning ALL items were
+    // restocked including genuinely damaged ones. We now check adminDecision
+    // instead — only approved items are restocked, rejected ones are not.
+    // This is the correct business rule: if admin rejected an item it should
+    // not go back into stock regardless of condition.
     const restorableItems = order.returnInfo.itemsToReturn.filter(
-      (item) => item.condition !== 'damaged'
+      (item) => item.adminDecision === 'approved'
     );
-
+ 
     if (restorableItems.length > 0) {
       const bulkOps = restorableItems.map((item) => ({
         updateOne: {
@@ -881,14 +894,14 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
       }));
       await Product.bulkWrite(bulkOps, { ordered: false });
     }
-
+ 
     order.addReturnTimeline('return_completed', 'Return process completed and discount issued', req.user._id);
   }
-
+ 
   order.addAuditEntry('return_status_updated', req.user._id, { status });
   await order.save();
   invalidateReturnCaches('status');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    `Return status updated to ${status}`,
