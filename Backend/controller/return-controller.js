@@ -473,9 +473,9 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
   const order = req.order;
-
+ 
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
-
+ 
   itemDecisions.forEach((decision) => {
     const item = order.returnInfo.itemsToReturn.find((i) => {
       const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
@@ -488,16 +488,18 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
         : '';
     }
   });
-
+ 
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
       const pid = i.product?._id?.toString() ?? i.product?.toString();
       return [pid, i.price ?? 0];
     })
   );
-
+ 
   const missingProductIds = [];
-  const discountValue = order.returnInfo.itemsToReturn
+ 
+  // Sum of approved item prices (pre-discount, full listed price)
+  const approvedItemsTotal = order.returnInfo.itemsToReturn
     .filter((i) => i.adminDecision === 'approved')
     .reduce((sum, i) => {
       const pid       = i.product?._id?.toString() ?? i.product?.toString();
@@ -507,45 +509,54 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
       if (unitPrice === null) { missingProductIds.push(pid); return sum; }
       return sum + unitPrice * (i.quantity ?? 1);
     }, 0);
-
+ 
   if (missingProductIds.length > 0) {
     return next(new HandleError(
       `Cannot calculate discount: approved items with no price data (product IDs: ${missingProductIds.join(', ')}).`,
       400
     ));
   }
-
-  order.returnInfo.discountValue = discountValue;
+ 
+  const orderSubtotal    = order.itemPrice ?? 0;
+  const totalDiscount    = order.discounts?.totalDiscount ?? 0;
+  const discountValue = orderSubtotal > 0
+    ? (totalDiscount / orderSubtotal) * approvedItemsTotal
+    : 0;
+ 
+  order.returnInfo.discountValue = Math.round(discountValue * 100) / 100;
   order.returnInfo.status        = 'items_reviewed';
   order.returnInfo.approvedAt    = new Date();
   order.returnInfo.approvedBy    = req.user._id;
-
+ 
   const pleaDeadline = new Date();
   pleaDeadline.setHours(pleaDeadline.getHours() + 48);
   order.returnInfo.pleaDeadline = pleaDeadline;
-
+ 
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
-
+ 
   const approvedCount = itemDecisions.filter((d) => d.decision === 'approved').length;
   const rejectedCount = itemDecisions.filter((d) => d.decision === 'rejected').length;
-
+ 
   order.addReturnTimeline(
     'items_reviewed',
     `Admin reviewed items: ${approvedCount} approved, ${rejectedCount} rejected`,
     req.user._id,
-    { approvedCount, rejectedCount, discountValue }
+    { approvedCount, rejectedCount, discountValue: order.returnInfo.discountValue }
   );
-  order.addAuditEntry('items_reviewed', req.user._id, { approvedCount, rejectedCount, discountValue });
-
+  order.addAuditEntry('items_reviewed', req.user._id, {
+    approvedCount, rejectedCount, discountValue: order.returnInfo.discountValue,
+  });
+ 
   await order.save();
   invalidateReturnCaches('stats');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    `Items reviewed. ${approvedCount} approved, ${rejectedCount} rejected. Customer has 48 hours to respond.`,
     returnInfo: order.returnInfo,
   });
 });
+
 
 // ============================================
 // CUSTOMER ACCEPTS DECISIONS (without disputing)
@@ -642,16 +653,16 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
 export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
   const order = req.order;
-
+ 
   if ((order.returnInfo.pleaAttempts ?? 0) === 0) {
     return next(new HandleError(
       'Cannot resolve plea: no plea has been submitted by the customer for this return.',
       400
     ));
   }
-
+ 
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
-
+ 
   itemDecisions.forEach((decision) => {
     const item = order.returnInfo.itemsToReturn.find((i) => {
       const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
@@ -664,15 +675,16 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
         : '';
     }
   });
-
+ 
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
       const pid = i.product?._id?.toString() ?? i.product?.toString();
       return [pid, i.price ?? 0];
     })
   );
-
-  const discountValue = order.returnInfo.itemsToReturn
+ 
+  // Sum of approved item prices (pre-discount, full listed price)
+  const approvedItemsTotal = order.returnInfo.itemsToReturn
     .filter((i) => i.adminDecision === 'approved')
     .reduce((sum, i) => {
       const pid       = i.product?._id?.toString() ?? i.product?.toString();
@@ -681,34 +693,46 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
         : (orderItemPriceMap.get(pid) ?? 0);
       return sum + unitPrice * (i.quantity ?? 1);
     }, 0);
-
-  order.returnInfo.discountValue = discountValue;
+ 
+  // FIX: Proportional discount amount applied to approved items
+  const orderSubtotal = order.itemPrice ?? 0;
+  const totalDiscount = order.discounts?.totalDiscount ?? 0;
+ 
+  const discountValue = orderSubtotal > 0
+    ? (totalDiscount / orderSubtotal) * approvedItemsTotal
+    : 0;
+ 
+  order.returnInfo.discountValue = Math.round(discountValue * 100) / 100;
   order.returnInfo.status        = 'approved';
   order.returnInfo.approvedAt    = new Date();
   order.returnInfo.pleaDeadline  = null;
-
+ 
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
-
+ 
   const approvedCount = itemDecisions.filter((d) => d.decision === 'approved').length;
   const rejectedCount = itemDecisions.filter((d) => d.decision === 'rejected').length;
-
+ 
   order.addReturnTimeline(
     'plea_resolved',
     `Plea reviewed. Final decisions: ${approvedCount} approved, ${rejectedCount} rejected. Awaiting customer shipment.`,
     req.user._id,
-    { approvedCount, rejectedCount, discountValue, isFinalRound: true }
+    { approvedCount, rejectedCount, discountValue: order.returnInfo.discountValue, isFinalRound: true }
   );
-  order.addAuditEntry('plea_resolved', req.user._id, { approvedCount, rejectedCount, discountValue });
-
+  order.addAuditEntry('plea_resolved', req.user._id, {
+    approvedCount, rejectedCount, discountValue: order.returnInfo.discountValue,
+  });
+ 
   await order.save();
   invalidateReturnCaches('stats');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    `Plea resolved. ${approvedCount} items approved, ${rejectedCount} rejected. Customer will now ship items back.`,
     returnInfo: order.returnInfo,
   });
 });
+ 
+
 
 // ============================================
 // CUSTOMER CONFIRMS SHIPMENT
