@@ -314,16 +314,21 @@ function ReturnRequest() {
 
   // Pre-populate form when viewing existing return
   const returnInfoPopulated = useRef(false);
-  useEffect(() => {
-    if (isTracking && returnInfo && !returnInfoPopulated.current) {
-      returnInfoPopulated.current = true;
-      setFormData({
-        reason:        returnInfo.reason        || '',
-        description:   returnInfo.description   || '',
-        itemsToReturn: returnInfo.itemsToReturn ?? [],
-      });
-    }
-  }, [isTracking, returnInfo]);
+  
+useEffect(() => {
+  returnInfoPopulated.current = false;
+}, [orderId]);
+
+useEffect(() => {
+  if (isTracking && returnInfo && !returnInfoPopulated.current) {
+    returnInfoPopulated.current = true;
+    setFormData({
+      reason:        returnInfo.reason        || '',
+      description:   returnInfo.description   || '',
+      itemsToReturn: returnInfo.itemsToReturn ?? [],
+    });
+  }
+}, [isTracking, returnInfo]);
 
   // Global error / success toasts — only fires for requestReturn
   useEffect(() => {
@@ -416,83 +421,84 @@ function ReturnRequest() {
   // ── Accept decisions ──────────────────────────────────────────────────────
 
   const handleAcceptDecisions = async () => {
-    try {
-      await dispatch(acceptDecisions(orderId)).unwrap();
-      toast.success('Decisions accepted. Please ship your approved items back to us.', {
-        position: 'top-center', autoClose: 5000,
-      });
-      setItemsReviewedChoice('accepted');
-      setShowAcceptConfirm(false);
-      dispatch(getOrderDetails(orderId));
-    } catch (err) {
-      toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to accept decisions.', { position: 'top-center' });
-    }
-  };
-
+  try {
+    await dispatch(acceptDecisions(orderId)).unwrap();
+    toast.success('Decisions accepted. Please ship your approved items back to us.', {
+      position: 'top-center', autoClose: 5000,
+    });
+    setItemsReviewedChoice('accepted');
+    setShowAcceptConfirm(false);
+    await dispatch(getOrderDetails(orderId));
+    dispatch(getReturnStatus(orderId));
+  } catch (err) {
+    toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to accept decisions.', { position: 'top-center' });
+  }
+};
   // ── Confirm shipped ───────────────────────────────────────────────────────
 
   const handleConfirmShipped = async () => {
-    if (!selectedCourier) {
-      toast.error('Please select a courier.', { position: 'top-center' });
-      return;
-    }
-    if (selectedCourier === 'Other' && !otherCourier.trim()) {
-      toast.error('Please specify your courier name.', { position: 'top-center' });
-      return;
-    }
-    try {
-      await dispatch(confirmShipped({
-        orderId,
-        courierName:    effectiveCourier || undefined,
-        trackingNumber: trackingInput.trim() || undefined,
-      })).unwrap();
-      toast.success('Shipment confirmed! We will notify you when we receive your items.', {
-        position: 'top-center', autoClose: 5000,
-      });
-      dispatch(getOrderDetails(orderId));
-    } catch (err) {
-      toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to confirm shipment.', { position: 'top-center' });
-    }
-  };
+  if (!selectedCourier) {
+    toast.error('Please select a courier.', { position: 'top-center' });
+    return;
+  }
+  if (selectedCourier === 'Other' && !otherCourier.trim()) {
+    toast.error('Please specify your courier name.', { position: 'top-center' });
+    return;
+  }
+  try {
+    await dispatch(confirmShipped({
+      orderId,
+      courierName:    effectiveCourier || undefined,
+      trackingNumber: trackingInput.trim() || undefined,
+    })).unwrap();
+    toast.success('Shipment confirmed! We will notify you when we receive your items.', {
+      position: 'top-center', autoClose: 5000,
+    });
+    await dispatch(getOrderDetails(orderId));
+    dispatch(getReturnStatus(orderId));
+  } catch (err) {
+    toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to confirm shipment.', { position: 'top-center' });
+  }
+};
 
   // ── Plea submit ───────────────────────────────────────────────────────────
 
   const handleSubmitPlea = async () => {
-    if (pleaText.trim().length < MIN_PLEA_CHARS) {
-      toast.error(`Plea description must be at least ${MIN_PLEA_CHARS} characters.`, { position: 'top-center' });
-      return;
-    }
+  if (pleaText.trim().length < MIN_PLEA_CHARS) {
+    toast.error(`Plea description must be at least ${MIN_PLEA_CHARS} characters.`, { position: 'top-center' });
+    return;
+  }
 
-    // Fire plea text immediately — upload runs in parallel (fire-and-forget)
-    const pleaPromise = dispatch(submitPlea({ orderId, pleaDescription: pleaText.trim() })).unwrap();
+  const pleaPromise = dispatch(submitPlea({ orderId, pleaDescription: pleaText.trim() })).unwrap();
 
-    if (pleaFiles.length > 0) {
-      setPleaUploading(true);
-      const uploadFormData = new FormData();
-      pleaFiles.forEach((f) => uploadFormData.append('attachments', f));
-      axios.post(`/api/v1/orders/${orderId}/return/plea/upload`, uploadFormData, { withCredentials: true })
-        .catch(() => {
-          toast.warn('Evidence files could not be uploaded, but your plea was still submitted.', {
-            position: 'top-center', autoClose: 4000,
-          });
-        })
-        .finally(() => setPleaUploading(false));
-    }
+  if (pleaFiles.length > 0) {
+    setPleaUploading(true);
+    const uploadFormData = new FormData();
+    pleaFiles.forEach((f) => uploadFormData.append('attachments', f));
+    axios.post(`/api/v1/orders/${orderId}/return/plea/upload`, uploadFormData, { withCredentials: true })
+      .catch(() => {
+        toast.warn('Evidence files could not be uploaded, but your plea was still submitted.', {
+          position: 'top-center', autoClose: 4000,
+        });
+      })
+      .finally(() => setPleaUploading(false));
+  }
 
-    try {
-      await pleaPromise;
-      toast.success('Plea submitted. The admin will respond within 48 hours.', {
-        position: 'top-center', autoClose: 4000,
-      });
-      setPleaText('');
-      setPleaFiles([]);
-      setPleaFilePreviews([]);
-      setItemsReviewedChoice(null);
-      dispatch(getOrderDetails(orderId));
-    } catch {
-      // pleaError in slice triggers toast via useEffect above
-    }
-  };
+  try {
+    await pleaPromise;
+    toast.success('Plea submitted. The admin will respond within 48 hours.', {
+      position: 'top-center', autoClose: 4000,
+    });
+    setPleaText('');
+    setPleaFiles([]);
+    setPleaFilePreviews([]);
+    setItemsReviewedChoice(null);
+    await dispatch(getOrderDetails(orderId));
+    dispatch(getReturnStatus(orderId));
+  } catch {
+    // pleaError in slice triggers toast via useEffect above
+  }
+};
 
   // ── Validation ────────────────────────────────────────────────────────────
 
