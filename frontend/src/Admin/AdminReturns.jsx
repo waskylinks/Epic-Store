@@ -616,7 +616,7 @@ const AdminReturns = () => {
       { label: 'Completed',         value: stats.completed         ?? 0,     icon: CheckCircle,   color: '#10B981', isCount: true  },
       { label: 'Rejected',          value: stats.rejected          ?? 0,     icon: Cancel,        color: '#EF4444', isCount: true  },
       // FIX: Restored revenue KPI
-      { label: 'Total Requested',   value: typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,
+      { label: 'Requested Revenue',   value: typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,
                                                                               icon: Discount,      color: '#0EA5E9', isCount: false },
     ];
     return cards.map((c) => (

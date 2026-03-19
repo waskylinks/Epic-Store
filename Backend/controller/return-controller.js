@@ -112,12 +112,12 @@ const invalidateReturnCaches = (scope = 'stats') => {
 };
 
 // ============================================
-// FIX: checkAndExpireTimers
-// Both expiry cases now advance to 'approved' instead of 'awaiting_discount'.
-// The correct flow is: items_reviewed → approved → in_transit → received →
-// inspected → awaiting_discount → completed.
-// awaiting_discount is only reached after physical inspection via
-// generateDiscountCode, not as an automatic timer expiry target.
+// checkAndExpireTimers
+// Both timer expiry cases advance to 'approved'.
+// Full lifecycle: items_reviewed → approved → in_transit (customer) →
+// received → inspected → awaiting_discount → completed
+// Timers only run at items_reviewed and plea_submitted.
+// Once approved, no timer — customer ships at their own pace.
 // ============================================
 const checkAndExpireTimers = (order) => {
   if (!order.returnInfo) return false;
@@ -127,25 +127,22 @@ const checkAndExpireTimers = (order) => {
 
   if (pleaDeadline && now > new Date(pleaDeadline)) {
     if (status === 'items_reviewed') {
-      // FIX: was 'awaiting_discount' — must be 'approved' so physical return can proceed
-      order.returnInfo.status      = 'approved';
-      order.returnInfo.approvedAt  = now;
+      order.returnInfo.status       = 'approved';
+      order.returnInfo.approvedAt   = now;
       order.returnInfo.pleaDeadline = null;
       order.addReturnTimeline(
         'plea_window_expired',
-        'Plea window expired without submission. Return automatically approved to proceed.',
+        'Plea window expired without submission. Return automatically approved.',
         null
       );
       mutated = true;
     } else if (status === 'plea_submitted') {
-      // FIX: was 'awaiting_discount' — must be 'approved' so physical return can proceed.
-      // Admin did not respond within 48h; plea is accepted by default, return advances.
-      order.returnInfo.status      = 'approved';
-      order.returnInfo.approvedAt  = now;
+      order.returnInfo.status       = 'approved';
+      order.returnInfo.approvedAt   = now;
       order.returnInfo.pleaDeadline = null;
       order.addReturnTimeline(
         'admin_plea_response_expired',
-        'Admin did not respond to plea within 48 hours. Return automatically approved using original item decisions.',
+        'Admin did not respond to plea within 48 hours. Return automatically approved.',
         null
       );
       mutated = true;
@@ -183,7 +180,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     if (cached) stats = JSON.parse(cached);
   } catch (_) { /* cache miss */ }
 
-  // FIX: include firstName lastName in user lookup projection so name displays correctly
   const lookupStages = [
     {
       $lookup: {
@@ -215,11 +211,12 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         itemsToReturn: 1, requestedAmount: 1, requestedAt: 1,
         requestedBy: 1, adminNote: 1, restockFee: 1,
         pleaDeadline: 1, pleaAttempts: 1, discountValue: 1,
+        // Include courier and tracking so admin table can display them
+        courierName: 1, trackingNumber: 1,
       },
       orderStatus: 1,
       totalPrice:  1,
       createdAt:   1,
-      // FIX: also expose shippingInfo so getCustomerPhone works in table rows
       shippingInfo: 1,
       unreadMessages: {
         $size: {
@@ -326,7 +323,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET SINGLE RETURN (Admin)
-// FIX: populate firstName lastName on user for correct name display
 // @route  GET /api/v1/admin/returns/:id
 // @access Private/Admin
 // ============================================
@@ -334,7 +330,6 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
   const order = await Order.findById(id)
-    // FIX: added firstName lastName to user populate
     .populate('user',                                'name email phoneNo firstName lastName')
     .populate('returnInfo.requestedBy',              'name email')
     .populate('returnInfo.approvedBy',               'name email')
@@ -463,7 +458,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN REVIEWS RETURN — per-item decisions (first round)
-// Status transitions: requested → items_reviewed
+// Status: requested → items_reviewed
 // Sets 48h plea window for customer to accept or dispute.
 // @route  PUT /api/v1/admin/orders/:id/return/review
 // @access Private/Admin
@@ -546,29 +541,26 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// CUSTOMER ACCEPTS DECISIONS (new endpoint)
-// FIX: replaces the hacky submitPlea-with-acceptance-text approach.
-// When customer accepts admin decisions without disputing, status goes
-// directly to 'approved' so the physical return process can begin.
-// Locks all item decisions as-is — no further changes possible.
+// CUSTOMER ACCEPTS DECISIONS (without disputing)
+// Status: items_reviewed → approved
+// Customer accepts admin decisions and return proceeds to shipping.
 // @route  POST /api/v1/orders/:id/return/accept-decisions
 // @access Private/Customer
 // ============================================
 export const acceptDecisions = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
-  const order  = req.order; // set by canAcceptDecisions middleware
+  const order  = req.order;
 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
 
-  // Set status to approved — physical return process begins
-  order.returnInfo.status      = 'approved';
-  order.returnInfo.approvedAt  = order.returnInfo.approvedAt ?? new Date();
-  order.returnInfo.pleaDeadline = null; // close the response window permanently
+  order.returnInfo.status       = 'approved';
+  order.returnInfo.approvedAt   = order.returnInfo.approvedAt ?? new Date();
+  order.returnInfo.pleaDeadline = null;
   order.returnInfo.acceptedAt   = new Date();
 
   order.addReturnTimeline(
     'decisions_accepted',
-    'Customer accepted admin item decisions. Return approved to proceed.',
+    'Customer accepted admin item decisions. Return approved — awaiting customer shipment.',
     userId
   );
   order.addAuditEntry('decisions_accepted', userId, {
@@ -580,13 +572,14 @@ export const acceptDecisions = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success:    true,
-    message:    'Decisions accepted. Your return has been approved and will proceed to shipment.',
+    message:    'Decisions accepted. Please ship your approved items back to us.',
     returnInfo: order.returnInfo,
   });
 });
 
 // ============================================
 // CUSTOMER SUBMITS PLEA
+// Status: items_reviewed → plea_submitted
 // @route  POST /api/v1/orders/:id/return/plea
 // @access Private/Customer
 // ============================================
@@ -635,10 +628,7 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // ADMIN RESOLVES PLEA — second-round per-item decisions
-// FIX: status transitions to 'approved' (not 'awaiting_discount').
-// Physical return process must happen before discount is generated.
-// Flow: plea_submitted → approved → in_transit → received →
-//       inspected → awaiting_discount → completed
+// Status: plea_submitted → approved
 // @route  PUT /api/v1/admin/orders/:id/return/plea-review
 // @access Private/Admin
 // ============================================
@@ -686,10 +676,9 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
     }, 0);
 
   order.returnInfo.discountValue = discountValue;
-  // FIX: was 'awaiting_discount' — must be 'approved' so physical return process begins
-  order.returnInfo.status       = 'approved';
-  order.returnInfo.approvedAt   = new Date();
-  order.returnInfo.pleaDeadline = null; // plea phase permanently closed
+  order.returnInfo.status        = 'approved';
+  order.returnInfo.approvedAt    = new Date();
+  order.returnInfo.pleaDeadline  = null;
 
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
 
@@ -698,7 +687,7 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
 
   order.addReturnTimeline(
     'plea_resolved',
-    `Plea reviewed. Final decisions: ${approvedCount} approved, ${rejectedCount} rejected. Return approved to proceed.`,
+    `Plea reviewed. Final decisions: ${approvedCount} approved, ${rejectedCount} rejected. Awaiting customer shipment.`,
     req.user._id,
     { approvedCount, rejectedCount, discountValue, isFinalRound: true }
   );
@@ -709,16 +698,68 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
 
   return res.status(200).json({
     success:    true,
-    message:    `Plea resolved. ${approvedCount} items approved, ${rejectedCount} rejected. Return is now approved — customer should ship items back.`,
+    message:    `Plea resolved. ${approvedCount} items approved, ${rejectedCount} rejected. Customer will now ship items back.`,
+    returnInfo: order.returnInfo,
+  });
+});
+
+// ============================================
+// CUSTOMER CONFIRMS SHIPMENT
+// Status: approved → in_transit
+//
+// This is the correct real-world flow. The customer physically packs
+// items, drops them at a courier, and confirms here with optional
+// courier name and tracking number. Admin should NOT set in_transit —
+// they have no involvement at this stage.
+//
+// The timer is completely done by the time approved is reached
+// (pleaDeadline is null). Customer can take as long as needed to ship.
+//
+// @route  POST /api/v1/orders/:id/return/confirm-shipped
+// @access Private/Customer
+// ============================================
+export const confirmShipped = handleAsyncError(async (req, res, next) => {
+  const { courierName, trackingNumber } = req.body;
+  const userId = req.user._id;
+  const order  = req.order; // set by canConfirmShipped middleware
+
+  try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
+
+  const sanitizedCourier  = courierName    ? sanitizeHtml.sanitize(String(courierName).trim())    : null;
+  const sanitizedTracking = trackingNumber ? sanitizeHtml.sanitize(String(trackingNumber).trim()) : null;
+
+  order.returnInfo.status         = 'in_transit';
+  order.returnInfo.shippedAt      = new Date();
+  order.returnInfo.courierName    = sanitizedCourier;
+  order.returnInfo.trackingNumber = sanitizedTracking ?? order.returnInfo.trackingNumber ?? null;
+
+  const timelineMsg = sanitizedCourier
+    ? `Customer confirmed shipment via ${sanitizedCourier}${sanitizedTracking ? ` — tracking: ${sanitizedTracking}` : ''}`
+    : 'Customer confirmed shipment of return items.';
+
+  order.addReturnTimeline('customer_shipped', timelineMsg, userId, {
+    courierName:    sanitizedCourier,
+    trackingNumber: sanitizedTracking,
+  });
+  order.addAuditEntry('customer_shipped', userId, {
+    courierName:    sanitizedCourier,
+    trackingNumber: sanitizedTracking,
+  });
+
+  await order.save();
+  invalidateReturnCaches('stats');
+
+  return res.status(200).json({
+    success:    true,
+    message:    'Shipment confirmed. We will notify you when your items are received.',
     returnInfo: order.returnInfo,
   });
 });
 
 // ============================================
 // ADMIN GENERATES DISCOUNT CODE
-// FIX: now sets status to 'awaiting_discount' (not 'completed').
-// This is triggered after 'inspected'. The discount creation page
-// handles the final transition to 'completed' once the code is issued.
+// Status: inspected → awaiting_discount
+// The discount creation page handles awaiting_discount → completed.
 // @route  POST /api/v1/admin/orders/:id/return/generate-discount
 // @access Private/Admin
 // ============================================
@@ -728,7 +769,6 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
 
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
 
-  // FIX: set awaiting_discount, not completed — discount page handles completion
   order.returnInfo.status = 'awaiting_discount';
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
 
@@ -778,10 +818,9 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPDATE RETURN STATUS (Admin)
-// FIX: also handles awaiting_discount → completed transition (stock restore
-// and completedAt happen here, triggered after discount is actually issued).
-// The validateReturnStatusUpdate middleware must allow 'completed' from
-// 'awaiting_discount'. approved→in_transit→received→inspected handled here too.
+// Handles: received → inspected and awaiting_discount → completed.
+// NOTE: approved → in_transit is now CUSTOMER-triggered via confirmShipped.
+//       Admin cannot set in_transit directly.
 // @route  PUT /api/v1/admin/orders/:id/return/status
 // @access Private/Admin
 // ============================================
@@ -795,16 +834,19 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found', 400));
   }
 
-  order.returnInfo.status = status;
-
+  // Hard guard: in_transit is customer-triggered only
   if (status === 'in_transit') {
-    order.returnInfo.shippedAt = new Date();
-    order.addReturnTimeline('in_transit', 'Customer shipping items back', req.user._id);
+    return next(new HandleError(
+      'Status in_transit is set by the customer when they confirm shipment. Use POST /orders/:id/return/confirm-shipped.',
+      400
+    ));
   }
+
+  order.returnInfo.status = status;
 
   if (status === 'received') {
     order.returnInfo.receivedAt = new Date();
-    order.addReturnTimeline('return_received', 'Return package received', req.user._id);
+    order.addReturnTimeline('return_received', 'Return package received at warehouse', req.user._id);
   }
 
   if (status === 'inspected') {
@@ -813,7 +855,7 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
     if (inspectionNotes) {
       order.returnInfo.inspectionNotes = sanitizeHtml.sanitize(String(inspectionNotes));
     }
-    order.addReturnTimeline('return_inspected', 'Return inspected', req.user._id, {
+    order.addReturnTimeline('return_inspected', 'Return items inspected', req.user._id, {
       inspectionNotes: order.returnInfo.inspectionNotes,
     });
   }
