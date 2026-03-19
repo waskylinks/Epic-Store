@@ -304,9 +304,11 @@ const orderSchema = new mongoose.Schema(
               enum: ['approved', 'rejected', 'pending'],
               default: 'pending',
             },
-            // NEW — required when adminDecision is 'rejected'.
+            
             adminRejectionReason: { type: String, default: '' },
+            approvedQuantity: { type: Number, default: null },
           },
+          
         ],
 
         returnLabel: {
@@ -341,6 +343,12 @@ const orderSchema = new mongoose.Schema(
         pleaAttempts: { type: Number, default: 0 },
 
         discountValue: { type: Number, default: 0 },
+
+        requestedGross:  { type: Number, default: 0 }, // all requested items × quantity × price
+        approvedGross:   { type: Number, default: 0 }, // approved items × approvedQuantity × price
+        rejectedGross:   { type: Number, default: 0 }, // rejected items × quantity × price
+        approvedDiscount: { type: Number, default: 0 }, // proportional discount deducted from approvedGross
+        shippingDeducted: { type: Number, default: 0 },
 
         // NEW — customer's plea submission.
         pleaInfo: {
@@ -789,7 +797,7 @@ orderSchema.virtual('pleaDeadlineMs').get(function () {
 orderSchema.virtual('approvedItemsValue').get(function () {
   return (this.returnInfo?.itemsToReturn ?? [])
     .filter((item) => item.adminDecision === 'approved')
-    .reduce((sum, item) => sum + (item.price ?? 0) * (item.quantity ?? 1), 0);
+    .reduce((sum, item) => sum + (item.price ?? 0) * (item.approvedQuantity ?? item.quantity ?? 1), 0);
 });
 
 orderSchema.set('toJSON', { virtuals: true });
