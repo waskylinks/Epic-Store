@@ -247,9 +247,14 @@ const initialState = {
 
   // Stats
   stats: null,
-  // FIX: totalRequestedAmount stored as top-level field for KPI card.
-  // Backend puts it inside stats.totalRequestedAmount — we extract it here.
+  // All three revenue KPI values extracted from stats into top-level fields
+  // so AdminReturns.jsx can destructure them directly from state.adminReturn.
+  // totalApprovedAmount and totalRejectedAmount are only non-zero for returns
+  // that have passed the plea/accept stage (approved → completed). Preliminary
+  // values at items_reviewed / plea_submitted are excluded on the backend.
   totalRequestedAmount: 0,
+  totalApprovedAmount:  0,
+  totalRejectedAmount:  0,
 
   // Pagination
   pagination: {
@@ -344,9 +349,11 @@ const adminReturnSlice = createSlice({
         };
         if (payload.stats) {
           state.stats = payload.stats;
-          // FIX: extract totalRequestedAmount from stats into its own top-level field
-          // so AdminReturns.jsx can destructure it directly from state.adminReturn
+          // Extract all three revenue fields from stats into top-level state
+          // so KPI cards can destructure them without reaching into stats.
           state.totalRequestedAmount = payload.stats.totalRequestedAmount ?? 0;
+          state.totalApprovedAmount  = payload.stats.totalApprovedAmount  ?? 0;
+          state.totalRejectedAmount  = payload.stats.totalRejectedAmount  ?? 0;
         }
       })
       .addCase(getAllReturns.rejected, (state, { payload }) => {
@@ -376,8 +383,8 @@ const adminReturnSlice = createSlice({
         state.error   = null;
       })
       .addCase(getSingleReturn.fulfilled, (state, { payload }) => {
-        state.loading        = false;
-        state.currentReturn  = payload.order ?? null;
+        state.loading       = false;
+        state.currentReturn = payload.order ?? null;
       })
       .addCase(getSingleReturn.rejected, (state, { payload }) => {
         state.loading = false;
@@ -429,7 +436,7 @@ const adminReturnSlice = createSlice({
       });
 
     // ── generateDiscountCode ─────────────────────────────────────────────────
-    // FIX: now transitions to 'awaiting_discount' (not 'completed').
+    // Transitions to 'awaiting_discount' (not 'completed').
     // Patch currentReturn.returnInfo.status accordingly.
     builder
       .addCase(generateDiscountCode.pending, (state) => {
