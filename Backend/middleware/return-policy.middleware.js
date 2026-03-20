@@ -345,6 +345,9 @@ export const canCancelReturn = async (req, res, next) => {
 // validateReturnFileUpload
 // Shared file validation for all upload endpoints.
 // Max 8 files, 5MB each, allowed types only.
+//
+// ALLOWED_TYPES must stay in sync with returnFileFilter in multer.js.
+// To avoid future drift, consider extracting to a shared constant file.
 // ============================================
 export const validateReturnFileUpload = (req, res, next) => {
   if (!req.files || req.files.length === 0) {
@@ -352,8 +355,15 @@ export const validateReturnFileUpload = (req, res, next) => {
   }
 
   const MAX_FILES     = 8;
-  const MAX_FILE_SIZE = 5 * 1024 * 1024;
-  const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'video/mp4', 'application/pdf'];
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
+  const ALLOWED_TYPES = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
+    'video/mp4', 'video/webm', 'video/quicktime',
+    'application/pdf',
+  ];
+
+  const ALLOWED_LABEL = 'JPEG, PNG, WebP, GIF, MP4, WebM, MOV, PDF';
 
   if (req.files.length > MAX_FILES) {
     return next(new HandleError(`Maximum ${MAX_FILES} files allowed`, 400));
@@ -361,11 +371,13 @@ export const validateReturnFileUpload = (req, res, next) => {
 
   for (const file of req.files) {
     if (file.size > MAX_FILE_SIZE) {
-      return next(new HandleError(`File "${file.originalname}" exceeds maximum size of 5MB`, 400));
+      return next(new HandleError(
+        `File "${file.originalname}" exceeds the maximum size of 5MB`, 400
+      ));
     }
     if (!ALLOWED_TYPES.includes(file.mimetype)) {
       return next(new HandleError(
-        `File "${file.originalname}" has invalid type. Allowed: JPEG, PNG, WebP, MP4, PDF`, 400
+        `File "${file.originalname}" has invalid type. Allowed: ${ALLOWED_LABEL}`, 400
       ));
     }
   }
