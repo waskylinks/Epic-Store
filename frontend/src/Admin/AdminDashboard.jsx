@@ -41,6 +41,7 @@ import {
   fetchAdminStats,
   fetchOrderStatusBreakdown,
   fetchInventoryBreakdown,
+  setActiveOrderStatusTimeframe,
 } from '../features/analytics/coreAnalyticsSlice';
 import {
   fetchDashboardKPIs,
@@ -122,7 +123,8 @@ const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000;
 const STALE_DATA_THRESHOLD  = 3 * 60 * 1000;
 const DEBOUNCE_DELAY        = 800;
 
-// Module-scoped — survives navigation
+// Module-scoped — survives navigation.
+// 'month' entry is deleted on mount so navigating back always fetches fresh.
 const lastFetchedCache = {};
 let activeAbortController = null;
 
@@ -284,7 +286,6 @@ function useDebounce(callback, delay) {
   return [debounced, cancel];
 }
 
-// ── ROI colour helper ─────────────────────────────────────────
 function roiColor(roi) {
   if (roi === null || roi === undefined) return '#6B7280';
   if (roi >= 100) return '#10B981';
@@ -301,7 +302,11 @@ export default function AdminDashboard() {
 
   // ── Selectors ────────────────────────────────────────────
   const {
-    basicStats, basicStatsFetched, ordersByStatus, inventoryStatus,
+    basicStats,
+    basicStatsFetched,
+    ordersByStatus,
+    ordersByStatusTrends,
+    inventoryStatus,
   } = useSelector((s) => s.coreAnalytics);
 
   const {
@@ -317,7 +322,6 @@ export default function AdminDashboard() {
     returnOverview, refundOverview,
   } = useSelector((s) => s.operations);
 
-  // Discount analytics — overview only for the dashboard summary card
   const {
     overview:        discountOverview,
     overviewLoading: discountOverviewLoading,
@@ -344,11 +348,12 @@ export default function AdminDashboard() {
   const autoRefreshTimerRef = useRef(null);
 
   // ── Static data (one-time) ───────────────────────────────
+  // fetchOrderStatusBreakdown removed from here — it now lives in
+  // loadTimeframeData so it re-fetches on every timeframe switch.
   const loadStaticData = useCallback(() => {
     if (basicStatsFetched) return;
     Promise.allSettled([
       fetchAdminStats(),
-      fetchOrderStatusBreakdown(),
       fetchInventoryBreakdown(),
       fetchDashboardAlerts(),
       fetchLowStockAlerts(),
@@ -365,7 +370,12 @@ export default function AdminDashboard() {
 
     if (activeAbortController) activeAbortController.abort();
     activeAbortController = new AbortController();
+
+    // Set both timeframe guards before dispatching so stale fulfilled
+    // responses from previous timeframe switches are rejected.
     dispatch(setActiveTimeframe(currentTimeframe));
+    dispatch(setActiveOrderStatusTimeframe(currentTimeframe));
+
     lastFetchedCache[currentTimeframe] = now;
     setLastFetchTime(now);
     isLoadingRef.current = true;
@@ -374,6 +384,9 @@ export default function AdminDashboard() {
       fetchDashboardKPIs(currentTimeframe),
       fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' }),
       fetchTopPerformers(currentTimeframe),
+      // Order status breakdown now receives the active timeframe so the
+      // card shows period-scoped counts + per-status trend chips.
+      fetchOrderStatusBreakdown(currentTimeframe),
       fetchChannelPerformance(currentTimeframe),
       fetchDevicePerformance(currentTimeframe),
       fetchCheckoutAbandonmentStats(currentTimeframe),
@@ -383,14 +396,18 @@ export default function AdminDashboard() {
       fetchSLABreaches(currentTimeframe),
       fetchReturnOverview(currentTimeframe),
       fetchRefundOverview(currentTimeframe),
-      // Discount overview is not timeframe-dependent — server caches it for
-      // 5 min, so dispatching on every timeframe change is cheap.
       fetchDiscountAnalyticsOverview(),
     ].map(thunk => dispatch(thunk).unwrap().catch(() => {})))
-    .finally(() => { isLoadingRef.current = false; activeAbortController = null; });
+      .finally(() => {
+        isLoadingRef.current  = false;
+        activeAbortController = null;
+      });
   }, [dispatch]);
 
-  const [debouncedLoadTimeframe, cancelDebounce] = useDebounce(loadTimeframeData, DEBOUNCE_DELAY);
+  const [debouncedLoadTimeframe, cancelDebounce] = useDebounce(
+    loadTimeframeData,
+    DEBOUNCE_DELAY
+  );
 
   const handleTimeframeChange = useCallback((newTf) => {
     if (kpisLoading) return;
@@ -399,11 +416,13 @@ export default function AdminDashboard() {
     debouncedLoadTimeframe(newTf, true);
   }, [kpisLoading, debouncedLoadTimeframe, cancelDebounce]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // ── Mount effect ─────────────────────────────────────────
   useEffect(() => {
+    delete lastFetchedCache['month'];
     loadStaticData();
-    loadTimeframeData('month', false);
+    loadTimeframeData('month', true);
     return () => { cancelDebounce(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -420,9 +439,10 @@ export default function AdminDashboard() {
     return () => { if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current); };
   }, [timeframe, loadTimeframeData]);
 
-  const isActive = useCallback((p) =>
-    location.pathname === p || location.pathname.startsWith(p + '/'),
-  [location.pathname]);
+  const isActive = useCallback(
+    (p) => location.pathname === p || location.pathname.startsWith(p + '/'),
+    [location.pathname]
+  );
 
   const inv = useMemo(() => inventoryStatus || {
     inStock: 0, lowStock: 0, outOfStock: 0, discontinued: 0, total: 0,
@@ -468,7 +488,6 @@ export default function AdminDashboard() {
     { label: 'Admins',       value: basicStats?.adminCount ?? null, color: '#A855F7', icon: ManageAccounts },
   ], [basicStats, inv]);
 
-  // ── Discount summary derived values ──────────────────────
   const discountSummary = discountOverview?.overall ?? null;
   const discountTopCode = discountOverview?.topByROI?.[0] ?? null;
 
@@ -510,7 +529,6 @@ export default function AdminDashboard() {
 
         {/* ── Main ────────────────────────────────────────── */}
         <div className="adm-main">
-          {/* Page header */}
           <div className="adm-page-hd">
             <div className="adm-page-hd-left">
               <button className="adm-menu-btn" onClick={() => setSidebarOpen(prev => !prev)} aria-label="Toggle menu">
@@ -525,9 +543,14 @@ export default function AdminDashboard() {
               <LastUpdated timestamp={lastFetchTime} />
               <div className="adm-timeframe">
                 {['day', 'week', 'month', 'year'].map(t => (
-                  <button key={t} className={`adm-tf-btn ${timeframe === t ? 'adm-tf-btn--active' : ''}`}
-                    onClick={() => handleTimeframeChange(t)} disabled={kpisLoading} aria-pressed={timeframe === t}>
-                    {kpisLoading && timeframe === t ? <span className="adm-tf-spinner" /> : t.charAt(0).toUpperCase() + t.slice(1)}
+                  <button key={t}
+                    className={`adm-tf-btn ${timeframe === t ? 'adm-tf-btn--active' : ''}`}
+                    onClick={() => handleTimeframeChange(t)}
+                    disabled={kpisLoading}
+                    aria-pressed={timeframe === t}>
+                    {kpisLoading && timeframe === t
+                      ? <span className="adm-tf-spinner" />
+                      : t.charAt(0).toUpperCase() + t.slice(1)}
                   </button>
                 ))}
               </div>
@@ -536,13 +559,19 @@ export default function AdminDashboard() {
           </div>
 
           <div className="adm-content">
-            {error && <div className="adm-error-banner"><Warning style={{ fontSize: 18 }} /><span>{error}</span></div>}
+            {error && (
+              <div className="adm-error-banner">
+                <Warning style={{ fontSize: 18 }} /><span>{error}</span>
+              </div>
+            )}
 
             {/* ── KPIs ──────────────────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#6366F115', color: '#6366F1' }}><BarChart style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#6366F115', color: '#6366F1' }}>
+                    <BarChart style={{ fontSize: 16 }} />
+                  </span>
                   Key Performance Indicators
                 </h2>
                 {kpisReady && !kpisLoading && <TrendChip value={kpis?.revenue?.change || 0} />}
@@ -559,7 +588,9 @@ export default function AdminDashboard() {
                             <span className="adm-kpi-icon" style={{ background: k.bg, color: k.accent }}>
                               <k.icon style={{ fontSize: 20 }} />
                             </span>
-                            {k.change !== undefined && kpisReady && !kpisLoading && <TrendChip value={k.change} />}
+                            {k.change !== undefined && kpisReady && !kpisLoading && (
+                              <TrendChip value={k.change} />
+                            )}
                           </div>
                           <div className="adm-kpi-label">{k.label}</div>
                           <div className="adm-kpi-value">{k.value ?? <Dash />}</div>
@@ -574,20 +605,60 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#F9731615', color: '#F97316' }}><ShoppingCart style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#F9731615', color: '#F97316' }}>
+                    <ShoppingCart style={{ fontSize: 16 }} />
+                  </span>
                   Orders &amp; Inventory Status
                 </h2>
-                <Link to="/admin/orders" className="adm-section-link">View Orders <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/orders" className="adm-section-link">
+                  View Orders <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-charts-row">
+                {/*
+                  Order status card now shows period-scoped counts.
+                  When ordersByStatusTrends is populated (timeframe fetch),
+                  each row also renders a TrendChip comparing vs the previous period.
+                */}
                 <SectionCard title="Order Status Breakdown" icon={ShoppingCart} iconColor="#F97316" link="/admin/orders">
                   {firstLoad ? <LoadingState label="Loading orders..." /> : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Processing" value={fmt.number(ordersByStatus?.processing)} accent="#F59E0B" />
-                      <MetricRow label="Shipped"    value={fmt.number(ordersByStatus?.shipped)}    accent="#3B82F6" />
-                      <MetricRow label="Delivered"  value={fmt.number(ordersByStatus?.delivered)}  accent="#10B981" />
-                      <MetricRow label="Cancelled"  value={fmt.number(ordersByStatus?.cancelled)}  accent="#EF4444" />
-                      <MetricRow label="Total"      value={basicStats?.orders !== undefined ? fmt.number(basicStats.orders) : <Dash />} />
+                      <MetricRow
+                        label="Processing"
+                        value={fmt.number(ordersByStatus?.processing)}
+                        accent="#F59E0B"
+                        sub={ordersByStatusTrends?.processing !== undefined
+                          ? <TrendChip value={ordersByStatusTrends.processing} />
+                          : null}
+                      />
+                      <MetricRow
+                        label="Shipped"
+                        value={fmt.number(ordersByStatus?.shipped)}
+                        accent="#3B82F6"
+                        sub={ordersByStatusTrends?.shipped !== undefined
+                          ? <TrendChip value={ordersByStatusTrends.shipped} />
+                          : null}
+                      />
+                      <MetricRow
+                        label="Delivered"
+                        value={fmt.number(ordersByStatus?.delivered)}
+                        accent="#10B981"
+                        sub={ordersByStatusTrends?.delivered !== undefined
+                          ? <TrendChip value={ordersByStatusTrends.delivered} />
+                          : null}
+                      />
+                      <MetricRow
+                        label="Cancelled"
+                        value={fmt.number(ordersByStatus?.cancelled)}
+                        accent="#EF4444"
+                        sub={ordersByStatusTrends?.cancelled !== undefined
+                          ? <TrendChip value={ordersByStatusTrends.cancelled} />
+                          : null}
+                      />
+                      <MetricRow
+                        label="Total (all-time)"
+                        value={basicStats?.orders !== undefined ? fmt.number(basicStats.orders) : <Dash />}
+                      />
                     </div>
                   )}
                 </SectionCard>
@@ -609,15 +680,22 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#10B98115', color: '#10B981' }}><TrendingUp style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#10B98115', color: '#10B981' }}>
+                    <TrendingUp style={{ fontSize: 16 }} />
+                  </span>
                   Revenue Analytics
                 </h2>
-                <Link to="/admin/reports" className="adm-section-link">Full Reports <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/reports" className="adm-section-link">
+                  Full Reports <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-charts-row">
                 <SectionCard title="Revenue Trends" subtitle={`${timeframe} view - daily breakdown`} icon={TrendingUp} iconColor="#10B981" link="/admin/reports" linkLabel="Reports">
                   {firstLoad ? <LoadingState label="Loading revenue data..." /> : revenueData.length === 0 ? (
-                    <div className="adm-empty"><Assessment style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No revenue data available for this period</span></div>
+                    <div className="adm-empty">
+                      <Assessment style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No revenue data available for this period</span>
+                    </div>
                   ) : (
                     <ResponsiveContainer width="100%" height={260}>
                       <AreaChart data={revenueData}>
@@ -630,7 +708,10 @@ export default function AdminDashboard() {
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }} />
                         <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }} formatter={(v) => [fmt.currency(v), 'Revenue']} />
+                        <Tooltip
+                          contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
+                          formatter={(v) => [fmt.currency(v), 'Revenue']}
+                        />
                         <Area type="monotone" dataKey="revenue" stroke="#10B981" strokeWidth={2} fill="url(#revGrad)" dot={false} />
                       </AreaChart>
                     </ResponsiveContainer>
@@ -638,14 +719,20 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Sales by Category" subtitle="Revenue distribution" icon={Category} iconColor="#6366F1" link="/admin/analytics">
                   {firstLoad ? <LoadingState label="Loading categories..." /> : catData.length === 0 ? (
-                    <div className="adm-empty"><Category style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No category data available</span></div>
+                    <div className="adm-empty">
+                      <Category style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No category data available</span>
+                    </div>
                   ) : (
                     <ResponsiveContainer width="100%" height={260}>
                       <ReChart data={catData} layout="vertical">
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
                         <XAxis type="number" tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#6B7280' }} width={90} />
-                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }} formatter={(v) => [fmt.currency(v), 'Revenue']} />
+                        <Tooltip
+                          contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
+                          formatter={(v) => [fmt.currency(v), 'Revenue']}
+                        />
                         <Bar dataKey="value" radius={[0, 4, 4, 0]}>
                           {catData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
                         </Bar>
@@ -660,7 +747,9 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#e563f115', color: '#e563f1' }}><Insights style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#e563f115', color: '#e563f1' }}>
+                    <Insights style={{ fontSize: 16 }} />
+                  </span>
                   Discount Performance
                 </h2>
                 <Link to="/admin/discount-analytics" className="adm-section-link">
@@ -668,7 +757,6 @@ export default function AdminDashboard() {
                 </Link>
               </div>
               <div className="adm-charts-row">
-                {/* Summary KPIs */}
                 <SectionCard title="Discount ROI Overview" subtitle="Store-wide discount effectiveness" icon={LocalOffer} iconColor="#e563f1" link="/admin/discount-analytics" linkLabel="View Analytics">
                   {discountOverviewLoading || (!discountSummary && firstLoad) ? (
                     <LoadingState label="Loading discount data..." />
@@ -679,44 +767,19 @@ export default function AdminDashboard() {
                     </div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow
-                        label="Total Discount Cost"
-                        value={fmt.compact(discountSummary.totalDiscountCost)}
-                        accent="#EF4444"
-                      />
-                      <MetricRow
-                        label="Revenue Influenced"
-                        value={fmt.compact(discountSummary.totalRevenueInfluenced)}
-                        accent="#10B981"
-                      />
-                      <MetricRow
-                        label="Overall ROI"
-                        value={
-                          <span style={{ color: roiColor(discountSummary.overallROI), fontWeight: 700 }}>
-                            {fmt.roi(discountSummary.overallROI)}
-                          </span>
-                        }
-                      />
-                      <MetricRow
-                        label="Total Redemptions"
-                        value={fmt.number(discountSummary.totalRedemptions)}
-                        accent="#8B5CF6"
-                      />
-                      <MetricRow
-                        label="Active Codes"
-                        value={fmt.number(discountSummary.totalCodesWithRedemptions)}
-                        sub={`of ${fmt.number(discountSummary.totalCodes)} total`}
-                      />
-                      <MetricRow
-                        label="Redemption Rate"
-                        value={fmt.pct(discountSummary.redemptionRate)}
-                        accent="#F59E0B"
-                      />
+                      <MetricRow label="Total Discount Cost"   value={fmt.compact(discountSummary.totalDiscountCost)}      accent="#EF4444" />
+                      <MetricRow label="Revenue Influenced"    value={fmt.compact(discountSummary.totalRevenueInfluenced)} accent="#10B981" />
+                      <MetricRow label="Overall ROI"           value={
+                        <span style={{ color: roiColor(discountSummary.overallROI), fontWeight: 700 }}>
+                          {fmt.roi(discountSummary.overallROI)}
+                        </span>
+                      } />
+                      <MetricRow label="Total Redemptions"     value={fmt.number(discountSummary.totalRedemptions)}        accent="#8B5CF6" />
+                      <MetricRow label="Active Codes"          value={fmt.number(discountSummary.totalCodesWithRedemptions)} sub={`of ${fmt.number(discountSummary.totalCodes)} total`} />
+                      <MetricRow label="Redemption Rate"       value={fmt.pct(discountSummary.redemptionRate)}             accent="#F59E0B" />
                     </div>
                   )}
                 </SectionCard>
-
-                {/* Top code by ROI + category breakdown */}
                 <SectionCard title="Top Code &amp; Category Breakdown" subtitle="Best performing discount and ROI by category" icon={BarChart} iconColor="#8B5CF6" link="/admin/discount-analytics" linkLabel="Leaderboard">
                   {discountOverviewLoading || (!discountOverview && firstLoad) ? (
                     <LoadingState label="Loading discount data..." />
@@ -727,7 +790,6 @@ export default function AdminDashboard() {
                     </div>
                   ) : (
                     <>
-                      {/* Top code by ROI */}
                       {discountTopCode && (
                         <div className="adm-discount-top-code">
                           <div className="adm-discount-top-label">Top ROI Code</div>
@@ -739,7 +801,6 @@ export default function AdminDashboard() {
                           </div>
                         </div>
                       )}
-                      {/* Category breakdown bars */}
                       <div className="adm-metric-list" style={{ marginTop: discountTopCode ? 12 : 0 }}>
                         {(discountOverview.byCategory || []).slice(0, 5).map((cat, i) => {
                           const maxRev = Math.max(...(discountOverview.byCategory || []).map(c => c.totalRevenueInfluenced || 0)) || 1;
@@ -773,10 +834,14 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#06B6D415', color: '#06B6D4' }}><PersonSearch style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#06B6D415', color: '#06B6D4' }}>
+                    <PersonSearch style={{ fontSize: 16 }} />
+                  </span>
                   Customer Analytics
                 </h2>
-                <Link to="/admin/customers" className="adm-section-link">Full Customer Data <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/customers" className="adm-section-link">
+                  Full Customer Data <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-cards-3">
                 <SectionCard title="Customer Overview" icon={People} iconColor="#06B6D4">
@@ -793,7 +858,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Segment Distribution" icon={BarChart} iconColor="#8B5CF6" link="/admin/customers">
                   {firstLoad ? <LoadingState label="Loading segments..." /> : safeSegments.length === 0 ? (
-                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No segment data available</span></div>
+                    <div className="adm-empty">
+                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No segment data available</span>
+                    </div>
                   ) : (
                     <div className="adm-segment-list">
                       {safeSegments.map((seg, i) => (
@@ -810,7 +878,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Top Customers" icon={ManageAccounts} iconColor="#A855F7" link="/admin/customers">
                   {firstLoad ? <LoadingState label="Loading top customers..." /> : !topPerformers?.customers?.length ? (
-                    <div className="adm-empty"><People style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No customer data available</span></div>
+                    <div className="adm-empty">
+                      <People style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No customer data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       {topPerformers.customers.slice(0, 5).map((c, i) => (
@@ -826,15 +897,22 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#F59E0B15', color: '#F59E0B' }}><CampaignOutlined style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#F59E0B15', color: '#F59E0B' }}>
+                    <CampaignOutlined style={{ fontSize: 16 }} />
+                  </span>
                   Marketing Attribution
                 </h2>
-                <Link to="/admin/attribution" className="adm-section-link">Full Attribution <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/attribution" className="adm-section-link">
+                  Full Attribution <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-charts-row">
                 <SectionCard title="Channel Performance" icon={CampaignOutlined} iconColor="#F59E0B" link="/admin/attribution">
                   {firstLoad ? <LoadingState label="Loading channels..." /> : channelData.length === 0 ? (
-                    <div className="adm-empty"><CampaignOutlined style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No channel data available</span></div>
+                    <div className="adm-empty">
+                      <CampaignOutlined style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No channel data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       {channelData.slice(0, 6).map((ch, i) => (
@@ -850,7 +928,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Device Performance" icon={DevicesOther} iconColor="#6366F1" link="/admin/attribution">
                   {firstLoad ? <LoadingState label="Loading device data..." /> : deviceData.length === 0 ? (
-                    <div className="adm-empty"><DevicesOther style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No device data available</span></div>
+                    <div className="adm-empty">
+                      <DevicesOther style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No device data available</span>
+                    </div>
                   ) : (
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
@@ -870,10 +951,14 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#10B98115', color: '#10B981' }}><ShoppingCartCheckout style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#10B98115', color: '#10B981' }}>
+                    <ShoppingCartCheckout style={{ fontSize: 16 }} />
+                  </span>
                   Checkout Analytics
                 </h2>
-                <Link to="/admin/checkout" className="adm-section-link">Full Checkout Data <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/checkout" className="adm-section-link">
+                  Full Checkout Data <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-cards-3">
                 <SectionCard title="Abandonment Stats" icon={ShoppingCartCheckout} iconColor="#10B981">
@@ -932,7 +1017,9 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#3B82F615', color: '#3B82F6' }}><Inventory style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#3B82F615', color: '#3B82F6' }}>
+                    <Inventory style={{ fontSize: 16 }} />
+                  </span>
                   Product Performance
                 </h2>
                 <Link to="/admin/products" className="adm-section-link">View Products <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
@@ -981,7 +1068,9 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#64748B15', color: '#64748B' }}><LocalShipping style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#64748B15', color: '#64748B' }}>
+                    <LocalShipping style={{ fontSize: 16 }} />
+                  </span>
                   Operational Metrics
                 </h2>
               </div>
@@ -1004,8 +1093,8 @@ export default function AdminDashboard() {
                     <div className="adm-empty"><FactCheck style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No SLA data available</span></div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Compliance Rate"      value={fmt.pct(slaBreaches.complianceRate)}   accent="#10B981" />
-                      <MetricRow label="Total Breaches"       value={fmt.number(slaBreaches.totalBreaches)} accent="#EF4444" />
+                      <MetricRow label="Compliance Rate"      value={fmt.pct(slaBreaches.complianceRate)}      accent="#10B981" />
+                      <MetricRow label="Total Breaches"       value={fmt.number(slaBreaches.totalBreaches)}    accent="#EF4444" />
                       <MetricRow label="Critical Breaches"    value={fmt.number(slaBreaches.criticalBreaches)} accent="#DC2626" />
                       <MetricRow label="Avg. Resolution Time" value={`${slaBreaches.avgResolutionTime?.toFixed(1) || '-'} hrs`} />
                     </div>
@@ -1031,7 +1120,9 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#EF444415', color: '#EF4444' }}><ReplayCircleFilled style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#EF444415', color: '#EF4444' }}>
+                    <ReplayCircleFilled style={{ fontSize: 16 }} />
+                  </span>
                   Returns Analytics
                 </h2>
                 <Link to="/admin/returns" className="adm-section-link">Manage Returns <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
@@ -1073,7 +1164,9 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#14B8A615', color: '#14B8A6' }}><CurrencyExchange style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#14B8A615', color: '#14B8A6' }}>
+                    <CurrencyExchange style={{ fontSize: 16 }} />
+                  </span>
                   Refunds Analytics
                 </h2>
                 <Link to="/admin/refunds" className="adm-section-link">Manage Refunds <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
@@ -1117,7 +1210,9 @@ export default function AdminDashboard() {
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#F59E0B15', color: '#F59E0B' }}><Warning style={{ fontSize: 16 }} /></span>
+                  <span className="adm-section-icon-wrap" style={{ background: '#F59E0B15', color: '#F59E0B' }}>
+                    <Warning style={{ fontSize: 16 }} />
+                  </span>
                   Alerts &amp; Activity
                 </h2>
               </div>

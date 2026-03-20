@@ -31,15 +31,23 @@ export const fetchAdminStats = createAsyncThunk(
     }
 );
 
+// Now accepts an optional timeframe string.
+// - No argument (or undefined): hits the endpoint with no query param →
+//   all-time counts, same shape as before { ordersByStatus: {...} }
+// - With timeframe ("day" | "week" | "month" | "year"): appends
+//   ?timeframe=<value> → richer response with trends, share, previousPeriod.
+// The _timeframe key is embedded in the payload so the fulfilled case can
+// reject stale out-of-order responses when the user switches timeframes.
 export const fetchOrderStatusBreakdown = createAsyncThunk(
     "coreAnalytics/fetchOrderStatusBreakdown",
-    async (_, { rejectWithValue, signal }) => {
+    async (timeframe, { rejectWithValue, signal }) => {
         try {
-            const { data } = await axios.get(
-                `${API_BASE}/admin/order-status-breakdown`,
-                { signal }
-            );
-            return data;
+            const url = timeframe
+                ? `${API_BASE}/admin/order-status-breakdown?timeframe=${timeframe}`
+                : `${API_BASE}/admin/order-status-breakdown`;
+            const { data } = await axios.get(url, { signal });
+            // Embed the requested timeframe (may be undefined for all-time calls)
+            return { ...data, _timeframe: timeframe ?? null };
         } catch (error) {
             if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(
@@ -100,7 +108,22 @@ const coreAnalyticsSlice = createSlice({
             adminCount: 0,
         },
         basicStatsFetched: false,
-        ordersByStatus:    null,
+
+        // ordersByStatus always holds the flat { processing, shipped, delivered, cancelled }
+        // shape so existing dashboard render code needs no changes.
+        ordersByStatus: null,
+
+        // Extra fields populated only when a timeframe was requested.
+        // null when the all-time endpoint was used.
+        ordersByStatusPreviousPeriod: null,  // { ordersByStatus, total }
+        ordersByStatusTrends:         null,  // { processing, shipped, delivered, cancelled }
+        ordersByStatusShare:          null,  // { processing, shipped, delivered, cancelled }
+        ordersByStatusCurrentTotal:   null,
+
+        // Tracks which timeframe the current breakdown data belongs to so
+        // stale out-of-order responses from rapid timeframe switches are rejected.
+        activeOrderStatusTimeframe: null,
+
         inventoryStatus:   null,
         basicAnalytics: {
             trends:               { revenue: 0, orders: 0, users: 0, products: 0 },
@@ -116,6 +139,11 @@ const coreAnalyticsSlice = createSlice({
     reducers: {
         clearCoreAnalyticsError: (state) => {
             state.error = null;
+        },
+        // Call this before dispatching fetchOrderStatusBreakdown(timeframe) so
+        // the fulfilled case can reject stale responses from previous timeframes.
+        setActiveOrderStatusTimeframe: (state, action) => {
+            state.activeOrderStatusTimeframe = action.payload;
         },
     },
     extraReducers: (builder) => {
@@ -163,19 +191,60 @@ const coreAnalyticsSlice = createSlice({
             });
 
         // ── fetchOrderStatusBreakdown ────────────────────────────────────────
+        // Handles both the all-time (no timeframe) and timeframe-scoped shapes.
+        // ordersByStatus is always written so existing UI code is unaffected.
+        // The richer fields (trends, share, previousPeriod) are only written
+        // when the response carries a matching _timeframe value.
         builder
             .addCase(fetchOrderStatusBreakdown.pending, (state) => {
                 state.loading = true;
                 state.error   = null;
             })
             .addCase(fetchOrderStatusBreakdown.fulfilled, (state, action) => {
-                state.loading        = false;
-                state.ordersByStatus = action.payload.ordersByStatus || {
+                state.loading = false;
+
+                const {
+                    _timeframe,
+                    ordersByStatus,
+                    previousPeriod,
+                    currentTotal,
+                    trends,
+                    share,
+                } = action.payload;
+
+                // ── Stale-response guard ─────────────────────────────────────
+                // Only apply the guard when a timeframe was requested. All-time
+                // calls (_timeframe === null) are always accepted.
+                if (
+                    _timeframe !== null &&
+                    _timeframe !== undefined &&
+                    _timeframe !== state.activeOrderStatusTimeframe
+                ) {
+                    return;
+                }
+
+                // ── Core counts — always present ─────────────────────────────
+                state.ordersByStatus = ordersByStatus || {
                     processing: 0,
                     shipped:    0,
                     delivered:  0,
                     cancelled:  0,
                 };
+
+                // ── Timeframe-specific extras ────────────────────────────────
+                if (_timeframe) {
+                    state.ordersByStatusPreviousPeriod  = previousPeriod  ?? null;
+                    state.ordersByStatusTrends          = trends          ?? null;
+                    state.ordersByStatusShare           = share           ?? null;
+                    state.ordersByStatusCurrentTotal    = currentTotal    ?? null;
+                } else {
+                    // All-time fetch — clear out any stale timeframe data so the
+                    // UI doesn't accidentally render trends from a previous call.
+                    state.ordersByStatusPreviousPeriod  = null;
+                    state.ordersByStatusTrends          = null;
+                    state.ordersByStatusShare           = null;
+                    state.ordersByStatusCurrentTotal    = null;
+                }
             })
             .addCase(fetchOrderStatusBreakdown.rejected, (state, action) => {
                 state.loading = false;
@@ -205,5 +274,9 @@ const coreAnalyticsSlice = createSlice({
     },
 });
 
-export const { clearCoreAnalyticsError } = coreAnalyticsSlice.actions;
+export const {
+    clearCoreAnalyticsError,
+    setActiveOrderStatusTimeframe,
+} = coreAnalyticsSlice.actions;
+
 export default coreAnalyticsSlice.reducer;
