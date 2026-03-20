@@ -2,63 +2,57 @@ import { v2 as cloudinary } from 'cloudinary';
 import streamifier from 'streamifier';
 
 /**
- * Configure Cloudinary with environment variables
- * This should be called once during server startup
+ * Configure Cloudinary with environment variables.
+ * Call once at server startup before any uploads.
  */
 export const configureCloudinary = () => {
-  // ✅ Use correct environment variable names
   const config = {
     cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
+    api_key:    process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
   };
 
-  // Validate configuration
   const missingFields = [];
   if (!config.cloud_name) missingFields.push('CLOUDINARY_CLOUD_NAME');
-  if (!config.api_key) missingFields.push('CLOUDINARY_API_KEY');
+  if (!config.api_key)    missingFields.push('CLOUDINARY_API_KEY');
   if (!config.api_secret) missingFields.push('CLOUDINARY_API_SECRET');
 
   if (missingFields.length > 0) {
-    throw new Error(
-      `Missing Cloudinary configuration: ${missingFields.join(', ')}`
-    );
+    throw new Error(`Missing Cloudinary configuration: ${missingFields.join(', ')}`);
   }
 
-  // Configure Cloudinary
   cloudinary.config(config);
 
-  // Log success (safe logging - don't expose secrets)
   console.log('✅ Cloudinary configured successfully:', {
     cloud_name: config.cloud_name,
-    api_key: `${config.api_key.substring(0, 5)}...`,
-    api_secret: '***hidden***'
+    api_key:    `${config.api_key.substring(0, 5)}...`,
+    api_secret: '***hidden***',
   });
 
   return cloudinary;
 };
 
-// Export the cloudinary instance
 export { cloudinary };
 
+// ============================================
+// UPLOAD
+// ============================================
+
 /**
- * Upload a file buffer to Cloudinary
- * @param {Buffer} fileBuffer - The file buffer to upload
- * @param {Object} options - Additional upload options
- * @returns {Promise} Cloudinary upload result
+ *
+ * @param {Buffer} fileBuffer 
+ * @param {Object} options    
+ * @returns {Promise<Object>} 
  */
 export const uploadToCloudinary = (fileBuffer, options = {}) => {
   return new Promise((resolve, reject) => {
-    // Validate inputs
     if (!fileBuffer) {
       return reject(new Error('File buffer is required'));
     }
-
     if (!Buffer.isBuffer(fileBuffer)) {
       return reject(new Error('Invalid file buffer'));
     }
 
-    // Check if Cloudinary is configured
     const currentConfig = cloudinary.config();
     if (!currentConfig.cloud_name || !currentConfig.api_key) {
       return reject(new Error(
@@ -66,60 +60,68 @@ export const uploadToCloudinary = (fileBuffer, options = {}) => {
       ));
     }
 
-    // Default upload options
+    const isImageOnly =
+      !options.resource_type ||
+      options.resource_type === 'image';
+
     const uploadOptions = {
-      folder: options.folder || 'products',
-      resource_type: options.resource_type || 'auto',
-      transformation: options.transformation || [
-        { width: 1000, height: 1000, crop: 'limit' },
-        { quality: 'auto:good' }
-      ],
-      ...options
+      folder:        options.folder        || 'uploads',
+      resource_type: options.resource_type || 'image',
+      ...(isImageOnly && {
+        transformation: options.transformation || [
+          { width: 1000, height: 1000, crop: 'limit' },
+          { quality: 'auto:good' },
+        ],
+      }),
+      ...options,
     };
 
-    console.log('⬆️ Starting Cloudinary upload to folder:', uploadOptions.folder);
+    console.log('⬆️  Starting Cloudinary upload:', {
+      folder:        uploadOptions.folder,
+      resource_type: uploadOptions.resource_type,
+      hasTransform:  !!uploadOptions.transformation,
+    });
 
-    // Create upload stream
     const uploadStream = cloudinary.uploader.upload_stream(
       uploadOptions,
       (error, result) => {
         if (error) {
           console.error('❌ Cloudinary upload failed:', {
-            message: error.message,
+            message:   error.message,
             http_code: error.http_code,
-            name: error.name
+            name:      error.name,
           });
-          
-          // Provide more helpful error messages
+
           if (error.http_code === 401) {
-            reject(new Error(
+            return reject(new Error(
               'Cloudinary authentication failed. Check your API credentials.'
             ));
-          } else if (error.http_code === 403) {
-            reject(new Error(
+          }
+          if (error.http_code === 403) {
+            return reject(new Error(
               'Cloudinary authorization failed. Check your API permissions.'
             ));
-          } else {
-            reject(error);
           }
-        } else {
-          console.log('✅ Upload successful:', {
-            public_id: result.public_id,
-            format: result.format,
-            size: `${(result.bytes / 1024).toFixed(2)} KB`
-          });
-          resolve(result);
+          return reject(error);
         }
+
+        console.log('✅ Upload successful:', {
+          public_id:     result.public_id,
+          resource_type: result.resource_type,
+          format:        result.format,
+          size:          `${(result.bytes / 1024).toFixed(2)} KB`,
+          url:           result.secure_url,
+        });
+
+        resolve(result);
       }
     );
 
-    // Handle stream errors
     uploadStream.on('error', (error) => {
       console.error('❌ Upload stream error:', error);
       reject(error);
     });
 
-    // Pipe the buffer to Cloudinary
     try {
       streamifier.createReadStream(fileBuffer).pipe(uploadStream);
     } catch (error) {
@@ -129,27 +131,31 @@ export const uploadToCloudinary = (fileBuffer, options = {}) => {
   });
 };
 
+// ============================================
+// DELETE
+// ============================================
+
 /**
- * Delete an image from Cloudinary
- * @param {string} publicId - The public ID of the image to delete
- * @returns {Promise} Cloudinary deletion result
+ *
+ * @param {string} publicId      
+ * @param {string} resourceType  
+ * @returns {Promise<Object>} 
  */
-export const deleteFromCloudinary = async (publicId) => {
-  if (!publicId) {
-    throw new Error('Public ID is required for deletion');
-  }
+export const deleteFromCloudinary = async (publicId, resourceType = 'image') => {
+  if (!publicId) throw new Error('Public ID is required for deletion');
 
   try {
-    const result = await cloudinary.uploader.destroy(publicId, { 
-      invalidate: true 
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+      invalidate:    true,
     });
-    
+
     if (result.result === 'ok') {
-      console.log(`✅ Deleted image: ${publicId}`);
+      console.log(`✅ Deleted ${resourceType}: ${publicId}`);
     } else {
-      console.warn(`⚠️ Delete returned: ${result.result} for ${publicId}`);
+      console.warn(`⚠️  Delete returned: ${result.result} for ${publicId}`);
     }
-    
+
     return result;
   } catch (error) {
     console.error(`❌ Failed to delete ${publicId}:`, error.message);
@@ -158,32 +164,46 @@ export const deleteFromCloudinary = async (publicId) => {
 };
 
 /**
- * Delete multiple images from Cloudinary
- * @param {Array} publicIds - Array of public IDs to delete
- * @returns {Promise} Array of deletion results
+ *
+ * @param {Array<{ publicId: string, resourceType?: string }>} files
+ * @returns {Promise<Array>} Array of deletion results.
  */
-export const deleteMultipleFromCloudinary = async (publicIds) => {
-  if (!Array.isArray(publicIds) || publicIds.length === 0) {
-    throw new Error('Array of public IDs is required');
+export const deleteMultipleFromCloudinary = async (files) => {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('Array of { publicId, resourceType? } objects is required');
   }
 
-  try {
-    const deletePromises = publicIds.map(id => 
-      cloudinary.uploader.destroy(id, { invalidate: true })
-        .catch(err => ({ error: err.message, public_id: id }))
-    );
-    
-    const results = await Promise.all(deletePromises);
-    
-    const successful = results.filter(r => !r.error).length;
-    const failed = results.length - successful;
-    
-    console.log(`🗑️ Deleted ${successful}/${results.length} images` + 
-                (failed > 0 ? ` (${failed} failed)` : ''));
-    
-    return results;
-  } catch (error) {
-    console.error('❌ Failed to delete multiple images:', error);
-    throw error;
+  const deletePromises = files.map(({ publicId, resourceType = 'image' }) =>
+    cloudinary.uploader
+      .destroy(publicId, { resource_type: resourceType, invalidate: true })
+      .catch((err) => ({ error: err.message, public_id: publicId }))
+  );
+
+  const results  = await Promise.all(deletePromises);
+  const failed   = results.filter((r) => r.error).length;
+  const succeeded = results.length - failed;
+
+  console.log(
+    `🗑️  Deleted ${succeeded}/${results.length} files` +
+    (failed > 0 ? ` (${failed} failed)` : '')
+  );
+
+  return results;
+};
+
+// ============================================
+// URL HELPER
+// ============================================
+
+/**
+ *
+ * @param {Object} result - The raw Cloudinary upload result object.
+ * @returns {string} The secure delivery URL.
+ */
+export const resolveCloudinaryUrl = (result) => {
+  if (!result?.secure_url) {
+    throw new Error('Invalid Cloudinary result: missing secure_url');
   }
+
+  return result.secure_url;
 };
