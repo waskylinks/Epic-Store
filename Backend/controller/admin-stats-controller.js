@@ -55,39 +55,131 @@ export const getAdminStats = handleAsyncError(async (req, res) => {
 
 // ============================================
 // ORDER STATUS BREAKDOWN
+// Accepts an optional ?timeframe=day|week|month|year query param.
+// When timeframe is provided the counts are scoped to that date range
+// and a previousPeriod breakdown + per-status trends are included,
+// mirroring the pattern used by getDashboardKPIs.
+// When no timeframe is supplied the behaviour is unchanged — all-time
+// counts are returned (same as before).
 // ============================================
-export const getOrderStatusBreakdown = handleAsyncError(async (req, res) => {
-  const cacheKey = `order_status_breakdown_${CACHE_VERSION}`;
+export const getOrderStatusBreakdown = handleAsyncError(async (req, res, next) => {
+  const { timeframe } = req.query;
 
-  const cached = await getCache(cacheKey);
-  if (cached) {
-    return res.status(200).json({ success: true, ...cached });
+  // ── All-time path (no timeframe) ────────────────────────────────────────
+  if (!timeframe) {
+    const cacheKey = `order_status_breakdown_${CACHE_VERSION}`;
+    const cached = await getCache(cacheKey);
+    if (cached) return res.status(200).json({ success: true, ...cached });
+
+    const orderStatusAgg = await Order.aggregate([
+      { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
+    ]);
+
+    const breakdown = { processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
+    orderStatusAgg.forEach(({ _id: status, count }) => {
+      switch (status) {
+        case "Processing": breakdown.processing = count; break;
+        case "Shipped":    breakdown.shipped    = count; break;
+        case "Delivered":  breakdown.delivered  = count; break;
+        case "Cancelled":  breakdown.cancelled  = count; break;
+      }
+    });
+
+    const response = { ordersByStatus: breakdown };
+    await setCache(cacheKey, response, 300);
+    return res.status(200).json({ success: true, ...response });
   }
 
-  const orderStatusAgg = await Order.aggregate([
-    { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
+  // ── Timeframe-scoped path ────────────────────────────────────────────────
+  if (!validateTimeframe(timeframe, next)) return;
+
+  const cacheKey = `order_status_breakdown_${timeframe}_${CACHE_VERSION}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
+  const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } =
+    getDateRanges(timeframe);
+
+  // Run both period aggregations in parallel via $facet in a single round-trip
+  const [facetResult] = await Order.aggregate([
+    {
+      $facet: {
+        current: [
+          { $match: { createdAt: { $gte: currentPeriodStart } } },
+          { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
+        ],
+        previous: [
+          {
+            $match: {
+              createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
+            }
+          },
+          { $group: { _id: "$orderStatus", count: { $sum: 1 } } }
+        ],
+        // Total order count for the current period (used for percentages)
+        currentTotal: [
+          { $match: { createdAt: { $gte: currentPeriodStart } } },
+          { $group: { _id: null, total: { $sum: 1 } } }
+        ],
+        previousTotal: [
+          {
+            $match: {
+              createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd }
+            }
+          },
+          { $group: { _id: null, total: { $sum: 1 } } }
+        ]
+      }
+    }
   ]);
 
-  const breakdown = {
-    processing: 0,
-    shipped: 0,
-    delivered: 0,
-    cancelled: 0
+  // ── Build breakdown objects from aggregation arrays ──────────────────────
+  const STATUSES = ["Processing", "Shipped", "Delivered", "Cancelled"];
+  const KEY_MAP  = {
+    Processing: "processing",
+    Shipped:    "shipped",
+    Delivered:  "delivered",
+    Cancelled:  "cancelled"
   };
 
-  orderStatusAgg.forEach(item => {
-    const status = item._id;
-    const count = item.count;
+  const toBreakdown = (agg) => {
+    const obj = { processing: 0, shipped: 0, delivered: 0, cancelled: 0 };
+    agg.forEach(({ _id: status, count }) => {
+      const key = KEY_MAP[status];
+      if (key) obj[key] = count;
+    });
+    return obj;
+  };
 
-    switch (status) {
-      case "Processing": breakdown.processing = count; break;
-      case "Shipped":    breakdown.shipped    = count; break;
-      case "Delivered":  breakdown.delivered  = count; break;
-      case "Cancelled":  breakdown.cancelled  = count; break;
-    }
+  const current  = toBreakdown(facetResult.current);
+  const previous = toBreakdown(facetResult.previous);
+
+  const currentTotal  = facetResult.currentTotal[0]?.total  || 0;
+  const previousTotal = facetResult.previousTotal[0]?.total || 0;
+
+  // ── Per-status trends and share percentages ──────────────────────────────
+  const trends = {};
+  const share  = {};
+  STATUSES.forEach((status) => {
+    const key      = KEY_MAP[status];
+    trends[key]    = calculateTrend(current[key], previous[key]);
+    share[key]     = currentTotal > 0
+      ? Math.round((current[key] / currentTotal) * 100 * 10) / 10
+      : 0;
   });
 
-  const response = { ordersByStatus: breakdown };
+  const response = {
+    timeframe,
+    ordersByStatus: current,
+    previousPeriod: {
+      ordersByStatus: previous,
+      total:          previousTotal
+    },
+    currentTotal,
+    trends,
+    share
+  };
+
   await setCache(cacheKey, response, 300);
   res.status(200).json({ success: true, ...response });
 });
@@ -161,13 +253,13 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
     Product.countDocuments({ createdAt: { $gte: previousPeriodStart, $lt: previousPeriodEnd } })
   ]);
 
-  const currentRevenue = currentOrders[0]?.revenue || 0;
+  const currentRevenue  = currentOrders[0]?.revenue  || 0;
   const previousRevenue = previousOrders[0]?.revenue || 0;
 
   const trends = {
     revenue:  calculateTrend(currentRevenue, previousRevenue),
-    orders:   calculateTrend(currentOrders[0]?.orders || 0, previousOrders[0]?.orders || 0),
-    users:    calculateTrend(currentUsers, previousUsers),
+    orders:   calculateTrend(currentOrders[0]?.orders  || 0, previousOrders[0]?.orders || 0),
+    users:    calculateTrend(currentUsers,   previousUsers),
     products: calculateTrend(currentProducts, previousProducts)
   };
 
@@ -191,13 +283,13 @@ export const getAnalytics = handleAsyncError(async (req, res, next) => {
     topProducts,
     recentOrders,
     currentPeriod: {
-      orders:   currentOrders[0]?.orders || 0,
+      orders:   currentOrders[0]?.orders  || 0,
       revenue:  Number(currentRevenue.toFixed(2)),
       users:    currentUsers,
       products: currentProducts
     },
     previousPeriod: {
-      orders:   previousOrders[0]?.orders || 0,
+      orders:   previousOrders[0]?.orders  || 0,
       revenue:  Number(previousRevenue.toFixed(2)),
       users:    previousUsers,
       products: previousProducts
@@ -217,7 +309,6 @@ export const getTopProductsEndpoint = handleAsyncError(async (req, res) => {
   const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 100);
   const page  = Math.max(parseInt(req.query.page) || 1, 1);
   const skip  = (page - 1) * limit;
-
 
   const cacheKey = `top_products_${limit}_${page}_${CACHE_VERSION}`;
 
@@ -294,7 +385,7 @@ export const getInventoryStats = handleAsyncError(async (req, res) => {
       price:     p.pricing?.regular || 0
     })),
     alerts: {
-      needsRestock:   inventoryByStatus.lowStock + inventoryByStatus.outOfStock,
+      needsRestock:    inventoryByStatus.lowStock + inventoryByStatus.outOfStock,
       outOfStockCount: inventoryByStatus.outOfStock,
       criticalCount:   inventoryByStatus.outOfStock
     }
