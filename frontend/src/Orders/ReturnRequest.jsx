@@ -8,7 +8,7 @@ import {
   FiPackage, FiAlertCircle, FiClock, FiSend, FiPaperclip,
   FiX, FiFile, FiVideo, FiMessageSquare, FiRotateCcw, FiInfo,
   FiArrowLeft, FiBox, FiCheckCircle, FiXCircle, FiTag, FiLoader,
-  FiThumbsUp, FiThumbsDown, FiTruck, FiMapPin,
+  FiThumbsUp, FiThumbsDown, FiTruck, FiMapPin, FiDollarSign,
 } from 'react-icons/fi';
 
 import PageTitle           from '../components/PageTitle';
@@ -53,20 +53,18 @@ const RETURN_REASONS = [
   { value: 'other',             label: 'Other'                         },
 ];
 
-// Couriers relevant to the Nigerian market — "Other" always last
 const COURIERS = [
-  { value: 'DHL',         label: 'DHL'              },
-  { value: 'FedEx',       label: 'FedEx'            },
-  { value: 'UPS',         label: 'UPS'              },
-  { value: 'GIG Logistics', label: 'GIG Logistics'  },
-  { value: 'Sendbox',     label: 'Sendbox'          },
-  { value: 'Aramex',      label: 'Aramex'           },
-  { value: 'GIGL',        label: 'GIGL'             },
-  { value: 'Kwik',        label: 'Kwik'             },
-  { value: 'Other',       label: 'Other (specify)'  },
+  { value: 'DHL',           label: 'DHL'             },
+  { value: 'FedEx',         label: 'FedEx'           },
+  { value: 'UPS',           label: 'UPS'             },
+  { value: 'GIG Logistics', label: 'GIG Logistics'   },
+  { value: 'Sendbox',       label: 'Sendbox'         },
+  { value: 'Aramex',        label: 'Aramex'          },
+  { value: 'GIGL',          label: 'GIGL'            },
+  { value: 'Kwik',          label: 'Kwik'            },
+  { value: 'Other',         label: 'Other (specify)' },
 ];
 
-// Store return address — used on the approved panel
 const RETURN_ADDRESS = {
   name:    'Epic Store Returns',
   line1:   '12 Wuse Zone 5',
@@ -75,7 +73,8 @@ const RETURN_ADDRESS = {
   phone:   '+234 906 161 4369',
 };
 
-// Full lifecycle order used for timeline and status display
+// Full lifecycle used for hasReached() — received/inspected kept here for
+// internal ordering logic but are hidden from the visible timeline
 const LIFECYCLE_ORDER = [
   'requested', 'items_reviewed', 'plea_submitted',
   'approved', 'in_transit', 'received', 'inspected',
@@ -129,6 +128,7 @@ const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
   );
 };
 
+// FIX #1: inspected label fixed from 'Inspecting' → 'Inspected'
 const ReturnStatusBadge = ({ status }) => {
   const configs = {
     none:              { label: 'No Return',         className: 'rtr-return-badge-none'              },
@@ -139,7 +139,7 @@ const ReturnStatusBadge = ({ status }) => {
     awaiting_discount: { label: 'Awaiting Discount', className: 'rtr-return-badge-awaiting-discount' },
     in_transit:        { label: 'In Transit',        className: 'rtr-return-badge-transit'           },
     received:          { label: 'Received',          className: 'rtr-return-badge-received'          },
-    inspected:         { label: 'Inspecting',        className: 'rtr-return-badge-inspecting'        },
+    inspected:         { label: 'Inspected',         className: 'rtr-return-badge-inspected'         }, // FIX: was 'Inspecting'
     completed:         { label: 'Completed',         className: 'rtr-return-badge-completed'         },
     rejected:          { label: 'Rejected',          className: 'rtr-return-badge-rejected'          },
     cancelled:         { label: 'Cancelled',         className: 'rtr-return-badge-cancelled'         },
@@ -147,8 +147,68 @@ const ReturnStatusBadge = ({ status }) => {
   const config = configs[status] ?? configs.none;
   return (
     <span className={`rtr-return-badge ${config.className}`}>
-      <span className="rtr-return-badge-label">{config.label}</span>
+      {config.label}
     </span>
+  );
+};
+
+// Credit breakdown — shown to user from items_reviewed onwards
+const CreditBreakdown = ({ returnInfo, currency = 'USD' }) => {
+  const {
+    requestedGross  = 0,
+    approvedGross   = 0,
+    rejectedGross   = 0,
+    approvedDiscount = 0,
+    shippingDeducted = 0,
+    discountValue   = 0,
+  } = returnInfo ?? {};
+
+  const fmt = (n) => new Intl.NumberFormat('en-US', {
+    style: 'currency', currency,
+    minimumFractionDigits: 2,
+  }).format(n ?? 0);
+
+  const hasDiscount  = approvedDiscount > 0;
+  const hasRejected  = rejectedGross    > 0;
+
+  return (
+    <div className="rtr-credit-breakdown">
+      <div className="rtr-credit-hd">
+        <FiDollarSign className="rtr-credit-hd-icon" />
+        <span>Return Credit Breakdown</span>
+      </div>
+      <div className="rtr-credit-rows">
+        <div className="rtr-credit-row">
+          <span className="rtr-credit-label">Requested Total</span>
+          <span className="rtr-credit-val">{fmt(requestedGross)}</span>
+        </div>
+        <div className="rtr-credit-row rtr-credit-row--approved">
+          <span className="rtr-credit-label">Approved Total</span>
+          <span className="rtr-credit-val rtr-credit-green">{fmt(approvedGross)}</span>
+        </div>
+        {hasRejected && (
+          <div className="rtr-credit-row rtr-credit-row--rejected">
+            <span className="rtr-credit-label">Rejected Total</span>
+            <span className="rtr-credit-val rtr-credit-red">−{fmt(rejectedGross)}</span>
+          </div>
+        )}
+        {hasDiscount && (
+          <div className="rtr-credit-row rtr-credit-row--deduct">
+            <span className="rtr-credit-label">Discount Applied</span>
+            <span className="rtr-credit-val rtr-credit-amber">−{fmt(approvedDiscount)}</span>
+          </div>
+        )}
+        <div className="rtr-credit-row rtr-credit-row--deduct">
+          <span className="rtr-credit-label">Shipping Deducted</span>
+          <span className="rtr-credit-val rtr-credit-amber">−{fmt(shippingDeducted)}</span>
+        </div>
+        <div className="rtr-credit-divider" />
+        <div className="rtr-credit-row rtr-credit-row--total">
+          <span className="rtr-credit-label-total">Return Credit Value</span>
+          <span className="rtr-credit-val-total">{fmt(discountValue)}</span>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -240,6 +300,14 @@ function ReturnRequest() {
   const rejectedItems    = returnItems.filter((i) => i.adminDecision === 'rejected');
   const hasRejectedItems = rejectedItems.length > 0;
 
+  // FIX #3: detect plea-rejected state — status is 'approved' but ALL items are rejected
+  // This happens when admin resolves plea and rejects everything
+  const allItemsRejectedAfterPlea =
+    status === 'approved' &&
+    returnItems.length > 0 &&
+    returnItems.every((i) => i.adminDecision === 'rejected') &&
+    (returnInfo?.pleaAttempts ?? 0) > 0;
+
   const pleaWindowOpen = React.useMemo(
     () =>
       status === 'items_reviewed' &&
@@ -257,8 +325,9 @@ function ReturnRequest() {
 
   const unreadCount = messages.filter((m) => m.senderType === 'admin' && !m.isRead).length;
 
-  // Effective courier name for display — resolves 'Other' to freetext
   const effectiveCourier = selectedCourier === 'Other' ? otherCourier.trim() : selectedCourier;
+
+  const currency = order?.paymentInfo?.currency ?? 'USD';
 
   // ── Effects ───────────────────────────────────────────────────────────────
 
@@ -279,18 +348,14 @@ function ReturnRequest() {
     if (isTracking) fetchMessages(1);
   }, [isTracking, fetchMessages]);
 
-  // Scroll to top when tracking view first appears
   useEffect(() => {
     if (isTracking && trackingTopRef.current) {
       trackingTopRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [isTracking]);
 
-  // Auto-advance to accepted when all items approved
   useEffect(() => {
-    if (allApproved && !itemsReviewedChoice) {
-      setItemsReviewedChoice('accepted');
-    }
+    if (allApproved && !itemsReviewedChoice) setItemsReviewedChoice('accepted');
   }, [allApproved, itemsReviewedChoice]);
 
   // Pre-populate items for new-return form
@@ -312,25 +377,23 @@ function ReturnRequest() {
     }
   }, [order?.orderItems, isTracking]);
 
-  // Pre-populate form when viewing existing return
+  // BUG FIX #2: reset returnInfoPopulated when orderId changes
   const returnInfoPopulated = useRef(false);
-  
-useEffect(() => {
-  returnInfoPopulated.current = false;
-}, [orderId]);
+  useEffect(() => {
+    returnInfoPopulated.current = false;
+  }, [orderId]);
 
-useEffect(() => {
-  if (isTracking && returnInfo && !returnInfoPopulated.current) {
-    returnInfoPopulated.current = true;
-    setFormData({
-      reason:        returnInfo.reason        || '',
-      description:   returnInfo.description   || '',
-      itemsToReturn: returnInfo.itemsToReturn ?? [],
-    });
-  }
-}, [isTracking, returnInfo]);
+  useEffect(() => {
+    if (isTracking && returnInfo && !returnInfoPopulated.current) {
+      returnInfoPopulated.current = true;
+      setFormData({
+        reason:        returnInfo.reason        || '',
+        description:   returnInfo.description   || '',
+        itemsToReturn: returnInfo.itemsToReturn ?? [],
+      });
+    }
+  }, [isTracking, returnInfo]);
 
-  // Global error / success toasts — only fires for requestReturn
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center' });
@@ -420,85 +483,89 @@ useEffect(() => {
 
   // ── Accept decisions ──────────────────────────────────────────────────────
 
+  // BUG FIX #4: call getReturnStatus after acceptDecisions
   const handleAcceptDecisions = async () => {
-  try {
-    await dispatch(acceptDecisions(orderId)).unwrap();
-    toast.success('Decisions accepted. Please ship your approved items back to us.', {
-      position: 'top-center', autoClose: 5000,
-    });
-    setItemsReviewedChoice('accepted');
-    setShowAcceptConfirm(false);
-    await dispatch(getOrderDetails(orderId));
-    dispatch(getReturnStatus(orderId));
-  } catch (err) {
-    toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to accept decisions.', { position: 'top-center' });
-  }
-};
+    try {
+      await dispatch(acceptDecisions(orderId)).unwrap();
+      toast.success('Decisions accepted. Please ship your approved items back to us.', {
+        position: 'top-center', autoClose: 5000,
+      });
+      setItemsReviewedChoice('accepted');
+      setShowAcceptConfirm(false);
+      await dispatch(getOrderDetails(orderId));
+      dispatch(getReturnStatus(orderId)); // BUG FIX
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to accept decisions.', { position: 'top-center' });
+    }
+  };
+
   // ── Confirm shipped ───────────────────────────────────────────────────────
 
+  // BUG FIX #4: call getReturnStatus after confirmShipped
   const handleConfirmShipped = async () => {
-  if (!selectedCourier) {
-    toast.error('Please select a courier.', { position: 'top-center' });
-    return;
-  }
-  if (selectedCourier === 'Other' && !otherCourier.trim()) {
-    toast.error('Please specify your courier name.', { position: 'top-center' });
-    return;
-  }
-  try {
-    await dispatch(confirmShipped({
-      orderId,
-      courierName:    effectiveCourier || undefined,
-      trackingNumber: trackingInput.trim() || undefined,
-    })).unwrap();
-    toast.success('Shipment confirmed! We will notify you when we receive your items.', {
-      position: 'top-center', autoClose: 5000,
-    });
-    await dispatch(getOrderDetails(orderId));
-    dispatch(getReturnStatus(orderId));
-  } catch (err) {
-    toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to confirm shipment.', { position: 'top-center' });
-  }
-};
+    if (!selectedCourier) {
+      toast.error('Please select a courier.', { position: 'top-center' });
+      return;
+    }
+    if (selectedCourier === 'Other' && !otherCourier.trim()) {
+      toast.error('Please specify your courier name.', { position: 'top-center' });
+      return;
+    }
+    try {
+      await dispatch(confirmShipped({
+        orderId,
+        courierName:    effectiveCourier || undefined,
+        trackingNumber: trackingInput.trim() || undefined,
+      })).unwrap();
+      toast.success('Shipment confirmed! We will notify you when we receive your items.', {
+        position: 'top-center', autoClose: 5000,
+      });
+      await dispatch(getOrderDetails(orderId));
+      dispatch(getReturnStatus(orderId)); // BUG FIX
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to confirm shipment.', { position: 'top-center' });
+    }
+  };
 
   // ── Plea submit ───────────────────────────────────────────────────────────
 
+  // BUG FIX #4: call getReturnStatus after submitPlea
   const handleSubmitPlea = async () => {
-  if (pleaText.trim().length < MIN_PLEA_CHARS) {
-    toast.error(`Plea description must be at least ${MIN_PLEA_CHARS} characters.`, { position: 'top-center' });
-    return;
-  }
+    if (pleaText.trim().length < MIN_PLEA_CHARS) {
+      toast.error(`Plea description must be at least ${MIN_PLEA_CHARS} characters.`, { position: 'top-center' });
+      return;
+    }
 
-  const pleaPromise = dispatch(submitPlea({ orderId, pleaDescription: pleaText.trim() })).unwrap();
+    const pleaPromise = dispatch(submitPlea({ orderId, pleaDescription: pleaText.trim() })).unwrap();
 
-  if (pleaFiles.length > 0) {
-    setPleaUploading(true);
-    const uploadFormData = new FormData();
-    pleaFiles.forEach((f) => uploadFormData.append('attachments', f));
-    axios.post(`/api/v1/orders/${orderId}/return/plea/upload`, uploadFormData, { withCredentials: true })
-      .catch(() => {
-        toast.warn('Evidence files could not be uploaded, but your plea was still submitted.', {
-          position: 'top-center', autoClose: 4000,
-        });
-      })
-      .finally(() => setPleaUploading(false));
-  }
+    if (pleaFiles.length > 0) {
+      setPleaUploading(true);
+      const uploadFormData = new FormData();
+      pleaFiles.forEach((f) => uploadFormData.append('attachments', f));
+      axios.post(`/api/v1/orders/${orderId}/return/plea/upload`, uploadFormData, { withCredentials: true })
+        .catch(() => {
+          toast.warn('Evidence files could not be uploaded, but your plea was still submitted.', {
+            position: 'top-center', autoClose: 4000,
+          });
+        })
+        .finally(() => setPleaUploading(false));
+    }
 
-  try {
-    await pleaPromise;
-    toast.success('Plea submitted. The admin will respond within 48 hours.', {
-      position: 'top-center', autoClose: 4000,
-    });
-    setPleaText('');
-    setPleaFiles([]);
-    setPleaFilePreviews([]);
-    setItemsReviewedChoice(null);
-    await dispatch(getOrderDetails(orderId));
-    dispatch(getReturnStatus(orderId));
-  } catch {
-    // pleaError in slice triggers toast via useEffect above
-  }
-};
+    try {
+      await pleaPromise;
+      toast.success('Plea submitted. The admin will respond within 48 hours.', {
+        position: 'top-center', autoClose: 4000,
+      });
+      setPleaText('');
+      setPleaFiles([]);
+      setPleaFilePreviews([]);
+      setItemsReviewedChoice(null);
+      await dispatch(getOrderDetails(orderId));
+      dispatch(getReturnStatus(orderId)); // BUG FIX
+    } catch {
+      // pleaError in slice triggers toast via useEffect
+    }
+  };
 
   // ── Validation ────────────────────────────────────────────────────────────
 
@@ -591,7 +658,7 @@ useEffect(() => {
 
   // ── Utilities ─────────────────────────────────────────────────────────────
 
-  const formatCurrency = (amount, currency = 'USD') =>
+  const formatCurrency = (amount) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(amount ?? 0);
 
   const fmtDate = (d, opts = { month: 'short', day: 'numeric', year: 'numeric' }) =>
@@ -637,6 +704,11 @@ useEffect(() => {
     </>
   );
 
+  // Whether to show the credit breakdown to the user
+  const showBreakdown = ['items_reviewed', 'plea_submitted', 'approved',
+    'in_transit', 'awaiting_discount', 'completed'].includes(status)
+    && (returnInfo?.discountValue != null);
+
   // ── Main render ───────────────────────────────────────────────────────────
 
   return (
@@ -652,10 +724,12 @@ useEffect(() => {
         {/* ── Header ── */}
         <div className="rtr-return-header" ref={trackingTopRef}>
           <div className="rtr-header-content">
-            <FiRotateCcw className="rtr-header-icon" />
+            <span className="rtr-header-icon-wrap">
+              <FiRotateCcw className="rtr-header-icon" />
+            </span>
             <div>
               <h1>{isTracking ? 'Return Status' : 'Request Return'}</h1>
-              <p className="rtr-order-reference">Order: #{orderId.slice(-8).toUpperCase()}</p>
+              <p className="rtr-order-reference">Order #{orderId.slice(-8).toUpperCase()}</p>
             </div>
           </div>
           {isTracking && (
@@ -675,6 +749,7 @@ useEffect(() => {
           {isTracking && (
             <div className="rtr-return-status-card">
               <div className="rtr-card-header">
+                <span className="rtr-card-header-bar" />
                 <FiInfo className="rtr-card-icon" />
                 <h2>Return Information</h2>
                 <ReturnStatusBadge status={status} />
@@ -682,9 +757,8 @@ useEffect(() => {
 
               <div className="rtr-status-details">
 
-                {/* ── Timeline ────────────────────────────────────────────────
-                    requested → items_reviewed → plea_submitted → approved →
-                    in_transit → received → inspected → awaiting_discount → completed */}
+                {/* ── Timeline ── */}
+                {/* FIX #2: received and inspected are hidden from user timeline */}
                 <div className="rtr-status-timeline">
                   <div className="rtr-timeline-item">
                     <div className="rtr-timeline-dot rtr-active" />
@@ -734,27 +808,9 @@ useEffect(() => {
                     </div>
                   )}
 
-                  {hasReached('received') && returnInfo.receivedAt && (
-                    <div className="rtr-timeline-item">
-                      <div className="rtr-timeline-dot rtr-active" />
-                      <div className="rtr-timeline-content">
-                        <span className="rtr-timeline-label">Received</span>
-                        <span className="rtr-timeline-date">{fmtDate(returnInfo.receivedAt)}</span>
-                      </div>
-                    </div>
-                  )}
+                  {/* FIX #2: received and inspected steps are HIDDEN from user */}
+                  {/* Jump straight from in_transit to awaiting_discount */}
 
-                  {hasReached('inspected') && returnInfo.inspectedAt && (
-                    <div className="rtr-timeline-item">
-                      <div className="rtr-timeline-dot rtr-active" />
-                      <div className="rtr-timeline-content">
-                        <span className="rtr-timeline-label">Inspected</span>
-                        <span className="rtr-timeline-date">{fmtDate(returnInfo.inspectedAt)}</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* awaiting_discount is LAST before completed */}
                   {hasReached('awaiting_discount') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -778,44 +834,79 @@ useEffect(() => {
                 {/* ── Info grid ── */}
                 <div className="rtr-return-info-grid">
                   <div className="rtr-info-item">
-                    <span className="rtr-info-label">Return Reason:</span>
+                    <span className="rtr-info-label">Return Reason</span>
                     <span className="rtr-info-value">{reasonLabel(returnInfo.reason)}</span>
                   </div>
                   <div className="rtr-info-item">
-                    <span className="rtr-info-label">Items to Return:</span>
+                    <span className="rtr-info-label">Items to Return</span>
                     <span className="rtr-info-value">{returnItems.length} item(s)</span>
                   </div>
-                  {discountValue != null && discountValue > 0 && hasReached('items_reviewed') && (
-                    <div className="rtr-info-item">
-                      <span className="rtr-info-label">Discount Value:</span>
-                      <span className="rtr-info-value rtr-strong">
-                        {formatCurrency(discountValue, order.paymentInfo?.currency)}
-                      </span>
-                    </div>
-                  )}
                   {returnInfo.description && (
                     <div className="rtr-info-item rtr-full-width">
-                      <span className="rtr-info-label">Description:</span>
+                      <span className="rtr-info-label">Description</span>
                       <span className="rtr-info-value">{returnInfo.description}</span>
                     </div>
                   )}
                   {returnInfo.rmaNumber && (
                     <div className="rtr-info-item rtr-full-width">
-                      <span className="rtr-info-label">RMA Number:</span>
+                      <span className="rtr-info-label">RMA Number</span>
                       <span className="rtr-info-value rtr-tracking">{returnInfo.rmaNumber}</span>
                     </div>
                   )}
                   {returnInfo.adminNote && (
                     <div className="rtr-info-item rtr-full-width rtr-admin-note">
-                      <span className="rtr-info-label">Admin Note:</span>
+                      <span className="rtr-info-label">Admin Note</span>
                       <span className="rtr-info-value">{returnInfo.adminNote}</span>
                     </div>
                   )}
                 </div>
 
-                {/* ══════════════════════════════════════════════════
+                {/* ── Credit breakdown — from items_reviewed onwards ── */}
+                {showBreakdown && (
+                  <CreditBreakdown returnInfo={returnInfo} currency={currency} />
+                )}
+
+                {/* ════════════════════════════════════════════════════════
+                    FIX #3: plea rejected — all items rejected after plea
+                ════════════════════════════════════════════════════════ */}
+                {allItemsRejectedAfterPlea && (
+                  <div className="rtr-plea-rejected-panel">
+                    <div className="rtr-plea-rejected-header">
+                      <FiXCircle className="rtr-plea-rejected-icon" />
+                      <div>
+                        <h3>Plea Not Accepted</h3>
+                        <p>
+                          We have reviewed your plea and unfortunately all items in this return
+                          have been rejected. No store credit will be issued for this return.
+                        </p>
+                      </div>
+                    </div>
+                    {returnInfo.adminNote && (
+                      <div className="rtr-plea-rejected-note">
+                        <span className="rtr-info-label">Admin Note:</span>
+                        <p>{returnInfo.adminNote}</p>
+                      </div>
+                    )}
+                    <div className="rtr-plea-rejected-items">
+                      <span className="rtr-info-label">Rejected Items:</span>
+                      {returnItems.map((item, i) => (
+                        <div key={i} className="rtr-plea-rejected-item">
+                          {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
+                          <div className="rtr-item-details">
+                            <span className="rtr-item-name">{item.name || item.product?.name}</span>
+                            {item.adminRejectionReason && (
+                              <span className="rtr-rejection-reason">Reason: {item.adminRejectionReason}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* ════════════════════════════════════════════════════
                     items_reviewed — decision cards + user choice
-                ══════════════════════════════════════════════════ */}
+                ════════════════════════════════════════════════════ */}
                 {status === 'items_reviewed' && returnItems.length > 0 && (
                   <div className="rtr-item-decisions">
                     <h3>Item Decisions</h3>
@@ -825,15 +916,24 @@ useEffect(() => {
                           <div className="rtr-decisions-col-header">
                             <FiCheckCircle /><span>Approved ({approvedItems.length})</span>
                           </div>
-                          {approvedItems.map((item, i) => (
-                            <div key={i} className="rtr-decision-item">
-                              {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
-                              <div className="rtr-item-details">
-                                <span className="rtr-item-name">{item.name || item.product?.name}</span>
-                                <span className="rtr-item-quantity">Qty: {item.quantity}</span>
+                          {approvedItems.map((item, i) => {
+                            // FIX: show approvedQuantity not quantity
+                            const qty = item.approvedQuantity ?? item.quantity;
+                            return (
+                              <div key={i} className="rtr-decision-item">
+                                {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
+                                <div className="rtr-item-details">
+                                  <span className="rtr-item-name">{item.name || item.product?.name}</span>
+                                  <span className="rtr-item-quantity">
+                                    Qty: {qty}
+                                    {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
+                                      <span className="rtr-item-qty-note"> (of {item.quantity} requested)</span>
+                                    )}
+                                  </span>
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
                       {rejectedItems.length > 0 && (
@@ -865,7 +965,7 @@ useEffect(() => {
                       />
                     )}
 
-                    {/* All items approved — no choice needed */}
+                    {/* All approved — no dispute needed */}
                     {!hasRejectedItems && pleaWindowOpen && (
                       <div className="rtr-accept-section">
                         <div className="rtr-accept-header">
@@ -875,22 +975,13 @@ useEffect(() => {
                             <p>All your items have been approved. Accept to begin the return process.</p>
                           </div>
                         </div>
-                        <div className="rtr-accept-actions">
-                          <button
-                            type="button"
-                            className="rtr-btn-primary"
-                            onClick={() => setShowAcceptConfirm(true)}
-                            disabled={acceptLoading}
-                          >
-                            {acceptLoading
-                              ? <><FiClock className="rtr-spin" /> Processing…</>
-                              : <><FiCheckCircle /> Accept & Proceed</>}
-                          </button>
-                        </div>
+                        <button type="button" className="rtr-btn-primary" onClick={() => setShowAcceptConfirm(true)} disabled={acceptLoading}>
+                          {acceptLoading ? <><FiClock className="rtr-spin" /> Processing…</> : <><FiCheckCircle /> Accept &amp; Proceed</>}
+                        </button>
                       </div>
                     )}
 
-                    {/* Some items rejected — show choice */}
+                    {/* Some rejected — show choice */}
                     {hasRejectedItems && pleaWindowOpen && !itemsReviewedChoice && (
                       <div className="rtr-choice-section">
                         <div className="rtr-choice-header">
@@ -901,20 +992,12 @@ useEffect(() => {
                           </div>
                         </div>
                         <div className="rtr-choice-actions">
-                          <button
-                            type="button"
-                            className="rtr-btn-choice rtr-btn-choice--accept"
-                            onClick={() => setShowAcceptConfirm(true)}
-                          >
+                          <button type="button" className="rtr-btn-choice rtr-btn-choice--accept" onClick={() => setShowAcceptConfirm(true)}>
                             <FiThumbsUp />
                             Accept Decisions
                             <span className="rtr-choice-sub">Proceed with approved items only</span>
                           </button>
-                          <button
-                            type="button"
-                            className="rtr-btn-choice rtr-btn-choice--dispute"
-                            onClick={() => setItemsReviewedChoice('plea')}
-                          >
+                          <button type="button" className="rtr-btn-choice rtr-btn-choice--dispute" onClick={() => setItemsReviewedChoice('plea')}>
                             <FiThumbsDown />
                             Dispute Rejections
                             <span className="rtr-choice-sub">Submit a plea for rejected items</span>
@@ -923,7 +1006,6 @@ useEffect(() => {
                       </div>
                     )}
 
-                    {/* Plea window expired */}
                     {hasRejectedItems && !pleaWindowOpen && status === 'items_reviewed' && (
                       <div className="rtr-info-banner-neutral">
                         <FiInfo />
@@ -933,7 +1015,7 @@ useEffect(() => {
                   </div>
                 )}
 
-                {/* ══ Accept confirmation modal ══ */}
+               {/* ── Accept confirmation modal ── */}
                 {showAcceptConfirm && (
                   <div className="rtr-modal-overlay" onClick={() => setShowAcceptConfirm(false)}>
                     <div className="rtr-modal-content" onClick={(e) => e.stopPropagation()}>
@@ -945,13 +1027,30 @@ useEffect(() => {
                         {approvedItems.length > 0 && (
                           <div className="rtr-accept-preview">
                             <p className="rtr-accept-preview-label">Approved items that will be credited:</p>
-                            {approvedItems.map((item, i) => (
-                              <div key={i} className="rtr-accept-preview-item">
-                                {item.image && <img src={item.image} alt={item.name} className="rtr-accept-preview-img" />}
-                                <span>{item.name || item.product?.name}</span>
-                                <span className="rtr-accept-preview-qty">×{item.quantity}</span>
-                              </div>
-                            ))}
+                            {approvedItems.map((item, i) => {
+                              const qty = item.approvedQuantity ?? item.quantity;
+
+                              const resolvedName = (() => {
+                                if (item.name && item.name.trim()) return item.name.trim();
+                                if (item.product?.name && item.product.name.trim()) return item.product.name.trim();
+                                // Match by product ID against order items
+                                const pid = item.product?._id?.toString() ?? item.product?.toString();
+                                const match = order?.orderItems?.find((oi) => {
+                                  const oiPid = oi.product?._id?.toString() ?? oi.product?.toString();
+                                  return oiPid === pid;
+                                });
+                                if (match) return match.product?.name ?? match.name ?? null;
+                                return null;
+                              })();
+
+                              return (
+                                <div key={i} className="rtr-accept-preview-item">
+                                  {item.image && <img src={item.image} alt={resolvedName ?? 'Product'} className="rtr-accept-preview-img" />}
+                                  <span>{resolvedName ?? `Item ${i + 1}`}</span>
+                                  <span className="rtr-accept-preview-qty">×{qty}</span>
+                                </div>
+                              );
+                            })}
                             {rejectedItems.length > 0 && (
                               <p className="rtr-accept-preview-rejected">
                                 {rejectedItems.length} rejected item(s) will not be credited.
@@ -962,9 +1061,7 @@ useEffect(() => {
                         <p>This action cannot be undone. You will need to ship your approved items back to us.</p>
                       </div>
                       <div className="rtr-modal-actions">
-                        <button onClick={() => setShowAcceptConfirm(false)} className="rtr-btn-secondary" disabled={acceptLoading}>
-                          Go Back
-                        </button>
+                        <button onClick={() => setShowAcceptConfirm(false)} className="rtr-btn-secondary" disabled={acceptLoading}>Go Back</button>
                         <button onClick={handleAcceptDecisions} className="rtr-btn-primary" disabled={acceptLoading}>
                           {acceptLoading ? 'Processing…' : 'Confirm & Accept'}
                         </button>
@@ -973,7 +1070,7 @@ useEffect(() => {
                   </div>
                 )}
 
-                {/* ══ Plea form ══ */}
+                {/* ── Plea form ── */}
                 {status === 'items_reviewed' && itemsReviewedChoice === 'plea' && (
                   <div className="rtr-plea-section">
                     <div className="rtr-plea-header">
@@ -983,15 +1080,13 @@ useEffect(() => {
                         <p>You have one opportunity to submit a plea. Provide a clear explanation and any supporting evidence.</p>
                       </div>
                     </div>
-
                     <div className="rtr-form-group">
                       <label className="rtr-form-label">Your Plea *</label>
                       <textarea
                         className="rtr-form-textarea"
                         value={pleaText}
                         onChange={(e) => setPleaText(e.target.value)}
-                        rows={5}
-                        maxLength={MAX_PLEA_CHARS}
+                        rows={5} maxLength={MAX_PLEA_CHARS}
                         placeholder="Explain why the rejected items should be reconsidered…"
                         disabled={pleaLoading}
                       />
@@ -999,11 +1094,10 @@ useEffect(() => {
                         <span className={pleaText.length > MAX_PLEA_CHARS - 100 ? 'rtr-char-warn' : ''}>{pleaText.length}</span>
                         /{MAX_PLEA_CHARS}
                         {pleaText.length < MIN_PLEA_CHARS && pleaText.length > 0 && (
-                          <span className="rtr-char-warn rtr-char-min">&nbsp;(minimum {MIN_PLEA_CHARS} characters)</span>
+                          <span className="rtr-char-warn rtr-char-min">&nbsp;(min {MIN_PLEA_CHARS} chars)</span>
                         )}
                       </div>
                     </div>
-
                     <div className="rtr-form-group">
                       <label className="rtr-form-label">Supporting Evidence (Optional)</label>
                       <input ref={pleaFileInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mov,.pdf" onChange={handlePleaFileSelect} style={{ display: 'none' }} />
@@ -1030,21 +1124,16 @@ useEffect(() => {
                         </div>
                       )}
                     </div>
-
                     <div className="rtr-plea-form-actions">
-                      <button type="button" className="rtr-btn-secondary" onClick={() => setItemsReviewedChoice(null)} disabled={pleaLoading}>
-                        Go Back
-                      </button>
+                      <button type="button" className="rtr-btn-secondary" onClick={() => setItemsReviewedChoice(null)} disabled={pleaLoading}>Go Back</button>
                       <button type="button" className="rtr-btn-primary" onClick={handleSubmitPlea} disabled={pleaLoading || pleaText.trim().length < MIN_PLEA_CHARS}>
-                        {pleaLoading
-                          ? <><FiClock className="rtr-spin" /> Submitting…</>
-                          : <><FiSend /> Submit Plea</>}
+                        {pleaLoading ? <><FiClock className="rtr-spin" /> Submitting…</> : <><FiSend /> Submit Plea</>}
                       </button>
                     </div>
                   </div>
                 )}
 
-                {/* ══ plea_submitted confirmation ══ */}
+                {/* ── plea_submitted ── */}
                 {status === 'plea_submitted' && (
                   <div className="rtr-plea-submitted-panel">
                     <div className="rtr-plea-submitted-header">
@@ -1060,21 +1149,6 @@ useEffect(() => {
                         <p>{pleaInfo.pleaDescription}</p>
                       </div>
                     )}
-                    {pleaInfo?.pleaDocuments?.length > 0 && (
-                      <div className="rtr-plea-evidence-thumbs">
-                        <span className="rtr-info-label">Submitted Evidence:</span>
-                        <div className="rtr-evidence-grid">
-                          {pleaInfo.pleaDocuments.map((doc, i) => (
-                            <a key={i} href={doc.url} target="_blank" rel="noopener noreferrer" className="rtr-evidence-thumb">
-                              {doc.mimeType?.startsWith('image/')
-                                ? <img src={doc.url} alt={doc.filename} />
-                                : <div className="rtr-evidence-thumb-placeholder"><FiFile /><span>{doc.filename}</span></div>
-                              }
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                     {pleaDeadline && (
                       <CountdownTimer
                         deadline={pleaDeadline}
@@ -1085,13 +1159,8 @@ useEffect(() => {
                   </div>
                 )}
 
-                {/* ══════════════════════════════════════════════════════════
-                    approved — ship your items back
-                    Shows: return address, courier selector, tracking input,
-                    confirm shipment button.
-                    Real-world flow: customer packs, drops at courier, confirms.
-                ══════════════════════════════════════════════════════════ */}
-                {status === 'approved' && (
+                {/* ── approved — ship items back ── */}
+                {status === 'approved' && !allItemsRejectedAfterPlea && (
                   <div className="rtr-approved-panel">
                     <div className="rtr-approved-panel-header">
                       <FiTruck className="rtr-approved-icon" />
@@ -1104,19 +1173,35 @@ useEffect(() => {
                       </div>
                     </div>
 
-                    {/* Approved items list */}
                     {approvedItems.length > 0 && (
-                      <div className="rtr-awaiting-approved-items" style={{ marginBottom: 16 }}>
-                        <span className="rtr-info-label" style={{ display: 'block', marginBottom: 6 }}>Items to ship back:</span>
-                        {approvedItems.map((item, i) => (
-                          <span key={i} className="rtr-awaiting-item-pill">
-                            {item.name || item.product?.name} ×{item.quantity}
-                          </span>
-                        ))}
+                      <div className="rtr-awaiting-approved-items">
+                        <span className="rtr-info-label">Items to ship back:</span>
+                        <div className="rtr-awaiting-pills">
+                          {approvedItems.map((item, i) => {
+                            const qty = item.approvedQuantity ?? item.quantity;
+
+                            const resolvedName = (() => {
+                              if (item.name && item.name.trim()) return item.name.trim();
+                              if (item.product?.name && item.product.name.trim()) return item.product.name.trim();
+                              const pid = item.product?._id?.toString() ?? item.product?.toString();
+                              const match = order?.orderItems?.find((oi) => {
+                                const oiPid = oi.product?._id?.toString() ?? oi.product?.toString();
+                                return oiPid === pid;
+                              });
+                              if (match) return match.product?.name ?? match.name ?? null;
+                              return null;
+                            })();
+
+                            return (
+                              <span key={i} className="rtr-awaiting-item-pill">
+                                {resolvedName ?? `Item ${i + 1}`} ×{qty}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
 
-                    {/* Return address box */}
                     <div className="rtr-approved-address-box">
                       <div className="rtr-approved-address-header">
                         <FiMapPin className="rtr-approved-address-icon" />
@@ -1131,14 +1216,12 @@ useEffect(() => {
                       </div>
                     </div>
 
-                    {/* Courier selector */}
                     <div className="rtr-form-group">
                       <label className="rtr-form-label">Select Courier *</label>
                       <div className="rtr-courier-list">
                         {COURIERS.map((courier) => (
                           <button
-                            key={courier.value}
-                            type="button"
+                            key={courier.value} type="button"
                             className={`rtr-courier-option${selectedCourier === courier.value ? ' rtr-courier-option--selected' : ''}`}
                             onClick={() => { setSelectedCourier(courier.value); if (courier.value !== 'Other') setOtherCourier(''); }}
                             disabled={confirmShippedLoading}
@@ -1149,42 +1232,29 @@ useEffect(() => {
                       </div>
                       {selectedCourier === 'Other' && (
                         <input
-                          type="text"
-                          className="rtr-courier-other-input rtr-form-input"
-                          placeholder="Enter courier name…"
-                          value={otherCourier}
+                          type="text" className="rtr-form-input" style={{ marginTop: 8 }}
+                          placeholder="Enter courier name…" value={otherCourier}
                           onChange={(e) => setOtherCourier(e.target.value)}
-                          maxLength={80}
-                          disabled={confirmShippedLoading}
-                          style={{ marginTop: 8 }}
+                          maxLength={80} disabled={confirmShippedLoading}
                         />
                       )}
                     </div>
 
-                    {/* Tracking number — optional */}
                     <div className="rtr-form-group">
                       <label className="rtr-form-label">
-                        Tracking Number
-                        <span className="rtr-tracking-optional"> (optional)</span>
+                        Tracking Number <span className="rtr-tracking-optional">(optional)</span>
                       </label>
-                      <p className="rtr-helper-text">
-                        If your courier provided a tracking number, enter it here. Not all couriers give one immediately.
-                      </p>
+                      <p className="rtr-helper-text">If your courier provided a tracking number, enter it here.</p>
                       <input
-                        type="text"
-                        className="rtr-form-input rtr-tracking-input"
-                        placeholder="e.g. 1234567890"
-                        value={trackingInput}
+                        type="text" className="rtr-form-input rtr-tracking-input"
+                        placeholder="e.g. 1234567890" value={trackingInput}
                         onChange={(e) => setTrackingInput(e.target.value)}
-                        maxLength={100}
-                        disabled={confirmShippedLoading}
+                        maxLength={100} disabled={confirmShippedLoading}
                       />
                     </div>
 
-                    {/* Confirm shipment button */}
                     <button
-                      type="button"
-                      className="rtr-btn-primary rtr-confirm-ship-btn"
+                      type="button" className="rtr-btn-primary rtr-confirm-ship-btn"
                       onClick={handleConfirmShipped}
                       disabled={confirmShippedLoading || !selectedCourier || (selectedCourier === 'Other' && !otherCourier.trim())}
                     >
@@ -1195,10 +1265,7 @@ useEffect(() => {
                   </div>
                 )}
 
-                {/* ══════════════════════════════════════════════════════════
-                    in_transit — package on the way
-                    Shows courier and tracking number if provided.
-                ══════════════════════════════════════════════════════════ */}
+                {/* ── in_transit ── */}
                 {status === 'in_transit' && (
                   <div className="rtr-in-transit-panel">
                     <div className="rtr-in-transit-header">
@@ -1209,21 +1276,21 @@ useEffect(() => {
                       </div>
                     </div>
                     <div className="rtr-transit-details">
-                      {(returnInfo.courierName) && (
+                      {returnInfo.courierName && (
                         <div className="rtr-transit-detail">
-                          <span className="rtr-info-label">Courier:</span>
+                          <span className="rtr-info-label">Courier</span>
                           <span className="rtr-info-value">{returnInfo.courierName}</span>
                         </div>
                       )}
-                      {(returnInfo.trackingNumber) && (
+                      {returnInfo.trackingNumber && (
                         <div className="rtr-transit-detail">
-                          <span className="rtr-info-label">Tracking Number:</span>
+                          <span className="rtr-info-label">Tracking Number</span>
                           <span className="rtr-info-value rtr-tracking">{returnInfo.trackingNumber}</span>
                         </div>
                       )}
                       {returnInfo.shippedAt && (
                         <div className="rtr-transit-detail">
-                          <span className="rtr-info-label">Shipped On:</span>
+                          <span className="rtr-info-label">Shipped On</span>
                           <span className="rtr-info-value">{fmtDate(returnInfo.shippedAt)}</span>
                         </div>
                       )}
@@ -1231,57 +1298,54 @@ useEffect(() => {
                   </div>
                 )}
 
-                {/* ══ received / inspected — status info ══ */}
+                {/* FIX #2: received and inspected are hidden — user sees neutral banner if on those statuses */}
                 {(status === 'received' || status === 'inspected') && (
                   <div className="rtr-info-banner-neutral">
                     <FiInfo />
-                    <span>
-                      {status === 'received'
-                        ? 'We have received your items. They are now being inspected.'
-                        : 'Your items have been inspected. We are preparing your discount code.'}
-                    </span>
+                    <span>Your items have been received and are being processed. Your discount code will be ready soon.</span>
                   </div>
                 )}
 
-                {/* ══ awaiting_discount — last step before complete ══ */}
+                {/* ── awaiting_discount — show full breakdown ── */}
                 {status === 'awaiting_discount' && (
                   <div className="rtr-awaiting-discount">
                     <div className="rtr-awaiting-discount-icon-wrap">
                       <FiLoader className="rtr-awaiting-spin" />
                     </div>
                     <h3>Your Discount Code Is Being Prepared</h3>
-                    <p>Your items have been inspected. Our team is generating your store credit discount code.</p>
-                    {discountValue != null && discountValue > 0 && (
-                      <div className="rtr-awaiting-discount-value">
-                        Expected discount: <strong>{formatCurrency(discountValue, order.paymentInfo?.currency)}</strong>
-                      </div>
-                    )}
+                    <p>Your items have been verified. Our team is generating your store credit discount code.</p>
+
                     {approvedItems.length > 0 && (
-                      <div className="rtr-awaiting-approved-items">
+                      <div className="rtr-awaiting-approved-items" style={{ marginTop: 12 }}>
                         <span className="rtr-info-label">Approved items:</span>
-                        {approvedItems.map((item, i) => (
-                          <span key={i} className="rtr-awaiting-item-pill">
-                            {item.name || item.product?.name} ×{item.quantity}
-                          </span>
-                        ))}
+                        <div className="rtr-awaiting-pills">
+                          {approvedItems.map((item, i) => {
+                            const qty = item.approvedQuantity ?? item.quantity;
+                            return (
+                              <span key={i} className="rtr-awaiting-item-pill">
+                                {item.name || item.product?.name} ×{qty}
+                              </span>
+                            );
+                          })}
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* ══ completed ══ */}
+                {/* ── completed ── */}
                 {status === 'completed' && (
                   <div className="rtr-completed-panel">
                     <FiCheckCircle className="rtr-completed-icon" />
                     <h3>Return Completed</h3>
                     <p>Your store credit discount code has been issued.</p>
-                    <button className="rtr-btn-primary" onClick={() => navigate('/my-discounts')} style={{ marginTop: 12 }}>
+                    <button className="rtr-btn-primary" onClick={() => navigate('/my-discounts')} style={{ marginTop: 14 }}>
                       <FiTag /> View My Discount Codes
                     </button>
                   </div>
                 )}
 
-                {/* Items list (requested + non-decision statuses) */}
+                {/* Items list for non-decision statuses */}
                 {!['items_reviewed', 'plea_submitted', 'approved', 'in_transit', 'awaiting_discount', 'completed'].includes(status) && returnItems.length > 0 && (
                   <div className="rtr-return-items">
                     <h3>Items Being Returned</h3>
@@ -1312,22 +1376,23 @@ useEffect(() => {
           {/* ── Order summary ── */}
           <div className="rtr-summary-card">
             <div className="rtr-card-header">
+              <span className="rtr-card-header-bar" />
               <FiPackage className="rtr-card-icon" />
               <h2>Order Summary</h2>
             </div>
             <div className="rtr-summary-details">
               <div className="rtr-summary-row">
-                <span className="rtr-label">Total Amount:</span>
-                <span className="rtr-value rtr-strong">{formatCurrency(order.totalPrice, order.paymentInfo?.currency)}</span>
+                <span className="rtr-label">Total Amount</span>
+                <span className="rtr-value rtr-strong">{formatCurrency(order.totalPrice)}</span>
               </div>
               <div className="rtr-summary-row">
-                <span className="rtr-label">Order Status:</span>
+                <span className="rtr-label">Order Status</span>
                 <span className="rtr-value">
-                  <span className={`rtr-status-badge rtr-status-${order.orderStatus.toLowerCase()}`}>{order.orderStatus}</span>
+                  <span className={`rtr-status-badge rtr-status-${order.orderStatus?.toLowerCase()}`}>{order.orderStatus}</span>
                 </span>
               </div>
               <div className="rtr-summary-row">
-                <span className="rtr-label">Ordered Date:</span>
+                <span className="rtr-label">Ordered Date</span>
                 <span className="rtr-value">{fmtDate(order.createdAt, { month: 'long', day: 'numeric', year: 'numeric' })}</span>
               </div>
             </div>
@@ -1337,6 +1402,7 @@ useEffect(() => {
           {!isTracking && (
             <div className="rtr-return-form-card">
               <div className="rtr-card-header">
+                <span className="rtr-card-header-bar" />
                 <FiBox className="rtr-card-icon" />
                 <h2>Select Items to Return</h2>
               </div>
@@ -1354,14 +1420,14 @@ useEffect(() => {
                         {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
                         <div className="rtr-item-info">
                           <span className="rtr-item-name">{item.name}</span>
-                          <span className="rtr-item-price">{formatCurrency(item.price, order.paymentInfo?.currency)}</span>
+                          <span className="rtr-item-price">{formatCurrency(item.price)}</span>
                         </div>
                         {item.selected && (
                           <>
                             <div className="rtr-quantity-selector">
                               <label>Quantity:</label>
                               <div className="rtr-quantity-controls">
-                                <button type="button" onClick={() => handleQuantityChange(index, item.returnQuantity - 1)} disabled={item.returnQuantity <= 1}>-</button>
+                                <button type="button" onClick={() => handleQuantityChange(index, item.returnQuantity - 1)} disabled={item.returnQuantity <= 1}>−</button>
                                 <span>{item.returnQuantity}</span>
                                 <button type="button" onClick={() => handleQuantityChange(index, item.returnQuantity + 1)} disabled={item.returnQuantity >= item.quantity}>+</button>
                               </div>
@@ -1406,7 +1472,8 @@ useEffect(() => {
                     id="description" name="description"
                     className={`rtr-form-textarea ${formErrors.description ? 'rtr-error' : ''}`}
                     value={formData.description} onChange={handleChange}
-                    rows={4} maxLength={MAX_DESC_CHARS} placeholder="Describe the issue(s) with your order…"
+                    rows={4} maxLength={MAX_DESC_CHARS}
+                    placeholder="Describe the issue(s) with your order…"
                   />
                   <div className="rtr-char-counter">
                     <span className={formData.description.length > MAX_DESC_CHARS - 100 ? 'rtr-char-warn' : ''}>{formData.description.length}</span>
