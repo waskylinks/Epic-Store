@@ -805,3 +805,138 @@
   .rtr-btn-cancel-return, .rtr-confirm-ship-btn { display: none !important; }
   .rtr-return-request-container { background: #fff; padding: 0; }
 }
+
+/* ── Plea item stepper ──────────────────────────────────────── */
+/* Append these rules to the bottom of ReturnRequest.css        */
+
+.rtr-plea-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.rtr-plea-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--rtr-card);
+  border: 1px solid var(--rtr-border);
+  border-radius: var(--rtr-radius-sm);
+  flex-wrap: wrap;
+}
+
+.rtr-plea-item-img {
+  width: 42px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: var(--rtr-radius-xs);
+  border: 1px solid var(--rtr-border);
+  flex-shrink: 0;
+}
+
+.rtr-plea-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+}
+
+.rtr-plea-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--rtr-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rtr-plea-item-rejected {
+  font-size: 11.5px;
+  color: var(--rtr-danger-text);
+  font-weight: 600;
+}
+
+.rtr-plea-qty-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.rtr-plea-qty-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rtr-text-muted);
+  white-space: nowrap;
+}
+
+.rtr-plea-stepper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #F8FAFD;
+  border: 1.5px solid var(--rtr-border);
+  border-radius: var(--rtr-radius-xs);
+  padding: 5px 10px;
+}
+
+.rtr-plea-stepper-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--rtr-border);
+  border-radius: 5px;
+  background: var(--rtr-card);
+  color: var(--rtr-text-sec);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: var(--rtr-transition);
+  padding: 0;
+  font-family: inherit;
+  line-height: 1;
+}
+.rtr-plea-stepper-btn:hover:not(:disabled) {
+  background: var(--rtr-coral-pale);
+  border-color: var(--rtr-coral);
+  color: var(--rtr-coral);
+}
+.rtr-plea-stepper-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.rtr-plea-stepper-val {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--rtr-text);
+  min-width: 22px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.rtr-plea-qty-of {
+  font-size: 12px;
+  color: var(--rtr-text-muted);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.rtr-plea-qty-silent {
+  font-size: 11px;
+  color: var(--rtr-text-muted);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+  .rtr-plea-item-row     { flex-direction: column; align-items: flex-start; }
+  .rtr-plea-qty-controls { width: 100%; }
+  .rtr-plea-qty-silent   { width: 100%; }
+}

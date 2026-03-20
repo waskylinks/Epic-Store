@@ -73,8 +73,6 @@ const RETURN_ADDRESS = {
   phone:   '+234 906 161 4369',
 };
 
-// Full lifecycle used for hasReached() — received/inspected kept here for
-// internal ordering logic but are hidden from the visible timeline
 const LIFECYCLE_ORDER = [
   'requested', 'items_reviewed', 'plea_submitted',
   'approved', 'in_transit', 'received', 'inspected',
@@ -90,6 +88,22 @@ const ALLOWED_FILE_TYPES = {
   images:    ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'],
   videos:    ['video/mp4', 'video/webm', 'video/quicktime'],
   documents: ['application/pdf'],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Resolves a product name from returnInfo item, falling back to order.orderItems
+const resolveItemName = (item, orderItems, idx) => {
+  if (item.name?.trim())          return item.name.trim();
+  if (item.product?.name?.trim()) return item.product.name.trim();
+  const pid = item.product?._id?.toString() ?? item.product?.toString();
+  const match = orderItems?.find((oi) => {
+    const oiPid = oi.product?._id?.toString() ?? oi.product?.toString();
+    return oiPid === pid;
+  });
+  return match?.product?.name ?? match?.name ?? `Item ${(idx ?? 0) + 1}`;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +142,6 @@ const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
   );
 };
 
-// FIX #1: inspected label fixed from 'Inspecting' → 'Inspected'
 const ReturnStatusBadge = ({ status }) => {
   const configs = {
     none:              { label: 'No Return',         className: 'rtr-return-badge-none'              },
@@ -139,37 +152,28 @@ const ReturnStatusBadge = ({ status }) => {
     awaiting_discount: { label: 'Awaiting Discount', className: 'rtr-return-badge-awaiting-discount' },
     in_transit:        { label: 'In Transit',        className: 'rtr-return-badge-transit'           },
     received:          { label: 'Received',          className: 'rtr-return-badge-received'          },
-    inspected:         { label: 'Inspected',         className: 'rtr-return-badge-inspected'         }, // FIX: was 'Inspecting'
+    inspected:         { label: 'Inspected',         className: 'rtr-return-badge-inspected'         },
     completed:         { label: 'Completed',         className: 'rtr-return-badge-completed'         },
     rejected:          { label: 'Rejected',          className: 'rtr-return-badge-rejected'          },
     cancelled:         { label: 'Cancelled',         className: 'rtr-return-badge-cancelled'         },
   };
   const config = configs[status] ?? configs.none;
-  return (
-    <span className={`rtr-return-badge ${config.className}`}>
-      {config.label}
-    </span>
-  );
+  return <span className={`rtr-return-badge ${config.className}`}>{config.label}</span>;
 };
 
-// Credit breakdown — shown to user from items_reviewed onwards
 const CreditBreakdown = ({ returnInfo, currency = 'USD' }) => {
   const {
-    requestedGross  = 0,
-    approvedGross   = 0,
-    rejectedGross   = 0,
+    requestedGross   = 0,
+    approvedGross    = 0,
+    rejectedGross    = 0,
     approvedDiscount = 0,
     shippingDeducted = 0,
-    discountValue   = 0,
+    discountValue    = 0,
   } = returnInfo ?? {};
 
   const fmt = (n) => new Intl.NumberFormat('en-US', {
-    style: 'currency', currency,
-    minimumFractionDigits: 2,
+    style: 'currency', currency, minimumFractionDigits: 2,
   }).format(n ?? 0);
-
-  const hasDiscount  = approvedDiscount > 0;
-  const hasRejected  = rejectedGross    > 0;
 
   return (
     <div className="rtr-credit-breakdown">
@@ -186,13 +190,13 @@ const CreditBreakdown = ({ returnInfo, currency = 'USD' }) => {
           <span className="rtr-credit-label">Approved Total</span>
           <span className="rtr-credit-val rtr-credit-green">{fmt(approvedGross)}</span>
         </div>
-        {hasRejected && (
+        {rejectedGross > 0 && (
           <div className="rtr-credit-row rtr-credit-row--rejected">
             <span className="rtr-credit-label">Rejected Total</span>
             <span className="rtr-credit-val rtr-credit-red">−{fmt(rejectedGross)}</span>
           </div>
         )}
-        {hasDiscount && (
+        {approvedDiscount > 0 && (
           <div className="rtr-credit-row rtr-credit-row--deduct">
             <span className="rtr-credit-label">Discount Applied</span>
             <span className="rtr-credit-val rtr-credit-amber">−{fmt(approvedDiscount)}</span>
@@ -276,6 +280,8 @@ function ReturnRequest() {
   const [pleaFiles,           setPleaFiles]           = useState([]);
   const [pleaFilePreviews,    setPleaFilePreviews]    = useState([]);
   const [pleaUploading,       setPleaUploading]       = useState(false);
+  // Map of productId → how many units user is appealing
+  const [pleaQuantities,      setPleaQuantities]      = useState({});
 
   // items_reviewed choice: null | 'plea' | 'accepted'
   const [itemsReviewedChoice, setItemsReviewedChoice] = useState(null);
@@ -293,20 +299,18 @@ function ReturnRequest() {
   const isTracking    = !!(status && status !== 'none');
   const pleaDeadline  = returnInfo?.pleaDeadline ?? null;
   const pleaAttempts  = returnInfo?.pleaAttempts ?? 0;
-  const discountValue = returnInfo?.discountValue ?? null;
   const pleaInfo      = returnInfo?.pleaInfo ?? null;
 
   const approvedItems    = returnItems.filter((i) => i.adminDecision === 'approved');
   const rejectedItems    = returnItems.filter((i) => i.adminDecision === 'rejected');
   const hasRejectedItems = rejectedItems.length > 0;
 
-  // FIX #3: detect plea-rejected state — status is 'approved' but ALL items are rejected
-  // This happens when admin resolves plea and rejects everything
+  // Plea rejected — status is 'approved' but ALL items were rejected after plea resolution
   const allItemsRejectedAfterPlea =
     status === 'approved' &&
     returnItems.length > 0 &&
     returnItems.every((i) => i.adminDecision === 'rejected') &&
-    (returnInfo?.pleaAttempts ?? 0) > 0;
+    pleaAttempts > 0;
 
   const pleaWindowOpen = React.useMemo(
     () =>
@@ -326,8 +330,8 @@ function ReturnRequest() {
   const unreadCount = messages.filter((m) => m.senderType === 'admin' && !m.isRead).length;
 
   const effectiveCourier = selectedCourier === 'Other' ? otherCourier.trim() : selectedCourier;
-
-  const currency = order?.paymentInfo?.currency ?? 'USD';
+  const currency         = order?.paymentInfo?.currency ?? 'USD';
+  const orderItems       = order?.orderItems ?? [];
 
   // ── Effects ───────────────────────────────────────────────────────────────
 
@@ -358,6 +362,17 @@ function ReturnRequest() {
     if (allApproved && !itemsReviewedChoice) setItemsReviewedChoice('accepted');
   }, [allApproved, itemsReviewedChoice]);
 
+  // Seed pleaQuantities when plea form opens — default to full rejected quantity per item
+  useEffect(() => {
+    if (itemsReviewedChoice !== 'plea' || rejectedItems.length === 0) return;
+    const initial = {};
+    rejectedItems.forEach((item, idx) => {
+      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      initial[pid] = item.quantity ?? 1;
+    });
+    setPleaQuantities(initial);
+  }, [itemsReviewedChoice]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pre-populate items for new-return form
   const itemsPopulated = useRef(false);
   useEffect(() => {
@@ -377,7 +392,7 @@ function ReturnRequest() {
     }
   }, [order?.orderItems, isTracking]);
 
-  // BUG FIX #2: reset returnInfoPopulated when orderId changes
+  // BUG FIX: reset returnInfoPopulated when orderId changes
   const returnInfoPopulated = useRef(false);
   useEffect(() => {
     returnInfoPopulated.current = false;
@@ -483,7 +498,6 @@ function ReturnRequest() {
 
   // ── Accept decisions ──────────────────────────────────────────────────────
 
-  // BUG FIX #4: call getReturnStatus after acceptDecisions
   const handleAcceptDecisions = async () => {
     try {
       await dispatch(acceptDecisions(orderId)).unwrap();
@@ -493,7 +507,7 @@ function ReturnRequest() {
       setItemsReviewedChoice('accepted');
       setShowAcceptConfirm(false);
       await dispatch(getOrderDetails(orderId));
-      dispatch(getReturnStatus(orderId)); // BUG FIX
+      dispatch(getReturnStatus(orderId));
     } catch (err) {
       toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to accept decisions.', { position: 'top-center' });
     }
@@ -501,7 +515,6 @@ function ReturnRequest() {
 
   // ── Confirm shipped ───────────────────────────────────────────────────────
 
-  // BUG FIX #4: call getReturnStatus after confirmShipped
   const handleConfirmShipped = async () => {
     if (!selectedCourier) {
       toast.error('Please select a courier.', { position: 'top-center' });
@@ -521,7 +534,7 @@ function ReturnRequest() {
         position: 'top-center', autoClose: 5000,
       });
       await dispatch(getOrderDetails(orderId));
-      dispatch(getReturnStatus(orderId)); // BUG FIX
+      dispatch(getReturnStatus(orderId));
     } catch (err) {
       toast.error(typeof err === 'string' ? err : err?.message ?? 'Failed to confirm shipment.', { position: 'top-center' });
     }
@@ -529,14 +542,29 @@ function ReturnRequest() {
 
   // ── Plea submit ───────────────────────────────────────────────────────────
 
-  // BUG FIX #4: call getReturnStatus after submitPlea
   const handleSubmitPlea = async () => {
     if (pleaText.trim().length < MIN_PLEA_CHARS) {
       toast.error(`Plea description must be at least ${MIN_PLEA_CHARS} characters.`, { position: 'top-center' });
       return;
     }
 
-    const pleaPromise = dispatch(submitPlea({ orderId, pleaDescription: pleaText.trim() })).unwrap();
+    // Build pleaItems — one entry per rejected item with the user's chosen appeal quantity.
+    // Units not appealed are silently accepted as rejected (no credit will be issued for them).
+    const pleaItems = rejectedItems.map((item, idx) => {
+      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty = item.quantity ?? 1;
+      const chosen = pleaQuantities[pid] ?? maxQty;
+      return {
+        productId:    pid,
+        pleaQuantity: Math.min(Math.max(1, chosen), maxQty),
+      };
+    });
+
+    const pleaPromise = dispatch(submitPlea({
+      orderId,
+      pleaDescription: pleaText.trim(),
+      pleaItems,
+    })).unwrap();
 
     if (pleaFiles.length > 0) {
       setPleaUploading(true);
@@ -559,9 +587,10 @@ function ReturnRequest() {
       setPleaText('');
       setPleaFiles([]);
       setPleaFilePreviews([]);
+      setPleaQuantities({});
       setItemsReviewedChoice(null);
       await dispatch(getOrderDetails(orderId));
-      dispatch(getReturnStatus(orderId)); // BUG FIX
+      dispatch(getReturnStatus(orderId));
     } catch {
       // pleaError in slice triggers toast via useEffect
     }
@@ -599,7 +628,7 @@ function ReturnRequest() {
       const selectedItems = formData.itemsToReturn
         .filter((item) => item.selected)
         .map(({ product, returnQuantity, name, price, image, reason }) => ({
-          product: product?._id?.toString() ?? product?.toString() ?? product,
+          product:  product?._id?.toString() ?? product?.toString() ?? product,
           quantity: returnQuantity,
           name, price, image, reason,
         }));
@@ -673,6 +702,10 @@ function ReturnRequest() {
     return currentIdx >= targetIdx && targetIdx !== -1;
   };
 
+  const showBreakdown = ['items_reviewed', 'plea_submitted', 'approved',
+    'in_transit', 'awaiting_discount', 'completed'].includes(status)
+    && (returnInfo?.discountValue != null);
+
   // ── Render guards ─────────────────────────────────────────────────────────
 
   if (orderLoading) return (<><Navbar /><Loader type="snake" size="md" /><Footer /></>);
@@ -703,11 +736,6 @@ function ReturnRequest() {
       <Footer />
     </>
   );
-
-  // Whether to show the credit breakdown to the user
-  const showBreakdown = ['items_reviewed', 'plea_submitted', 'approved',
-    'in_transit', 'awaiting_discount', 'completed'].includes(status)
-    && (returnInfo?.discountValue != null);
 
   // ── Main render ───────────────────────────────────────────────────────────
 
@@ -757,8 +785,7 @@ function ReturnRequest() {
 
               <div className="rtr-status-details">
 
-                {/* ── Timeline ── */}
-                {/* FIX #2: received and inspected are hidden from user timeline */}
+                {/* Timeline — received and inspected hidden from user */}
                 <div className="rtr-status-timeline">
                   <div className="rtr-timeline-item">
                     <div className="rtr-timeline-dot rtr-active" />
@@ -767,7 +794,6 @@ function ReturnRequest() {
                       <span className="rtr-timeline-date">{fmtDate(returnInfo.requestedAt)}</span>
                     </div>
                   </div>
-
                   {hasReached('items_reviewed') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -777,7 +803,6 @@ function ReturnRequest() {
                       </div>
                     </div>
                   )}
-
                   {hasReached('plea_submitted') && pleaInfo?.pleaSubmittedAt && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -787,7 +812,6 @@ function ReturnRequest() {
                       </div>
                     </div>
                   )}
-
                   {hasReached('approved') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -797,7 +821,6 @@ function ReturnRequest() {
                       </div>
                     </div>
                   )}
-
                   {hasReached('in_transit') && returnInfo.shippedAt && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -807,10 +830,7 @@ function ReturnRequest() {
                       </div>
                     </div>
                   )}
-
-                  {/* FIX #2: received and inspected steps are HIDDEN from user */}
-                  {/* Jump straight from in_transit to awaiting_discount */}
-
+                  {/* received and inspected hidden — jump straight to awaiting_discount */}
                   {hasReached('awaiting_discount') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -819,7 +839,6 @@ function ReturnRequest() {
                       </div>
                     </div>
                   )}
-
                   {hasReached('completed') && returnInfo.completedAt && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -831,7 +850,7 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* ── Info grid ── */}
+                {/* Info grid */}
                 <div className="rtr-return-info-grid">
                   <div className="rtr-info-item">
                     <span className="rtr-info-label">Return Reason</span>
@@ -861,24 +880,17 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* ── Credit breakdown — from items_reviewed onwards ── */}
-                {showBreakdown && (
-                  <CreditBreakdown returnInfo={returnInfo} currency={currency} />
-                )}
+                {/* Credit breakdown */}
+                {showBreakdown && <CreditBreakdown returnInfo={returnInfo} currency={currency} />}
 
-                {/* ════════════════════════════════════════════════════════
-                    FIX #3: plea rejected — all items rejected after plea
-                ════════════════════════════════════════════════════════ */}
+                {/* Plea rejected — all items rejected after plea resolution */}
                 {allItemsRejectedAfterPlea && (
                   <div className="rtr-plea-rejected-panel">
                     <div className="rtr-plea-rejected-header">
                       <FiXCircle className="rtr-plea-rejected-icon" />
                       <div>
                         <h3>Plea Not Accepted</h3>
-                        <p>
-                          We have reviewed your plea and unfortunately all items in this return
-                          have been rejected. No store credit will be issued for this return.
-                        </p>
+                        <p>We have reviewed your plea and unfortunately all items have been rejected. No store credit will be issued.</p>
                       </div>
                     </div>
                     {returnInfo.adminNote && (
@@ -891,9 +903,9 @@ function ReturnRequest() {
                       <span className="rtr-info-label">Rejected Items:</span>
                       {returnItems.map((item, i) => (
                         <div key={i} className="rtr-plea-rejected-item">
-                          {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
+                          {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, i)} className="rtr-item-image" />}
                           <div className="rtr-item-details">
-                            <span className="rtr-item-name">{item.name || item.product?.name}</span>
+                            <span className="rtr-item-name">{resolveItemName(item, orderItems, i)}</span>
                             {item.adminRejectionReason && (
                               <span className="rtr-rejection-reason">Reason: {item.adminRejectionReason}</span>
                             )}
@@ -904,9 +916,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ════════════════════════════════════════════════════
-                    items_reviewed — decision cards + user choice
-                ════════════════════════════════════════════════════ */}
+                {/* items_reviewed — decision cards + user choice */}
                 {status === 'items_reviewed' && returnItems.length > 0 && (
                   <div className="rtr-item-decisions">
                     <h3>Item Decisions</h3>
@@ -917,13 +927,12 @@ function ReturnRequest() {
                             <FiCheckCircle /><span>Approved ({approvedItems.length})</span>
                           </div>
                           {approvedItems.map((item, i) => {
-                            // FIX: show approvedQuantity not quantity
                             const qty = item.approvedQuantity ?? item.quantity;
                             return (
                               <div key={i} className="rtr-decision-item">
-                                {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
+                                {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, i)} className="rtr-item-image" />}
                                 <div className="rtr-item-details">
-                                  <span className="rtr-item-name">{item.name || item.product?.name}</span>
+                                  <span className="rtr-item-name">{resolveItemName(item, orderItems, i)}</span>
                                   <span className="rtr-item-quantity">
                                     Qty: {qty}
                                     {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
@@ -943,9 +952,9 @@ function ReturnRequest() {
                           </div>
                           {rejectedItems.map((item, i) => (
                             <div key={i} className="rtr-decision-item">
-                              {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
+                              {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, i)} className="rtr-item-image" />}
                               <div className="rtr-item-details">
-                                <span className="rtr-item-name">{item.name || item.product?.name}</span>
+                                <span className="rtr-item-name">{resolveItemName(item, orderItems, i)}</span>
                                 <span className="rtr-item-quantity">Qty: {item.quantity}</span>
                                 {item.adminRejectionReason && (
                                   <span className="rtr-rejection-reason">Reason: {item.adminRejectionReason}</span>
@@ -965,7 +974,7 @@ function ReturnRequest() {
                       />
                     )}
 
-                    {/* All approved — no dispute needed */}
+                    {/* All approved */}
                     {!hasRejectedItems && pleaWindowOpen && (
                       <div className="rtr-accept-section">
                         <div className="rtr-accept-header">
@@ -1015,7 +1024,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-               {/* ── Accept confirmation modal ── */}
+                {/* Accept confirmation modal */}
                 {showAcceptConfirm && (
                   <div className="rtr-modal-overlay" onClick={() => setShowAcceptConfirm(false)}>
                     <div className="rtr-modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1028,25 +1037,12 @@ function ReturnRequest() {
                           <div className="rtr-accept-preview">
                             <p className="rtr-accept-preview-label">Approved items that will be credited:</p>
                             {approvedItems.map((item, i) => {
-                              const qty = item.approvedQuantity ?? item.quantity;
-
-                              const resolvedName = (() => {
-                                if (item.name && item.name.trim()) return item.name.trim();
-                                if (item.product?.name && item.product.name.trim()) return item.product.name.trim();
-                                // Match by product ID against order items
-                                const pid = item.product?._id?.toString() ?? item.product?.toString();
-                                const match = order?.orderItems?.find((oi) => {
-                                  const oiPid = oi.product?._id?.toString() ?? oi.product?.toString();
-                                  return oiPid === pid;
-                                });
-                                if (match) return match.product?.name ?? match.name ?? null;
-                                return null;
-                              })();
-
+                              const qty          = item.approvedQuantity ?? item.quantity;
+                              const resolvedName = resolveItemName(item, orderItems, i);
                               return (
                                 <div key={i} className="rtr-accept-preview-item">
-                                  {item.image && <img src={item.image} alt={resolvedName ?? 'Product'} className="rtr-accept-preview-img" />}
-                                  <span>{resolvedName ?? `Item ${i + 1}`}</span>
+                                  {item.image && <img src={item.image} alt={resolvedName} className="rtr-accept-preview-img" />}
+                                  <span>{resolvedName}</span>
                                   <span className="rtr-accept-preview-qty">×{qty}</span>
                                 </div>
                               );
@@ -1070,16 +1066,73 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── Plea form ── */}
+                {/* Plea form */}
                 {status === 'items_reviewed' && itemsReviewedChoice === 'plea' && (
                   <div className="rtr-plea-section">
                     <div className="rtr-plea-header">
                       <FiInfo className="rtr-plea-header-icon" />
                       <div>
                         <h3>Dispute Rejected Items</h3>
-                        <p>You have one opportunity to submit a plea. Provide a clear explanation and any supporting evidence.</p>
+                        <p>
+                          Choose how many units to appeal for each item.
+                          Units you don't appeal are accepted as rejected — no credit will be issued for them.
+                        </p>
                       </div>
                     </div>
+
+                    {/* Per-item appeal quantity steppers */}
+                    {rejectedItems.length > 0 && (
+                      <div className="rtr-plea-items">
+                        <label className="rtr-form-label">Appeal Quantity per Item</label>
+                        <p className="rtr-helper-text">Select how many units you are disputing for each rejected item.</p>
+                        {rejectedItems.map((item, idx) => {
+                          const pid     = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+                          const maxQty  = item.quantity ?? 1;
+                          const current = pleaQuantities[pid] ?? maxQty;
+                          const silent  = maxQty - current;
+                          const name    = resolveItemName(item, orderItems, idx);
+
+                          return (
+                            <div key={pid} className="rtr-plea-item-row">
+                              {item.image && (
+                                <img src={item.image} alt={name} className="rtr-plea-item-img" />
+                              )}
+                              <div className="rtr-plea-item-info">
+                                <span className="rtr-plea-item-name">{name}</span>
+                                <span className="rtr-plea-item-rejected">
+                                  Rejected: {maxQty} unit{maxQty !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                              <div className="rtr-plea-qty-controls">
+                                <span className="rtr-plea-qty-label">Appealing:</span>
+                                <div className="rtr-plea-stepper">
+                                  <button
+                                    type="button"
+                                    className="rtr-plea-stepper-btn"
+                                    onClick={() => setPleaQuantities((prev) => ({ ...prev, [pid]: Math.max(1, current - 1) }))}
+                                    disabled={pleaLoading || current <= 1}
+                                    aria-label="Decrease appeal quantity"
+                                  >−</button>
+                                  <span className="rtr-plea-stepper-val">{current}</span>
+                                  <button
+                                    type="button"
+                                    className="rtr-plea-stepper-btn"
+                                    onClick={() => setPleaQuantities((prev) => ({ ...prev, [pid]: Math.min(maxQty, current + 1) }))}
+                                    disabled={pleaLoading || current >= maxQty}
+                                    aria-label="Increase appeal quantity"
+                                  >+</button>
+                                </div>
+                                <span className="rtr-plea-qty-of">of {maxQty}</span>
+                                {silent > 0 && (
+                                  <span className="rtr-plea-qty-silent">({silent} accepted as rejected)</span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
                     <div className="rtr-form-group">
                       <label className="rtr-form-label">Your Plea *</label>
                       <textarea
@@ -1093,11 +1146,12 @@ function ReturnRequest() {
                       <div className="rtr-char-counter">
                         <span className={pleaText.length > MAX_PLEA_CHARS - 100 ? 'rtr-char-warn' : ''}>{pleaText.length}</span>
                         /{MAX_PLEA_CHARS}
-                        {pleaText.length < MIN_PLEA_CHARS && pleaText.length > 0 && (
+                        {pleaText.length > 0 && pleaText.length < MIN_PLEA_CHARS && (
                           <span className="rtr-char-warn rtr-char-min">&nbsp;(min {MIN_PLEA_CHARS} chars)</span>
                         )}
                       </div>
                     </div>
+
                     <div className="rtr-form-group">
                       <label className="rtr-form-label">Supporting Evidence (Optional)</label>
                       <input ref={pleaFileInputRef} type="file" multiple accept=".jpg,.jpeg,.png,.gif,.webp,.mp4,.webm,.mov,.pdf" onChange={handlePleaFileSelect} style={{ display: 'none' }} />
@@ -1124,6 +1178,7 @@ function ReturnRequest() {
                         </div>
                       )}
                     </div>
+
                     <div className="rtr-plea-form-actions">
                       <button type="button" className="rtr-btn-secondary" onClick={() => setItemsReviewedChoice(null)} disabled={pleaLoading}>Go Back</button>
                       <button type="button" className="rtr-btn-primary" onClick={handleSubmitPlea} disabled={pleaLoading || pleaText.trim().length < MIN_PLEA_CHARS}>
@@ -1133,7 +1188,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── plea_submitted ── */}
+                {/* plea_submitted */}
                 {status === 'plea_submitted' && (
                   <div className="rtr-plea-submitted-panel">
                     <div className="rtr-plea-submitted-header">
@@ -1159,7 +1214,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── approved — ship items back ── */}
+                {/* approved — ship items back */}
                 {status === 'approved' && !allItemsRejectedAfterPlea && (
                   <div className="rtr-approved-panel">
                     <div className="rtr-approved-panel-header">
@@ -1178,23 +1233,11 @@ function ReturnRequest() {
                         <span className="rtr-info-label">Items to ship back:</span>
                         <div className="rtr-awaiting-pills">
                           {approvedItems.map((item, i) => {
-                            const qty = item.approvedQuantity ?? item.quantity;
-
-                            const resolvedName = (() => {
-                              if (item.name && item.name.trim()) return item.name.trim();
-                              if (item.product?.name && item.product.name.trim()) return item.product.name.trim();
-                              const pid = item.product?._id?.toString() ?? item.product?.toString();
-                              const match = order?.orderItems?.find((oi) => {
-                                const oiPid = oi.product?._id?.toString() ?? oi.product?.toString();
-                                return oiPid === pid;
-                              });
-                              if (match) return match.product?.name ?? match.name ?? null;
-                              return null;
-                            })();
-
+                            const qty  = item.approvedQuantity ?? item.quantity;
+                            const name = resolveItemName(item, orderItems, i);
                             return (
                               <span key={i} className="rtr-awaiting-item-pill">
-                                {resolvedName ?? `Item ${i + 1}`} ×{qty}
+                                {name} ×{qty}
                               </span>
                             );
                           })}
@@ -1265,7 +1308,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── in_transit ── */}
+                {/* in_transit */}
                 {status === 'in_transit' && (
                   <div className="rtr-in-transit-panel">
                     <div className="rtr-in-transit-header">
@@ -1298,7 +1341,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* FIX #2: received and inspected are hidden — user sees neutral banner if on those statuses */}
+                {/* received/inspected — hidden, show neutral banner */}
                 {(status === 'received' || status === 'inspected') && (
                   <div className="rtr-info-banner-neutral">
                     <FiInfo />
@@ -1306,7 +1349,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── awaiting_discount — show full breakdown ── */}
+                {/* awaiting_discount */}
                 {status === 'awaiting_discount' && (
                   <div className="rtr-awaiting-discount">
                     <div className="rtr-awaiting-discount-icon-wrap">
@@ -1314,16 +1357,16 @@ function ReturnRequest() {
                     </div>
                     <h3>Your Discount Code Is Being Prepared</h3>
                     <p>Your items have been verified. Our team is generating your store credit discount code.</p>
-
                     {approvedItems.length > 0 && (
                       <div className="rtr-awaiting-approved-items" style={{ marginTop: 12 }}>
                         <span className="rtr-info-label">Approved items:</span>
                         <div className="rtr-awaiting-pills">
                           {approvedItems.map((item, i) => {
-                            const qty = item.approvedQuantity ?? item.quantity;
+                            const qty  = item.approvedQuantity ?? item.quantity;
+                            const name = resolveItemName(item, orderItems, i);
                             return (
                               <span key={i} className="rtr-awaiting-item-pill">
-                                {item.name || item.product?.name} ×{qty}
+                                {name} ×{qty}
                               </span>
                             );
                           })}
@@ -1333,7 +1376,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── completed ── */}
+                {/* completed */}
                 {status === 'completed' && (
                   <div className="rtr-completed-panel">
                     <FiCheckCircle className="rtr-completed-icon" />
@@ -1352,9 +1395,9 @@ function ReturnRequest() {
                     <div className="rtr-items-list">
                       {returnItems.map((item, index) => (
                         <div key={index} className="rtr-return-item-card">
-                          {item.image && <img src={item.image} alt={item.name} className="rtr-item-image" />}
+                          {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, index)} className="rtr-item-image" />}
                           <div className="rtr-item-details">
-                            <span className="rtr-item-name">{item.name}</span>
+                            <span className="rtr-item-name">{resolveItemName(item, orderItems, index)}</span>
                             <span className="rtr-item-quantity">Quantity: {item.quantity}</span>
                             {item.reason && <span className="rtr-item-reason">Reason: {reasonLabel(item.reason)}</span>}
                           </div>
@@ -1373,7 +1416,7 @@ function ReturnRequest() {
             </div>
           )}
 
-          {/* ── Order summary ── */}
+          {/* Order summary */}
           <div className="rtr-summary-card">
             <div className="rtr-card-header">
               <span className="rtr-card-header-bar" />
@@ -1398,7 +1441,7 @@ function ReturnRequest() {
             </div>
           </div>
 
-          {/* ── New-return form ── */}
+          {/* New-return form */}
           {!isTracking && (
             <div className="rtr-return-form-card">
               <div className="rtr-card-header">

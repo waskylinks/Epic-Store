@@ -123,11 +123,11 @@ export const acceptDecisions = createAsyncThunk(
 // ─────────────────────────────────────────────────────────────────────────────
 export const submitPlea = createAsyncThunk(
   "return/submitPlea",
-  async ({ orderId, pleaDescription }, { rejectWithValue }) => {
+  async ({ orderId, pleaDescription, pleaItems = [] }, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
         `/api/v1/orders/${orderId}/return/plea`,
-        { pleaDescription },
+        { pleaDescription, pleaItems },
         { withCredentials: true }
       );
       return data;
