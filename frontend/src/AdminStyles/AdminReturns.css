@@ -958,3 +958,74 @@
   .rt-body  { padding: 10px 10px 32px; }
   .rt-kpi-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Reject-variant quantity stepper ───────────────────────── */
+/* The approve stepper (.rt-qty-stepper) already exists in green.
+   These modifiers flip it to a red/amber theme for the reject direction. */
+ 
+.rt-qty-stepper--reject {
+  background: #FEF2F2;
+  border-color: #FECACA;
+}
+ 
+.rt-qty-stepper-label--reject {
+  color: #991B1B;
+}
+ 
+.rt-qty-btn--reject {
+  border-color: #FECACA;
+  color: #991B1B;
+}
+.rt-qty-btn--reject:hover:not(:disabled) {
+  background: #FEE2E2;
+  border-color: #EF4444;
+}
+ 
+.rt-qty-value--reject {
+  color: #991B1B;
+}
+ 
+/* ── Remainder note chips ───────────────────────────────────── */
+/* Shown next to the stepper to tell admin what's silently happening */
+.rt-qty-remainder {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+ 
+/* "X auto-rejected" — shown under approve stepper */
+.rt-qty-remainder--rejected {
+  background: #FEE2E2;
+  color: #991B1B;
+}
+ 
+/* "X auto-approved" — shown under reject stepper */
+.rt-qty-remainder--approved {
+  background: #DCFCE7;
+  color: #065F46;
+}
+ 
+/* ── Plea quantity note ──────────────────────────────────────── */
+/* Shown per item in plea round: "Customer appealed X of Y units" */
+.rt-item-plea-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6B21A8;
+  background: #F3E8FF;
+  border: 1px solid #E9D5FF;
+  border-radius: 20px;
+  padding: 2px 8px;
+  margin-top: 3px;
+  width: fit-content;
+}
+ 
+/* ── Stepper flex wrap on small screens ─────────────────────── */
+@media (max-width: 480px) {
+  .rt-qty-stepper--reject { flex-wrap: wrap; }
+}

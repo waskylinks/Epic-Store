@@ -21,7 +21,7 @@ import Footer from '../components/footer';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/AdminReturns.css';
 
-// ── Debounce hook ────────────────────────────────────────────────────────────
+// ── Debounce hook ─────────────────────────────────────────────────────────────
 function useDebounce(value, delay) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -31,7 +31,7 @@ function useDebounce(value, delay) {
   return debounced;
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 const getCustomerName = (user) => {
   if (!user) return 'N/A';
   const first = user.firstName?.trim() ?? '';
@@ -56,7 +56,7 @@ const fmt         = (n) => (typeof n === 'number' ? n.toFixed(2) : '0.00');
 const fmtCurrency = (n) => `$${fmt(typeof n === 'number' ? n : 0)}`;
 const fmtDate     = (d) => d ? new Date(d).toLocaleString() : 'N/A';
 
-// ── Constants ────────────────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 const STATUS_COLOR = {
   requested: 'requested', items_reviewed: 'items_reviewed',
   plea_submitted: 'plea_submitted', awaiting_discount: 'awaiting_discount',
@@ -64,8 +64,7 @@ const STATUS_COLOR = {
   inspected: 'inspected', completed: 'completed', rejected: 'rejected', cancelled: 'cancelled',
 };
 
-const TERMINAL_STATUSES = new Set(['completed', 'rejected', 'cancelled']);
-
+const TERMINAL_STATUSES  = new Set(['completed', 'rejected', 'cancelled']);
 const LIFECYCLE_STATUSES = ['approved', 'in_transit', 'received', 'inspected', 'awaiting_discount', 'completed'];
 
 const NEXT_STATUS_MAP = {
@@ -99,7 +98,7 @@ const SORT_OPTIONS = [
 
 const LIMIT = 20;
 
-// ── CountdownTimer ───────────────────────────────────────────────────────────
+// ── CountdownTimer ────────────────────────────────────────────────────────────
 const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
   const [timeLeft, setTimeLeft] = useState(null);
   useEffect(() => {
@@ -132,14 +131,12 @@ const CountdownTimer = ({ deadline, label, expiredLabel = 'Expired' }) => {
   );
 };
 
-// ── CreditBreakdown ──────────────────────────────────────────────────────────
+// ── CreditBreakdown ───────────────────────────────────────────────────────────
 const CreditBreakdown = ({ returnInfo }) => {
   const {
     requestedGross = 0, approvedGross = 0, rejectedGross = 0,
     approvedDiscount = 0, shippingDeducted = 0, discountValue = 0,
   } = returnInfo ?? {};
-
-  const hasDiscount = approvedDiscount > 0;
 
   return (
     <div className="rt-credit-breakdown">
@@ -162,7 +159,7 @@ const CreditBreakdown = ({ returnInfo }) => {
             <span className="rt-credit-val rt-credit-val--rejected">−{fmtCurrency(rejectedGross)}</span>
           </div>
         )}
-        {hasDiscount && (
+        {approvedDiscount > 0 && (
           <div className="rt-credit-row rt-credit-row--deduct">
             <span className="rt-credit-label">Discount Applied</span>
             <span className="rt-credit-val rt-credit-val--deduct">−{fmtCurrency(approvedDiscount)}</span>
@@ -182,8 +179,28 @@ const CreditBreakdown = ({ returnInfo }) => {
   );
 };
 
-// ── PerItemDecisionForm ──────────────────────────────────────────────────────
-const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, lockedProductIds = new Set() }) => {
+// ── PerItemDecisionForm ───────────────────────────────────────────────────────
+// decisions shape per item:
+//   { decision, rejectionReason, approvedQuantity, rejectedQuantity }
+//
+// Approve decision:
+//   approvedQuantity = stepper value (1..maxQty)
+//   remainder (maxQty - approvedQuantity) implicitly rejected
+//
+// Reject decision:
+//   rejectedQuantity = stepper value (1..maxQty)
+//   remainder (maxQty - rejectedQuantity) implicitly approved
+//   → backend derives approvedQuantity = maxQty - rejectedQuantity
+//
+// In plea round: approve stepper capped at item.pleaQuantity (what customer appealed for)
+const PerItemDecisionForm = ({
+  items,
+  decisions,
+  onDecisionChange,
+  disabled,
+  lockedProductIds = new Set(),
+  isPleaRound = false,
+}) => {
   if (!items?.length) return <div className="rt-empty" style={{ minHeight: 80 }}><span>No items to review</span></div>;
 
   return (
@@ -192,9 +209,26 @@ const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, loc
         const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
         const name     = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
         const image    = item.product?.images?.[0]?.url ?? item.image ?? null;
-        const dec      = decisions[pid] ?? { decision: '', rejectionReason: '', approvedQuantity: item.quantity ?? 1 };
-        const isLocked = lockedProductIds.has(pid);
         const maxQty   = item.quantity ?? 1;
+        const isLocked = lockedProductIds.has(pid);
+
+        // Plea round: admin cannot approve more than the customer appealed for
+        const pleaQty      = item.pleaQuantity ?? maxQty;
+        const approveMax   = isPleaRound ? pleaQty : maxQty;
+
+        const dec = decisions[pid] ?? {
+          decision:         '',
+          rejectionReason:  '',
+          approvedQuantity: approveMax,
+          rejectedQuantity: maxQty,
+        };
+
+        const currentApproved  = dec.approvedQuantity ?? approveMax;
+        const currentRejected  = dec.rejectedQuantity ?? maxQty;
+
+        // Derived remainders for the note labels
+        const approveRemainder = maxQty - currentApproved;  // silently rejected
+        const rejectRemainder  = maxQty - currentRejected;  // silently approved
 
         return (
           <div key={pid} className={`rt-item-decision-card${isLocked ? ' rt-item-decision-card--locked' : ''}`}>
@@ -203,13 +237,18 @@ const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, loc
               <div className="rt-item-decision-meta">
                 <span className="rt-item-name">{name}</span>
                 <span className="rt-item-meta">
-                  Qty: {item.quantity ?? 1}{item.price ? ` · ${fmtCurrency(item.price)} ea` : ''}
+                  Qty: {maxQty}{item.price ? ` · ${fmtCurrency(item.price)} ea` : ''}
                 </span>
                 {item.reason && <span className="rt-item-reason">{item.reason.replace(/_/g, ' ')}</span>}
+                {isPleaRound && !isLocked && item.pleaQuantity != null && (
+                  <span className="rt-item-plea-note">
+                    Customer appealed {item.pleaQuantity} of {maxQty} unit{maxQty !== 1 ? 's' : ''}
+                  </span>
+                )}
                 {isLocked && (
                   <span className="rt-item-locked-badge">
                     <CheckCircle style={{ fontSize: 11 }} /> Approved — locked
-                    {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
+                    {item.approvedQuantity != null && item.approvedQuantity !== maxQty && (
                       <span className="rt-item-locked-qty"> · Qty approved: {item.approvedQuantity}</span>
                     )}
                   </span>
@@ -238,45 +277,79 @@ const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, loc
               </div>
             )}
 
-            {/* Quantity stepper — only for approved unlocked items */}
+            {/* Approve stepper — capped at pleaQuantity in plea round */}
             {!isLocked && dec.decision === 'approved' && (
-              <div className="rt-qty-stepper">
+              <div className="rt-qty-stepper rt-qty-stepper--approve">
                 <span className="rt-qty-stepper-label">Approved Qty:</span>
                 <div className="rt-qty-stepper-controls">
                   <button
-                    type="button"
-                    className="rt-qty-btn"
-                    onClick={() => onDecisionChange(pid, 'approvedQuantity', Math.max(1, (dec.approvedQuantity ?? maxQty) - 1))}
-                    disabled={disabled || (dec.approvedQuantity ?? maxQty) <= 1}
-                    aria-label="Decrease quantity"
+                    type="button" className="rt-qty-btn"
+                    onClick={() => onDecisionChange(pid, 'approvedQuantity', Math.max(1, currentApproved - 1))}
+                    disabled={disabled || currentApproved <= 1}
+                    aria-label="Decrease approved quantity"
                   >
                     <Remove style={{ fontSize: 13 }} />
                   </button>
-                  <span className="rt-qty-value">{dec.approvedQuantity ?? maxQty}</span>
+                  <span className="rt-qty-value">{currentApproved}</span>
                   <button
-                    type="button"
-                    className="rt-qty-btn"
-                    onClick={() => onDecisionChange(pid, 'approvedQuantity', Math.min(maxQty, (dec.approvedQuantity ?? maxQty) + 1))}
-                    disabled={disabled || (dec.approvedQuantity ?? maxQty) >= maxQty}
-                    aria-label="Increase quantity"
+                    type="button" className="rt-qty-btn"
+                    onClick={() => onDecisionChange(pid, 'approvedQuantity', Math.min(approveMax, currentApproved + 1))}
+                    disabled={disabled || currentApproved >= approveMax}
+                    aria-label="Increase approved quantity"
                   >
                     <Add style={{ fontSize: 13 }} />
                   </button>
                 </div>
-                <span className="rt-qty-max">of {maxQty}</span>
+                <span className="rt-qty-max">of {approveMax}</span>
+                {approveRemainder > 0 && (
+                  <span className="rt-qty-remainder rt-qty-remainder--rejected">
+                    {approveRemainder} auto-rejected
+                  </span>
+                )}
               </div>
             )}
 
+            {/* Reject stepper — sends rejectedQuantity; remainder auto-approved */}
             {!isLocked && dec.decision === 'rejected' && (
-              <div className="rt-item-rejection-reason">
-                <input
-                  type="text" className="rt-form-input"
-                  placeholder="Rejection reason (required)…"
-                  value={dec.rejectionReason ?? ''}
-                  onChange={(e) => onDecisionChange(pid, 'rejectionReason', e.target.value)}
-                  disabled={disabled} maxLength={500}
-                />
-              </div>
+              <>
+                <div className="rt-qty-stepper rt-qty-stepper--reject">
+                  <span className="rt-qty-stepper-label rt-qty-stepper-label--reject">Rejected Qty:</span>
+                  <div className="rt-qty-stepper-controls">
+                    <button
+                      type="button" className="rt-qty-btn rt-qty-btn--reject"
+                      onClick={() => onDecisionChange(pid, 'rejectedQuantity', Math.max(1, currentRejected - 1))}
+                      disabled={disabled || currentRejected <= 1}
+                      aria-label="Decrease rejected quantity"
+                    >
+                      <Remove style={{ fontSize: 13 }} />
+                    </button>
+                    <span className="rt-qty-value rt-qty-value--reject">{currentRejected}</span>
+                    <button
+                      type="button" className="rt-qty-btn rt-qty-btn--reject"
+                      onClick={() => onDecisionChange(pid, 'rejectedQuantity', Math.min(maxQty, currentRejected + 1))}
+                      disabled={disabled || currentRejected >= maxQty}
+                      aria-label="Increase rejected quantity"
+                    >
+                      <Add style={{ fontSize: 13 }} />
+                    </button>
+                  </div>
+                  <span className="rt-qty-max">of {maxQty}</span>
+                  {rejectRemainder > 0 && (
+                    <span className="rt-qty-remainder rt-qty-remainder--approved">
+                      {rejectRemainder} auto-approved
+                    </span>
+                  )}
+                </div>
+                <div className="rt-item-rejection-reason">
+                  <input
+                    type="text" className="rt-form-input"
+                    placeholder="Rejection reason (required)…"
+                    value={dec.rejectionReason ?? ''}
+                    onChange={(e) => onDecisionChange(pid, 'rejectionReason', e.target.value)}
+                    disabled={disabled} maxLength={500}
+                  />
+                </div>
+              </>
             )}
           </div>
         );
@@ -285,7 +358,7 @@ const PerItemDecisionForm = ({ items, decisions, onDecisionChange, disabled, loc
   );
 };
 
-// ── PleaPreviewModal ─────────────────────────────────────────────────────────
+// ── PleaPreviewModal ──────────────────────────────────────────────────────────
 const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, loading }) => {
   const approved = items.filter((item, idx) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
@@ -313,14 +386,15 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
                 <span>Approved ({approved.length})</span>
               </div>
               {approved.map((item, i) => {
-                const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(i);
-                const approvedQty = decisions[pid]?.approvedQuantity ?? item.quantity ?? 1;
+                const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(i);
+                const approvedQty = decisions[pid]?.approvedQuantity ?? item.pleaQuantity ?? item.quantity ?? 1;
+                const maxQty      = item.quantity ?? 1;
                 return (
                   <div key={i} className="rt-modal-item">
                     <span>{item.product?.name ?? item.name ?? `Item ${i + 1}`}</span>
                     <span className="rt-td-muted">×{approvedQty}</span>
-                    {approvedQty !== (item.quantity ?? 1) && (
-                      <span className="rt-modal-qty-note">(of {item.quantity ?? 1} requested)</span>
+                    {approvedQty !== maxQty && (
+                      <span className="rt-modal-qty-note">(of {maxQty} requested)</span>
                     )}
                   </div>
                 );
@@ -365,7 +439,7 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
   );
 };
 
-// ── Component ────────────────────────────────────────────────────────────────
+// ── Main Component ────────────────────────────────────────────────────────────
 const AdminReturns = () => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
@@ -439,12 +513,12 @@ const AdminReturns = () => {
   useEffect(() => {
     setLocalPage(1);
     triggerFetch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly, triggerFetch]);
 
   useEffect(() => {
     triggerFetch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+
   }, [localPage, triggerFetch]);
 
   const handleFetchReturns = useCallback(() => triggerFetch(), [triggerFetch]);
@@ -469,7 +543,7 @@ const AdminReturns = () => {
     }
   }, [activeTab, currentReturn, newStatus]);
 
-  // Seed item decisions — includes approvedQuantity
+  // Seed item decisions when currentReturn changes or tab changes
   useEffect(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return;
     const items = currentReturn.returnInfo.itemsToReturn;
@@ -477,12 +551,14 @@ const AdminReturns = () => {
     setItemDecisions((prev) => {
       const next = { ...prev };
       items.forEach((item, idx) => {
-        const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const maxQty = item.quantity ?? 1;
         if (!next[pid]) {
           next[pid] = {
-            decision:         item.adminDecision         ?? '',
-            rejectionReason:  item.adminRejectionReason  ?? '',
-            approvedQuantity: item.approvedQuantity       ?? item.quantity ?? 1,
+            decision:         item.adminDecision        ?? '',
+            rejectionReason:  item.adminRejectionReason ?? '',
+            approvedQuantity: item.approvedQuantity      ?? maxQty,
+            rejectedQuantity: maxQty, // default: reject all
           };
         }
       });
@@ -492,19 +568,25 @@ const AdminReturns = () => {
     if (activeTab === 'plea') {
       const fresh = {};
       items.forEach((item, idx) => {
-        const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-        // Locked items (approved) pre-seed approvedQuantity from stored value
+        const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const maxQty   = item.quantity ?? 1;
+        const pleaQty  = item.pleaQuantity ?? maxQty;
+
         if (item.adminDecision === 'approved') {
+          // Locked — keep round-one approvedQuantity
           fresh[pid] = {
             decision:         'approved',
             rejectionReason:  '',
-            approvedQuantity: item.approvedQuantity ?? item.quantity ?? 1,
+            approvedQuantity: item.approvedQuantity ?? maxQty,
+            rejectedQuantity: maxQty,
           };
         } else {
+          // Previously rejected — can now be approved up to pleaQuantity
           fresh[pid] = {
             decision:         '',
             rejectionReason:  '',
-            approvedQuantity: item.quantity ?? 1,
+            approvedQuantity: pleaQty, // default: approve all that were appealed
+            rejectedQuantity: maxQty,
           };
         }
       });
@@ -565,8 +647,6 @@ const AdminReturns = () => {
     });
   }, [currentReturn, pleaDecisions]);
 
-  // Locked = previously approved items in plea round
-  // Their approvedQuantity is also locked (read from item.approvedQuantity)
   const pleaLockedProductIds = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return new Set();
     return new Set(
@@ -615,17 +695,25 @@ const AdminReturns = () => {
   const handlePleaDecisionChange = useCallback((pid, field, value) =>
     setPleaDecisions((p) => ({ ...p, [pid]: { ...p[pid], [field]: value } })), []);
 
-  // buildDecisionsArray now includes approvedQuantity
+  // buildDecisionsArray:
+  //   approve → sends approvedQuantity
+  //   reject  → sends rejectedQuantity (backend derives approvedQuantity = maxQty - rejectedQuantity)
   const buildDecisionsArray = (decisionsMap, items) =>
     items.map((item, idx) => {
-      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const dec = decisionsMap[pid] ?? {};
-      return {
-        productId:        pid,
-        decision:         dec.decision,
-        rejectionReason:  dec.rejectionReason ?? '',
-        approvedQuantity: dec.decision === 'approved' ? (dec.approvedQuantity ?? item.quantity ?? 1) : undefined,
+      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty = item.quantity ?? 1;
+      const dec    = decisionsMap[pid] ?? {};
+      const base   = {
+        productId:       pid,
+        decision:        dec.decision,
+        rejectionReason: dec.rejectionReason ?? '',
       };
+      if (dec.decision === 'approved') {
+        base.approvedQuantity = Math.min(dec.approvedQuantity ?? maxQty, maxQty);
+      } else if (dec.decision === 'rejected') {
+        base.rejectedQuantity = Math.min(dec.rejectedQuantity ?? maxQty, maxQty);
+      }
+      return base;
     });
 
   const handleReviewReturn = useCallback(async () => {
@@ -647,7 +735,6 @@ const AdminReturns = () => {
       })).unwrap();
       setPleaDecisions({}); setPleaAdminNote('');
       setShowPleaPreview(false);
-      // FIX: redirect to status tab instead of letting page go blank
       setActiveTab('status');
       triggerFetch();
     } catch (err) {
@@ -710,7 +797,7 @@ const AdminReturns = () => {
     dispatch(clearCurrentReturn()); triggerFetch();
   }, [dispatch, triggerFetch]);
 
-  // ── KPI cards ──────────────────────────────────────────────────────────────
+  // ── KPI cards ─────────────────────────────────────────────────────────────
   const renderKPICards = () => {
     if (!stats) {
       return Array.from({ length: 9 }).map((_, i) => (
@@ -731,10 +818,11 @@ const AdminReturns = () => {
       { label: 'Completed',         value: stats.completed         ?? 0, icon: CheckCircle,   color: '#10B981', isCount: true  },
       { label: 'Rejected',          value: stats.rejected          ?? 0, icon: Cancel,        color: '#EF4444', isCount: true  },
       {
-        label: 'Requested Revenue',
-        // FIX: use toLocaleString() — no decimal point
-        value: typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,
-        icon: Discount, color: '#0EA5E9', isCount: false,
+        label:   'Requested Revenue',
+        value:   typeof totalRequestedAmount === 'number' ? totalRequestedAmount : 0,
+        icon:    Discount,
+        color:   '#0EA5E9',
+        isCount: false,
       },
     ];
     return cards.map((c) => (
@@ -754,7 +842,7 @@ const AdminReturns = () => {
     ));
   };
 
-  // ── Table ──────────────────────────────────────────────────────────────────
+  // ── Table ─────────────────────────────────────────────────────────────────
   const renderTable = () => {
     if (tableLoading && !displayList.length) {
       return (
@@ -781,15 +869,9 @@ const AdminReturns = () => {
         <table className="rt-tbl">
           <thead>
             <tr>
-              <th>Order ID</th>
-              <th>Customer</th>
-              <th>RMA</th>
-              <th>Requested Amt</th>
-              <th>Reason</th>
-              <th>Requested</th>
-              <th>Status</th>
-              <th>Msgs</th>
-              <th>Actions</th>
+              <th>Order ID</th><th>Customer</th><th>RMA</th>
+              <th>Requested Amt</th><th>Reason</th><th>Requested</th>
+              <th>Status</th><th>Msgs</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -881,7 +963,7 @@ const AdminReturns = () => {
     );
   };
 
-  // ── Detail panel ───────────────────────────────────────────────────────────
+  // ── Detail panel ──────────────────────────────────────────────────────────
   const renderDetailPanel = () => {
     if (!showDetailPanel) return null;
 
@@ -908,7 +990,6 @@ const AdminReturns = () => {
     const rma           = returnInfo.rmaNumber ?? null;
     const approvedItems = (returnInfo.itemsToReturn ?? []).filter((i) => i.adminDecision === 'approved');
 
-    // Statuses at which the credit breakdown is visible
     const showBreakdown = ['items_reviewed', 'plea_submitted', 'approved', 'in_transit',
       'received', 'inspected', 'awaiting_discount', 'completed'].includes(retStatus);
 
@@ -962,7 +1043,6 @@ const AdminReturns = () => {
                         <span className="rt-metric-val">{val}</span>
                       </div>
                     ))}
-
                     <div className="rt-metric-row">
                       <span className="rt-metric-label">Status</span>
                       <span className={`rt-status rt-status--${STATUS_COLOR[retStatus] ?? 'cancelled'}`}>
@@ -975,21 +1055,18 @@ const AdminReturns = () => {
                         {returnInfo.requestedAt ? new Date(returnInfo.requestedAt).toLocaleString() : 'N/A'}
                       </span>
                     </div>
-
                     {['in_transit','received','inspected','awaiting_discount','completed'].includes(retStatus) && returnInfo.courierName && (
                       <div className="rt-metric-row">
                         <span className="rt-metric-label">Courier</span>
                         <span className="rt-metric-val">{returnInfo.courierName}</span>
                       </div>
                     )}
-
                     {['in_transit','received','inspected','awaiting_discount','completed'].includes(retStatus) && returnInfo.shippedAt && (
                       <div className="rt-metric-row">
                         <span className="rt-metric-label">Shipped On</span>
                         <span className="rt-metric-val">{fmtDate(returnInfo.shippedAt)}</span>
                       </div>
                     )}
-
                     {returnInfo.trackingNumber && (
                       <div className="rt-metric-row">
                         <span className="rt-metric-label">Tracking #</span>
@@ -1005,7 +1082,6 @@ const AdminReturns = () => {
                   </div>
                 </div>
 
-                {/* Credit breakdown — shown from items_reviewed onwards */}
                 {showBreakdown && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Credit Breakdown</span><span className="rt-section-line" /></div>
@@ -1016,106 +1092,94 @@ const AdminReturns = () => {
                 {returnInfo.description && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Customer Description</span><span className="rt-section-line" /></div>
-                    <div className="rt-card">
-                      <div className="rt-card-body">
-                        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{returnInfo.description}</p>
-                      </div>
-                    </div>
+                    <div className="rt-card"><div className="rt-card-body">
+                      <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{returnInfo.description}</p>
+                    </div></div>
                   </>
                 )}
 
                 {retStatus === 'items_reviewed' && returnInfo.itemsToReturn?.length > 0 && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Item Decisions</span><span className="rt-section-line" /></div>
-                    <div className="rt-card">
-                      <div className="rt-card-body">
-                        {renderItemDecisionBadges(returnInfo)}
-                        {returnInfo.pleaDeadline && (
-                          <div style={{ marginTop: 12 }}>
-                            <CountdownTimer deadline={returnInfo.pleaDeadline} label="Customer plea window:" expiredLabel="Plea window closed" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <div className="rt-card"><div className="rt-card-body">
+                      {renderItemDecisionBadges(returnInfo)}
+                      {returnInfo.pleaDeadline && (
+                        <div style={{ marginTop: 12 }}>
+                          <CountdownTimer deadline={returnInfo.pleaDeadline} label="Customer plea window:" expiredLabel="Plea window closed" />
+                        </div>
+                      )}
+                    </div></div>
                   </>
                 )}
 
                 {retStatus === 'plea_submitted' && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Plea Submitted</span><span className="rt-section-line" /></div>
-                    <div className="rt-card">
-                      <div className="rt-card-body">
-                        <div className="rt-plea-submitted-badge">
-                          <Gavel style={{ fontSize: 15 }} />
-                          <span>Customer has submitted a plea for reconsideration</span>
-                        </div>
-                        {returnInfo.pleaInfo?.pleaDescription && (
-                          <p style={{ margin: '10px 0 0', fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
-                            {returnInfo.pleaInfo.pleaDescription}
-                          </p>
-                        )}
-                        {returnInfo.pleaDeadline && (
-                          <div style={{ marginTop: 12 }}>
-                            <CountdownTimer deadline={returnInfo.pleaDeadline} label="Admin response window:" expiredLabel="Response window closed" />
-                          </div>
-                        )}
-                        {renderItemDecisionBadges(returnInfo)}
+                    <div className="rt-card"><div className="rt-card-body">
+                      <div className="rt-plea-submitted-badge">
+                        <Gavel style={{ fontSize: 15 }} />
+                        <span>Customer has submitted a plea for reconsideration</span>
                       </div>
-                    </div>
+                      {returnInfo.pleaInfo?.pleaDescription && (
+                        <p style={{ margin: '10px 0 0', fontSize: 13, color: '#374151', lineHeight: 1.6 }}>
+                          {returnInfo.pleaInfo.pleaDescription}
+                        </p>
+                      )}
+                      {returnInfo.pleaDeadline && (
+                        <div style={{ marginTop: 12 }}>
+                          <CountdownTimer deadline={returnInfo.pleaDeadline} label="Admin response window:" expiredLabel="Response window closed" />
+                        </div>
+                      )}
+                      {renderItemDecisionBadges(returnInfo)}
+                    </div></div>
                   </>
                 )}
 
                 {returnInfo.inspectionNotes && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Inspection Notes</span><span className="rt-section-line" /></div>
-                    <div className="rt-card">
-                      <div className="rt-card-body">
-                        <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{returnInfo.inspectionNotes}</p>
-                      </div>
-                    </div>
+                    <div className="rt-card"><div className="rt-card-body">
+                      <p style={{ margin: 0, fontSize: 13, color: '#374151', lineHeight: 1.6 }}>{returnInfo.inspectionNotes}</p>
+                    </div></div>
                   </>
                 )}
 
                 {!['items_reviewed', 'plea_submitted'].includes(retStatus) && returnInfo.itemsToReturn?.length > 0 && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Items to Return</span><span className="rt-section-line" /></div>
-                    <div className="rt-card">
-                      <div className="rt-card-body">
-                        {returnInfo.itemsToReturn.map((item, idx) => (
-                          <div key={item.product?._id ?? idx} className="rt-item-row">
-                            <div className="rt-item-info">
-                              <span className="rt-item-name">{item.product?.name ?? `Item ${idx + 1}`}</span>
-                              <span className="rt-item-meta">
-                                Qty: {item.quantity ?? 1}
-                                {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
-                                  <span className="rt-item-approved-qty"> · Approved: {item.approvedQuantity}</span>
-                                )}
-                                {item.condition ? ` · ${item.condition}` : ''}
-                              </span>
-                            </div>
-                            {item.reason && <span className="rt-item-reason">{item.reason.replace(/_/g, ' ')}</span>}
+                    <div className="rt-card"><div className="rt-card-body">
+                      {returnInfo.itemsToReturn.map((item, idx) => (
+                        <div key={item.product?._id ?? idx} className="rt-item-row">
+                          <div className="rt-item-info">
+                            <span className="rt-item-name">{item.product?.name ?? `Item ${idx + 1}`}</span>
+                            <span className="rt-item-meta">
+                              Qty: {item.quantity ?? 1}
+                              {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
+                                <span className="rt-item-approved-qty"> · Approved: {item.approvedQuantity}</span>
+                              )}
+                              {item.condition ? ` · ${item.condition}` : ''}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                          {item.reason && <span className="rt-item-reason">{item.reason.replace(/_/g, ' ')}</span>}
+                        </div>
+                      ))}
+                    </div></div>
                   </>
                 )}
 
                 {currentReturn.orderItems?.length > 0 && (
                   <>
                     <div className="rt-section"><span className="rt-section-text">Order Items</span><span className="rt-section-line" /></div>
-                    <div className="rt-card">
-                      <div className="rt-card-body">
-                        {currentReturn.orderItems.map((item, idx) => (
-                          <div key={item._id ?? idx} className="rt-item-row">
-                            <div className="rt-item-info">
-                              <span className="rt-item-name">{item.product?.name ?? `Item ${idx + 1}`}</span>
-                              <span className="rt-item-meta">Qty: {item.quantity ?? 1} · {fmtCurrency(item.price ?? 0)} ea</span>
-                            </div>
+                    <div className="rt-card"><div className="rt-card-body">
+                      {currentReturn.orderItems.map((item, idx) => (
+                        <div key={item._id ?? idx} className="rt-item-row">
+                          <div className="rt-item-info">
+                            <span className="rt-item-name">{item.product?.name ?? `Item ${idx + 1}`}</span>
+                            <span className="rt-item-meta">Qty: {item.quantity ?? 1} · {fmtCurrency(item.price ?? 0)} ea</span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                        </div>
+                      ))}
+                    </div></div>
                   </>
                 )}
               </>
@@ -1140,8 +1204,10 @@ const AdminReturns = () => {
                   {retStatus === 'requested' && (
                     <>
                       <PerItemDecisionForm
-                        items={returnInfo.itemsToReturn ?? []} decisions={itemDecisions}
-                        onDecisionChange={handleItemDecisionChange} disabled={loading}
+                        items={returnInfo.itemsToReturn ?? []}
+                        decisions={itemDecisions}
+                        onDecisionChange={handleItemDecisionChange}
+                        disabled={loading}
                       />
                       <div className="rt-form-group" style={{ marginTop: 14 }}>
                         <label className="rt-form-label" htmlFor="rt-admin-note">Admin Note</label>
@@ -1167,7 +1233,7 @@ const AdminReturns = () => {
                 <div className="rt-card-hd">
                   <div>
                     <h3 className="rt-card-title"><Gavel style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />Plea Review</h3>
-                    <p className="rt-card-sub">Second-round decisions — approved items are locked</p>
+                    <p className="rt-card-sub">Second-round decisions — approved items are locked · approve max capped at customer's plea quantity</p>
                   </div>
                 </div>
                 <div className="rt-card-body">
@@ -1195,7 +1261,7 @@ const AdminReturns = () => {
                   {pleaLockedProductIds.size > 0 && (
                     <div className="rt-info-banner rt-info-banner--info" style={{ marginBottom: 12 }}>
                       <CheckCircle style={{ fontSize: 16, flexShrink: 0 }} />
-                      <span>Previously <strong>approved items are locked</strong> and cannot be changed. Only rejected items need a new decision.</span>
+                      <span>Previously <strong>approved items are locked</strong>. Only rejected items can be reconsidered, up to the quantity the customer appealed for.</span>
                     </div>
                   )}
 
@@ -1205,9 +1271,12 @@ const AdminReturns = () => {
                   </div>
 
                   <PerItemDecisionForm
-                    items={returnInfo.itemsToReturn ?? []} decisions={pleaDecisions}
-                    onDecisionChange={handlePleaDecisionChange} disabled={pleaReviewLoading}
+                    items={returnInfo.itemsToReturn ?? []}
+                    decisions={pleaDecisions}
+                    onDecisionChange={handlePleaDecisionChange}
+                    disabled={pleaReviewLoading}
                     lockedProductIds={pleaLockedProductIds}
+                    isPleaRound={true}
                   />
 
                   <div className="rt-form-group" style={{ marginTop: 14 }}>
@@ -1237,7 +1306,6 @@ const AdminReturns = () => {
                   </div>
                 </div>
                 <div className="rt-card-body">
-
                   {retStatus === 'approved' ? (
                     <>
                       <div className="rt-progress-row">
@@ -1272,10 +1340,7 @@ const AdminReturns = () => {
                         <Discount style={{ fontSize: 16, flexShrink: 0 }} />
                         <span>Items inspected and verified. Review the credit breakdown below then generate the discount code.</span>
                       </div>
-
-                      {/* Full credit breakdown before generating discount */}
                       <CreditBreakdown returnInfo={returnInfo} />
-
                       {approvedItems.length > 0 && (
                         <div className="rt-approved-summary" style={{ marginTop: 14 }}>
                           <span className="rt-form-label">Approved Items:</span>
@@ -1294,7 +1359,6 @@ const AdminReturns = () => {
                           })}
                         </div>
                       )}
-
                       <button type="button" className="rt-btn rt-btn--generate-discount" style={{ marginTop: 16 }} onClick={handleGenerateDiscount} disabled={discountCodeLoading}>
                         <Discount style={{ fontSize: 16, marginRight: 6 }} />
                         {discountCodeLoading ? 'Generating…' : 'Generate Discount Code'}
@@ -1320,7 +1384,6 @@ const AdminReturns = () => {
                           );
                         })}
                       </div>
-
                       {validNextStatuses.length === 0 && (
                         <div className={`rt-info-banner rt-info-banner--${isTerminal ? 'warning' : 'info'}`}>
                           {isTerminal
@@ -1333,7 +1396,6 @@ const AdminReturns = () => {
                           </span>
                         </div>
                       )}
-
                       {validNextStatuses.length > 0 && (
                         <>
                           <div className="rt-form-group">
@@ -1445,7 +1507,6 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* Plea preview modal — rendered inside overlay but outside drawer div to avoid CSS conflicts */}
         {showPleaPreview && currentReturn && (
           <PleaPreviewModal
             items={currentReturn.returnInfo?.itemsToReturn ?? []}
@@ -1460,7 +1521,7 @@ const AdminReturns = () => {
     );
   };
 
-  // ── Main render ────────────────────────────────────────────────────────────
+  // ── Main render ───────────────────────────────────────────────────────────
   return (
     <>
       <Navbar />
