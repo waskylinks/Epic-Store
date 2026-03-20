@@ -425,6 +425,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     }
   }
 
+  // Build price map from order items (raw unit price)
   const orderItemMap = new Map(
     order.orderItems.map((i) => {
       const id = i.product?._id ?? i.product;
@@ -432,14 +433,20 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     })
   );
 
+  const orderSubtotal  = order.itemPrice ?? 0;
+  const totalDiscount  = order.discounts?.totalDiscount ?? 0;
+  const discountRate   = orderSubtotal > 0 ? totalDiscount / orderSubtotal : 0;
+
   const requestedAmount = items.reduce((sum, item) => {
-    const price = orderItemMap.get(item.product?.toString()) ?? 0;
-    return sum + price * (item.quantity || 0);
+    const rawPrice      = orderItemMap.get(item.product?.toString()) ?? 0;
+    const discountedPrice = rawPrice * (1 - discountRate);
+    return sum + discountedPrice * (item.quantity || 0);
   }, 0);
 
   const itemsWithPrice = items.map((item) => ({
     ...item,
-    price: orderItemMap.get(item.product?.toString()) ?? 0,
+    // Store the discounted unit price so downstream calculations are consistent
+    price: (orderItemMap.get(item.product?.toString()) ?? 0) * (1 - discountRate),
   }));
 
   order.returnInfo = {
@@ -447,7 +454,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     reason,
     description,
     itemsToReturn:        itemsWithPrice,
-    requestedAmount,
+    requestedAmount:      Math.round(requestedAmount * 100) / 100,
     requestedAt:          new Date(),
     requestedBy:          userId,
     attachments,
@@ -470,7 +477,6 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     returnInfo: order.returnInfo,
   });
 });
-
 // ============================================
 // ADMIN REVIEWS RETURN — per-item decisions (first round)
 // Status: requested → items_reviewed
@@ -484,30 +490,40 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
  
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
  
-  itemDecisions.forEach((decision) => {
-    const item = order.returnInfo.itemsToReturn.find((i) => {
-      const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
-      return itemProductId === decision.productId.toString();
-    });
-    if (!item) return;
- 
-    item.adminDecision        = decision.decision;
-    item.adminRejectionReason = decision.decision === 'rejected'
-      ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
-      : '';
- 
-    const totalQty = item.quantity ?? 1;
- 
-    if (decision.decision === 'approved') {
-      const approved        = Math.min(Math.max(1, decision.approvedQuantity ?? totalQty), totalQty);
-      item.approvedQuantity = approved;
-    } else {
-      const rejected         = Math.min(Math.max(1, decision.rejectedQuantity ?? totalQty), totalQty);
-      const implicitApproved = totalQty - rejected;
-
-      item.approvedQuantity  = implicitApproved > 0 ? implicitApproved : null;
-    }
+ itemDecisions.forEach((decision) => {
+  const item = order.returnInfo.itemsToReturn.find((i) => {
+    const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
+    return itemProductId === decision.productId.toString();
   });
+  if (!item) return;
+
+  const totalQty = item.quantity ?? 1;
+
+  if (decision.decision === 'approved') {
+    const approved        = Math.min(Math.max(1, decision.approvedQuantity ?? totalQty), totalQty);
+    item.approvedQuantity = approved;
+    item.adminDecision    = 'approved';
+
+    // If fewer than the full qty were approved, the remainder is auto-rejected.
+    // Persist a rejection reason for those units so the customer and downstream
+    // logic know why they were not credited.
+    if (approved < totalQty) {
+      item.adminRejectionReason = decision.rejectionReason
+        ? sanitizeHtml.sanitize(String(decision.rejectionReason))
+        : 'Partial quantity approved — remaining units not accepted';
+    } else {
+      item.adminRejectionReason = '';
+    }
+  } else {
+    // decision === 'rejected'
+    item.adminDecision        = 'rejected';
+    item.adminRejectionReason = sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''));
+
+    const rejected         = Math.min(Math.max(1, decision.rejectedQuantity ?? totalQty), totalQty);
+    const implicitApproved = totalQty - rejected;
+    item.approvedQuantity  = implicitApproved > 0 ? implicitApproved : null;
+  }
+});
  
   // ── 2. Build fallback price map from order items ───────────────────────────
   const orderItemPriceMap = new Map(
@@ -747,27 +763,33 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
  
   // ── 1. Apply second-round decisions ───────────────────────────────────────
 
-  itemDecisions.forEach((decision) => {
-    const item = order.returnInfo.itemsToReturn.find((i) => {
-      const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
-      return itemProductId === decision.productId.toString();
-    });
-    if (!item) return;
- 
-    item.adminDecision        = decision.decision;
-    item.adminRejectionReason = decision.decision === 'rejected'
-      ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
-      : '';
- 
-    if (decision.decision === 'approved') {
-      const maxApprovable   = item.pleaQuantity ?? item.approvedQuantity ?? item.quantity ?? 1;
-      const adminRequested  = decision.approvedQuantity ?? maxApprovable;
-      item.approvedQuantity = Math.min(Math.max(1, adminRequested), maxApprovable);
-    } else {
-      // Admin rejected the plea — none of the appealed units are approved
-      item.approvedQuantity = null;
-    }
+itemDecisions.forEach((decision) => {
+  const item = order.returnInfo.itemsToReturn.find((i) => {
+    const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
+    return itemProductId === decision.productId.toString();
   });
+  if (!item) return;
+
+  if (decision.decision === 'approved') {
+    const maxApprovable   = item.pleaQuantity ?? item.approvedQuantity ?? item.quantity ?? 1;
+    const adminRequested  = decision.approvedQuantity ?? maxApprovable;
+    item.approvedQuantity = Math.min(Math.max(1, adminRequested), maxApprovable);
+    item.adminDecision    = 'approved';
+
+    // Same partial-approve rule as first round
+    if (item.approvedQuantity < (item.quantity ?? 1)) {
+      item.adminRejectionReason = decision.rejectionReason
+        ? sanitizeHtml.sanitize(String(decision.rejectionReason))
+        : 'Partial quantity approved — remaining units not accepted';
+    } else {
+      item.adminRejectionReason = '';
+    }
+  } else {
+    item.adminDecision        = 'rejected';
+    item.adminRejectionReason = sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''));
+    item.approvedQuantity     = null;
+  }
+});
  
   // ── 2. Build fallback price map from order items ───────────────────────────
   const orderItemPriceMap = new Map(
