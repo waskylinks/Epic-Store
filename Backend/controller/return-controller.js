@@ -400,13 +400,14 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 // @route  POST /api/v1/orders/:id/return/request
 // @access Private/Customer
 // ============================================
+
 export const requestReturn = handleAsyncError(async (req, res, next) => {
   const { reason, description, items, attachments = [], policyAcknowledged } = req.body;
   const userId = req.user._id;
   const order  = req.order;
-
+ 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
-
+ 
   if (order.orderStatus !== 'Delivered') {
     return next(new HandleError('Can only return delivered orders', 400));
   }
@@ -424,31 +425,28 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
       ));
     }
   }
-
-  // Build price map from order items (raw unit price)
+ 
+  // FIX: orderItems[].price stores the discounted unit price stamped at
+  // checkout by initializePaymentController. Use it directly — no discount
+  // rate recalculation needed, and no risk of spreading a category-scoped
+  // discount onto items that were never eligible for it.
   const orderItemMap = new Map(
     order.orderItems.map((i) => {
       const id = i.product?._id ?? i.product;
       return [id.toString(), i.price ?? 0];
     })
   );
-
-  const orderSubtotal  = order.itemPrice ?? 0;
-  const totalDiscount  = order.discounts?.totalDiscount ?? 0;
-  const discountRate   = orderSubtotal > 0 ? totalDiscount / orderSubtotal : 0;
-
+ 
   const requestedAmount = items.reduce((sum, item) => {
-    const rawPrice      = orderItemMap.get(item.product?.toString()) ?? 0;
-    const discountedPrice = rawPrice * (1 - discountRate);
-    return sum + discountedPrice * (item.quantity || 0);
+    const price = orderItemMap.get(item.product?.toString()) ?? 0;
+    return sum + price * (item.quantity || 0);
   }, 0);
-
+ 
   const itemsWithPrice = items.map((item) => ({
     ...item,
-    // Store the discounted unit price so downstream calculations are consistent
-    price: (orderItemMap.get(item.product?.toString()) ?? 0) * (1 - discountRate),
+    price: orderItemMap.get(item.product?.toString()) ?? 0,
   }));
-
+ 
   order.returnInfo = {
     status:               'requested',
     reason,
@@ -463,20 +461,21 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     documents:            [],
     policyAcknowledgedAt: policyAcknowledged ? new Date() : null,
   };
-
+ 
   order.addReturnTimeline('return_requested', `Return requested: ${reason}`, userId);
   order.addStatusHistory('Return Requested', userId, reason);
   order.addAuditEntry('return_requested', userId, { reason, description, itemsCount: items.length, requestedAmount });
-
+ 
   await order.save();
   invalidateReturnCaches('stats');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    'Return request submitted successfully',
     returnInfo: order.returnInfo,
   });
 });
+
 // ============================================
 // ADMIN REVIEWS RETURN — per-item decisions (first round)
 // Status: requested → items_reviewed
