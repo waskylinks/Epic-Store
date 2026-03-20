@@ -1191,8 +1191,6 @@ function ReturnRequest() {
                                   <button
                                     type="button"
                                     className="rtr-plea-stepper-btn"
-                                    {/* ── FIX: max is rejectedQty (unapproved remainder),
-                                        NOT item.quantity (full requested amount) ── */}
                                     onClick={() => setPleaQuantities((prev) => ({ ...prev, [pid]: Math.min(rejectedQty, current + 1) }))}
                                     disabled={pleaLoading || current >= rejectedQty}
                                     aria-label="Increase appeal quantity"

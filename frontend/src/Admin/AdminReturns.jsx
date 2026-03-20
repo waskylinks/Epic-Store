@@ -186,16 +186,17 @@ const PerItemDecisionForm = ({
   onDecisionChange,
   disabled,
   lockedProductIds = new Set(),
-  // ── FIX: pleaRoundApproveMax is a Map<pid, number> that tells the form
-  // the maximum approvable quantity for each item in the plea round.
-  //
-  // For fully-rejected items:   max = item.pleaQuantity (what customer appealed)
-  // For partially-approved items: max = item.pleaQuantity (the appealed remainder)
-  //
-  // Previously, approveMax fell back to item.quantity for ALL items, which
-  // allowed the admin to approve more units than the customer actually appealed
-  // for a partially-approved item whose remaining units were contested.
+  // pleaRoundApproveMax: Map<pid, number>
+  // The maximum units the admin can approve/reject in this plea round.
+  // For fully-rejected items   → item.pleaQuantity (what customer appealed)
+  // For partially-approved     → item.pleaQuantity (the contested remainder only)
+  // Not set for first-round review (isPleaRound=false).
   pleaRoundApproveMax = new Map(),
+  // round1ApprovedQty: Map<pid, number>
+  // For partially-approved items, how many units were already approved in round 1.
+  // Used purely for the UI context strip (Option C) and for buildDecisionsArray
+  // to calculate the correct total when serialising plea-round decisions.
+  round1ApprovedQty = new Map(),
   isPleaRound = false,
 }) => {
   if (!items?.length) return <div className="rt-empty" style={{ minHeight: 80 }}><span>No items to review</span></div>;
@@ -209,18 +210,14 @@ const PerItemDecisionForm = ({
         const maxQty   = item.quantity ?? 1;
         const isLocked = lockedProductIds.has(pid);
 
-        // ── FIX: derive approveMax correctly for the plea round ──────────
-        // Old: approveMax = isPleaRound ? (item.pleaQuantity ?? maxQty) : maxQty
-        //   — this used item.pleaQuantity for ALL items in plea round, but
-        //     item.pleaQuantity is only set on items the customer appealed.
-        //     For a partially-approved item the customer DID appeal, pleaQuantity
-        //     is the appealed remainder and this was correct. But the lock was
-        //     applied to the entire item (see pleaLockedProductIds below), so
-        //     the partial item never reached this logic at all — it was just hidden.
-        //
-        // New: approveMax reads from pleaRoundApproveMax map when in plea round.
-        //   The map is built in the main component with correct per-item values.
-        //   Falls back to maxQty for the first-round review (isPleaRound=false).
+        // How many units were locked from round 1 (only non-zero for partial approvals)
+        const lockedFromR1 = round1ApprovedQty.get(pid) ?? 0;
+        // Whether this is a partially-approved item entering the plea round
+        const isPartialPlea = isPleaRound && lockedFromR1 > 0 && !isLocked;
+
+        // approveMax is the ceiling for the CONTESTED portion only.
+        // For first-round review it equals maxQty.
+        // For plea round it comes from the map (pleaQuantity or remainder).
         const approveMax = isPleaRound
           ? (pleaRoundApproveMax.get(pid) ?? item.pleaQuantity ?? maxQty)
           : maxQty;
@@ -229,13 +226,16 @@ const PerItemDecisionForm = ({
           decision:         '',
           rejectionReason:  '',
           approvedQuantity: approveMax,
-          rejectedQuantity: maxQty,
+          rejectedQuantity: approveMax,
         };
 
-        const currentApproved  = dec.approvedQuantity ?? approveMax;
-        const currentRejected  = dec.rejectedQuantity ?? maxQty;
-        const approveRemainder = maxQty - currentApproved;
-        const rejectRemainder  = maxQty - currentRejected;
+        const currentApproved = dec.approvedQuantity ?? approveMax;
+        const currentRejected = dec.rejectedQuantity ?? approveMax;
+
+        // Remainders are calculated against approveMax (the contested portion),
+        // NOT maxQty — the locked round-1 units are not part of this decision.
+        const approveRemainder = approveMax - currentApproved;
+        const rejectRemainder  = approveMax - currentRejected;
 
         return (
           <div key={pid} className={`rt-item-decision-card${isLocked ? ' rt-item-decision-card--locked' : ''}`}>
@@ -247,11 +247,23 @@ const PerItemDecisionForm = ({
                   Qty: {maxQty}{item.price ? ` · ${fmtCurrency(item.price)} ea` : ''}
                 </span>
                 {item.reason && <span className="rt-item-reason">{item.reason.replace(/_/g, ' ')}</span>}
+
+                {/* Option C — pill: round-1 approved quantity, shown on partial items */}
+                {isPartialPlea && (
+                  <span className="rt-item-locked-badge" style={{ marginTop: 4 }}>
+                    <CheckCircle style={{ fontSize: 11 }} />
+                    {lockedFromR1} unit{lockedFromR1 !== 1 ? 's' : ''} approved in round 1 — locked
+                  </span>
+                )}
+
+                {/* Customer appeal note */}
                 {isPleaRound && !isLocked && item.pleaQuantity != null && (
                   <span className="rt-item-plea-note">
                     Customer appealed {item.pleaQuantity} of {maxQty} unit{maxQty !== 1 ? 's' : ''}
                   </span>
                 )}
+
+                {/* Fully-locked item badge */}
                 {isLocked && (
                   <span className="rt-item-locked-badge">
                     <CheckCircle style={{ fontSize: 11 }} /> Approved — locked
@@ -262,6 +274,17 @@ const PerItemDecisionForm = ({
                 )}
               </div>
             </div>
+
+            {/* Option C — info banner: scope of this decision for partial items */}
+            {isPartialPlea && (
+              <div className="rt-info-banner rt-info-banner--info" style={{ margin: '2px 0 0', padding: '8px 12px', fontSize: 12 }}>
+                <CheckCircle style={{ fontSize: 14, flexShrink: 0 }} />
+                <span>
+                  <strong>{lockedFromR1} unit{lockedFromR1 !== 1 ? 's' : ''} already approved</strong> and cannot be changed.
+                  You are deciding on the remaining <strong>{approveMax} unit{approveMax !== 1 ? 's' : ''}</strong> only.
+                </span>
+              </div>
+            )}
 
             {!isLocked && (
               <div className="rt-item-decision-controls">
@@ -343,14 +366,18 @@ const PerItemDecisionForm = ({
                     <span className="rt-qty-value rt-qty-value--reject">{currentRejected}</span>
                     <button
                       type="button" className="rt-qty-btn rt-qty-btn--reject"
-                      onClick={() => onDecisionChange(pid, 'rejectedQuantity', Math.min(maxQty, currentRejected + 1))}
-                      disabled={disabled || currentRejected >= maxQty}
+                      // BUG FIX: was Math.min(maxQty, ...) — allowed admin to reject
+                      // all 3 units when only 2 are contested. Now capped at approveMax
+                      // (the contested portion only; the locked round-1 unit is excluded).
+                      onClick={() => onDecisionChange(pid, 'rejectedQuantity', Math.min(approveMax, currentRejected + 1))}
+                      disabled={disabled || currentRejected >= approveMax}
                       aria-label="Increase rejected quantity"
                     >
                       <Add style={{ fontSize: 13 }} />
                     </button>
                   </div>
-                  <span className="rt-qty-max">of {maxQty}</span>
+                  {/* BUG FIX: was "of {maxQty}" — now shows the contested portion */}
+                  <span className="rt-qty-max">of {approveMax}</span>
                   {rejectRemainder > 0 && (
                     <span className="rt-qty-remainder rt-qty-remainder--approved">
                       {rejectRemainder} auto-approved
@@ -694,17 +721,24 @@ const AdminReturns = () => {
       const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
       const maxQty = item.quantity ?? 1;
 
-      // ── FIX: fully-approved items (locked) count as complete automatically.
-      // Partially-approved items are NOT locked, so they need an explicit decision.
+      // Fully-approved items (locked) count as complete — no plea decision needed.
       const approvedQty     = item.approvedQuantity ?? maxQty;
       const isFullyApproved = item.adminDecision === 'approved' && approvedQty >= maxQty;
-      if (isFullyApproved) return true; // locked — no decision needed
+      if (isFullyApproved) return true;
+
+      // For partially-approved items, approveMax is the contested portion only
+      // (the round-1 approved units are excluded from this decision).
+      // approveMax mirrors what pleaRoundApproveMax.get(pid) would return.
+      const contestedQty = item.adminDecision === 'approved'
+        ? (item.pleaQuantity ?? (maxQty - approvedQty))
+        : (item.pleaQuantity ?? maxQty);
 
       const dec = pleaDecisions[pid];
       if (!dec?.decision) return false;
       if (dec.decision === 'rejected') return !!dec.rejectionReason?.trim();
       if (dec.decision === 'approved') {
-        const approveRemainder = maxQty - (dec.approvedQuantity ?? maxQty);
+        // approveRemainder is relative to the contested portion, not maxQty
+        const approveRemainder = contestedQty - (dec.approvedQuantity ?? contestedQty);
         if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
         return true;
       }
@@ -767,6 +801,28 @@ const AdminReturns = () => {
     return map;
   }, [currentReturn]);
 
+  // round1ApprovedQty: Map<pid, number>
+  // Tracks how many units were already approved in round 1 for partially-approved
+  // items. Used by PerItemDecisionForm for the Option C context UI strip and
+  // by buildDecisionsArray to add the locked units back into the total when
+  // serialising plea-round approve decisions for the backend.
+  const round1ApprovedQty = useMemo(() => {
+    const map = new Map();
+    if (!currentReturn?.returnInfo?.itemsToReturn) return map;
+    currentReturn.returnInfo.itemsToReturn.forEach((item, idx) => {
+      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty = item.quantity ?? 1;
+      if (item.adminDecision === 'approved') {
+        const approvedQty = item.approvedQuantity ?? maxQty;
+        if (approvedQty < maxQty) {
+          // Partially approved — record how many are locked from round 1
+          map.set(pid, approvedQty);
+        }
+      }
+    });
+    return map;
+  }, [currentReturn]);
+
   // Handlers
   const handlePageChange = useCallback((page) => {
     if (page < 1 || page > totalPages) return;
@@ -806,7 +862,12 @@ const AdminReturns = () => {
   const handlePleaDecisionChange = useCallback((pid, field, value) =>
     setPleaDecisions((p) => ({ ...p, [pid]: { ...p[pid], [field]: value } })), []);
 
-  const buildDecisionsArray = (decisionsMap, items) =>
+  // buildDecisionsArray: serialise the decisions map into the array the backend expects.
+  // For plea-round partial approvals the admin's decision covers only the contested
+  // portion — we must add the already-locked round-1 approved quantity back in so the
+  // backend receives the correct TOTAL approvedQuantity for the item.
+  // isPlea + r1Map are optional — only supplied when building the plea decisions array.
+  const buildDecisionsArray = (decisionsMap, items, isPlea = false, r1Map = new Map()) =>
     items.map((item, idx) => {
       const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
       const maxQty = item.quantity ?? 1;
@@ -817,7 +878,10 @@ const AdminReturns = () => {
         rejectionReason: dec.rejectionReason ?? '',
       };
       if (dec.decision === 'approved') {
-        base.approvedQuantity = Math.min(dec.approvedQuantity ?? maxQty, maxQty);
+        const pleaApproved = dec.approvedQuantity ?? maxQty;
+        // In plea round, add back the units that were already locked from round 1
+        const lockedR1     = isPlea ? (r1Map.get(pid) ?? 0) : 0;
+        base.approvedQuantity = Math.min(pleaApproved + lockedR1, maxQty);
       } else if (dec.decision === 'rejected') {
         base.rejectedQuantity = Math.min(dec.rejectedQuantity ?? maxQty, maxQty);
       }
@@ -836,7 +900,12 @@ const AdminReturns = () => {
 
   const handlePleaReviewConfirm = useCallback(async () => {
     if (!selectedId || !currentReturn?.returnInfo?.itemsToReturn) return;
-    const decisionsArray = buildDecisionsArray(pleaDecisions, currentReturn.returnInfo.itemsToReturn);
+    const decisionsArray = buildDecisionsArray(
+      pleaDecisions,
+      currentReturn.returnInfo.itemsToReturn,
+      true,          // isPlea — adds back locked round-1 units for partial approvals
+      round1ApprovedQty,
+    );
     try {
       await dispatch(submitAdminPleaReview({
         orderId: selectedId, itemDecisions: decisionsArray, adminNote: pleaAdminNote || undefined,
@@ -849,7 +918,7 @@ const AdminReturns = () => {
       setShowPleaPreview(false);
       void err;
     }
-  }, [dispatch, selectedId, currentReturn, pleaDecisions, pleaAdminNote, triggerFetch]);
+  }, [dispatch, selectedId, currentReturn, pleaDecisions, pleaAdminNote, round1ApprovedQty, triggerFetch]);
 
   const handleGenerateDiscount = useCallback(async () => {
     if (!selectedId) return;
@@ -1408,6 +1477,7 @@ const AdminReturns = () => {
                     disabled={pleaReviewLoading}
                     lockedProductIds={pleaLockedProductIds}
                     pleaRoundApproveMax={pleaRoundApproveMax}
+                    round1ApprovedQty={round1ApprovedQty}
                     isPleaRound={true}
                   />
 
