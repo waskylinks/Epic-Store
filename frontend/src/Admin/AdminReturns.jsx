@@ -179,18 +179,27 @@ const CreditBreakdown = ({ returnInfo }) => {
   );
 };
 
-// ── PerItemDecisionForm ──────────────────────────────
-
+// ── PerItemDecisionForm ───────────────────────────────────────────────────────
 const PerItemDecisionForm = ({
   items,
   decisions,
   onDecisionChange,
   disabled,
   lockedProductIds = new Set(),
+  // ── FIX: pleaRoundApproveMax is a Map<pid, number> that tells the form
+  // the maximum approvable quantity for each item in the plea round.
+  //
+  // For fully-rejected items:   max = item.pleaQuantity (what customer appealed)
+  // For partially-approved items: max = item.pleaQuantity (the appealed remainder)
+  //
+  // Previously, approveMax fell back to item.quantity for ALL items, which
+  // allowed the admin to approve more units than the customer actually appealed
+  // for a partially-approved item whose remaining units were contested.
+  pleaRoundApproveMax = new Map(),
   isPleaRound = false,
 }) => {
   if (!items?.length) return <div className="rt-empty" style={{ minHeight: 80 }}><span>No items to review</span></div>;
- 
+
   return (
     <div className="rt-per-item-decisions">
       {items.map((item, idx) => {
@@ -199,25 +208,35 @@ const PerItemDecisionForm = ({
         const image    = item.product?.images?.[0]?.url ?? item.image ?? null;
         const maxQty   = item.quantity ?? 1;
         const isLocked = lockedProductIds.has(pid);
- 
-        // Plea round: admin cannot approve more than the customer appealed for
-        const pleaQty      = item.pleaQuantity ?? maxQty;
-        const approveMax   = isPleaRound ? pleaQty : maxQty;
- 
+
+        // ── FIX: derive approveMax correctly for the plea round ──────────
+        // Old: approveMax = isPleaRound ? (item.pleaQuantity ?? maxQty) : maxQty
+        //   — this used item.pleaQuantity for ALL items in plea round, but
+        //     item.pleaQuantity is only set on items the customer appealed.
+        //     For a partially-approved item the customer DID appeal, pleaQuantity
+        //     is the appealed remainder and this was correct. But the lock was
+        //     applied to the entire item (see pleaLockedProductIds below), so
+        //     the partial item never reached this logic at all — it was just hidden.
+        //
+        // New: approveMax reads from pleaRoundApproveMax map when in plea round.
+        //   The map is built in the main component with correct per-item values.
+        //   Falls back to maxQty for the first-round review (isPleaRound=false).
+        const approveMax = isPleaRound
+          ? (pleaRoundApproveMax.get(pid) ?? item.pleaQuantity ?? maxQty)
+          : maxQty;
+
         const dec = decisions[pid] ?? {
           decision:         '',
           rejectionReason:  '',
           approvedQuantity: approveMax,
           rejectedQuantity: maxQty,
         };
- 
+
         const currentApproved  = dec.approvedQuantity ?? approveMax;
         const currentRejected  = dec.rejectedQuantity ?? maxQty;
- 
-        // Derived remainders for the note labels
-        const approveRemainder = maxQty - currentApproved;  // silently rejected
-        const rejectRemainder  = maxQty - currentRejected;  // silently approved
- 
+        const approveRemainder = maxQty - currentApproved;
+        const rejectRemainder  = maxQty - currentRejected;
+
         return (
           <div key={pid} className={`rt-item-decision-card${isLocked ? ' rt-item-decision-card--locked' : ''}`}>
             <div className="rt-item-decision-info">
@@ -243,7 +262,7 @@ const PerItemDecisionForm = ({
                 )}
               </div>
             </div>
- 
+
             {!isLocked && (
               <div className="rt-item-decision-controls">
                 <button
@@ -264,8 +283,7 @@ const PerItemDecisionForm = ({
                 </button>
               </div>
             )}
- 
-            {/* Approve stepper — capped at pleaQuantity in plea round */}
+
             {!isLocked && dec.decision === 'approved' && (
               <div className="rt-qty-stepper rt-qty-stepper--approve">
                 <span className="rt-qty-stepper-label">Approved Qty:</span>
@@ -296,10 +314,7 @@ const PerItemDecisionForm = ({
                 )}
               </div>
             )}
- 
-            {/* FIX: Reason field for auto-rejected remainder on partial approve.
-                Shown when decision is 'approved' but approvedQty < maxQty.
-                The auto-rejected units need a reason just like an explicit reject. */}
+
             {!isLocked && dec.decision === 'approved' && approveRemainder > 0 && (
               <div className="rt-item-rejection-reason">
                 <input
@@ -311,8 +326,7 @@ const PerItemDecisionForm = ({
                 />
               </div>
             )}
- 
-            {/* Reject stepper — sends rejectedQuantity; remainder auto-approved */}
+
             {!isLocked && dec.decision === 'rejected' && (
               <>
                 <div className="rt-qty-stepper rt-qty-stepper--reject">
@@ -448,7 +462,7 @@ const AdminReturns = () => {
   const navigate = useNavigate();
 
   const {
-    returns, unreadReturns, stats, totalRequestedAmount, currentReturn,
+    returns, unreadReturns, stats, currentReturn,
     messages, messagesPage, hasMoreMessages, totalMessages, pendingAttachments,
     errorStage, timeline, documents, pagination, loading, returnsLoading,
     unreadLoading, messageSendLoading, messagesLoading, timelineLoading,
@@ -516,12 +530,10 @@ const AdminReturns = () => {
   useEffect(() => {
     setLocalPage(1);
     triggerFetch();
-
   }, [filterStatus, fromDate, toDate, rmaDebounced, sortBy, sortOrder, showUnreadOnly, triggerFetch]);
 
   useEffect(() => {
     triggerFetch();
-
   }, [localPage, triggerFetch]);
 
   const handleFetchReturns = useCallback(() => triggerFetch(), [triggerFetch]);
@@ -546,7 +558,6 @@ const AdminReturns = () => {
     }
   }, [activeTab, currentReturn, newStatus]);
 
-  // Seed item decisions when currentReturn changes or tab changes
   useEffect(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return;
     const items = currentReturn.returnInfo.itemsToReturn;
@@ -561,7 +572,7 @@ const AdminReturns = () => {
             decision:         item.adminDecision        ?? '',
             rejectionReason:  item.adminRejectionReason ?? '',
             approvedQuantity: item.approvedQuantity      ?? maxQty,
-            rejectedQuantity: maxQty, // default: reject all
+            rejectedQuantity: maxQty,
           };
         }
       });
@@ -571,24 +582,52 @@ const AdminReturns = () => {
     if (activeTab === 'plea') {
       const fresh = {};
       items.forEach((item, idx) => {
-        const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-        const maxQty   = item.quantity ?? 1;
-        const pleaQty  = item.pleaQuantity ?? maxQty;
+        const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const maxQty = item.quantity ?? 1;
 
+        // ── FIX: seed plea decisions accounting for partial approvals ──────
+        // Old code treated any item with adminDecision==='approved' as fully
+        // locked regardless of approvedQuantity. A partially-approved item
+        // (adminDecision==='approved', approvedQuantity < quantity) was locked
+        // entirely even though the unapproved remainder was being contested.
+        //
+        // New logic:
+        //   - Fully approved (approvedQty === maxQty): lock it, pre-fill approved
+        //   - Partially approved (approvedQty < maxQty): NOT locked, pre-fill
+        //     as undecided so the admin makes a fresh plea-round decision on the
+        //     unapproved portion. approvedQuantity is seeded to pleaQuantity
+        //     (the contested remainder) so the stepper starts at the right value.
+        //   - Rejected: NOT locked, pre-fill as undecided
         if (item.adminDecision === 'approved') {
-          // Locked — keep round-one approvedQuantity
-          fresh[pid] = {
-            decision:         'approved',
-            rejectionReason:  '',
-            approvedQuantity: item.approvedQuantity ?? maxQty,
-            rejectedQuantity: maxQty,
-          };
+          const approvedQty  = item.approvedQuantity ?? maxQty;
+          const isFullyApproved = approvedQty >= maxQty;
+
+          if (isFullyApproved) {
+            // Fully approved in round 1 — lock, no plea reconsideration needed
+            fresh[pid] = {
+              decision:         'approved',
+              rejectionReason:  '',
+              approvedQuantity: approvedQty,
+              rejectedQuantity: maxQty,
+            };
+          } else {
+            // Partially approved — the unapproved remainder is being contested.
+            // Leave unlocked so admin can make a plea-round decision on the remainder.
+            const pleaQty = item.pleaQuantity ?? (maxQty - approvedQty);
+            fresh[pid] = {
+              decision:         '',
+              rejectionReason:  '',
+              approvedQuantity: pleaQty,
+              rejectedQuantity: maxQty - approvedQty,
+            };
+          }
         } else {
-          // Previously rejected — can now be approved up to pleaQuantity
+          // Fully rejected in round 1 — unlocked, awaiting plea-round decision
+          const pleaQty = item.pleaQuantity ?? maxQty;
           fresh[pid] = {
             decision:         '',
             rejectionReason:  '',
-            approvedQuantity: pleaQty, // default: approve all that were appealed
+            approvedQuantity: pleaQty,
             rejectedQuantity: maxQty,
           };
         }
@@ -633,62 +672,99 @@ const AdminReturns = () => {
   }, [currentReturn]);
 
   const reviewDecisionsComplete = useMemo(() => {
-  if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
-  return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
-    const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-    const dec    = itemDecisions[pid];
-    const maxQty = item.quantity ?? 1;
- 
-    if (!dec?.decision) return false;
- 
-    if (dec.decision === 'rejected') {
-      return !!dec.rejectionReason?.trim();
-    }
- 
-    if (dec.decision === 'approved') {
-      const approvedQty      = dec.approvedQuantity ?? maxQty;
-      const approveRemainder = maxQty - approvedQty;
-      
-      if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
-      return true;
-    }
- 
-    return false;
-  });
-}, [currentReturn, itemDecisions]);
+    if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
+    return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
+      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const dec    = itemDecisions[pid];
+      const maxQty = item.quantity ?? 1;
+      if (!dec?.decision) return false;
+      if (dec.decision === 'rejected') return !!dec.rejectionReason?.trim();
+      if (dec.decision === 'approved') {
+        const approveRemainder = maxQty - (dec.approvedQuantity ?? maxQty);
+        if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
+        return true;
+      }
+      return false;
+    });
+  }, [currentReturn, itemDecisions]);
 
-const pleaDecisionsComplete = useMemo(() => {
-  if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
-  return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
-    const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-    const dec    = pleaDecisions[pid];
-    const maxQty = item.quantity ?? 1;
- 
-    if (!dec?.decision) return false;
- 
-    if (dec.decision === 'rejected') {
-      return !!dec.rejectionReason?.trim();
-    }
- 
-    if (dec.decision === 'approved') {
-      const approvedQty      = dec.approvedQuantity ?? maxQty;
-      const approveRemainder = maxQty - approvedQty;
-      
-      if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
-      return true;
-    }
- 
-    return false;
-  });
-}, [currentReturn, pleaDecisions]);
+  const pleaDecisionsComplete = useMemo(() => {
+    if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
+    return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
+      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty = item.quantity ?? 1;
 
+      // ── FIX: fully-approved items (locked) count as complete automatically.
+      // Partially-approved items are NOT locked, so they need an explicit decision.
+      const approvedQty     = item.approvedQuantity ?? maxQty;
+      const isFullyApproved = item.adminDecision === 'approved' && approvedQty >= maxQty;
+      if (isFullyApproved) return true; // locked — no decision needed
+
+      const dec = pleaDecisions[pid];
+      if (!dec?.decision) return false;
+      if (dec.decision === 'rejected') return !!dec.rejectionReason?.trim();
+      if (dec.decision === 'approved') {
+        const approveRemainder = maxQty - (dec.approvedQuantity ?? maxQty);
+        if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
+        return true;
+      }
+      return false;
+    });
+  }, [currentReturn, pleaDecisions]);
+
+  // ── FIX: pleaLockedProductIds — only lock FULLY approved items ────────────
+  // Old: locked any item where adminDecision === 'approved', regardless of qty.
+  //   A partially-approved item (e.g. 2 of 4 approved) was fully locked even
+  //   though the customer appealed the other 2 units.
+  //
+  // New: only lock items where adminDecision === 'approved' AND
+  //   approvedQuantity >= quantity (all requested units were approved).
+  //   Partially-approved items remain unlocked so the admin can make a
+  //   plea-round decision on the unapproved remainder.
   const pleaLockedProductIds = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return new Set();
     return new Set(
       currentReturn.returnInfo.itemsToReturn
-        .filter((i) => i.adminDecision === 'approved')
+        .filter((item) => {
+          if (item.adminDecision !== 'approved') return false;
+          const approvedQty = item.approvedQuantity ?? (item.quantity ?? 1);
+          return approvedQty >= (item.quantity ?? 1); // only lock if fully approved
+        })
         .map((item, idx) => item.product?._id?.toString() ?? item.product?.toString() ?? String(idx))
     );
+  }, [currentReturn]);
+
+  // ── FIX: pleaRoundApproveMax — Map<pid, number> ───────────────────────────
+  // Provides the correct maximum approvable quantity for each item in the plea
+  // round so PerItemDecisionForm can cap the stepper correctly.
+  //
+  // Fully rejected items:      pleaQuantity (what customer appealed)
+  // Partially approved items:  pleaQuantity (the contested remainder)
+  //
+  // This map is passed to PerItemDecisionForm as the new pleaRoundApproveMax prop.
+  const pleaRoundApproveMax = useMemo(() => {
+    const map = new Map();
+    if (!currentReturn?.returnInfo?.itemsToReturn) return map;
+    currentReturn.returnInfo.itemsToReturn.forEach((item, idx) => {
+      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty = item.quantity ?? 1;
+
+      if (item.adminDecision === 'approved') {
+        const approvedQty  = item.approvedQuantity ?? maxQty;
+        const isFullyApproved = approvedQty >= maxQty;
+        if (!isFullyApproved) {
+          // Partially approved: the contested remainder is the max approvable
+          // in this plea round. Cap further at what the customer actually appealed.
+          const remainder = maxQty - approvedQty;
+          map.set(pid, item.pleaQuantity ?? remainder);
+        }
+        // Fully approved items are locked — no entry needed
+      } else {
+        // Fully rejected: max is what the customer appealed
+        map.set(pid, item.pleaQuantity ?? maxQty);
+      }
+    });
+    return map;
   }, [currentReturn]);
 
   // Handlers
@@ -730,9 +806,6 @@ const pleaDecisionsComplete = useMemo(() => {
   const handlePleaDecisionChange = useCallback((pid, field, value) =>
     setPleaDecisions((p) => ({ ...p, [pid]: { ...p[pid], [field]: value } })), []);
 
-  // buildDecisionsArray:
-  //   approve → sends approvedQuantity
-  //   reject  → sends rejectedQuantity (backend derives approvedQuantity = maxQty - rejectedQuantity)
   const buildDecisionsArray = (decisionsMap, items) =>
     items.map((item, idx) => {
       const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
@@ -832,6 +905,66 @@ const pleaDecisionsComplete = useMemo(() => {
     dispatch(clearCurrentReturn()); triggerFetch();
   }, [dispatch, triggerFetch]);
 
+  // ── KPI cards ─────────────────────────────────────────────────────────────
+  const renderKPICards = () => {
+    if (!stats) {
+      return Array.from({ length: 11 }).map((_, i) => (
+        <div key={i} className="rt-kpi" style={{ '--kpi-color': '#E5E7EB' }}>
+          <div className="rt-kpi-top"><div className="rt-skel" style={{ width: 40, height: 40, borderRadius: 10 }} /></div>
+          <div className="rt-skel" style={{ width: '55%', height: 11, marginBottom: 8 }} />
+          <div className="rt-skel" style={{ width: '70%', height: 26 }} />
+        </div>
+      ));
+    }
+
+    const cards = [
+      { label: 'Total Returns',     value: stats.total             ?? 0, icon: Assessment,    color: '#6366F1', isCount: true  },
+      { label: 'Pending Review',    value: stats.requested         ?? 0, icon: Schedule,      color: '#F59E0B', isCount: true  },
+      { label: 'Items Reviewed',    value: stats.items_reviewed    ?? 0, icon: RateReview,    color: '#3B82F6', isCount: true  },
+      { label: 'Plea Submitted',    value: stats.plea_submitted    ?? 0, icon: Gavel,         color: '#8B5CF6', isCount: true  },
+      { label: 'In Transit',        value: stats.in_transit        ?? 0, icon: LocalShipping, color: '#06B6D4', isCount: true  },
+      { label: 'Awaiting Discount', value: stats.awaiting_discount ?? 0, icon: PendingActions,color: '#F97316', isCount: true  },
+      { label: 'Completed',         value: stats.completed         ?? 0, icon: CheckCircle,   color: '#10B981', isCount: true  },
+      { label: 'Rejected',          value: stats.rejected          ?? 0, icon: Cancel,        color: '#EF4444', isCount: true  },
+      {
+        label:   'Requested Revenue',
+        value:   typeof stats.totalRequestedAmount === 'number' ? stats.totalRequestedAmount : 0,
+        icon:    Discount,
+        color:   '#0EA5E9',
+        isCount: false,
+      },
+      {
+        label:   'Approved Value',
+        value:   typeof stats.totalApprovedAmount === 'number' ? stats.totalApprovedAmount : 0,
+        icon:    ThumbUp,
+        color:   '#10B981',
+        isCount: false,
+      },
+      {
+        label:   'Rejected Value',
+        value:   typeof stats.totalRejectedAmount === 'number' ? stats.totalRejectedAmount : 0,
+        icon:    ReportProblem,
+        color:   '#EF4444',
+        isCount: false,
+      },
+    ];
+
+    return cards.map((c) => (
+      <div key={c.label} className="rt-kpi" style={{ '--kpi-color': c.color }}>
+        <div className="rt-kpi-top">
+          <span className="rt-kpi-icon" style={{ background: `${c.color}18`, color: c.color }}>
+            <c.icon style={{ fontSize: 20 }} />
+          </span>
+        </div>
+        <div className="rt-kpi-label">{c.label}</div>
+        <div className="rt-kpi-value">
+          {c.isCount
+            ? c.value.toLocaleString()
+            : `$${c.value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`}
+        </div>
+      </div>
+    ));
+  };
 
   // ── Table ─────────────────────────────────────────────────────────────────
   const renderTable = () => {
@@ -990,7 +1123,6 @@ const pleaDecisionsComplete = useMemo(() => {
       <div className="rt-drawer-overlay" onClick={handleClosePanel} role="presentation">
         <div className="rt-drawer" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="rt-drawer-heading">
 
-          {/* Header */}
           <div className="rt-drawer-hd">
             <div className="rt-drawer-hd-info">
               <h2 className="rt-drawer-title" id="rt-drawer-heading">Return — #{orderRef}</h2>
@@ -999,7 +1131,6 @@ const pleaDecisionsComplete = useMemo(() => {
             <button type="button" className="rt-drawer-close" onClick={handleClosePanel} aria-label="Close">×</button>
           </div>
 
-          {/* Tabs */}
           <div className="rt-drawer-tabs">
             <div className="rt-tf rt-drawer-tab-row">
               {visibleTabs.map((tab) => (
@@ -1023,11 +1154,11 @@ const pleaDecisionsComplete = useMemo(() => {
                 <div className="rt-card">
                   <div className="rt-card-body">
                     {[
-                      ['Customer',    getCustomerName(currentReturn.user)],
-                      ['Email',       currentReturn.user?.email ?? 'N/A'],
-                      ['Phone',       getCustomerPhone(currentReturn)],
-                      ['Requested Value', fmtCurrency(currentReturn.returnInfo?.requestedAmount ?? 0)],
-                      ['Reason',      returnInfo.reason?.replace(/_/g, ' ') ?? 'N/A'],
+                      ['Customer',         getCustomerName(currentReturn.user)],
+                      ['Email',            currentReturn.user?.email ?? 'N/A'],
+                      ['Phone',            getCustomerPhone(currentReturn)],
+                      ['Requested Value',  fmtCurrency(currentReturn.returnInfo?.requestedAmount ?? 0)],
+                      ['Reason',           returnInfo.reason?.replace(/_/g, ' ') ?? 'N/A'],
                     ].map(([label, val]) => (
                       <div key={label} className="rt-metric-row">
                         <span className="rt-metric-label">{label}</span>
@@ -1224,7 +1355,9 @@ const pleaDecisionsComplete = useMemo(() => {
                 <div className="rt-card-hd">
                   <div>
                     <h3 className="rt-card-title"><Gavel style={{ fontSize: 15, verticalAlign: 'middle', marginRight: 6 }} />Plea Review</h3>
-                    <p className="rt-card-sub">Second-round decisions — approved items are locked · approve max capped at customer's plea quantity</p>
+                    {/* ── FIX: updated subtitle to reflect that partially-approved
+                        items are now also reviewable in the plea round ── */}
+                    <p className="rt-card-sub">Second-round decisions — fully approved items are locked · partially approved items show the unapproved remainder · approve max capped at customer's appeal quantity</p>
                   </div>
                 </div>
                 <div className="rt-card-body">
@@ -1252,7 +1385,11 @@ const pleaDecisionsComplete = useMemo(() => {
                   {pleaLockedProductIds.size > 0 && (
                     <div className="rt-info-banner rt-info-banner--info" style={{ marginBottom: 12 }}>
                       <CheckCircle style={{ fontSize: 16, flexShrink: 0 }} />
-                      <span>Previously <strong>approved items are locked</strong>. Only rejected items can be reconsidered, up to the quantity the customer appealed for.</span>
+                      {/* ── FIX: updated banner copy to clarify partial approval behaviour ── */}
+                      <span>
+                        <strong>Fully approved items are locked.</strong> Items where only some units were approved
+                        remain open — you can approve up to the quantity the customer appealed for those units.
+                      </span>
                     </div>
                   )}
 
@@ -1261,12 +1398,16 @@ const pleaDecisionsComplete = useMemo(() => {
                     <span className="rt-section-line" />
                   </div>
 
+                  {/* ── FIX: pass pleaRoundApproveMax so the form knows the correct
+                      stepper ceiling per item, and pass the updated pleaLockedProductIds
+                      which now only locks fully-approved items ── */}
                   <PerItemDecisionForm
                     items={returnInfo.itemsToReturn ?? []}
                     decisions={pleaDecisions}
                     onDecisionChange={handlePleaDecisionChange}
                     disabled={pleaReviewLoading}
                     lockedProductIds={pleaLockedProductIds}
+                    pleaRoundApproveMax={pleaRoundApproveMax}
                     isPleaRound={true}
                   />
 

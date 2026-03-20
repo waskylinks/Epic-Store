@@ -48,7 +48,7 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 32px;
+  margin-bottom: 24px;
   flex-wrap: wrap;
 }
 .rt-hd-left  { display: flex; align-items: center; gap: 16px; }
@@ -87,7 +87,7 @@
 /* ── Section Dividers ───────────────────────────────────────── */
 .rt-section {
   display: flex; align-items: center;
-  gap: 12px; margin: 30px 0 18px;
+  gap: 12px; margin: 24px 0 14px;
 }
 .rt-section-text {
   font-size: 11.5px; font-weight: 700;
@@ -97,36 +97,49 @@
 .rt-section-line { flex: 1; height: 1px; background: #E5E7EB; }
 
 /* ── KPI Cards ──────────────────────────────────────────────── */
+/*
+  FIX: Cards were too large and filled the entire screen width.
+  Changes:
+  - minmax reduced from 190px → 140px so more cards fit per row
+  - padding tightened: 22px 20px 18px → 14px 16px 12px
+  - icon shrunk: 42px → 34px, border-radius 11px → 9px
+  - label font: 11px → 10.5px
+  - value font: 28px → 20px
+  - top margin-bottom: 16px → 10px
+  - hover lift: translateY(-2px) → translateY(-1px)
+  - top accent bar: 3px → 2.5px
+  The responsive breakpoints are updated to match the new min-width.
+*/
 .rt-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 16px;
-  margin-bottom: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 6px;
 }
 .rt-kpi {
   background: #fff;
   border: 1px solid #E5E7EB;
-  border-radius: 16px;
-  padding: 22px 20px 18px;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  border-radius: 12px;
+  padding: 14px 16px 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
   transition: box-shadow 0.2s, transform 0.2s, border-color 0.2s;
   position: relative; overflow: hidden;
 }
 .rt-kpi::before {
   content: '';
   position: absolute; top: 0; left: 0; right: 0;
-  height: 3px;
+  height: 2.5px;
   background: var(--kpi-color, #6366F1);
   opacity: 0.85;
 }
 .rt-kpi:hover {
-  box-shadow: 0 6px 20px rgba(0,0,0,0.09);
-  transform: translateY(-2px); border-color: #C4C9D4;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+  transform: translateY(-1px); border-color: #C4C9D4;
 }
-.rt-kpi-top   { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-.rt-kpi-icon  { width: 42px; height: 42px; border-radius: 11px; display: flex; align-items: center; justify-content: center; }
-.rt-kpi-label { font-size: 11px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 6px; }
-.rt-kpi-value { font-size: 28px; font-weight: 800; color: #111827; line-height: 1.1; letter-spacing: -0.7px; }
+.rt-kpi-top   { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.rt-kpi-icon  { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; }
+.rt-kpi-label { font-size: 10.5px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.rt-kpi-value { font-size: 20px; font-weight: 800; color: #111827; line-height: 1.1; letter-spacing: -0.5px; }
 
 /* ── Skeleton ───────────────────────────────────────────────── */
 .rt-skel {
@@ -832,7 +845,6 @@
 .rt-countdown--expired .rt-countdown-value { color: #9CA3AF; }
 
 /* ── Modal ──────────────────────────────────────────────────── */
-/* FIX: modal is a sibling of rt-drawer, not nested inside it */
 .rt-drawer-overlay .rt-modal-overlay {
   position: absolute; inset: 0;
   background: rgba(0,0,0,0.5);
@@ -901,14 +913,17 @@
    RESPONSIVE
 ═══════════════════════════════════════════════════════════ */
 
+/* Large screens: all 11 cards in one row */
 @media (min-width: 1400px) {
-  .rt-kpi-grid { grid-template-columns: repeat(9, 1fr); }
+  .rt-kpi-grid { grid-template-columns: repeat(11, 1fr); }
 }
+/* Medium-large: two rows of roughly 6 and 5 */
 @media (min-width: 1100px) and (max-width: 1399px) {
-  .rt-kpi-grid { grid-template-columns: repeat(5, 1fr); }
+  .rt-kpi-grid { grid-template-columns: repeat(6, 1fr); }
 }
+/* Medium: 4 per row */
 @media (min-width: 768px) and (max-width: 1099px) {
-  .rt-kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  .rt-kpi-grid { grid-template-columns: repeat(4, 1fr); }
 }
 
 @media (max-width: 1024px) {
@@ -918,8 +933,9 @@
 @media (max-width: 768px) {
   .rt-body     { padding: 16px 14px 44px; }
   .rt-hd       { flex-direction: column; align-items: flex-start; }
-  .rt-kpi-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
-  .rt-kpi-value { font-size: 22px; }
+  /* 3 per row on tablet */
+  .rt-kpi-grid { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .rt-kpi-value { font-size: 18px; }
   .rt-filters  { gap: 8px; }
   .rt-date-wrap { width: 100%; }
   .rt-date-input { flex: 1; min-width: 100px; }
@@ -931,9 +947,11 @@
 
 @media (max-width: 480px) {
   .rt-body          { padding: 12px 12px 40px; }
-  .rt-kpi-grid      { grid-template-columns: 1fr 1fr; gap: 10px; }
-  .rt-kpi           { padding: 16px 14px; }
-  .rt-kpi-value     { font-size: 20px; }
+  /* 2 per row on mobile */
+  .rt-kpi-grid      { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .rt-kpi           { padding: 12px 12px 10px; }
+  .rt-kpi-value     { font-size: 17px; }
+  .rt-kpi-icon      { width: 28px; height: 28px; }
   .rt-hd-title      { font-size: 18px; }
   .rt-filters       { flex-direction: column; align-items: stretch; }
   .rt-search-wrap   { min-width: unset; width: 100%; }
@@ -956,22 +974,20 @@
 
 @media (max-width: 360px) {
   .rt-body  { padding: 10px 10px 32px; }
-  .rt-kpi-grid { grid-template-columns: 1fr; }
+  .rt-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .rt-kpi-value { font-size: 15px; }
 }
 
 /* ── Reject-variant quantity stepper ───────────────────────── */
-/* The approve stepper (.rt-qty-stepper) already exists in green.
-   These modifiers flip it to a red/amber theme for the reject direction. */
- 
 .rt-qty-stepper--reject {
   background: #FEF2F2;
   border-color: #FECACA;
 }
- 
+
 .rt-qty-stepper-label--reject {
   color: #991B1B;
 }
- 
+
 .rt-qty-btn--reject {
   border-color: #FECACA;
   color: #991B1B;
@@ -980,13 +996,12 @@
   background: #FEE2E2;
   border-color: #EF4444;
 }
- 
+
 .rt-qty-value--reject {
   color: #991B1B;
 }
- 
+
 /* ── Remainder note chips ───────────────────────────────────── */
-/* Shown next to the stepper to tell admin what's silently happening */
 .rt-qty-remainder {
   font-size: 11px;
   font-weight: 600;
@@ -995,21 +1010,18 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
- 
-/* "X auto-rejected" — shown under approve stepper */
+
 .rt-qty-remainder--rejected {
   background: #FEE2E2;
   color: #991B1B;
 }
- 
-/* "X auto-approved" — shown under reject stepper */
+
 .rt-qty-remainder--approved {
   background: #DCFCE7;
   color: #065F46;
 }
- 
+
 /* ── Plea quantity note ──────────────────────────────────────── */
-/* Shown per item in plea round: "Customer appealed X of Y units" */
 .rt-item-plea-note {
   display: inline-flex;
   align-items: center;
@@ -1024,7 +1036,7 @@
   margin-top: 3px;
   width: fit-content;
 }
- 
+
 /* ── Stepper flex wrap on small screens ─────────────────────── */
 @media (max-width: 480px) {
   .rt-qty-stepper--reject { flex-wrap: wrap; }

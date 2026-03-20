@@ -107,6 +107,49 @@ const resolveItemName = (item, orderItems, idx) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FIX — getRejectedUnits
+//
+// Previously, the customer plea form only considered items where
+// adminDecision === 'rejected'. This missed the case where an admin
+// APPROVED an item but with a lower quantity than requested — the
+// unapproved remainder is effectively "auto-rejected" and the customer
+// should be able to appeal those units too.
+//
+// This helper returns a normalised list of items that have ANY rejected
+// units, along with how many units were rejected, so the plea form and
+// handleSubmitPlea can work uniformly whether the rejection came from a
+// full reject decision or a partial approve decision.
+//
+// Returns an array of:
+// {
+//   item,           — the original returnInfo item object
+//   idx,            — original index in returnItems
+//   pid,            — product id string
+//   rejectedQty,    — number of units that were rejected / unapproved
+//   isPartial,      — true when adminDecision==='approved' but qty < requested
+// }
+// ─────────────────────────────────────────────────────────────────────────────
+const getRejectedUnits = (returnItems) =>
+  returnItems.reduce((acc, item, idx) => {
+    const pid        = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+    const totalQty   = item.quantity ?? 1;
+    const decision   = item.adminDecision;
+
+    if (decision === 'rejected') {
+      // Fully rejected — all units are appealable
+      acc.push({ item, idx, pid, rejectedQty: totalQty, isPartial: false });
+    } else if (decision === 'approved') {
+      const approvedQty  = item.approvedQuantity ?? totalQty;
+      const remainder    = totalQty - approvedQty;
+      if (remainder > 0) {
+        // Partially approved — only the unapproved remainder is appealable
+        acc.push({ item, idx, pid, rejectedQty: remainder, isPartial: true });
+      }
+    }
+    return acc;
+  }, []);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SUB-COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -302,8 +345,15 @@ function ReturnRequest() {
   const pleaInfo      = returnInfo?.pleaInfo ?? null;
 
   const approvedItems    = returnItems.filter((i) => i.adminDecision === 'approved');
-  const rejectedItems    = returnItems.filter((i) => i.adminDecision === 'rejected');
-  const hasRejectedItems = rejectedItems.length > 0;
+
+  // ── FIX: use getRejectedUnits instead of a simple .filter() ──────────────
+  // Old code only caught fully-rejected items:
+  //   const rejectedItems = returnItems.filter((i) => i.adminDecision === 'rejected');
+  //
+  // New code also catches items where the admin approved a lower quantity
+  // than requested — those unapproved units are appealable too.
+  const rejectedUnitsList = getRejectedUnits(returnItems);
+  const hasRejectedItems  = rejectedUnitsList.length > 0;
 
   // Plea rejected — status is 'approved' but ALL items were rejected after plea resolution
   const allItemsRejectedAfterPlea =
@@ -362,13 +412,16 @@ function ReturnRequest() {
     if (allApproved && !itemsReviewedChoice) setItemsReviewedChoice('accepted');
   }, [allApproved, itemsReviewedChoice]);
 
-  // Seed pleaQuantities when plea form opens — default to full rejected quantity per item
+  // ── FIX: seed pleaQuantities using rejectedUnitsList ─────────────────────
+  // Old code defaulted to item.quantity for each rejectedItem.
+  // New code defaults to rejectedQty (the unapproved remainder), so for a
+  // partially-approved item the stepper starts at the correct appealable max
+  // rather than the full requested quantity.
   useEffect(() => {
-    if (itemsReviewedChoice !== 'plea' || rejectedItems.length === 0) return;
+    if (itemsReviewedChoice !== 'plea' || rejectedUnitsList.length === 0) return;
     const initial = {};
-    rejectedItems.forEach((item, idx) => {
-      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      initial[pid] = item.quantity ?? 1;
+    rejectedUnitsList.forEach(({ pid, rejectedQty }) => {
+      initial[pid] = rejectedQty; // default: appeal all rejected/unapproved units
     });
     setPleaQuantities(initial);
   }, [itemsReviewedChoice]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -548,15 +601,21 @@ function ReturnRequest() {
       return;
     }
 
-    // Build pleaItems — one entry per rejected item with the user's chosen appeal quantity.
-    // Units not appealed are silently accepted as rejected (no credit will be issued for them).
-    const pleaItems = rejectedItems.map((item, idx) => {
-      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const maxQty = item.quantity ?? 1;
-      const chosen = pleaQuantities[pid] ?? maxQty;
+    // ── FIX: build pleaItems from rejectedUnitsList ───────────────────────
+    // Old code iterated over rejectedItems (adminDecision==='rejected' only)
+    // and used item.quantity as the max. This missed partially-approved items.
+    //
+    // New code iterates over rejectedUnitsList which includes both:
+    //   - fully rejected items  (isPartial=false, rejectedQty === item.quantity)
+    //   - partially approved items (isPartial=true, rejectedQty === unapproved remainder)
+    //
+    // The pleaQuantity sent to the backend is capped at rejectedQty so the
+    // customer cannot appeal more units than were actually rejected/unapproved.
+    const pleaItems = rejectedUnitsList.map(({ pid, rejectedQty }) => {
+      const chosen = pleaQuantities[pid] ?? rejectedQty;
       return {
         productId:    pid,
-        pleaQuantity: Math.min(Math.max(1, chosen), maxQty),
+        pleaQuantity: Math.min(Math.max(1, chosen), rejectedQty),
       };
     });
 
@@ -945,19 +1004,31 @@ function ReturnRequest() {
                           })}
                         </div>
                       )}
-                      {rejectedItems.length > 0 && (
+
+                      {/* ── FIX: rejected column now shows both fully-rejected items
+                          AND the unapproved remainder of partially-approved items ── */}
+                      {rejectedUnitsList.length > 0 && (
                         <div className="rtr-decisions-col rtr-decisions-rejected">
                           <div className="rtr-decisions-col-header">
-                            <FiXCircle /><span>Rejected ({rejectedItems.length})</span>
+                            <FiXCircle /><span>Rejected ({rejectedUnitsList.length})</span>
                           </div>
-                          {rejectedItems.map((item, i) => (
-                            <div key={i} className="rtr-decision-item">
-                              {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, i)} className="rtr-item-image" />}
+                          {rejectedUnitsList.map(({ item, idx, rejectedQty, isPartial }) => (
+                            <div key={idx} className="rtr-decision-item">
+                              {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, idx)} className="rtr-item-image" />}
                               <div className="rtr-item-details">
-                                <span className="rtr-item-name">{resolveItemName(item, orderItems, i)}</span>
-                                <span className="rtr-item-quantity">Qty: {item.quantity}</span>
-                                {item.adminRejectionReason && (
+                                <span className="rtr-item-name">{resolveItemName(item, orderItems, idx)}</span>
+                                <span className="rtr-item-quantity">
+                                  {isPartial
+                                    ? `${rejectedQty} of ${item.quantity} units not approved`
+                                    : `Qty: ${rejectedQty}`}
+                                </span>
+                                {!isPartial && item.adminRejectionReason && (
                                   <span className="rtr-rejection-reason">Reason: {item.adminRejectionReason}</span>
+                                )}
+                                {isPartial && (
+                                  <span className="rtr-rejection-reason">
+                                    {item.approvedQuantity} unit{item.approvedQuantity !== 1 ? 's' : ''} approved, {rejectedQty} not approved
+                                  </span>
                                 )}
                               </div>
                             </div>
@@ -1047,9 +1118,9 @@ function ReturnRequest() {
                                 </div>
                               );
                             })}
-                            {rejectedItems.length > 0 && (
+                            {rejectedUnitsList.length > 0 && (
                               <p className="rtr-accept-preview-rejected">
-                                {rejectedItems.length} rejected item(s) will not be credited.
+                                {rejectedUnitsList.length} rejected item(s) will not be credited.
                               </p>
                             )}
                           </div>
@@ -1066,7 +1137,9 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* Plea form */}
+                {/* ── FIX: Plea form — uses rejectedUnitsList instead of rejectedItems
+                    so partially-approved items appear, and stepper max is rejectedQty
+                    (the unapproved remainder) not the full item.quantity ── */}
                 {status === 'items_reviewed' && itemsReviewedChoice === 'plea' && (
                   <div className="rtr-plea-section">
                     <div className="rtr-plea-header">
@@ -1081,15 +1154,13 @@ function ReturnRequest() {
                     </div>
 
                     {/* Per-item appeal quantity steppers */}
-                    {rejectedItems.length > 0 && (
+                    {rejectedUnitsList.length > 0 && (
                       <div className="rtr-plea-items">
                         <label className="rtr-form-label">Appeal Quantity per Item</label>
                         <p className="rtr-helper-text">Select how many units you are disputing for each rejected item.</p>
-                        {rejectedItems.map((item, idx) => {
-                          const pid     = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-                          const maxQty  = item.quantity ?? 1;
-                          const current = pleaQuantities[pid] ?? maxQty;
-                          const silent  = maxQty - current;
+                        {rejectedUnitsList.map(({ item, idx, pid, rejectedQty, isPartial }) => {
+                          const current = pleaQuantities[pid] ?? rejectedQty;
+                          const silent  = rejectedQty - current;
                           const name    = resolveItemName(item, orderItems, idx);
 
                           return (
@@ -1099,8 +1170,11 @@ function ReturnRequest() {
                               )}
                               <div className="rtr-plea-item-info">
                                 <span className="rtr-plea-item-name">{name}</span>
+                                {/* ── FIX: label shows the correct rejected/unapproved count ── */}
                                 <span className="rtr-plea-item-rejected">
-                                  Rejected: {maxQty} unit{maxQty !== 1 ? 's' : ''}
+                                  {isPartial
+                                    ? `${rejectedQty} of ${item.quantity} units not approved`
+                                    : `Rejected: ${rejectedQty} unit${rejectedQty !== 1 ? 's' : ''}`}
                                 </span>
                               </div>
                               <div className="rtr-plea-qty-controls">
@@ -1117,12 +1191,15 @@ function ReturnRequest() {
                                   <button
                                     type="button"
                                     className="rtr-plea-stepper-btn"
-                                    onClick={() => setPleaQuantities((prev) => ({ ...prev, [pid]: Math.min(maxQty, current + 1) }))}
-                                    disabled={pleaLoading || current >= maxQty}
+                                    {/* ── FIX: max is rejectedQty (unapproved remainder),
+                                        NOT item.quantity (full requested amount) ── */}
+                                    onClick={() => setPleaQuantities((prev) => ({ ...prev, [pid]: Math.min(rejectedQty, current + 1) }))}
+                                    disabled={pleaLoading || current >= rejectedQty}
                                     aria-label="Increase appeal quantity"
                                   >+</button>
                                 </div>
-                                <span className="rtr-plea-qty-of">of {maxQty}</span>
+                                {/* ── FIX: "of N" shows rejectedQty, not item.quantity ── */}
+                                <span className="rtr-plea-qty-of">of {rejectedQty}</span>
                                 {silent > 0 && (
                                   <span className="rtr-plea-qty-silent">({silent} accepted as rejected)</span>
                                 )}
