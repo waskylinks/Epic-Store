@@ -481,26 +481,34 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
   const order = req.order;
-
+ 
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
-
-  // ── 1. Apply per-item decisions ────────────────────────────────────────────
+ 
   itemDecisions.forEach((decision) => {
     const item = order.returnInfo.itemsToReturn.find((i) => {
       const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
       return itemProductId === decision.productId.toString();
     });
-    if (item) {
-      item.adminDecision        = decision.decision;
-      item.adminRejectionReason = decision.decision === 'rejected'
-        ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
-        : '';
-      item.approvedQuantity = decision.decision === 'approved'
-        ? Math.min(Math.max(1, decision.approvedQuantity ?? item.quantity), item.quantity)
-        : null;
+    if (!item) return;
+ 
+    item.adminDecision        = decision.decision;
+    item.adminRejectionReason = decision.decision === 'rejected'
+      ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
+      : '';
+ 
+    const totalQty = item.quantity ?? 1;
+ 
+    if (decision.decision === 'approved') {
+      const approved        = Math.min(Math.max(1, decision.approvedQuantity ?? totalQty), totalQty);
+      item.approvedQuantity = approved;
+    } else {
+      const rejected         = Math.min(Math.max(1, decision.rejectedQuantity ?? totalQty), totalQty);
+      const implicitApproved = totalQty - rejected;
+
+      item.approvedQuantity  = implicitApproved > 0 ? implicitApproved : null;
     }
   });
-
+ 
   // ── 2. Build fallback price map from order items ───────────────────────────
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
@@ -508,64 +516,63 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
       return [pid, i.price ?? 0];
     })
   );
-
-  // ── 3. Price resolver — stamped item price takes priority, falls back to order item price ──
+ 
+  // ── 3. Price resolver ─────────────────────────────────────────────────────
   const resolvePrice = (item) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString();
     if (item.price != null && item.price > 0) return item.price;
     return orderItemPriceMap.get(pid) ?? null;
   };
-
-  // ── 4. Guard: all approved items must have a resolvable price ──────────────
+ 
+  // ── 4. Guard: items with approved units must have a resolvable price ───────
   const missingProductIds = [];
   for (const item of order.returnInfo.itemsToReturn) {
-    if (item.adminDecision === 'approved' && resolvePrice(item) === null) {
+    const aq = item.approvedQuantity ?? 0;
+    if (aq > 0 && resolvePrice(item) === null) {
       missingProductIds.push(item.product?._id?.toString() ?? item.product?.toString());
     }
   }
   if (missingProductIds.length > 0) {
     return next(new HandleError(
-      `Cannot calculate discount: approved items with no price data (product IDs: ${missingProductIds.join(', ')}).`,
+      `Cannot calculate discount: items with no price data (product IDs: ${[...new Set(missingProductIds)].join(', ')}).`,
       400
     ));
   }
-
+ 
   // ── 5. Compute breakdown ───────────────────────────────────────────────────
-
-  // requestedGross — all requested items × requested quantity × stamped price
+ 
   const requestedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
     return sum + (resolvePrice(i) ?? 0) * (i.quantity ?? 1);
   }, 0);
+ 
 
-  // approvedGross — approved items × approvedQuantity × stamped price
-  const approvedGross = order.returnInfo.itemsToReturn
-    .filter((i) => i.adminDecision === 'approved')
-    .reduce((sum, i) => {
-      return sum + (resolvePrice(i) ?? 0) * (i.approvedQuantity ?? i.quantity ?? 1);
-    }, 0);
-
-  // rejectedGross — rejected items × requested quantity × stamped price
-  const rejectedGross = order.returnInfo.itemsToReturn
-    .filter((i) => i.adminDecision === 'rejected')
-    .reduce((sum, i) => {
-      return sum + (resolvePrice(i) ?? 0) * (i.quantity ?? 1);
-    }, 0);
-
-  // approvedDiscount — proportional share of order-level discount applied to approvedGross
+  const approvedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
+    const aq = i.approvedQuantity ?? 0;
+    if (aq <= 0) return sum;
+    return sum + (resolvePrice(i) ?? 0) * aq;
+  }, 0);
+ 
+  const rejectedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
+    const totalQty    = i.quantity ?? 1;
+    const approvedQty = i.approvedQuantity ?? 0;
+    const rejectedQty = totalQty - approvedQty;
+    if (rejectedQty <= 0) return sum;
+    return sum + (resolvePrice(i) ?? 0) * rejectedQty;
+  }, 0);
+ 
+  
   const orderSubtotal    = order.itemPrice ?? 0;
   const totalDiscount    = order.discounts?.totalDiscount ?? 0;
   const discountRate     = orderSubtotal > 0 ? totalDiscount / orderSubtotal : 0;
   const approvedDiscount = Math.round(discountRate * approvedGross * 100) / 100;
-
-  // shippingDeducted — always deduct full order shipping regardless of partial/full return
+ 
   const shippingDeducted = order.shippingPrice ?? 0;
-
-  // discountValue — final net credit value, floored at 0
+ 
   const discountValue = Math.max(
     0,
     Math.round((approvedGross - approvedDiscount - shippingDeducted) * 100) / 100
   );
-
+ 
   // ── 6. Persist breakdown + status transition ───────────────────────────────
   order.returnInfo.requestedGross   = Math.round(requestedGross   * 100) / 100;
   order.returnInfo.approvedGross    = Math.round(approvedGross    * 100) / 100;
@@ -573,20 +580,20 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   order.returnInfo.approvedDiscount = approvedDiscount;
   order.returnInfo.shippingDeducted = shippingDeducted;
   order.returnInfo.discountValue    = discountValue;
-
+ 
   order.returnInfo.status     = 'items_reviewed';
   order.returnInfo.approvedAt = new Date();
   order.returnInfo.approvedBy = req.user._id;
-
+ 
   const pleaDeadline = new Date();
   pleaDeadline.setHours(pleaDeadline.getHours() + 48);
   order.returnInfo.pleaDeadline = pleaDeadline;
-
+ 
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
-
+ 
   const approvedCount = itemDecisions.filter((d) => d.decision === 'approved').length;
   const rejectedCount = itemDecisions.filter((d) => d.decision === 'rejected').length;
-
+ 
   order.addReturnTimeline(
     'items_reviewed',
     `Admin reviewed items: ${approvedCount} approved, ${rejectedCount} rejected`,
@@ -596,16 +603,17 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('items_reviewed', req.user._id, {
     approvedCount, rejectedCount, discountValue, approvedGross, shippingDeducted,
   });
-
+ 
   await order.save();
   invalidateReturnCaches('stats');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    `Items reviewed. ${approvedCount} approved, ${rejectedCount} rejected. Customer has 48 hours to respond.`,
     returnInfo: order.returnInfo,
   });
 });
+ 
 // ============================================
 // CUSTOMER ACCEPTS DECISIONS (without disputing)
 // Status: items_reviewed → approved
@@ -650,12 +658,12 @@ export const acceptDecisions = handleAsyncError(async (req, res, next) => {
 // @access Private/Customer
 // ============================================
 export const submitPlea = handleAsyncError(async (req, res, next) => {
-  const { pleaDescription } = req.body;
+  const { pleaDescription, pleaItems = [] } = req.body;
   const userId  = req.user._id;
   const order   = req.order;
-
+ 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
-
+ 
   const hasRejectedItem = order.returnInfo.itemsToReturn.some(
     (i) => i.adminDecision === 'rejected'
   );
@@ -665,32 +673,57 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
       400
     ));
   }
-
+ 
+  // Build a map of productId → pleaQuantity from the customer's submission.
+  // pleaItems = [{ productId, pleaQuantity }]
+  // If a rejected item is not included in pleaItems, its full rejected quantity is appealed by default.
+  const pleaItemMap = new Map(
+    pleaItems.map((p) => [p.productId.toString(), p.pleaQuantity])
+  );
+ 
+  // Stamp pleaQuantity on each rejected item.
+  // Non-appealed units (item.quantity - pleaQuantity) are silently accepted as rejected.
+  order.returnInfo.itemsToReturn.forEach((item) => {
+    if (item.adminDecision !== 'rejected') return;
+ 
+    const pid = item.product?._id?.toString() ?? item.product?.toString();
+    const requested = pleaItemMap.get(pid);
+ 
+    if (requested != null) {
+      // Clamp: must be at least 1 and at most the full rejected quantity
+      item.pleaQuantity = Math.min(Math.max(1, Math.floor(requested)), item.quantity ?? 1);
+    } else {
+      // Customer didn't specify — appeal all rejected units by default
+      item.pleaQuantity = item.quantity ?? 1;
+    }
+  });
+ 
   order.returnInfo.pleaInfo = {
     pleaDescription:  sanitizeHtml.sanitize(String(pleaDescription)),
     pleaSubmittedAt:  new Date(),
     pleaDocuments:    order.returnInfo.pleaInfo?.pleaDocuments ?? [],
   };
-
+ 
   order.returnInfo.status       = 'plea_submitted';
   order.returnInfo.pleaAttempts = (order.returnInfo.pleaAttempts ?? 0) + 1;
-
+ 
   const adminResponseDeadline = new Date();
   adminResponseDeadline.setHours(adminResponseDeadline.getHours() + 48);
   order.returnInfo.pleaDeadline = adminResponseDeadline;
-
+ 
   order.addReturnTimeline('plea_submitted', 'Customer submitted a plea for reconsideration', userId);
   order.addAuditEntry('plea_submitted', userId, { pleaAttempts: order.returnInfo.pleaAttempts });
-
+ 
   await order.save();
   invalidateReturnCaches('stats');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    'Plea submitted successfully. The admin will review your plea within 48 hours.',
     returnInfo: order.returnInfo,
   });
 });
+ 
 
 // ============================================
 // ADMIN RESOLVES PLEA — second-round per-item decisions
@@ -702,41 +735,40 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
 export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
   const order = req.order;
-
+ 
   if ((order.returnInfo.pleaAttempts ?? 0) === 0) {
     return next(new HandleError(
       'Cannot resolve plea: no plea has been submitted by the customer for this return.',
       400
     ));
   }
-
+ 
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
-
+ 
   // ── 1. Apply second-round decisions ───────────────────────────────────────
-  // Only items explicitly included in itemDecisions get updated.
-  // Locked items (previously approved, absent from itemDecisions) keep their
-  // existing adminDecision and approvedQuantity from round one untouched.
+
   itemDecisions.forEach((decision) => {
     const item = order.returnInfo.itemsToReturn.find((i) => {
       const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
       return itemProductId === decision.productId.toString();
     });
-    if (item) {
-      item.adminDecision        = decision.decision;
-      item.adminRejectionReason = decision.decision === 'rejected'
-        ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
-        : '';
-      // For approved items: admin may adjust approvedQuantity in this round.
-      // Falls back to existing approvedQuantity from round one, then to item.quantity.
-      item.approvedQuantity = decision.decision === 'approved'
-        ? Math.min(
-            Math.max(1, decision.approvedQuantity ?? item.approvedQuantity ?? item.quantity),
-            item.quantity
-          )
-        : null;
+    if (!item) return;
+ 
+    item.adminDecision        = decision.decision;
+    item.adminRejectionReason = decision.decision === 'rejected'
+      ? sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''))
+      : '';
+ 
+    if (decision.decision === 'approved') {
+      const maxApprovable   = item.pleaQuantity ?? item.approvedQuantity ?? item.quantity ?? 1;
+      const adminRequested  = decision.approvedQuantity ?? maxApprovable;
+      item.approvedQuantity = Math.min(Math.max(1, adminRequested), maxApprovable);
+    } else {
+      // Admin rejected the plea — none of the appealed units are approved
+      item.approvedQuantity = null;
     }
   });
-
+ 
   // ── 2. Build fallback price map from order items ───────────────────────────
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
@@ -744,50 +776,51 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
       return [pid, i.price ?? 0];
     })
   );
-
+ 
   // ── 3. Price resolver ─────────────────────────────────────────────────────
   const resolvePrice = (item) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString();
     if (item.price != null && item.price > 0) return item.price;
     return orderItemPriceMap.get(pid) ?? 0;
   };
-
+ 
   // ── 4. Compute breakdown across ALL items (locked + newly decided) ─────────
-
-  // requestedGross — all items at original requested quantity (unchanged from round one)
+ 
+  // requestedGross — original requested quantity unchanged
   const requestedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
     return sum + resolvePrice(i) * (i.quantity ?? 1);
   }, 0);
-
+ 
   // approvedGross — all currently approved items × their final approvedQuantity
   const approvedGross = order.returnInfo.itemsToReturn
     .filter((i) => i.adminDecision === 'approved')
     .reduce((sum, i) => {
       return sum + resolvePrice(i) * (i.approvedQuantity ?? i.quantity ?? 1);
     }, 0);
-
-  // rejectedGross — all currently rejected items × requested quantity
+ 
+  // rejectedGross — rejected items × full requested quantity
+  // (includes both silently-accepted-rejected units and admin-rejected plea units)
   const rejectedGross = order.returnInfo.itemsToReturn
     .filter((i) => i.adminDecision === 'rejected')
     .reduce((sum, i) => {
       return sum + resolvePrice(i) * (i.quantity ?? 1);
     }, 0);
-
+ 
   // approvedDiscount — proportional share of order-level discount on approvedGross
   const orderSubtotal    = order.itemPrice ?? 0;
   const totalDiscount    = order.discounts?.totalDiscount ?? 0;
   const discountRate     = orderSubtotal > 0 ? totalDiscount / orderSubtotal : 0;
   const approvedDiscount = Math.round(discountRate * approvedGross * 100) / 100;
-
+ 
   // shippingDeducted — always deduct full shipping
   const shippingDeducted = order.shippingPrice ?? 0;
-
+ 
   // discountValue — final net credit, floored at 0
   const discountValue = Math.max(
     0,
     Math.round((approvedGross - approvedDiscount - shippingDeducted) * 100) / 100
   );
-
+ 
   // ── 5. Persist breakdown + status transition ───────────────────────────────
   order.returnInfo.requestedGross   = Math.round(requestedGross   * 100) / 100;
   order.returnInfo.approvedGross    = Math.round(approvedGross    * 100) / 100;
@@ -795,16 +828,16 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   order.returnInfo.approvedDiscount = approvedDiscount;
   order.returnInfo.shippingDeducted = shippingDeducted;
   order.returnInfo.discountValue    = discountValue;
-
+ 
   order.returnInfo.status       = 'approved';
   order.returnInfo.approvedAt   = new Date();
   order.returnInfo.pleaDeadline = null;
-
+ 
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
-
+ 
   const approvedCount = order.returnInfo.itemsToReturn.filter((i) => i.adminDecision === 'approved').length;
   const rejectedCount = order.returnInfo.itemsToReturn.filter((i) => i.adminDecision === 'rejected').length;
-
+ 
   order.addReturnTimeline(
     'plea_resolved',
     `Plea reviewed. Final decisions: ${approvedCount} approved, ${rejectedCount} rejected. Awaiting customer shipment.`,
@@ -814,16 +847,17 @@ export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('plea_resolved', req.user._id, {
     approvedCount, rejectedCount, discountValue, approvedGross, shippingDeducted,
   });
-
+ 
   await order.save();
   invalidateReturnCaches('stats');
-
+ 
   return res.status(200).json({
     success:    true,
     message:    `Plea resolved. ${approvedCount} items approved, ${rejectedCount} rejected. Customer will now ship items back.`,
     returnInfo: order.returnInfo,
   });
 });
+ 
 // ============================================
 // CUSTOMER CONFIRMS SHIPMENT
 // Status: approved → in_transit

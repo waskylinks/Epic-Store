@@ -307,6 +307,7 @@ const orderSchema = new mongoose.Schema(
             
             adminRejectionReason: { type: String, default: '' },
             approvedQuantity: { type: Number, default: null },
+            pleaQuantity: { type: Number, default: null },
           },
           
         ],
