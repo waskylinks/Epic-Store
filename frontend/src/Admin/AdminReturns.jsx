@@ -179,20 +179,8 @@ const CreditBreakdown = ({ returnInfo }) => {
   );
 };
 
-// ── PerItemDecisionForm ───────────────────────────────────────────────────────
-// decisions shape per item:
-//   { decision, rejectionReason, approvedQuantity, rejectedQuantity }
-//
-// Approve decision:
-//   approvedQuantity = stepper value (1..maxQty)
-//   remainder (maxQty - approvedQuantity) implicitly rejected
-//
-// Reject decision:
-//   rejectedQuantity = stepper value (1..maxQty)
-//   remainder (maxQty - rejectedQuantity) implicitly approved
-//   → backend derives approvedQuantity = maxQty - rejectedQuantity
-//
-// In plea round: approve stepper capped at item.pleaQuantity (what customer appealed for)
+// ── PerItemDecisionForm ──────────────────────────────
+
 const PerItemDecisionForm = ({
   items,
   decisions,
@@ -202,7 +190,7 @@ const PerItemDecisionForm = ({
   isPleaRound = false,
 }) => {
   if (!items?.length) return <div className="rt-empty" style={{ minHeight: 80 }}><span>No items to review</span></div>;
-
+ 
   return (
     <div className="rt-per-item-decisions">
       {items.map((item, idx) => {
@@ -211,25 +199,25 @@ const PerItemDecisionForm = ({
         const image    = item.product?.images?.[0]?.url ?? item.image ?? null;
         const maxQty   = item.quantity ?? 1;
         const isLocked = lockedProductIds.has(pid);
-
+ 
         // Plea round: admin cannot approve more than the customer appealed for
         const pleaQty      = item.pleaQuantity ?? maxQty;
         const approveMax   = isPleaRound ? pleaQty : maxQty;
-
+ 
         const dec = decisions[pid] ?? {
           decision:         '',
           rejectionReason:  '',
           approvedQuantity: approveMax,
           rejectedQuantity: maxQty,
         };
-
+ 
         const currentApproved  = dec.approvedQuantity ?? approveMax;
         const currentRejected  = dec.rejectedQuantity ?? maxQty;
-
+ 
         // Derived remainders for the note labels
         const approveRemainder = maxQty - currentApproved;  // silently rejected
         const rejectRemainder  = maxQty - currentRejected;  // silently approved
-
+ 
         return (
           <div key={pid} className={`rt-item-decision-card${isLocked ? ' rt-item-decision-card--locked' : ''}`}>
             <div className="rt-item-decision-info">
@@ -255,7 +243,7 @@ const PerItemDecisionForm = ({
                 )}
               </div>
             </div>
-
+ 
             {!isLocked && (
               <div className="rt-item-decision-controls">
                 <button
@@ -276,7 +264,7 @@ const PerItemDecisionForm = ({
                 </button>
               </div>
             )}
-
+ 
             {/* Approve stepper — capped at pleaQuantity in plea round */}
             {!isLocked && dec.decision === 'approved' && (
               <div className="rt-qty-stepper rt-qty-stepper--approve">
@@ -308,7 +296,22 @@ const PerItemDecisionForm = ({
                 )}
               </div>
             )}
-
+ 
+            {/* FIX: Reason field for auto-rejected remainder on partial approve.
+                Shown when decision is 'approved' but approvedQty < maxQty.
+                The auto-rejected units need a reason just like an explicit reject. */}
+            {!isLocked && dec.decision === 'approved' && approveRemainder > 0 && (
+              <div className="rt-item-rejection-reason">
+                <input
+                  type="text" className="rt-form-input"
+                  placeholder={`Reason for ${approveRemainder} auto-rejected unit${approveRemainder !== 1 ? 's' : ''} (required)…`}
+                  value={dec.rejectionReason ?? ''}
+                  onChange={(e) => onDecisionChange(pid, 'rejectionReason', e.target.value)}
+                  disabled={disabled} maxLength={500}
+                />
+              </div>
+            )}
+ 
             {/* Reject stepper — sends rejectedQuantity; remainder auto-approved */}
             {!isLocked && dec.decision === 'rejected' && (
               <>
@@ -630,22 +633,54 @@ const AdminReturns = () => {
   }, [currentReturn]);
 
   const reviewDecisionsComplete = useMemo(() => {
-    if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
-    return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
-      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const dec = itemDecisions[pid];
-      return dec?.decision && !(dec.decision === 'rejected' && !dec.rejectionReason?.trim());
-    });
-  }, [currentReturn, itemDecisions]);
+  if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
+  return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
+    const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+    const dec    = itemDecisions[pid];
+    const maxQty = item.quantity ?? 1;
+ 
+    if (!dec?.decision) return false;
+ 
+    if (dec.decision === 'rejected') {
+      return !!dec.rejectionReason?.trim();
+    }
+ 
+    if (dec.decision === 'approved') {
+      const approvedQty      = dec.approvedQuantity ?? maxQty;
+      const approveRemainder = maxQty - approvedQty;
+      
+      if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
+      return true;
+    }
+ 
+    return false;
+  });
+}, [currentReturn, itemDecisions]);
 
-  const pleaDecisionsComplete = useMemo(() => {
-    if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
-    return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
-      const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const dec = pleaDecisions[pid];
-      return dec?.decision && !(dec.decision === 'rejected' && !dec.rejectionReason?.trim());
-    });
-  }, [currentReturn, pleaDecisions]);
+const pleaDecisionsComplete = useMemo(() => {
+  if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
+  return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
+    const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+    const dec    = pleaDecisions[pid];
+    const maxQty = item.quantity ?? 1;
+ 
+    if (!dec?.decision) return false;
+ 
+    if (dec.decision === 'rejected') {
+      return !!dec.rejectionReason?.trim();
+    }
+ 
+    if (dec.decision === 'approved') {
+      const approvedQty      = dec.approvedQuantity ?? maxQty;
+      const approveRemainder = maxQty - approvedQty;
+      
+      if (approveRemainder > 0) return !!dec.rejectionReason?.trim();
+      return true;
+    }
+ 
+    return false;
+  });
+}, [currentReturn, pleaDecisions]);
 
   const pleaLockedProductIds = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return new Set();
