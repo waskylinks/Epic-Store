@@ -400,14 +400,13 @@ export const getSingleReturn = handleAsyncError(async (req, res, next) => {
 // @route  POST /api/v1/orders/:id/return/request
 // @access Private/Customer
 // ============================================
-
 export const requestReturn = handleAsyncError(async (req, res, next) => {
   const { reason, description, items, attachments = [], policyAcknowledged } = req.body;
   const userId = req.user._id;
   const order  = req.order;
- 
+
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
- 
+
   if (order.orderStatus !== 'Delivered') {
     return next(new HandleError('Can only return delivered orders', 400));
   }
@@ -425,7 +424,7 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
       ));
     }
   }
- 
+
   // FIX: orderItems[].price stores the discounted unit price stamped at
   // checkout by initializePaymentController. Use it directly — no discount
   // rate recalculation needed, and no risk of spreading a category-scoped
@@ -436,17 +435,17 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
       return [id.toString(), i.price ?? 0];
     })
   );
- 
+
   const requestedAmount = items.reduce((sum, item) => {
     const price = orderItemMap.get(item.product?.toString()) ?? 0;
     return sum + price * (item.quantity || 0);
   }, 0);
- 
+
   const itemsWithPrice = items.map((item) => ({
     ...item,
     price: orderItemMap.get(item.product?.toString()) ?? 0,
   }));
- 
+
   order.returnInfo = {
     status:               'requested',
     reason,
@@ -461,14 +460,14 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     documents:            [],
     policyAcknowledgedAt: policyAcknowledged ? new Date() : null,
   };
- 
+
   order.addReturnTimeline('return_requested', `Return requested: ${reason}`, userId);
   order.addStatusHistory('Return Requested', userId, reason);
   order.addAuditEntry('return_requested', userId, { reason, description, itemsCount: items.length, requestedAmount });
- 
+
   await order.save();
   invalidateReturnCaches('stats');
- 
+
   return res.status(200).json({
     success:    true,
     message:    'Return request submitted successfully',

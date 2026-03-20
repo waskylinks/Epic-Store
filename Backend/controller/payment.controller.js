@@ -151,17 +151,13 @@ const buildPaymentMeta = (gateway, raw) => {
 
 // ============================================
 // INITIALIZE PAYMENT
+// @route POST /api/v1/payment/initialize
+// @access Private
 // ============================================
-
-/**
- * Initialize Payment
- * @route POST /api/v1/payment/initialize
- * @access Private
- */
 export const initializePaymentController = handleAsyncError(async (req, res, next) => {
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
- 
+
   const {
     gateway,
     currency,
@@ -170,47 +166,47 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     cartPricing,
     discountSnapshot = null,
   } = req.body;
- 
+
   // ── 1. Basic field validation ────────────────────────────────────────────
   if (!gateway || !currency || !shippingInfo || !cartItems || cartItems.length === 0) {
     return next(new HandleError(
       "Missing required fields: gateway, currency, shippingInfo, cartItems", 400
     ));
   }
- 
+
   if (!cartPricing || typeof cartPricing.totalPrice !== 'number' || cartPricing.totalPrice <= 0) {
     return next(new HandleError(
       "cartPricing is required and must contain a valid totalPrice. " +
       "Complete the cart/checkout step before initialising payment.", 400
     ));
   }
- 
+
   const { itemPrice, taxPrice, shippingPrice, totalPrice } = cartPricing;
   if (
-    typeof itemPrice     !== 'number' ||
-    typeof taxPrice      !== 'number' ||
+    typeof itemPrice    !== 'number' ||
+    typeof taxPrice     !== 'number' ||
     typeof shippingPrice !== 'number' ||
-    typeof totalPrice    !== 'number'
+    typeof totalPrice   !== 'number'
   ) {
     return next(new HandleError(
       "cartPricing must include numeric itemPrice, taxPrice, shippingPrice and totalPrice", 400
     ));
   }
- 
+
   const normalizedCurrency = currency.toUpperCase();
   if (!SUPPORTED_CURRENCIES.includes(normalizedCurrency)) {
     return next(new HandleError(
       `Unsupported currency: ${currency}. Supported: ${SUPPORTED_CURRENCIES.join(', ')}`, 400
     ));
   }
- 
+
   // ── 2. Load user ─────────────────────────────────────────────────────────
   const user = await User.findById(userId).select('email name country createdAt');
   if (!user) return next(new HandleError("User not found", 404));
- 
+
   // ── 3. Lightweight product validation ────────────────────────────────────
   const Product = (await import('../models/product-model.js')).default;
- 
+
   const productIds = cartItems.map(item => {
     if (!item.product) throw new HandleError('Invalid cart item: missing product ID', 400);
     if (!item.quantity || item.quantity < 1 || !Number.isInteger(Number(item.quantity))) {
@@ -218,22 +214,84 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     }
     return item.product;
   });
- 
+
   const products = await Product.find({ _id: { $in: productIds } })
     .select('_id name price pricing stock inventory category images status');
- 
+
   if (products.length !== productIds.length) {
     const foundIds = products.map(p => p._id.toString());
     const missing  = productIds.filter(id => !foundIds.includes(id.toString()));
     return next(new HandleError(`Products not found: ${missing.join(', ')}`, 404));
   }
- 
+
   const productMap = {};
   products.forEach(p => { productMap[p._id.toString()] = p; });
- 
-  // ── 4. Build discount info ───────────────────────────────────────────────
-  // Resolve discount context before building orderItems so we can compute
-  // the correct discounted unit price per item in a single pass.
+
+  const orderItems = [];
+  for (const cartItem of cartItems) {
+    const product  = productMap[cartItem.product.toString()];
+    const quantity = Number(cartItem.quantity);
+
+    if (product.status !== 'published') {
+      return next(new HandleError(`Product "${product.name}" is no longer available`, 400));
+    }
+
+    const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+    if (availableStock < quantity) {
+      return next(new HandleError(
+        `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${quantity}`,
+        400
+      ));
+    }
+
+    let unitPrice = 0;
+    if (product.pricing?.sale   > 0) unitPrice = product.pricing.sale;
+    else if (product.pricing?.regular > 0) unitPrice = product.pricing.regular;
+    else if (product.price      > 0) unitPrice = product.price;
+    else return next(new HandleError(`Product "${product.name}" has no valid price`, 500));
+
+    // FIX: compute discounted unit price per item so returns and refunds
+    // always have the correct per-item paid price.
+    // Category-scoped: only reduce price for eligible category items.
+    // Global: reduce price for all items proportionally.
+    const eligibleCats     = discountSnapshot?.eligibleProductCategories ?? [];
+    const isCategoryScoped = eligibleCats.length > 0;
+    const discountAmt      = Number(discountSnapshot?.discountAmount ?? 0);
+    const discountBase     = isCategoryScoped
+      ? Number(discountSnapshot?.originalItemPrice ?? itemPrice)
+      : itemPrice;
+    const discountRate     = discountBase > 0 && discountAmt > 0
+      ? discountAmt / discountBase
+      : 0;
+
+    const isEligible = discountRate > 0
+      ? (isCategoryScoped ? eligibleCats.includes(product.category) : true)
+      : false;
+
+    const storedUnitPrice = isEligible
+      ? Math.round(unitPrice * (1 - discountRate) * 100) / 100
+      : unitPrice;
+
+    orderItems.push({
+      product:  product._id,
+      name:     product.name,
+      price:    storedUnitPrice,
+      quantity,
+      image:    product.images?.[0]?.url || product.images?.[0] || '',
+      category: product.category,
+    });
+  }
+
+  // ── 4. Attribution / device ───────────────────────────────────────────────
+  const attributionData = req.attributionData || {
+    source: 'direct', medium: null, campaign: null, referrer: null, landingPage: null
+  };
+  const deviceInfo = req.deviceInfo || { device: 'desktop', browser: 'unknown' };
+
+  // ── 5. Generate reference ────────────────────────────────────────────────
+  const reference = generateOrderReference();
+
+  // ── 6. Build discount info for session storage ───────────────────────────
   let discountInfo = null;
   if (discountSnapshot && discountSnapshot.code) {
     discountInfo = {
@@ -249,92 +307,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
         : [],
     };
   }
- 
-  // FIX: Pre-compute the per-category discount rate so each order item stores
-  // the actual price the customer paid, not the catalogue price.
-  //
-  // Two cases:
-  //   A) Category-scoped discount (eligibleProductCategories is non-empty):
-  //      Only items whose category appears in the list are discounted.
-  //      The discount rate is computed against the eligible subtotal only
-  //      (originalItemPrice from the cart controller = eligible subtotal).
-  //
-  //   B) Global discount (eligibleProductCategories is empty):
-  //      All items are discounted proportionally.
-  //      The discount rate is computed against the full itemPrice.
-  //
-  // In both cases, non-eligible items keep their raw catalogue price.
- 
-  const eligibleCats       = discountInfo?.eligibleProductCategories ?? [];
-  const isCategoryScoped   = eligibleCats.length > 0;
-  const discountAmount     = discountInfo?.discountAmount ?? 0;
- 
-  // For category-scoped discounts, originalItemPrice is the eligible subtotal
-  // as computed by applyDiscountCode in the cart controller.
-  const discountBase = isCategoryScoped
-    ? (discountInfo?.originalItemPrice ?? itemPrice)
-    : itemPrice;
- 
-  const discountRate = discountBase > 0 && discountAmount > 0
-    ? discountAmount / discountBase
-    : 0;
- 
-  // ── 5. Build orderItems with discounted unit prices ───────────────────────
-  const orderItems = [];
-  for (const cartItem of cartItems) {
-    const product  = productMap[cartItem.product.toString()];
-    const quantity = Number(cartItem.quantity);
- 
-    if (product.status !== 'published') {
-      return next(new HandleError(`Product "${product.name}" is no longer available`, 400));
-    }
- 
-    const availableStock = product.inventory?.stock ?? product.stock ?? 0;
-    if (availableStock < quantity) {
-      return next(new HandleError(
-        `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${quantity}`,
-        400
-      ));
-    }
- 
-    let unitPrice = 0;
-    if (product.pricing?.sale    > 0) unitPrice = product.pricing.sale;
-    else if (product.pricing?.regular > 0) unitPrice = product.pricing.regular;
-    else if (product.price       > 0) unitPrice = product.price;
-    else return next(new HandleError(`Product "${product.name}" has no valid price`, 500));
- 
-    // FIX: compute the discounted unit price so downstream operations
-    // (returns, refunds) always have the correct per-item paid price.
-    let storedUnitPrice = unitPrice;
-    if (discountRate > 0) {
-      const isEligible = isCategoryScoped
-        ? eligibleCats.includes(product.category)
-        : true; // global discount applies to all items
-      if (isEligible) {
-        storedUnitPrice = Math.round(unitPrice * (1 - discountRate) * 100) / 100;
-      }
-    }
- 
-    orderItems.push({
-      product:  product._id,
-      name:     product.name,
-      price:    storedUnitPrice,
-      quantity,
-      image:    product.images?.[0]?.url || product.images?.[0] || '',
-      category: product.category,
-    });
-  }
- 
-  // ── 6. Attribution / device ───────────────────────────────────────────────
-  const attributionData = req.attributionData || {
-    source: 'direct', medium: null, campaign: null, referrer: null, landingPage: null
-  };
-  const deviceInfo = req.deviceInfo || { device: 'desktop', browser: 'unknown' };
- 
-  // ── 7. Generate reference ────────────────────────────────────────────────
-  const reference = generateOrderReference();
- 
-  // ── 8. Persist Redis session ─────────────────────────────────────────────
+
+  // ── 7. Persist Redis session ─────────────────────────────────────────────
   try {
     await createPaymentSession({
       reference,
@@ -364,8 +338,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
   } catch {
     return next(new HandleError("Failed to create payment session. Please try again.", 500));
   }
- 
-  // ── 9. Initialise gateway ─────────────────────────────────────────────────
+
+  // ── 8. Initialise gateway ─────────────────────────────────────────────────
   let gatewayResponse;
   try {
     gatewayResponse = await PaymentFactory.initializePayment(gateway, {
@@ -387,13 +361,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       502
     ));
   }
- 
-  // ── 10. Stripe alias ───────────────────────────────────────────────────────
+
+  // ── 9. Stripe alias ───────────────────────────────────────────────────────
   if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
     createSessionAlias(gatewayResponse.payment_intent_id, reference).catch(() => {});
   }
- 
-  // ── 11. Build response ────────────────────────────────────────────────────
+
+  // ── 10. Build response ────────────────────────────────────────────────────
   const responseData = {
     reference,
     amount:   totalPrice,
@@ -414,7 +388,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       })
     }
   };
- 
+
   if (gateway === 'paystack') {
     responseData.authorization_url = gatewayResponse.authorization_url;
     responseData.access_code       = gatewayResponse.access_code;
@@ -424,95 +398,11 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     responseData.client_secret      = gatewayResponse.client_secret;
     responseData.payment_intent_id  = gatewayResponse.payment_intent_id;
   }
- 
+
   return res.status(200).json({
     success: true,
     message: "Payment initialized successfully",
     data:    responseData
-  });
-});
- 
- 
-// ============================================
-// CUSTOMER REQUESTS RETURN
-// Fixed: uses item.price directly from orderItemMap (now stores discounted
-// unit price stored at checkout) instead of recomputing a global discount
-// rate that incorrectly spread category-scoped discounts across all items.
-// @route  POST /api/v1/orders/:id/return/request
-// @access Private/Customer
-// ============================================
-export const requestReturn = handleAsyncError(async (req, res, next) => {
-  const { reason, description, items, attachments = [], policyAcknowledged } = req.body;
-  const userId = req.user._id;
-  const order  = req.order;
- 
-  try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
- 
-  if (order.orderStatus !== 'Delivered') {
-    return next(new HandleError('Can only return delivered orders', 400));
-  }
-  if (order.returnInfo && order.returnInfo.status !== 'none') {
-    return next(new HandleError('Return request already exists for this order', 400));
-  }
-  if (order.deliveredAt) {
-    const RETURN_WINDOW_DAYS = 30;
-    const deadline = new Date(order.deliveredAt);
-    deadline.setDate(deadline.getDate() + RETURN_WINDOW_DAYS);
-    if (Date.now() > deadline.getTime()) {
-      const days = Math.floor((Date.now() - new Date(order.deliveredAt).getTime()) / 86_400_000);
-      return next(new HandleError(
-        `Return period has expired (${RETURN_WINDOW_DAYS} days). Order was delivered ${days} days ago.`, 400
-      ));
-    }
-  }
- 
-  // FIX: orderItems[].price now stores the discounted unit price stamped at
-  // checkout by initializePaymentController. Use it directly — no discount
-  // rate recalculation needed, and no risk of spreading a category-scoped
-  // discount onto items that were never eligible for it.
-  const orderItemMap = new Map(
-    order.orderItems.map((i) => {
-      const id = i.product?._id ?? i.product;
-      return [id.toString(), i.price ?? 0];
-    })
-  );
- 
-  const requestedAmount = items.reduce((sum, item) => {
-    const price = orderItemMap.get(item.product?.toString()) ?? 0;
-    return sum + price * (item.quantity || 0);
-  }, 0);
- 
-  const itemsWithPrice = items.map((item) => ({
-    ...item,
-    price: orderItemMap.get(item.product?.toString()) ?? 0,
-  }));
- 
-  order.returnInfo = {
-    status:               'requested',
-    reason,
-    description,
-    itemsToReturn:        itemsWithPrice,
-    requestedAmount:      Math.round(requestedAmount * 100) / 100,
-    requestedAt:          new Date(),
-    requestedBy:          userId,
-    attachments,
-    messages:             [],
-    timeline:             [],
-    documents:            [],
-    policyAcknowledgedAt: policyAcknowledged ? new Date() : null,
-  };
- 
-  order.addReturnTimeline('return_requested', `Return requested: ${reason}`, userId);
-  order.addStatusHistory('Return Requested', userId, reason);
-  order.addAuditEntry('return_requested', userId, { reason, description, itemsCount: items.length, requestedAmount });
- 
-  await order.save();
-  invalidateReturnCaches('stats');
- 
-  return res.status(200).json({
-    success:    true,
-    message:    'Return request submitted successfully',
-    returnInfo: order.returnInfo,
   });
 });
 
