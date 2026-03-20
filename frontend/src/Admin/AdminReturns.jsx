@@ -1070,7 +1070,7 @@ const pleaDecisionsComplete = useMemo(() => {
                       ['Customer',    getCustomerName(currentReturn.user)],
                       ['Email',       currentReturn.user?.email ?? 'N/A'],
                       ['Phone',       getCustomerPhone(currentReturn)],
-                      ['Order Total', fmtCurrency(currentReturn.totalPrice)],
+                      ['Requested Value', fmtCurrency(currentReturn.returnInfo?.requestedAmount ?? 0)],
                       ['Reason',      returnInfo.reason?.replace(/_/g, ' ') ?? 'N/A'],
                     ].map(([label, val]) => (
                       <div key={label} className="rt-metric-row">
