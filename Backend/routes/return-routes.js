@@ -49,7 +49,11 @@ import {
   canConfirmShipped,
 } from '../middleware/return-policy.middleware.js';
 
-import upload from '../middleware/multer.js';
+// FIX: import safeReturnUploadArray instead of the default upload instance.
+// The default upload only allows images (used for product uploads).
+// safeReturnUploadArray uses a permissive filter that also allows
+// videos (mp4, webm, quicktime) and PDFs for return/plea evidence.
+import { safeReturnUploadArray } from '../middleware/multer.js';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 const router = express.Router();
@@ -145,15 +149,12 @@ router.post(
   '/orders/:id/return/plea/upload',
   verifyUserAuth,
   uploadLimiter,
-  upload.array('attachments', UPLOAD_LIMIT),
+  safeReturnUploadArray('attachments', UPLOAD_LIMIT),
   validateReturnFileUpload,
   uploadPleaFiles
 );
 
 // Customer confirms they have shipped items back → in_transit
-// Real-world flow: customer packs items, drops at courier, confirms here.
-// Optionally provides courier name and tracking number.
-// Admin does NOT trigger in_transit — they have no involvement at this stage.
 router.post(
   '/orders/:id/return/confirm-shipped',
   verifyUserAuth,
@@ -174,12 +175,12 @@ router.post(
   addCustomerReturnMessage
 );
 
-// File uploads
+// Customer file uploads
 router.post(
   '/orders/:id/return/upload',
   verifyUserAuth,
   uploadLimiter,
-  upload.array('attachments', UPLOAD_LIMIT),
+  safeReturnUploadArray('attachments', UPLOAD_LIMIT),
   validateReturnFileUpload,
   uploadCustomerReturnFiles
 );
@@ -228,10 +229,7 @@ router.put(
   resolveAfterPlea
 );
 
-// Lifecycle status updates (admin-controlled stages only):
-// received → inspected and awaiting_discount → completed
-// NOTE: approved → in_transit is customer-triggered via /confirm-shipped above.
-//       The controller hard-blocks in_transit from this endpoint as a safety net.
+// Lifecycle status updates (admin-controlled stages only)
 router.put(
   '/admin/orders/:id/return/status',
   ...adminAuth,
@@ -241,7 +239,6 @@ router.put(
 );
 
 // Generate discount code: inspected → awaiting_discount
-// The discount creation page then handles: awaiting_discount → completed
 router.post(
   '/admin/orders/:id/return/generate-discount',
   ...adminAuth,
@@ -266,7 +263,7 @@ router.post(
   '/admin/returns/:id/upload',
   ...adminAuth,
   uploadLimiter,
-  upload.array('attachments', UPLOAD_LIMIT),
+  safeReturnUploadArray('attachments', UPLOAD_LIMIT),
   validateReturnFileUpload,
   uploadReturnFiles
 );

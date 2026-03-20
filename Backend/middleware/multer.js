@@ -23,33 +23,11 @@ const upload = multer({
 // SAFE UPLOAD WRAPPER
 // ============================================
 //
-// The root cause of the "stuck updating" bug:
-//
-// When multer encounters ANY error (file too large, wrong mimetype,
-// unexpected field, etc.) it calls next(err) WITHOUT populating
-// req.body — even for the non-file text fields that were already
-// parsed before the error occurred.
-//
-// This means the controller receives req.body = undefined, logs
-// show bodyExists: false, and the request either hangs or fails
-// silently depending on whether the global error handler catches
-// the multer error shape correctly.
-//
-// This wrapper runs multer manually inside a try/catch so that:
-//   1. If multer succeeds → req.body and req.files are populated normally
-//   2. If multer errors  → we return a clean 400 JSON response immediately
-//                          instead of letting the error bubble up unparsed
-//
-// Usage in router:  safeUpload.array('images', 10)
-// Replaces:         upload.array('images', 10)
-// ============================================
 
 const wrapMulter = (multerMiddleware) => (req, res, next) => {
   multerMiddleware(req, res, (err) => {
     if (!err) return next();
 
-    // MulterError covers: LIMIT_FILE_SIZE, LIMIT_FILE_COUNT,
-    // LIMIT_UNEXPECTED_FILE, LIMIT_PART_COUNT, etc.
     if (err.code === 'LIMIT_FILE_SIZE') {
       return next(new HandleError('One or more images exceed the 10MB limit. Please reduce file size and try again.', 400));
     }
@@ -75,5 +53,34 @@ export const safeUploadArray = (fieldName = 'images', maxCount = 10) =>
   wrapMulter(upload.array(fieldName, maxCount));
 
 export const uploadProductImages = safeUploadArray('images', 10);
+
+// ── Return-specific upload instance ──────────────────────────────────────────
+// Allows images, videos (mp4, webm, quicktime), and PDFs.
+// Used exclusively by return and plea file upload routes.
+// The default upload instance above stays images-only for product uploads.
+
+const returnFileFilter = (req, file, cb) => {
+  const ALLOWED = [
+    'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif',
+    'video/mp4', 'video/webm', 'video/quicktime',
+    'application/pdf',
+  ];
+  if (ALLOWED.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Allowed: JPEG, PNG, WebP, GIF, MP4, WebM, MOV, PDF.'), false);
+  }
+};
+
+const returnUpload = multer({
+  storage,
+  fileFilter: returnFileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+  },
+});
+
+export const safeReturnUploadArray = (fieldName = 'attachments', maxCount = 8) =>
+  wrapMulter(returnUpload.array(fieldName, maxCount));
 
 export default upload;
