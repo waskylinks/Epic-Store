@@ -156,11 +156,6 @@ const checkAndExpireTimers = (order) => {
 // @route  GET /api/v1/admin/returns
 // @access Private/Admin
 // ============================================
-// ============================================
-// GET ALL RETURNS (Admin)
-// @route  GET /api/v1/admin/returns
-// @access Private/Admin
-// ============================================
 export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const { page = 1, limit = 20, sortBy, order } = req.query;
   const parsedPage  = Math.max(1, parseInt(page)  || 1);
@@ -208,49 +203,46 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     { $unwind: { path: '$returnInfo.requestedBy', preserveNullAndEmptyArrays: true } },
   ];
 
-  // FIX: Added shippedAt to the projection so the admin table and drawer
-  // have it available from the list endpoint, not just from getSingleReturn.
-  // courierName and trackingNumber were already projected; shippedAt was missing.
   const projectStage = {
-  $project: {
-    user: 1,
-    returnInfo: {
-      status: 1, rmaNumber: 1, reason: 1, description: 1,
-      itemsToReturn: 1, requestedAmount: 1, requestedAt: 1,
-      requestedBy: 1, adminNote: 1, restockFee: 1,
-      pleaDeadline: 1, pleaAttempts: 1,
-      // credit value fields
-      discountValue:    1,
-      requestedGross:   1,
-      approvedGross:    1,
-      rejectedGross:    1,
-      approvedDiscount: 1,
-      shippingDeducted: 1,
-      // shipping / transit
-      courierName: 1, trackingNumber: 1, shippedAt: 1,
-    },
-    orderStatus:  1,
-    totalPrice:   1,
-    createdAt:    1,
-    shippingInfo: 1,
-    unreadMessages: {
-      $size: {
-        $filter: {
-          input: { $ifNull: ['$returnInfo.messages', []] },
-          as:    'm',
-          cond: {
-            $and: [
-              { $eq: ['$$m.isRead',     false] },
-              { $eq: ['$$m.senderType', 'customer'] },
-            ],
+    $project: {
+      user: 1,
+      returnInfo: {
+        status: 1, rmaNumber: 1, reason: 1, description: 1,
+        itemsToReturn: 1, requestedAmount: 1, requestedAt: 1,
+        requestedBy: 1, adminNote: 1, restockFee: 1,
+        pleaDeadline: 1, pleaAttempts: 1,
+        // credit value fields
+        discountValue:    1,
+        requestedGross:   1,
+        approvedGross:    1,
+        rejectedGross:    1,
+        approvedDiscount: 1,
+        shippingDeducted: 1,
+        // shipping / transit
+        courierName: 1, trackingNumber: 1, shippedAt: 1,
+      },
+      orderStatus:  1,
+      totalPrice:   1,
+      createdAt:    1,
+      shippingInfo: 1,
+      unreadMessages: {
+        $size: {
+          $filter: {
+            input: { $ifNull: ['$returnInfo.messages', []] },
+            as:    'm',
+            cond: {
+              $and: [
+                { $eq: ['$$m.isRead',     false] },
+                { $eq: ['$$m.senderType', 'customer'] },
+              ],
+            },
           },
         },
       },
     },
-  },
-};
+  };
 
-
+  // ── Cached path: stats already known, only fetch the page of orders ────────
   if (stats) {
     const orders = await Order.aggregate([
       { $match: matchStage },
@@ -276,6 +268,15 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     });
   }
 
+  // Statuses where item decisions are final and can be safely summed.
+  // Excludes: requested, items_reviewed, plea_submitted (preliminary / still
+  //           disputable by the customer), rejected, cancelled (nothing approved).
+  const FINALISED_STATUSES = [
+    'approved', 'in_transit', 'received',
+    'inspected', 'awaiting_discount', 'completed',
+  ];
+
+  // ── Full facet: compute stats + fetch page in one aggregation ─────────────
   const [facetResult] = await Order.aggregate([
     { $match: matchStage },
     {
@@ -287,10 +288,26 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
           ...lookupStages,
           projectStage,
         ],
-        totalCount:           [{ $count: 'count' }],
-        statCounts:           [{ $group: { _id: '$returnInfo.status', count: { $sum: 1 } } }],
+        totalCount: [
+          { $count: 'count' },
+        ],
+        statCounts: [
+          { $group: { _id: '$returnInfo.status', count: { $sum: 1 } } },
+        ],
         totalRequestedAmount: [
           { $group: { _id: null, total: { $sum: { $ifNull: ['$returnInfo.requestedAmount', 0] } } } },
+        ],
+        // Only sum approvedGross for returns whose decisions are final.
+        // items_reviewed and plea_submitted are excluded — values there are
+        // preliminary and the customer can still dispute them.
+        totalApprovedAmount: [
+          { $match: { 'returnInfo.status': { $in: FINALISED_STATUSES } } },
+          { $group: { _id: null, total: { $sum: { $ifNull: ['$returnInfo.approvedGross', 0] } } } },
+        ],
+        // Same finalised-only gate for rejectedGross.
+        totalRejectedAmount: [
+          { $match: { 'returnInfo.status': { $in: FINALISED_STATUSES } } },
+          { $group: { _id: null, total: { $sum: { $ifNull: ['$returnInfo.rejectedGross', 0] } } } },
         ],
       },
     },
@@ -299,7 +316,10 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
   const orders       = facetResult.data            || [];
   const totalReturns = facetResult.totalCount?.[0]?.count || 0;
   const countMap     = Object.fromEntries((facetResult.statCounts || []).map((s) => [s._id, s.count]));
+
   const totalRequestedAmount = facetResult.totalRequestedAmount?.[0]?.total || 0;
+  const totalApprovedAmount  = facetResult.totalApprovedAmount?.[0]?.total  || 0;
+  const totalRejectedAmount  = facetResult.totalRejectedAmount?.[0]?.total  || 0;
 
   stats = {
     total:              totalReturns,
@@ -315,6 +335,8 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     rejected:           countMap.rejected           || 0,
     cancelled:          countMap.cancelled          || 0,
     totalRequestedAmount,
+    totalApprovedAmount,
+    totalRejectedAmount,
   };
 
   setCache(STATS_CACHE_KEY, JSON.stringify(stats), STATS_TTL_SECONDS).catch((err) => {
@@ -336,6 +358,7 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     })),
   });
 });
+
 // ============================================
 // GET SINGLE RETURN (Admin)
 // @route  GET /api/v1/admin/returns/:id
