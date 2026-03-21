@@ -113,11 +113,6 @@ const invalidateReturnCaches = (scope = 'stats') => {
 
 // ============================================
 // checkAndExpireTimers
-// Both timer expiry cases advance to 'approved'.
-// Full lifecycle: items_reviewed → approved → in_transit (customer) →
-// received → inspected → awaiting_discount → completed
-// Timers only run at items_reviewed and plea_submitted.
-// Once approved, no timer — customer ships at their own pace.
 // ============================================
 const checkAndExpireTimers = (order) => {
   if (!order.returnInfo) return false;
@@ -211,14 +206,12 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         itemsToReturn: 1, requestedAmount: 1, requestedAt: 1,
         requestedBy: 1, adminNote: 1, restockFee: 1,
         pleaDeadline: 1, pleaAttempts: 1,
-        // credit value fields
         discountValue:    1,
         requestedGross:   1,
         approvedGross:    1,
         rejectedGross:    1,
         approvedDiscount: 1,
         shippingDeducted: 1,
-        // shipping / transit
         courierName: 1, trackingNumber: 1, shippedAt: 1,
       },
       orderStatus:  1,
@@ -242,7 +235,6 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     },
   };
 
-  // ── Cached path: stats already known, only fetch the page of orders ────────
   if (stats) {
     const orders = await Order.aggregate([
       { $match: matchStage },
@@ -268,15 +260,11 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // Statuses where item decisions are final and can be safely summed.
-  // Excludes: requested, items_reviewed, plea_submitted (preliminary / still
-  //           disputable by the customer), rejected, cancelled (nothing approved).
   const FINALISED_STATUSES = [
     'approved', 'in_transit', 'received',
     'inspected', 'awaiting_discount', 'completed',
   ];
 
-  // ── Full facet: compute stats + fetch page in one aggregation ─────────────
   const [facetResult] = await Order.aggregate([
     { $match: matchStage },
     {
@@ -297,14 +285,10 @@ export const getAllReturns = handleAsyncError(async (req, res, next) => {
         totalRequestedAmount: [
           { $group: { _id: null, total: { $sum: { $ifNull: ['$returnInfo.requestedAmount', 0] } } } },
         ],
-        // Only sum approvedGross for returns whose decisions are final.
-        // items_reviewed and plea_submitted are excluded — values there are
-        // preliminary and the customer can still dispute them.
         totalApprovedAmount: [
           { $match: { 'returnInfo.status': { $in: FINALISED_STATUSES } } },
           { $group: { _id: null, total: { $sum: { $ifNull: ['$returnInfo.approvedGross', 0] } } } },
         ],
-        // Same finalised-only gate for rejectedGross.
         totalRejectedAmount: [
           { $match: { 'returnInfo.status': { $in: FINALISED_STATUSES } } },
           { $group: { _id: null, total: { $sum: { $ifNull: ['$returnInfo.rejectedGross', 0] } } } },
@@ -448,10 +432,6 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // FIX: orderItems[].price stores the discounted unit price stamped at
-  // checkout by initializePaymentController. Use it directly — no discount
-  // rate recalculation needed, and no risk of spreading a category-scoped
-  // discount onto items that were never eligible for it.
   const orderItemMap = new Map(
     order.orderItems.map((i) => {
       const id = i.product?._id ?? i.product;
@@ -501,67 +481,64 @@ export const requestReturn = handleAsyncError(async (req, res, next) => {
 // ============================================
 // ADMIN REVIEWS RETURN — per-item decisions (first round)
 // Status: requested → items_reviewed
-// Sets 48h plea window for customer to accept or dispute.
 // @route  PUT /api/v1/admin/orders/:id/return/review
 // @access Private/Admin
 // ============================================
 export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
   const order = req.order;
- 
+
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
- 
- itemDecisions.forEach((decision) => {
-  const item = order.returnInfo.itemsToReturn.find((i) => {
-    const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
-    return itemProductId === decision.productId.toString();
-  });
-  if (!item) return;
 
-  const totalQty = item.quantity ?? 1;
+  itemDecisions.forEach((decision) => {
+    const item = order.returnInfo.itemsToReturn.find((i) => {
+      const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
+      return itemProductId === decision.productId.toString();
+    });
+    if (!item) return;
 
-  if (decision.decision === 'approved') {
-    const approved        = Math.min(Math.max(1, decision.approvedQuantity ?? totalQty), totalQty);
-    item.approvedQuantity = approved;
-    item.adminDecision    = 'approved';
+    const totalQty = item.quantity ?? 1;
 
-    // If fewer than the full qty were approved, the remainder is auto-rejected.
-    // Persist a rejection reason for those units so the customer and downstream
-    // logic know why they were not credited.
-    if (approved < totalQty) {
-      item.adminRejectionReason = decision.rejectionReason
-        ? sanitizeHtml.sanitize(String(decision.rejectionReason))
-        : 'Partial quantity approved — remaining units not accepted';
+    if (decision.decision === 'approved') {
+      const approved        = Math.min(Math.max(1, decision.approvedQuantity ?? totalQty), totalQty);
+      item.approvedQuantity = approved;
+      item.adminDecision    = 'approved';
+
+      if (approved < totalQty) {
+        item.adminRejectionReason = decision.rejectionReason
+          ? sanitizeHtml.sanitize(String(decision.rejectionReason))
+          : 'Partial quantity approved — remaining units not accepted';
+      } else {
+        item.adminRejectionReason = '';
+      }
     } else {
-      item.adminRejectionReason = '';
-    }
-  } else {
-    // decision === 'rejected'
-    item.adminDecision        = 'rejected';
-    item.adminRejectionReason = sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''));
+      // decision === 'rejected'
+      item.adminDecision        = 'rejected';
+      item.adminRejectionReason = sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''));
 
-    const rejected         = Math.min(Math.max(1, decision.rejectedQuantity ?? totalQty), totalQty);
-    const implicitApproved = totalQty - rejected;
-    item.approvedQuantity  = implicitApproved > 0 ? implicitApproved : null;
-  }
-});
- 
-  // ── 2. Build fallback price map from order items ───────────────────────────
+      const rejected         = Math.min(Math.max(1, decision.rejectedQuantity ?? totalQty), totalQty);
+      const implicitApproved = totalQty - rejected;
+      // For a fully rejected item implicitApproved=0 — store 0 not null so
+      // the universal breakdown formulas work consistently everywhere.
+      item.approvedQuantity  = implicitApproved > 0 ? implicitApproved : 0;
+    }
+  });
+
+  // ── Price map ────────────────────────────────────────────────────────────
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
       const pid = i.product?._id?.toString() ?? i.product?.toString();
       return [pid, i.price ?? 0];
     })
   );
- 
-  // ── 3. Price resolver ─────────────────────────────────────────────────────
+
   const resolvePrice = (item) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString();
     if (item.price != null && item.price > 0) return item.price;
     return orderItemPriceMap.get(pid) ?? null;
   };
- 
-  // ── 4. Guard: items with approved units must have a resolvable price ───────
+
+  // Guard: items with approved units must have a resolvable price
   const missingProductIds = [];
   for (const item of order.returnInfo.itemsToReturn) {
     const aq = item.approvedQuantity ?? 0;
@@ -575,20 +552,26 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
       400
     ));
   }
- 
-  // ── 5. Compute breakdown ───────────────────────────────────────────────────
- 
+
+  // ── Universal breakdown formulas ─────────────────────────────────────────
+  //
+  // requestedGross: full requested quantity × price for every item
   const requestedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
     return sum + (resolvePrice(i) ?? 0) * (i.quantity ?? 1);
   }, 0);
- 
 
+  // approvedGross: approved quantity × price for every item
+  // Uses approvedQuantity directly — works for full approvals, partial approvals,
+  // and full rejections (approvedQuantity=0).
   const approvedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
     const aq = i.approvedQuantity ?? 0;
     if (aq <= 0) return sum;
     return sum + (resolvePrice(i) ?? 0) * aq;
   }, 0);
- 
+
+  // rejectedGross: (quantity - approvedQuantity) × price for every item
+  // Works universally: full reject (aq=0 → all), partial approve (aq<qty → remainder),
+  // full approve (aq=qty → 0, skipped).
   const rejectedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
     const totalQty    = i.quantity ?? 1;
     const approvedQty = i.approvedQuantity ?? 0;
@@ -596,41 +579,39 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
     if (rejectedQty <= 0) return sum;
     return sum + (resolvePrice(i) ?? 0) * rejectedQty;
   }, 0);
- 
-  
+
   const orderSubtotal    = order.itemPrice ?? 0;
   const totalDiscount    = order.discounts?.totalDiscount ?? 0;
   const discountRate     = orderSubtotal > 0 ? totalDiscount / orderSubtotal : 0;
   const approvedDiscount = Math.round(discountRate * approvedGross * 100) / 100;
- 
+
   const shippingDeducted = order.shippingPrice ?? 0;
- 
+
   const discountValue = Math.max(
     0,
     Math.round((approvedGross - approvedDiscount - shippingDeducted) * 100) / 100
   );
- 
-  // ── 6. Persist breakdown + status transition ───────────────────────────────
+
   order.returnInfo.requestedGross   = Math.round(requestedGross   * 100) / 100;
   order.returnInfo.approvedGross    = Math.round(approvedGross    * 100) / 100;
   order.returnInfo.rejectedGross    = Math.round(rejectedGross    * 100) / 100;
   order.returnInfo.approvedDiscount = approvedDiscount;
   order.returnInfo.shippingDeducted = shippingDeducted;
   order.returnInfo.discountValue    = discountValue;
- 
+
   order.returnInfo.status     = 'items_reviewed';
   order.returnInfo.approvedAt = new Date();
   order.returnInfo.approvedBy = req.user._id;
- 
+
   const pleaDeadline = new Date();
   pleaDeadline.setHours(pleaDeadline.getHours() + 48);
   order.returnInfo.pleaDeadline = pleaDeadline;
- 
+
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
- 
+
   const approvedCount = itemDecisions.filter((d) => d.decision === 'approved').length;
   const rejectedCount = itemDecisions.filter((d) => d.decision === 'rejected').length;
- 
+
   order.addReturnTimeline(
     'items_reviewed',
     `Admin reviewed items: ${approvedCount} approved, ${rejectedCount} rejected`,
@@ -640,21 +621,20 @@ export const reviewReturnRequest = handleAsyncError(async (req, res, next) => {
   order.addAuditEntry('items_reviewed', req.user._id, {
     approvedCount, rejectedCount, discountValue, approvedGross, shippingDeducted,
   });
- 
+
   await order.save();
   invalidateReturnCaches('stats');
- 
+
   return res.status(200).json({
     success:    true,
     message:    `Items reviewed. ${approvedCount} approved, ${rejectedCount} rejected. Customer has 48 hours to respond.`,
     returnInfo: order.returnInfo,
   });
 });
- 
+
 // ============================================
-// CUSTOMER ACCEPTS DECISIONS (without disputing)
+// CUSTOMER ACCEPTS DECISIONS
 // Status: items_reviewed → approved
-// Customer accepts admin decisions and return proceeds to shipping.
 // @route  POST /api/v1/orders/:id/return/accept-decisions
 // @access Private/Customer
 // ============================================
@@ -698,9 +678,9 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
   const { pleaDescription, pleaItems = [] } = req.body;
   const userId  = req.user._id;
   const order   = req.order;
- 
+
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
- 
+
   const hasRejectedItem = order.returnInfo.itemsToReturn.some(
     (i) => i.adminDecision === 'rejected'
   );
@@ -710,216 +690,247 @@ export const submitPlea = handleAsyncError(async (req, res, next) => {
       400
     ));
   }
- 
-  // Build a map of productId → pleaQuantity from the customer's submission.
-  // pleaItems = [{ productId, pleaQuantity }]
-  // If a rejected item is not included in pleaItems, its full rejected quantity is appealed by default.
+
   const pleaItemMap = new Map(
     pleaItems.map((p) => [p.productId.toString(), p.pleaQuantity])
   );
- 
-  // Stamp pleaQuantity on each rejected item.
-  // Non-appealed units (item.quantity - pleaQuantity) are silently accepted as rejected.
+
   order.returnInfo.itemsToReturn.forEach((item) => {
     if (item.adminDecision !== 'rejected') return;
- 
+
     const pid = item.product?._id?.toString() ?? item.product?.toString();
     const requested = pleaItemMap.get(pid);
- 
+
     if (requested != null) {
-      // Clamp: must be at least 1 and at most the full rejected quantity
       item.pleaQuantity = Math.min(Math.max(1, Math.floor(requested)), item.quantity ?? 1);
     } else {
-      // Customer didn't specify — appeal all rejected units by default
       item.pleaQuantity = item.quantity ?? 1;
     }
   });
- 
+
   order.returnInfo.pleaInfo = {
     pleaDescription:  sanitizeHtml.sanitize(String(pleaDescription)),
     pleaSubmittedAt:  new Date(),
     pleaDocuments:    order.returnInfo.pleaInfo?.pleaDocuments ?? [],
   };
- 
+
   order.returnInfo.status       = 'plea_submitted';
   order.returnInfo.pleaAttempts = (order.returnInfo.pleaAttempts ?? 0) + 1;
- 
+
   const adminResponseDeadline = new Date();
   adminResponseDeadline.setHours(adminResponseDeadline.getHours() + 48);
   order.returnInfo.pleaDeadline = adminResponseDeadline;
- 
+
   order.addReturnTimeline('plea_submitted', 'Customer submitted a plea for reconsideration', userId);
   order.addAuditEntry('plea_submitted', userId, { pleaAttempts: order.returnInfo.pleaAttempts });
- 
+
   await order.save();
   invalidateReturnCaches('stats');
- 
+
   return res.status(200).json({
     success:    true,
     message:    'Plea submitted successfully. The admin will review your plea within 48 hours.',
     returnInfo: order.returnInfo,
   });
 });
- 
 
 // ============================================
 // ADMIN RESOLVES PLEA — second-round per-item decisions
 // Status: plea_submitted → approved
+//
+// CRITICAL FIX: All breakdown formulas now use the universal approach
+// (approvedQuantity-based) rather than filtering by adminDecision.
+// This correctly handles every edge case:
+//
+//   1. Plea approved for all contested units
+//      approvedQty = lockedR1 + pleaApproved
+//      rejectedQty = 0
+//
+//   2. Plea approved for some, silent remainder rejected by customer
+//      approvedQty = lockedR1 + pleaApproved (partial of plead units)
+//      rejectedQty = quantity - approvedQty (includes silent + admin-rejected)
+//
+//   3. Plea fully rejected, item had round-1 partial approval
+//      adminDecision='rejected', approvedQty=lockedR1 (preserved)
+//      approvedGross still credits the lockedR1 units
+//      rejectedGross correctly counts only quantity - lockedR1
+//
+//   4. Plea fully rejected, item had no prior approvals
+//      adminDecision='rejected', approvedQty=0
+//      approvedGross skips this item (aq=0)
+//      rejectedGross counts full quantity
+//
 // @route  PUT /api/v1/admin/orders/:id/return/plea-review
 // @access Private/Admin
 // ============================================
-
 export const resolveAfterPlea = handleAsyncError(async (req, res, next) => {
   const { itemDecisions, adminNote = '' } = req.body;
   const order = req.order;
- 
+
   if ((order.returnInfo.pleaAttempts ?? 0) === 0) {
     return next(new HandleError(
       'Cannot resolve plea: no plea has been submitted by the customer for this return.',
       400
     ));
   }
- 
+
   const sanitizedNote = adminNote ? sanitizeHtml.sanitize(String(adminNote)) : '';
- 
-  // ── 1. Apply second-round decisions ───────────────────────────────────────
 
-itemDecisions.forEach((decision) => {
-  const item = order.returnInfo.itemsToReturn.find((i) => {
-    const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
-    return itemProductId === decision.productId.toString();
-  });
-  if (!item) return;
+  // ── 1. Apply second-round decisions ─────────────────────────────────────
+  itemDecisions.forEach((decision) => {
+    const item = order.returnInfo.itemsToReturn.find((i) => {
+      const itemProductId = i.product?._id?.toString() ?? i.product?.toString();
+      return itemProductId === decision.productId.toString();
+    });
+    if (!item) return;
 
-  if (decision.decision === 'approved') {
-    const maxApprovable   = item.pleaQuantity ?? item.approvedQuantity ?? item.quantity ?? 1;
-    const adminRequested  = decision.approvedQuantity ?? maxApprovable;
-    item.approvedQuantity = Math.min(Math.max(1, adminRequested), maxApprovable);
-    item.adminDecision    = 'approved';
+    if (decision.decision === 'approved') {
+      const maxApprovable   = item.pleaQuantity ?? item.approvedQuantity ?? item.quantity ?? 1;
+      const adminRequested  = decision.approvedQuantity ?? maxApprovable;
+      item.approvedQuantity = Math.min(Math.max(1, adminRequested), item.quantity ?? 1);
+      item.adminDecision    = 'approved';
 
-    // Same partial-approve rule as first round
-    if (item.approvedQuantity < (item.quantity ?? 1)) {
-      item.adminRejectionReason = decision.rejectionReason
-        ? sanitizeHtml.sanitize(String(decision.rejectionReason))
-        : 'Partial quantity approved — remaining units not accepted';
+      if (item.approvedQuantity < (item.quantity ?? 1)) {
+        item.adminRejectionReason = decision.rejectionReason
+          ? sanitizeHtml.sanitize(String(decision.rejectionReason))
+          : 'Partial quantity approved — remaining units not accepted';
+      } else {
+        item.adminRejectionReason = '';
+      }
     } else {
-      item.adminRejectionReason = '';
+      // decision === 'rejected'
+      // FIX: Do NOT set approvedQuantity to null. The frontend sends
+      // approvedQuantity in the payload for rejected plea decisions
+      // representing the round-1 locked units that must be preserved.
+      // For a fully-rejected item (no round-1 approvals) this will be 0.
+      // Setting null here would destroy the round-1 approved unit count
+      // for partially-approved items, making approvedGross miss those units
+      // and rejectedGross double-count them.
+      item.adminDecision        = 'rejected';
+      item.adminRejectionReason = sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''));
+      // Preserve the round-1 approved quantity sent by the frontend.
+      // decision.approvedQuantity = lockedR1 for partially-approved items,
+      // 0 for fully-rejected items with no prior approvals.
+      item.approvedQuantity     = decision.approvedQuantity ?? 0;
     }
-  } else {
-    item.adminDecision        = 'rejected';
-    item.adminRejectionReason = sanitizeHtml.sanitize(String(decision.rejectionReason ?? ''));
-    item.approvedQuantity     = null;
-  }
-});
- 
-  // ── 2. Build fallback price map from order items ───────────────────────────
+  });
+
+  // ── 2. Build fallback price map from order items ─────────────────────────
   const orderItemPriceMap = new Map(
     order.orderItems.map((i) => {
       const pid = i.product?._id?.toString() ?? i.product?.toString();
       return [pid, i.price ?? 0];
     })
   );
- 
-  // ── 3. Price resolver ─────────────────────────────────────────────────────
+
+  // ── 3. Price resolver ────────────────────────────────────────────────────
   const resolvePrice = (item) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString();
     if (item.price != null && item.price > 0) return item.price;
     return orderItemPriceMap.get(pid) ?? 0;
   };
- 
-  // ── 4. Compute breakdown across ALL items (locked + newly decided) ─────────
- 
-  // requestedGross — original requested quantity unchanged
+
+  // ── 4. Universal breakdown formulas ─────────────────────────────────────
+  //
+  // These formulas are adminDecision-agnostic — they operate entirely on
+  // approvedQuantity vs quantity. This correctly handles all edge cases:
+  //
+  //   • Full approval:  aq = qty   → approvedGross += full, rejectedGross += 0
+  //   • Full rejection: aq = 0     → approvedGross += 0,    rejectedGross += full
+  //   • Partial:        aq < qty   → approvedGross += aq,   rejectedGross += remainder
+  //   • Plea rejected, round-1 partial: aq = lockedR1 (preserved above)
+  //       approvedGross += lockedR1 × price  ✓ credits round-1 approved units
+  //       rejectedGross += (qty-lockedR1) × price  ✓ only counts truly rejected units
+
+  // requestedGross — full requested quantity regardless of decisions
   const requestedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
     return sum + resolvePrice(i) * (i.quantity ?? 1);
   }, 0);
- 
-  // approvedGross — all currently approved items × their final approvedQuantity
-  const approvedGross = order.returnInfo.itemsToReturn
-    .filter((i) => i.adminDecision === 'approved')
-    .reduce((sum, i) => {
-      return sum + resolvePrice(i) * (i.approvedQuantity ?? i.quantity ?? 1);
-    }, 0);
- 
-  // rejectedGross — rejected items × full requested quantity
-  // (includes both silently-accepted-rejected units and admin-rejected plea units)
-  const rejectedGross = order.returnInfo.itemsToReturn
-    .filter((i) => i.adminDecision === 'rejected')
-    .reduce((sum, i) => {
-      return sum + resolvePrice(i) * (i.quantity ?? 1);
-    }, 0);
- 
+
+  // approvedGross — sum of approvedQuantity × price for ALL items
+  // (adminDecision label is irrelevant — only the quantity count matters)
+  const approvedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
+    const aq = i.approvedQuantity ?? 0;
+    if (aq <= 0) return sum;
+    return sum + resolvePrice(i) * aq;
+  }, 0);
+
+  // rejectedGross — sum of (quantity - approvedQuantity) × price for ALL items
+  // (covers full rejections, partial approvals, and plea-rejected partial approvals)
+  const rejectedGross = order.returnInfo.itemsToReturn.reduce((sum, i) => {
+    const totalQty    = i.quantity ?? 1;
+    const approvedQty = i.approvedQuantity ?? 0;
+    const rejectedQty = totalQty - approvedQty;
+    if (rejectedQty <= 0) return sum;
+    return sum + resolvePrice(i) * rejectedQty;
+  }, 0);
+
   // approvedDiscount — proportional share of order-level discount on approvedGross
   const orderSubtotal    = order.itemPrice ?? 0;
   const totalDiscount    = order.discounts?.totalDiscount ?? 0;
   const discountRate     = orderSubtotal > 0 ? totalDiscount / orderSubtotal : 0;
   const approvedDiscount = Math.round(discountRate * approvedGross * 100) / 100;
- 
-  // shippingDeducted — always deduct full shipping
+
+  // shippingDeducted — always deduct full shipping cost
   const shippingDeducted = order.shippingPrice ?? 0;
- 
+
   // discountValue — final net credit, floored at 0
   const discountValue = Math.max(
     0,
     Math.round((approvedGross - approvedDiscount - shippingDeducted) * 100) / 100
   );
- 
-  // ── 5. Persist breakdown + status transition ───────────────────────────────
+
+  // ── 5. Persist breakdown + status transition ─────────────────────────────
   order.returnInfo.requestedGross   = Math.round(requestedGross   * 100) / 100;
   order.returnInfo.approvedGross    = Math.round(approvedGross    * 100) / 100;
   order.returnInfo.rejectedGross    = Math.round(rejectedGross    * 100) / 100;
   order.returnInfo.approvedDiscount = approvedDiscount;
   order.returnInfo.shippingDeducted = shippingDeducted;
   order.returnInfo.discountValue    = discountValue;
- 
+
   order.returnInfo.status       = 'approved';
   order.returnInfo.approvedAt   = new Date();
   order.returnInfo.pleaDeadline = null;
- 
+
   if (sanitizedNote) order.returnInfo.adminNote = sanitizedNote;
- 
-  const approvedCount = order.returnInfo.itemsToReturn.filter((i) => i.adminDecision === 'approved').length;
-  const rejectedCount = order.returnInfo.itemsToReturn.filter((i) => i.adminDecision === 'rejected').length;
- 
+
+  // Count for timeline — based on whether any units were approved per item
+  const approvedCount = order.returnInfo.itemsToReturn.filter((i) => (i.approvedQuantity ?? 0) > 0).length;
+  const rejectedCount = order.returnInfo.itemsToReturn.filter((i) => {
+    const aq = i.approvedQuantity ?? 0;
+    return aq < (i.quantity ?? 1);
+  }).length;
+
   order.addReturnTimeline(
     'plea_resolved',
-    `Plea reviewed. Final decisions: ${approvedCount} approved, ${rejectedCount} rejected. Awaiting customer shipment.`,
+    `Plea reviewed. Final decisions: ${approvedCount} item(s) have approved units, ${rejectedCount} item(s) have rejected units. Awaiting customer shipment.`,
     req.user._id,
-    { approvedCount, rejectedCount, discountValue, approvedGross, shippingDeducted, isFinalRound: true }
+    { approvedCount, rejectedCount, discountValue, approvedGross, rejectedGross, shippingDeducted, isFinalRound: true }
   );
   order.addAuditEntry('plea_resolved', req.user._id, {
-    approvedCount, rejectedCount, discountValue, approvedGross, shippingDeducted,
+    approvedCount, rejectedCount, discountValue, approvedGross, rejectedGross, shippingDeducted,
   });
- 
+
   await order.save();
   invalidateReturnCaches('stats');
- 
+
   return res.status(200).json({
     success:    true,
-    message:    `Plea resolved. ${approvedCount} items approved, ${rejectedCount} rejected. Customer will now ship items back.`,
+    message:    `Plea resolved. ${approvedCount} item(s) have approved units, ${rejectedCount} item(s) have rejected units. Customer will now ship items back.`,
     returnInfo: order.returnInfo,
   });
 });
- 
+
 // ============================================
 // CUSTOMER CONFIRMS SHIPMENT
 // Status: approved → in_transit
-//
-// This is the correct real-world flow. The customer physically packs
-// items, drops them at a courier, and confirms here with optional
-// courier name and tracking number. Admin should NOT set in_transit —
-// they have no involvement at this stage.
-//
-// The timer is completely done by the time approved is reached
-// (pleaDeadline is null). Customer can take as long as needed to ship.
-//
 // @route  POST /api/v1/orders/:id/return/confirm-shipped
 // @access Private/Customer
 // ============================================
 export const confirmShipped = handleAsyncError(async (req, res, next) => {
   const { courierName, trackingNumber } = req.body;
   const userId = req.user._id;
-  const order  = req.order; // set by canConfirmShipped middleware
+  const order  = req.order;
 
   try { assertOrderOwner(order, userId, req.user.role); } catch (e) { return next(e); }
 
@@ -957,7 +968,6 @@ export const confirmShipped = handleAsyncError(async (req, res, next) => {
 // ============================================
 // ADMIN GENERATES DISCOUNT CODE
 // Status: inspected → awaiting_discount
-// The discount creation page handles awaiting_discount → completed.
 // @route  POST /api/v1/admin/orders/:id/return/generate-discount
 // @access Private/Admin
 // ============================================
@@ -983,11 +993,11 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
   invalidateReturnCaches('status');
 
   const approvedItems = order.returnInfo.itemsToReturn
-    .filter((i) => i.adminDecision === 'approved')
+    .filter((i) => (i.approvedQuantity ?? 0) > 0)
     .map((i) => ({
       productId:  i.product?._id ?? i.product,
       name:       i.product?.name ?? 'Unknown Product',
-      quantity:   i.quantity ?? 1,
+      quantity:   i.approvedQuantity ?? i.quantity ?? 1,
       unitPrice:  i.product?.price ?? i.price ?? 0,
       image:      i.product?.images?.[0]?.url ?? null,
       reason:     i.reason ?? '',
@@ -1016,9 +1026,6 @@ export const generateDiscountCode = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // UPDATE RETURN STATUS (Admin)
-// Handles: received → inspected and awaiting_discount → completed.
-// NOTE: approved → in_transit is now CUSTOMER-triggered via confirmShipped.
-//       Admin cannot set in_transit directly.
 // @route  PUT /api/v1/admin/orders/:id/return/status
 // @access Private/Admin
 // ============================================
@@ -1032,7 +1039,6 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No return request found', 400));
   }
 
-  // Hard guard: in_transit is customer-triggered only
   if (status === 'in_transit') {
     return next(new HandleError(
       'Status in_transit is set by the customer when they confirm shipment. Use POST /orders/:id/return/confirm-shipped.',
@@ -1061,8 +1067,12 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
   if (status === 'completed') {
     order.returnInfo.completedAt = new Date();
 
+    // FIX: restore stock using approvedQuantity for ALL items where
+    // approvedQuantity > 0, regardless of adminDecision label.
+    // This correctly credits stock for plea-resolved partially-approved items
+    // whose adminDecision may be 'rejected' but still have approved units.
     const restorableItems = order.returnInfo.itemsToReturn.filter(
-      (item) => item.adminDecision === 'approved'
+      (item) => (item.approvedQuantity ?? 0) > 0
     );
 
     if (restorableItems.length > 0) {
@@ -1072,10 +1082,10 @@ export const updateReturnStatus = handleAsyncError(async (req, res, next) => {
           update: [{
             $set: {
               'inventory.stock': {
-                $add: [{ $ifNull: ['$inventory.stock', 0] }, item.approvedQuantity ?? item.quantity],
+                $add: [{ $ifNull: ['$inventory.stock', 0] }, item.approvedQuantity],
               },
               stock: {
-                $add: [{ $ifNull: ['$stock', 0] }, item.approvedQuantity ?? item.quantity],
+                $add: [{ $ifNull: ['$stock', 0] }, item.approvedQuantity],
               },
             },
           }],
