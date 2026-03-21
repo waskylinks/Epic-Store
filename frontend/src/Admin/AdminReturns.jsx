@@ -850,6 +850,22 @@ const AdminReturns = () => {
   const handlePleaDecisionChange = useCallback((pid, field, value) =>
     setPleaDecisions((p) => ({ ...p, [pid]: { ...p[pid], [field]: value } })), []);
 
+  // buildDecisionsArray serialises the admin's decisions into the array the
+  // backend expects. Two critical fixes vs the original:
+  //
+  // FIX A — 'approved' in plea round:
+  //   pleaApproved is the number of contested units the admin approves.
+  //   lockedR1 is the number of units already approved in round 1 (from r1Map).
+  //   Total approvedQuantity = pleaApproved + lockedR1, capped at item.quantity.
+  //   This was already correct.
+  //
+  // FIX B — 'rejected' in plea round (NEW):
+  //   When the admin rejects a plea for a partially-approved item, the round-1
+  //   approved units (lockedR1) must be preserved. Without sending approvedQuantity
+  //   for rejected decisions, the backend would set it to null and lose those units.
+  //   Fix: always send approvedQuantity = lockedR1 for rejected plea decisions.
+  //   For round-1 review (isPlea=false), rejected items have no prior approvals,
+  //   so approvedQuantity is derived server-side from quantity - rejectedQuantity.
   const buildDecisionsArray = (decisionsMap, items, isPlea = false, r1Map = new Map()) =>
     items.map((item, idx) => {
       const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
@@ -866,6 +882,13 @@ const AdminReturns = () => {
         base.approvedQuantity = Math.min(pleaApproved + lockedR1, maxQty);
       } else if (dec.decision === 'rejected') {
         base.rejectedQuantity = Math.min(dec.rejectedQuantity ?? maxQty, maxQty);
+        // FIX: for plea-round rejections on partially-approved items, send the
+        // round-1 locked units as approvedQuantity so the backend preserves them.
+        // Backend resolveAfterPlea now reads decision.approvedQuantity for rejected
+        // decisions instead of setting null.
+        if (isPlea) {
+          base.approvedQuantity = r1Map.get(pid) ?? 0;
+        }
       }
       return base;
     });
@@ -1794,44 +1817,158 @@ const AdminReturns = () => {
                     </>
                   )}
 
-                  {/* ── inspected: generate button ── */}
-                  {retStatus === 'inspected' && (
-                    <>
-                      <div className="rt-info-banner rt-info-banner--info">
-                        <Discount style={{ fontSize: 16, flexShrink: 0 }} />
-                        <span>Items inspected and verified. Review the credit breakdown below then generate the discount code.</span>
-                      </div>
-                      <CreditBreakdown returnInfo={returnInfo} />
-                      {approvedItems.length > 0 && (
-                        <div className="rt-approved-summary" style={{ marginTop: 14 }}>
-                          <span className="rt-form-label">Approved Items:</span>
-                          {approvedItems.map((item, idx) => {
-                            const pid  = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-                            const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
-                            const qty  = item.approvedQuantity ?? item.quantity ?? 1;
-                            return (
-                              <div key={pid} className="rt-approved-summary-item">
-                                <CheckCircle style={{ fontSize: 13, color: '#10B981' }} />
-                                <span>{name}</span>
-                                <span className="rt-td-muted">×{qty}</span>
-                                {item.price && <span className="rt-td-money">{fmtCurrency((item.price ?? 0) * qty)}</span>}
-                              </div>
-                            );
-                          })}
+                  {/* ── inspected: per-item breakdown + generate button ── */}
+                  {retStatus === 'inspected' && (() => {
+                    const allItems = returnInfo.itemsToReturn ?? [];
+
+                    return (
+                      <>
+                        <div className="rt-info-banner rt-info-banner--info">
+                          <Discount style={{ fontSize: 16, flexShrink: 0 }} />
+                          <span>
+                            Items inspected and verified. Review the per-item breakdown carefully
+                            before generating the discount code — once generated the credit value is locked.
+                          </span>
                         </div>
-                      )}
-                      <button
-                        type="button"
-                        className="rt-btn rt-btn--generate-discount"
-                        style={{ marginTop: 16 }}
-                        onClick={handleGenerateDiscount}
-                        disabled={discountCodeLoading}
-                      >
-                        <Discount style={{ fontSize: 16, marginRight: 6 }} />
-                        {discountCodeLoading ? 'Initiating…' : 'Generate Discount Code'}
-                      </button>
-                    </>
-                  )}
+
+                        {/* ── Per-item breakdown table ── */}
+                        {allItems.length > 0 && (
+                          <>
+                            <div className="rt-section" style={{ margin: '14px 0 10px' }}>
+                              <span className="rt-section-text">Item Breakdown</span>
+                              <span className="rt-section-line" />
+                            </div>
+                            <div className="rt-item-breakdown-table">
+                              <div className="rt-ibt-header">
+                                <span className="rt-ibt-col rt-ibt-col--name">Item</span>
+                                <span className="rt-ibt-col rt-ibt-col--req">Requested</span>
+                                <span className="rt-ibt-col rt-ibt-col--approved">Approved</span>
+                                <span className="rt-ibt-col rt-ibt-col--rejected">Rejected</span>
+                              </div>
+                              {allItems.map((item, idx) => {
+                                const pid          = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+                                const name         = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+                                const image        = item.product?.images?.[0]?.url ?? item.image ?? null;
+                                const totalQty     = item.quantity ?? 1;
+                                const approvedQty  = item.approvedQuantity ?? 0;
+                                const rejectedQty  = totalQty - approvedQty;
+                                const unitPrice    = item.price ?? item.product?.price ?? 0;
+                                const approvedAmt  = approvedQty * unitPrice;
+                                const rejectedAmt  = rejectedQty * unitPrice;
+                                const isFullApproved  = approvedQty >= totalQty;
+                                const isFullRejected  = approvedQty === 0;
+                                const isPartial       = !isFullApproved && !isFullRejected;
+
+                                return (
+                                  <div key={pid} className={`rt-ibt-row${isFullApproved ? ' rt-ibt-row--approved' : isFullRejected ? ' rt-ibt-row--rejected' : ' rt-ibt-row--partial'}`}>
+                                    {/* Item name + image */}
+                                    <div className="rt-ibt-col rt-ibt-col--name">
+                                      <div className="rt-ibt-item-info">
+                                        {image && <img src={image} alt={name} className="rt-ibt-img" />}
+                                        <div className="rt-ibt-meta">
+                                          <span className="rt-ibt-name">{name}</span>
+                                          {unitPrice > 0 && (
+                                            <span className="rt-ibt-unit-price">{fmtCurrency(unitPrice)} each</span>
+                                          )}
+                                          {item.adminRejectionReason && rejectedQty > 0 && (
+                                            <span className="rt-ibt-rejection-note">{item.adminRejectionReason}</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Requested qty */}
+                                    <div className="rt-ibt-col rt-ibt-col--req">
+                                      <span className="rt-ibt-qty">{totalQty}</span>
+                                      {unitPrice > 0 && (
+                                        <span className="rt-ibt-subtotal">{fmtCurrency(totalQty * unitPrice)}</span>
+                                      )}
+                                    </div>
+
+                                    {/* Approved qty + subtotal */}
+                                    <div className="rt-ibt-col rt-ibt-col--approved">
+                                      {approvedQty > 0 ? (
+                                        <>
+                                          <span className="rt-ibt-qty rt-ibt-qty--approved">
+                                            <CheckCircle style={{ fontSize: 11 }} />
+                                            {approvedQty}
+                                          </span>
+                                          {unitPrice > 0 && (
+                                            <span className="rt-ibt-subtotal rt-ibt-subtotal--approved">
+                                              {fmtCurrency(approvedAmt)}
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className="rt-ibt-none">—</span>
+                                      )}
+                                    </div>
+
+                                    {/* Rejected qty + subtotal */}
+                                    <div className="rt-ibt-col rt-ibt-col--rejected">
+                                      {rejectedQty > 0 ? (
+                                        <>
+                                          <span className="rt-ibt-qty rt-ibt-qty--rejected">
+                                            <Cancel style={{ fontSize: 11 }} />
+                                            {rejectedQty}
+                                          </span>
+                                          {unitPrice > 0 && (
+                                            <span className="rt-ibt-subtotal rt-ibt-subtotal--rejected">
+                                              {fmtCurrency(rejectedAmt)}
+                                            </span>
+                                          )}
+                                        </>
+                                      ) : (
+                                        <span className="rt-ibt-none">—</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+
+                              {/* Totals footer row */}
+                              <div className="rt-ibt-footer">
+                                <div className="rt-ibt-col rt-ibt-col--name">
+                                  <span className="rt-ibt-footer-label">Totals</span>
+                                </div>
+                                <div className="rt-ibt-col rt-ibt-col--req">
+                                  <span className="rt-ibt-footer-val">
+                                    {fmtCurrency(returnInfo.requestedGross ?? 0)}
+                                  </span>
+                                </div>
+                                <div className="rt-ibt-col rt-ibt-col--approved">
+                                  <span className="rt-ibt-footer-val rt-ibt-footer-val--approved">
+                                    {fmtCurrency(returnInfo.approvedGross ?? 0)}
+                                  </span>
+                                </div>
+                                <div className="rt-ibt-col rt-ibt-col--rejected">
+                                  <span className="rt-ibt-footer-val rt-ibt-footer-val--rejected">
+                                    {fmtCurrency(returnInfo.rejectedGross ?? 0)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </>
+                        )}
+
+                        {/* Credit breakdown showing the deductions */}
+                        <div style={{ marginTop: 14 }}>
+                          <CreditBreakdown returnInfo={returnInfo} />
+                        </div>
+
+                        <button
+                          type="button"
+                          className="rt-btn rt-btn--generate-discount"
+                          style={{ marginTop: 16 }}
+                          onClick={handleGenerateDiscount}
+                          disabled={discountCodeLoading}
+                        >
+                          <Discount style={{ fontSize: 16, marginRight: 6 }} />
+                          {discountCodeLoading ? 'Initiating…' : 'Generate Discount Code'}
+                        </button>
+                      </>
+                    );
+                  })()}
 
                   {/* ── approved: waiting for customer shipment ── */}
                   {retStatus === 'approved' && (

@@ -1366,3 +1366,247 @@
     font-size: 14px;
   }
 }
+
+/* ================================================================
+   ADMIN RETURNS — CSS ADDITIONS (Per-Item Breakdown Table)
+   Append these rules to the bottom of AdminReturns.css
+   ================================================================ */
+
+/* ── Item Breakdown Table ────────────────────────────────────────
+   Shown in the status tab when retStatus === 'inspected', before
+   the admin generates the discount code. Displays every return item
+   with its requested, approved, and rejected quantity and subtotal
+   so the admin can verify the calculation before locking it in.
+   ──────────────────────────────────────────────────────────────── */
+.rt-item-breakdown-table {
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  margin-bottom: 4px;
+}
+
+/* ── Header row ─────────────────────────────────────────────────── */
+.rt-ibt-header {
+  display: grid;
+  grid-template-columns: 1fr 90px 90px 90px;
+  gap: 0;
+  padding: 9px 14px;
+  background: #F9FAFB;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+.rt-ibt-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #6B7280;
+  padding: 0 4px;
+}
+
+.rt-ibt-col--name     { padding-left: 0; }
+.rt-ibt-col--req      { align-items: center; color: #374151; }
+.rt-ibt-col--approved { align-items: center; color: #065F46; }
+.rt-ibt-col--rejected { align-items: center; color: #991B1B; }
+
+/* ── Data rows ──────────────────────────────────────────────────── */
+.rt-ibt-row {
+  display: grid;
+  grid-template-columns: 1fr 90px 90px 90px;
+  gap: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid #F3F4F6;
+  align-items: center;
+  transition: background 0.1s;
+}
+
+.rt-ibt-row:last-of-type {
+  border-bottom: none;
+}
+
+.rt-ibt-row:hover {
+  background: #FAFAFA;
+}
+
+/* Row colour tints by outcome */
+.rt-ibt-row--approved { background: #F0FDF4; }
+.rt-ibt-row--approved:hover { background: #DCFCE7; }
+
+.rt-ibt-row--rejected { background: #FEF2F2; }
+.rt-ibt-row--rejected:hover { background: #FEE2E2; }
+
+.rt-ibt-row--partial  { background: #FFFBEB; }
+.rt-ibt-row--partial:hover  { background: #FEF3C7; }
+
+/* ── Item info cell ─────────────────────────────────────────────── */
+.rt-ibt-item-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rt-ibt-img {
+  width: 38px;
+  height: 38px;
+  object-fit: cover;
+  border-radius: 7px;
+  border: 1px solid #E5E7EB;
+  flex-shrink: 0;
+}
+
+.rt-ibt-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.rt-ibt-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rt-ibt-unit-price {
+  font-size: 11.5px;
+  color: #6B7280;
+  font-weight: 500;
+}
+
+.rt-ibt-rejection-note {
+  font-size: 11px;
+  color: #B91C1C;
+  font-weight: 500;
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
+/* ── Quantity + subtotal cells ───────────────────────────────────── */
+.rt-ibt-qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #374151;
+}
+
+.rt-ibt-qty--approved {
+  color: #065F46;
+}
+
+.rt-ibt-qty--rejected {
+  color: #991B1B;
+}
+
+.rt-ibt-subtotal {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #9CA3AF;
+  margin-top: 2px;
+}
+
+.rt-ibt-subtotal--approved {
+  color: #10B981;
+}
+
+.rt-ibt-subtotal--rejected {
+  color: #EF4444;
+}
+
+.rt-ibt-none {
+  font-size: 13px;
+  color: #D1D5DB;
+  font-weight: 600;
+}
+
+/* ── Footer totals row ───────────────────────────────────────────── */
+.rt-ibt-footer {
+  display: grid;
+  grid-template-columns: 1fr 90px 90px 90px;
+  gap: 0;
+  padding: 10px 14px;
+  background: #F9FAFB;
+  border-top: 2px solid #E5E7EB;
+  align-items: center;
+}
+
+.rt-ibt-footer-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #6B7280;
+}
+
+.rt-ibt-footer-val {
+  font-size: 13px;
+  font-weight: 800;
+  color: #111827;
+  text-align: center;
+}
+
+.rt-ibt-footer-val--approved {
+  color: #10B981;
+}
+
+.rt-ibt-footer-val--rejected {
+  color: #EF4444;
+}
+
+/* ── Responsive ──────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .rt-ibt-header,
+  .rt-ibt-row,
+  .rt-ibt-footer {
+    grid-template-columns: 1fr 72px 72px 72px;
+    padding: 10px 10px;
+  }
+
+  .rt-ibt-img {
+    width: 30px;
+    height: 30px;
+  }
+
+  .rt-ibt-name {
+    font-size: 12px;
+  }
+
+  .rt-ibt-qty {
+    font-size: 13px;
+  }
+
+  .rt-ibt-subtotal {
+    font-size: 10.5px;
+  }
+
+  .rt-ibt-rejection-note {
+    max-width: 120px;
+  }
+}
+
+@media (max-width: 380px) {
+  /* On very small screens hide the unit price and rejection note */
+  .rt-ibt-unit-price,
+  .rt-ibt-rejection-note {
+    display: none;
+  }
+
+  .rt-ibt-header,
+  .rt-ibt-row,
+  .rt-ibt-footer {
+    grid-template-columns: 1fr 60px 60px 60px;
+  }
+}
