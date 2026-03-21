@@ -1041,3 +1041,328 @@
 @media (max-width: 480px) {
   .rt-qty-stepper--reject { flex-wrap: wrap; }
 }
+
+
+/* ================================================================
+   ADMIN RETURNS — CSS ADDITIONS
+   Append these rules to the bottom of AdminReturns.css
+   All new classes use the existing rt- prefix.
+   ================================================================ */
+
+/* ── Step Indicator ─────────────────────────────────────────────
+   Renders the "Step 1 → Step 2" progress strip inside the
+   status tab for the inline discount generation flow.
+   ──────────────────────────────────────────────────────────────── */
+.rt-step-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 4px;
+}
+
+.rt-step-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.rt-step-dot {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #E5E7EB;
+  color: #9CA3AF;
+  font-size: 13px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 2px #E5E7EB;
+  transition: all 0.2s;
+}
+
+.rt-step-dot--active {
+  background: #6366F1;
+  color: #fff;
+  box-shadow: 0 0 0 2px #6366F1;
+}
+
+.rt-step-dot--done {
+  background: #10B981;
+  color: #fff;
+  box-shadow: 0 0 0 2px #10B981;
+}
+
+.rt-step-connector {
+  flex: 1;
+  height: 2px;
+  background: #E5E7EB;
+  margin-bottom: 22px;
+  min-width: 40px;
+  transition: background 0.3s;
+}
+
+.rt-step-connector--done {
+  background: #10B981;
+}
+
+.rt-step-label {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #9CA3AF;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+/* ── Discount Preview Panel ─────────────────────────────────────
+   Wrapper for the entire Step 1 confirm/preview area rendered
+   inside the status tab card body when retStatus === 'awaiting_discount'
+   and returnDiscountStep === 1.
+   ──────────────────────────────────────────────────────────────── */
+.rt-discount-preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Customer Strip ─────────────────────────────────────────────
+   Highlighted customer name + email row at the top of the preview.
+   Distinct from rt-metric-row because it has a coloured background.
+   ──────────────────────────────────────────────────────────────── */
+.rt-customer-strip {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #EEF2FF;
+  border: 1px solid #C7D2FE;
+  border-radius: 10px;
+  margin-top: 4px;
+}
+
+.rt-customer-strip-name {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #312E81;
+  line-height: 1.3;
+}
+
+.rt-customer-strip-email {
+  display: block;
+  font-size: 12px;
+  color: #4F46E5;
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+/* ── Preview Amount Value ────────────────────────────────────────
+   Larger, coloured amount display inside the metric-row for
+   the credit value — distinct from regular rt-metric-val.
+   ──────────────────────────────────────────────────────────────── */
+.rt-preview-value--amount {
+  font-size: 17px;
+  font-weight: 800;
+  color: #6366F1;
+  letter-spacing: -0.3px;
+}
+
+/* ── Discount Inline Error ───────────────────────────────────────
+   Inline error shown inside the Step 1 panel when
+   createCompensationDiscount or updateReturnStatus fails.
+   Distinct from rt-error-banner (which is page-level).
+   ──────────────────────────────────────────────────────────────── */
+.rt-discount-inline-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  border-radius: 8px;
+  color: #B91C1C;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.55;
+  margin-top: 4px;
+}
+
+/* ── Resume Banner ───────────────────────────────────────────────
+   Shown when retStatus === 'awaiting_discount' but returnDiscountStep
+   is 0 (page was refreshed mid-flow, returnDataForDiscount is null).
+   Also shown inside renderDiscountConfirmStep() when returnData is null.
+   ──────────────────────────────────────────────────────────────── */
+.rt-resume-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #FFFBEB;
+  border: 1px solid #FDE68A;
+  border-radius: 10px;
+  color: #92400E;
+  margin-bottom: 4px;
+}
+
+.rt-resume-banner svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ── Return Success Panel ────────────────────────────────────────
+   Step 2 — the success confirmation rendered inside the status tab
+   card body after both createCompensationDiscount and
+   updateReturnStatus({ status: 'completed' }) succeed.
+   ──────────────────────────────────────────────────────────────── */
+.rt-return-success-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.rt-return-success-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 20px 8px 4px;
+}
+
+.rt-return-success-icon-wrap {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #D1FAE5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(16, 185, 129, 0.25);
+  margin-bottom: 4px;
+}
+
+.rt-return-success-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #065F46;
+  margin: 0;
+}
+
+.rt-return-success-desc {
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.6;
+  max-width: 320px;
+  margin: 0;
+}
+
+/* ── Generated Code Box ─────────────────────────────────────────
+   The code display box in Step 2 success panel.
+   Shows the generated discount code in monospace with a copy button.
+   ──────────────────────────────────────────────────────────────── */
+.rt-code-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #EEF2FF;
+  border: 1.5px solid #C7D2FE;
+  border-radius: 12px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.rt-code-box-text {
+  font-family: 'SF Mono', 'Consolas', 'Liberation Mono', monospace;
+  font-size: 16px;
+  font-weight: 700;
+  color: #4F46E5;
+  letter-spacing: 0.08em;
+  word-break: break-all;
+  flex: 1;
+  text-align: left;
+}
+
+.rt-code-copy-btn {
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid #C7D2FE;
+  border-radius: 8px;
+  background: #fff;
+  color: #4F46E5;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s;
+  padding: 0;
+}
+
+.rt-code-copy-btn:hover {
+  background: #6366F1;
+  border-color: #6366F1;
+  color: #fff;
+}
+
+.rt-code-copy-btn--done {
+  background: #10B981 !important;
+  border-color: #10B981 !important;
+  color: #fff !important;
+}
+
+/* ── Customer Note ───────────────────────────────────────────────
+   Small grey note below the code box in Step 2.
+   ──────────────────────────────────────────────────────────────── */
+.rt-customer-note {
+  font-size: 12px;
+  color: #9CA3AF;
+  line-height: 1.55;
+  max-width: 320px;
+  margin: 0;
+  text-align: center;
+}
+
+/* ── Responsive additions ────────────────────────────────────────
+   Extend the existing breakpoints for the new elements.
+   ──────────────────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .rt-step-connector {
+    min-width: 20px;
+  }
+
+  .rt-customer-strip {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .rt-code-box {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .rt-code-copy-btn {
+    align-self: flex-end;
+  }
+
+  .rt-return-success-body {
+    padding: 14px 4px 4px;
+  }
+
+  .rt-return-success-icon-wrap {
+    width: 50px;
+    height: 50px;
+  }
+
+  .rt-code-box-text {
+    font-size: 14px;
+  }
+}

@@ -112,7 +112,8 @@ export const submitAdminPleaReview = createAsyncThunk(
 );
 
 // generateDiscountCode: transitions inspected → awaiting_discount.
-// The discount creation page handles awaiting_discount → completed.
+// The backend returns returnDataForDiscount which is stored in slice state
+// so the status tab can render the confirm step without any navigation.
 export const generateDiscountCode = createAsyncThunk(
   'adminReturn/generateDiscountCode',
   async (orderId, { rejectWithValue }) => {
@@ -266,6 +267,13 @@ const initialState = {
   // Detail
   currentReturn: null,
 
+  // Return discount flow
+  // Populated by generateDiscountCode.fulfilled with the backend's
+  // returnDataForDiscount payload. Consumed by the status tab's inline
+  // confirm step (step 1) to pre-fill the discount preview. Cleared
+  // when the admin closes the drawer or completes the flow.
+  returnDataForDiscount: null,
+
   // Messages
   messages:        [],
   messagesPage:    1,
@@ -328,6 +336,14 @@ const adminReturnSlice = createSlice({
     clearPendingAttachments: (state) => {
       state.pendingAttachments = [];
       state.errorStage         = null;
+    },
+
+    // Clears the returnDataForDiscount payload from state.
+    // Called when the admin closes the drawer, clicks Done after step 2,
+    // or cancels out of the confirm step. Prevents stale data from a
+    // previous return appearing if the admin opens a different return.
+    clearReturnDiscountData: (state) => {
+      state.returnDataForDiscount = null;
     },
   },
 
@@ -436,8 +452,11 @@ const adminReturnSlice = createSlice({
       });
 
     // ── generateDiscountCode ─────────────────────────────────────────────────
-    // Transitions to 'awaiting_discount' (not 'completed').
-    // Patch currentReturn.returnInfo.status accordingly.
+    // Transitions inspected → awaiting_discount on the backend.
+    // Stores returnDataForDiscount in slice state so the status tab's inline
+    // confirm step can read it without any navigation or separate modal.
+    // The fulfilled case patches currentReturn.returnInfo.status to
+    // awaiting_discount so the status tab immediately renders step 1.
     builder
       .addCase(generateDiscountCode.pending, (state) => {
         state.discountCodeLoading = true;
@@ -447,12 +466,20 @@ const adminReturnSlice = createSlice({
         state.discountCodeLoading = false;
         state.success             = true;
         state.message             = payload.message ?? 'Discount code generation initiated';
+
+        // Patch currentReturn so the status tab immediately reflects
+        // awaiting_discount without needing a full re-fetch.
         if (state.currentReturn && payload.returnInfo) {
           state.currentReturn = {
             ...state.currentReturn,
             returnInfo: payload.returnInfo,
           };
         }
+
+        // Store the discount pre-fill data for the inline confirm step.
+        // Shape: { orderId, orderReference, customerId, customerName,
+        //          customerEmail, approvedItems, discountValue, returnStatus }
+        state.returnDataForDiscount = payload.returnDataForDiscount ?? null;
       })
       .addCase(generateDiscountCode.rejected, (state, { payload }) => {
         state.discountCodeLoading = false;
@@ -474,6 +501,12 @@ const adminReturnSlice = createSlice({
             ...state.currentReturn,
             returnInfo: payload.returnInfo,
           };
+        }
+        // When the return reaches completed, clear the discount pre-fill data
+        // since the flow is done. The returnDataForDiscount is no longer needed
+        // and should not persist to the next return the admin opens.
+        if (payload.returnInfo?.status === 'completed') {
+          state.returnDataForDiscount = null;
         }
       })
       .addCase(updateReturnStatus.rejected, (state, { payload }) => {
@@ -572,6 +605,7 @@ export const {
   clearCurrentReturn,
   clearReturnMessages,
   clearPendingAttachments,
+  clearReturnDiscountData,
 } = adminReturnSlice.actions;
 
 export default adminReturnSlice.reducer;

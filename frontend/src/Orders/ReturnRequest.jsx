@@ -1,6 +1,6 @@
 // ReturnRequest.jsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { toast } from 'react-toastify';
 import axios from 'axios';
@@ -9,6 +9,7 @@ import {
   FiX, FiFile, FiVideo, FiMessageSquare, FiRotateCcw, FiInfo,
   FiArrowLeft, FiBox, FiCheckCircle, FiXCircle, FiTag, FiLoader,
   FiThumbsUp, FiThumbsDown, FiTruck, FiMapPin, FiDollarSign,
+  FiGift,
 } from 'react-icons/fi';
 
 import PageTitle           from '../components/PageTitle';
@@ -94,7 +95,9 @@ const ALLOWED_FILE_TYPES = {
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Resolves a product name from returnInfo item, falling back to order.orderItems
+// Resolves the best product name from a returnInfo item, falling back through
+// item.name, item.product.name, and then matching against order.orderItems.
+// Used consistently across all status panels to avoid undefined renders.
 const resolveItemName = (item, orderItems, idx) => {
   if (item.name?.trim())          return item.name.trim();
   if (item.product?.name?.trim()) return item.product.name.trim();
@@ -107,42 +110,26 @@ const resolveItemName = (item, orderItems, idx) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FIX — getRejectedUnits
+// getRejectedUnits
 //
-// Previously, the customer plea form only considered items where
-// adminDecision === 'rejected'. This missed the case where an admin
-// APPROVED an item but with a lower quantity than requested — the
-// unapproved remainder is effectively "auto-rejected" and the customer
-// should be able to appeal those units too.
+// Returns a normalised list of items that have ANY rejected units — either a
+// full adminDecision==='rejected', or a partial approve where approvedQuantity
+// is less than the total quantity (the unapproved remainder is appealable).
 //
-// This helper returns a normalised list of items that have ANY rejected
-// units, along with how many units were rejected, so the plea form and
-// handleSubmitPlea can work uniformly whether the rejection came from a
-// full reject decision or a partial approve decision.
-//
-// Returns an array of:
-// {
-//   item,           — the original returnInfo item object
-//   idx,            — original index in returnItems
-//   pid,            — product id string
-//   rejectedQty,    — number of units that were rejected / unapproved
-//   isPartial,      — true when adminDecision==='approved' but qty < requested
-// }
+// Returns: [{ item, idx, pid, rejectedQty, isPartial }]
 // ─────────────────────────────────────────────────────────────────────────────
 const getRejectedUnits = (returnItems) =>
   returnItems.reduce((acc, item, idx) => {
-    const pid        = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-    const totalQty   = item.quantity ?? 1;
-    const decision   = item.adminDecision;
+    const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+    const totalQty = item.quantity ?? 1;
+    const decision = item.adminDecision;
 
     if (decision === 'rejected') {
-      // Fully rejected — all units are appealable
       acc.push({ item, idx, pid, rejectedQty: totalQty, isPartial: false });
     } else if (decision === 'approved') {
-      const approvedQty  = item.approvedQuantity ?? totalQty;
-      const remainder    = totalQty - approvedQty;
+      const approvedQty = item.approvedQuantity ?? totalQty;
+      const remainder   = totalQty - approvedQty;
       if (remainder > 0) {
-        // Partially approved — only the unapproved remainder is appealable
         acc.push({ item, idx, pid, rejectedQty: remainder, isPartial: true });
       }
     }
@@ -302,11 +289,17 @@ function ReturnRequest() {
   const trackingTopRef   = useRef(null);
 
   const { order, loading: orderLoading } = useSelector((s) => s.order);
+
   const {
     messages, loading, messagesLoading, messageSendLoading,
     uploadLoading, pleaLoading, acceptLoading, confirmShippedLoading,
     pleaError, hasMoreMessages, totalMessages, messagesPage,
     pendingAttachments, errorStage, error, success,
+    // FIX: destructure local courier/tracking values from the slice so the
+    // in_transit panel can display them immediately after confirmShipped,
+    // before the server re-fetch completes or in case the server omits them.
+    courierName:    sliceCourierName,
+    trackingNumber: sliceTrackingNumber,
   } = useSelector((s) => s.return);
 
   // ── Local state ───────────────────────────────────────────────────────────
@@ -346,12 +339,9 @@ function ReturnRequest() {
 
   const approvedItems    = returnItems.filter((i) => i.adminDecision === 'approved');
 
-  // ── FIX: use getRejectedUnits instead of a simple .filter() ──────────────
-  // Old code only caught fully-rejected items:
-  //   const rejectedItems = returnItems.filter((i) => i.adminDecision === 'rejected');
-  //
-  // New code also catches items where the admin approved a lower quantity
-  // than requested — those unapproved units are appealable too.
+  // Uses getRejectedUnits so partially-approved items (where approvedQuantity
+  // is less than quantity) are also included — their unapproved remainder is
+  // appealable and should appear in the rejected column.
   const rejectedUnitsList = getRejectedUnits(returnItems);
   const hasRejectedItems  = rejectedUnitsList.length > 0;
 
@@ -383,6 +373,12 @@ function ReturnRequest() {
   const currency         = order?.paymentInfo?.currency ?? 'USD';
   const orderItems       = order?.orderItems ?? [];
 
+  // FIX: resolve courierName and trackingNumber using both server returnInfo
+  // and local slice state as fallback. The slice stores these immediately after
+  // confirmShipped.fulfilled, before the server re-fetch resolves.
+  const displayCourierName    = returnInfo?.courierName    ?? sliceCourierName    ?? null;
+  const displayTrackingNumber = returnInfo?.trackingNumber ?? sliceTrackingNumber ?? null;
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -412,16 +408,13 @@ function ReturnRequest() {
     if (allApproved && !itemsReviewedChoice) setItemsReviewedChoice('accepted');
   }, [allApproved, itemsReviewedChoice]);
 
-  // ── FIX: seed pleaQuantities using rejectedUnitsList ─────────────────────
-  // Old code defaulted to item.quantity for each rejectedItem.
-  // New code defaults to rejectedQty (the unapproved remainder), so for a
-  // partially-approved item the stepper starts at the correct appealable max
-  // rather than the full requested quantity.
+  // Seed pleaQuantities using rejectedUnitsList so partially-approved items
+  // default to their unapproved remainder (not full item.quantity).
   useEffect(() => {
     if (itemsReviewedChoice !== 'plea' || rejectedUnitsList.length === 0) return;
     const initial = {};
     rejectedUnitsList.forEach(({ pid, rejectedQty }) => {
-      initial[pid] = rejectedQty; // default: appeal all rejected/unapproved units
+      initial[pid] = rejectedQty;
     });
     setPleaQuantities(initial);
   }, [itemsReviewedChoice]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -445,7 +438,7 @@ function ReturnRequest() {
     }
   }, [order?.orderItems, isTracking]);
 
-  // BUG FIX: reset returnInfoPopulated when orderId changes
+  // Reset returnInfoPopulated when orderId changes
   const returnInfoPopulated = useRef(false);
   useEffect(() => {
     returnInfoPopulated.current = false;
@@ -601,16 +594,10 @@ function ReturnRequest() {
       return;
     }
 
-    // ── FIX: build pleaItems from rejectedUnitsList ───────────────────────
-    // Old code iterated over rejectedItems (adminDecision==='rejected' only)
-    // and used item.quantity as the max. This missed partially-approved items.
-    //
-    // New code iterates over rejectedUnitsList which includes both:
-    //   - fully rejected items  (isPartial=false, rejectedQty === item.quantity)
-    //   - partially approved items (isPartial=true, rejectedQty === unapproved remainder)
-    //
-    // The pleaQuantity sent to the backend is capped at rejectedQty so the
-    // customer cannot appeal more units than were actually rejected/unapproved.
+    // Build pleaItems from rejectedUnitsList — covers both fully-rejected items
+    // and partially-approved items whose unapproved remainder is being appealed.
+    // pleaQuantity is capped at rejectedQty so the customer cannot appeal more
+    // units than were actually rejected or unapproved.
     const pleaItems = rejectedUnitsList.map(({ pid, rejectedQty }) => {
       const chosen = pleaQuantities[pid] ?? rejectedQty;
       return {
@@ -844,7 +831,7 @@ function ReturnRequest() {
 
               <div className="rtr-status-details">
 
-                {/* Timeline — received and inspected hidden from user */}
+                {/* Timeline — received and inspected hidden from customer */}
                 <div className="rtr-status-timeline">
                   <div className="rtr-timeline-item">
                     <div className="rtr-timeline-dot rtr-active" />
@@ -889,7 +876,7 @@ function ReturnRequest() {
                       </div>
                     </div>
                   )}
-                  {/* received and inspected hidden — jump straight to awaiting_discount */}
+                  {/* received and inspected are hidden — customer sees awaiting_discount next */}
                   {hasReached('awaiting_discount') && (
                     <div className="rtr-timeline-item">
                       <div className="rtr-timeline-dot rtr-active" />
@@ -939,7 +926,7 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* Credit breakdown */}
+                {/* Credit breakdown — shown at all stages from items_reviewed onwards */}
                 {showBreakdown && <CreditBreakdown returnInfo={returnInfo} currency={currency} />}
 
                 {/* Plea rejected — all items rejected after plea resolution */}
@@ -1005,8 +992,8 @@ function ReturnRequest() {
                         </div>
                       )}
 
-                      {/* ── FIX: rejected column now shows both fully-rejected items
-                          AND the unapproved remainder of partially-approved items ── */}
+                      {/* Rejected column: covers both full rejections and unapproved
+                          remainders of partially-approved items via rejectedUnitsList */}
                       {rejectedUnitsList.length > 0 && (
                         <div className="rtr-decisions-col rtr-decisions-rejected">
                           <div className="rtr-decisions-col-header">
@@ -1045,7 +1032,7 @@ function ReturnRequest() {
                       />
                     )}
 
-                    {/* All approved */}
+                    {/* All approved — single accept button */}
                     {!hasRejectedItems && pleaWindowOpen && (
                       <div className="rtr-accept-section">
                         <div className="rtr-accept-header">
@@ -1061,7 +1048,7 @@ function ReturnRequest() {
                       </div>
                     )}
 
-                    {/* Some rejected — show choice */}
+                    {/* Some rejected — show accept vs dispute choice */}
                     {hasRejectedItems && pleaWindowOpen && !itemsReviewedChoice && (
                       <div className="rtr-choice-section">
                         <div className="rtr-choice-header">
@@ -1137,9 +1124,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── FIX: Plea form — uses rejectedUnitsList instead of rejectedItems
-                    so partially-approved items appear, and stepper max is rejectedQty
-                    (the unapproved remainder) not the full item.quantity ── */}
+                {/* Plea form */}
                 {status === 'items_reviewed' && itemsReviewedChoice === 'plea' && (
                   <div className="rtr-plea-section">
                     <div className="rtr-plea-header">
@@ -1153,7 +1138,6 @@ function ReturnRequest() {
                       </div>
                     </div>
 
-                    {/* Per-item appeal quantity steppers */}
                     {rejectedUnitsList.length > 0 && (
                       <div className="rtr-plea-items">
                         <label className="rtr-form-label">Appeal Quantity per Item</label>
@@ -1170,7 +1154,6 @@ function ReturnRequest() {
                               )}
                               <div className="rtr-plea-item-info">
                                 <span className="rtr-plea-item-name">{name}</span>
-                                {/* ── FIX: label shows the correct rejected/unapproved count ── */}
                                 <span className="rtr-plea-item-rejected">
                                   {isPartial
                                     ? `${rejectedQty} of ${item.quantity} units not approved`
@@ -1196,7 +1179,6 @@ function ReturnRequest() {
                                     aria-label="Increase appeal quantity"
                                   >+</button>
                                 </div>
-                                {/* ── FIX: "of N" shows rejectedQty, not item.quantity ── */}
                                 <span className="rtr-plea-qty-of">of {rejectedQty}</span>
                                 {silent > 0 && (
                                   <span className="rtr-plea-qty-silent">({silent} accepted as rejected)</span>
@@ -1383,7 +1365,9 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* in_transit */}
+                {/* in_transit — FIX: use displayCourierName/displayTrackingNumber
+                    which fall back to slice local state when returnInfo fields
+                    are not yet populated from the server after confirmShipped */}
                 {status === 'in_transit' && (
                   <div className="rtr-in-transit-panel">
                     <div className="rtr-in-transit-header">
@@ -1394,16 +1378,16 @@ function ReturnRequest() {
                       </div>
                     </div>
                     <div className="rtr-transit-details">
-                      {returnInfo.courierName && (
+                      {displayCourierName && (
                         <div className="rtr-transit-detail">
                           <span className="rtr-info-label">Courier</span>
-                          <span className="rtr-info-value">{returnInfo.courierName}</span>
+                          <span className="rtr-info-value">{displayCourierName}</span>
                         </div>
                       )}
-                      {returnInfo.trackingNumber && (
+                      {displayTrackingNumber && (
                         <div className="rtr-transit-detail">
                           <span className="rtr-info-label">Tracking Number</span>
-                          <span className="rtr-info-value rtr-tracking">{returnInfo.trackingNumber}</span>
+                          <span className="rtr-info-value rtr-tracking">{displayTrackingNumber}</span>
                         </div>
                       )}
                       {returnInfo.shippedAt && (
@@ -1416,7 +1400,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* received/inspected — hidden, show neutral banner */}
+                {/* received/inspected — hidden stages, show neutral holding banner */}
                 {(status === 'received' || status === 'inspected') && (
                   <div className="rtr-info-banner-neutral">
                     <FiInfo />
@@ -1451,19 +1435,68 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* completed */}
+                {/* ── COMPLETED PANEL ───────────────────────────────────────
+                    FIX: Updated heading, paragraph, and replaced the button
+                    with a Link styled as a banner card. Also shows the list
+                    of approved items so the customer knows what the credit
+                    covers, and the credit value from the breakdown.
+                ──────────────────────────────────────────────────────────── */}
                 {status === 'completed' && (
                   <div className="rtr-completed-panel">
                     <FiCheckCircle className="rtr-completed-icon" />
-                    <h3>Return Completed</h3>
-                    <p>Your store credit discount code has been issued.</p>
-                    <button className="rtr-btn-primary" onClick={() => navigate('/my-discounts')} style={{ marginTop: 14 }}>
-                      <FiTag /> View My Discount Codes
-                    </button>
+                    <h3>Return Request Completed</h3>
+                    <p>
+                      Your return has been fully processed. A store credit discount code has been
+                      issued and added to your account.
+                    </p>
+
+                    {/* Approved items summary so the customer knows what they're credited for */}
+                    {approvedItems.length > 0 && (
+                      <>
+                        <div className="rtr-completed-divider" />
+                        <div className="rtr-completed-items-list">
+                          <span className="rtr-info-label" style={{ marginBottom: 6, display: 'block' }}>
+                            Items credited:
+                          </span>
+                          {approvedItems.map((item, i) => {
+                            const qty  = item.approvedQuantity ?? item.quantity;
+                            const name = resolveItemName(item, orderItems, i);
+                            return (
+                              <div key={i} className="rtr-completed-item">
+                                {item.image && (
+                                  <img src={item.image} alt={name} className="rtr-item-image" />
+                                )}
+                                <span className="rtr-completed-item-name">{name}</span>
+                                <span className="rtr-completed-item-qty">×{qty}</span>
+                              </div>
+                            );
+                          })}
+                          {returnInfo?.discountValue > 0 && (
+                            <div className="rtr-completed-credit-total">
+                              <span>Total credit value</span>
+                              <span className="rtr-completed-credit-amount">
+                                {formatCurrency(returnInfo.discountValue)}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {/* Link styled as a banner card — distinct from solid button */}
+                    <Link to="/my-discounts" className="rtr-completed-discount-link">
+                      <FiGift className="rtr-completed-discount-link-icon" />
+                      <div className="rtr-completed-discount-link-text">
+                        <span className="rtr-completed-discount-link-title">View your discount code</span>
+                        <span className="rtr-completed-discount-link-sub">
+                          Your code is waiting in My Discounts →
+                        </span>
+                      </div>
+                    </Link>
                   </div>
                 )}
 
-                {/* Items list for non-decision statuses */}
+                {/* Items list for statuses that don't have their own item display */}
                 {!['items_reviewed', 'plea_submitted', 'approved', 'in_transit', 'awaiting_discount', 'completed'].includes(status) && returnItems.length > 0 && (
                   <div className="rtr-return-items">
                     <h3>Items Being Returned</h3>
