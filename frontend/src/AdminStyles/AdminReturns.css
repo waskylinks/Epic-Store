@@ -1610,3 +1610,102 @@
     grid-template-columns: 1fr 60px 60px 60px;
   }
 }
+
+/* ── Plea pool chips (used in renderItemDecisionBadges) ── */
+.rt-decision-badge-plea-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 4px 0 8px 4px;
+}
+ 
+.rt-plea-pool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+ 
+.rt-plea-pool-chip--r1 {
+  background: #EFF6FF;
+  color: #1D4ED8;
+  border: 1px solid #BFDBFE;
+}
+ 
+.rt-plea-pool-chip--approved {
+  background: #F0FDF4;
+  color: #15803D;
+  border: 1px solid #BBF7D0;
+}
+ 
+.rt-plea-pool-chip--rejected {
+  background: #FEF2F2;
+  color: #B91C1C;
+  border: 1px solid #FECACA;
+}
+ 
+.rt-plea-pool-chip--silent {
+  background: #FFFBEB;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+ 
+/* ── Modal item pool breakdown notes ── */
+.rt-modal-item-breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+ 
+.rt-modal-pool-note {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+ 
+.rt-modal-pool-note--r1 {
+  background: #EFF6FF;
+  color: #1D4ED8;
+}
+ 
+.rt-modal-pool-note--plea {
+  background: #F0FDF4;
+  color: #15803D;
+}
+ 
+.rt-modal-item-rejected-note {
+  font-size: 11.5px;
+  color: #EF4444;
+  font-weight: 500;
+}
+ 
+/* ── Modal grand total summary footer ── */
+.rt-modal-summary-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #F9FAFB;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+}
+ 
+.rt-modal-summary-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: #374151;
+}
+ 
+.rt-modal-summary-row strong {
+  margin-left: auto;
+  font-size: 13px;
+}

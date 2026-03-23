@@ -408,7 +408,7 @@ const PerItemDecisionForm = ({
 };
 
 // ── PleaPreviewModal ──────────────────────────────────────────────────────────
-const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, loading }) => {
+const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, loading, r1Map = new Map() }) => {
   const approved = items.filter((item, idx) => {
     const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
     return decisions[pid]?.decision === 'approved';
@@ -417,7 +417,39 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
     const pid = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
     return decisions[pid]?.decision === 'rejected';
   });
-
+ 
+  // Compute grand totals for the summary footer
+  let totalApprovedUnits = 0;
+  let totalRejectedUnits = 0;
+ 
+  // For fully-approved locked items (not in decisions as approved/rejected),
+  // count their approvedQuantity toward the approved total
+  items.forEach((item, idx) => {
+    const pid     = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+    const maxQty  = item.quantity ?? 1;
+    const dec     = decisions[pid];
+    const lockedR1 = r1Map.get(pid) ?? 0;
+ 
+    if (!dec?.decision) {
+      // Fully locked approved item — all units approved
+      totalApprovedUnits += item.approvedQuantity ?? maxQty;
+    } else if (dec.decision === 'approved') {
+      const pleaApproved = dec.approvedQuantity ?? (item.pleaQuantity ?? maxQty);
+      totalApprovedUnits += pleaApproved + lockedR1;
+      // Rejected = contested units that weren't approved
+      const pleaMax = item.pleaQuantity ?? (maxQty - lockedR1);
+      totalRejectedUnits += Math.max(0, pleaMax - pleaApproved);
+      // Add silent accepted units
+      totalRejectedUnits += item.silentAcceptedQuantity ?? 0;
+    } else if (dec.decision === 'rejected') {
+      // R1 locked units are still approved even though plea was rejected
+      totalApprovedUnits += lockedR1;
+      const pleaMax = item.pleaQuantity ?? (maxQty - lockedR1);
+      totalRejectedUnits += pleaMax;
+      totalRejectedUnits += item.silentAcceptedQuantity ?? 0;
+    }
+  });
+ 
   return (
     <div className="rt-modal-overlay" onClick={onCancel} role="presentation">
       <div className="rt-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -426,7 +458,10 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
           <button type="button" className="rt-drawer-close" onClick={onCancel} aria-label="Close">×</button>
         </div>
         <div className="rt-modal-body">
-          <p className="rt-modal-intro">Please review your final plea decisions before submitting. This cannot be changed afterwards.</p>
+          <p className="rt-modal-intro">
+            Please review your final plea decisions before submitting. This cannot be changed afterwards.
+          </p>
+ 
           {approved.length > 0 && (
             <div className="rt-modal-decision-group rt-modal-approved">
               <div className="rt-modal-decision-group-hd">
@@ -434,39 +469,118 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
                 <span>Approved ({approved.length})</span>
               </div>
               {approved.map((item, i) => {
-                const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(i);
-                const approvedQty = decisions[pid]?.approvedQuantity ?? item.pleaQuantity ?? item.quantity ?? 1;
-                const maxQty      = item.quantity ?? 1;
+                const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(i);
+                const maxQty   = item.quantity ?? 1;
+                const lockedR1 = r1Map.get(pid) ?? 0;
+ 
+                // FIX: total approved = plea-approved portion + R1 locked units
+                const pleaApproved    = decisions[pid]?.approvedQuantity ?? (item.pleaQuantity ?? maxQty);
+                const finalApprovedQty = pleaApproved + lockedR1;
+ 
+                // Units rejected in this plea round (contested but not approved)
+                const pleaMax      = item.pleaQuantity ?? (maxQty - lockedR1);
+                const pleaRejected = Math.max(0, pleaMax - pleaApproved);
+                const silentAccepted = item.silentAcceptedQuantity ?? 0;
+                const finalRejectedQty = pleaRejected + silentAccepted;
+ 
                 return (
                   <div key={i} className="rt-modal-item">
-                    <span>{item.product?.name ?? item.name ?? `Item ${i + 1}`}</span>
-                    <span className="rt-td-muted">×{approvedQty}</span>
-                    {approvedQty !== maxQty && (
-                      <span className="rt-modal-qty-note">(of {maxQty} requested)</span>
-                    )}
+                    <div style={{ flex: 1 }}>
+                      <span>{item.product?.name ?? item.name ?? `Item ${i + 1}`}</span>
+                      {lockedR1 > 0 && (
+                        <div className="rt-modal-item-breakdown">
+                          <span className="rt-modal-pool-note rt-modal-pool-note--r1">
+                            R1 locked: {lockedR1}
+                          </span>
+                          <span className="rt-modal-pool-note rt-modal-pool-note--plea">
+                            Plea approved: {pleaApproved}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      <span className="rt-td-muted">
+                        ✓ {finalApprovedQty} approved
+                        {finalApprovedQty !== maxQty && (
+                          <span style={{ color: '#9CA3AF', marginLeft: 4 }}>(of {maxQty})</span>
+                        )}
+                      </span>
+                      {finalRejectedQty > 0 && (
+                        <span className="rt-modal-item-rejected-note">
+                          ✗ {finalRejectedQty} rejected
+                        </span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
           )}
+ 
           {rejected.length > 0 && (
             <div className="rt-modal-decision-group rt-modal-rejected">
               <div className="rt-modal-decision-group-hd">
                 <Cancel style={{ fontSize: 14 }} />
-                <span>Rejected ({rejected.length})</span>
+                <span>Plea Rejected ({rejected.length})</span>
               </div>
               {rejected.map((item, idx) => {
-                const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-                const reason = decisions[pid]?.rejectionReason;
+                const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+                const maxQty   = item.quantity ?? 1;
+                const lockedR1 = r1Map.get(pid) ?? 0;
+                const reason   = decisions[pid]?.rejectionReason;
+ 
+                // Contested units that are now rejected
+                const pleaMax        = item.pleaQuantity ?? (maxQty - lockedR1);
+                const silentAccepted = item.silentAcceptedQuantity ?? 0;
+                const totalRejected  = pleaMax + silentAccepted;
+                // R1 locked units are still approved
+                const stillApproved  = lockedR1;
+ 
                 return (
                   <div key={idx} className="rt-modal-item">
-                    <span>{item.product?.name ?? item.name ?? `Item ${idx + 1}`}</span>
-                    {reason && <span className="rt-td-muted rt-modal-reason">— {reason}</span>}
+                    <div style={{ flex: 1 }}>
+                      <span>{item.product?.name ?? item.name ?? `Item ${idx + 1}`}</span>
+                      {reason && (
+                        <span className="rt-td-muted rt-modal-reason">— {reason}</span>
+                      )}
+                      {lockedR1 > 0 && (
+                        <div className="rt-modal-item-breakdown">
+                          <span className="rt-modal-pool-note rt-modal-pool-note--r1">
+                            R1 locked: {lockedR1} (still approved)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+                      {stillApproved > 0 && (
+                        <span className="rt-td-muted" style={{ fontSize: 11 }}>
+                          ✓ {stillApproved} approved
+                        </span>
+                      )}
+                      <span className="rt-modal-item-rejected-note">
+                        ✗ {totalRejected} rejected
+                      </span>
+                    </div>
                   </div>
                 );
               })}
             </div>
           )}
+ 
+          {/* Grand total summary across ALL items including locked ones */}
+          <div className="rt-modal-summary-footer">
+            <div className="rt-modal-summary-row">
+              <CheckCircle style={{ fontSize: 13, color: '#10B981' }} />
+              <span>Total approved units:</span>
+              <strong style={{ color: '#10B981' }}>{totalApprovedUnits}</strong>
+            </div>
+            <div className="rt-modal-summary-row">
+              <Cancel style={{ fontSize: 13, color: '#EF4444' }} />
+              <span>Total rejected units:</span>
+              <strong style={{ color: '#EF4444' }}>{totalRejectedUnits}</strong>
+            </div>
+          </div>
+ 
           {adminNote && (
             <div className="rt-modal-note">
               <span className="rt-form-label">Your Note:</span>
@@ -475,7 +589,9 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
           )}
         </div>
         <div className="rt-modal-footer">
-          <button type="button" className="rt-btn rt-btn--secondary" onClick={onCancel} disabled={loading}>Go Back</button>
+          <button type="button" className="rt-btn rt-btn--secondary" onClick={onCancel} disabled={loading}>
+            Go Back
+          </button>
           <button type="button" className="rt-btn rt-btn--primary" onClick={onConfirm} disabled={loading}>
             {loading ? 'Submitting…' : 'Confirm & Submit Final Decisions'}
           </button>
@@ -484,6 +600,7 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
     </div>
   );
 };
+ 
 
 // ── StepIndicator ─────────────────────────────────────────────────────────────
 const StepIndicator = ({ currentStep }) => (
@@ -1197,59 +1314,96 @@ const AdminReturns = () => {
     );
   };
 
-  // FIX: renderItemDecisionBadges — use approvedQuantity to compute rejected
-  // quantity for display, so the badge correctly shows partial rejections
-  // regardless of adminDecision label. Also show rejected quantity on the
-  // badge when some units are rejected even if adminDecision === 'approved'
-  // (partial approval case).
-  const renderItemDecisionBadges = (returnInfo) => {
-    const items    = returnInfo?.itemsToReturn ?? [];
-    const reviewed = items.filter((i) => i.adminDecision && i.adminDecision !== 'pending');
-    if (!reviewed.length) return null;
-    return (
-      <div className="rt-item-decision-badges">
-        {items.map((item, idx) => {
-          const pid          = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-          const name         = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
-          const dec          = item.adminDecision;
-          if (!dec || dec === 'pending') return null;
 
-          const totalQty    = item.quantity ?? 1;
-          const approvedQty = item.approvedQuantity ?? (dec === 'approved' ? totalQty : 0);
-          const rejectedQty = totalQty - approvedQty;
-          const isPartial   = approvedQty > 0 && rejectedQty > 0;
-
-          return (
-            <React.Fragment key={pid}>
-              {/* Approved badge — shown when any units are approved */}
-              {approvedQty > 0 && (
-                <div className="rt-decision-badge rt-decision-badge--approved">
-                  <CheckCircle style={{ fontSize: 13 }} />
-                  <span>{name}</span>
-                  {approvedQty !== totalQty && (
-                    <span className="rt-decision-badge-qty">×{approvedQty} of {totalQty}</span>
-                  )}
-                </div>
-              )}
-              {/* Rejected badge — shown when any units are rejected */}
-              {rejectedQty > 0 && (
-                <div className="rt-decision-badge rt-decision-badge--rejected">
-                  <Cancel style={{ fontSize: 13 }} />
-                  <span>{name}</span>
-                  {isPartial && (
-                    <span className="rt-decision-badge-qty">{rejectedQty} of {totalQty} rejected</span>
-                  )}
-                  {item.adminRejectionReason && (
-                    <span className="rt-decision-badge-reason">— {item.adminRejectionReason}</span>
-                  )}
-                </div>
-              )}
-            </React.Fragment>
-          );
-        })}
-      </div>
-    );
-  };
+const renderItemDecisionBadges = (returnInfo) => {
+  const items    = returnInfo?.itemsToReturn ?? [];
+  const reviewed = items.filter((i) => i.adminDecision && i.adminDecision !== 'pending');
+  if (!reviewed.length) return null;
+ 
+  return (
+    <div className="rt-item-decision-badges">
+      {items.map((item, idx) => {
+        const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const name        = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+        const dec         = item.adminDecision;
+        if (!dec || dec === 'pending') return null;
+ 
+        const totalQty    = item.quantity ?? 1;
+        const approvedQty = item.approvedQuantity ?? (dec === 'approved' ? totalQty : 0);
+        const rejectedQty = totalQty - approvedQty;
+        const isPartial   = approvedQty > 0 && rejectedQty > 0;
+ 
+        // Plea-round pool fields (set by resolveAfterPlea)
+        const pleaApprovedQty  = item.pleaApprovedQty        ?? null;
+        const pleaRejectedQty  = item.pleaRejectedQty        ?? null;
+        const silentAccepted   = item.silentAcceptedQuantity ?? 0;
+        const r1Locked         = (pleaApprovedQty != null)
+          ? approvedQty - pleaApprovedQty
+          : null;
+ 
+        const hasPleaDetail =
+          (pleaApprovedQty != null && pleaApprovedQty > 0) ||
+          (pleaRejectedQty != null && pleaRejectedQty > 0) ||
+          silentAccepted > 0;
+ 
+        return (
+          <React.Fragment key={pid}>
+            {/* Approved badge — shown when any units are approved */}
+            {approvedQty > 0 && (
+              <div className="rt-decision-badge rt-decision-badge--approved">
+                <CheckCircle style={{ fontSize: 13 }} />
+                <span>{name}</span>
+                {approvedQty !== totalQty && (
+                  <span className="rt-decision-badge-qty">×{approvedQty} of {totalQty}</span>
+                )}
+              </div>
+            )}
+ 
+            {/* Rejected badge — shown when any units are rejected */}
+            {rejectedQty > 0 && (
+              <div className="rt-decision-badge rt-decision-badge--rejected">
+                <Cancel style={{ fontSize: 13 }} />
+                <span>{name}</span>
+                {isPartial && (
+                  <span className="rt-decision-badge-qty">{rejectedQty} of {totalQty} rejected</span>
+                )}
+                {item.adminRejectionReason && (
+                  <span className="rt-decision-badge-reason">— {item.adminRejectionReason}</span>
+                )}
+              </div>
+            )}
+ 
+            {/* Plea pool breakdown — shown after plea resolution when fields exist */}
+            {hasPleaDetail && (
+              <div className="rt-decision-badge-plea-detail">
+                {r1Locked != null && r1Locked > 0 && (
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--r1">
+                    R1 locked: {r1Locked}
+                  </span>
+                )}
+                {pleaApprovedQty != null && pleaApprovedQty > 0 && (
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--approved">
+                    Plea approved: {pleaApprovedQty}
+                  </span>
+                )}
+                {pleaRejectedQty != null && pleaRejectedQty > 0 && (
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--rejected">
+                    Plea rejected: {pleaRejectedQty}
+                  </span>
+                )}
+                {silentAccepted > 0 && (
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--silent">
+                    Silent: {silentAccepted}
+                  </span>
+                )}
+              </div>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
 
   // ── Status tab: inline discount flow panels ───────────────────────────────
 
@@ -1561,19 +1715,60 @@ const AdminReturns = () => {
                   </>
                 )}
 
-                {retStatus === 'items_reviewed' && returnInfo.itemsToReturn?.length > 0 && (
-                  <>
-                    <div className="rt-section"><span className="rt-section-text">Item Decisions</span><span className="rt-section-line" /></div>
-                    <div className="rt-card"><div className="rt-card-body">
-                      {renderItemDecisionBadges(returnInfo)}
-                      {returnInfo.pleaDeadline && (
-                        <div style={{ marginTop: 12 }}>
-                          <CountdownTimer deadline={returnInfo.pleaDeadline} label="Customer plea window:" expiredLabel="Plea window closed" />
+                {returnInfo.itemsToReturn?.length > 0 && (() => {
+                  const POST_REVIEW = [
+                    'items_reviewed', 'plea_submitted', 'approved',
+                    'in_transit', 'received', 'inspected',
+                    'awaiting_discount', 'completed',
+                  ];
+                
+                  if (POST_REVIEW.includes(retStatus)) {
+                    if (!['items_reviewed', 'plea_submitted'].includes(retStatus)) {
+                      return (
+                        <>
+                          <div className="rt-section">
+                            <span className="rt-section-text">Item Decisions</span>
+                            <span className="rt-section-line" />
+                          </div>
+                          <div className="rt-card">
+                            <div className="rt-card-body">
+                              {renderItemDecisionBadges(returnInfo)}
+                            </div>
+                          </div>
+                        </>
+                      );
+                    }
+                    return null; // items_reviewed and plea_submitted already render badges above
+                  }
+                
+                  // requested — no decisions yet, show raw items list
+                  return (
+                    <>
+                      <div className="rt-section">
+                        <span className="rt-section-text">Items to Return</span>
+                        <span className="rt-section-line" />
+                      </div>
+                      <div className="rt-card">
+                        <div className="rt-card-body">
+                          {returnInfo.itemsToReturn.map((item, idx) => (
+                            <div key={item.product?._id ?? idx} className="rt-item-row">
+                              <div className="rt-item-info">
+                                <span className="rt-item-name">{item.product?.name ?? `Item ${idx + 1}`}</span>
+                                <span className="rt-item-meta">
+                                  Qty: {item.quantity ?? 1}
+                                  {item.condition ? ` · ${item.condition}` : ''}
+                                </span>
+                              </div>
+                              {item.reason && (
+                                <span className="rt-item-reason">{item.reason.replace(/_/g, ' ')}</span>
+                              )}
+                            </div>
+                          ))}
                         </div>
-                      )}
-                    </div></div>
-                  </>
-                )}
+                      </div>
+                    </>
+                  );
+                })()}
 
                 {retStatus === 'plea_submitted' && (
                   <>
@@ -2182,16 +2377,17 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {showPleaPreview && currentReturn && (
-          <PleaPreviewModal
-            items={currentReturn.returnInfo?.itemsToReturn ?? []}
-            decisions={pleaDecisions}
-            adminNote={pleaAdminNote}
-            onConfirm={handlePleaReviewConfirm}
-            onCancel={() => setShowPleaPreview(false)}
-            loading={pleaReviewLoading}
-          />
-        )}
+          {showPleaPreview && currentReturn && (
+            <PleaPreviewModal
+              items={currentReturn.returnInfo?.itemsToReturn ?? []}
+              decisions={pleaDecisions}
+              adminNote={pleaAdminNote}
+              onConfirm={handlePleaReviewConfirm}
+              onCancel={() => setShowPleaPreview(false)}
+              loading={pleaReviewLoading}
+              r1Map={round1ApprovedQty}
+            />
+          )}
       </div>
     );
   };

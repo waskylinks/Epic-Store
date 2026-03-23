@@ -206,19 +206,8 @@ const ReturnStatusBadge = ({ status }) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CreditBreakdown
-//
-// FIX: Extended to show the four-unit-pool detail when plea data is present.
-// The four pools are:
-//   R1 locked approved   — always credited (approvedQuantity - pleaApprovedQty)
-//   Plea approved        — item.pleaApprovedQty (set by resolveAfterPlea)
-//   Plea rejected        — item.pleaRejectedQty (set by resolveAfterPlea)
-//   Silently accepted    — item.silentAcceptedQuantity (set by submitPlea)
-//
-// The gross breakdown rows (requestedGross, approvedGross, rejectedGross) come
-// from the backend and are always correct. The per-item pool detail is additive
-// context shown below the totals when the plea fields are present.
 // ─────────────────────────────────────────────────────────────────────────────
-const CreditBreakdown = ({ returnInfo, currency = 'USD', showPleaDetail = false }) => {
+const CreditBreakdown = ({ returnInfo, currency = 'USD', showPleaDetail = false, orderItems = [] }) => {
   const {
     requestedGross   = 0,
     approvedGross    = 0,
@@ -228,18 +217,18 @@ const CreditBreakdown = ({ returnInfo, currency = 'USD', showPleaDetail = false 
     discountValue    = 0,
     itemsToReturn    = [],
   } = returnInfo ?? {};
-
+ 
   const fmt = (n) => new Intl.NumberFormat('en-US', {
     style: 'currency', currency, minimumFractionDigits: 2,
   }).format(n ?? 0);
-
+ 
   // Determine whether any item has plea-pool data worth showing.
   const hasPleaDetail = showPleaDetail && itemsToReturn.some(
     (i) => (i.pleaApprovedQty != null && i.pleaApprovedQty > 0) ||
             (i.pleaRejectedQty != null && i.pleaRejectedQty > 0) ||
             (i.silentAcceptedQuantity != null && i.silentAcceptedQuantity > 0)
   );
-
+ 
   return (
     <div className="rtr-credit-breakdown">
       <div className="rtr-credit-hd">
@@ -277,73 +266,85 @@ const CreditBreakdown = ({ returnInfo, currency = 'USD', showPleaDetail = false 
           <span className="rtr-credit-val-total">{fmt(discountValue)}</span>
         </div>
       </div>
-
-      {/* ── PLEA POOL DETAIL ──
-          Shown only when plea data is present (post-plea resolution stages).
-          Breaks down each item's four unit pools so the customer can see
-          exactly how R1 locked, plea approved, plea rejected, and silently
-          accepted units contributed to the final approved/rejected totals.
-      ── */}
+ 
+      {/* ── PLEA POOL DETAIL ──────────────────────────────────────────────────
+          Uses only existing rtr- CSS classes. No new class names introduced.
+          Structure mirrors the .rtr-item-decisions section elsewhere on the
+          page so the visual language is consistent.
+      ──────────────────────────────────────────────────────────────────────── */}
       {hasPleaDetail && (
-        <div className="rtr-plea-pool-detail">
-          <div className="rtr-plea-pool-hd">
-            <FiInfo className="rtr-plea-pool-hd-icon" />
+        <div className="rtr-item-decisions" style={{ marginTop: 16 }}>
+          {/* Section heading — reuses .rtr-decisions-col-header pattern */}
+          <div className="rtr-decisions-col-header" style={{ marginBottom: 10 }}>
+            <FiInfo />
             <span>Plea Decision Breakdown</span>
           </div>
+ 
           {itemsToReturn.map((item, idx) => {
-            const totalQty        = item.quantity ?? 1;
-            const approvedQty     = item.approvedQuantity ?? 0;
-            const pleaApproved    = item.pleaApprovedQty        ?? null;
-            const pleaRejected    = item.pleaRejectedQty        ?? null;
-            const silentAccepted  = item.silentAcceptedQuantity ?? 0;
-
-            // Only show items that went through a plea round
+            const totalQty       = item.quantity ?? 1;
+            const approvedQty    = item.approvedQuantity ?? 0;
+            const pleaApproved   = item.pleaApprovedQty        ?? null;
+            const pleaRejected   = item.pleaRejectedQty        ?? null;
+            const silentAccepted = item.silentAcceptedQuantity ?? 0;
+ 
+            // Only render items that went through a plea round
             const hadPlea = (pleaApproved != null && pleaApproved > 0) ||
                             (pleaRejected != null && pleaRejected > 0) ||
                             silentAccepted > 0;
             if (!hadPlea) return null;
-
-            // R1 locked = units approved before the plea (never contested)
-            const r1Locked = approvedQty - (pleaApproved ?? 0);
-            const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
-
+ 
+            // R1 locked = units approved before the plea (never contested).
+            // Guard against null pleaApproved so r1Locked stays meaningful.
+            const r1Locked = (pleaApproved != null)
+              ? Math.max(0, approvedQty - pleaApproved)
+              : approvedQty;
+ 
+            // FIX: use resolveItemName so the product name is always shown,
+            // never falling back to "Item 1 / Item 2 / Item 4"
+            const name = resolveItemName(item, orderItems, idx);
+ 
             return (
-              <div key={idx} className="rtr-plea-pool-item">
-                <span className="rtr-plea-pool-item-name">{name}</span>
-                <div className="rtr-plea-pool-rows">
+              <div key={idx} className="rtr-decision-item" style={{ marginBottom: 10 }}>
+                {/* Item name row — reuses .rtr-item-details */}
+                <div className="rtr-item-details">
+                  <span className="rtr-item-name">{name}</span>
+ 
+                  {/* R1 locked approved */}
                   {r1Locked > 0 && (
-                    <div className="rtr-plea-pool-row rtr-plea-pool-row--r1">
-                      <FiCheckCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--approved" />
-                      <span className="rtr-plea-pool-label">Round 1 approved</span>
-                      <span className="rtr-plea-pool-qty">{r1Locked} unit{r1Locked !== 1 ? 's' : ''}</span>
-                    </div>
-                  )}
-                  {pleaApproved != null && pleaApproved > 0 && (
-                    <div className="rtr-plea-pool-row rtr-plea-pool-row--plea-approved">
-                      <FiCheckCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--approved" />
-                      <span className="rtr-plea-pool-label">Plea approved</span>
-                      <span className="rtr-plea-pool-qty">{pleaApproved} unit{pleaApproved !== 1 ? 's' : ''}</span>
-                    </div>
-                  )}
-                  {pleaRejected != null && pleaRejected > 0 && (
-                    <div className="rtr-plea-pool-row rtr-plea-pool-row--plea-rejected">
-                      <FiXCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--rejected" />
-                      <span className="rtr-plea-pool-label">Plea rejected</span>
-                      <span className="rtr-plea-pool-qty">{pleaRejected} unit{pleaRejected !== 1 ? 's' : ''}</span>
-                    </div>
-                  )}
-                  {silentAccepted > 0 && (
-                    <div className="rtr-plea-pool-row rtr-plea-pool-row--silent">
-                      <FiXCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--silent" />
-                      <span className="rtr-plea-pool-label">Accepted as rejected</span>
-                      <span className="rtr-plea-pool-qty">{silentAccepted} unit{silentAccepted !== 1 ? 's' : ''}</span>
-                    </div>
-                  )}
-                  <div className="rtr-plea-pool-row rtr-plea-pool-row--total">
-                    <span className="rtr-plea-pool-label rtr-plea-pool-label--total">
-                      Final: {approvedQty} approved · {totalQty - approvedQty} rejected
+                    <span className="rtr-item-quantity" style={{ color: '#10B981' }}>
+                      <FiCheckCircle style={{ fontSize: 11, marginRight: 3 }} />
+                      Round 1 approved: {r1Locked} unit{r1Locked !== 1 ? 's' : ''}
                     </span>
-                  </div>
+                  )}
+ 
+                  {/* Plea approved */}
+                  {pleaApproved != null && pleaApproved > 0 && (
+                    <span className="rtr-item-quantity" style={{ color: '#10B981' }}>
+                      <FiCheckCircle style={{ fontSize: 11, marginRight: 3 }} />
+                      Plea approved: {pleaApproved} unit{pleaApproved !== 1 ? 's' : ''}
+                    </span>
+                  )}
+ 
+                  {/* Plea rejected */}
+                  {pleaRejected != null && pleaRejected > 0 && (
+                    <span className="rtr-item-quantity" style={{ color: '#EF4444' }}>
+                      <FiXCircle style={{ fontSize: 11, marginRight: 3 }} />
+                      Plea rejected: {pleaRejected} unit{pleaRejected !== 1 ? 's' : ''}
+                    </span>
+                  )}
+ 
+                  {/* Silently accepted (not contested) */}
+                  {silentAccepted > 0 && (
+                    <span className="rtr-rejection-reason">
+                      <FiXCircle style={{ fontSize: 11, marginRight: 3 }} />
+                      Accepted as rejected: {silentAccepted} unit{silentAccepted !== 1 ? 's' : ''}
+                    </span>
+                  )}
+ 
+                  {/* Final summary line */}
+                  <span className="rtr-rejection-reason" style={{ marginTop: 3, fontStyle: 'normal', fontWeight: 500 }}>
+                    Final: {approvedQty} approved · {totalQty - approvedQty} rejected
+                  </span>
                 </div>
               </div>
             );
@@ -353,6 +354,7 @@ const CreditBreakdown = ({ returnInfo, currency = 'USD', showPleaDetail = false 
     </div>
   );
 };
+ 
 
 const PolicyGate = ({ onAccept }) => (
   <div className="rtr-policy-gate">
@@ -1058,13 +1060,17 @@ function ReturnRequest() {
                     already been resolved (approved, in_transit, awaiting_discount,
                     completed). At items_reviewed and plea_submitted the plea is
                     not yet resolved so we omit the detail. */}
-                {showBreakdown && (
-                  <CreditBreakdown
-                    returnInfo={returnInfo}
-                    currency={currency}
-                    showPleaDetail={hasPleaRound && ['approved', 'in_transit', 'received', 'inspected', 'awaiting_discount', 'completed'].includes(status)}
-                  />
-                )}
+                  {showBreakdown && (
+                    <CreditBreakdown
+                      returnInfo={returnInfo}
+                      currency={currency}
+                      orderItems={orderItems}
+                      showPleaDetail={
+                        hasPleaRound &&
+                        ['approved', 'in_transit', 'received', 'inspected', 'awaiting_discount', 'completed'].includes(status)
+                      }
+                    />
+                  )}
 
                 {/* Plea rejected — all items rejected after plea resolution */}
                 {allItemsRejectedAfterPlea && (
@@ -1415,25 +1421,35 @@ function ReturnRequest() {
                         <p>{pleaInfo.pleaDescription}</p>
                       </div>
                     )}
-                    {/* FIX: Show the per-item silentAcceptedQuantity so the customer
+                    {/* Show the per-item silentAcceptedQuantity so the customer
                         can see which units they chose not to contest while waiting
                         for the admin's response. */}
                     {returnItems.some((i) => (i.silentAcceptedQuantity ?? 0) > 0) && (
-                      <div className="rtr-plea-silent-summary">
-                        <span className="rtr-info-label">Units accepted as rejected (not contested):</span>
-                        {returnItems
-                          .filter((i) => (i.silentAcceptedQuantity ?? 0) > 0)
-                          .map((item, i) => (
-                            <div key={i} className="rtr-plea-silent-item">
-                              <span className="rtr-plea-silent-name">{resolveItemName(item, orderItems, i)}</span>
-                              <span className="rtr-plea-silent-qty">
-                                {item.silentAcceptedQuantity} unit{item.silentAcceptedQuantity !== 1 ? 's' : ''} silently accepted
-                              </span>
-                            </div>
-                          ))
-                        }
+                      <div className="rtr-return-info-grid" style={{ marginTop: 12 }}>
+                        <div className="rtr-info-item rtr-full-width">
+                          <span className="rtr-info-label">
+                            Units accepted as rejected (not contested):
+                          </span>
+                          {returnItems
+                            .filter((i) => (i.silentAcceptedQuantity ?? 0) > 0)
+                            .map((item, i) => (
+                              <div key={i} className="rtr-decision-item" style={{ marginTop: 6 }}>
+                                <div className="rtr-item-details">
+                                  <span className="rtr-item-name">
+                                    {resolveItemName(item, orderItems, i)}
+                                  </span>
+                                  <span className="rtr-rejection-reason">
+                                    {item.silentAcceptedQuantity} unit
+                                    {item.silentAcceptedQuantity !== 1 ? 's' : ''} silently accepted
+                                  </span>
+                                </div>
+                              </div>
+                            ))
+                          }
+                        </div>
                       </div>
                     )}
+
                     {pleaDeadline && (
                       <CountdownTimer
                         deadline={pleaDeadline}
