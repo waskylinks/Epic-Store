@@ -307,7 +307,10 @@ const orderSchema = new mongoose.Schema(
             
             adminRejectionReason: { type: String, default: '' },
             approvedQuantity: { type: Number, default: null },
-            pleaQuantity: { type: Number, default: null },
+            pleaQuantity:           { type: Number, default: null },
+            silentAcceptedQuantity: { type: Number, default: 0    },
+            pleaApprovedQty:        { type: Number, default: null },
+            pleaRejectedQty:        { type: Number, default: null },
           },
           
         ],
@@ -797,8 +800,8 @@ orderSchema.virtual('pleaDeadlineMs').get(function () {
 
 orderSchema.virtual('approvedItemsValue').get(function () {
   return (this.returnInfo?.itemsToReturn ?? [])
-    .filter((item) => item.adminDecision === 'approved')
-    .reduce((sum, item) => sum + (item.price ?? 0) * (item.approvedQuantity ?? item.quantity ?? 1), 0);
+    .filter((item) => (item.approvedQuantity ?? 0) > 0)
+    .reduce((sum, item) => sum + (item.price ?? 0) * (item.approvedQuantity ?? 0), 0);
 });
 
 orderSchema.set('toJSON', { virtuals: true });
