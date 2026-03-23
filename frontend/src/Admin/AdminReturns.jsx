@@ -1196,7 +1196,8 @@ const AdminReturns = () => {
       { label: 'Items Reviewed',    value: stats.items_reviewed    ?? 0, icon: RateReview,    color: '#3B82F6', isCount: true  },
       { label: 'Plea Submitted',    value: stats.plea_submitted    ?? 0, icon: Gavel,         color: '#8B5CF6', isCount: true  },
       { label: 'In Transit',        value: stats.in_transit        ?? 0, icon: LocalShipping, color: '#06B6D4', isCount: true  },
-      { label: 'Awaiting Discount', value: stats.awaiting_discount ?? 0, icon: PendingActions,color: '#F97316', isCount: true  },
+      { label: 'Inspected', value: stats.inspected ?? 0, icon: RateReview, color: '#F97316', isCount: true },
+      { label: 'Awaiting Discount', value: stats.awaiting_discount ?? 0, icon: PendingActions, color: '#F97316', isCount: true  },
       { label: 'Completed',         value: stats.completed         ?? 0, icon: CheckCircle,   color: '#10B981', isCount: true  },
       { label: 'Rejected',          value: stats.rejected          ?? 0, icon: Cancel,        color: '#EF4444', isCount: true  },
       { label: 'Requested Revenue', value: typeof stats.totalRequestedAmount === 'number' ? stats.totalRequestedAmount : 0, icon: Discount,     color: '#0EA5E9', isCount: false },
@@ -1316,36 +1317,49 @@ const AdminReturns = () => {
 
 
 const renderItemDecisionBadges = (returnInfo) => {
-  const items    = returnInfo?.itemsToReturn ?? [];
+  const items = returnInfo?.itemsToReturn ?? [];
   const reviewed = items.filter((i) => i.adminDecision && i.adminDecision !== 'pending');
-  if (!reviewed.length) return null;
- 
+
+  // Show if any item has a decision OR is fully approved (no plea needed)
+  const hasAnything = reviewed.length > 0 || items.some((i) => (i.approvedQuantity ?? 0) >= (i.quantity ?? 1));
+  if (!hasAnything) return null;
+
   return (
     <div className="rt-item-decision-badges">
       {items.map((item, idx) => {
-        const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-        const name        = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
-        const dec         = item.adminDecision;
-        if (!dec || dec === 'pending') return null;
- 
-        const totalQty    = item.quantity ?? 1;
-        const approvedQty = item.approvedQuantity ?? (dec === 'approved' ? totalQty : 0);
-        const rejectedQty = totalQty - approvedQty;
-        const isPartial   = approvedQty > 0 && rejectedQty > 0;
- 
+        const pid          = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+        const name         = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+        const dec          = item.adminDecision;
+        const totalQty     = item.quantity ?? 1;
+        const approvedQty  = item.approvedQuantity ?? 0;
+        const rejectedQty  = totalQty - approvedQty;
+        const isPartial    = approvedQty > 0 && rejectedQty > 0;
+
+        // Fully approved item that never went through plea — show approved badge
+        if (!dec || dec === 'pending') {
+          if (approvedQty >= totalQty) {
+            return (
+              <div key={pid} className="rt-decision-badge rt-decision-badge--approved">
+                <CheckCircle style={{ fontSize: 13 }} />
+                <span>{name}</span>
+                <span className="rt-decision-badge-qty">Approved: {approvedQty}</span>
+              </div>
+            );
+          }
+          return null;
+        }
+
         // Plea-round pool fields (set by resolveAfterPlea)
-        const pleaApprovedQty  = item.pleaApprovedQty        ?? null;
-        const pleaRejectedQty  = item.pleaRejectedQty        ?? null;
-        const silentAccepted   = item.silentAcceptedQuantity ?? 0;
-        const r1Locked         = (pleaApprovedQty != null)
-          ? approvedQty - pleaApprovedQty
-          : null;
- 
+        const pleaApprovedQty = item.pleaApprovedQty        ?? null;
+        const pleaRejectedQty = item.pleaRejectedQty        ?? null;
+        const silentAccepted  = item.silentAcceptedQuantity ?? 0;
+        const r1Locked        = (pleaApprovedQty != null) ? approvedQty - pleaApprovedQty : null;
+
         const hasPleaDetail =
           (pleaApprovedQty != null && pleaApprovedQty > 0) ||
           (pleaRejectedQty != null && pleaRejectedQty > 0) ||
           silentAccepted > 0;
- 
+
         return (
           <React.Fragment key={pid}>
             {/* Approved badge — shown when any units are approved */}
@@ -1358,7 +1372,7 @@ const renderItemDecisionBadges = (returnInfo) => {
                 )}
               </div>
             )}
- 
+
             {/* Rejected badge — shown when any units are rejected */}
             {rejectedQty > 0 && (
               <div className="rt-decision-badge rt-decision-badge--rejected">
@@ -1372,29 +1386,21 @@ const renderItemDecisionBadges = (returnInfo) => {
                 )}
               </div>
             )}
- 
-            {/* Plea pool breakdown — shown after plea resolution when fields exist */}
+
+            {/* Plea pool breakdown — shown after plea resolution */}
             {hasPleaDetail && (
               <div className="rt-decision-badge-plea-detail">
                 {r1Locked != null && r1Locked > 0 && (
-                  <span className="rt-plea-pool-chip rt-plea-pool-chip--r1">
-                    R1 locked: {r1Locked}
-                  </span>
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--r1">R1 locked: {r1Locked}</span>
                 )}
                 {pleaApprovedQty != null && pleaApprovedQty > 0 && (
-                  <span className="rt-plea-pool-chip rt-plea-pool-chip--approved">
-                    Plea approved: {pleaApprovedQty}
-                  </span>
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--approved">Plea approved: {pleaApprovedQty}</span>
                 )}
                 {pleaRejectedQty != null && pleaRejectedQty > 0 && (
-                  <span className="rt-plea-pool-chip rt-plea-pool-chip--rejected">
-                    Plea rejected: {pleaRejectedQty}
-                  </span>
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--rejected">Plea rejected: {pleaRejectedQty}</span>
                 )}
                 {silentAccepted > 0 && (
-                  <span className="rt-plea-pool-chip rt-plea-pool-chip--silent">
-                    Silent: {silentAccepted}
-                  </span>
+                  <span className="rt-plea-pool-chip rt-plea-pool-chip--silent">Silent: {silentAccepted}</span>
                 )}
               </div>
             )}
@@ -1812,8 +1818,10 @@ const renderItemDecisionBadges = (returnInfo) => {
                             <span className="rt-item-name">{item.product?.name ?? `Item ${idx + 1}`}</span>
                             <span className="rt-item-meta">
                               Qty: {item.quantity ?? 1}
-                              {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
-                                <span className="rt-item-approved-qty"> · Approved: {item.approvedQuantity}</span>
+                              {item.approvedQuantity != null && (
+                                <span className="rt-item-approved-qty">
+                                  {' · '}Approved: {item.approvedQuantity}
+                                </span>
                               )}
                               {(() => {
                                 const totalQty    = item.quantity ?? 1;
@@ -1999,16 +2007,22 @@ const renderItemDecisionBadges = (returnInfo) => {
                           );
                         })}
                       </div>
-                      <div className="rt-resume-banner">
-                        <Warning style={{ fontSize: 16, flexShrink: 0 }} />
-                        <div>
-                          <p style={{ margin: 0, fontWeight: 700, fontSize: 13 }}>Discount generation was initiated</p>
-                          <p style={{ margin: '3px 0 0', fontSize: 12.5, color: '#6B7280' }}>
-                            Close this drawer and reopen this return from the list, then use the Status tab to continue generating the discount code.
-                            If a code was already generated, check the Discount Codes page.
-                          </p>
-                        </div>
+                      <div className="rt-info-banner rt-info-banner--info">
+                        <Discount style={{ fontSize: 16, flexShrink: 0 }} />
+                        <span>
+                          Discount code generation was initiated but not completed. Click below to resume and generate the code.
+                        </span>
                       </div>
+                      <button
+                        type="button"
+                        className="rt-btn rt-btn--generate-discount"
+                        style={{ marginTop: 16 }}
+                        onClick={handleGenerateDiscount}
+                        disabled={discountCodeLoading}
+                      >
+                        <Discount style={{ fontSize: 16, marginRight: 6 }} />
+                        {discountCodeLoading ? 'Initiating…' : 'Generate Discount Code'}
+                      </button>
                     </>
                   )}
 
