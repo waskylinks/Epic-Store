@@ -76,8 +76,6 @@ const fmtCurrency = (n) => `$${fmt(typeof n === 'number' ? n : 0)}`;
 const fmtDate     = (d) => d ? new Date(d).toLocaleString() : 'N/A';
 
 // Resolve the best display name for a customer from returnDataForDiscount.
-// The backend populates customerName from order.user?.name which may be empty
-// if the user model stores firstName/lastName separately. Fall back to email.
 const resolveCustomerDisplayName = (returnData) => {
   if (!returnData) return 'N/A';
   const name = returnData.customerName?.trim();
@@ -269,6 +267,11 @@ const PerItemDecisionForm = ({
                 {isPleaRound && !isLocked && item.pleaQuantity != null && (
                   <span className="rt-item-plea-note">
                     Customer appealed {item.pleaQuantity} of {maxQty} unit{maxQty !== 1 ? 's' : ''}
+                    {(item.silentAcceptedQuantity ?? 0) > 0 && (
+                      <span className="rt-item-silent-note">
+                        {' '}· {item.silentAcceptedQuantity} silently accepted
+                      </span>
+                    )}
                   </span>
                 )}
                 {isLocked && (
@@ -483,8 +486,6 @@ const PleaPreviewModal = ({ items, decisions, adminNote, onConfirm, onCancel, lo
 };
 
 // ── StepIndicator ─────────────────────────────────────────────────────────────
-// Renders the "Step 1 → Step 2" progress indicator inside the status tab
-// for the inline discount generation flow.
 const StepIndicator = ({ currentStep }) => (
   <div className="rt-step-indicator">
     <div className="rt-step-node">
@@ -517,8 +518,6 @@ const AdminReturns = () => {
     returnDataForDiscount,
   } = useSelector((state) => state.adminReturn);
 
-  // Pull actionLoading and compensationConflict from the discount slice
-  // so we can handle 409 conflicts in the inline confirm step.
   const {
     actionLoading: discountActionLoading,
     compensationConflict,
@@ -555,17 +554,12 @@ const AdminReturns = () => {
   const [newStatus,       setNewStatus]       = useState('');
   const [inspectionNotes, setInspectionNotes] = useState('');
 
-  // ── Return discount inline flow state ─────────────────────────────────────
-  // returnDiscountStep:
-  //   0 = not in the flow (default, or after close)
-  //   1 = showing the confirm/preview panel (awaiting_discount)
-  //   2 = showing the success panel (completed)
+  // Return discount inline flow
   const [returnDiscountStep,    setReturnDiscountStep]    = useState(0);
   const [generatedDiscountCode, setGeneratedDiscountCode] = useState(null);
   const [returnDiscountError,   setReturnDiscountError]   = useState(null);
   const [returnDiscountLoading, setReturnDiscountLoading] = useState(false);
 
-  // Copy button state for the generated code box in step 2
   const { copied: codeCopied, copy: copyCode } = useCopyToClipboard();
 
   const rmaDebounced = useDebounce(rmaSearch, 400);
@@ -652,27 +646,26 @@ const AdminReturns = () => {
         const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
         const maxQty = item.quantity ?? 1;
 
-        if (item.adminDecision === 'approved') {
-          const approvedQty     = item.approvedQuantity ?? maxQty;
-          const isFullyApproved = approvedQty >= maxQty;
-          if (isFullyApproved) {
-            fresh[pid] = {
-              decision:         'approved',
-              rejectionReason:  '',
-              approvedQuantity: approvedQty,
-              rejectedQuantity: maxQty,
-            };
-          } else {
-            const pleaQty = item.pleaQuantity ?? (maxQty - approvedQty);
-            fresh[pid] = {
-              decision:         '',
-              rejectionReason:  '',
-              approvedQuantity: pleaQty,
-              rejectedQuantity: pleaQty,
-            };
-          }
+        // FIX: use approvedQuantity directly (not adminDecision label) to
+        // determine whether the item is fully approved and should be locked.
+        // With the unified model, adminDecision='approved' always means
+        // approvedQuantity > 0, but fully-approved means approvedQty === maxQty.
+        const approvedQty     = item.approvedQuantity ?? 0;
+        const isFullyApproved = approvedQty >= maxQty;
+
+        if (isFullyApproved) {
+          // Fully approved → locked, no plea decision needed
+          fresh[pid] = {
+            decision:         'approved',
+            rejectionReason:  '',
+            approvedQuantity: approvedQty,
+            rejectedQuantity: maxQty,
+          };
         } else {
-          const pleaQty = item.pleaQuantity ?? maxQty;
+          // Partially approved or fully rejected → plea round
+          // contestableQty is the number of units the customer could appeal.
+          // pleaQuantity is how many they actually appealed (set by submitPlea).
+          const pleaQty = item.pleaQuantity ?? (maxQty - approvedQty);
           fresh[pid] = {
             decision:         '',
             rejectionReason:  '',
@@ -737,17 +730,26 @@ const AdminReturns = () => {
     });
   }, [currentReturn, itemDecisions]);
 
+  // FIX: pleaDecisionsComplete — use approvedQuantity directly (not
+  // adminDecision label) to determine whether an item is fully approved
+  // (locked) vs needs a plea decision. contestedQty is always
+  // item.pleaQuantity for items that are not fully approved, because
+  // submitPlea now correctly sets pleaQuantity = contestableQty - silentAccepted.
   const pleaDecisionsComplete = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
     return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
-      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const maxQty = item.quantity ?? 1;
-      const approvedQty     = item.approvedQuantity ?? maxQty;
-      const isFullyApproved = item.adminDecision === 'approved' && approvedQty >= maxQty;
+      const pid             = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty          = item.quantity ?? 1;
+      const approvedQty     = item.approvedQuantity ?? 0;
+      const isFullyApproved = approvedQty >= maxQty;
+
+      // Fully approved items are locked — no decision required
       if (isFullyApproved) return true;
-      const contestedQty = item.adminDecision === 'approved'
-        ? (item.pleaQuantity ?? (maxQty - approvedQty))
-        : (item.pleaQuantity ?? maxQty);
+
+      // Contested units: how many the customer actually appealed
+      // (pleaQuantity set by submitPlea, always ≤ contestableQty)
+      const contestedQty = item.pleaQuantity ?? (maxQty - approvedQty);
+
       const dec = pleaDecisions[pid];
       if (!dec?.decision) return false;
       if (dec.decision === 'rejected') return !!dec.rejectionReason?.trim();
@@ -760,48 +762,59 @@ const AdminReturns = () => {
     });
   }, [currentReturn, pleaDecisions]);
 
+  // FIX: pleaLockedProductIds — use approvedQuantity >= quantity (not
+  // adminDecision label) so items from both approve-path and reject-path
+  // that are fully approved are correctly locked.
   const pleaLockedProductIds = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn) return new Set();
     return new Set(
       currentReturn.returnInfo.itemsToReturn
         .filter((item) => {
-          if (item.adminDecision !== 'approved') return false;
-          const approvedQty = item.approvedQuantity ?? (item.quantity ?? 1);
+          const approvedQty = item.approvedQuantity ?? 0;
           return approvedQty >= (item.quantity ?? 1);
         })
         .map((item, idx) => item.product?._id?.toString() ?? item.product?.toString() ?? String(idx))
     );
   }, [currentReturn]);
 
+  // FIX: pleaRoundApproveMax — use approvedQuantity directly (not adminDecision)
+  // to compute the contestable remainder for partially-approved items.
+  // For fully-approved items these are already in pleaLockedProductIds so the
+  // map entry is never read, but we skip them anyway for clarity.
   const pleaRoundApproveMax = useMemo(() => {
     const map = new Map();
     if (!currentReturn?.returnInfo?.itemsToReturn) return map;
     currentReturn.returnInfo.itemsToReturn.forEach((item, idx) => {
-      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const maxQty = item.quantity ?? 1;
-      if (item.adminDecision === 'approved') {
-        const approvedQty     = item.approvedQuantity ?? maxQty;
-        const isFullyApproved = approvedQty >= maxQty;
-        if (!isFullyApproved) {
-          const remainder = maxQty - approvedQty;
-          map.set(pid, item.pleaQuantity ?? remainder);
-        }
-      } else {
-        map.set(pid, item.pleaQuantity ?? maxQty);
-      }
+      const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty      = item.quantity ?? 1;
+      const approvedQty = item.approvedQuantity ?? 0;
+      const isFullyApproved = approvedQty >= maxQty;
+
+      if (isFullyApproved) return; // locked — no entry needed
+
+      // For partially-approved or fully-rejected items the admin can approve
+      // up to pleaQuantity (what the customer actually appealed).
+      map.set(pid, item.pleaQuantity ?? (maxQty - approvedQty));
     });
     return map;
   }, [currentReturn]);
 
+  // FIX: round1ApprovedQty — read approvedQuantity directly regardless of
+  // adminDecision label. With the unified model all partially-approved items
+  // (whether originally via approve-path or reject-path) have
+  // adminDecision='approved', so filtering by adminDecision is now correct.
+  // We keep the logic label-agnostic anyway for robustness: capture any item
+  // whose approvedQuantity is > 0 but < quantity, regardless of label.
   const round1ApprovedQty = useMemo(() => {
     const map = new Map();
     if (!currentReturn?.returnInfo?.itemsToReturn) return map;
     currentReturn.returnInfo.itemsToReturn.forEach((item, idx) => {
-      const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-      const maxQty = item.quantity ?? 1;
-      if (item.adminDecision === 'approved') {
-        const approvedQty = item.approvedQuantity ?? maxQty;
-        if (approvedQty < maxQty) map.set(pid, approvedQty);
+      const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+      const maxQty      = item.quantity ?? 1;
+      const approvedQty = item.approvedQuantity ?? 0;
+      // Capture partially-approved items (R1 locked units > 0 but < total)
+      if (approvedQty > 0 && approvedQty < maxQty) {
+        map.set(pid, approvedQty);
       }
     });
     return map;
@@ -819,7 +832,6 @@ const AdminReturns = () => {
     setItemDecisions({}); setAdminNote('');
     setPleaDecisions({}); setPleaAdminNote('');
     setNewStatus(''); setInspectionNotes('');
-    // Reset discount flow state when opening a new return
     setReturnDiscountStep(0);
     setGeneratedDiscountCode(null);
     setReturnDiscountError(null);
@@ -851,21 +863,19 @@ const AdminReturns = () => {
     setPleaDecisions((p) => ({ ...p, [pid]: { ...p[pid], [field]: value } })), []);
 
   // buildDecisionsArray serialises the admin's decisions into the array the
-  // backend expects. Two critical fixes vs the original:
+  // backend expects.
   //
   // FIX A — 'approved' in plea round:
-  //   pleaApproved is the number of contested units the admin approves.
-  //   lockedR1 is the number of units already approved in round 1 (from r1Map).
+  //   pleaApproved = admin-chosen contested units to approve
+  //   lockedR1     = R1 locked units from round1ApprovedQty map
   //   Total approvedQuantity = pleaApproved + lockedR1, capped at item.quantity.
-  //   This was already correct.
   //
-  // FIX B — 'rejected' in plea round (NEW):
-  //   When the admin rejects a plea for a partially-approved item, the round-1
-  //   approved units (lockedR1) must be preserved. Without sending approvedQuantity
-  //   for rejected decisions, the backend would set it to null and lose those units.
-  //   Fix: always send approvedQuantity = lockedR1 for rejected plea decisions.
-  //   For round-1 review (isPlea=false), rejected items have no prior approvals,
-  //   so approvedQuantity is derived server-side from quantity - rejectedQuantity.
+  // FIX B — 'rejected' in plea round:
+  //   For partially-approved items, the R1 locked units must be preserved.
+  //   Send approvedQuantity = lockedR1 for rejected plea decisions so the
+  //   backend resolveAfterPlea preserves them (item.approvedQuantity = r1Locked).
+  //   For round-1 (isPlea=false), rejected items have no prior approvals so
+  //   approvedQuantity is derived server-side from quantity - rejectedQuantity.
   const buildDecisionsArray = (decisionsMap, items, isPlea = false, r1Map = new Map()) =>
     items.map((item, idx) => {
       const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
@@ -882,10 +892,8 @@ const AdminReturns = () => {
         base.approvedQuantity = Math.min(pleaApproved + lockedR1, maxQty);
       } else if (dec.decision === 'rejected') {
         base.rejectedQuantity = Math.min(dec.rejectedQuantity ?? maxQty, maxQty);
-        // FIX: for plea-round rejections on partially-approved items, send the
-        // round-1 locked units as approvedQuantity so the backend preserves them.
-        // Backend resolveAfterPlea now reads decision.approvedQuantity for rejected
-        // decisions instead of setting null.
+        // For plea-round rejections on partially-approved items, send the
+        // R1 locked units as approvedQuantity so the backend preserves them.
         if (isPlea) {
           base.approvedQuantity = r1Map.get(pid) ?? 0;
         }
@@ -925,47 +933,27 @@ const AdminReturns = () => {
     }
   }, [dispatch, selectedId, currentReturn, pleaDecisions, pleaAdminNote, round1ApprovedQty, triggerFetch]);
 
-  // ── handleGenerateDiscount ────────────────────────────────────────────────
-  // Fires generateDiscountCode which transitions inspected → awaiting_discount.
-  // On success, the slice stores returnDataForDiscount and patches
-  // currentReturn.returnInfo.status to awaiting_discount. We then advance
-  // returnDiscountStep to 1 so the status tab renders the confirm panel.
-  // NOTE: navigate() is intentionally removed — the flow stays in the drawer.
   const handleGenerateDiscount = useCallback(async () => {
     if (!selectedId) return;
     setReturnDiscountError(null);
     try {
       await dispatch(generateDiscountCode(selectedId)).unwrap();
-      // Advance to step 1 (the confirm/preview panel).
-      // The status tab will now render because retStatus === 'awaiting_discount'
-      // and returnDiscountStep === 1.
       setReturnDiscountStep(1);
       setActiveTab('status');
       triggerFetch();
     } catch (err) {
-      // Error is already stored in adminReturn.error and shown in the drawer's
-      // existing error handling. No additional handling needed here.
       void err;
     }
   }, [dispatch, selectedId, triggerFetch]);
 
-  // ── handleCompleteReturnWithDiscount ──────────────────────────────────────
-  // Step 1 confirm button handler. Calls createCompensationDiscount then
-  // updateReturnStatus({ status: 'completed' }) sequentially.
-  // On success advances to step 2 (success panel).
-  // On failure surfaces an inline error in step 1.
   const handleCompleteReturnWithDiscount = useCallback(async () => {
     if (!returnDataForDiscount) return;
     setReturnDiscountLoading(true);
     setReturnDiscountError(null);
 
     const compensationPayload = {
-      // createCompensationDiscount requires 'userId' — map from customerId
       userId:        returnDataForDiscount.customerId,
       category:      'return',
-      // When relatedReturn is supplied the controller reads discountValue
-      // directly from order.returnInfo.discountValue — amount is ignored.
-      // We include it anyway as a fallback in case relatedReturn lookup fails.
       amount:        returnDataForDiscount.discountValue,
       reason:        `Return compensation — ${returnDataForDiscount.orderReference}`,
       validDays:     RETURN_DISCOUNT_VALID_DAYS,
@@ -981,7 +969,6 @@ const AdminReturns = () => {
       ).unwrap();
       discountCode = discountResult?.discount?.code ?? null;
     } catch (err) {
-      // Handle 409 conflict (discount already exists for this return)
       const message = err?.message ?? 'Failed to create discount code';
       const existingCode = err?.existingCode ?? null;
       setReturnDiscountError(
@@ -998,27 +985,20 @@ const AdminReturns = () => {
         updateReturnStatus({ orderId: returnDataForDiscount.orderId, status: 'completed' })
       ).unwrap();
     } catch (err) {
-      // The discount was created but the status update failed.
-      // Surface a specific error so admin knows what happened.
       setReturnDiscountError(
         `Discount code ${discountCode ? `(${discountCode}) ` : ''}was generated but the return status could not be updated to completed. Please update the status manually.`
       );
       setReturnDiscountLoading(false);
-      // Even on partial failure, store the code so admin can see it
       if (discountCode) setGeneratedDiscountCode(discountCode);
       return;
     }
 
-    // Both calls succeeded — advance to step 2
     setGeneratedDiscountCode(discountCode);
     setReturnDiscountStep(2);
     setReturnDiscountLoading(false);
     triggerFetch();
   }, [dispatch, returnDataForDiscount, triggerFetch]);
 
-  // ── handleReturnDiscountDone ──────────────────────────────────────────────
-  // Called from the "Done" button in step 2 and the "Cancel" button in step 1.
-  // Resets all discount flow state and closes the drawer.
   const handleReturnDiscountDone = useCallback(() => {
     setReturnDiscountStep(0);
     setGeneratedDiscountCode(null);
@@ -1070,7 +1050,6 @@ const AdminReturns = () => {
     setPleaDecisions({}); setPleaAdminNote('');
     setNewStatus(''); setInspectionNotes('');
     setShowPleaPreview(false);
-    // Reset discount flow state
     setReturnDiscountStep(0);
     setGeneratedDiscountCode(null);
     setReturnDiscountError(null);
@@ -1218,28 +1197,54 @@ const AdminReturns = () => {
     );
   };
 
+  // FIX: renderItemDecisionBadges — use approvedQuantity to compute rejected
+  // quantity for display, so the badge correctly shows partial rejections
+  // regardless of adminDecision label. Also show rejected quantity on the
+  // badge when some units are rejected even if adminDecision === 'approved'
+  // (partial approval case).
   const renderItemDecisionBadges = (returnInfo) => {
     const items    = returnInfo?.itemsToReturn ?? [];
-    const reviewed = items.filter((i) => i.adminDecision);
+    const reviewed = items.filter((i) => i.adminDecision && i.adminDecision !== 'pending');
     if (!reviewed.length) return null;
     return (
       <div className="rt-item-decision-badges">
         {items.map((item, idx) => {
-          const pid  = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-          const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
-          const dec  = item.adminDecision;
-          if (!dec) return null;
+          const pid          = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+          const name         = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+          const dec          = item.adminDecision;
+          if (!dec || dec === 'pending') return null;
+
+          const totalQty    = item.quantity ?? 1;
+          const approvedQty = item.approvedQuantity ?? (dec === 'approved' ? totalQty : 0);
+          const rejectedQty = totalQty - approvedQty;
+          const isPartial   = approvedQty > 0 && rejectedQty > 0;
+
           return (
-            <div key={pid} className={`rt-decision-badge rt-decision-badge--${dec}`}>
-              {dec === 'approved' ? <CheckCircle style={{ fontSize: 13 }} /> : <Cancel style={{ fontSize: 13 }} />}
-              <span>{name}</span>
-              {dec === 'approved' && item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
-                <span className="rt-decision-badge-qty">×{item.approvedQuantity} of {item.quantity}</span>
+            <React.Fragment key={pid}>
+              {/* Approved badge — shown when any units are approved */}
+              {approvedQty > 0 && (
+                <div className="rt-decision-badge rt-decision-badge--approved">
+                  <CheckCircle style={{ fontSize: 13 }} />
+                  <span>{name}</span>
+                  {approvedQty !== totalQty && (
+                    <span className="rt-decision-badge-qty">×{approvedQty} of {totalQty}</span>
+                  )}
+                </div>
               )}
-              {dec === 'rejected' && item.adminRejectionReason && (
-                <span className="rt-decision-badge-reason">— {item.adminRejectionReason}</span>
+              {/* Rejected badge — shown when any units are rejected */}
+              {rejectedQty > 0 && (
+                <div className="rt-decision-badge rt-decision-badge--rejected">
+                  <Cancel style={{ fontSize: 13 }} />
+                  <span>{name}</span>
+                  {isPartial && (
+                    <span className="rt-decision-badge-qty">{rejectedQty} of {totalQty} rejected</span>
+                  )}
+                  {item.adminRejectionReason && (
+                    <span className="rt-decision-badge-reason">— {item.adminRejectionReason}</span>
+                  )}
+                </div>
               )}
-            </div>
+            </React.Fragment>
           );
         })}
       </div>
@@ -1248,13 +1253,9 @@ const AdminReturns = () => {
 
   // ── Status tab: inline discount flow panels ───────────────────────────────
 
-  // Step 1 — confirm/preview panel rendered inside the status tab when
-  // retStatus === 'awaiting_discount' and returnDiscountStep === 1.
   const renderDiscountConfirmStep = () => {
     const rd = returnDataForDiscount;
     if (!rd) {
-      // returnDataForDiscount was lost (page refresh mid-flow).
-      // Show a resume banner instead of crashing.
       return (
         <div className="rt-resume-banner">
           <Warning style={{ fontSize: 16, flexShrink: 0 }} />
@@ -1282,7 +1283,6 @@ const AdminReturns = () => {
           <span className="rt-section-line" />
         </div>
 
-        {/* Customer strip */}
         <div className="rt-customer-strip">
           <Person style={{ fontSize: 17, color: '#4F46E5', flexShrink: 0 }} />
           <div>
@@ -1293,7 +1293,6 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* Key-value preview rows */}
         <div className="rt-card" style={{ marginTop: 12, marginBottom: 0 }}>
           <div className="rt-card-body">
             <div className="rt-metric-row">
@@ -1325,7 +1324,6 @@ const AdminReturns = () => {
           </div>
         </div>
 
-        {/* Approved items list */}
         {rd.approvedItems?.length > 0 && (
           <>
             <div className="rt-section" style={{ margin: '14px 0 10px' }}>
@@ -1347,7 +1345,6 @@ const AdminReturns = () => {
           </>
         )}
 
-        {/* Inline error — shown when createCompensationDiscount or updateReturnStatus fails */}
         {returnDiscountError && (
           <div className="rt-discount-inline-error" role="alert">
             <Warning style={{ fontSize: 15, flexShrink: 0 }} />
@@ -1355,7 +1352,6 @@ const AdminReturns = () => {
           </div>
         )}
 
-        {/* Action buttons */}
         <div style={{ display: 'flex', gap: 10, marginTop: 18 }}>
           <button
             type="button"
@@ -1383,7 +1379,6 @@ const AdminReturns = () => {
     );
   };
 
-  // Step 2 — success panel rendered when returnDiscountStep === 2
   const renderDiscountSuccessStep = () => (
     <div className="rt-return-success-panel">
       <StepIndicator currentStep={2} />
@@ -1454,12 +1449,11 @@ const AdminReturns = () => {
       );
     }
 
-    const returnInfo    = currentReturn.returnInfo ?? {};
-    const retStatus     = returnInfo.status ?? 'unknown';
-    const isTerminal    = TERMINAL_STATUSES.has(retStatus);
-    const orderRef      = currentReturn._id?.toString().slice(-6).toUpperCase() ?? 'N/A';
-    const rma           = returnInfo.rmaNumber ?? null;
-    const approvedItems = (returnInfo.itemsToReturn ?? []).filter((i) => i.adminDecision === 'approved');
+    const returnInfo = currentReturn.returnInfo ?? {};
+    const retStatus  = returnInfo.status ?? 'unknown';
+    const isTerminal = TERMINAL_STATUSES.has(retStatus);
+    const orderRef   = currentReturn._id?.toString().slice(-6).toUpperCase() ?? 'N/A';
+    const rma        = returnInfo.rmaNumber ?? null;
 
     const showBreakdown = ['items_reviewed', 'plea_submitted', 'approved', 'in_transit',
       'received', 'inspected', 'awaiting_discount', 'completed'].includes(retStatus);
@@ -1626,6 +1620,15 @@ const AdminReturns = () => {
                               {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
                                 <span className="rt-item-approved-qty"> · Approved: {item.approvedQuantity}</span>
                               )}
+                              {(() => {
+                                const totalQty    = item.quantity ?? 1;
+                                const approvedQty = item.approvedQuantity ?? 0;
+                                const rejectedQty = totalQty - approvedQty;
+                                if (rejectedQty > 0 && rejectedQty < totalQty) {
+                                  return <span className="rt-item-rejected-qty"> · Rejected: {rejectedQty}</span>;
+                                }
+                                return null;
+                              })()}
                               {item.condition ? ` · ${item.condition}` : ''}
                             </span>
                           </div>
@@ -1777,13 +1780,10 @@ const AdminReturns = () => {
                 </div>
                 <div className="rt-card-body">
 
-                  {/* ── Step 2: Success panel (completed via discount flow) ── */}
                   {retStatus === 'completed' && returnDiscountStep === 2 && renderDiscountSuccessStep()}
 
-                  {/* ── Step 1: Confirm panel (awaiting_discount, freshly generated) ── */}
                   {retStatus === 'awaiting_discount' && returnDiscountStep === 1 && renderDiscountConfirmStep()}
 
-                  {/* ── awaiting_discount with no active step (stale/refreshed state) ── */}
                   {retStatus === 'awaiting_discount' && returnDiscountStep === 0 && (
                     <>
                       <div className="rt-progress-row">
@@ -1817,7 +1817,6 @@ const AdminReturns = () => {
                     </>
                   )}
 
-                  {/* ── inspected: per-item breakdown + generate button ── */}
                   {retStatus === 'inspected' && (() => {
                     const allItems = returnInfo.itemsToReturn ?? [];
 
@@ -1831,7 +1830,6 @@ const AdminReturns = () => {
                           </span>
                         </div>
 
-                        {/* ── Per-item breakdown table ── */}
                         {allItems.length > 0 && (
                           <>
                             <div className="rt-section" style={{ margin: '14px 0 10px' }}>
@@ -1846,22 +1844,25 @@ const AdminReturns = () => {
                                 <span className="rt-ibt-col rt-ibt-col--rejected">Rejected</span>
                               </div>
                               {allItems.map((item, idx) => {
-                                const pid          = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-                                const name         = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
-                                const image        = item.product?.images?.[0]?.url ?? item.image ?? null;
-                                const totalQty     = item.quantity ?? 1;
-                                const approvedQty  = item.approvedQuantity ?? 0;
-                                const rejectedQty  = totalQty - approvedQty;
-                                const unitPrice    = item.price ?? item.product?.price ?? 0;
-                                const approvedAmt  = approvedQty * unitPrice;
-                                const rejectedAmt  = rejectedQty * unitPrice;
-                                const isFullApproved  = approvedQty >= totalQty;
-                                const isFullRejected  = approvedQty === 0;
-                                const isPartial       = !isFullApproved && !isFullRejected;
+                                const pid         = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+                                const name        = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+                                const image       = item.product?.images?.[0]?.url ?? item.image ?? null;
+                                const totalQty    = item.quantity ?? 1;
+                                const approvedQty = item.approvedQuantity ?? 0;
+                                const rejectedQty = totalQty - approvedQty;
+                                const unitPrice   = item.price ?? item.product?.price ?? 0;
+                                const approvedAmt = approvedQty * unitPrice;
+                                const rejectedAmt = rejectedQty * unitPrice;
+                                const isFullApproved = approvedQty >= totalQty;
+                                const isFullRejected = approvedQty === 0;
+
+                                // Plea breakdown detail (if available)
+                                const pleaApprovedQty = item.pleaApprovedQty ?? null;
+                                const pleaRejectedQty = item.pleaRejectedQty ?? null;
+                                const silentAccepted  = item.silentAcceptedQuantity ?? 0;
 
                                 return (
                                   <div key={pid} className={`rt-ibt-row${isFullApproved ? ' rt-ibt-row--approved' : isFullRejected ? ' rt-ibt-row--rejected' : ' rt-ibt-row--partial'}`}>
-                                    {/* Item name + image */}
                                     <div className="rt-ibt-col rt-ibt-col--name">
                                       <div className="rt-ibt-item-info">
                                         {image && <img src={image} alt={name} className="rt-ibt-img" />}
@@ -1873,11 +1874,26 @@ const AdminReturns = () => {
                                           {item.adminRejectionReason && rejectedQty > 0 && (
                                             <span className="rt-ibt-rejection-note">{item.adminRejectionReason}</span>
                                           )}
+                                          {/* Show plea breakdown detail when available */}
+                                          {pleaApprovedQty != null && pleaApprovedQty > 0 && (
+                                            <span className="rt-ibt-plea-note rt-ibt-plea-note--approved">
+                                              Plea: +{pleaApprovedQty} approved
+                                            </span>
+                                          )}
+                                          {pleaRejectedQty != null && pleaRejectedQty > 0 && (
+                                            <span className="rt-ibt-plea-note rt-ibt-plea-note--rejected">
+                                              Plea: {pleaRejectedQty} rejected
+                                            </span>
+                                          )}
+                                          {silentAccepted > 0 && (
+                                            <span className="rt-ibt-plea-note rt-ibt-plea-note--silent">
+                                              {silentAccepted} silently accepted
+                                            </span>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
 
-                                    {/* Requested qty */}
                                     <div className="rt-ibt-col rt-ibt-col--req">
                                       <span className="rt-ibt-qty">{totalQty}</span>
                                       {unitPrice > 0 && (
@@ -1885,7 +1901,6 @@ const AdminReturns = () => {
                                       )}
                                     </div>
 
-                                    {/* Approved qty + subtotal */}
                                     <div className="rt-ibt-col rt-ibt-col--approved">
                                       {approvedQty > 0 ? (
                                         <>
@@ -1904,7 +1919,6 @@ const AdminReturns = () => {
                                       )}
                                     </div>
 
-                                    {/* Rejected qty + subtotal */}
                                     <div className="rt-ibt-col rt-ibt-col--rejected">
                                       {rejectedQty > 0 ? (
                                         <>
@@ -1926,7 +1940,6 @@ const AdminReturns = () => {
                                 );
                               })}
 
-                              {/* Totals footer row */}
                               <div className="rt-ibt-footer">
                                 <div className="rt-ibt-col rt-ibt-col--name">
                                   <span className="rt-ibt-footer-label">Totals</span>
@@ -1951,7 +1964,6 @@ const AdminReturns = () => {
                           </>
                         )}
 
-                        {/* Credit breakdown showing the deductions */}
                         <div style={{ marginTop: 14 }}>
                           <CreditBreakdown returnInfo={returnInfo} />
                         </div>
@@ -1970,7 +1982,6 @@ const AdminReturns = () => {
                     );
                   })()}
 
-                  {/* ── approved: waiting for customer shipment ── */}
                   {retStatus === 'approved' && (
                     <>
                       <div className="rt-progress-row">
@@ -2001,7 +2012,6 @@ const AdminReturns = () => {
                     </>
                   )}
 
-                  {/* ── completed (opened from list, not via discount flow) ── */}
                   {retStatus === 'completed' && returnDiscountStep !== 2 && (
                     <>
                       <div className="rt-progress-row">
@@ -2029,7 +2039,6 @@ const AdminReturns = () => {
                     </>
                   )}
 
-                  {/* ── all other lifecycle statuses with valid next transitions ── */}
                   {!['inspected', 'approved', 'awaiting_discount', 'completed'].includes(retStatus) && (
                     <>
                       <div className="rt-progress-row">

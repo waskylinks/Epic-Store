@@ -97,7 +97,6 @@ const ALLOWED_FILE_TYPES = {
 
 // Resolves the best product name from a returnInfo item, falling back through
 // item.name, item.product.name, and then matching against order.orderItems.
-// Used consistently across all status panels to avoid undefined renders.
 const resolveItemName = (item, orderItems, idx) => {
   if (item.name?.trim())          return item.name.trim();
   if (item.product?.name?.trim()) return item.product.name.trim();
@@ -112,23 +111,37 @@ const resolveItemName = (item, orderItems, idx) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // getRejectedUnits
 //
-// Returns a normalised list of items that have ANY rejected units — either a
-// full adminDecision==='rejected', or a partial approve where approvedQuantity
-// is less than the total quantity (the unapproved remainder is appealable).
+// Returns a normalised list of items that have ANY rejected/unapproved units.
+//
+// With the UNIFIED MODEL from reviewReturnRequest:
+//   - adminDecision='rejected'  → approvedQuantity=0  → fully rejected
+//   - adminDecision='approved'  → approvedQuantity>0  → either full or partial
+//     If approvedQuantity < quantity, the remainder is appealable.
+//
+// The 'rejected' branch uses (item.quantity - (item.approvedQuantity ?? 0))
+// rather than item.quantity because the unified model guarantees
+// approvedQuantity=0 for fully-rejected items, making both equivalent —
+// but the subtraction form is explicit and correct for any future state.
 //
 // Returns: [{ item, idx, pid, rejectedQty, isPartial }]
 // ─────────────────────────────────────────────────────────────────────────────
 const getRejectedUnits = (returnItems) =>
   returnItems.reduce((acc, item, idx) => {
-    const pid      = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
-    const totalQty = item.quantity ?? 1;
-    const decision = item.adminDecision;
+    const pid        = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);
+    const totalQty   = item.quantity ?? 1;
+    const approvedQty = item.approvedQuantity ?? 0;
+    const decision   = item.adminDecision;
 
     if (decision === 'rejected') {
-      acc.push({ item, idx, pid, rejectedQty: totalQty, isPartial: false });
+      // Unified model: adminDecision='rejected' always means approvedQuantity=0.
+      // rejectedQty = totalQty - approvedQty = totalQty - 0 = totalQty.
+      const rejectedQty = totalQty - approvedQty;
+      if (rejectedQty > 0) {
+        acc.push({ item, idx, pid, rejectedQty, isPartial: false });
+      }
     } else if (decision === 'approved') {
-      const approvedQty = item.approvedQuantity ?? totalQty;
-      const remainder   = totalQty - approvedQty;
+      // Partial approval: some units approved, the remainder is unapproved.
+      const remainder = totalQty - approvedQty;
       if (remainder > 0) {
         acc.push({ item, idx, pid, rejectedQty: remainder, isPartial: true });
       }
@@ -191,7 +204,21 @@ const ReturnStatusBadge = ({ status }) => {
   return <span className={`rtr-return-badge ${config.className}`}>{config.label}</span>;
 };
 
-const CreditBreakdown = ({ returnInfo, currency = 'USD' }) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// CreditBreakdown
+//
+// FIX: Extended to show the four-unit-pool detail when plea data is present.
+// The four pools are:
+//   R1 locked approved   — always credited (approvedQuantity - pleaApprovedQty)
+//   Plea approved        — item.pleaApprovedQty (set by resolveAfterPlea)
+//   Plea rejected        — item.pleaRejectedQty (set by resolveAfterPlea)
+//   Silently accepted    — item.silentAcceptedQuantity (set by submitPlea)
+//
+// The gross breakdown rows (requestedGross, approvedGross, rejectedGross) come
+// from the backend and are always correct. The per-item pool detail is additive
+// context shown below the totals when the plea fields are present.
+// ─────────────────────────────────────────────────────────────────────────────
+const CreditBreakdown = ({ returnInfo, currency = 'USD', showPleaDetail = false }) => {
   const {
     requestedGross   = 0,
     approvedGross    = 0,
@@ -199,11 +226,19 @@ const CreditBreakdown = ({ returnInfo, currency = 'USD' }) => {
     approvedDiscount = 0,
     shippingDeducted = 0,
     discountValue    = 0,
+    itemsToReturn    = [],
   } = returnInfo ?? {};
 
   const fmt = (n) => new Intl.NumberFormat('en-US', {
     style: 'currency', currency, minimumFractionDigits: 2,
   }).format(n ?? 0);
+
+  // Determine whether any item has plea-pool data worth showing.
+  const hasPleaDetail = showPleaDetail && itemsToReturn.some(
+    (i) => (i.pleaApprovedQty != null && i.pleaApprovedQty > 0) ||
+            (i.pleaRejectedQty != null && i.pleaRejectedQty > 0) ||
+            (i.silentAcceptedQuantity != null && i.silentAcceptedQuantity > 0)
+  );
 
   return (
     <div className="rtr-credit-breakdown">
@@ -242,6 +277,79 @@ const CreditBreakdown = ({ returnInfo, currency = 'USD' }) => {
           <span className="rtr-credit-val-total">{fmt(discountValue)}</span>
         </div>
       </div>
+
+      {/* ── PLEA POOL DETAIL ──
+          Shown only when plea data is present (post-plea resolution stages).
+          Breaks down each item's four unit pools so the customer can see
+          exactly how R1 locked, plea approved, plea rejected, and silently
+          accepted units contributed to the final approved/rejected totals.
+      ── */}
+      {hasPleaDetail && (
+        <div className="rtr-plea-pool-detail">
+          <div className="rtr-plea-pool-hd">
+            <FiInfo className="rtr-plea-pool-hd-icon" />
+            <span>Plea Decision Breakdown</span>
+          </div>
+          {itemsToReturn.map((item, idx) => {
+            const totalQty        = item.quantity ?? 1;
+            const approvedQty     = item.approvedQuantity ?? 0;
+            const pleaApproved    = item.pleaApprovedQty        ?? null;
+            const pleaRejected    = item.pleaRejectedQty        ?? null;
+            const silentAccepted  = item.silentAcceptedQuantity ?? 0;
+
+            // Only show items that went through a plea round
+            const hadPlea = (pleaApproved != null && pleaApproved > 0) ||
+                            (pleaRejected != null && pleaRejected > 0) ||
+                            silentAccepted > 0;
+            if (!hadPlea) return null;
+
+            // R1 locked = units approved before the plea (never contested)
+            const r1Locked = approvedQty - (pleaApproved ?? 0);
+            const name = item.product?.name ?? item.name ?? `Item ${idx + 1}`;
+
+            return (
+              <div key={idx} className="rtr-plea-pool-item">
+                <span className="rtr-plea-pool-item-name">{name}</span>
+                <div className="rtr-plea-pool-rows">
+                  {r1Locked > 0 && (
+                    <div className="rtr-plea-pool-row rtr-plea-pool-row--r1">
+                      <FiCheckCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--approved" />
+                      <span className="rtr-plea-pool-label">Round 1 approved</span>
+                      <span className="rtr-plea-pool-qty">{r1Locked} unit{r1Locked !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  {pleaApproved != null && pleaApproved > 0 && (
+                    <div className="rtr-plea-pool-row rtr-plea-pool-row--plea-approved">
+                      <FiCheckCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--approved" />
+                      <span className="rtr-plea-pool-label">Plea approved</span>
+                      <span className="rtr-plea-pool-qty">{pleaApproved} unit{pleaApproved !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  {pleaRejected != null && pleaRejected > 0 && (
+                    <div className="rtr-plea-pool-row rtr-plea-pool-row--plea-rejected">
+                      <FiXCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--rejected" />
+                      <span className="rtr-plea-pool-label">Plea rejected</span>
+                      <span className="rtr-plea-pool-qty">{pleaRejected} unit{pleaRejected !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  {silentAccepted > 0 && (
+                    <div className="rtr-plea-pool-row rtr-plea-pool-row--silent">
+                      <FiXCircle className="rtr-plea-pool-icon rtr-plea-pool-icon--silent" />
+                      <span className="rtr-plea-pool-label">Accepted as rejected</span>
+                      <span className="rtr-plea-pool-qty">{silentAccepted} unit{silentAccepted !== 1 ? 's' : ''}</span>
+                    </div>
+                  )}
+                  <div className="rtr-plea-pool-row rtr-plea-pool-row--total">
+                    <span className="rtr-plea-pool-label rtr-plea-pool-label--total">
+                      Final: {approvedQty} approved · {totalQty - approvedQty} rejected
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
@@ -337,7 +445,12 @@ function ReturnRequest() {
   const pleaAttempts  = returnInfo?.pleaAttempts ?? 0;
   const pleaInfo      = returnInfo?.pleaInfo ?? null;
 
-  const approvedItems    = returnItems.filter((i) => i.adminDecision === 'approved');
+  // FIX: approvedItems — filters by adminDecision === 'approved'.
+  // With the unified model this is correct: all items with any approved units
+  // (whether from approve-path or reject-path) have adminDecision='approved'.
+  // Fully-rejected items (approvedQuantity=0) have adminDecision='rejected'
+  // and are correctly excluded.
+  const approvedItems = returnItems.filter((i) => i.adminDecision === 'approved');
 
   // Uses getRejectedUnits so partially-approved items (where approvedQuantity
   // is less than quantity) are also included — their unapproved remainder is
@@ -345,7 +458,10 @@ function ReturnRequest() {
   const rejectedUnitsList = getRejectedUnits(returnItems);
   const hasRejectedItems  = rejectedUnitsList.length > 0;
 
-  // Plea rejected — status is 'approved' but ALL items were rejected after plea resolution
+  // FIX: allItemsRejectedAfterPlea — with the unified model, adminDecision='rejected'
+  // only applies to fully-rejected items (approvedQuantity=0). So checking that
+  // every item has adminDecision='rejected' correctly identifies the case where
+  // zero units were approved across all items after plea resolution.
   const allItemsRejectedAfterPlea =
     status === 'approved' &&
     returnItems.length > 0 &&
@@ -379,6 +495,10 @@ function ReturnRequest() {
   const displayCourierName    = returnInfo?.courierName    ?? sliceCourierName    ?? null;
   const displayTrackingNumber = returnInfo?.trackingNumber ?? sliceTrackingNumber ?? null;
 
+  // Whether the return has gone through a plea round — used to decide whether
+  // to show the per-item plea pool detail in CreditBreakdown.
+  const hasPleaRound = pleaAttempts > 0;
+
   // ── Effects ───────────────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -408,8 +528,12 @@ function ReturnRequest() {
     if (allApproved && !itemsReviewedChoice) setItemsReviewedChoice('accepted');
   }, [allApproved, itemsReviewedChoice]);
 
-  // Seed pleaQuantities using rejectedUnitsList so partially-approved items
-  // default to their unapproved remainder (not full item.quantity).
+  // FIX: Seed pleaQuantities using rejectedUnitsList so the stepper defaults
+  // to the actual unapproved/rejected quantity for each item, not item.quantity.
+  // For partially-approved items (isPartial=true) this means the stepper starts
+  // at (quantity - approvedQuantity), not the full quantity. The stepper is also
+  // capped at rejectedQty so the customer cannot accidentally plea for already-
+  // approved units.
   useEffect(() => {
     if (itemsReviewedChoice !== 'plea' || rejectedUnitsList.length === 0) return;
     const initial = {};
@@ -594,10 +718,13 @@ function ReturnRequest() {
       return;
     }
 
-    // Build pleaItems from rejectedUnitsList — covers both fully-rejected items
-    // and partially-approved items whose unapproved remainder is being appealed.
-    // pleaQuantity is capped at rejectedQty so the customer cannot appeal more
-    // units than were actually rejected or unapproved.
+    // FIX: Build pleaItems from rejectedUnitsList — covers both fully-rejected
+    // items (adminDecision='rejected') and partially-approved items whose
+    // unapproved remainder is being appealed (adminDecision='approved',
+    // approvedQuantity < quantity). rejectedQty in both cases is already the
+    // correct contestable quantity (computed in getRejectedUnits as
+    // totalQty - approvedQty for the partial case), so capping at rejectedQty
+    // ensures the customer cannot appeal already-approved units.
     const pleaItems = rejectedUnitsList.map(({ pid, rejectedQty }) => {
       const chosen = pleaQuantities[pid] ?? rejectedQty;
       return {
@@ -926,8 +1053,18 @@ function ReturnRequest() {
                   )}
                 </div>
 
-                {/* Credit breakdown — shown at all stages from items_reviewed onwards */}
-                {showBreakdown && <CreditBreakdown returnInfo={returnInfo} currency={currency} />}
+                {/* FIX: Credit breakdown — pass showPleaDetail=true so the
+                    four-pool breakdown is shown on stages where the plea has
+                    already been resolved (approved, in_transit, awaiting_discount,
+                    completed). At items_reviewed and plea_submitted the plea is
+                    not yet resolved so we omit the detail. */}
+                {showBreakdown && (
+                  <CreditBreakdown
+                    returnInfo={returnInfo}
+                    currency={currency}
+                    showPleaDetail={hasPleaRound && ['approved', 'in_transit', 'received', 'inspected', 'awaiting_discount', 'completed'].includes(status)}
+                  />
+                )}
 
                 {/* Plea rejected — all items rejected after plea resolution */}
                 {allItemsRejectedAfterPlea && (
@@ -967,20 +1104,25 @@ function ReturnRequest() {
                   <div className="rtr-item-decisions">
                     <h3>Item Decisions</h3>
                     <div className="rtr-decisions-columns">
+                      {/* FIX: Approved column — approvedItems already correctly
+                          includes only items with adminDecision='approved' (which
+                          with the unified model means approvedQuantity > 0).
+                          We show approvedQuantity for the count, and note the
+                          partial qty if less than total was approved. */}
                       {approvedItems.length > 0 && (
                         <div className="rtr-decisions-col rtr-decisions-approved">
                           <div className="rtr-decisions-col-header">
                             <FiCheckCircle /><span>Approved ({approvedItems.length})</span>
                           </div>
                           {approvedItems.map((item, i) => {
-                            const qty = item.approvedQuantity ?? item.quantity;
+                            const approvedQty = item.approvedQuantity ?? item.quantity;
                             return (
                               <div key={i} className="rtr-decision-item">
                                 {item.image && <img src={item.image} alt={resolveItemName(item, orderItems, i)} className="rtr-item-image" />}
                                 <div className="rtr-item-details">
                                   <span className="rtr-item-name">{resolveItemName(item, orderItems, i)}</span>
                                   <span className="rtr-item-quantity">
-                                    Qty: {qty}
+                                    Qty: {approvedQty}
                                     {item.approvedQuantity != null && item.approvedQuantity !== item.quantity && (
                                       <span className="rtr-item-qty-note"> (of {item.quantity} requested)</span>
                                     )}
@@ -992,8 +1134,13 @@ function ReturnRequest() {
                         </div>
                       )}
 
-                      {/* Rejected column: covers both full rejections and unapproved
-                          remainders of partially-approved items via rejectedUnitsList */}
+                      {/* FIX: Rejected column — uses getRejectedUnits which now
+                          correctly handles both:
+                          1. Fully rejected (adminDecision='rejected', approvedQty=0)
+                             → rejectedQty = item.quantity
+                          2. Partially approved (adminDecision='approved', approvedQty<qty)
+                             → rejectedQty = quantity - approvedQuantity
+                          isPartial=true for case 2, showing the correct partial label. */}
                       {rejectedUnitsList.length > 0 && (
                         <div className="rtr-decisions-col rtr-decisions-rejected">
                           <div className="rtr-decisions-col-header">
@@ -1138,6 +1285,13 @@ function ReturnRequest() {
                       </div>
                     </div>
 
+                    {/* FIX: Plea quantity stepper — uses rejectedUnitsList entries which
+                        already carry the correct contestable quantity (rejectedQty) for
+                        each item. The stepper max is capped at rejectedQty so the
+                        customer cannot plea for more units than were actually rejected
+                        or unapproved. For partially-approved items (isPartial=true),
+                        rejectedQty = quantity - approvedQuantity, not item.quantity,
+                        so already-approved units are never included in the stepper range. */}
                     {rejectedUnitsList.length > 0 && (
                       <div className="rtr-plea-items">
                         <label className="rtr-form-label">Appeal Quantity per Item</label>
@@ -1259,6 +1413,25 @@ function ReturnRequest() {
                       <div className="rtr-plea-submitted-text">
                         <span className="rtr-info-label">Your Plea:</span>
                         <p>{pleaInfo.pleaDescription}</p>
+                      </div>
+                    )}
+                    {/* FIX: Show the per-item silentAcceptedQuantity so the customer
+                        can see which units they chose not to contest while waiting
+                        for the admin's response. */}
+                    {returnItems.some((i) => (i.silentAcceptedQuantity ?? 0) > 0) && (
+                      <div className="rtr-plea-silent-summary">
+                        <span className="rtr-info-label">Units accepted as rejected (not contested):</span>
+                        {returnItems
+                          .filter((i) => (i.silentAcceptedQuantity ?? 0) > 0)
+                          .map((item, i) => (
+                            <div key={i} className="rtr-plea-silent-item">
+                              <span className="rtr-plea-silent-name">{resolveItemName(item, orderItems, i)}</span>
+                              <span className="rtr-plea-silent-qty">
+                                {item.silentAcceptedQuantity} unit{item.silentAcceptedQuantity !== 1 ? 's' : ''} silently accepted
+                              </span>
+                            </div>
+                          ))
+                        }
                       </div>
                     )}
                     {pleaDeadline && (
@@ -1435,12 +1608,7 @@ function ReturnRequest() {
                   </div>
                 )}
 
-                {/* ── COMPLETED PANEL ───────────────────────────────────────
-                    FIX: Updated heading, paragraph, and replaced the button
-                    with a Link styled as a banner card. Also shows the list
-                    of approved items so the customer knows what the credit
-                    covers, and the credit value from the breakdown.
-                ──────────────────────────────────────────────────────────── */}
+                {/* ── COMPLETED PANEL ── */}
                 {status === 'completed' && (
                   <div className="rtr-completed-panel">
                     <FiCheckCircle className="rtr-completed-icon" />
