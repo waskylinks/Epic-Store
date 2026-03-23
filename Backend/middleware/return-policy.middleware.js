@@ -254,9 +254,9 @@ export const canGenerateDiscount = async (req, res, next) => {
 
     if (!order) return next(new HandleError('Order not found', 404));
 
-    if (!order.returnInfo || order.returnInfo.status !== 'inspected') {
+    if (!order.returnInfo || (order.returnInfo.status !== 'inspected' && order.returnInfo.status !== 'awaiting_discount')) {
       return next(new HandleError(
-        `Discount generation requires status 'inspected'. Current status: ${order.returnInfo?.status || 'none'}`, 400
+        `Discount generation requires status 'inspected or awaiting discount'. Current status: ${order.returnInfo?.status || 'none'}`, 400
       ));
     }
 
