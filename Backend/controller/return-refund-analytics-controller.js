@@ -203,10 +203,8 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
 
   const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } = getDateRanges(timeframe);
 
-  // All returns that went through R1 review (have item decisions)
   const [pleaStats, itemLevelPleaStats, previousPleaStats] = await Promise.all([
 
-    // Return-level plea stats
     Order.aggregate([
       {
         $match: {
@@ -219,10 +217,8 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
           _id: null,
           totalReviewed:     { $sum: 1 },
 
-          // Returns where customer submitted a plea
-          withPlea:          { $sum: { $cond: [{ $gte: ['$returnInfo.pleaAttempts', 1] }, 1, 0] } },
+          withPlea: { $sum: { $cond: [{ $gte: ['$returnInfo.pleaAttempts', 1] }, 1, 0] } },
 
-          // Returns where plea was submitted and now finalised (can assess outcome)
           pleaFinalised: {
             $sum: {
               $cond: [
@@ -237,8 +233,6 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
             },
           },
 
-          // Returns where plea resulted in higher credit than R1
-          // approvedGross > 0 and plea happened = plea resulted in some approval
           pleaResultedInMoreCredit: {
             $sum: {
               $cond: [
@@ -247,6 +241,7 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
                     { $gte: ['$returnInfo.pleaAttempts', 1] },
                     { $gt:  ['$returnInfo.approvedGross', 0] },
                     { $in:  ['$returnInfo.status', ['completed', 'in_transit', 'received', 'inspected', 'awaiting_discount']] },
+                    { $ne:  ['$returnInfo.pleaExpired', true] },
                   ],
                 },
                 1, 0,
@@ -254,15 +249,13 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
             },
           },
 
-          // Plea deadline expired without admin response
           pleaDeadlineExpired: {
             $sum: {
               $cond: [
                 {
                   $and: [
                     { $gte: ['$returnInfo.pleaAttempts', 1] },
-                    { $eq:  ['$returnInfo.pleaDeadline', null] },
-                    { $in:  ['$returnInfo.status', ['approved', 'in_transit', 'received', 'inspected', 'awaiting_discount', 'completed']] },
+                    { $eq:  ['$returnInfo.pleaExpired', true] },
                   ],
                 },
                 1, 0,
@@ -270,7 +263,6 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
             },
           },
 
-          // Credit delta — how much extra credit was issued after plea vs R1
           totalApprovedGross:  { $sum: { $ifNull: ['$returnInfo.approvedGross',  0] } },
           totalRejectedGross:  { $sum: { $ifNull: ['$returnInfo.rejectedGross',  0] } },
           totalDiscountValue:  { $sum: { $ifNull: ['$returnInfo.discountValue',  0] } },
@@ -279,7 +271,6 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
       },
     ]),
 
-    // Item-level plea pool breakdown — unwind itemsToReturn
     Order.aggregate([
       {
         $match: {
@@ -292,21 +283,19 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
         $group: {
           _id: null,
           totalItems:            { $sum: 1 },
-          totalQuantity:         { $sum: { $ifNull: ['$returnInfo.itemsToReturn.quantity',             0] } },
-          totalApprovedQty:      { $sum: { $ifNull: ['$returnInfo.itemsToReturn.approvedQuantity',     0] } },
-          totalPleaQty:          { $sum: { $ifNull: ['$returnInfo.itemsToReturn.pleaQuantity',         0] } },
-          totalPleaApprovedQty:  { $sum: { $ifNull: ['$returnInfo.itemsToReturn.pleaApprovedQty',      0] } },
-          totalPleaRejectedQty:  { $sum: { $ifNull: ['$returnInfo.itemsToReturn.pleaRejectedQty',      0] } },
+          totalQuantity:         { $sum: { $ifNull: ['$returnInfo.itemsToReturn.quantity',               0] } },
+          totalApprovedQty:      { $sum: { $ifNull: ['$returnInfo.itemsToReturn.approvedQuantity',       0] } },
+          totalPleaQty:          { $sum: { $ifNull: ['$returnInfo.itemsToReturn.pleaQuantity',           0] } },
+          totalPleaApprovedQty:  { $sum: { $ifNull: ['$returnInfo.itemsToReturn.pleaApprovedQty',        0] } },
+          totalPleaRejectedQty:  { $sum: { $ifNull: ['$returnInfo.itemsToReturn.pleaRejectedQty',        0] } },
           totalSilentAccepted:   { $sum: { $ifNull: ['$returnInfo.itemsToReturn.silentAcceptedQuantity', 0] } },
 
-          // Items that went through plea (pleaQuantity is set)
           itemsWithPlea: {
             $sum: {
               $cond: [{ $gt: [{ $ifNull: ['$returnInfo.itemsToReturn.pleaQuantity', 0] }, 0] }, 1, 0],
             },
           },
 
-          // Items fully approved (approvedQuantity === quantity)
           itemsFullyApproved: {
             $sum: {
               $cond: [
@@ -316,7 +305,6 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
             },
           },
 
-          // Items fully rejected (approvedQuantity === 0)
           itemsFullyRejected: {
             $sum: {
               $cond: [
@@ -326,7 +314,6 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
             },
           },
 
-          // Items partially approved
           itemsPartiallyApproved: {
             $sum: {
               $cond: [
@@ -344,7 +331,6 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
       },
     ]),
 
-    // Previous period plea stats for trend
     Order.aggregate([
       {
         $match: {
@@ -362,9 +348,9 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
     ]),
   ]);
 
-  const stats         = pleaStats[0]         ?? {};
-  const itemStats     = itemLevelPleaStats[0] ?? {};
-  const prevStats     = previousPleaStats[0]  ?? { totalReviewed: 0, withPlea: 0 };
+  const stats     = pleaStats[0]          ?? {};
+  const itemStats = itemLevelPleaStats[0] ?? {};
+  const prevStats = previousPleaStats[0]  ?? { totalReviewed: 0, withPlea: 0 };
 
   const totalReviewed       = stats.totalReviewed       ?? 0;
   const withPlea            = stats.withPlea            ?? 0;
@@ -372,44 +358,37 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
   const totalRequestedGross = stats.totalRequestedGross ?? 0;
   const totalApprovedGross  = stats.totalApprovedGross  ?? 0;
 
-  // Plea submission rate
   const pleaSubmissionRate = totalReviewed > 0
     ? Math.round((withPlea / totalReviewed) * 100 * 100) / 100
     : 0;
 
-  // Plea success rate — of those that went through plea, how many got more credit
   const pleaSuccessRate = pleaFinalised > 0
     ? Math.round(((stats.pleaResultedInMoreCredit ?? 0) / pleaFinalised) * 100 * 100) / 100
     : 0;
 
-  // Silent acceptance rate — units customer chose not to contest / total contestable
-  const totalContestable    = (itemStats.totalPleaQty ?? 0) + (itemStats.totalSilentAccepted ?? 0);
+  const totalContestable     = (itemStats.totalPleaQty ?? 0) + (itemStats.totalSilentAccepted ?? 0);
   const silentAcceptanceRate = totalContestable > 0
     ? Math.round(((itemStats.totalSilentAccepted ?? 0) / totalContestable) * 100 * 100) / 100
     : 0;
 
-  // Unit approval rate
-  const totalQty    = itemStats.totalQuantity    ?? 0;
-  const approvedQty = itemStats.totalApprovedQty ?? 0;
+  const totalQty         = itemStats.totalQuantity    ?? 0;
+  const approvedQty      = itemStats.totalApprovedQty ?? 0;
   const unitApprovalRate = totalQty > 0
     ? Math.round((approvedQty / totalQty) * 100 * 100) / 100
     : 0;
 
-  // Plea unit approval rate — of contested units, how many were approved
-  const pleaQty         = itemStats.totalPleaQty         ?? 0;
-  const pleaApprovedQty = itemStats.totalPleaApprovedQty ?? 0;
+  const pleaQty              = itemStats.totalPleaQty         ?? 0;
+  const pleaApprovedQty      = itemStats.totalPleaApprovedQty ?? 0;
   const pleaUnitApprovalRate = pleaQty > 0
     ? Math.round((pleaApprovedQty / pleaQty) * 100 * 100) / 100
     : 0;
 
-  // Credit recovery rate — approved / requested
   const creditRecoveryRate = totalRequestedGross > 0
     ? Math.round((totalApprovedGross / totalRequestedGross) * 100 * 100) / 100
     : 0;
 
-  // Admin deadline expiry rate
-  const pleaDeadlineExpiredRate = pleaFinalised > 0
-    ? Math.round(((stats.pleaDeadlineExpired ?? 0) / pleaFinalised) * 100 * 100) / 100
+  const pleaDeadlineExpiredRate = withPlea > 0
+    ? Math.round(((stats.pleaDeadlineExpired ?? 0) / withPlea) * 100 * 100) / 100
     : 0;
 
   const response = {
@@ -419,42 +398,36 @@ export const getReturnPleaAnalytics = handleAsyncError(async (req, res, next) =>
       pleaSubmissionRate,
       pleaFinalised,
       pleaSuccessRate,
-      pleaDeadlineExpired:     stats.pleaDeadlineExpired     ?? 0,
+      pleaDeadlineExpired:      stats.pleaDeadlineExpired      ?? 0,
       pleaDeadlineExpiredRate,
       pleaResultedInMoreCredit: stats.pleaResultedInMoreCredit ?? 0,
     },
     unitLevel: {
-      totalItems:              itemStats.totalItems             ?? 0,
-      totalQuantity:           totalQty,
-      totalApprovedQty:        approvedQty,
+      totalItems:             itemStats.totalItems             ?? 0,
+      totalQuantity:          totalQty,
+      totalApprovedQty:       approvedQty,
       unitApprovalRate,
-      itemsFullyApproved:      itemStats.itemsFullyApproved     ?? 0,
-      itemsPartiallyApproved:  itemStats.itemsPartiallyApproved ?? 0,
-      itemsFullyRejected:      itemStats.itemsFullyRejected     ?? 0,
-      itemsWithPlea:           itemStats.itemsWithPlea          ?? 0,
+      itemsFullyApproved:     itemStats.itemsFullyApproved     ?? 0,
+      itemsPartiallyApproved: itemStats.itemsPartiallyApproved ?? 0,
+      itemsFullyRejected:     itemStats.itemsFullyRejected     ?? 0,
+      itemsWithPlea:          itemStats.itemsWithPlea          ?? 0,
       pleaQty,
       pleaApprovedQty,
-      pleaRejectedQty:         itemStats.totalPleaRejectedQty   ?? 0,
-      silentAcceptedQty:       itemStats.totalSilentAccepted    ?? 0,
+      pleaRejectedQty:        itemStats.totalPleaRejectedQty   ?? 0,
+      silentAcceptedQty:      itemStats.totalSilentAccepted    ?? 0,
       silentAcceptanceRate,
       pleaUnitApprovalRate,
     },
     creditMetrics: {
-      totalRequestedGross:  Math.round((stats.totalRequestedGross ?? 0) * 100) / 100,
-      totalApprovedGross:   Math.round((stats.totalApprovedGross  ?? 0) * 100) / 100,
-      totalRejectedGross:   Math.round((stats.totalRejectedGross  ?? 0) * 100) / 100,
-      totalDiscountValue:   Math.round((stats.totalDiscountValue  ?? 0) * 100) / 100,
+      totalRequestedGross: Math.round((stats.totalRequestedGross ?? 0) * 100) / 100,
+      totalApprovedGross:  Math.round((stats.totalApprovedGross  ?? 0) * 100) / 100,
+      totalRejectedGross:  Math.round((stats.totalRejectedGross  ?? 0) * 100) / 100,
+      totalDiscountValue:  Math.round((stats.totalDiscountValue  ?? 0) * 100) / 100,
       creditRecoveryRate,
     },
     trends: {
-      pleaSubmissionRate: calculateTrend(
-        withPlea,
-        prevStats.withPlea
-      ),
-      totalReviewed: calculateTrend(
-        totalReviewed,
-        prevStats.totalReviewed
-      ),
+      pleaSubmissionRate: calculateTrend(withPlea, prevStats.withPlea),
+      totalReviewed:      calculateTrend(totalReviewed, prevStats.totalReviewed),
     },
   };
 
