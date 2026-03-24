@@ -5,10 +5,13 @@ import {
   getReturnOverview,
   getReturnsByProduct,
   getReturnsByCategory,
+  getReturnPleaAnalytics,
+  getReturnCreditAnalytics,
+  getReturnLifecycleTiming,
   getRefundOverview,
   getRefundsByPaymentMethod,
-  getRefundTimeline
-} from "../controller/return-refund-analytics-controller.js"; // FIX: Corrected import path
+  getRefundTimeline,
+} from '../controller/return-refund-analytics-controller.js';
 
 const router = express.Router();
 
@@ -39,6 +42,12 @@ router.get("/returns/by-product", getReturnsByProduct);
  * @access Admin
  */
 router.get("/returns/by-category", getReturnsByCategory);
+
+router.get('/returns/plea',      getReturnPleaAnalytics);
+
+router.get('/returns/credit',    getReturnCreditAnalytics);
+
+router.get('/returns/lifecycle', getReturnLifecycleTiming);
 
 // ============================================
 // REFUND ANALYTICS
