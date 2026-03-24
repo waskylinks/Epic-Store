@@ -54,6 +54,7 @@ import RefundAnalytics from './Admin/RefundAnalytics';
 import AdminDiscounts from './Admin/AdminDiscounts';
 import UserDiscounts from './pages/UserDiscounts';
 import DiscountAnalytics from './Admin/DiscountAnalytics';
+import ReturnAnalytics from './Admin/ReturnAnalytics';
 
 function App() {
   const { initializing } = useSelector(state => state.user);
@@ -146,6 +147,7 @@ function App() {
         <Route path='/admin/checkout' element={<ProtectedRoute element={<CheckoutAnalytics />} adminOnly={true} />} />
         <Route path='/admin/recovery-emails' element={<ProtectedRoute element={<RecoveryEmailManager />} adminOnly={true} />} />
         <Route path='/admin/refund-analytics' element={<ProtectedRoute element={<RefundAnalytics />} adminOnly={true} />} />
+        <Route path='/admin/return-analytics' element={<ProtectedRoute element={<ReturnAnalytics />} adminOnly={true} />} />
         <Route path='/admin/discounts' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
         <Route path='/admin/discounts/new' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
         <Route path='/admin/discount-analytics' element={<ProtectedRoute element={<DiscountAnalytics />} adminOnly={true} />} />
