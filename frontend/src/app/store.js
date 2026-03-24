@@ -24,6 +24,7 @@ import reportsReducer from '../features/analytics/reportsSlice';
 import customerAnalyticsReducer from '../features/analytics/customerAnalyticsSlice';
 import attributionReducer from '../features/analytics/attributionSlice';
 import operationsReducer from '../features/analytics/operationsSlice';
+import returnAnalyticsReducer from '../features/analytics/returnAnalyticsSlice';
 
 
 
@@ -54,6 +55,7 @@ export const store = configureStore({
         customerAnalytics: customerAnalyticsReducer,
         attribution:       attributionReducer,
         operations:        operationsReducer,
+        returnAnalytics: returnAnalyticsReducer,
 
     }
 });

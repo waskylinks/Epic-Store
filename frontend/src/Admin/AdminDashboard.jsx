@@ -64,9 +64,12 @@ import {
   fetchFulfillmentAnalytics,
   fetchFraudAnalytics,
   fetchSLABreaches,
+} from '../features/analytics/operationsSlice';
+import {
   fetchReturnOverview,
   fetchRefundOverview,
-} from '../features/analytics/operationsSlice';
+  setReturnAnalyticsTimeframe,
+} from '../features/analytics/returnAnalyticsSlice';
 import {
   fetchDiscountAnalyticsOverview,
 } from '../features/analytics/discountAnalyticsSlice';
@@ -91,6 +94,7 @@ const NAV_GROUPS = [
       { path: '/admin/attribution',        icon: CampaignOutlined,     label: 'Attribution',         color: '#F59E0B' },
       { path: '/admin/checkout',           icon: ShoppingCartCheckout, label: 'Checkout',            color: '#10B981' },
       { path: '/admin/refund-analytics',   icon: CurrencyExchange,     label: 'Refund Analytics',    color: '#14B8A6' },
+      { path: '/admin/return-analytics', icon: ReplayCircleFilled, label: 'Return Analytics', color: '#EF4444' },
       { path: '/admin/discount-analytics', icon: Insights,             label: 'Discount ROI',        color: '#e563f1' },
     ],
   },
@@ -111,8 +115,8 @@ const NAV_GROUPS = [
   {
     group: 'Operations',
     items: [
-      { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',         color: '#EF4444' },
       { path: '/admin/refunds',         icon: CurrencyExchange,   label: 'Refunds',         color: '#14B8A6' },
+      { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',         color: '#EF4444' },
       { path: '/admin/reviews',         icon: StarOutline,        label: 'Reviews',         color: '#F59E0B' },
       { path: '/admin/recovery-emails', icon: MarkEmailRead,      label: 'Recovery Emails', color: '#FF6B6B' },
     ],
@@ -317,10 +321,14 @@ export default function AdminDashboard() {
   const { channelPerformance, devicePerformance } = useSelector((s) => s.attribution);
 
   const {
-    checkoutAbandonment, categoryPerformance, lowStockAlerts,
-    fulfillmentAnalytics, fraudAnalytics, slaBreaches,
-    returnOverview, refundOverview,
-  } = useSelector((s) => s.operations);
+  checkoutAbandonment, categoryPerformance, lowStockAlerts,
+  fulfillmentAnalytics, fraudAnalytics, slaBreaches,
+} = useSelector((s) => s.operations);
+
+const {
+  returnOverview,
+  refundOverview,
+} = useSelector((s) => s.returnAnalytics);
 
   const {
     overview:        discountOverview,
@@ -328,7 +336,7 @@ export default function AdminDashboard() {
   } = useSelector((s) => s.discountAnalytics);
 
   const error = useSelector(
-    (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error || null
+    (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error  || s.returnAnalytics.error || null
   );
 
   // ── Local state ──────────────────────────────────────────
@@ -375,6 +383,7 @@ export default function AdminDashboard() {
     // responses from previous timeframe switches are rejected.
     dispatch(setActiveTimeframe(currentTimeframe));
     dispatch(setActiveOrderStatusTimeframe(currentTimeframe));
+    dispatch(setReturnAnalyticsTimeframe(currentTimeframe));
 
     lastFetchedCache[currentTimeframe] = now;
     setLastFetchTime(now);
