@@ -384,13 +384,13 @@ export default function ReturnAnalytics() {
       key: 'totalRequestedGross', label: 'Total Requested', icon: AttachMoney,
       accent: '#F97316', bg: '#F9731615',
       value:  returnOverview?.creditMetrics
-        ? fmt.compact(returnOverview.creditMetrics.totalRequestedGross) : null,
+        ? fmt.currency(returnOverview.creditMetrics.totalRequestedGross) : null,
     },
     {
       key: 'totalApprovedGross', label: 'Total Approved Value', icon: AttachMoney,
       accent: '#16A34A', bg: '#16A34A15',
       value:  returnOverview?.creditMetrics
-        ? fmt.compact(returnOverview.creditMetrics.totalApprovedGross) : null,
+        ? fmt.currency(returnOverview.creditMetrics.totalApprovedGross) : null,
     },
   ];
 

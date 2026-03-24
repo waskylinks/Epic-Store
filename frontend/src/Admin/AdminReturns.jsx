@@ -848,10 +848,7 @@ const AdminReturns = () => {
   }, [currentReturn, itemDecisions]);
 
   // FIX: pleaDecisionsComplete — use approvedQuantity directly (not
-  // adminDecision label) to determine whether an item is fully approved
-  // (locked) vs needs a plea decision. contestedQty is always
-  // item.pleaQuantity for items that are not fully approved, because
-  // submitPlea now correctly sets pleaQuantity = contestableQty - silentAccepted.
+
   const pleaDecisionsComplete = useMemo(() => {
     if (!currentReturn?.returnInfo?.itemsToReturn?.length) return false;
     return currentReturn.returnInfo.itemsToReturn.every((item, idx) => {
@@ -894,10 +891,7 @@ const AdminReturns = () => {
     );
   }, [currentReturn]);
 
-  // FIX: pleaRoundApproveMax — use approvedQuantity directly (not adminDecision)
-  // to compute the contestable remainder for partially-approved items.
-  // For fully-approved items these are already in pleaLockedProductIds so the
-  // map entry is never read, but we skip them anyway for clarity.
+
   const pleaRoundApproveMax = useMemo(() => {
     const map = new Map();
     if (!currentReturn?.returnInfo?.itemsToReturn) return map;
@@ -916,12 +910,7 @@ const AdminReturns = () => {
     return map;
   }, [currentReturn]);
 
-  // FIX: round1ApprovedQty — read approvedQuantity directly regardless of
-  // adminDecision label. With the unified model all partially-approved items
-  // (whether originally via approve-path or reject-path) have
-  // adminDecision='approved', so filtering by adminDecision is now correct.
-  // We keep the logic label-agnostic anyway for robustness: capture any item
-  // whose approvedQuantity is > 0 but < quantity, regardless of label.
+
   const round1ApprovedQty = useMemo(() => {
     const map = new Map();
     if (!currentReturn?.returnInfo?.itemsToReturn) return map;
@@ -979,20 +968,7 @@ const AdminReturns = () => {
   const handlePleaDecisionChange = useCallback((pid, field, value) =>
     setPleaDecisions((p) => ({ ...p, [pid]: { ...p[pid], [field]: value } })), []);
 
-  // buildDecisionsArray serialises the admin's decisions into the array the
-  // backend expects.
-  //
-  // FIX A — 'approved' in plea round:
-  //   pleaApproved = admin-chosen contested units to approve
-  //   lockedR1     = R1 locked units from round1ApprovedQty map
-  //   Total approvedQuantity = pleaApproved + lockedR1, capped at item.quantity.
-  //
-  // FIX B — 'rejected' in plea round:
-  //   For partially-approved items, the R1 locked units must be preserved.
-  //   Send approvedQuantity = lockedR1 for rejected plea decisions so the
-  //   backend resolveAfterPlea preserves them (item.approvedQuantity = r1Locked).
-  //   For round-1 (isPlea=false), rejected items have no prior approvals so
-  //   approvedQuantity is derived server-side from quantity - rejectedQuantity.
+
   const buildDecisionsArray = (decisionsMap, items, isPlea = false, r1Map = new Map()) =>
     items.map((item, idx) => {
       const pid    = item.product?._id?.toString() ?? item.product?.toString() ?? String(idx);

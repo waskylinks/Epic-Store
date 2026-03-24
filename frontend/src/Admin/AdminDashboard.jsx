@@ -1143,26 +1143,34 @@ const {
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Total Returns"    value={fmt.number(returnOverview.totalReturns)} />
-                      <MetricRow label="Return Rate"      value={fmt.pct(returnOverview.returnRate)}             accent="#EF4444" />
-                      <MetricRow label="Pending Review"   value={fmt.number(returnOverview.pendingReview)}       accent="#F59E0B" />
-                      <MetricRow label="Approved Returns" value={fmt.number(returnOverview.approved)}            accent="#10B981" />
-                      <MetricRow label="Value Returned"   value={fmt.currency(returnOverview.totalValue)}        accent="#EF4444" />
+                      <MetricRow label="Return Rate"      value={fmt.pct(returnOverview.returnRate)}              accent="#EF4444" />
+                      <MetricRow label="Pending Review"   value={fmt.number(returnOverview.byStatus?.requested)}  accent="#F59E0B" />
+                      <MetricRow label="Completed"        value={fmt.number(returnOverview.byStatus?.completed)}  accent="#10B981" />
+                      <MetricRow label="Approved Value"   value={fmt.compact(returnOverview.creditMetrics?.totalApprovedGross ?? 0)} accent="#EF4444" />
                       <MetricRow label="Avg. Processing"  value={`${returnOverview.avgProcessingDays?.toFixed(1) || '-'} days`} />
                     </div>
                   )}
                 </SectionCard>
                 <SectionCard title="Top Return Reasons" icon={Assessment} iconColor="#F97316" link="/admin/returns">
-                  {firstLoad ? <LoadingState label="Loading return reasons..." /> : !returnOverview?.topReasons?.length ? (
+                  {firstLoad ? <LoadingState label="Loading return reasons..." /> : !returnOverview?.byReason?.length ? (
                     <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No return reasons data available</span></div>
                   ) : (
                     <div className="adm-segment-list">
-                      {returnOverview.topReasons.map((r, i) => (
-                        <div key={i} className="adm-segment-row">
-                          <div className="adm-segment-label">{r.reason}</div>
-                          <div className="adm-segment-bar-wrap"><div className="adm-segment-bar" style={{ width: `${r.percentage || 0}%`, background: '#EF4444' }} /></div>
-                          <div className="adm-segment-pct">{fmt.pct(r.percentage)}</div>
-                        </div>
-                      ))}
+                      {(() => {
+                        const total = returnOverview.byReason.reduce((s, r) => s + (r.count || 0), 0);
+                        return returnOverview.byReason.slice(0, 5).map((r, i) => {
+                          const pct = total > 0 ? (r.count / total) * 100 : 0;
+                          return (
+                            <div key={i} className="adm-segment-row">
+                              <div className="adm-segment-label">{r._id || 'Unknown'}</div>
+                              <div className="adm-segment-bar-wrap">
+                                <div className="adm-segment-bar" style={{ width: `${pct}%`, background: '#EF4444' }} />
+                              </div>
+                              <div className="adm-segment-pct">{pct.toFixed(1)}%</div>
+                            </div>
+                          );
+                        });
+                      })()}
                     </div>
                   )}
                 </SectionCard>
@@ -1196,11 +1204,11 @@ const {
                   )}
                 </SectionCard>
                 <SectionCard title="Refund Status Breakdown" icon={BarChart} iconColor="#8B5CF6" link="/admin/refunds">
-                  {firstLoad ? <LoadingState label="Loading refund status..." /> : !refundOverview?.statusBreakdown?.length ? (
+                  {firstLoad ? <LoadingState label="Loading refund status..." /> : !refundOverview?.statusBreakdown?.length || refundOverview.statusBreakdown.every(s => s.count === 0) ? (
                     <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No refund status data available</span></div>
                   ) : (
                     <div className="adm-segment-list">
-                      {refundOverview.statusBreakdown.map((s, i) => (
+                      {refundOverview.statusBreakdown.filter(s => s.count > 0).map((s, i) => (
                         <div key={i} className="adm-segment-row">
                           <div className="adm-segment-label">{s.status}</div>
                           <div className="adm-segment-bar-wrap">
