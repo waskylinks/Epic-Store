@@ -1,11 +1,13 @@
 // operationsSlice.js
 // Covers: checkout abandonment, product analytics, fulfillment, SLA breaches,
 // fraud, shipping carriers, shipment tracking, cancellations, high-risk orders,
-// returns, and refunds.
+// and refunds.
+//
+// Returns analytics has been extracted to its own dedicated slice:
+// returnAnalyticsSlice.js
 //
 // These domains share the order fulfilment health theme and none are large
-// enough individually to justify a dedicated file. If returns/refunds grow
-// significantly they can be extracted to their own slice later.
+// enough individually to justify a dedicated file.
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -368,26 +370,9 @@ export const fetchHighRiskOrders = createAsyncThunk(
 );
 
 // ============================================
-// THUNKS — RETURNS & REFUNDS
+// THUNKS — REFUNDS
+// (Returns has been moved to returnAnalyticsSlice.js)
 // ============================================
-
-export const fetchReturnOverview = createAsyncThunk(
-    "operations/fetchReturnOverview",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
-        try {
-            const { data } = await axios.get(
-                `${API_BASE}/analytics/returns/overview?timeframe=${timeframe}`,
-                { signal }
-            );
-            return { ...data, _timeframe: timeframe };
-        } catch (error) {
-            if (isAbortError(error)) return rejectWithValue({ aborted: true });
-            return rejectWithValue(
-                error.response?.data?.message || "Failed to fetch return overview"
-            );
-        }
-    }
-);
 
 export const fetchRefundOverview = createAsyncThunk(
     "operations/fetchRefundOverview",
@@ -402,42 +387,6 @@ export const fetchRefundOverview = createAsyncThunk(
             if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(
                 error.response?.data?.message || "Failed to fetch refund overview"
-            );
-        }
-    }
-);
-
-export const fetchReturnsByProduct = createAsyncThunk(
-    "operations/fetchReturnsByProduct",
-    async ({ limit = 20, sortBy = "returnRate" }, { rejectWithValue, signal }) => {
-        try {
-            const { data } = await axios.get(
-                `${API_BASE}/analytics/returns/by-product?limit=${limit}&sortBy=${sortBy}`,
-                { signal }
-            );
-            return data;
-        } catch (error) {
-            if (isAbortError(error)) return rejectWithValue({ aborted: true });
-            return rejectWithValue(
-                error.response?.data?.message || "Failed to fetch returns by product"
-            );
-        }
-    }
-);
-
-export const fetchReturnsByCategory = createAsyncThunk(
-    "operations/fetchReturnsByCategory",
-    async ({ limit = 20, sortBy = "returnRate" }, { rejectWithValue, signal }) => {
-        try {
-            const { data } = await axios.get(
-                `${API_BASE}/analytics/returns/by-category?limit=${limit}&sortBy=${sortBy}`,
-                { signal }
-            );
-            return data;
-        } catch (error) {
-            if (isAbortError(error)) return rejectWithValue({ aborted: true });
-            return rejectWithValue(
-                error.response?.data?.message || "Failed to fetch returns by category"
             );
         }
     }
@@ -515,11 +464,8 @@ const operationsSlice = createSlice({
         cancellationAnalytics: null,
         highRiskOrders:        null,
 
-        // Returns & refunds
-        returnOverview:         null,
+        // Refunds only — returns lives in returnAnalyticsSlice
         refundOverview:         null,
-        returnsByProduct:       [],
-        returnsByCategory:      [],
         refundsByPaymentMethod: null,
         refundTimeline:         null,
 
@@ -802,42 +748,9 @@ const operationsSlice = createSlice({
                 if (!action.payload?.aborted) state.error = action.payload;
             });
 
-        // ── RETURNS & REFUNDS ────────────────────────────────────────────────
+        // ── REFUNDS ──────────────────────────────────────────────────────────
+        // Returns analytics has been moved to returnAnalyticsSlice.js
         builder
-            .addCase(fetchReturnOverview.fulfilled, (state, action) => {
-                if (action.payload._timeframe !== state.activeTimeframe) return;
-                const { currentPeriod = {}, breakdown = {}, trend } = action.payload;
-                const byReason     = breakdown.byReason || [];
-                const totalReasons = byReason.reduce(
-                    (sum, r) => sum + (r.count || 0),
-                    0
-                );
-                state.returnOverview = {
-                    totalReturns:      currentPeriod.totalReturns     || 0,
-                    returnRate:        currentPeriod.returnRate        || 0,
-                    approved:          currentPeriod.approved          || 0,
-                    pendingReview:
-                        (currentPeriod.requested || 0) +
-                        (currentPeriod.inTransit  || 0),
-                    totalValue:        currentPeriod.totalValue        || 0,
-                    avgProcessingDays: currentPeriod.avgProcessingDays || 0,
-                    trend,
-                    topReasons: byReason.map((r) => ({
-                        reason:     r._id || "Unknown",
-                        count:      r.count || 0,
-                        percentage:
-                            totalReasons > 0
-                                ? Math.round(
-                                      (r.count / totalReasons) * 100 * 10
-                                  ) / 10
-                                : 0,
-                    })),
-                };
-            })
-            .addCase(fetchReturnOverview.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
             .addCase(fetchRefundOverview.fulfilled, (state, action) => {
                 if (action.payload._timeframe !== state.activeTimeframe) return;
                 const { trends } = action.payload;
@@ -853,20 +766,6 @@ const operationsSlice = createSlice({
                 };
             })
             .addCase(fetchRefundOverview.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchReturnsByProduct.fulfilled, (state, action) => {
-                state.returnsByProduct = action.payload;
-            })
-            .addCase(fetchReturnsByProduct.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchReturnsByCategory.fulfilled, (state, action) => {
-                state.returnsByCategory = action.payload;
-            })
-            .addCase(fetchReturnsByCategory.rejected, (state, action) => {
                 if (!action.payload?.aborted) state.error = action.payload;
             })
 
