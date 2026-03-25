@@ -133,24 +133,9 @@ const EmptyState = ({ icon, title, desc }) => (
   </div>
 );
 
-// ─────────────────────────────────────────────
-// BALANCE CELL
-// ─────────────────────────────────────────────
 
-const BalanceCell = ({ discount }) => {
-  const { type, remainingBalance, value } = discount;
-  if (type !== 'fixed' || remainingBalance == null) return <span style={{ color: 'var(--addisc-text-xmuted)' }}>—</span>;
 
-  let cls = 'addisc-balance-full';
-  if (remainingBalance === 0) cls = 'addisc-balance-depleted';
-  else if (remainingBalance < value) cls = 'addisc-balance-partial';
 
-  return (
-    <span className={cls}>
-      ${remainingBalance.toFixed(2)} / ${value.toFixed(2)}
-    </span>
-  );
-};
 
 // ─────────────────────────────────────────────
 // PRODUCT CATEGORY CHIPS
@@ -400,17 +385,7 @@ const DetailDrawer = ({
                   {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
                 </span>
               </div>
-              {/* Remaining balance — fixed type only */}
-              {d.type === 'fixed' && (
-                <div className="addisc-drawer-field">
-                  <span className="addisc-drawer-label">Remaining balance</span>
-                  <span className="addisc-drawer-value addisc-drawer-value--bold">
-                    {d.remainingBalance != null
-                      ? `$${d.remainingBalance.toFixed(2)} of $${d.value.toFixed(2)}`
-                      : 'Not tracked (legacy)'}
-                  </span>
-                </div>
-              )}
+
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Category</span>
                 <span className="addisc-drawer-value">
@@ -1549,13 +1524,7 @@ const AdminDiscounts = () => {
               { label: 'Broadcast active',   value: broadcastCount,                        color: '#0369A1' },
               { label: 'VIP',                value: stats?.vip                    ?? 0,   color: '#ed3ad5' },
               { label: '🖤 Black Friday',    value: stats?.blackfriday            ?? 0,   color: '#1a1a1a' },
-              {
-                label: 'Fixed balance left',
-                value: stats?.totalRemainingBalance != null
-                  ? `$${Number(stats.totalRemainingBalance).toFixed(2)}`
-                  : '—',
-                color: '#0F766E',
-              },
+             
             ].map((kpi) => (
               <div key={kpi.label} className="addisc-kpi" style={{ '--addisc-kpi-color': kpi.color }}>
                 <span className="addisc-kpi-label">{kpi.label}</span>
@@ -1642,7 +1611,7 @@ const AdminDiscounts = () => {
                             <th>Audience</th>
                             <th>Product cats</th>
                             <th>Uses</th>
-                            <th>Balance</th>
+                            
                             <th>Valid until</th>
                             <th>Status</th>
                             <th>Actions</th>
@@ -1685,10 +1654,7 @@ const AdminDiscounts = () => {
                                   {d.usageLimit?.currentUses ?? 0}
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
                                 </td>
-                                {/* Balance column — fixed discounts only */}
-                                <td onClick={(e) => e.stopPropagation()}>
-                                  <BalanceCell discount={d} />
-                                </td>
+                               
                                 <td>{fmtDate(d.validUntil)}</td>
                                 <td><StatusBadge status={d.status} validUntil={d.validUntil} /></td>
                                 <td onClick={(e) => e.stopPropagation()}>

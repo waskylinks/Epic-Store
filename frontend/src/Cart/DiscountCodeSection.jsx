@@ -112,7 +112,9 @@ function DiscountCodeSection() {
                 Balance remaining after checkout:
               </span>
               <span className="discount-balance-value">
-                {formatUSD(discount.balanceAfterUse ?? discount.remainingBalance)}
+                {formatUSD(discount.balanceAfterUse !== null && discount.balanceAfterUse !== undefined
+                  ? discount.balanceAfterUse
+                  : discount.remainingBalance)}
               </span>
             </div>
           )}

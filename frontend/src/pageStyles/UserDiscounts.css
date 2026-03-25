@@ -1010,7 +1010,7 @@
 .ud-card-balance {
   font-size: 13px;
   font-weight: 600;
-  color: var(--ud-text-sec);
+  color: rgb(197, 81, 27);
   margin: 4px 0 8px; /* consistent spacing with .ud-value */
   line-height: 1.4;
   word-break: break-word; /* ensures long numbers wrap on small screens */

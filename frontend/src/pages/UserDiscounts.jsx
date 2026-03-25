@@ -147,7 +147,9 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
           <span className="ud-value-amount">{valueDisplay}</span>
           <span className="ud-value-label">off your order</span>
           
-            {discount.type === 'fixed' && discount.remainingBalance != null && (
+            {discount.type === 'fixed' && 
+            discount.remainingBalance != null && 
+            discount.remainingBalance !== discount.value && (
               <p className="ud-card-balance">
                 ${Number(discount.remainingBalance).toFixed(2)} remaining of ${Number(discount.value).toFixed(2)}
               </p>

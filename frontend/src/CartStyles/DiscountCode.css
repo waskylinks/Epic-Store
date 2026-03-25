@@ -85,12 +85,14 @@
 /* Discount Applied */
 .discount-applied {
   display: flex;
+  flex-wrap: wrap;         
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1rem;
   background-color: #f0fdf4;
   border: 1px solid #86efac;
   border-radius: 6px;
+  gap: 0.5rem 0;            
 }
 
 .discount-applied-info {
@@ -200,4 +202,25 @@
   .discount-category-label {
     font-size: 0.75rem;
   }
+}
+
+.discount-balance-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 0.5rem;
+  border-top: 1px solid #bbf7d0;
+  margin-top: 0.25rem;
+}
+
+.discount-balance-label {
+  font-size: 0.8rem;
+  color: #047857;
+}
+
+.discount-balance-value {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #059669;
 }
