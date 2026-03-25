@@ -34,7 +34,7 @@ const router = express.Router();
 // ============================================
 
 // Apply auth + admin guard to every route in this router
-router.use(verifyUserAuth, roleBaseAccess("admin"));
+router.use(verifyUserAuth, roleBaseAccess("admin", "superAdmin"));
 
 // ============================================
 // 1. AGGREGATE / OVERVIEW ROUTES

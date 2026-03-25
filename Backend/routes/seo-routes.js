@@ -187,7 +187,7 @@ router.get('/robots.txt', (req, res) => {
 router.get(
   '/sitemap/stats',
   verifyUserAuth,
-  roleBaseAccess('admin'),
+  roleBaseAccess('admin', "superAdmin"),
   async (req, res) => {
     try {
       const [total, published, indexable, noIndex, categoryBreakdown, recentlyUpdated] =
@@ -232,7 +232,7 @@ router.get(
 router.post(
   '/sitemap/refresh',
   verifyUserAuth,
-  roleBaseAccess('admin'),
+  roleBaseAccess('admin', "superAdmin"),
   async (req, res) => {
     try {
       await deleteCachePattern('sitemap*');

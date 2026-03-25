@@ -41,7 +41,7 @@ import upload from '../middleware/multer.js';
 
 const router = express.Router();
 
-const adminAuth = [verifyUserAuth, roleBaseAccess('admin')];
+const adminAuth = [verifyUserAuth, roleBaseAccess('admin', "superAdmin")];
 
 /* ======================================================
    CUSTOMER REFUND ROUTES

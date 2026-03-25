@@ -111,37 +111,37 @@ router.route('/reviews')
 // ============================================
 
 router.route('/product/:id')
-  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getProductDetails);
+  .get(verifyUserAuth, roleBaseAccess('admin', "superAdmin"), adminLimiter, getProductDetails);
 
 router.route('/admin/products')
-  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProducts);
+  .get(verifyUserAuth, roleBaseAccess('admin', "superAdmin"), adminLimiter, getAdminProducts);
 
 router.route('/admin/products/stats')
-  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getAdminProductStats);
+  .get(verifyUserAuth, roleBaseAccess('admin', "superAdmin"), adminLimiter, getAdminProductStats);
 
 router.route('/admin/products/create')
   .post(
     verifyUserAuth,
-    roleBaseAccess('admin'),
+    roleBaseAccess('admin', "superAdmin"),
     uploadProductImages,   // ← wrapped multer, before adminLimiter
     adminLimiter,
     createProducts
   );
 
 router.route('/admin/products/batch-delete')
-  .delete(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, deleteMultipleProducts);
+  .delete(verifyUserAuth, roleBaseAccess('admin', "superAdmin"), adminLimiter, deleteMultipleProducts);
 
 router.route('/admin/product/:id')
   .put(
     verifyUserAuth,
-    roleBaseAccess('admin'),
+    roleBaseAccess('admin', "superAdmin"),
     uploadProductImages,   // ← wrapped multer, before adminLimiter
     adminLimiter,
     updateProduct
   )
-  .delete(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, deleteProduct);
+  .delete(verifyUserAuth, roleBaseAccess('admin', "superAdmin"), adminLimiter, deleteProduct);
 
 router.route('/admin/product/:id/structured-data')
-  .get(verifyUserAuth, roleBaseAccess('admin'), adminLimiter, getProductStructuredData);
+  .get(verifyUserAuth, roleBaseAccess('admin', "superAdmin"), adminLimiter, getProductStructuredData);
 
 export default router;

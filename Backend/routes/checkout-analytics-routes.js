@@ -18,7 +18,7 @@ const router = express.Router();
 router.get(
   '/abandonment',
   verifyUserAuth,
-  roleBaseAccess('admin'),
+  roleBaseAccess('admin', "superAdmin"),
   adminAnalyticsLimiter,
   getCheckoutAbandonmentStats
 );
@@ -31,7 +31,7 @@ router.get(
 router.get(
   '/abandoned-list',
   verifyUserAuth,
-  roleBaseAccess('admin'),
+  roleBaseAccess('admin', "superAdmin"),
   adminAnalyticsLimiter,
   getAbandonedCheckoutsList
 );
@@ -44,7 +44,7 @@ router.get(
 router.get(
   '/recovery-opportunities',
   verifyUserAuth,
-  roleBaseAccess('admin'),
+  roleBaseAccess('admin', "superAdmin"),
   adminAnalyticsLimiter,
   getRecoveryOpportunities
 );
@@ -57,7 +57,7 @@ router.get(
 router.post(
   '/:checkoutId/mark-recovery-sent',
   verifyUserAuth,
-  roleBaseAccess('admin'),
+  roleBaseAccess('admin', "superAdmin"),
   markRecoveryEmailSent
 );
 

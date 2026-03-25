@@ -58,7 +58,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 const router = express.Router();
 
-const adminAuth = [verifyUserAuth, roleBaseAccess('admin')];
+const adminAuth = [verifyUserAuth, roleBaseAccess('admin', "superAdmin")];
 
 const UPLOAD_LIMIT = 8;
 

@@ -13,7 +13,7 @@ import {
 const router = express.Router();
 
 // All routes require admin authentication and rate limiting
-router.use(verifyUserAuth, roleBaseAccess("admin"), adminAnalyticsLimiter);
+router.use(verifyUserAuth, roleBaseAccess("admin", "superAdmin"), adminAnalyticsLimiter);
 
 /**
  * Get basic admin statistics
