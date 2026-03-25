@@ -1102,8 +1102,24 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
           totalUses: { $sum: "$usageLimit.currentUses" },
           vip:       { $sum: { $cond: [{ $eq: ["$audience", "specific"] }, 1, 0] } },
  
-          // NEW: dedicated Black Friday counter
+          
           blackfriday: { $sum: { $cond: [{ $eq: ["$category", "blackfriday"] }, 1, 0] } },
+        },
+        
+        totalRemainingBalance: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$type", "fixed"] },
+                  { $eq: ["$status", "active"] },
+                  { $gt: ["$remainingBalance", 0] },
+                ],
+              },
+              "$remainingBalance",
+              0,
+            ],
+          },
         },
       },
     ]),
@@ -1119,6 +1135,7 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
       totalUses:   0,
       vip:         0,
       blackfriday: 0,
+      totalRemainingBalance: 0, 
     },
   };
  
