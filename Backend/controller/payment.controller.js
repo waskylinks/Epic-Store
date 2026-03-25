@@ -305,6 +305,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
       eligibleProductCategories: Array.isArray(discountSnapshot.eligibleProductCategories)
         ? discountSnapshot.eligibleProductCategories
         : [],
+      remainingBalance: discountSnapshot.remainingBalance ?? null,
     };
   }
 

@@ -373,7 +373,16 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
 
+  // calculateDiscount() caps the amount to remainingBalance internally
+  // for fixed-type codes, so discountAmount is always safe to use directly.
   const discountAmount = discount.calculateDiscount(itemPrice, validItems);
+
+  // NEW: project what balance will remain after this checkout completes.
+  // Null for percentage codes — balance tracking only applies to fixed type.
+  const balanceAfterThisUse =
+    discount.type === 'fixed' && discount.remainingBalance !== null
+      ? Math.max(0, discount.remainingBalance - discountAmount)
+      : null;
 
   const eligibleCats = discount.conditions?.eligibleProductCategories ?? [];
 
@@ -415,6 +424,10 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       eligibleProductCategories: eligibleCats,
       eligibleSubtotal,
       ineligibleSubtotal,
+      // NEW: partial fixed-discount balance fields (null for percentage codes)
+      remainingBalance: discount.remainingBalance ?? null,
+      balanceAfterUse:  balanceAfterThisUse,
+      isPartialAllowed: discount.isPartialAllowed ?? true,
     },
     pricing: {
       itemPrice:           Math.round(itemPrice * 100) / 100,

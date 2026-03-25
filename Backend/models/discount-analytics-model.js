@@ -196,7 +196,7 @@ const discountAnalyticsSchema = new mongoose.Schema(
       validUntil: Date,
       status: {
         type: String,
-        enum: ["active", "inactive", "expired"],
+        enum: ["active", "inactive", "expired", 'exhausted'],
       },
       isCompensation: {
         type: Boolean,
@@ -253,10 +253,13 @@ const discountAnalyticsSchema = new mongoose.Schema(
     financials: {
       // Total discount value given away (sum of discountAmount across all redemptions)
       totalDiscountCost: {
-        type: Number,
-        default: 0,
-        min: 0,
-      },
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    remainingBalance:    { type: Number, default: null },
+    originalValue:       { type: Number, default: null },
+    percentageExhausted: { type: Number, default: null },
 
       // Average discount amount per redemption
       avgDiscountAmount: {

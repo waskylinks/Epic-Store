@@ -209,13 +209,30 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
   const allowedUpdates = [
     "description", "status", "validFrom", "validUntil",
     "usageLimit", "conditions", "notes",
-    "eligibleProductCategories",   // NEW top-level alias
+    "eligibleProductCategories",
+    "remainingBalance",  
   ];
 
   const updates = {};
   allowedUpdates.forEach((field) => {
     if (req.body[field] !== undefined) updates[field] = req.body[field];
   });
+
+  if (updates.remainingBalance !== undefined) {
+  const rb = Number(updates.remainingBalance);
+  if (isNaN(rb) || rb < 0) {
+    return next(new HandleError("remainingBalance must be a non-negative number", 400));
+  }
+  const peek = await Discount.findById(id).select("value type").lean();
+  if (!peek) return next(new HandleError("Discount not found", 404));
+  if (peek.type !== "fixed") {
+    return next(new HandleError("remainingBalance can only be set on fixed-type discounts", 400));
+  }
+  if (rb > peek.value) {
+    return next(new HandleError(`remainingBalance cannot exceed face value ($${peek.value})`, 400));
+  }
+  updates.remainingBalance = rb;
+}
 
   // NEW — eligibleProductCategories handling.
   //
@@ -857,6 +874,10 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       eligibleProductCategories: eligibleCats,
       eligibleSubtotal,
       ineligibleSubtotal,
+      remainingBalance: eligibleCats.length === 0
+        ? discount.remainingBalance
+        : null,
+      isPartialAllowed: discount.isPartialAllowed,
     },
   });
 });

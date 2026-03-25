@@ -53,6 +53,24 @@ const discountSchema = new mongoose.Schema(
     },
 
     // ============================================
+    // PARTIAL USE TRACKING (fixed discounts)
+    // null  = not tracked (percentage codes, or legacy fixed codes)
+    // >= 0  = current spendable balance
+    // ============================================
+    remainingBalance: {
+      type: Number,
+      default: null,
+      min: 0,
+    },
+
+    // When false the discount must cover the full cart or it is rejected.
+    // When true (default) it can be applied partially up to remainingBalance.
+    isPartialAllowed: {
+      type: Boolean,
+      default: true,
+    },
+
+    // ============================================
     // AUDIENCE
     // ============================================
     audience: {
@@ -78,7 +96,7 @@ const discountSchema = new mongoose.Schema(
     // ============================================
     status: {
       type: String,
-      enum: ["active", "inactive", "expired"],
+      enum: ["active", "inactive", "expired", "exhausted"],
       default: "active",
     },
 
@@ -167,6 +185,10 @@ const discountSchema = new mongoose.Schema(
         user: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
         order: { type: mongoose.Schema.Types.ObjectId, ref: "Order" },
         discountAmount: Number,
+        // amountUsed records the actual amount deducted from remainingBalance
+        // for this specific transaction (same as discountAmount for fixed codes,
+        // kept separate for clarity and future-proofing).
+        amountUsed: Number,
         usedAt: { type: Date, default: Date.now },
       },
     ],
@@ -261,7 +283,9 @@ discountSchema.virtual("isValid").get(function () {
     this.validFrom <= now &&
     this.validUntil >= now &&
     (this.usageLimit.totalUses === null ||
-      this.usageLimit.currentUses < this.usageLimit.totalUses)
+      this.usageLimit.currentUses < this.usageLimit.totalUses) &&
+    // Fixed codes with balance tracking must have balance remaining
+    (this.type !== "fixed" || this.remainingBalance === null || this.remainingBalance > 0)
   );
 });
 
@@ -316,8 +340,12 @@ discountSchema.methods.calculateDiscount = function (cartTotal, items = []) {
       discountAmount = Math.min(discountAmount, this.conditions.maxDiscountAmount);
     }
   } else {
-    // Fixed discount — always deduct the full fixed value.
-    discountAmount = this.value;
+    // Fixed discount — cap to face value, cart total, and remaining balance.
+    discountAmount = Math.min(
+      this.value,                                          // face value
+      cartTotal,                                           // can't exceed cart
+      this.remainingBalance ?? this.value                  // can't exceed remaining balance
+    );
   }
 
   // Discount can never exceed the cart total.
@@ -400,6 +428,11 @@ discountSchema.methods.validateCart = function (cartTotal, items = [], userId = 
     return { valid: false, reason: "Discount code is not valid or has expired" };
   }
 
+  // Fixed codes with balance tracking: reject if fully exhausted
+  if (this.type === "fixed" && this.remainingBalance !== null && this.remainingBalance <= 0) {
+    return { valid: false, reason: "This discount code has been fully used." };
+  }
+
   if (cartTotal < this.conditions.minPurchaseAmount) {
     return {
       valid: false,
@@ -443,9 +476,26 @@ discountSchema.methods.validateCart = function (cartTotal, items = [], userId = 
 // ============================================
 discountSchema.methods.recordUsage = async function (userId, orderId, discountAmount) {
   const isFirstUse = this.usageLimit.currentUses === 0;
+  const actualAmount = discountAmount; // actual amount deducted this transaction
 
-  this.usageHistory.push({ user: userId, order: orderId, discountAmount, usedAt: new Date() });
+  this.usageHistory.push({
+    user: userId,
+    order: orderId,
+    discountAmount: actualAmount,
+    amountUsed: actualAmount,
+    usedAt: new Date(),
+  });
   this.usageLimit.currentUses += 1;
+
+  // Deduct from remaining balance for tracked fixed codes
+  if (this.type === "fixed" && this.remainingBalance !== null) {
+    this.remainingBalance = Math.max(0, this.remainingBalance - actualAmount);
+  }
+
+  // Mark as exhausted when balance hits zero
+  if (this.type === "fixed" && this.remainingBalance === 0) {
+    this.status = "exhausted";
+  }
 
   if (isFirstUse) {
     const now = new Date();
@@ -498,7 +548,7 @@ discountSchema.statics.getUserDiscounts = async function (userId) {
   })
     .select(
       "code description type value category validUntil audience " +
-      "conditions.eligibleProductCategories"
+      "conditions.eligibleProductCategories remainingBalance isPartialAllowed"
     )
     .lean();
 };
@@ -530,7 +580,7 @@ discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSiz
   while (true) {
     const batch = await this.find(
       {
-        status:     "expired",
+        status:     { $in: ["expired", "exhausted"] },
         validUntil: { $lt: cutoff },
         _id:        { $lt: runCeiling },
         deletionEligibleAt: { $not: { $gt: now } },
@@ -562,6 +612,11 @@ export { PRODUCT_CATEGORIES };
 // ============================================
 
 discountSchema.pre("save", function (next) {
+  // Initialise remainingBalance for new fixed-type discounts
+  if (this.isNew && this.type === "fixed" && this.remainingBalance === null) {
+    this.remainingBalance = this.value;
+  }
+
   if (this.validUntil <= new Date() && this.status === "active") {
     this.status = "expired";
   }

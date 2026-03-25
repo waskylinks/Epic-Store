@@ -64,8 +64,15 @@ export const syncDiscountAnalytics = async (discountId) => {
   const redemptionMetrics  = buildRedemptionMetrics(usageHistory);
   console.log(`[DA:sync] redemptionMetrics=`, JSON.stringify(redemptionMetrics));
 
-  const financials         = buildFinancials(usageHistory, matchedOrders, discount.code);
-  console.log(`[DA:sync] financials=`, JSON.stringify(financials));
+const financials = buildFinancials(usageHistory, matchedOrders, discount.code);
+
+financials.remainingBalance = discount.remainingBalance ?? null;
+financials.originalValue    = discount.value ?? null;
+financials.percentageExhausted =
+  discount.value != null && discount.remainingBalance != null
+    ? Math.round(((discount.value - discount.remainingBalance) / discount.value) * 100)
+    : null;
+  
 
   const conversion         = await buildConversion(discount, usageHistory, matchedOrders);
   const categoryBreakdown  = buildCategoryBreakdown(
@@ -182,18 +189,7 @@ export const syncDiscountAfterOrderCreated = async (order) => {
 // SYNC BASELINE AFTER NON-DISCOUNTED ORDER
 // ============================================
 
-// Called from verifyPaymentController when a successful order has no discount
-// codes. The baseline (storeAvgOrderValue, aovLiftPercent) is stored inside
-// every DiscountAnalytics document and is only recomputed during a sync.
-// Without this hook, placing a non-discounted order never triggers a sync,
-// so all existing DiscountAnalytics documents keep their stale baseline
-// (typically $0 when it's the first non-discounted order) indefinitely —
-// even though buildBaseline's query would return the correct value if run.
-//
-// This function runs buildBaseline once and then bulk-updates the baseline
-// field on every DiscountAnalytics document in a single updateMany call.
-// It intentionally skips the full syncDiscountAnalytics() path to keep the
-// operation cheap — no usageHistory processing, no Order matching per code.
+
 export const syncBaselineAfterNonDiscountedOrder = async () => {
   console.log(`[DA:baselineSync] non-discounted order placed — refreshing baseline for all codes`);
   try {
