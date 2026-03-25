@@ -42,16 +42,17 @@ function DiscountCodeSection() {
     setCode('');
   };
 
-  // Build a concise category restriction label for display inside the
-  // applied state pill, e.g. "Electronics only" or "Electronics & Clothing only".
-  // When eligibleProductCategories is empty the discount is unrestricted
-  // and no extra label is needed.
   const categoryLabel = (() => {
     const cats = discount.eligibleProductCategories ?? [];
     if (cats.length === 0) return null;
     if (cats.length === 1) return `${cats[0]} only`;
     return `${cats.slice(0, -1).join(', ')} & ${cats[cats.length - 1]} only`;
   })();
+
+  const formatUSD = (amount) => {
+    if (amount == null) return "$0.00";
+    return `$${Number(amount).toFixed(2)}`;
+  };
 
   return (
     <div className="discount-section">
@@ -76,24 +77,19 @@ function DiscountCodeSection() {
             {isApplying ? 'Applying...' : 'Apply'}
           </button>
         </form>
-      ) : (
+) : (
         <div className="discount-applied">
           <div className="discount-applied-info">
             <FiCheck className="discount-check-icon" />
             <div className="discount-applied-details">
               <span className="discount-applied-code">{discount.code}</span>
 
-              {/* Show description when no category restriction —
-                  it's the most useful context in that case */}
               {!categoryLabel && discount.description && (
                 <span className="discount-applied-description">
                   {discount.description}
                 </span>
               )}
 
-              {/* When category-restricted, the restriction IS the key context.
-                  Show it in place of the generic description so the user
-                  immediately understands which items qualified. */}
               {categoryLabel && (
                 <span className="discount-category-label">
                   <FiTag />
@@ -110,6 +106,16 @@ function DiscountCodeSection() {
           >
             <FiX />
           </button>
+          {discount.remainingBalance !== null && (
+            <div className="discount-balance-row">
+              <span className="discount-balance-label">
+                Balance remaining after checkout:
+              </span>
+              <span className="discount-balance-value">
+                {formatUSD(discount.balanceAfterUse ?? discount.remainingBalance)}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

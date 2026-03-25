@@ -146,6 +146,12 @@ const DiscountCard = ({ discount, onCopy, copiedCode, onShopNow, index }) => {
         <div className={`ud-value${isExpired ? ' ud-value--expired' : ''}`}>
           <span className="ud-value-amount">{valueDisplay}</span>
           <span className="ud-value-label">off your order</span>
+          {/* ── FIX: Show remaining balance for fixed discounts ── */}
+          {discount.type === 'fixed' && discount.remainingBalance !== null && (
+            <p className="ud-card-balance">
+              ${discount.remainingBalance.toFixed(2)} remaining of ${discount.value.toFixed(2)}
+            </p>
+            )}
         </div>
 
         {discount.description && (
@@ -340,15 +346,7 @@ const UserDiscounts = () => {
     navigate('/cart', { state: { applyCode: code } });
   }, [navigate]);
 
-  // ── Derived: merge broadcast + personal, then split active / expired ───────
-  //
-  // FIX: broadcastDiscounts (audience:'all') were fetched and stored in Redux
-  // correctly by getMyDiscounts, but were NEVER rendered — the previous code
-  // only iterated over personalDiscounts. Merging them here means all codes
-  // a user is eligible for appear in the "My Discounts" tab.
-  //
-  // AudienceBadge inside DiscountCard already renders "Available to all" for
-  // broadcast codes so users can visually distinguish them.
+
   const { activePersonal, expiredPersonal } = useMemo(() => {
     const all = [...broadcastDiscounts, ...personalDiscounts];
     const active = all.filter(

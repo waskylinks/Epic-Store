@@ -2084,3 +2084,27 @@ input#comp-validDays {
   .addisc-body  { padding: 0; }
   .addisc-page  { background: #fff; }
 }
+
+.addisc-balance-full  {
+  font-family: var(--addisc-font-mono);
+  font-size:   12.5px;
+  font-weight: 600;
+  color:       var(--addisc-green);
+  white-space: nowrap;
+}
+
+.addisc-balance-partial {
+  font-family: var(--addisc-font-mono);
+  font-size:   12.5px;
+  font-weight: 600;
+  color:       var(--addisc-amber);
+  white-space: nowrap;
+}
+
+.addisc-balance-depleted {
+  font-family: var(--addisc-font-mono);
+  font-size:   12.5px;
+  font-weight: 600;
+  color:       var(--addisc-red);
+  white-space: nowrap;
+}

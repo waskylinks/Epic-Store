@@ -152,11 +152,6 @@ export const removeDiscountCode = createAsyncThunk(
 // ============================================
 
 const initialDiscount = {
-  // FIX: discountId added — stores the Discount document's _id returned by
-  // the cart controller. Required so the payment controller can call
-  // recordUsage() after a successful payment and update the discount's
-  // currentUses count and usageHistory. Without this field the admin
-  // discount page never reflects real usage.
   discountId:                null,
   code:                      null,
   type:                      null,
@@ -168,6 +163,9 @@ const initialDiscount = {
   eligibleProductCategories: [],
   appliedPending:            false,
   applied:                   false,
+  remainingBalance: null,       
+  balanceAfterUse: null,        
+  isPartialAllowed: true, 
 };
 
 const initialPricing = {
@@ -369,9 +367,6 @@ const cartSlice = createSlice({
 
     // ──────────────────────────────────────────────
     // VALIDATE CHECKOUT
-    // FIX (pre-existing): do NOT reset state.discount here — validateCheckout
-    // has no knowledge of the discount and must not touch it. Pricing is also
-    // preserved from applyDiscountCode when a discount is active.
     // ──────────────────────────────────────────────
     builder
       .addCase(validateCheckout.pending, (state) => {
@@ -417,12 +412,6 @@ const cartSlice = createSlice({
       .addCase(applyDiscountCode.fulfilled, (state, action) => {
         const { discount, pricing, appliedPending } = action.payload;
         state.discount = {
-          // FIX: store the Discount document's _id returned by the cart
-          // controller so it can be forwarded in discountSnapshot to the
-          // payment controller. The payment controller uses this to call
-          // discount.recordUsage() after successful payment, updating
-          // currentUses and usageHistory — which is what the admin
-          // discount page reads to display usage counts.
           discountId:                discount.id   ?? null,
           code:                      discount.code,
           type:                      discount.type,
@@ -434,6 +423,9 @@ const cartSlice = createSlice({
           eligibleProductCategories: discount.eligibleProductCategories ?? [],
           appliedPending:            appliedPending ?? true,
           applied:                   true,
+          remainingBalance: discount.remainingBalance  ?? null,
+          balanceAfterUse:  discount.balanceAfterUse   ?? null,
+          isPartialAllowed: discount.isPartialAllowed  ?? true,
         };
 
         state.pricing = pricing;

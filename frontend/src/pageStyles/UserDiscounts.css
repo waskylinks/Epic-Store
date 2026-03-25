@@ -1006,3 +1006,26 @@
   .ud-section-hd { margin-bottom: 10px; }
   .ud-how-num    { width: 28px; height: 28px; font-size: 12px; }
 }
+
+.ud-card-balance {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ud-text-sec);
+  margin: 4px 0 8px; /* consistent spacing with .ud-value */
+  line-height: 1.4;
+  word-break: break-word; /* ensures long numbers wrap on small screens */
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+  .ud-card-balance {
+    font-size: 12.5px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ud-card-balance {
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+}

@@ -48,7 +48,6 @@ const ACTION_META = {
   sweep_window_expired: { label: 'Window Expired', color: '#6B7280', bg: '#F3F4F6' },
 };
 
-// CHANGED: added 'blackfriday' to all category constant arrays
 const CATEGORY_OPTIONS = ['promo', 'refund', 'return', 'loyalty', 'affiliate', 'support', 'blackfriday'];
 const TYPE_OPTIONS     = ['percentage', 'fixed'];
 const STATUS_OPTIONS   = ['active', 'expired', 'inactive'];
@@ -82,13 +81,6 @@ const getDaysUntilEligible = (date) => {
 // SMALL ATOMS
 // ─────────────────────────────────────────────
 
-/**
- * BUG FIX: StatusBadge now computes the effective status client-side.
- * A discount with status="active" but a validUntil in the past has not
- * been swept by the cleanup CRON yet — it should display as "Expired",
- * not "Active". This brings the badge in line with what the backend
- * actually enforces at validation time.
- */
 const StatusBadge = ({ status, validUntil }) => {
   const effectiveStatus =
     status === 'active' && validUntil && new Date(validUntil) < new Date()
@@ -140,6 +132,25 @@ const EmptyState = ({ icon, title, desc }) => (
     {desc && <p className="addisc-empty-desc">{desc}</p>}
   </div>
 );
+
+// ─────────────────────────────────────────────
+// BALANCE CELL
+// ─────────────────────────────────────────────
+
+const BalanceCell = ({ discount }) => {
+  const { type, remainingBalance, value } = discount;
+  if (type !== 'fixed' || remainingBalance == null) return <span style={{ color: 'var(--addisc-text-xmuted)' }}>—</span>;
+
+  let cls = 'addisc-balance-full';
+  if (remainingBalance === 0) cls = 'addisc-balance-depleted';
+  else if (remainingBalance < value) cls = 'addisc-balance-partial';
+
+  return (
+    <span className={cls}>
+      ${remainingBalance.toFixed(2)} / ${value.toFixed(2)}
+    </span>
+  );
+};
 
 // ─────────────────────────────────────────────
 // PRODUCT CATEGORY CHIPS
@@ -358,7 +369,6 @@ const DetailDrawer = ({
         <div className="addisc-drawer-header">
           <div className="addisc-drawer-header-left">
             <span className="addisc-drawer-code">{d.code}</span>
-            {/* BUG FIX: pass validUntil so the badge shows "Expired" for unswiped codes */}
             <StatusBadge status={d.status} validUntil={d.validUntil} />
             <AudienceBadge audience={d.audience} />
           </div>
@@ -390,9 +400,19 @@ const DetailDrawer = ({
                   {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
                 </span>
               </div>
+              {/* Remaining balance — fixed type only */}
+              {d.type === 'fixed' && (
+                <div className="addisc-drawer-field">
+                  <span className="addisc-drawer-label">Remaining balance</span>
+                  <span className="addisc-drawer-value addisc-drawer-value--bold">
+                    {d.remainingBalance != null
+                      ? `$${d.remainingBalance.toFixed(2)} of $${d.value.toFixed(2)}`
+                      : 'Not tracked (legacy)'}
+                  </span>
+                </div>
+              )}
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Category</span>
-                {/* CHANGED: blackfriday gets a visual tag */}
                 <span className="addisc-drawer-value">
                   {d.category === 'blackfriday' ? '🖤 Black Friday' : d.category}
                 </span>
@@ -587,8 +607,6 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
   };
 
   const isEditRestricted = mode === 'edit' && form.eligibleProductCategories.length > 0;
-
-  // CHANGED: Black Friday gets a highlighted label in the category dropdown
   const categoryLabel = (c) => c === 'blackfriday' ? '🖤 Black Friday' : c;
 
   return (
@@ -712,13 +730,11 @@ const DiscountModal = ({ mode = 'create', initial = {}, loading, error, onSubmit
                 <label className="addisc-form-label" htmlFor="addisc-category">Category</label>
                 <select id="addisc-category" className="addisc-form-select" value={form.category}
                   onChange={(e) => set('category', e.target.value)} disabled={mode === 'edit'}>
-                  {/* CHANGED: blackfriday option rendered via categoryLabel helper */}
                   {CATEGORY_OPTIONS.map((c) => (
                     <option key={c} value={c}>{categoryLabel(c)}</option>
                   ))}
                 </select>
                 {mode === 'edit' && <span className="addisc-form-hint addisc-form-hint--locked">Locked after creation</span>}
-                {/* CHANGED: highlight when blackfriday is selected in create mode */}
                 {mode === 'create' && form.category === 'blackfriday' && (
                   <span className="addisc-form-hint addisc-form-hint--info" style={{ display: 'block', marginTop: 6 }}>
                     🖤 Black Friday codes are tracked separately in analytics for campaign reporting.
@@ -995,7 +1011,6 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
     onSubmit(payload);
   };
 
-  // CHANGED: blackfriday label helper for VIP modal category dropdown
   const categoryLabel = (c) => c === 'blackfriday' ? '🖤 Black Friday' : c;
 
   if (vipSuccess && lastCreatedVipDiscount) {
@@ -1103,7 +1118,6 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
               <label className="addisc-form-label" htmlFor="vip-category">Category</label>
               <select id="vip-category" className="addisc-form-select" value={form.category}
                 onChange={(e) => set('category', e.target.value)}>
-                {/* CHANGED: blackfriday available in VIP modal too */}
                 {CATEGORY_OPTIONS.map((c) => <option key={c} value={c}>{categoryLabel(c)}</option>)}
               </select>
             </div>
@@ -1320,7 +1334,7 @@ const AdminDiscounts = () => {
           setEditTarget(null);
           dispatch(clearAdminDiscountState());
           dispatch(getAllDiscounts({}));
-          dispatch(getDiscountStats()); 
+          dispatch(getDiscountStats());
           showToast('Discount created.');
         })
         .catch((err) => {
@@ -1423,7 +1437,6 @@ const AdminDiscounts = () => {
     [discounts],
   );
 
-  // CHANGED: helper to make category labels human-friendly in table/filter
   const categoryLabel = (c) => c === 'blackfriday' ? '🖤 Black Friday' : c;
 
   return (
@@ -1492,7 +1505,6 @@ const AdminDiscounts = () => {
                 VIP discount
               </button>
 
-              {/* CHANGED: Black Friday quick-create button — pre-fills the modal */}
               <button
                 type="button"
                 className="addisc-btn addisc-btn--blackfriday"
@@ -1527,18 +1539,23 @@ const AdminDiscounts = () => {
             <span className="addisc-section-divider-line" />
           </div>
 
-          {/* CHANGED: KPI grid now includes Black Friday card */}
           <div className="addisc-kpi-grid">
             {[
-              { label: 'Total codes',      value: stats?.total        ?? 0, color: '#6366F1' },
-              { label: 'Active',           value: stats?.active       ?? 0, color: '#ff3c3c' },
-              { label: 'Expired',          value: stats?.expired      ?? 0, color: '#F59E0B' },
-              { label: 'Inactive',         value: stats?.inactive     ?? 0, color: '#9CA3AF' },
-              { label: 'Total uses',       value: stats?.totalUses    ?? 0, color: '#10B981' },
-              { label: 'Broadcast active', value: broadcastCount,            color: '#0369A1' },
-              { label: 'VIP',              value: stats?.vip          ?? 0, color: '#ed3ad5' },
-              // CHANGED: Black Friday KPI card
-              { label: '🖤 Black Friday',  value: stats?.blackfriday  ?? 0, color: '#1a1a1a' },
+              { label: 'Total codes',        value: stats?.total                  ?? 0,   color: '#6366F1' },
+              { label: 'Active',             value: stats?.active                 ?? 0,   color: '#ff3c3c' },
+              { label: 'Expired',            value: stats?.expired                ?? 0,   color: '#F59E0B' },
+              { label: 'Inactive',           value: stats?.inactive               ?? 0,   color: '#9CA3AF' },
+              { label: 'Total uses',         value: stats?.totalUses              ?? 0,   color: '#10B981' },
+              { label: 'Broadcast active',   value: broadcastCount,                        color: '#0369A1' },
+              { label: 'VIP',                value: stats?.vip                    ?? 0,   color: '#ed3ad5' },
+              { label: '🖤 Black Friday',    value: stats?.blackfriday            ?? 0,   color: '#1a1a1a' },
+              {
+                label: 'Fixed balance left',
+                value: stats?.totalRemainingBalance != null
+                  ? `$${Number(stats.totalRemainingBalance).toFixed(2)}`
+                  : '—',
+                color: '#0F766E',
+              },
             ].map((kpi) => (
               <div key={kpi.label} className="addisc-kpi" style={{ '--addisc-kpi-color': kpi.color }}>
                 <span className="addisc-kpi-label">{kpi.label}</span>
@@ -1584,7 +1601,6 @@ const AdminDiscounts = () => {
                 <select className="addisc-filter-select" value={codesFilters.category}
                   onChange={(e) => setCodesFilters((p) => ({ ...p, category: e.target.value }))}>
                   <option value="">All categories</option>
-                  {/* CHANGED: blackfriday option in filter */}
                   {CATEGORY_OPTIONS.map((c) => (
                     <option key={c} value={c}>{categoryLabel(c)}</option>
                   ))}
@@ -1626,6 +1642,7 @@ const AdminDiscounts = () => {
                             <th>Audience</th>
                             <th>Product cats</th>
                             <th>Uses</th>
+                            <th>Balance</th>
                             <th>Valid until</th>
                             <th>Status</th>
                             <th>Actions</th>
@@ -1653,7 +1670,6 @@ const AdminDiscounts = () => {
                                     <span className="addisc-type-label">{d.type}</span>
                                   </div>
                                 </td>
-                                {/* CHANGED: render blackfriday with emoji in table */}
                                 <td>{categoryLabel(d.category)}</td>
                                 <td><AudienceBadge audience={d.audience} /></td>
                                 <td>
@@ -1669,8 +1685,11 @@ const AdminDiscounts = () => {
                                   {d.usageLimit?.currentUses ?? 0}
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
                                 </td>
+                                {/* Balance column — fixed discounts only */}
+                                <td onClick={(e) => e.stopPropagation()}>
+                                  <BalanceCell discount={d} />
+                                </td>
                                 <td>{fmtDate(d.validUntil)}</td>
-                                {/* BUG FIX: pass validUntil to StatusBadge in table row */}
                                 <td><StatusBadge status={d.status} validUntil={d.validUntil} /></td>
                                 <td onClick={(e) => e.stopPropagation()}>
                                   <div className="addisc-row-actions">
