@@ -366,6 +366,7 @@ const {
       fetchDashboardAlerts(),
       fetchLowStockAlerts(),
       fetchCustomerOverview(),
+      fetchOrderStatusBreakdown(),
     ].map(thunk => dispatch(thunk).unwrap().catch(() => {})));
   }, [dispatch, basicStatsFetched]);
 

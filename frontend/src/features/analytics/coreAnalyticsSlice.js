@@ -31,13 +31,7 @@ export const fetchAdminStats = createAsyncThunk(
     }
 );
 
-// Now accepts an optional timeframe string.
-// - No argument (or undefined): hits the endpoint with no query param →
-//   all-time counts, same shape as before { ordersByStatus: {...} }
-// - With timeframe ("day" | "week" | "month" | "year"): appends
-//   ?timeframe=<value> → richer response with trends, share, previousPeriod.
-// The _timeframe key is embedded in the payload so the fulfilled case can
-// reject stale out-of-order responses when the user switches timeframes.
+
 export const fetchOrderStatusBreakdown = createAsyncThunk(
     "coreAnalytics/fetchOrderStatusBreakdown",
     async (timeframe, { rejectWithValue, signal }) => {
@@ -190,62 +184,21 @@ const coreAnalyticsSlice = createSlice({
                 if (!action.payload?.aborted) state.error = action.payload;
             });
 
-        // ── fetchOrderStatusBreakdown ────────────────────────────────────────
-        // Handles both the all-time (no timeframe) and timeframe-scoped shapes.
-        // ordersByStatus is always written so existing UI code is unaffected.
-        // The richer fields (trends, share, previousPeriod) are only written
-        // when the response carries a matching _timeframe value.
         builder
             .addCase(fetchOrderStatusBreakdown.pending, (state) => {
                 state.loading = true;
                 state.error   = null;
             })
+            
             .addCase(fetchOrderStatusBreakdown.fulfilled, (state, action) => {
-                state.loading = false;
-
-                const {
-                    _timeframe,
-                    ordersByStatus,
-                    previousPeriod,
-                    currentTotal,
-                    trends,
-                    share,
-                } = action.payload;
-
-                // ── Stale-response guard ─────────────────────────────────────
-                // Only apply the guard when a timeframe was requested. All-time
-                // calls (_timeframe === null) are always accepted.
-                if (
-                    _timeframe !== null &&
-                    _timeframe !== undefined &&
-                    _timeframe !== state.activeOrderStatusTimeframe
-                ) {
-                    return;
-                }
-
-                // ── Core counts — always present ─────────────────────────────
-                state.ordersByStatus = ordersByStatus || {
-                    processing: 0,
-                    shipped:    0,
-                    delivered:  0,
-                    cancelled:  0,
-                };
-
-                // ── Timeframe-specific extras ────────────────────────────────
-                if (_timeframe) {
-                    state.ordersByStatusPreviousPeriod  = previousPeriod  ?? null;
-                    state.ordersByStatusTrends          = trends          ?? null;
-                    state.ordersByStatusShare           = share           ?? null;
-                    state.ordersByStatusCurrentTotal    = currentTotal    ?? null;
-                } else {
-                    // All-time fetch — clear out any stale timeframe data so the
-                    // UI doesn't accidentally render trends from a previous call.
-                    state.ordersByStatusPreviousPeriod  = null;
-                    state.ordersByStatusTrends          = null;
-                    state.ordersByStatusShare           = null;
-                    state.ordersByStatusCurrentTotal    = null;
-                }
+            if (action.payload?.ordersByStatus) {
+                state.ordersByStatus = action.payload.ordersByStatus;
+            }
+            if (action.payload?.trends) {
+                state.ordersByStatusTrends = action.payload.trends;
+            }
             })
+
             .addCase(fetchOrderStatusBreakdown.rejected, (state, action) => {
                 state.loading = false;
                 if (!action.payload?.aborted) state.error = action.payload;
