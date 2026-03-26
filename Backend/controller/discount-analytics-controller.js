@@ -24,6 +24,41 @@ const parsePositiveInt = (val, defaultVal) => {
 };
 
 // ============================================
+// BALANCE FIELD GUARD
+// ============================================
+
+// Balance / exhaustion data is only meaningful for fixed discounts issued
+// to a specific (targeted) audience — compensation codes, VIP entitlements, etc.
+//
+// For broadcast (audience: 'all') fixed codes, remainingBalance is a single
+// shared pool counter that decrements across ALL redemptions collectively.
+// It does NOT represent a per-user entitlement and has no analytical value
+// in the analytics layer — the relevant signals are redemptions, unique users,
+// revenue influenced, and product category breakdown.
+//
+// This helper nulls out the three balance fields on any analytics document
+// that does not meet the specific+fixed criteria, ensuring the API never
+// serves misleading data regardless of what is stored in the DB.
+const stripBalanceIfNotApplicable = (analyticsDoc) => {
+  if (!analyticsDoc) return analyticsDoc;
+
+  const isSpecificFixed =
+    analyticsDoc.meta?.type === "fixed" &&
+    analyticsDoc.meta?.audience === "specific";
+
+  if (!isSpecificFixed && analyticsDoc.financials) {
+    analyticsDoc.financials.remainingBalance    = null;
+    analyticsDoc.financials.originalValue       = null;
+    analyticsDoc.financials.percentageExhausted = null;
+  }
+
+  return analyticsDoc;
+};
+
+// Apply to an array of analytics docs (used by list endpoints).
+const stripBalanceFromList = (docs) => docs.map(stripBalanceIfNotApplicable);
+
+// ============================================
 // SHARED LOOKUP HELPER
 // ============================================
 
@@ -64,11 +99,9 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
   async (req, res, next) => {
     const cached = await getCache(CACHE.OVERVIEW.key);
     if (cached) {
-      
       return res.status(200).json({ success: true, ...cached, fromCache: true });
     }
 
-  
     const summary = await getDiscountAnalyticsSummary();
 
     const overall = summary.overall[0] ?? {
@@ -99,7 +132,6 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
           ) / 100
         : null;
 
-    
     const response = {
       overall: {
         ...overall,
@@ -129,7 +161,6 @@ export const getROIByCategory = handleAsyncError(async (req, res, next) => {
   }
 
   const raw = await DiscountAnalytics.getROIByCategory();
-
 
   const categories = raw.map((cat) => ({
     category:               cat._id,
@@ -166,7 +197,6 @@ export const getROIByType = handleAsyncError(async (req, res, next) => {
   }
 
   const raw = await DiscountAnalytics.getROIByType();
-  
 
   const types = raw.map((t) => {
     const roi =
@@ -251,6 +281,8 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
     )
     .lean();
 
+  // Balance fields are not included in the top performers projection —
+  // this endpoint is leaderboard-only so no stripping is required here.
 
   const response = {
     sortBy,
@@ -336,8 +368,6 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
     },
   ]);
 
- 
-
   const periodTotals = trends.reduce(
     (acc, day) => {
       acc.totalRedemptions       += day.redemptions;
@@ -384,19 +414,13 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-
-
     // Primary lookup: try both discountId field and analytics _id
     let analytics = await findAnalyticsByEitherId(discountId);
 
     if (!analytics) {
-      console.log(`[DA:detail] no analytics doc — checking if discount exists for id=${discountId}`);
-
-
       const discount = await Discount.findById(discountId).select("_id code usageLimit").lean();
 
       if (discount && discount.usageLimit?.currentUses > 0) {
-        
         try {
           await syncDiscountAnalytics(discount._id);
           analytics = await findAnalyticsByEitherId(discountId);
@@ -415,6 +439,10 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
         )
       );
     }
+
+    // Strip balance fields for broadcast fixed codes — they represent a shared
+    // pool counter, not a per-user entitlement, so they have no meaning here.
+    analytics = stripBalanceIfNotApplicable(analytics);
 
     res.status(200).json({ success: true, analytics });
   }
@@ -578,7 +606,9 @@ export const getAllDiscountAnalytics = handleAsyncError(
         "discountId discountCode meta redemptions.total redemptions.uniqueUsers " +
         "financials.roi financials.totalRevenueInfluenced " +
         "financials.totalDiscountCost financials.avgOrderValue " +
-        "financials.avgDiscountAmount conversion.postRedemptionRetentionRate " +
+        "financials.avgDiscountAmount financials.remainingBalance " +
+        "financials.originalValue financials.percentageExhausted " +
+        "conversion.postRedemptionRetentionRate " +
         "conversion.targetedRedemptionRate baseline.aovLiftPercent " +
         "peakUsage lastSyncedAt"
       )
@@ -587,9 +617,14 @@ export const getAllDiscountAnalytics = handleAsyncError(
     const hasNextPage = docs.length > limit;
     if (hasNextPage) docs.pop();
 
+    // Strip balance fields from broadcast fixed codes before sending to client.
+    // This ensures the list view never shows a misleading shared pool balance
+    // as if it were a per-user entitlement figure.
+    const analytics = stripBalanceFromList(docs);
+
     let nextCursor = null;
-    if (hasNextPage && docs.length > 0) {
-      const last = docs[docs.length - 1];
+    if (hasNextPage && analytics.length > 0) {
+      const last = analytics[analytics.length - 1];
       nextCursor = Buffer.from(
         JSON.stringify({ id: last._id })
       ).toString("base64");
@@ -597,7 +632,7 @@ export const getAllDiscountAnalytics = handleAsyncError(
 
     res.status(200).json({
       success: true,
-      analytics: docs,
+      analytics,
       pagination: { limit, hasNextPage, nextCursor },
     });
   }
@@ -621,8 +656,13 @@ export const syncSingleDiscountAnalytics = handleAsyncError(
     }
 
     try {
-      const analytics = await syncDiscountAnalytics(discountId);
+      const analyticsRaw = await syncDiscountAnalytics(discountId);
       await invalidateAllAnalyticsCache();
+
+      // Apply the same balance guard to the synced document returned to the client.
+      const analytics = stripBalanceIfNotApplicable(
+        analyticsRaw?.toObject ? analyticsRaw.toObject() : analyticsRaw
+      );
 
       res.status(200).json({
         success:   true,
@@ -660,7 +700,6 @@ export const getStaleSyncReport = handleAsyncError(async (req, res, next) => {
   const thresholdHours = parsePositiveInt(req.query.thresholdHours, 24);
 
   const stale = await DiscountAnalytics.findStale(thresholdHours);
-
 
   res.status(200).json({
     success:        true,
