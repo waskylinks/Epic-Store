@@ -28,6 +28,9 @@ import {
   resetValidation
 } from '../features/shipping/shippingSlice';
 
+import useCheckoutAbandonment from '../hooks/useCheckoutAbandonment';
+import { updateCheckoutStep, selectCheckoutId } from '../features/checkout/checkoutSlice';
+
 // ─── React Select custom styles to match .es-input ───────────────────────────
 const buildSelectStyles = (hasError = false) => ({
   control: (base, state) => ({
@@ -122,6 +125,10 @@ function Shipping() {
     success,
     message
   } = useSelector(state => state.shipping);
+
+  const checkoutId = useSelector(selectCheckoutId);
+
+  const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, 'shipping_info');
 
   // ─── Form data ──────────────────────────────────────────────────────────────
   const [formData, setFormData] = useState({
@@ -362,37 +369,48 @@ function Shipping() {
   };
 
   // ─── Submit ───────────────────────────────────────────────────────────────────
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!validateForm()) return;
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (!validateForm()) return;
 
-    setIsSubmitting(true);
-    try {
-      const userName = user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'User';
+  setIsSubmitting(true);
+  try {
+    const userName = user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'User';
 
-      if (saveToAccount) {
-        // FIX: capture the returned saved address and dispatch it as selectedAddress
-        const saved = await dispatch(saveAddress({
-          name: userName,
-          ...formData,
-          isDefault: setAsDefaultCheck
-        })).unwrap();
-        dispatch(selectAddress(saved));
-      } else {
-        // FIX: always push formData into Redux so OrderConfirm has a valid address
-        dispatch(selectAddress({
-          name: userName,
-          ...formData
-        }));
-      }
-
-      navigate('/order/confirm');
-    } catch (err) {
-      console.error('Shipping submission failed:', err);
-    } finally {
-      setIsSubmitting(false);
+    if (saveToAccount) {
+      const saved = await dispatch(saveAddress({
+        name: userName,
+        ...formData,
+        isDefault: setAsDefaultCheck
+      })).unwrap();
+      dispatch(selectAddress(saved));
+    } else {
+      dispatch(selectAddress({
+        name: userName,
+        ...formData
+      }));
     }
-  };
+
+    // Record step progression — non-fatal
+    if (checkoutId) {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step: 'shipping_info'
+        })).unwrap();
+      } catch (stepErr) {
+        console.warn('[Shipping] Step update failed (non-fatal):', stepErr);
+      }
+    }
+
+    setIntentionalProceed();
+    navigate('/order/confirm');
+  } catch (err) {
+    console.error('Shipping submission failed:', err);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
 
   const handleSelectAddress = (addr) => {
     dispatch(selectAddress(addr));
