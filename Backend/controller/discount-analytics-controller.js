@@ -64,16 +64,12 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
   async (req, res, next) => {
     const cached = await getCache(CACHE.OVERVIEW.key);
     if (cached) {
-      console.log(`[DA:overview] serving from cache`);
+      
       return res.status(200).json({ success: true, ...cached, fromCache: true });
     }
 
-    console.log(`[DA:overview] cache miss — running getSummary`);
+  
     const summary = await getDiscountAnalyticsSummary();
-    console.log(`[DA:overview] summary.overall=`, JSON.stringify(summary?.overall));
-    console.log(`[DA:overview] summary.byCategory.length=`, summary?.byCategory?.length);
-    console.log(`[DA:overview] summary.topByROI.length=`, summary?.topByROI?.length);
-    console.log(`[DA:overview] summary.underperforming.length=`, summary?.underperforming?.length);
 
     const overall = summary.overall[0] ?? {
       totalCodes:                0,
@@ -103,8 +99,7 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
           ) / 100
         : null;
 
-    console.log(`[DA:overview] computed redemptionRate=${redemptionRate} overallROI=${overallROI}`);
-
+    
     const response = {
       overall: {
         ...overall,
@@ -134,7 +129,7 @@ export const getROIByCategory = handleAsyncError(async (req, res, next) => {
   }
 
   const raw = await DiscountAnalytics.getROIByCategory();
-  console.log(`[DA:roiByCategory] raw.length=${raw.length}`);
+
 
   const categories = raw.map((cat) => ({
     category:               cat._id,
@@ -171,7 +166,7 @@ export const getROIByType = handleAsyncError(async (req, res, next) => {
   }
 
   const raw = await DiscountAnalytics.getROIByType();
-  console.log(`[DA:roiByType] raw.length=${raw.length}`);
+  
 
   const types = raw.map((t) => {
     const roi =
@@ -256,7 +251,6 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
     )
     .lean();
 
-  console.log(`[DA:topPerformers] sortBy=${sortBy} count=${topCodes.length}`);
 
   const response = {
     sortBy,
@@ -342,7 +336,7 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
     },
   ]);
 
-  console.log(`[DA:trends] timeframe=${timeframe} trends.length=${trends.length}`);
+ 
 
   const periodTotals = trends.reduce(
     (acc, day) => {
@@ -390,29 +384,22 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-    console.log(`[DA:detail] looking up id=${discountId}`);
+
 
     // Primary lookup: try both discountId field and analytics _id
     let analytics = await findAnalyticsByEitherId(discountId);
-    console.log(`[DA:detail] found by id=${!!analytics} code=${analytics?.discountCode}`);
 
-    // If no analytics doc exists, check if the Discount itself exists and
-    // trigger an on-demand sync so future requests succeed.
     if (!analytics) {
       console.log(`[DA:detail] no analytics doc — checking if discount exists for id=${discountId}`);
 
-      // Try to find the discount by either its own _id or by code lookup via
-      // a DiscountAnalytics discountCode match (handles both ID shapes)
+
       const discount = await Discount.findById(discountId).select("_id code usageLimit").lean();
-      console.log(`[DA:detail] discount found=${!!discount} code=${discount?.code} uses=${discount?.usageLimit?.currentUses}`);
 
       if (discount && discount.usageLimit?.currentUses > 0) {
-        // Discount has been used but analytics doc is missing — sync it now
-        console.log(`[DA:detail] triggering on-demand sync for discount=${discount.code}`);
+        
         try {
           await syncDiscountAnalytics(discount._id);
           analytics = await findAnalyticsByEitherId(discountId);
-          console.log(`[DA:detail] post-sync found=${!!analytics}`);
         } catch (err) {
           console.error(`[DA:detail] on-demand sync failed:`, err?.message);
         }
@@ -457,8 +444,6 @@ export const getDiscountSegmentBreakdown = handleAsyncError(
       return next(new HandleError("No analytics found for this discount", 404));
     }
 
-    console.log(`[DA:segments] discountId=${discountId} segmentBreakdown.length=${analytics.segmentBreakdown?.length}`);
-
     res.status(200).json({
       success:            true,
       discountCode:       analytics.discountCode,
@@ -500,8 +485,6 @@ export const getDiscountRedemptionTrend = handleAsyncError(
     const trend = (analytics.dailyRedemptions ?? []).filter(
       (entry) => new Date(entry.date) >= currentPeriodStart
     );
-
-    console.log(`[DA:codeTrend] discountId=${discountId} timeframe=${timeframe} trend.length=${trend.length}`);
 
     const periodTotals = trend.reduce(
       (acc, day) => {
@@ -604,8 +587,6 @@ export const getAllDiscountAnalytics = handleAsyncError(
     const hasNextPage = docs.length > limit;
     if (hasNextPage) docs.pop();
 
-    console.log(`[DA:allAnalytics] sortBy=${sortBy} returned=${docs.length} hasNextPage=${hasNextPage}`);
-
     let nextCursor = null;
     if (hasNextPage && docs.length > 0) {
       const last = docs[docs.length - 1];
@@ -680,7 +661,6 @@ export const getStaleSyncReport = handleAsyncError(async (req, res, next) => {
 
   const stale = await DiscountAnalytics.findStale(thresholdHours);
 
-  console.log(`[DA:stale] thresholdHours=${thresholdHours} staleCount=${stale.length}`);
 
   res.status(200).json({
     success:        true,

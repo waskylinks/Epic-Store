@@ -111,20 +111,7 @@ const invalidateReturnCaches = (scope = 'stats') => {
   });
 };
 
-// ============================================
-// buildTaxedPriceResolver
-//
-// Returns a function that resolves the tax-inclusive unit price for a
-// return item. Tax is stored at order level only (order.taxPrice /
-// order.itemPrice), so we derive a proportional rate and apply it to
-// each item's base price.
-//
-// taxRate = order.taxPrice / order.itemPrice
-// taxedPrice = basePrice * (1 + taxRate)
-//
-// The resolver is constructed once per controller call and reused for
-// all items so the rate is not recomputed on every iteration.
-// ============================================
+
 const buildTaxedPriceResolver = (order, orderItemPriceMap) => {
   const orderSubtotal = order.itemPrice ?? 0;
   const orderTax      = order.taxPrice  ?? 0;

@@ -919,7 +919,7 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
         "code description type value category audience status validUntil " +
         "conditions.minPurchaseAmount conditions.maxDiscountAmount " +
         "conditions.firstOrderOnly conditions.eligibleProductCategories " +
-        "usageLimit.currentUses usageLimit.totalUses"
+        "usageLimit.currentUses usageLimit.totalUses remainingBalance"
       )
       .lean(),
 
@@ -934,7 +934,7 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
         "code description type value category audience status validUntil " +
         "conditions.minPurchaseAmount conditions.firstOrderOnly " +
         "conditions.eligibleProductCategories " +
-        "usageLimit.currentUses usageLimit.totalUses"
+        "usageLimit.currentUses usageLimit.totalUses remainingBalance"
       )
       .lean(),
   ]);
@@ -1016,9 +1016,9 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
   } catch {
     // Redis unavailable — fall through to DB aggregation.
   }
- 
+
   const now = new Date();
- 
+
   const [stats, overall] = await Promise.all([
     Discount.aggregate([
       {
@@ -1026,7 +1026,6 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
           _id: "$category",
           totalDiscounts: { $sum: 1 },
           activeDiscounts: {
-            // FIX: only count as active when validUntil is still in the future
             $sum: {
               $cond: [
                 {
@@ -1054,13 +1053,12 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
       },
       { $sort: { totalUses: -1 } },
     ]),
+
     Discount.aggregate([
       {
         $group: {
           _id: null,
           total:     { $sum: 1 },
- 
-          // FIX: active = status "active" AND validUntil in the future
           active: {
             $sum: {
               $cond: [
@@ -1075,10 +1073,9 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
               ],
             },
           },
- 
-          inactive: { $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } },
- 
-          // FIX: expired = status "expired" OR (status "active" but validUntil passed)
+          inactive: {
+            $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] }
+          },
           expired: {
             $sum: {
               $cond: [
@@ -1098,33 +1095,14 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
               ],
             },
           },
- 
-          totalUses: { $sum: "$usageLimit.currentUses" },
-          vip:       { $sum: { $cond: [{ $eq: ["$audience", "specific"] }, 1, 0] } },
- 
-          
+          totalUses:   { $sum: "$usageLimit.currentUses" },
+          vip:         { $sum: { $cond: [{ $eq: ["$audience", "specific"] }, 1, 0] } },
           blackfriday: { $sum: { $cond: [{ $eq: ["$category", "blackfriday"] }, 1, 0] } },
-        },
-        
-        totalRemainingBalance: {
-          $sum: {
-            $cond: [
-              {
-                $and: [
-                  { $eq: ["$type", "fixed"] },
-                  { $eq: ["$status", "active"] },
-                  { $gt: ["$remainingBalance", 0] },
-                ],
-              },
-              "$remainingBalance",
-              0,
-            ],
-          },
         },
       },
     ]),
   ]);
- 
+
   const payload = {
     stats,
     overall: overall[0] || {
@@ -1135,16 +1113,15 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
       totalUses:   0,
       vip:         0,
       blackfriday: 0,
-      totalRemainingBalance: 0, 
     },
   };
- 
+
   try {
     await redis.set(STATS_CACHE_KEY, JSON.stringify(payload), { EX: STATS_CACHE_TTL });
   } catch {
     // Redis unavailable — response still sent, just not cached.
   }
- 
+
   res.status(200).json({ success: true, ...payload });
 });
  
