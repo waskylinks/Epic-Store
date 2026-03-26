@@ -240,8 +240,7 @@ checkoutSchema.virtual('minutesSinceLastActivity').get(function () {
 });
 
 checkoutSchema.virtual('shouldBeAbandoned').get(function () {
-  const ABANDONMENT_THRESHOLD_HOURS =
-    parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+  const ABANDONMENT_THRESHOLD_HOURS = parseFloat(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
   return (
     this.status === 'pending' &&
     this.minutesSinceLastActivity >= ABANDONMENT_THRESHOLD_HOURS * 60

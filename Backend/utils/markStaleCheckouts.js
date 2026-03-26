@@ -16,8 +16,7 @@ import Checkout from '../models/checkout-model.js';
  * @returns {Promise<{ marked: number, errors: number }>}
  */
 export const markStaleCheckouts = async () => {
-  const THRESHOLD_HOURS =
-    parseInt(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+  const THRESHOLD_HOURS = parseFloat(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
 
   const cutoff = new Date(
     Date.now() - THRESHOLD_HOURS * 60 * 60 * 1000
