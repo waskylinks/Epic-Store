@@ -590,10 +590,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
  
-  Checkout.findOne({ user: userId, status: 'pending' })
-    .sort({ lastActivityAt: -1 })
-    .then(checkout => checkout && checkout.markAsConverted(order._id, orderReference) && checkout.save())
-    .catch(() => {});
+
+  try {
+    const checkout = await Checkout.findOne({ user: userId, status: 'pending' })
+      .sort({ lastActivityAt: -1 });
+    
+    if (checkout) {
+      checkout.markAsConverted(order._id, orderReference);
+      await checkout.save();
+    }
+  } catch (err) {
+    console.error('[payment] Failed to mark checkout as converted:', err.message);
+    
+  }
  
   if (session.discount) {
     const discountLookup = session.discount.discountId
