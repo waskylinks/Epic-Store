@@ -29,6 +29,8 @@ import {
   FiCheckCircle
 } from 'react-icons/fi';
 
+import { createCheckoutSession, selectCheckoutId } from '../features/checkout/checkoutSlice';
+
 function Cart() {
   const { 
     cartItems,
@@ -44,6 +46,8 @@ function Cart() {
   const { isAuthenticated } = useSelector(state => state.user);
   const dispatch = useDispatch();
   const navigate = useNavigate();
+
+  const checkoutId = useSelector(selectCheckoutId);
 
   const [isValidating, setIsValidating] = useState(false);
   const [showClearModal, setShowClearModal] = useState(false);
@@ -89,15 +93,7 @@ function Cart() {
     }).format(amount);
   };
 
-  // Build display pricing from server state when available, falling back to
-  // a local calculation only when cartDetails are loaded but no server pricing
-  // has arrived yet (e.g. on first mount before validateCheckout or
-  // applyDiscountCode has been called).
-  //
-  // Once the slice has real server pricing (pricing.totalPrice > 0, set by
-  // applyDiscountCode or validateCheckout) we always prefer it — it is the
-  // authoritative source. The local calc is only a display fallback so the
-  // summary isn't blank while items are visible.
+
   const getDisplayPricing = () => {
     const localItemPrice = cartDetails.reduce(
       (acc, item) => acc + item.price * item.quantity, 0
@@ -132,11 +128,7 @@ function Cart() {
 
   const displayPricing = cartDetails.length > 0 ? getDisplayPricing() : pricing;
 
-  // ── Discount summary label ─────────────────────────────────────────────────
-  // When the code is category-restricted, append the qualifying category names
-  // to the summary line so the user knows exactly which items were discounted.
-  // e.g. "Discount (VIP28) — Electronics only: -$223.50"
-  // For unrestricted codes the label is just "Discount (CODE):".
+
   const discountSummaryLabel = (() => {
     if (!discount.applied) return null;
     const cats = discount.eligibleProductCategories ?? [];
@@ -149,19 +141,33 @@ function Cart() {
   // ──────────────────────────────────────────────────────────────────────────
 
   const handleProceedToCheckout = async () => {
+    if (!isAuthenticated) {
+      navigate('/login?redirect=/shipping');
+      return;
+    }
+
     setIsValidating(true);
     try {
       await dispatch(validateCheckout()).unwrap();
-      if (isAuthenticated) {
+
+      if (checkoutId) {
         navigate('/shipping');
-      } else {
-        navigate('/login?redirect=/shipping');
+        return;
       }
+
+      await dispatch(createCheckoutSession({
+        items: cartItems.map(item => ({
+          product:  item.product,
+          quantity: item.quantity
+        }))
+      })).unwrap();
+
+      navigate('/shipping');
     } catch (err) {
       toast.error(err.message || 'Some items are no longer available', {
-        position: 'top-center',
+        position:  'top-center',
         autoClose: 3000,
-        toastId: 'checkout-validation-error'
+        toastId:   'checkout-validation-error'
       });
     } finally {
       setIsValidating(false);
