@@ -61,9 +61,6 @@ const fmt = {
   currency: (v) =>
     new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
   number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  // FIX: null/undefined returns '—' instead of '0.0%'.
-  // Previously (null || 0).toFixed(1) coerced null to 0, making "no data"
-  // indistinguishable from a real 0% value (e.g. retention rate, drop-off).
   pct: (v) => {
     if (v === null || v === undefined) return '—';
     return `${Number(v).toFixed(1)}%`;
@@ -92,6 +89,19 @@ function roiColor(roi) {
   if (roi >= 0)   return '#F59E0B';
   return '#EF4444';
 }
+
+// ============================================
+// BALANCE GUARD
+// Balance / exhaustion data is only meaningful for fixed discounts
+// issued to a specific audience (compensation, VIP entitlements).
+//
+// For broadcast (audience: 'all') fixed codes the remainingBalance is
+// a shared pool counter — it doesn't represent a per-user entitlement
+// and mixing it into the analytics view creates misleading numbers.
+// Percentage codes never have balance data regardless of audience.
+// ============================================
+const shouldShowBalance = (type, audience) =>
+  type === 'fixed' && audience === 'specific';
 
 function useDebounce(callback, delay) {
   const cbRef    = useRef(callback);
@@ -279,6 +289,14 @@ function DetailDrawer({ discountId, onClose }) {
   const seg   = selectedSegmentBreakdown;
   const trend = selectedCodeTrend?.trend || [];
 
+  // Derive whether balance fields are relevant for this specific code.
+  // Only show for fixed discounts issued to a specific (targeted) audience.
+  // Broadcast fixed codes use a shared pool — that data belongs in the
+  // discount management view, not the analytics drawer.
+  const showBalance = d
+    ? shouldShowBalance(d.meta?.type, d.meta?.audience)
+    : false;
+
   return (
     <div className="da-drawer-overlay" onClick={onClose}>
       <div className="da-drawer" onClick={(e) => e.stopPropagation()}>
@@ -287,6 +305,9 @@ function DetailDrawer({ discountId, onClose }) {
             <div className="da-drawer-code">{d?.discountCode ?? '…'}</div>
             <div className="da-drawer-sub">
               {d?.meta?.category ?? ''} · {d?.meta?.type ?? ''}
+              {d?.meta?.audience === 'all' && (
+                <span className="da-drawer-audience-badge"> · Broadcast</span>
+              )}
             </div>
           </div>
           <button className="da-drawer-close" onClick={onClose} aria-label="Close">
@@ -302,22 +323,72 @@ function DetailDrawer({ discountId, onClose }) {
             <div className="da-drawer-metrics">
               <div className="da-drawer-metric">
                 <div className="da-drawer-metric-label">ROI</div>
-                <div className="da-drawer-metric-val" style={{ color: roiColor(d.financials?.roi) }}>
+                <div
+                  className="da-drawer-metric-val"
+                  style={{ color: roiColor(d.financials?.roi) }}
+                >
                   {fmt.roi(d.financials?.roi)}
                 </div>
               </div>
               <div className="da-drawer-metric">
                 <div className="da-drawer-metric-label">Revenue Influenced</div>
-                <div className="da-drawer-metric-val">{fmt.compact(d.financials?.totalRevenueInfluenced)}</div>
+                <div className="da-drawer-metric-val">
+                  {fmt.compact(d.financials?.totalRevenueInfluenced)}
+                </div>
               </div>
               <div className="da-drawer-metric">
                 <div className="da-drawer-metric-label">Discount Cost</div>
-                <div className="da-drawer-metric-val">{fmt.compact(d.financials?.totalDiscountCost)}</div>
+                <div className="da-drawer-metric-val">
+                  {fmt.compact(d.financials?.totalDiscountCost)}
+                </div>
               </div>
               <div className="da-drawer-metric">
                 <div className="da-drawer-metric-label">Avg Order Value</div>
-                <div className="da-drawer-metric-val">{fmt.currency(d.financials?.avgOrderValue)}</div>
+                <div className="da-drawer-metric-val">
+                  {fmt.currency(d.financials?.avgOrderValue)}
+                </div>
               </div>
+
+              {/* Balance fields — only rendered for specific-audience fixed codes */}
+              {showBalance && d.financials?.originalValue != null && (
+                <>
+                  <div className="da-drawer-metric">
+                    <div className="da-drawer-metric-label">Original Value</div>
+                    <div className="da-drawer-metric-val">
+                      {fmt.currency(d.financials.originalValue)}
+                    </div>
+                  </div>
+                  <div className="da-drawer-metric">
+                    <div className="da-drawer-metric-label">Remaining Balance</div>
+                    <div
+                      className="da-drawer-metric-val"
+                      style={{
+                        color: d.financials.remainingBalance === 0 ? '#EF4444' : '#10B981',
+                      }}
+                    >
+                      {d.financials.remainingBalance === 0
+                        ? 'Exhausted'
+                        : fmt.currency(d.financials.remainingBalance)}
+                    </div>
+                  </div>
+                  <div className="da-drawer-metric">
+                    <div className="da-drawer-metric-label">% Used</div>
+                    <div
+                      className="da-drawer-metric-val"
+                      style={{
+                        color:
+                          (d.financials.percentageExhausted ?? 0) >= 100
+                            ? '#EF4444'
+                            : (d.financials.percentageExhausted ?? 0) >= 75
+                            ? '#F59E0B'
+                            : '#6B7280',
+                      }}
+                    >
+                      {fmt.pct(d.financials.percentageExhausted)}
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
 
             <p className="da-drawer-section-label">Redemptions</p>
@@ -438,7 +509,6 @@ export default function AdminDiscountAnalytics() {
 
   const isLoadingRef        = useRef(false);
   const autoRefreshTimerRef = useRef(null);
-  // Track previous sync success so we only react to the rising edge
   const prevSyncSuccessRef  = useRef(false);
 
   const anyLoading = overviewLoading || topPerformersLoading || listLoading;
@@ -523,11 +593,6 @@ export default function AdminDiscountAnalytics() {
     dispatch(fetchDiscountTopPerformers({ limit: 20, sortBy }));
   }, [dispatch, sortBy]);
 
-  // FIX: after any sync completes (single or bulk), clear the 30-second
-  // frontend cache guard and force-reload all static data so the UI reflects
-  // the fresh analytics without waiting for the guard to expire naturally.
-  // The service also invalidates Redis on the backend so the overview endpoint
-  // returns fresh data instead of the cached (up to 5-min stale) response.
   useEffect(() => {
     if (success && !prevSyncSuccessRef.current) {
       delete lastFetchedCache['__da_static__'];
@@ -1221,11 +1286,18 @@ export default function AdminDiscountAnalytics() {
                               <th>Code</th>
                               <th>Category</th>
                               <th>Type</th>
+                              <th>Audience</th>
                               <th>Status</th>
                               <th>Redemptions</th>
                               <th>Unique Users</th>
                               <th>Rev Influenced</th>
                               <th>Discount Cost</th>
+                              {/* Balance column: only shown when at least one
+                                  specific+fixed code exists in the current page.
+                                  Keeps the table clean for broadcast-only views. */}
+                              {allAnalytics.some(a => shouldShowBalance(a.meta?.type, a.meta?.audience)) && (
+                                <th>Balance</th>
+                              )}
                               <th>ROI</th>
                               <th>Last Synced</th>
                               <th>Sync</th>
@@ -1233,9 +1305,12 @@ export default function AdminDiscountAnalytics() {
                           </thead>
                           <tbody>
                             {allAnalytics.map((a, i) => {
-                              const roi     = a.financials?.roi;
-                              const syncing = !!syncLoading?.[a._id];
-                              const syncErr = syncError?.[a._id];
+                              const roi          = a.financials?.roi;
+                              const syncing      = !!syncLoading?.[a._id];
+                              const syncErr      = syncError?.[a._id];
+                              const showBal      = shouldShowBalance(a.meta?.type, a.meta?.audience);
+                              const hasBalCol    = allAnalytics.some(x => shouldShowBalance(x.meta?.type, x.meta?.audience));
+
                               return (
                                 <tr
                                   key={a._id || i}
@@ -1246,6 +1321,12 @@ export default function AdminDiscountAnalytics() {
                                   <td><span className="da-code-pill-sm">{a.discountCode}</span></td>
                                   <td className="da-td-muted" style={{ textTransform: 'capitalize' }}>{a.meta?.category ?? '—'}</td>
                                   <td className="da-td-muted" style={{ textTransform: 'capitalize' }}>{a.meta?.type ?? '—'}</td>
+                                  <td className="da-td-muted" style={{ textTransform: 'capitalize' }}>
+                                    {a.meta?.audience === 'all'
+                                      ? <span className="da-audience-broadcast">Broadcast</span>
+                                      : <span className="da-audience-specific">Targeted</span>
+                                    }
+                                  </td>
                                   <td>
                                     <span className={`da-status-pill da-status-pill--${a.meta?.status ?? 'unknown'}`}>
                                       {a.meta?.status ?? '—'}
@@ -1255,6 +1336,33 @@ export default function AdminDiscountAnalytics() {
                                   <td>{fmt.number(a.redemptions?.uniqueUsers)}</td>
                                   <td className="da-td-green">{fmt.compact(a.financials?.totalRevenueInfluenced)}</td>
                                   <td className="da-td-red">{fmt.compact(a.financials?.totalDiscountCost)}</td>
+
+                                  {/* Balance cell — only rendered when the balance
+                                      column header is present (i.e. at least one
+                                      specific+fixed code is in the result set).
+                                      For broadcast or percentage codes the cell
+                                      shows a neutral dash. */}
+                                  {hasBalCol && (
+                                    <td className="da-td-mono">
+                                      {showBal && a.financials?.originalValue != null
+                                        ? (
+                                          <span className={
+                                            a.financials.remainingBalance === 0
+                                              ? 'da-balance--exhausted'
+                                              : a.financials.remainingBalance < a.financials.originalValue
+                                              ? 'da-balance--partial'
+                                              : 'da-balance--full'
+                                          }>
+                                            {a.financials.remainingBalance === 0
+                                              ? 'Exhausted'
+                                              : fmt.currency(a.financials.remainingBalance)}
+                                          </span>
+                                        )
+                                        : <span className="da-td-muted">—</span>
+                                      }
+                                    </td>
+                                  )}
+
                                   <td>
                                     <span className="da-roi-chip" style={{ color: roiColor(roi), background: `${roiColor(roi)}15` }}>
                                       {fmt.roi(roi)}

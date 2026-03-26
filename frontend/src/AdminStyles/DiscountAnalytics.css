@@ -4,11 +4,10 @@
    White background, high contrast, mirrors Dashboard.css
    ============================================================ */
 
-/* ── Variables (inherits root where available) ───────────── */
+/* ── Variables ───────────────────────────────────────────── */
 :root {
   --da-radius:     12px;
   --da-radius-sm:   8px;
-  --da-radius-xs:   5px;
   --da-transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   --da-bg:         #F0F2F5;
   --da-surface:    #FFFFFF;
@@ -479,8 +478,29 @@
 .da-status-pill--active    { background: #DCFCE7; color: #166534; }
 .da-status-pill--inactive  { background: #F3F4F6; color: #6B7280; }
 .da-status-pill--expired   { background: #FEE2E2; color: #991B1B; }
+.da-status-pill--exhausted { background: #FEF3C7; color: #92400E; }
 .da-status-pill--scheduled { background: #EFF6FF; color: #1D4ED8; }
 .da-status-pill--unknown   { background: #F3F4F6; color: #6B7280; }
+
+/* ── Balance cell states ─────────────────────────────────── */
+.da-balance--exhausted {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #EF4444;
+  font-variant-numeric: tabular-nums;
+}
+.da-balance--partial {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #F59E0B;
+  font-variant-numeric: tabular-nums;
+}
+.da-balance--full {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--da-text-muted);
+  font-variant-numeric: tabular-nums;
+}
 
 /* ── Count badge ─────────────────────────────────────────── */
 .da-count-badge {
@@ -576,7 +596,7 @@
 .da-sync-btn--loading { border-color: var(--da-accent); color: var(--da-accent); }
 .da-sync-btn--error   { border-color: #EF4444; color: #EF4444; }
 
-/* ── Trend controls (tab bar + mobile sheet) ─────────────── */
+/* ── Trend controls ──────────────────────────────────────── */
 .da-trend-controls {
   display: flex;
   align-items: center;
@@ -1014,10 +1034,8 @@
   .da-hd-title  { font-size: 20px; }
   .da-hd-right  { gap: 8px; }
 
-  /* Hide last-updated on small screens — saves space */
   .da-last-updated { display: none; }
 
-  /* Hide desktop tf group, show mobile trigger */
   .da-tf-group { display: none; }
   .da-tf-mobile-trigger { display: flex; }
   .da-tf-sheet-overlay,
@@ -1029,28 +1047,22 @@
   .da-tabs { gap: 2px; }
   .da-tab  { padding: 7px 12px; font-size: 12px; }
 
-  /* Code row — tighter on mobile */
   .da-code-row {
     grid-template-columns: 20px 1fr 52px 56px;
     gap: 7px;
   }
   .da-code-cat { display: none; }
 
-  /* Bar row — hide value, tighten label */
   .da-bar-row { grid-template-columns: 72px 1fr 50px; }
   .da-bar-row .da-chip { display: none; }
 
-  /* Trend KPI strip — 2 cols */
   .da-trend-kpi-strip { grid-template-columns: repeat(2, 1fr); }
 
-  /* Leaderboard controls wrap */
   .da-leaderboard-controls { gap: 6px; }
 
-  /* Filter bar stack */
   .da-filter-bar { gap: 8px; }
   .da-filter-select { font-size: 12px; }
 
-  /* Drawer full width on mobile */
   .da-drawer { width: 100%; }
 }
 
@@ -1079,4 +1091,29 @@
   .da-drawer-metrics { grid-template-columns: 1fr; }
 
   .da-sync-all-btn span:not(.da-btn-spinner) { display: none; }
+}
+
+/* ── Audience badges ─────────────────────────────────────── */
+.da-audience-broadcast {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #EFF6FF;
+  color: #1D4ED8;
+}
+.da-audience-specific {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+.da-drawer-audience-badge {
+  color: #1D4ED8;
+  font-weight: 700;
 }
