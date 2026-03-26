@@ -21,7 +21,7 @@ const EXPIRY_SECONDS  = 72 * 60 * 60; // 259200s — used for cache/cookie TTL i
  * @returns {string} signed JWT
  */
 export const generateRecoveryToken = ({ checkoutId, userId, email }) => {
-  if (!SECRET) throw new Error('JWT_SECRET_KEY is not defined in environment');
+  if (!SECRET) throw new Error('RECOVERY_TOKEN_SECRET is not defined in environment');
 
   return jwt.sign(
     {
@@ -46,7 +46,7 @@ export const generateRecoveryToken = ({ checkoutId, userId, email }) => {
  * @throws {{ message: string, code: 'EXPIRED' | 'INVALID' }}
  */
 export const verifyRecoveryToken = (token) => {
-  if (!SECRET) throw new Error('JWT_SECRET is not defined in environment');
+  if (!SECRET) throw new Error('RECOVERY_TOKEN_SECRET is not defined in environment');
 
   try {
     const decoded = jwt.verify(token, SECRET);
