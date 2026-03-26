@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import '../CartStyles/OrderConfirm.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
@@ -7,11 +7,11 @@ import { useSelector, useDispatch } from 'react-redux';
 import CheckoutPath from './CheckoutPath';
 import { useNavigate } from 'react-router-dom';
 import { getCartDetails } from '../features/cart/cartSlice';
-import { 
-  createCheckoutSession,
-  removeErrors,
-  removeMessage
+import {
+  updateCheckoutStep,
+  selectCheckoutId,
 } from '../features/checkout/checkoutSlice';
+import useCheckoutAbandonment from '../hooks/useCheckoutAbandonment';
 import { selectSelectedAddress } from '../features/shipping/shippingSlice';
 import { toast } from 'react-toastify';
 import Loader from '../components/Loader';
@@ -24,16 +24,13 @@ function OrderConfirm() {
   const { cartItems, cartDetails, pricing, discount, loading: cartLoading } = useSelector(state => state.cart);
   const { user } = useSelector(state => state.user);
   const selectedShippingAddress = useSelector(selectSelectedAddress);
-  const { 
-    session,
-    loading: checkoutLoading,
-    error: checkoutError,
-    success: checkoutSuccess
-  } = useSelector(state => state.checkout);
 
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [addressChecked, setAddressChecked] = useState(false);
+  const checkoutId = useSelector(selectCheckoutId);
+  const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, 'order_confirmation');
 
+  const [addressChecked, setAddressChecked] = React.useState(false);
+
+  // ── Cart guard ────────────────────────────────────────────────────────────
   useEffect(() => {
     if (cartItems.length > 0) {
       dispatch(getCartDetails());
@@ -42,10 +39,14 @@ function OrderConfirm() {
     }
   }, [cartItems.length, dispatch, navigate]);
 
+  // ── Address guard — deferred so Redux has time to rehydrate on first render
   useEffect(() => {
     const timer = setTimeout(() => {
       if (!selectedShippingAddress || !selectedShippingAddress.address) {
-        toast.warning('Please select a shipping address', { position: 'top-center', autoClose: 2000 });
+        toast.warning('Please select a shipping address', {
+          position: 'top-center',
+          autoClose: 2000
+        });
         navigate('/shipping');
       }
       setAddressChecked(true);
@@ -53,23 +54,29 @@ function OrderConfirm() {
     return () => clearTimeout(timer);
   }, [selectedShippingAddress, navigate]);
 
+  // ── Record that the user reached the order confirmation step ──────────────
+  // Non-fatal: a tracking failure must never block the user.
   useEffect(() => {
-    if (checkoutError) {
-      toast.error(checkoutError, { position: 'top-center', autoClose: 3000 });
-      dispatch(removeErrors());
-    }
-  }, [checkoutError, dispatch]);
+    if (!checkoutId) return;
+    (async () => {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step: 'order_confirmation'
+        })).unwrap();
+      } catch (err) {
+        console.warn('[OrderConfirm] Failed to record order_confirmation step:', err);
+      }
+    })();
+  }, [checkoutId, dispatch]);
 
-  useEffect(() => {
-    if (checkoutSuccess && session) {
-      dispatch(removeMessage());
-    }
-  }, [checkoutSuccess, session, dispatch]);
-
+  // ── Helpers ───────────────────────────────────────────────────────────────
   const formatUSD = (amount) => {
     if (!amount && amount !== 0) return '$0.00';
     return new Intl.NumberFormat('en-US', {
-      style: 'currency', currency: 'USD', minimumFractionDigits: 2
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2
     }).format(amount);
   };
 
@@ -79,9 +86,8 @@ function OrderConfirm() {
   };
 
   // ── Pricing ───────────────────────────────────────────────────────────────
-  // Read directly from Redux pricing — set authoritatively by applyDiscountCode
-  // (or validateCheckout when no discount is active). No local recalculation.
-  // pricing.itemPrice is already the post-discount discounted subtotal.
+  // Read directly from Redux — set authoritatively by applyDiscountCode /
+  // validateCheckout. pricing.itemPrice is already the post-discount subtotal.
   const displayPricing = pricing;
 
   // ── Discount context ──────────────────────────────────────────────────────
@@ -94,44 +100,28 @@ function OrderConfirm() {
       ? `${eligibleCats[0]} only`
       : `${eligibleCats.slice(0, -1).join(', ')} & ${eligibleCats[eligibleCats.length - 1]} only`
     : null;
-  // ─────────────────────────────────────────────────────────────────────────
 
-const proceedToPayment = async () => {
-  if (!selectedShippingAddress) {
-    toast.error('Please select a shipping address', { position: 'top-center', autoClose: 2000 });
-    navigate('/shipping');
-    return;
-  }
+  // ── Navigation ────────────────────────────────────────────────────────────
+  // Session already exists — created in Cart.jsx. Nothing async to do here.
+  // Validate address presence, mark intentional proceed, then navigate.
+  const proceedToPayment = () => {
+    if (!selectedShippingAddress || !selectedShippingAddress.address) {
+      toast.error('Please select a shipping address', {
+        position: 'top-center',
+        autoClose: 2000
+      });
+      navigate('/shipping');
+      return;
+    }
 
-  setIsProcessing(true);
-  try {
-    const items = cartDetails.map(item => ({
-      product:  item.product,
-      quantity: item.quantity
-    }));
-
-    const shippingInfo = {
-      firstName: user?.firstName || user?.name?.split(' ')[0] || 'User',
-      lastName:  user?.lastName  || user?.name?.split(' ').slice(1).join(' ') || '',
-      address:   selectedShippingAddress.address,
-      city:      selectedShippingAddress.city,
-      state:     selectedShippingAddress.state,
-      pinCode:   selectedShippingAddress.pinCode,
-      country:   selectedShippingAddress.country,
-      phoneNo:   selectedShippingAddress.phoneNo
-    };
-
-    await dispatch(createCheckoutSession({ items, shippingInfo })).unwrap();
+    // Tell the abandonment hook the user is moving forward intentionally
+    // so it does not dispatch abandonCheckout on unmount.
+    setIntentionalProceed();
     navigate('/process/payment');
-  } catch (err) {
-    toast.error(err.message || 'Failed to create checkout session', {
-      position: 'top-center', autoClose: 3000
-    });
-    setIsProcessing(false);
-  }
-};
+  };
 
-  if ((cartLoading && cartDetails.length === 0) || checkoutLoading || !addressChecked) {
+  // ── Loading / empty guards ────────────────────────────────────────────────
+  if ((cartLoading && cartDetails.length === 0) || !addressChecked) {
     return (
       <>
         <PageTitle title='Order Confirmation' />
@@ -144,6 +134,7 @@ const proceedToPayment = async () => {
 
   if (cartItems.length === 0) return null;
 
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle title='Order Confirmation' />
@@ -164,7 +155,7 @@ const proceedToPayment = async () => {
 
         <div className="eoc-content">
 
-          {/* ── Shipping Information ────────────────────────────────────── */}
+          {/* ── Shipping Information ──────────────────────────────────── */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Shipping Information</h2>
             <div className="eoc-shipping-card">
@@ -174,7 +165,9 @@ const proceedToPayment = async () => {
               </div>
               <div className="eoc-shipping-row">
                 <span className="eoc-shipping-label">Phone</span>
-                <span className="eoc-shipping-value">{selectedShippingAddress?.phoneNo || 'N/A'}</span>
+                <span className="eoc-shipping-value">
+                  {selectedShippingAddress?.phoneNo || 'N/A'}
+                </span>
               </div>
               <div className="eoc-shipping-row">
                 <span className="eoc-shipping-label">Address</span>
@@ -187,7 +180,7 @@ const proceedToPayment = async () => {
             </div>
           </div>
 
-          {/* ── Order Items ─────────────────────────────────────────────── */}
+          {/* ── Order Items ───────────────────────────────────────────── */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Order Items</h2>
             <div className="eoc-items-list">
@@ -226,15 +219,14 @@ const proceedToPayment = async () => {
             </div>
           </div>
 
-          {/* ── Order Summary ────────────────────────────────────────────── */}
+          {/* ── Order Summary ─────────────────────────────────────────── */}
           <div className="eoc-section">
             <h2 className="eoc-section-title">Order Summary</h2>
             <div className="eoc-summary-rows">
 
               <div className="eoc-summary-row">
                 <span className="eoc-summary-label">Subtotal</span>
-                {/* Single clean value — no strikethrough.
-                    pricing.itemPrice is already the post-discount subtotal.
+                {/* pricing.itemPrice is already the post-discount subtotal.
                     The user processed the discount on the Cart page; this
                     page is for confirmation, not price discovery. */}
                 <span className="eoc-summary-value">
@@ -296,7 +288,6 @@ const proceedToPayment = async () => {
             type="button"
             className="eoc-back-btn"
             onClick={() => navigate('/shipping')}
-            disabled={isProcessing}
           >
             Back to Shipping
           </button>
@@ -304,9 +295,9 @@ const proceedToPayment = async () => {
             type="button"
             className="eoc-proceed-btn"
             onClick={proceedToPayment}
-            disabled={isProcessing || cartItems.length === 0}
+            disabled={cartItems.length === 0}
           >
-            {isProcessing ? 'Creating Session...' : 'Proceed to Payment'}
+            Proceed to Payment
           </button>
         </div>
 
