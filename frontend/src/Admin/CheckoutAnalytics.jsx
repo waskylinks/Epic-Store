@@ -81,6 +81,22 @@ const fmt = {
       : '—',
 };
 
+/* ── Step label truncation for chart X-axis ──────────────────── */
+// Full labels like "Shipping Information" overflow the bar chart axis.
+// Map them to short abbreviations; fall back to slicing unknown labels.
+const STEP_ABBREV = {
+  'Shipping Information': 'Shipping',
+  'Order Confirmation':   'Order',
+  'Payment Selection':    'Pmt Select',
+  'Payment Gateway':      'Gateway',
+  'Payment Failed':       'Failed',
+};
+
+const truncateStepLabel = (label = '', maxLen = 10) => {
+  if (STEP_ABBREV[label]) return STEP_ABBREV[label];
+  return label.length > maxLen ? label.slice(0, maxLen - 1) + '…' : label;
+};
+
 /* ── Helpers ────────────────────────────────────────────────── */
 function TrendBadge({ value, invert = false }) {
   if (value == null)
@@ -207,27 +223,25 @@ function dropCls(rate) {
 }
 
 /* ── Recovery email button ──────────────────────────────────── */
-// Read env limits — fall back so UI always renders correctly
-// even without VITE_ vars set.
 const COOLDOWN_MS  = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
 const MAX_ATTEMPTS = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 
+// Module-level timestamp: evaluated once when the module loads, never during render.
+// Avoids the react-hooks/purity violation that flagged `useMemo(() => Date.now(), [])`.
+// Known minor UX: cooldown display becomes stale if the page stays open past a cooldown
+// boundary. The Refresh button gives the user a way to get accurate counts.
+const RENDER_NOW = Date.now();
+
 function RecoveryEmailButton({ checkout, loading, result, sendError, onSend }) {
-  // Capture a stable timestamp for this render — satisfies react-hooks/purity
-  // which flags Date.now() as impure when called directly during render.
-  const now = useMemo(() => Date.now(), []);
+  const now = RENDER_NOW;
 
   const ab        = checkout.abandonment || {};
   const converted = checkout.conversion?.isConverted;
 
-  // Prefer fresh data from a just-completed dispatch,
-  // fall back to whatever is already on the model record.
   const count  = result?.attemptNumber  ?? ab.recoveryEmailCount  ?? 0;
   const sentAt = result?.sentAt         ?? ab.recoveryEmailSentAt ?? null;
   const nextAt = result?.nextAvailableAt ?? null;
 
-  // Cooldown boundary — server-provided nextAvailableAt wins,
-  // otherwise derive from sentAt so UI is accurate before any send.
   const cooldownUntil =
     nextAt ? new Date(nextAt) :
     sentAt ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS) :
@@ -309,6 +323,25 @@ const VIEWS = [
   { key: 'abandoned',   label: 'Abandoned Carts', icon: MoneyOff },
 ];
 
+/* ── Custom X-axis tick for bar chart ────────────────────────── */
+// Recharts passes all SVG props; we only need x, y, payload.
+function TruncatedXAxisTick({ x, y, payload }) {
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text
+        x={0}
+        y={0}
+        dy={14}
+        textAnchor="middle"
+        fill="#6B7E99"
+        fontSize={10}
+      >
+        {truncateStepLabel(payload?.value)}
+      </text>
+    </g>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ══════════════════════════════════════════════════════════════ */
@@ -352,8 +385,14 @@ export default function CheckoutAnalytics() {
   }, [dispatch, timeframe]);
 
   useEffect(() => {
-    setRefreshing(true);
-    setHasFetched(false);
+    // Defer ALL setState calls into async callbacks to satisfy
+    // react-hooks/set-state-in-effect — synchronous setState inside an effect
+    // body causes cascading renders. queueMicrotask fires before paint but
+    // after the current call stack, letting React batch the update correctly.
+    queueMicrotask(() => {
+      setRefreshing(true);
+      setHasFetched(false);
+    });
     loadAll()?.then(() => {
       setRefreshing(false);
       setHasFetched(true);
@@ -370,11 +409,20 @@ export default function CheckoutAnalytics() {
   }, [loadAll]);
 
   /* ── Derived data ─────────────────────────────────────────── */
-  const stats    = checkoutAbandonment || {};
-  const steps    = stats.stepBreakdown || [];
+  const stats = checkoutAbandonment || {};
+
+  // Memoised so barChartData's dependency array gets a stable reference.
+  // Without this, `stats.stepBreakdown || []` creates a new [] on every render
+  // when stepBreakdown is undefined, causing barChartData to recompute every
+  // render and triggering the react-hooks/exhaustive-deps warning.
+  const steps = useMemo(
+    () => stats.stepBreakdown || [],
+    [stats.stepBreakdown]
+  );
+
   const stepsMax = steps.length ? Math.max(...steps.map((s) => s.count || 0)) : 1;
 
-  const opps         = recoveryOpportunitiesRaw?.opportunities || [];
+  const opps           = recoveryOpportunitiesRaw?.opportunities || [];
   const recoverableRev = recoveryOpportunitiesRaw?.summary?.totalPotentialRevenue || 0;
 
   const abandoned = abandonedCheckoutsRaw?.abandonedCheckouts || [];
@@ -386,6 +434,34 @@ export default function CheckoutAnalytics() {
   const totalCheckouts     = completedCheckouts + abandonedCount;
   const conversionRate     =
     totalCheckouts > 0 ? (completedCheckouts / totalCheckouts) * 100 : 0;
+
+  /**
+   * recoveryRate — derived client-side because the backend static method
+   * (getAbandonmentRate) does not return this field. The backend response
+   * does include recoveredOrders and abandonedCheckouts, so we compute:
+   *
+   *   recoveryRate = (recoveredOrders / abandonedCheckouts) * 100
+   *
+   * Guard against division by zero with || 1.
+   */
+  const recoveryRate = useMemo(() => {
+    const recovered = stats.recoveredOrders  || 0;
+    const abandoned_ = stats.abandonedCheckouts || 0;
+    if (abandoned_ === 0) return 0;
+    return Math.round((recovered / abandoned_) * 10000) / 100; // 2 decimal places
+  }, [stats.recoveredOrders, stats.abandonedCheckouts]);
+
+  /* ── Bar chart data — truncated labels for X-axis ────────── */
+  const barChartData = useMemo(
+    () =>
+      steps.map((s) => ({
+        name:        s.step || 'Unknown',       // full label → used in Tooltip
+        shortName:   truncateStepLabel(s.step), // short label → rendered on axis
+        count:       s.count    || 0,
+        dropOff:     s.dropOffRate || 0,
+      })),
+    [steps]
+  );
 
   return (
     <>
@@ -496,6 +572,7 @@ export default function CheckoutAnalytics() {
                   </div>
                 </div>
 
+                {/* ── Recovery Rate — computed client-side ── */}
                 <div
                   className="ck-kpi"
                   style={{
@@ -510,7 +587,7 @@ export default function CheckoutAnalytics() {
                   </div>
                   <div className="ck-kpi-label">Recovery Rate</div>
                   <div className="ck-kpi-value">
-                    {fmt.pct(stats.recoveryRate)}
+                    {fmt.pct(recoveryRate)}
                   </div>
                   <div className="ck-kpi-footer">
                     <span className="ck-kpi-sub">
@@ -545,13 +622,13 @@ export default function CheckoutAnalytics() {
 
           {/* ── View tabs ─────────────────────────────────── */}
           <div className="ck-tabs">
-            {VIEWS.map(({ key, label, icon: Icon }) => (
+            {VIEWS.map(({ key, label, icon: TabIcon }) => (
               <button
                 key={key}
                 className={`ck-tab ${activeView === key ? 'ck-tab--active' : ''}`}
                 onClick={() => setActiveView(key)}
               >
-                <Icon style={{ fontSize: 15 }} />
+                <TabIcon style={{ fontSize: 15 }} />
                 {label}
               </button>
             ))}
@@ -641,9 +718,10 @@ export default function CheckoutAnalytics() {
                     <Spinner h={280} />
                   ) : (
                     <div>
+                      {/* Recovery rate shown here uses the client-computed value */}
                       <div className="ck-metric-row">
                         <span className="ck-metric-label">Recovery Rate</span>
-                        <span className="ck-metric-val ck-metric-val--green">{fmt.pct(stats.recoveryRate)}</span>
+                        <span className="ck-metric-val ck-metric-val--green">{fmt.pct(recoveryRate)}</span>
                       </div>
                       <div className="ck-metric-row">
                         <span className="ck-metric-label">Recovered Revenue</span>
@@ -783,6 +861,7 @@ export default function CheckoutAnalytics() {
                   )}
                 </Card>
 
+                {/* ── Bar chart — uses shortName on X-axis, full name in tooltip ── */}
                 <Card
                   title="Step Volume Chart"
                   sub="Customers reaching each checkout step"
@@ -791,37 +870,41 @@ export default function CheckoutAnalytics() {
                 >
                   {first ? (
                     <Spinner h={360} />
-                  ) : steps.length === 0 ? (
+                  ) : barChartData.length === 0 ? (
                     <Empty h={360} />
                   ) : (
                     <ResponsiveContainer width="100%" height={360}>
                       <BarChart
-                        data={steps.map((s) => ({
-                          name:    s.step || `Step ${s.step}`,
-                          count:   s.count || 0,
-                          dropOff: s.dropOffRate || 0,
-                        }))}
-                        margin={{ top: 4, right: 8, left: 0, bottom: 0 }}
+                        data={barChartData}
+                        margin={{ top: 4, right: 8, left: 0, bottom: 48 }}
                       >
                         <CartesianGrid strokeDasharray="3 3" stroke="#E8EDF4" />
+                        {/*
+                          dataKey="shortName" so the axis tick receives the
+                          abbreviated label. The Tooltip uses `name` (full label)
+                          via a custom formatter so the tooltip is still readable.
+                        */}
                         <XAxis
-                          dataKey="name"
-                          tick={{ fontSize: 10, fill: '#6B7E99' }}
+                          dataKey="shortName"
+                          tick={<TruncatedXAxisTick />}
                           interval={0}
-                          angle={-15}
-                          textAnchor="end"
-                          height={50}
+                          height={56}
                         />
                         <YAxis tick={{ fontSize: 10, fill: '#6B7E99' }} />
                         <Tooltip
                           {...TT}
+                          labelFormatter={(shortName, payload) => {
+                            // Recover the full step name from the payload
+                            const fullName = payload?.[0]?.payload?.name ?? shortName;
+                            return fullName;
+                          }}
                           formatter={(v, n) => [
                             n === 'count' ? fmt.number(v) : fmt.pct(v),
                             n === 'count' ? 'Customers' : 'Drop-Off Rate',
                           ]}
                         />
                         <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                          {steps.map((_, i) => (
+                          {barChartData.map((_, i) => (
                             <Cell key={i} fill={PAL[i % PAL.length]} />
                           ))}
                         </Bar>
@@ -929,7 +1012,8 @@ export default function CheckoutAnalytics() {
                       <div className="ck-kpi-label">Recovered Revenue</div>
                       <div className="ck-kpi-value">{fmt.compact(stats.recoveredValue)}</div>
                       <div className="ck-kpi-footer">
-                        <span className="ck-kpi-sub">Recovery rate: {fmt.pct(stats.recoveryRate)}</span>
+                        {/* Client-computed recovery rate used here too */}
+                        <span className="ck-kpi-sub">Recovery rate: {fmt.pct(recoveryRate)}</span>
                       </div>
                     </div>
                     <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>

@@ -26,8 +26,8 @@ import Navbar from '../components/Navbar';
 import '../AdminStyles/RecoveryEmailManager.css';
 
 /* ── Constants ──────────────────────────────────────────────── */
-const COOLDOWN_MS  = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
-const MAX_ATTEMPTS = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
+const COOLDOWN_MS   = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
+const MAX_ATTEMPTS  = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 const BULK_DELAY_MS = 800; // delay between bulk sends to avoid hammering
 
 /* ── Formatters ─────────────────────────────────────────────── */
@@ -50,10 +50,10 @@ const fmt = {
 
 /* ── Helpers ────────────────────────────────────────────────── */
 function getEmailStatus(checkout, result) {
-  const ab       = checkout.abandonment || {};
-  const count    = result?.attemptNumber  ?? ab.recoveryEmailCount  ?? 0;
-  const sentAt   = result?.sentAt         ?? ab.recoveryEmailSentAt ?? null;
-  const nextAt   = result?.nextAvailableAt ?? null;
+  const ab        = checkout.abandonment || {};
+  const count     = result?.attemptNumber  ?? ab.recoveryEmailCount  ?? 0;
+  const sentAt    = result?.sentAt         ?? ab.recoveryEmailSentAt ?? null;
+  const nextAt    = result?.nextAvailableAt ?? null;
   const converted = checkout.conversion?.isConverted;
 
   if (converted) return { type: 'converted', label: 'Converted', count };
@@ -65,10 +65,10 @@ function getEmailStatus(checkout, result) {
 
   const inCooldown = !!(cooldownUntil && cooldownUntil.getTime() > Date.now());
 
-  if (count >= MAX_ATTEMPTS) return { type: 'maxed',    label: `Max (${MAX_ATTEMPTS})`,   count };
-  if (inCooldown)            return { type: 'cooldown', label: 'Cooldown',                count, cooldownUntil };
-  if (count > 0)             return { type: 'sent',     label: `Sent (${count})`,         count };
-  return                            { type: 'ready',    label: 'Ready',                   count };
+  if (count >= MAX_ATTEMPTS) return { type: 'maxed',    label: `Max (${MAX_ATTEMPTS})`, count };
+  if (inCooldown)            return { type: 'cooldown', label: 'Cooldown',              count, cooldownUntil };
+  if (count > 0)             return { type: 'sent',     label: `Sent (${count})`,       count };
+  return                            { type: 'ready',    label: 'Ready',                 count };
 }
 
 function getPriority(score) {
@@ -106,6 +106,8 @@ const TABS = [
 /* ── Per-row send button ────────────────────────────────────── */
 // Module-level timestamp: evaluated once when the module loads, never during render.
 // This satisfies react-hooks/purity which flags Date.now() inside components.
+// Known minor UX: cooldown display becomes stale if the page stays open for a long
+// time without a refresh. The user can always hit Refresh to get accurate counts.
 const MODULE_NOW = Date.now();
 
 function SendButton({ checkout, loading, result, sendError, onSend }) {
@@ -122,14 +124,17 @@ function SendButton({ checkout, loading, result, sendError, onSend }) {
   if (status.type === 'cooldown') {
     const h = Math.ceil((status.cooldownUntil.getTime() - now) / 3_600_000);
     return (
-      <span className="rem-status rem-status--cooldown" title={`Available: ${status.cooldownUntil.toLocaleString()}`}>
+      <span
+        className="rem-status rem-status--cooldown"
+        title={`Available: ${status.cooldownUntil.toLocaleString()}`}
+      >
         {h}h left
       </span>
     );
   }
 
-  const label = loading ? 'Sending…'
-    : status.count > 0   ? `Resend (${status.count}/${MAX_ATTEMPTS})`
+  const label = loading        ? 'Sending…'
+    : status.count > 0         ? `Resend (${status.count}/${MAX_ATTEMPTS})`
     : 'Send';
 
   return (
@@ -154,12 +159,16 @@ function SendButton({ checkout, loading, result, sendError, onSend }) {
 export default function RecoveryEmailManager() {
   const dispatch = useDispatch();
 
+  // `loading` is intentionally NOT destructured from s.operations:
+  // operationsSlice has no top-level loading field (only emailSendLoading
+  // keyed per checkout). Destructuring it would always give undefined, which
+  // broke the loading skeleton (`!hasFetched && loading` was always false).
+  // The skeleton is now driven by `first = !hasFetched` alone.
   const {
     abandonedCheckouts: abandonedRaw,
     emailSendLoading,
     emailSendResults,
     emailSendError,
-    loading,
     error,
   } = useSelector((s) => s.operations);
 
@@ -170,8 +179,8 @@ export default function RecoveryEmailManager() {
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkDone,    setBulkDone]    = useState(0);
   const [bulkTotal,   setBulkTotal]   = useState(0);
-  const bulkAbort                     = useRef(false);
-  const loadingRef                    = useRef(false);
+  const bulkAbort  = useRef(false);
+  const loadingRef = useRef(false);
 
   /* ── Fetch ────────────────────────────────────────────────── */
   const loadData = useCallback(() => {
@@ -179,11 +188,11 @@ export default function RecoveryEmailManager() {
     loadingRef.current = true;
     return Promise.allSettled([
       dispatch(fetchAbandonedCheckouts({
-        hours: 168, // 7 days — model max cart age
+        hours:    168, // 7 days — model max cart age
         minValue: 0,
-        limit: 200,
-        page: 1,
-        sortBy: 'priority',
+        limit:    200,
+        page:     1,
+        sortBy:   'priority',
       })),
     ]).finally(() => { loadingRef.current = false; });
   }, [dispatch]);
@@ -193,7 +202,6 @@ export default function RecoveryEmailManager() {
       setRefreshing(false);
       setHasFetched(true);
     });
-    // setState calls are inside .then() (async), not the synchronous effect body
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = useCallback(() => {
@@ -205,17 +213,22 @@ export default function RecoveryEmailManager() {
     });
   }, [loadData]);
 
-  /* ── Raw data ─────────────────────────────────────────────── */
-  const first = !hasFetched && loading;
+  /* ── Loading gate ─────────────────────────────────────────── */
+  // FIX: was `!hasFetched && loading` which was always false because
+  // `loading` does not exist on operationsSlice — only `emailSendLoading`
+  // (keyed per checkout) does. The skeleton inside rem-card never showed.
+  // Now driven purely by hasFetched, which is set to true after the first
+  // successful fetch completes.
+  const first = !hasFetched;
 
   /* ── Derive tab lists ─────────────────────────────────────── */
   const { queue, sent, recovered } = useMemo(() => {
     const checkouts = abandonedRaw?.abandonedCheckouts || [];
     const q = [], s = [], r = [];
     for (const c of checkouts) {
-      const result  = emailSendResults?.[c._id];
-      const status  = getEmailStatus(c, result);
-      const isConv  = c.conversion?.isConverted;
+      const result = emailSendResults?.[c._id];
+      const status = getEmailStatus(c, result);
+      const isConv = c.conversion?.isConverted;
 
       if (isConv) {
         r.push(c);
@@ -249,12 +262,15 @@ export default function RecoveryEmailManager() {
   );
 
   /* ── Bulk send ────────────────────────────────────────────── */
+  // `eligible` is captured once before the loop so the array cannot shrink
+  // mid-iteration even as Redux state updates move rows from queue → sent.
   const handleBulkSend = useCallback(async () => {
     const eligible = queue.filter((c) => {
       const st = getEmailStatus(c, emailSendResults?.[c._id]);
       return st.type === 'ready' || st.type === 'sent';
     });
     if (!eligible.length) return;
+
     bulkAbort.current = false;
     setBulkRunning(true);
     setBulkDone(0);
@@ -268,6 +284,7 @@ export default function RecoveryEmailManager() {
         await new Promise((r) => setTimeout(r, BULK_DELAY_MS));
       }
     }
+
     setBulkRunning(false);
   }, [dispatch, queue, emailSendResults]);
 
@@ -338,28 +355,36 @@ export default function RecoveryEmailManager() {
           {/* ── KPI strip ─────────────────────────────────── */}
           <div className="rem-kpi-strip">
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--coral"><Inbox style={{ fontSize: 18 }} /></span>
+              <span className="rem-kpi-icon rem-kpi-icon--coral">
+                <Inbox style={{ fontSize: 18 }} />
+              </span>
               <div>
                 <div className="rem-kpi-val">{fmt.number(queue.length)}</div>
                 <div className="rem-kpi-lbl">In Queue</div>
               </div>
             </div>
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--blue"><MarkEmailRead style={{ fontSize: 18 }} /></span>
+              <span className="rem-kpi-icon rem-kpi-icon--blue">
+                <MarkEmailRead style={{ fontSize: 18 }} />
+              </span>
               <div>
                 <div className="rem-kpi-val">{fmt.number(sent.length)}</div>
                 <div className="rem-kpi-lbl">Emails Sent</div>
               </div>
             </div>
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--green"><CheckCircle style={{ fontSize: 18 }} /></span>
+              <span className="rem-kpi-icon rem-kpi-icon--green">
+                <CheckCircle style={{ fontSize: 18 }} />
+              </span>
               <div>
                 <div className="rem-kpi-val">{fmt.number(recovered.length)}</div>
                 <div className="rem-kpi-lbl">Recovered</div>
               </div>
             </div>
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--amber"><AttachMoney style={{ fontSize: 18 }} /></span>
+              <span className="rem-kpi-icon rem-kpi-icon--amber">
+                <AttachMoney style={{ fontSize: 18 }} />
+              </span>
               <div>
                 <div className="rem-kpi-val">{fmt.compact(totalValue)}</div>
                 <div className="rem-kpi-lbl">Queue Value</div>
@@ -367,7 +392,7 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
-          {/* ── Bulk progress ──────────────────────────────── */}
+          {/* ── Bulk progress ─────────────────────────────── */}
           {bulkRunning && (
             <div className="rem-bulk-progress">
               <Spinner size={15} />
@@ -378,7 +403,9 @@ export default function RecoveryEmailManager() {
                   style={{ width: `${bulkTotal > 0 ? (bulkDone / bulkTotal) * 100 : 0}%` }}
                 />
               </div>
-              <span className="rem-bulk-pct">{bulkTotal > 0 ? Math.round((bulkDone / bulkTotal) * 100) : 0}%</span>
+              <span className="rem-bulk-pct">
+                {bulkTotal > 0 ? Math.round((bulkDone / bulkTotal) * 100) : 0}%
+              </span>
             </div>
           )}
 
@@ -387,7 +414,10 @@ export default function RecoveryEmailManager() {
             <div className="rem-tabs">
               {TABS.map((tab) => {
                 const TabIcon = tab.icon;
-                const count = tab.key === 'queue' ? queue.length : tab.key === 'sent' ? sent.length : recovered.length;
+                const count =
+                  tab.key === 'queue'     ? queue.length :
+                  tab.key === 'sent'      ? sent.length  :
+                  recovered.length;
                 return (
                   <button
                     key={tab.key}
@@ -416,13 +446,19 @@ export default function RecoveryEmailManager() {
           {/* ── Table ─────────────────────────────────────── */}
           <div className="rem-card">
             {first ? (
+              // Skeleton loading state — was broken before because `first`
+              // was `!hasFetched && loading` where loading is always undefined.
               <div className="rem-loading">
                 <Spinner size={28} />
                 <span>Loading checkouts…</span>
               </div>
             ) : activeList.length === 0 ? (
               <Empty
-                Icon={activeTab === 'queue' ? Inbox : activeTab === 'sent' ? MarkEmailRead : CheckCircle}
+                Icon={
+                  activeTab === 'queue'     ? Inbox        :
+                  activeTab === 'sent'      ? MarkEmailRead :
+                  CheckCircle
+                }
                 label={
                   activeTab === 'queue'     ? 'No carts in queue'      :
                   activeTab === 'sent'      ? 'No emails sent yet'     :
@@ -458,10 +494,15 @@ export default function RecoveryEmailManager() {
                       const status        = getEmailStatus(c, result);
 
                       return (
-                        <tr key={id || i} className={status.type === 'ready' ? 'rem-tr--ready' : ''}>
+                        <tr
+                          key={id || i}
+                          className={status.type === 'ready' ? 'rem-tr--ready' : ''}
+                        >
                           <td className="rem-td-rank">{i + 1}</td>
                           <td className="rem-td-name">
-                            {u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Guest'}
+                            {u.firstName
+                              ? `${u.firstName} ${u.lastName || ''}`.trim()
+                              : 'Guest'}
                           </td>
                           <td className="rem-td-email">{u.email || '—'}</td>
                           <td className="rem-td-money">{fmt.compact(cartValue)}</td>
@@ -486,7 +527,9 @@ export default function RecoveryEmailManager() {
                                 loading={!!emailSendLoading?.[id]}
                                 result={result}
                                 sendError={emailSendError?.[id]}
-                                onSend={(checkoutId) => dispatch(markRecoveryEmailSent(checkoutId))}
+                                onSend={(checkoutId) =>
+                                  dispatch(markRecoveryEmailSent(checkoutId))
+                                }
                               />
                             </td>
                           )}

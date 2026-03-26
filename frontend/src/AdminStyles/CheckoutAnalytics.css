@@ -1070,3 +1070,96 @@
     grid-template-columns: 1fr 1fr;
   }
 }
+
+/* ================================================================
+   CheckoutAnalytics.css — ADDITIONS
+   Append these rules to the bottom of CheckoutAnalytics.css
+   ================================================================ */
+
+/* ── Recovery email badges (status labels) ──────────────────── */
+
+.ck-email-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+.ck-email-badge--converted {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.ck-email-badge--maxed {
+  background: #f3f4f6;
+  color: #6b7280;
+}
+
+.ck-email-badge--cooldown {
+  background: #fef3c7;
+  color: #b45309;
+  cursor: default;
+}
+
+/* ── Recovery email send button & cell ──────────────────────── */
+
+.ck-email-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ck-email-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px;
+  background: #1D4ED8;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.ck-email-btn:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.ck-email-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Inline spinner inside the send button */
+.ck-email-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: ck-spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+
+/* Inline error label next to the send button */
+.ck-email-err {
+  font-size: 11px;
+  font-weight: 700;
+  color: #b91c1c;
+  background: #fee2e2;
+  padding: 3px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+  cursor: default;
+}
