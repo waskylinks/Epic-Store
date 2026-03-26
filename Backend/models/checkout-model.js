@@ -109,7 +109,7 @@ const checkoutSchema = new mongoose.Schema(
 
     currentStep: {
       type:    String,
-      enum:    ['shipping_info', 'payment_selection', 'payment_gateway', 'payment_failed'],
+      enum:    ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway', 'payment_failed'],
       default: 'shipping_info'
     },
 
