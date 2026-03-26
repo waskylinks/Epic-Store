@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 
-const SECRET          = process.env.JWT_SECRET_KEY;
-const EXPIRY          = '72h';
+const SECRET          = process.env.RECOVERY_TOKEN_SECRET;
+const EXPIRY = process.env.RECOVERY_TOKEN_EXPIRES || '72h';
 const EXPIRY_SECONDS  = 72 * 60 * 60; // 259200s — used for cache/cookie TTL if needed
 
 /**
