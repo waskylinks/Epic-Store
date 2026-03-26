@@ -5,12 +5,21 @@ import { getDateRanges } from "../utils/dateRanges.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getCache, setCache } from "../utils/redis.js";
 import { sendRecoveryEmail } from "../Services/recoveryEmailService.js";
+import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
 
 // ============================================
 // CHECKOUT ABANDONMENT STATS
 // ============================================
 
 export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, next) => {
+  // Sweep-on-read: mark any stale checkouts before aggregation runs.
+  // A sweep failure must never break the analytics response.
+  try {
+    await markStaleCheckouts();
+  } catch (sweepErr) {
+    console.error('[getCheckoutAbandonmentStats] Sweep failed:', sweepErr.message);
+  }
+
   const { timeframe = "month" } = req.query;
   validateTimeframe(timeframe, next);
 
@@ -131,10 +140,10 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
 
         const stepLabels = {
           'shipping_info':      'Shipping Information',
+          'order_confirmation': 'Order Confirmation',
           'payment_selection':  'Payment Selection',
           'payment_gateway':    'Payment Gateway',
           'payment_failed':     'Payment Failed',
-          'order_confirmation': 'Order Confirmation'
         };
 
         return {
@@ -177,24 +186,30 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
 // ============================================
 
 export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next) => {
+  // Sweep-on-read: mark any stale checkouts before the list query runs.
+  // A sweep failure must never break the abandoned list response.
+  try {
+    await markStaleCheckouts();
+  } catch (sweepErr) {
+    console.error('[getAbandonedCheckoutsList] Sweep failed:', sweepErr.message);
+  }
+
   const {
     hours     = 24,
     minValue  = 0,
     limit     = 50,
     page      = 1,
     sortBy    = "priority",
-    emailSent,  // 'true' | 'false' | undefined  →  Sent tab / Queue tab
-    recovered,  // 'true' | undefined             →  Recovered tab
+    emailSent,
+    recovered,
   } = req.query;
 
-  // Each filter combination gets its own cache entry
   const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}_es${emailSent ?? ''}_rec${recovered ?? ''}`;
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  // Base query — always applied
   const query = {
     'abandonment.isAbandoned': true,
     'abandonment.abandonedAt': {
@@ -204,13 +219,9 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     'conversion.isConverted': false,
   };
 
-  // emailSent=true  → Sent tab:      has received at least one recovery email
-  // emailSent=false → Queue tab:     has never received a recovery email
   if (emailSent === 'true')  query['abandonment.recoveryEmailSent'] = true;
   if (emailSent === 'false') query['abandonment.recoveryEmailSent'] = false;
 
-  // recovered=true  → Recovered tab: cart was recovered (may be converted)
-  // Drop the isConverted=false guard so converted-recovered carts are included
   if (recovered === 'true') {
     query['abandonment.recovered'] = true;
     delete query['conversion.isConverted'];
