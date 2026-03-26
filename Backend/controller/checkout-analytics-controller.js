@@ -187,7 +187,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
 
 export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next) => {
   // Sweep-on-read: mark any stale checkouts before the list query runs.
-  // A sweep failure must never break the abandoned list response.
   try {
     await markStaleCheckouts();
   } catch (sweepErr) {
@@ -195,11 +194,11 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
   }
 
   const {
-    hours     = 24,
-    minValue  = 0,
-    limit     = 50,
-    page      = 1,
-    sortBy    = "priority",
+    hours    = 24,
+    minValue = 0,
+    limit    = 50,
+    page     = 1,
+    sortBy   = "priority",
     emailSent,
     recovered,
   } = req.query;
@@ -227,63 +226,117 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     delete query['conversion.isConverted'];
   }
 
-  const checkouts = await Checkout.find(query)
-    .populate("user", "firstName lastName email")
-    .populate("items.product", "name images pricing")
-    .lean();
+  // ── DB-level sort for value and date ─────────────────────────────────────
+  // Priority cannot be sorted at DB level (computed virtual) so we fetch a
+  // capped set and sort in memory. Value and date sort entirely in the DB.
+  const DB_SORT_MAP = {
+    value: { 'pricing.totalPrice':      -1 },
+    date:  { 'abandonment.abandonedAt': -1 },
+  };
 
-  const checkoutsWithPriority = checkouts.map((checkout) => {
-    const hoursSinceAbandoned = checkout.abandonment?.abandonedAt
-      ? Math.floor(
-          (Date.now() - new Date(checkout.abandonment.abandonedAt).getTime()) /
-            (1000 * 60 * 60)
-        )
-      : 0;
+  const PRIORITY_FETCH_CAP = 500; // memory bound for in-memory priority sort
 
-    return {
+  let checkouts;
+  let totalCheckouts;
+
+  if (sortBy === 'priority') {
+    // Fetch capped set for in-memory priority sort — cannot do this in DB
+    const [raw, count] = await Promise.all([
+      Checkout.find(query)
+        .populate('user',          'firstName lastName email')
+        .populate('items.product', 'name images pricing')
+        .limit(PRIORITY_FETCH_CAP)
+        .lean(),
+      Checkout.countDocuments(query)
+    ]);
+
+    const withPriority = raw.map(checkout => ({
       ...checkout,
       priority: calculatePriorityScore(checkout),
-      hoursSinceAbandoned
-    };
-  });
+      hoursSinceAbandoned: checkout.abandonment?.abandonedAt
+        ? Math.floor(
+            (Date.now() - new Date(checkout.abandonment.abandonedAt).getTime()) /
+            (1000 * 60 * 60)
+          )
+        : 0
+    }));
 
-  let sortedCheckouts = checkoutsWithPriority;
-  if (sortBy === "priority") {
-    sortedCheckouts.sort((a, b) => b.priority - a.priority);
-  } else if (sortBy === "value") {
-    sortedCheckouts.sort((a, b) => b.pricing.totalPrice - a.pricing.totalPrice);
-  } else if (sortBy === "date") {
-    sortedCheckouts.sort(
-      (a, b) =>
-        new Date(b.abandonment.abandonedAt) - new Date(a.abandonment.abandonedAt)
-    );
+    withPriority.sort((a, b) => b.priority - a.priority);
+
+    checkouts      = withPriority.slice(skip, skip + parseInt(limit));
+    totalCheckouts = count;
+
+  } else {
+    // DB-level sort + pagination for value and date
+    const dbSort = DB_SORT_MAP[sortBy] || { 'abandonment.abandonedAt': -1 };
+
+    const [raw, count] = await Promise.all([
+      Checkout.find(query)
+        .populate('user',          'firstName lastName email')
+        .populate('items.product', 'name images pricing')
+        .sort(dbSort)
+        .skip(skip)
+        .limit(parseInt(limit))
+        .lean(),
+      Checkout.countDocuments(query)
+    ]);
+
+    checkouts = raw.map(checkout => ({
+      ...checkout,
+      priority: calculatePriorityScore(checkout),
+      hoursSinceAbandoned: checkout.abandonment?.abandonedAt
+        ? Math.floor(
+            (Date.now() - new Date(checkout.abandonment.abandonedAt).getTime()) /
+            (1000 * 60 * 60)
+          )
+        : 0
+    }));
+
+    totalCheckouts = count;
   }
 
-  const paginatedCheckouts = sortedCheckouts.slice(skip, skip + parseInt(limit));
-  const totalCheckouts     = sortedCheckouts.length;
-  const totalPages         = Math.ceil(totalCheckouts / parseInt(limit));
+  // ── Summary stats via aggregation — never computed from loaded docs ───────
+  const [summaryResult] = await Checkout.aggregate([
+    { $match: query },
+    {
+      $group: {
+        _id:           null,
+        totalValue:    { $sum: '$pricing.totalPrice' },
+        avgValue:      { $avg: '$pricing.totalPrice' },
+        highPriority: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $gte: ['$pricing.totalPrice', 100] },
+                  { $eq:  ['$conversion.isConverted', false] }
+                ]
+              },
+              1,
+              0
+            ]
+          }
+        }
+      }
+    }
+  ]);
+
+  const summary = summaryResult || { totalValue: 0, avgValue: 0, highPriority: 0 };
+  const totalPages = Math.ceil(totalCheckouts / parseInt(limit));
 
   const response = {
-    abandonedCheckouts: paginatedCheckouts,
+    abandonedCheckouts: checkouts,
     pagination: {
-      currentPage: parseInt(page),
+      currentPage:    parseInt(page),
       totalPages,
       totalCheckouts,
-      hasNextPage: parseInt(page) < totalPages,
-      hasPrevPage: parseInt(page) > 1
+      hasNextPage:    parseInt(page) < totalPages,
+      hasPrevPage:    parseInt(page) > 1
     },
     summary: {
-      totalValue: sortedCheckouts.reduce(
-        (sum, c) => sum + c.pricing.totalPrice, 0
-      ),
-      avgValue:
-        sortedCheckouts.length > 0
-          ? sortedCheckouts.reduce((sum, c) => sum + c.pricing.totalPrice, 0) /
-            sortedCheckouts.length
-          : 0,
-      highPriorityCheckouts: sortedCheckouts.filter(
-        (c) => c.priority >= 70
-      ).length
+      totalValue:             Math.round(summary.totalValue    * 100) / 100,
+      avgValue:               Math.round(summary.avgValue      * 100) / 100,
+      highPriorityCheckouts:  summary.highPriority
     }
   };
 

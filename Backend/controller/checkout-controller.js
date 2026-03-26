@@ -186,7 +186,13 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   const { id }              = req.params;
   const { step, gateway }   = req.body;
 
-  const validSteps = ['shipping_info', 'payment_selection', 'payment_gateway', 'payment_failed'];
+  const validSteps = [
+    'shipping_info',
+    'order_confirmation',
+    'payment_selection',
+    'payment_gateway',
+    'payment_failed'
+  ];
 
   if (!validSteps.includes(step)) {
     return next(new HandleError("Invalid checkout step", 400));

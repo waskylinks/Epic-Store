@@ -1,4 +1,5 @@
 import Checkout from '../models/checkout-model.js';
+import { deleteCachePattern } from '../utils/redis.js';
 
 /**
  * markStaleCheckouts
@@ -13,51 +14,89 @@ import Checkout from '../models/checkout-model.js';
  *      ensures analytics always reflect the latest state regardless of
  *      when the cron last fired.
  *
- * @returns {Promise<{ marked: number, errors: number }>}
+ * @returns {Promise<{ marked: number, errors: number, batches: number }>}
  */
 export const markStaleCheckouts = async () => {
   const THRESHOLD_HOURS = parseFloat(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+  const BATCH_SIZE = 500;
 
   const cutoff = new Date(
     Date.now() - THRESHOLD_HOURS * 60 * 60 * 1000
   );
 
-  // Fetch only the fields we need — lean() is intentionally NOT used here
-  // because we need to call instance methods (markAsAbandoned + save).
-  const staleCheckouts = await Checkout.find({
-    status:                   'pending',
-    lastActivityAt:           { $lt: cutoff },
-    'conversion.isConverted': false,
-  }).select('_id status lastActivityAt abandonment conversion currentStep');
+  let marked   = 0;
+  let errors   = 0;
+  let batches  = 0;
+  let lastId   = null;
+  let hasMore  = true;
 
-  let marked = 0;
-  let errors = 0;
+  while (hasMore) {
+    batches++;
 
-  for (const checkout of staleCheckouts) {
-    try {
-      // Guard: skip if already abandoned or converted by the time we process
-      // it (e.g. concurrent request handled it between the find and here).
-      if (
-        checkout.status !== 'pending' ||
-        checkout.conversion?.isConverted
-      ) {
-        continue;
+    const query = {
+      status:                   'pending',
+      lastActivityAt:           { $lt: cutoff },
+      'conversion.isConverted': false,
+      ...(lastId && { _id: { $gt: lastId } })
+    };
+
+    const staleCheckouts = await Checkout.find(query)
+      .select('_id status lastActivityAt abandonment conversion currentStep')
+      .sort({ _id: 1 })
+      .limit(BATCH_SIZE);
+
+    if (staleCheckouts.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    lastId = staleCheckouts[staleCheckouts.length - 1]._id;
+
+    for (const checkout of staleCheckouts) {
+      try {
+        if (
+          checkout.status !== 'pending' ||
+          checkout.conversion?.isConverted
+        ) {
+          continue;
+        }
+
+        checkout.markAsAbandoned();
+        checkout._shouldInvalidateCache = false; // suppress per-document cache hook — bulk flush happens after loop
+        await checkout.save();
+        marked++;
+      } catch (err) {
+        errors++;
+        console.error(
+          `[markStaleCheckouts] Failed to mark checkout ${checkout._id} as abandoned:`,
+          err.message
+        );
       }
+    }
 
-      checkout.markAsAbandoned();
-      await checkout.save();
-      marked++;
-    } catch (err) {
-      // One bad document must never abort the entire sweep.
-      errors++;
-      console.error(
-        `[markStaleCheckouts] Failed to mark checkout ${checkout._id} as abandoned:`,
-        err.message
-      );
+    if (staleCheckouts.length < BATCH_SIZE) {
+      hasMore = false;
+    }
+
+    if (batches >= 100) {
+      console.warn('[markStaleCheckouts] Reached 100 batch limit — stopping sweep early.');
+      break;
     }
   }
 
-  return { marked, errors };
+  if (marked > 0) {
+    await Promise.all([
+      deleteCachePattern('checkout_abandonment_*'),
+      deleteCachePattern('checkout_recovery_*'),
+      deleteCachePattern('abandoned_list:*'),
+      deleteCachePattern('admin_stats*'),
+      deleteCachePattern('analytics_*')
+    ]).catch(err =>
+      console.error('[markStaleCheckouts] Cache flush failed:', err.message)
+    );
+  }
+
+  return { marked, errors, batches };
 };
 
 export default markStaleCheckouts;
