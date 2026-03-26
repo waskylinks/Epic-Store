@@ -8,6 +8,7 @@ import { initializeRedis, shutdownRedis, default as redis } from './utils/redis.
 import { configureCloudinary } from './utils/cloudinaryUpload.js';
 import { startDiscountCleanupJob } from './jobs/discount-cleanup.js';
 import { startAuditCleanupJob }    from './jobs/audit-log-cleanup.js';
+import { startAbandonmentSweep } from './jobs/abandonmentSweep.js';
 
 /* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
@@ -68,6 +69,9 @@ const startServer = async () => {
 
         // 4️⃣ Connect to MongoDB
         await connectDB();
+
+        //cheout jobs
+        startAbandonmentSweep();
 
         // 5️⃣ Setup graceful shutdown hooks
         setupGracefulShutdown();
