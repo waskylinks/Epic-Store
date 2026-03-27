@@ -100,14 +100,14 @@ export const validateMultiple = (schemas) => {
  */
 export const validateBody = (schema) => (req, res, next) => {
   const { error, value } = schema.validate(req.body, {
-    abortEarly: false,   // return all errors, not just the first
-    stripUnknown: true,  // remove unknown keys to avoid injection
-    convert: true        // auto-convert types (e.g., string -> number)
+    abortEarly: false,
+    stripUnknown: true,
+    convert: true
   });
 
   if (error) {
-    // Format Joi errors into a clean array of messages
     const details = error.details.map((d) => d.message);
+    console.error('[validateBody] Joi errors:', JSON.stringify(error.details, null, 2)); // ADD THIS
     return res.status(400).json({
       success: false,
       message: "Validation failed",
@@ -115,7 +115,6 @@ export const validateBody = (schema) => (req, res, next) => {
     });
   }
 
-  // ✅ Safe: req.body can be reassigned
   req.body = value;
   next();
 };

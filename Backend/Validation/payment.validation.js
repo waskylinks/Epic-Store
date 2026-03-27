@@ -186,7 +186,13 @@ export const initializePaymentSchema = Joi.object({
       }),
     description: Joi.string()
       .allow(null, '')
-      .optional()
+      .optional(),
+    eligibleProductCategories: Joi.array()
+    .items(Joi.string())
+    .default([])
+    .optional(),
+    remainingBalance: Joi.number().allow(null).optional(),
+
   })
     .optional()
     .allow(null)

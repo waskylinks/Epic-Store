@@ -584,8 +584,6 @@ export const validateReturnStatusUpdate = (req, res, next) => {
   const { status, inspectionNotes } = req.body;
   const errors = [];
 
-  // FIX BUG-10 — items_reviewed, plea_submitted, awaiting_discount intentionally excluded.
-  // These statuses are only reachable via their own dedicated routes.
   const validStatuses = [
     'in_transit',
     'received',

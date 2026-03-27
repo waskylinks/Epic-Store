@@ -1,17 +1,11 @@
 import redis from '../utils/redis.js';
 import crypto from 'crypto';
 
-/**
- * Payment Session Service
- * Stores temporary payment data in Redis instead of creating pending orders
- * Sessions expire after 30 minutes
- * 
- * ✅ NEW: Supports alias keys for Stripe (payment_intent_id → order reference)
- */
+
 
 const SESSION_PREFIX = 'payment_session:';
 const ALIAS_PREFIX = 'payment_alias:';
-const SESSION_TTL = 1800; // 30 minutes in seconds
+const SESSION_TTL = 1800; 
 
 /**
  * Generate unique payment reference
