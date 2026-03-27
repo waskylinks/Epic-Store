@@ -7,6 +7,8 @@ import PageTitle from "../components/PageTitle";
 import Footer from "../components/footer";
 import CheckoutPath from "./CheckoutPath";
 
+import { selectSelectedAddress } from "../features/shipping/shippingSlice";
+
 import "../CartStyles/Payment.css";
 
 import { toast } from "react-toastify";
@@ -99,6 +101,8 @@ function Payment() {
 
   const cartPricing = useSelector(selectCartPricing);
   const discount    = useSelector(selectDiscount);
+
+  const selectedShippingAddress = useSelector(selectSelectedAddress);
 
   const {
     loading,
@@ -311,74 +315,96 @@ function Payment() {
   }, [paymentData, selectedGateway, flutterwaveConfig, openPaystackPopup, triggerFlutterwavePayment]);
 
   // ── Initialize payment ───────────────────────────────────────────────────
-  const handleInitializePayment = async () => {
-    if (!checkoutSession)                                                                    { toast.error("No checkout session found"); return; }
-    if (cartItems.length === 0)                                                              { toast.error("Cart is empty"); return; }
-    if (selectedGateway === "stripe"      && !STRIPE_KEY)                                   { toast.error("Stripe is not configured"); return; }
-    if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)  { toast.error("Flutterwave is not configured"); return; }
-    if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)     { toast.error("Paystack is not configured"); return; }
+ // ── Initialize payment ───────────────────────────────────────────────────
+const handleInitializePayment = async () => {
+  if (!checkoutSession && !checkoutId)                                                       { toast.error("No checkout session found"); return; }
+  if (cartItems.length === 0)                                                                { toast.error("Cart is empty"); return; }
+  if (selectedGateway === "stripe"      && !STRIPE_KEY)                                     { toast.error("Stripe is not configured"); return; }
+  if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)    { toast.error("Flutterwave is not configured"); return; }
+  if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)       { toast.error("Paystack is not configured"); return; }
 
-    // Record that the user actively attempted payment with a specific gateway.
-    // Non-fatal — must not block the payment flow if this fails.
-    if (checkoutId) {
-      try {
-        await dispatch(updateCheckoutStep({
-          checkoutId,
-          step:    "payment_gateway",
-          gateway: selectedGateway
-        })).unwrap();
-      } catch (err) {
-        console.warn("[Payment] Failed to record payment_gateway step:", err);
-      }
+  if (checkoutId) {
+    try {
+      await dispatch(updateCheckoutStep({
+        checkoutId,
+        step:    "payment_gateway",
+        gateway: selectedGateway
+      })).unwrap();
+    } catch (err) {
+      console.warn("[Payment] Failed to record payment_gateway step:", err);
     }
+  }
 
-    const pricingToSend = (cartPricing?.totalPrice > 0)
-      ? cartPricing
-      : checkoutPricing;
+  const pricingToSend = (cartPricing?.totalPrice > 0)
+    ? cartPricing
+    : checkoutPricing;
 
-    if (!pricingToSend || !pricingToSend.totalPrice) {
-      toast.error("Pricing information is missing. Please return to your cart.");
-      return;
-    }
+  if (!pricingToSend || !pricingToSend.totalPrice) {
+    toast.error("Pricing information is missing. Please return to your cart.");
+    return;
+  }
 
-    const discountSnapshot = (discount.applied && discount.code)
+  // FIX: checkout/create is called with only {items} so shippingInfo is never
+  // persisted on the checkout session. Fall back to selectedShippingAddress
+  // from Redux (set on the shipping page) which always has the correct data.
+  const shippingInfo = checkoutSession?.shippingInfo?.address
+    ? checkoutSession.shippingInfo
+    : selectedShippingAddress
       ? {
-          code:              discount.code,
-          discountId:        discount.discountId  || null,
-          type:              discount.type        || null,
-          value:             discount.value       || null,
-          discountAmount:    discount.discountAmount    || 0,
-          originalItemPrice: pricingToSend.itemPrice,
-          description:       discount.description || null,
+          address:  selectedShippingAddress.address,
+          city:     selectedShippingAddress.city,
+          state:    selectedShippingAddress.state,
+          country:  selectedShippingAddress.country,
+          pinCode:  selectedShippingAddress.pinCode,
+          phoneNo:  selectedShippingAddress.phoneNo,
         }
       : null;
 
-    paystackTriggered.current    = false;
-    flutterwaveTriggered.current = false;
-    setFlutterwaveOpen(false);
+  if (!shippingInfo?.address) {
+    toast.error("Shipping address is missing. Please go back and select an address.");
+    return;
+  }
 
-    dispatch(
-      initializePayment({
-        gateway:      selectedGateway,
-        currency:     selectedCurrency,
-        shippingInfo: checkoutSession.shippingInfo || {},
-        cartItems:    cartItems.map((item) => ({
-          product:  item.product,
-          quantity: item.qty || item.quantity || 1
-        })),
-        cartPricing: pricingToSend,
-        ...(discountSnapshot && { discountSnapshot }),
-      })
-    )
-      .unwrap()
-      .then((data) => {
-        if (selectedGateway === "stripe" && !data.client_secret) {
-          toast.error("Failed to initialize Stripe payment");
-        }
-      })
-      .catch((err) => toast.error(err.message || "Failed to initialize payment"));
-  };
+  const discountSnapshot = (discount.applied && discount.code)
+    ? {
+        code:              discount.code,
+        discountId:        discount.discountId  || null,
+        type:              discount.type        || null,
+        value:             discount.value       || null,
+        discountAmount:    discount.discountAmount    || 0,
+        originalItemPrice: pricingToSend.itemPrice,
+        description:       discount.description || null,
+        eligibleProductCategories: Array.isArray(discount.eligibleProductCategories)
+          ? discount.eligibleProductCategories
+          : [],
+      }
+    : null;
 
+  paystackTriggered.current    = false;
+  flutterwaveTriggered.current = false;
+  setFlutterwaveOpen(false);
+
+  dispatch(
+    initializePayment({
+      gateway:      selectedGateway,
+      currency:     selectedCurrency,
+      shippingInfo,
+      cartItems:    cartItems.map((item) => ({
+        product:  item.product,
+        quantity: item.qty || item.quantity || 1
+      })),
+      cartPricing: pricingToSend,
+      ...(discountSnapshot && { discountSnapshot }),
+    })
+  )
+    .unwrap()
+    .then((data) => {
+      if (selectedGateway === "stripe" && !data.client_secret) {
+        toast.error("Failed to initialize Stripe payment");
+      }
+    })
+    .catch((err) => toast.error(err.message || "Failed to initialize payment"));
+};
   // ── Stripe success callback ──────────────────────────────────────────────
   const handleStripeSuccess = (paymentIntentId) => {
     const successReference = paymentData.reference;

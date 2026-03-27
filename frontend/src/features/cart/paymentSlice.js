@@ -5,29 +5,6 @@ import axios from "axios";
 // INITIALIZE PAYMENT THUNK
 // ----------------------
 
-/**
- * FIX — Root cause change:
- *
- * Previously this thunk accepted `discountCode` (a string) and forwarded it
- * to the backend which would then re-run the entire pricing calculation
- * including discount application from scratch. This was the second pricing
- * path and the source of the bug: if discountCode was falsy at the moment
- * the button was clicked, the backend's `if (discountCode)` guard was never
- * entered and the gateway was charged the full undiscounted price.
- *
- * The fix:
- *  - Accept `cartPricing` (the full pricing object already computed by the
- *    cart controller and stored in Redux) and forward it to the backend.
- *  - Accept `discountSnapshot` (the full discount object from Redux state)
- *    and forward it so the backend can record it accurately without
- *    re-deriving anything.
- *  - The backend no longer calls validateAndCalculateOrder() for totals; it
- *    trusts cartPricing as the authoritative figure and only does a
- *    lightweight stock/existence check per product.
- *
- * The cart controller (applyDiscountCode) remains the single point of
- * calculation for all pricing including discounts.
- */
 export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
   async (payload, { rejectWithValue }) => {
@@ -37,13 +14,7 @@ export const initializePayment = createAsyncThunk(
         currency,
         shippingInfo,
         cartItems,
-        // FIX: pre-computed pricing from the cart controller.
-        // Shape: { itemPrice, taxPrice, shippingPrice, totalPrice, currency }
         cartPricing,
-        // FIX: full discount snapshot from the cart Redux state.
-        // Shape: { code, discountId, type, value, discountAmount,
-        //          originalItemPrice, description }
-        // null/undefined when no discount is active.
         discountSnapshot,
       } = payload;
 
@@ -108,19 +79,7 @@ export const verifyPayment = createAsyncThunk(
 // PAYMENT SLICE
 // ----------------------
 
-/**
- * discountInfo shape (set on initializePayment.fulfilled):
- *   {
- *     code:               string
- *     discountAmount:     number
- *     originalItemPrice:  number
- *   }
- * null when no discount was active during the last initialisation.
- *
- * idempotent:
- *   true  — order already existed; do NOT fire analytics / success toasts
- *   false — fresh verification; proceed normally
- */
+
 const initialState = {
   loading:      false,
   initLoading:  false,
@@ -144,8 +103,6 @@ const paymentSlice = createSlice({
       state.message = null;
     },
     resetPaymentState: () => initialState,
-    // FIX: clearPaymentData also clears discountInfo so stale discount data
-    // from a previous session is never shown alongside fresh payment data.
     clearPaymentData: (state) => {
       state.paymentData  = null;
       state.discountInfo = null;
@@ -163,11 +120,6 @@ const paymentSlice = createSlice({
       .addCase(initializePayment.fulfilled, (state, action) => {
         state.initLoading = false;
         state.paymentData = action.payload;
-
-        // Extract discount info from the server-confirmed breakdown.
-        // The server echoes back what was stored in the session — this
-        // is now sourced from discountSnapshot (which came from cart Redux),
-        // so it is always accurate and consistent with the cart display.
         state.discountInfo = action.payload?.breakdown?.discount ?? null;
       })
       .addCase(initializePayment.rejected, (state, action) => {
