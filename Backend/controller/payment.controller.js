@@ -590,99 +590,99 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
  
-
-  try {
-    const checkout = await Checkout.findOne({ user: userId, status: 'pending' })
-      .sort({ lastActivityAt: -1 });
-    
-    if (checkout) {
-      checkout.markAsConverted(order._id, orderReference);
-      await checkout.save();
-    }
-  } catch (err) {
-    console.error('[payment] Failed to mark checkout as converted:', err.message);
-    
-  }
- 
-  if (session.discount) {
-    const discountLookup = session.discount.discountId
-      ? Discount.findById(session.discount.discountId)
-      : Discount.findOne({ code: session.discount.code?.toUpperCase() });
- 
-    discountLookup
-      .then(discount => {
-        if (!discount) {
-          console.error(
-            `[payment] recordUsage skipped — discount not found. ` +
-            `id=${session.discount.discountId} code=${session.discount.code}`
-          );
-          return;
-        }
-        return discount.recordUsage(userId, order._id, session.discount.discountAmount);
-      })
-      .then(() => {
-        // FIX: syncDiscountAfterOrderCreated is chained here instead of being
-        // fired independently alongside recordUsage.
-        //
-        // Race condition this fixes:
-        //   recordUsage writes entry.user into Discount.usageHistory.
-        //   syncDiscountAfterOrderCreated reads that same usageHistory via
-        //   Discount.findById() to build uniqueRedeemers for retention rate.
-        //   Previously both were separate fire-and-forget calls so the sync
-        //   could read usageHistory before recordUsage finished writing —
-        //   leaving entry.user null and causing uniqueRedeemers to undercount,
-        //   which kept postRedemptionRetentionRate stuck at null indefinitely.
-        syncDiscountAfterOrderCreated(order).catch(() => {});
-      })
-      .catch((err) => {
-        console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err);
-      });
-  } else {
-    // Non-discounted order — cheaply re-compute and bulk-write only the baseline
-    // subdocument across all DiscountAnalytics docs so Store Avg AOV and AOV Lift
-    // reflect the fresh storeAvgOrderValue without requiring a manual Sync All.
-    syncBaselineAfterNonDiscountedOrder().catch(() => {});
-  }
- 
+  // FIX: populate immediately after create, while the connection pool is
+  // still free — before any fire-and-forget side-effects grab pool slots.
   try {
     await order.populate('orderItems.product', 'name images pricing');
-  } catch { /* non-fatal */ }
+  } catch { /* non-fatal — order still valid without populated refs */ }
  
-  syncCustomerAfterOrder(order._id).catch(() => {});
- 
-  createReceiptIfNotExists({
-    orderId:        order._id,
-    userId,
-    reference:      orderReference,
-    orderItems:     order.orderItems,
-    itemPrice:      order.itemPrice,
-    taxPrice:       order.taxPrice,
-    shippingPrice:  order.shippingPrice,
-    totalPrice:     order.totalPrice,
-    shippingInfo:   order.shippingInfo,
-    currency:       order.paymentInfo.currency,
-    paymentGateway: gateway,
-    ...(order.discounts?.codes?.[0] && {
-      discount: {
-        code:              order.discounts.codes[0].code,
-        discountAmount:    order.discounts.codes[0].amount,
-        type:              order.discounts.codes[0].type              ?? null,
-        originalItemPrice: order.discounts.codes[0].originalItemPrice ?? null,
-      }
-    }),
-  }).catch(() => {});
- 
-  Promise.all([
-    deletePaymentSession(reference),
-    reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
-  ]).catch(() => {});
- 
-  invalidatePaymentCaches().catch(() => {});
- 
-  return res.status(200).json({
+  // FIX: send the HTTP response NOW, before any side-effect work.
+  // Everything below is post-response cleanup — it must not block the reply.
+  res.status(200).json({
     success:    true,
     message:    "Payment verified and order created successfully",
     order,
     idempotent: false,
   });
+ 
+  // ── Post-response side-effects (fire-and-forget) ──────────────────────
+  // setImmediate() defers execution to the next event-loop iteration,
+  // guaranteeing res.json() has already been flushed before any of these
+  // async operations touch the DB or connection pool.
+  setImmediate(() => {
+ 
+    // 1. Mark checkout as converted
+    Checkout.findOne({ user: userId, status: 'pending' })
+      .sort({ lastActivityAt: -1 })
+      .then(checkout => {
+        if (!checkout) return;
+        checkout.markAsConverted(order._id, orderReference);
+        return checkout.save();
+      })
+      .catch(err =>
+        console.error('[payment] Failed to mark checkout as converted:', err.message)
+      );
+ 
+    // 2. Discount usage + analytics
+    if (session.discount) {
+      const discountLookup = session.discount.discountId
+        ? Discount.findById(session.discount.discountId)
+        : Discount.findOne({ code: session.discount.code?.toUpperCase() });
+ 
+      discountLookup
+        .then(discount => {
+          if (!discount) {
+            console.error(
+              `[payment] recordUsage skipped — discount not found. ` +
+              `id=${session.discount.discountId} code=${session.discount.code}`
+            );
+            return;
+          }
+          return discount.recordUsage(userId, order._id, session.discount.discountAmount);
+        })
+        .then(() => {
+          syncDiscountAfterOrderCreated(order).catch(() => {});
+        })
+        .catch(err =>
+          console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err)
+        );
+    } else {
+      syncBaselineAfterNonDiscountedOrder().catch(() => {});
+    }
+ 
+    // 3. Customer analytics
+    syncCustomerAfterOrder(order._id).catch(() => {});
+ 
+    // 4. Receipt
+    createReceiptIfNotExists({
+      orderId:        order._id,
+      userId,
+      reference:      orderReference,
+      orderItems:     order.orderItems,
+      itemPrice:      order.itemPrice,
+      taxPrice:       order.taxPrice,
+      shippingPrice:  order.shippingPrice,
+      totalPrice:     order.totalPrice,
+      shippingInfo:   order.shippingInfo,
+      currency:       order.paymentInfo.currency,
+      paymentGateway: gateway,
+      ...(order.discounts?.codes?.[0] && {
+        discount: {
+          code:              order.discounts.codes[0].code,
+          discountAmount:    order.discounts.codes[0].amount,
+          type:              order.discounts.codes[0].type              ?? null,
+          originalItemPrice: order.discounts.codes[0].originalItemPrice ?? null,
+        }
+      }),
+    }).catch(() => {});
+ 
+    // 5. Session cleanup + cache invalidation
+    Promise.all([
+      deletePaymentSession(reference),
+      reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
+    ]).catch(() => {});
+ 
+    invalidatePaymentCaches().catch(() => {});
+ 
+  }); // end setImmediate
 });
