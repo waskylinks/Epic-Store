@@ -3,7 +3,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
   ArrowBack, Refresh, Email, MarkEmailRead, CheckCircle,
-  FilterList, Search, AttachMoney, ErrorOutline, Send, Block, Inbox,
+  Search, AttachMoney, ErrorOutline, Send, Block, Inbox,
+  Loop, PersonSearch, SwapHoriz,
 } from '@mui/icons-material';
 import {
   fetchAbandonedCheckouts,
@@ -28,6 +29,7 @@ const fmt = {
   date: (d) => d ? new Date(d).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }) : '—',
+  hours: (h) => h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(1)}h`,
 };
 
 function getEmailStatus(checkout, result) {
@@ -58,6 +60,19 @@ function getPriority(score) {
   return                  { label: 'Low',    cls: 'low' };
 }
 
+// Resolve the step label to display for a checkout.
+// Always shows firstAbandonedAtStep when available — for re-abandoned carts
+// this is the original step, postRecoveryAbandonedAtStep is shown separately.
+const STEP_LABEL_MAP = {
+  'shipping_info':      'Shipping Info',
+  'order_confirmation': 'Order Confirm',
+  'payment_selection':  'Pmt Selection',
+  'payment_gateway':    'Pmt Gateway',
+  'payment_failed':     'Pmt Failed',
+};
+const resolveStep = (s = '') =>
+  STEP_LABEL_MAP[s] || s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
 function Spinner({ size = 20 }) {
   return (
     <span
@@ -67,9 +82,6 @@ function Spinner({ size = 20 }) {
   );
 }
 
-// FIX: renamed prop from Icon to icon + aliased to EmptyIcon locally.
-// ESLint's no-unused-vars flags destructured props named with a capital letter
-// when they're used only as JSX tags — the alias makes the usage unambiguous.
 function Empty({ icon: EmptyIcon = Inbox, label, sub }) {
   return (
     <div className="rem-empty">
@@ -80,10 +92,45 @@ function Empty({ icon: EmptyIcon = Inbox, label, sub }) {
   );
 }
 
+// ── Cart diff indicator ────────────────────────────────────────────────────
+// Shows a compact summary of what changed between the recovery cart snapshot
+// and the actual purchase (or the current cart state for re-abandoned carts).
+function CartDiffBadge({ diff }) {
+  if (!diff) return null;
+
+  const parts = [];
+  if (diff.itemsAdded   > 0) parts.push(`+${diff.itemsAdded} added`);
+  if (diff.itemsRemoved > 0) parts.push(`-${diff.itemsRemoved} removed`);
+  if (diff.qtyIncreased > 0) parts.push(`↑ qty`);
+  if (diff.qtyDecreased > 0) parts.push(`↓ qty`);
+  if (diff.discountChangedAfterRecovery) parts.push('disc. changed');
+
+  if (parts.length === 0) return (
+    <span className="rem-diff-badge rem-diff-badge--unchanged" title="Cart unchanged from recovery snapshot">
+      <SwapHoriz style={{ fontSize: 11 }} /> Unchanged
+    </span>
+  );
+
+  const valueDelta = diff.valueDelta ?? 0;
+  const cls = valueDelta > 0 ? 'pos' : valueDelta < 0 ? 'neg' : 'unchanged';
+
+  return (
+    <span
+      className={`rem-diff-badge rem-diff-badge--${cls}`}
+      title={`Cart changed after recovery link click: ${parts.join(', ')}. Value delta: ${valueDelta >= 0 ? '+' : ''}${fmt.currency(valueDelta)}`}
+    >
+      <SwapHoriz style={{ fontSize: 11 }} />
+      {parts.slice(0, 2).join(', ')}
+      {parts.length > 2 && ` +${parts.length - 2}`}
+    </span>
+  );
+}
+
 const TABS = [
-  { key: 'queue',     label: 'Queue',     icon: Inbox },
-  { key: 'sent',      label: 'Sent',      icon: MarkEmailRead },
-  { key: 'recovered', label: 'Recovered', icon: CheckCircle },
+  { key: 'queue',        label: 'Queue',           icon: Inbox },
+  { key: 'sent',         label: 'Sent',            icon: MarkEmailRead },
+  { key: 'reabandoned',  label: 'Failed Recovery', icon: Loop },
+  { key: 'recovered',    label: 'Recovered',       icon: CheckCircle },
 ];
 
 function useTick(intervalMs = 60_000) {
@@ -133,9 +180,6 @@ function SendButton({ checkout, loading, result, sendError, onSend, now }) {
 export default function RecoveryEmailManager() {
   const dispatch = useDispatch();
   const tick     = useTick(60_000);
-  // FIX: useMemo with tick as dependency satisfies react-hooks/purity (no
-  // impure Date.now() call in the render path) and gives tick a real consumer
-  // so no-unused-vars is also resolved.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const now      = useMemo(() => Date.now(), [tick]);
 
@@ -180,33 +224,55 @@ export default function RecoveryEmailManager() {
 
   const first = !hasFetched;
 
-  const { queue, sent, recovered } = useMemo(() => {
+  // ── Partition checkouts into tabs ────────────────────────────────────────
+  const { queue, sent, reAbandoned, recovered } = useMemo(() => {
     const checkouts = abandonedRaw?.abandonedCheckouts || [];
-    const q = [], s = [], r = [];
+    const q = [], s = [], r = [], rec = [];
+
     for (const c of checkouts) {
       const result = emailSendResults?.[c._id];
       const status = getEmailStatus(c, result);
       const isConv = c.conversion?.isConverted;
-      if (isConv)                                                                    r.push(c);
-      else if (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed') s.push(c);
-      else                                                                           q.push(c);
+      const isReAb = c.abandonment?.reAbandoned === true;
+
+      if (isConv) {
+        rec.push(c);
+      } else if (isReAb) {
+        // Re-abandoned always goes to its own tab regardless of email status
+        r.push(c);
+      } else if (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed') {
+        s.push(c);
+      } else {
+        q.push(c);
+      }
     }
-    return { queue: q, sent: s, recovered: r };
+    return { queue: q, sent: s, reAbandoned: r, recovered: rec };
   }, [abandonedRaw, emailSendResults]);
 
   const activeList = useMemo(() => {
-    const src = activeTab === 'queue' ? queue : activeTab === 'sent' ? sent : recovered;
+    const src =
+      activeTab === 'queue'       ? queue       :
+      activeTab === 'sent'        ? sent        :
+      activeTab === 'reabandoned' ? reAbandoned :
+      recovered;
+
     if (!search.trim()) return src;
     const q = search.toLowerCase();
     return src.filter((c) => {
       const u = c.user || {};
-      return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+      return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) ||
+             (u.email || '').toLowerCase().includes(q);
     });
-  }, [activeTab, queue, sent, recovered, search]);
+  }, [activeTab, queue, sent, reAbandoned, recovered, search]);
 
   const totalValue = useMemo(
     () => queue.reduce((sum, c) => sum + (c.pricing?.totalPrice || 0), 0),
     [queue]
+  );
+
+  const reAbandonedRevenue = useMemo(
+    () => reAbandoned.reduce((sum, c) => sum + (c.pricing?.totalPrice || 0), 0),
+    [reAbandoned]
   );
 
   const eligibleForBulk = useMemo(
@@ -253,6 +319,10 @@ export default function RecoveryEmailManager() {
 
   const handleBulkAbort = () => { bulkAbort.current = true; };
 
+  // ── Columns vary per tab ───────────────────────────────────────────────────
+  const showActionCol   = activeTab !== 'recovered';
+  const showReAbandonedCols = activeTab === 'reabandoned';
+
   return (
     <>
       <Navbar />
@@ -268,7 +338,7 @@ export default function RecoveryEmailManager() {
               <span className="rem-hd-icon"><MarkEmailRead style={{ fontSize: 26 }} /></span>
               <div>
                 <h1 className="rem-hd-title">Recovery Email Manager</h1>
-                <p className="rem-hd-sub">Send cart recovery emails · Track cooldowns · Monitor conversions</p>
+                <p className="rem-hd-sub">Send cart recovery emails · Track cooldowns · Monitor failed recoveries · Conversions</p>
               </div>
             </div>
             <div className="rem-hd-right">
@@ -318,6 +388,7 @@ export default function RecoveryEmailManager() {
             </div>
           )}
 
+          {/* ── KPI strip ──────────────────────────────────────────────── */}
           <div className="rem-kpi-strip">
             <div className="rem-kpi">
               <span className="rem-kpi-icon rem-kpi-icon--coral"><Inbox style={{ fontSize: 18 }} /></span>
@@ -328,12 +399,26 @@ export default function RecoveryEmailManager() {
               <div><div className="rem-kpi-val">{fmt.number(sent.length)}</div><div className="rem-kpi-lbl">Emails Sent</div></div>
             </div>
             <div className="rem-kpi">
+              <span className="rem-kpi-icon rem-kpi-icon--purple"><Loop style={{ fontSize: 18 }} /></span>
+              <div>
+                <div className="rem-kpi-val" style={{ color: '#7C3AED' }}>{fmt.number(reAbandoned.length)}</div>
+                <div className="rem-kpi-lbl">Failed Recoveries</div>
+              </div>
+            </div>
+            <div className="rem-kpi">
               <span className="rem-kpi-icon rem-kpi-icon--green"><CheckCircle style={{ fontSize: 18 }} /></span>
               <div><div className="rem-kpi-val">{fmt.number(recovered.length)}</div><div className="rem-kpi-lbl">Recovered</div></div>
             </div>
             <div className="rem-kpi">
               <span className="rem-kpi-icon rem-kpi-icon--amber"><AttachMoney style={{ fontSize: 18 }} /></span>
               <div><div className="rem-kpi-val">{fmt.compact(totalValue)}</div><div className="rem-kpi-lbl">Queue Value</div></div>
+            </div>
+            <div className="rem-kpi">
+              <span className="rem-kpi-icon rem-kpi-icon--red"><AttachMoney style={{ fontSize: 18 }} /></span>
+              <div>
+                <div className="rem-kpi-val" style={{ color: '#DC2626' }}>{fmt.compact(reAbandonedRevenue)}</div>
+                <div className="rem-kpi-lbl">Failed Rev. Lost</div>
+              </div>
             </div>
           </div>
 
@@ -348,22 +433,26 @@ export default function RecoveryEmailManager() {
             </div>
           )}
 
+          {/* ── Toolbar ─────────────────────────────────────────────────── */}
           <div className="rem-toolbar">
             <div className="rem-tabs">
               {TABS.map((tab) => {
-                // FIX: aliased to TabIcon (capital) so JSX recognises it as a
-                // component reference — this is what was triggering no-unused-vars
-                // in the original code where the alias name conflicted with scope.
                 const TabIcon = tab.icon;
-                const count = tab.key === 'queue' ? queue.length : tab.key === 'sent' ? sent.length : recovered.length;
+                const count =
+                  tab.key === 'queue'       ? queue.length       :
+                  tab.key === 'sent'        ? sent.length        :
+                  tab.key === 'reabandoned' ? reAbandoned.length :
+                  recovered.length;
                 return (
                   <button
                     key={tab.key}
-                    className={`rem-tab ${activeTab === tab.key ? 'rem-tab--active' : ''}`}
+                    className={`rem-tab ${activeTab === tab.key ? 'rem-tab--active' : ''} ${tab.key === 'reabandoned' && reAbandoned.length > 0 ? 'rem-tab--alert' : ''}`}
                     onClick={() => setActiveTab(tab.key)}
                   >
                     <TabIcon style={{ fontSize: 14 }} />{tab.label}
-                    <span className="rem-tab-count">{count}</span>
+                    <span className={`rem-tab-count ${tab.key === 'reabandoned' && reAbandoned.length > 0 ? 'rem-tab-count--alert' : ''}`}>
+                      {count}
+                    </span>
                   </button>
                 );
               })}
@@ -380,16 +469,34 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
+          {/* ── Failed Recovery context banner ───────────────────────────── */}
+          {activeTab === 'reabandoned' && reAbandoned.length > 0 && (
+            <div className="rem-context-banner">
+              <Loop style={{ fontSize: 16, color: '#7C3AED' }} />
+              <span>
+                These customers <strong>clicked your recovery link</strong> but abandoned again without purchasing.
+                The <em>Post-Recovery Step</em> column shows where they left on their second attempt.
+                Consider a different offer or follow-up strategy.
+              </span>
+            </div>
+          )}
+
+          {/* ── Table ───────────────────────────────────────────────────── */}
           <div className="rem-card">
             {first ? (
               <div className="rem-loading"><Spinner size={28} /><span>Loading checkouts…</span></div>
             ) : activeList.length === 0 ? (
               <Empty
-                // FIX: lowercase prop name to match updated Empty signature
-                icon={activeTab === 'queue' ? Inbox : activeTab === 'sent' ? MarkEmailRead : CheckCircle}
+                icon={
+                  activeTab === 'queue'       ? Inbox        :
+                  activeTab === 'sent'        ? MarkEmailRead :
+                  activeTab === 'reabandoned' ? Loop         :
+                  CheckCircle
+                }
                 label={
-                  activeTab === 'queue'     ? 'No carts in queue'     :
-                  activeTab === 'sent'      ? 'No emails sent yet'    :
+                  activeTab === 'queue'       ? 'No carts in queue'          :
+                  activeTab === 'sent'        ? 'No emails sent yet'         :
+                  activeTab === 'reabandoned' ? 'No failed recoveries — great news!' :
                   'No recovered carts yet'
                 }
                 sub={search ? 'Try a different search term' : undefined}
@@ -399,9 +506,18 @@ export default function RecoveryEmailManager() {
                 <table className="rem-tbl">
                   <thead>
                     <tr>
-                      <th>#</th><th>Customer</th><th>Email</th><th>Cart Value</th>
-                      <th>Items</th><th>Priority</th><th>Abandoned</th><th>Status</th>
-                      {activeTab !== 'recovered' && <th>Action</th>}
+                      <th>#</th>
+                      <th>Customer</th>
+                      <th>Email</th>
+                      <th>Cart Value</th>
+                      <th>Items</th>
+                      <th>Priority</th>
+                      <th>First Abandoned Step</th>
+                      {showReAbandonedCols && <th>Post-Recovery Step</th>}
+                      {showReAbandonedCols && <th>Cart Changes</th>}
+                      <th>Abandoned</th>
+                      <th>Status</th>
+                      {showActionCol && <th>Action</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -413,11 +529,24 @@ export default function RecoveryEmailManager() {
                       const result        = emailSendResults?.[id];
                       const status        = getEmailStatus(c, result);
 
+                      const firstStep       = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
+                      const postRecovStep   = c.abandonment?.postRecoveryAbandonedAtStep;
+                      const cartDiff        = c.abandonment?.recoveryCartDiff;
+                      const isOrganic       = c.abandonment?.organicRecovery === true;
+                      const failedRecoveries = c.abandonment?.failedRecoveries || 0;
+
                       return (
                         <tr key={id || i} className={status.type === 'ready' ? 'rem-tr--ready' : ''}>
                           <td className="rem-td-rank">{i + 1}</td>
                           <td className="rem-td-name">
-                            {u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Guest'}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              {u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Guest'}
+                              {isOrganic && (
+                                <span className="rem-flag rem-flag--organic" title="Converted without using recovery link (organic recovery)">
+                                  <PersonSearch style={{ fontSize: 10 }} /> Organic
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="rem-td-email">{u.email || '—'}</td>
                           <td className="rem-td-money">{fmt.compact(c.pricing?.totalPrice || 0)}</td>
@@ -425,13 +554,35 @@ export default function RecoveryEmailManager() {
                           <td>
                             <span className={`rem-priority rem-priority--${priority.cls}`}>{priority.label}</span>
                           </td>
+                          <td className="rem-td-step">
+                            {resolveStep(firstStep) || '—'}
+                          </td>
+                          {showReAbandonedCols && (
+                            <td className="rem-td-step rem-td-step--post">
+                              {postRecovStep ? (
+                                <span style={{ color: '#7C3AED', fontWeight: 700 }}>
+                                  {resolveStep(postRecovStep)}
+                                </span>
+                              ) : '—'}
+                              {failedRecoveries > 1 && (
+                                <span className="rem-fail-count" title={`${failedRecoveries} failed recovery attempts`}>
+                                  ×{failedRecoveries}
+                                </span>
+                              )}
+                            </td>
+                          )}
+                          {showReAbandonedCols && (
+                            <td>
+                              <CartDiffBadge diff={cartDiff} />
+                            </td>
+                          )}
                           <td className="rem-td-date">
                             {fmt.date(c.abandonment?.abandonedAt || c.updatedAt)}
                           </td>
                           <td>
                             <span className={`rem-status rem-status--${status.type}`}>{status.label}</span>
                           </td>
-                          {activeTab !== 'recovered' && (
+                          {showActionCol && (
                             <td>
                               <SendButton
                                 checkout={c}

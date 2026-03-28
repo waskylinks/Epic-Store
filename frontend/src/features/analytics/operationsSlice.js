@@ -1,5 +1,3 @@
-
-
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
@@ -36,14 +34,14 @@ export const fetchAbandonedCheckouts = createAsyncThunk(
     "operations/fetchAbandonedCheckouts",
     async (
         {
-            hours    = 24,
-            minValue = 0,
-            limit    = 50,
-            page     = 1,
-            sortBy   = "priority",
-            // FIX: reAbandoned filter param added so admins can isolate
-            // carts that went through a failed recovery cycle.
-            reAbandoned,
+            hours       = 24,
+            minValue    = 0,
+            limit       = 50,
+            page        = 1,
+            sortBy      = "priority",
+            emailSent,
+            recovered,
+            reAbandoned, // filter for failed-recovery carts
         },
         { rejectWithValue, signal }
     ) => {
@@ -55,9 +53,9 @@ export const fetchAbandonedCheckouts = createAsyncThunk(
                 page:     page.toString(),
                 sortBy,
             });
-            if (reAbandoned !== undefined && reAbandoned !== null) {
-                params.append('reAbandoned', reAbandoned.toString());
-            }
+            if (emailSent   !== undefined && emailSent   !== null) params.append('emailSent',   emailSent.toString());
+            if (recovered   !== undefined && recovered   !== null) params.append('recovered',   recovered.toString());
+            if (reAbandoned !== undefined && reAbandoned !== null) params.append('reAbandoned', reAbandoned.toString());
 
             const { data } = await axios.get(
                 `${API_BASE}/analytics/checkout/abandoned-list?${params.toString()}`,
@@ -91,6 +89,24 @@ export const fetchRecoveryOpportunities = createAsyncThunk(
     }
 );
 
+export const fetchReAbandonmentAnalytics = createAsyncThunk(
+    "operations/fetchReAbandonmentAnalytics",
+    async (timeframe = "month", { rejectWithValue, signal }) => {
+        try {
+            const { data } = await axios.get(
+                `${API_BASE}/analytics/checkout/re-abandonment?timeframe=${timeframe}`,
+                { signal }
+            );
+            return { ...data, _timeframe: timeframe };
+        } catch (error) {
+            if (isAbortError(error)) return rejectWithValue({ aborted: true });
+            return rejectWithValue(
+                error.response?.data?.message || "Failed to fetch re-abandonment analytics"
+            );
+        }
+    }
+);
+
 export const markRecoveryEmailSent = createAsyncThunk(
     "operations/markRecoveryEmailSent",
     async (checkoutId, { rejectWithValue }) => {
@@ -102,7 +118,6 @@ export const markRecoveryEmailSent = createAsyncThunk(
             );
             return { checkoutId, result: data.result };
         } catch (error) {
-            // Always return a consistent object shape to prevent destructure crash
             return rejectWithValue({
                 checkoutId,
                 message:
@@ -442,14 +457,13 @@ const operationsSlice = createSlice({
         activeTimeframe: "month",
 
         // Checkout
-        checkoutAbandonment:   null,
-        abandonedCheckouts:    [],
-        recoveryOpportunities: [],
-        emailSendLoading:      {},
-        emailSendResults:      {},
-        emailSendError:        {},
-        reAbandonedCount:    0,
-        failedRecoveriesCount: 0,
+        checkoutAbandonment:    null,
+        abandonedCheckouts:     null,
+        recoveryOpportunities:  null,
+        reAbandonmentAnalytics: null,
+        emailSendLoading:       {},
+        emailSendResults:       {},
+        emailSendError:         {},
 
         // Products
         productPerformance:     null,
@@ -469,7 +483,7 @@ const operationsSlice = createSlice({
         cancellationAnalytics: null,
         highRiskOrders:        null,
 
-        // Refunds only — returns lives in returnAnalyticsSlice
+        // Refunds
         refundOverview:         null,
         refundsByPaymentMethod: null,
         refundTimeline:         null,
@@ -499,13 +513,6 @@ const operationsSlice = createSlice({
                 if (action.payload._timeframe === state.activeTimeframe) {
                     const { _timeframe, ...data } = action.payload;
                     state.checkoutAbandonment = data;
-
-                    // FIX: surface reAbandoned and failedRecoveries counts if
-                    // the backend returns them so downstream components and
-                    // filters have them available in state.
-                    if (typeof data.failedRecoveriesCount === 'number') {
-                        state.failedRecoveriesCount = data.failedRecoveriesCount;
-                    }
                 }
             })
             .addCase(fetchCheckoutAbandonmentStats.rejected, (state, action) => {
@@ -514,12 +521,6 @@ const operationsSlice = createSlice({
 
             .addCase(fetchAbandonedCheckouts.fulfilled, (state, action) => {
                 state.abandonedCheckouts = action.payload;
-
-                // FIX: capture reAbandoned segment count if returned by backend
-                // so the filter badge and KPI strip can display it.
-                if (typeof action.payload.reAbandonedCount === 'number') {
-                    state.reAbandonedCount = action.payload.reAbandonedCount;
-                }
             })
             .addCase(fetchAbandonedCheckouts.rejected, (state, action) => {
                 if (!action.payload?.aborted) state.error = action.payload;
@@ -532,30 +533,41 @@ const operationsSlice = createSlice({
                 if (!action.payload?.aborted) state.error = action.payload;
             })
 
-            // markRecoveryEmailSent — keyed loading/error per checkoutId so
-            // individual rows show their own spinner without blocking the list.
+            .addCase(fetchReAbandonmentAnalytics.fulfilled, (state, action) => {
+                if (action.payload._timeframe === state.activeTimeframe) {
+                    const { _timeframe, ...data } = action.payload;
+                    state.reAbandonmentAnalytics = data;
+                }
+            })
+            .addCase(fetchReAbandonmentAnalytics.rejected, (state, action) => {
+                if (!action.payload?.aborted) state.error = action.payload;
+            })
+
+            // markRecoveryEmailSent — per-checkout keyed loading/error
             .addCase(markRecoveryEmailSent.pending, (state, action) => {
                 const checkoutId = action.meta.arg;
                 state.emailSendLoading[checkoutId] = true;
+                // Clear previous error before retry so stale ! indicator disappears
                 delete state.emailSendError[checkoutId];
             })
-
             .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
                 const { checkoutId, result } = action.payload;
-                if (!checkoutId || !result) return;          // ← ADD: guard against malformed payload
+                if (!checkoutId || !result) return;
 
                 state.emailSendLoading[checkoutId] = false;
                 state.emailSendResults[checkoutId] = result;
                 state.success = true;
                 state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
 
+                // Shared patch applied to both list stores
                 const patch = {
                     recoveryEmailSent:   true,
                     recoveryEmailSentAt: result.sentAt,
                     recoveryEmailCount:  result.attemptNumber,
-                    pendingEmailAck:     false,              // ← ADD: mirror the ack clear
+                    pendingEmailAck:     false,
                 };
 
+                // Patch abandonedCheckouts list
                 const list = state.abandonedCheckouts?.abandonedCheckouts;
                 if (Array.isArray(list)) {
                     const idx = list.findIndex((c) => c._id === checkoutId);
@@ -567,6 +579,7 @@ const operationsSlice = createSlice({
                     }
                 }
 
+                // Patch recoveryOpportunities list
                 const opps = state.recoveryOpportunities?.opportunities;
                 if (Array.isArray(opps)) {
                     const idx = opps.findIndex((c) => c._id === checkoutId);
@@ -699,18 +712,13 @@ const operationsSlice = createSlice({
                 const riskDist   = action.payload.riskDistribution || [];
                 const reviewDecs = action.payload.reviewDecisions  || [];
                 const fraudPrev  = action.payload.fraudPrevention  || {};
-                const totalRiskOrders = riskDist.reduce(
-                    (sum, r) => sum + (r.count || 0),
-                    0
-                );
-                const flaggedOrders = riskDist
+                const totalRiskOrders = riskDist.reduce((sum, r) => sum + (r.count || 0), 0);
+                const flaggedOrders   = riskDist
                     .filter((r) => r._id === "high" || r._id === "critical")
                     .reduce((sum, r) => sum + (r.count || 0), 0);
                 const fraudRate =
                     totalRiskOrders > 0
-                        ? Math.round(
-                              (flaggedOrders / totalRiskOrders) * 100 * 100
-                          ) / 100
+                        ? Math.round((flaggedOrders / totalRiskOrders) * 100 * 100) / 100
                         : 0;
                 const rejectedEntry  = reviewDecs.find((d) => d._id === "Rejected");
                 const confirmedFraud = rejectedEntry ? rejectedEntry.count || 0 : 0;
@@ -765,7 +773,6 @@ const operationsSlice = createSlice({
             });
 
         // ── REFUNDS ──────────────────────────────────────────────────────────
-        // Returns analytics has been moved to returnAnalyticsSlice.js
         builder
             .addCase(fetchRefundOverview.fulfilled, (state, action) => {
                 if (action.payload._timeframe !== state.activeTimeframe) return;
