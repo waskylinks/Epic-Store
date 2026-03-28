@@ -537,18 +537,24 @@ const operationsSlice = createSlice({
             .addCase(markRecoveryEmailSent.pending, (state, action) => {
                 const checkoutId = action.meta.arg;
                 state.emailSendLoading[checkoutId] = true;
-                // FIX: delete the previous error BEFORE the retry attempt is
-                // visible in the UI so the old error ! indicator doesn't flash
-                // during the in-flight request.
                 delete state.emailSendError[checkoutId];
             })
+
             .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
                 const { checkoutId, result } = action.payload;
+                if (!checkoutId || !result) return;          // ← ADD: guard against malformed payload
+
                 state.emailSendLoading[checkoutId] = false;
                 state.emailSendResults[checkoutId] = result;
                 state.success = true;
                 state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
 
+                const patch = {
+                    recoveryEmailSent:   true,
+                    recoveryEmailSentAt: result.sentAt,
+                    recoveryEmailCount:  result.attemptNumber,
+                    pendingEmailAck:     false,              // ← ADD: mirror the ack clear
+                };
 
                 const list = state.abandonedCheckouts?.abandonedCheckouts;
                 if (Array.isArray(list)) {
@@ -556,35 +562,23 @@ const operationsSlice = createSlice({
                     if (idx !== -1) {
                         list[idx] = {
                             ...list[idx],
-                            abandonment: {
-                                ...list[idx].abandonment,
-                                recoveryEmailSent:   true,
-                                recoveryEmailSentAt: result.sentAt,
-                                recoveryEmailCount:  result.attemptNumber,
-                            },
+                            abandonment: { ...list[idx].abandonment, ...patch },
                         };
                     }
                 }
 
-                // ── recoveryOpportunities list ───────────────────────────────
                 const opps = state.recoveryOpportunities?.opportunities;
                 if (Array.isArray(opps)) {
                     const idx = opps.findIndex((c) => c._id === checkoutId);
                     if (idx !== -1) {
                         opps[idx] = {
                             ...opps[idx],
-                            abandonment: {
-                                ...opps[idx].abandonment,
-                                recoveryEmailSent:   true,
-                                recoveryEmailSentAt: result.sentAt,
-                                recoveryEmailCount:  result.attemptNumber,
-                            },
+                            abandonment: { ...opps[idx].abandonment, ...patch },
                         };
                     }
                 }
             })
             .addCase(markRecoveryEmailSent.rejected, (state, action) => {
-                // action.payload is always { checkoutId, message } — safe to destructure
                 const { checkoutId, message } = action.payload;
                 state.emailSendLoading[checkoutId] = false;
                 state.emailSendError[checkoutId]   = message;
