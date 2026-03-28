@@ -81,3 +81,19 @@ export const verifyRecoveryToken = (token) => {
  * Useful for setting cache TTL on the recovery page.
  */
 export const RECOVERY_TOKEN_TTL_SECONDS = EXPIRY_SECONDS;
+
+/**
+ * Decode a recovery token WITHOUT verifying its signature or expiry.
+ * Use only for best-effort audit writes (e.g. recording token expiry).
+ * Never trust the payload for auth or access control.
+ *
+ * @param {string} token
+ * @returns {Object|null} decoded payload, or null if token is malformed
+ */
+export const decodeRecoveryToken = (token) => {
+  try {
+    return jwt.decode(token);
+  } catch {
+    return null;
+  }
+};
