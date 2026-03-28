@@ -5,7 +5,8 @@ import {
   getCheckoutAbandonmentStats,
   getAbandonedCheckoutsList,
   getRecoveryOpportunities,
-  markRecoveryEmailSent
+  markRecoveryEmailSent,
+  getReAbandonmentAnalytics, 
 } from '../controller/checkout-analytics-controller.js';
 
 const router = express.Router();
@@ -48,6 +49,13 @@ router.get(
   adminAnalyticsLimiter,
   getRecoveryOpportunities
 );
+
+router.get("/re-abandonment",
+  verifyUserAuth,
+  roleBaseAccess('admin', "superAdmin"),
+  adminAnalyticsLimiter,         
+  getReAbandonmentAnalytics
+); 
 
 /**
  * Mark recovery email sent
