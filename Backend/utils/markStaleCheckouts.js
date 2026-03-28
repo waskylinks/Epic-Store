@@ -1,35 +1,27 @@
 import Checkout from '../models/checkout-model.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
-/**
- * markStaleCheckouts
- *
- * Sweeps the database for pending checkouts that have been inactive beyond
- * the abandonment threshold and marks them as abandoned.
- *
- * Designed to be called:
- *   1. By the abandonmentSweep cron job (every 30 min in production)
- *   2. Inline at the top of getCheckoutAbandonmentStats and
- *      getAbandonedCheckoutsList before any aggregation runs — this
- *      ensures analytics always reflect the latest state regardless of
- *      when the cron last fired.
- *
- * @returns {Promise<{ marked: number, errors: number, batches: number }>}
- */
+
 export const markStaleCheckouts = async () => {
   const THRESHOLD_HOURS = parseFloat(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+
+  const RECOVERY_TOKEN_TTL_SECONDS =
+    parseInt(process.env.RECOVERY_TOKEN_TTL_SECONDS) || 72 * 60 * 60;
+
   const BATCH_SIZE = 500;
 
   const cutoff = new Date(
     Date.now() - THRESHOLD_HOURS * 60 * 60 * 1000
   );
 
-  let marked   = 0;
-  let errors   = 0;
-  let batches  = 0;
-  let lastId   = null;
-  let hasMore  = true;
+  let marked      = 0;
+  let errors      = 0;
+  let batches     = 0;
+  let reAbandoned = 0;
+  let lastId      = null;
+  let hasMore     = true;
 
+  // ── PRIMARY PASS: mark stale pending checkouts as abandoned ───────────────
   while (hasMore) {
     batches++;
 
@@ -41,7 +33,9 @@ export const markStaleCheckouts = async () => {
     };
 
     const staleCheckouts = await Checkout.find(query)
-      .select('_id status lastActivityAt abandonment conversion currentStep')
+      .select(
+        '_id status lastActivityAt abandonment conversion currentStep'
+      )
       .sort({ _id: 1 })
       .limit(BATCH_SIZE);
 
@@ -61,10 +55,25 @@ export const markStaleCheckouts = async () => {
           continue;
         }
 
+        const isFailedRecovery =
+          checkout.abandonment?.recoveryEmailSent === true &&
+          !!checkout.abandonment?.recoveryLinkClickedAt;
+
         checkout.markAsAbandoned();
-        checkout._shouldInvalidateCache = false; // suppress per-document cache hook — bulk flush happens after loop
+
+        checkout._shouldInvalidateCache = false;
+
         await checkout.save();
         marked++;
+
+        if (isFailedRecovery) {
+          reAbandoned++;
+
+          console.log(
+            `[markStaleCheckouts] Re-abandoned (failed recovery): checkout=${checkout._id}` +
+            ` | failedRecoveries=${checkout.abandonment.failedRecoveries}`
+          );
+        }
       } catch (err) {
         errors++;
         console.error(
@@ -79,11 +88,39 @@ export const markStaleCheckouts = async () => {
     }
 
     if (batches >= 100) {
-      console.warn('[markStaleCheckouts] Reached 100 batch limit — stopping sweep early.');
+      console.warn(
+        '[markStaleCheckouts] Reached 100 batch limit — stopping sweep early.'
+      );
       break;
     }
   }
 
+
+  try {
+    const tokenExpiryThreshold = new Date(
+      Date.now() - RECOVERY_TOKEN_TTL_SECONDS * 1000
+    );
+
+    await Checkout.updateMany(
+      {
+        'abandonment.lastRecoveryTokenIssuedAt': { $lte: tokenExpiryThreshold },
+        'abandonment.recoveryLinkClickedAt':     { $exists: false },
+        'abandonment.lastRecoveryTokenExpiredAt': { $exists: false },
+        'conversion.isConverted':                false
+      },
+      {
+        $set: { 'abandonment.lastRecoveryTokenExpiredAt': new Date() }
+      }
+    );
+  } catch (err) {
+    // Non-fatal — secondary pass failure must not affect the primary result.
+    console.error(
+      '[markStaleCheckouts] Secondary pass (token expiry write) failed:',
+      err.message
+    );
+  }
+
+  // ── Bulk cache flush ──────────────────────────────────────────────────────
   if (marked > 0) {
     await Promise.all([
       deleteCachePattern('checkout_abandonment_*'),
@@ -96,7 +133,7 @@ export const markStaleCheckouts = async () => {
     );
   }
 
-  return { marked, errors, batches };
+  return { marked, errors, batches, reAbandoned };
 };
 
 export default markStaleCheckouts;

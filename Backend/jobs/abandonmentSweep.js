@@ -1,10 +1,11 @@
 import cron from 'node-cron';
 import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
 
+const CRON_SCHEDULE_PRODUCTION  = '0,30 * * * *';  // every 30 min
+const CRON_SCHEDULE_DEVELOPMENT = '*/5 * * * *';   // every 5 min
 
-
-const CRON_SCHEDULE_PRODUCTION  = '0,30 * * * *';   // every 30 min
-const CRON_SCHEDULE_DEVELOPMENT = '*/5 * * * *';     // every 5 min
+const SWEEP_ERROR_ALERT_THRESHOLD =
+  parseInt(process.env.SWEEP_ERROR_ALERT_THRESHOLD) || 5;
 
 let isSweepRunning = false;
 
@@ -20,18 +21,22 @@ const runSweep = async () => {
   const startedAt = new Date();
 
   try {
-    const { marked, errors } = await markStaleCheckouts();
+    const { marked, errors, reAbandoned } = await markStaleCheckouts();
 
     const durationMs = Date.now() - startedAt.getTime();
 
     console.log(
       `[AbandonmentSweep] Completed at ${new Date().toISOString()} ` +
-      `| marked: ${marked} | errors: ${errors} | duration: ${durationMs}ms`
+      `| marked: ${marked} | reAbandoned: ${reAbandoned} | errors: ${errors} | duration: ${durationMs}ms`
     );
+
+    if (errors > SWEEP_ERROR_ALERT_THRESHOLD) {
+      console.error(
+        `[AbandonmentSweep] ERROR THRESHOLD EXCEEDED — ${errors} checkout(s) failed to mark abandoned ` +
+        `in the sweep at ${new Date().toISOString()}. Investigate immediately.`
+      );
+    }
   } catch (err) {
-    // Top-level catch — markStaleCheckouts has its own per-document
-    // try/catch, so this only fires if something catastrophic happens
-    // (e.g. the DB query itself throws).
     console.error(
       `[AbandonmentSweep] Sweep failed at ${new Date().toISOString()}:`,
       err.message
@@ -41,27 +46,21 @@ const runSweep = async () => {
   }
 };
 
-/**
- * startAbandonmentSweep
- *
- * Call once after the database connection is ready.
- * Schedules the cron and runs an immediate sweep on boot so the first
- * interval doesn't have to wait up to 30 minutes for stale data to clear.
- */
 export const startAbandonmentSweep = () => {
-  const isProd     = process.env.NODE_ENV === 'production';
-  const schedule   = isProd ? CRON_SCHEDULE_PRODUCTION : CRON_SCHEDULE_DEVELOPMENT;
+  const isProd        = process.env.NODE_ENV === 'production';
+  const schedule      = isProd ? CRON_SCHEDULE_PRODUCTION : CRON_SCHEDULE_DEVELOPMENT;
   const intervalLabel = isProd ? '30 minutes' : '5 minutes';
 
   console.log(
     `[AbandonmentSweep] Starting — environment: ${process.env.NODE_ENV || 'development'}, ` +
-    `interval: ${intervalLabel}`
+    `interval: ${intervalLabel}, ` +
+    `errorAlertThreshold: ${SWEEP_ERROR_ALERT_THRESHOLD}`
   );
 
   // Schedule the recurring job
   cron.schedule(schedule, runSweep, {
     scheduled: true,
-    timezone: 'UTC'
+    timezone:  'UTC'
   });
 
   // Run once immediately on boot so stale checkouts don't survive a restart
