@@ -31,7 +31,6 @@ const AMOUNT_TOLERANCE = {
   DEFAULT: 0.05
 };
 
-// Supported currencies — must match cart controller and pricing service
 const SUPPORTED_CURRENCIES = ['USD', 'NGN', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR'];
 
 // ============================================
@@ -51,7 +50,7 @@ const invalidatePaymentCaches = async () => {
       deleteCachePattern('payment_*')
     ]);
   } catch {
-    // intentionally swallowed
+    // intentionally swallowed — cache invalidation failure must never block a response
   }
 };
 
@@ -183,10 +182,10 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
   const { itemPrice, taxPrice, shippingPrice, totalPrice } = cartPricing;
   if (
-    typeof itemPrice    !== 'number' ||
-    typeof taxPrice     !== 'number' ||
+    typeof itemPrice     !== 'number' ||
+    typeof taxPrice      !== 'number' ||
     typeof shippingPrice !== 'number' ||
-    typeof totalPrice   !== 'number'
+    typeof totalPrice    !== 'number'
   ) {
     return next(new HandleError(
       "cartPricing must include numeric itemPrice, taxPrice, shippingPrice and totalPrice", 400
@@ -250,10 +249,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     else if (product.price      > 0) unitPrice = product.price;
     else return next(new HandleError(`Product "${product.name}" has no valid price`, 500));
 
-    // FIX: compute discounted unit price per item so returns and refunds
-    // always have the correct per-item paid price.
-    // Category-scoped: only reduce price for eligible category items.
-    // Global: reduce price for all items proportionally.
     const eligibleCats     = discountSnapshot?.eligibleProductCategories ?? [];
     const isCategoryScoped = eligibleCats.length > 0;
     const discountAmt      = Number(discountSnapshot?.discountAmount ?? 0);
@@ -409,104 +404,140 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 
 // ============================================
 // VERIFY PAYMENT
+// @route POST /api/v1/payment/verify
+// @access Private
 // ============================================
-
-/**
- * Verify Payment — confirms gateway charge, creates order.
- * No pricing changes — session is the source of truth here.
- *
- * @route POST /api/v1/payment/verify
- * @access Private
- */
 export const verifyPaymentController = handleAsyncError(async (req, res, next) => {
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
- 
+
   const { gateway, reference, transactionId } = req.body;
   if (!gateway || !reference) {
-    return next(new HandleError("Both 'gateway' and 'reference' are required to verify a payment", 400));
-  }
- 
-  const session = await getPaymentSession(reference);
-  if (!session) {
     return next(new HandleError(
-      "Payment session not found or expired. Please start a new payment.", 404
+      "Both 'gateway' and 'reference' are required to verify a payment", 400
     ));
   }
- 
+
+  // ── STEP 1: Load Redis session ────────────────────────────────────────────
+
+  const session = await getPaymentSession(reference);
+
+  if (!session) {
+
+    const orphanOrder = await Order.findOne({
+      $or: [
+        { "paymentInfo.reference":             reference },
+        { "paymentInfo.stripePaymentIntentId": reference }
+      ],
+      user: userId
+    }).lean();
+
+    if (orphanOrder) {
+
+      return res.status(200).json({
+        success:    true,
+        message:    "Payment already verified — returning existing order",
+        order:      orphanOrder,
+        idempotent: true
+      });
+    }
+
+    return next(new HandleError(
+      "Your payment session has expired (30-minute limit). " +
+      "No charge was made. Please start a new payment.",
+      400
+    ));
+  }
+
+  // ── STEP 2: Validate session integrity ───────────────────────────────────
   if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
       "Payment session data is incomplete. Please start a new payment.", 400
     ));
   }
- 
+
   if (session.createdAt && Date.now() - new Date(session.createdAt).getTime() > SESSION_EXPIRY_MS) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
       "Payment session has expired (30-minute limit). Please start a new payment.", 400
     ));
   }
- 
+
   const orderReference = session.reference;
- 
+
+  // ── STEP 4: Ownership check ───────────────────────────────────────────────
   if (session.userId !== userId.toString()) {
-    return next(new HandleError("This payment session does not belong to your account", 403));
+    return next(new HandleError(
+      "This payment session does not belong to your account", 403
+    ));
   }
- 
+
+  //  Gateway match ─────────────────────────────────────────────────
   if (session.gateway !== gateway) {
     return next(new HandleError(
       `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
- 
+
   const existingOrder = await Order.findOne({
     $or: [
-      { "paymentInfo.reference": orderReference },
-      { "paymentInfo.stripePaymentIntentId": reference }
+      { "paymentInfo.reference":             orderReference },
+      { "paymentInfo.stripePaymentIntentId": reference      },
+      { "paymentInfo.reference":             reference       }  // covers alias edge case
     ]
-  });
- 
+  }).lean();
+
   if (existingOrder) {
+    // Clean up the session since we're done with it
     await deletePaymentSession(reference).catch(() => {});
     if (reference !== orderReference) await deletePaymentSession(orderReference).catch(() => {});
+
     return res.status(200).json({
-      success: true,
-      message: "Payment already verified — returning existing order",
-      order: existingOrder,
+      success:    true,
+      message:    "Payment already verified — returning existing order",
+      order:      existingOrder,
       idempotent: true
     });
   }
- 
+
+
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
   } catch {
     return next(new HandleError(`Unsupported payment gateway: ${gateway}`, 400));
   }
- 
+
   let gatewayData;
   try {
-    gatewayData = await verifyWithGateway(paymentService, gateway, reference, transactionId || null);
+    gatewayData = await verifyWithGateway(
+      paymentService,
+      gateway,
+      reference,
+      transactionId || null
+    );
   } catch (err) {
     return next(new HandleError(
       `Payment verification failed with ${gateway}: ${err.message}`, 502
     ));
   }
- 
+
   const {
-    amount: gatewayAmount,
+    amount:   gatewayAmount,
     currency: gatewayCurrency,
-    id: providerTxId,
-    raw: gatewayResponse
+    id:       providerTxId,
+    raw:      gatewayResponse
   } = gatewayData;
- 
+
+  // ── STEP 8: Currency check ────────────────────────────────────────────────
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
       `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
- 
+
+  // ── STEP 9: Amount tolerance check ───────────────────────────────────────
   const tolerance  = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
@@ -515,22 +546,29 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       `gateway charged ${gatewayAmount} ${gatewayCurrency} (diff: ${amountDiff.toFixed(2)})`, 400
     ));
   }
- 
+
+  // ── STEP 10: Load user ────────────────────────────────────────────────────
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
- 
+
   const userOrderCount  = await Order.countDocuments({ user: userId, 'paymentInfo.status': 'success' });
   const isFirstPurchase = userOrderCount === 0;
   const purchaseNumber  = userOrderCount + 1;
- 
+
+  // ── STEP 11: Fraud and fulfillment metadata ───────────────────────────────
   const fraudCheck = calculateFraudRisk(
-    { totalPrice: session.totalPrice, shippingInfo: session.shippingInfo, orderItems: session.orderItems },
+    {
+      totalPrice:   session.totalPrice,
+      shippingInfo: session.shippingInfo,
+      orderItems:   session.orderItems
+    },
     user,
     { gateway, gatewayResponse }
   );
- 
+
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
- 
+
+  // ── STEP 12: Build order data ─────────────────────────────────────────────
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -578,7 +616,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     fraudCheck,
     fulfillmentSLA,
   };
- 
+
   let order;
   try {
     order = await Order.create(orderData);
@@ -589,46 +627,44 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       500
     ));
   }
- 
-  // FIX: populate immediately after create, while the connection pool is
-  // still free — before any fire-and-forget side-effects grab pool slots.
+
   try {
     await order.populate('orderItems.product', 'name images pricing');
-  } catch { /* non-fatal — order still valid without populated refs */ }
- 
-  // FIX: send the HTTP response NOW, before any side-effect work.
-  // Everything below is post-response cleanup — it must not block the reply.
+  } catch {
+    // Non-fatal — order is valid without populated refs. Client has enough data.
+  }
+
   res.status(200).json({
     success:    true,
     message:    "Payment verified and order created successfully",
     order,
     idempotent: false,
   });
- 
-  // ── Post-response side-effects (fire-and-forget) ──────────────────────
-  // setImmediate() defers execution to the next event-loop iteration,
-  // guaranteeing res.json() has already been flushed before any of these
-  // async operations touch the DB or connection pool.
+
   setImmediate(() => {
- 
-    // 1. Mark checkout as converted
-    Checkout.findOne({ user: userId, status: 'pending' })
+
+    Checkout.findOne({
+      user:                     userId,
+      'conversion.isConverted': false,
+      status:                   { $in: ['pending', 'abandoned'] }
+    })
       .sort({ lastActivityAt: -1 })
       .then(checkout => {
         if (!checkout) return;
+
         checkout.markAsConverted(order._id, orderReference);
         return checkout.save();
       })
       .catch(err =>
         console.error('[payment] Failed to mark checkout as converted:', err.message)
       );
- 
-    // 2. Discount usage + analytics
+
+    // ── 16b: Discount usage + analytics ────────────────────────────────────
     if (session.discount) {
       const discountLookup = session.discount.discountId
         ? Discount.findById(session.discount.discountId)
         : Discount.findOne({ code: session.discount.code?.toUpperCase() });
- 
+
       discountLookup
         .then(discount => {
           if (!discount) {
@@ -644,16 +680,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
           syncDiscountAfterOrderCreated(order).catch(() => {});
         })
         .catch(err =>
-          console.error('[payment] recordUsage failed for order', order._id, ':', err?.message ?? err)
+          console.error(
+            '[payment] recordUsage failed for order', order._id, ':', err?.message ?? err
+          )
         );
     } else {
       syncBaselineAfterNonDiscountedOrder().catch(() => {});
     }
- 
-    // 3. Customer analytics
+
+    // ── 16c: Customer analytics ─────────────────────────────────────────────
     syncCustomerAfterOrder(order._id).catch(() => {});
- 
-    // 4. Receipt
+
+    // ── 16d: Receipt ────────────────────────────────────────────────────────
     createReceiptIfNotExists({
       orderId:        order._id,
       userId,
@@ -675,14 +713,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         }
       }),
     }).catch(() => {});
- 
-    // 5. Session cleanup + cache invalidation
+
+
     Promise.all([
       deletePaymentSession(reference),
       reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
     ]).catch(() => {});
- 
+
     invalidatePaymentCaches().catch(() => {});
- 
+
   }); // end setImmediate
 });

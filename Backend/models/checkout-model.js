@@ -7,65 +7,74 @@ import { generateRecoveryToken } from '../utils/recoveryToken.js';
 // ============================================
 
 /**
- * Calculate recovery priority score for a checkout
- * Used by both virtual and analytics queries to avoid duplication
+ * Calculate recovery priority score for a checkout.
+ * Used by both the recoveryPriority virtual and analytics queries
+ * to avoid duplication between JS and aggregation layers.
  */
 export const calculatePriorityScore = (checkout) => {
   if (!checkout.abandonment?.isAbandoned) return 0;
-  
+
   let score = 0;
-  
+
   // Value scoring (40 points max)
   const total = checkout.pricing?.totalPrice || 0;
-  if (total > 500) score += 40;
+  if      (total > 500) score += 40;
   else if (total > 200) score += 30;
   else if (total > 100) score += 20;
-  else if (total > 50) score += 10;
-  
+  else if (total > 50)  score += 10;
+
   // Shipping info completion (20 points)
   if (checkout.shippingInfo?.address) score += 20;
-  
+
   // Cart size (20 points max)
   const items = checkout.items?.length || 0;
-  if (items >= 5) score += 20;
+  if      (items >= 5) score += 20;
   else if (items >= 3) score += 15;
   else if (items >= 2) score += 10;
-  else score += 5;
-  
+  else                  score += 5;
+
   // Recency scoring (20 points max)
-  const abandonedAt = checkout.abandonment?.abandonedAt;
+  // FIX: use firstAbandonedAt when available so re-abandoned carts are scored
+  // against their original abandonment time, not the most recent sweep time.
+  const abandonedAt = checkout.abandonment?.firstAbandonedAt
+    || checkout.abandonment?.abandonedAt;
+
   if (abandonedAt) {
     const hoursSince = Math.floor(
       (Date.now() - new Date(abandonedAt).getTime()) / (1000 * 60 * 60)
     );
-    if (hoursSince < 6)       score += 20;
+    if      (hoursSince < 6)  score += 20;
     else if (hoursSince < 24) score += 15;
     else if (hoursSince < 48) score += 10;
     else if (hoursSince < 72) score += 5;
   }
-  
+
   return Math.min(100, score);
 };
+
+// ============================================
+// SCHEMA
+// ============================================
 
 const checkoutSchema = new mongoose.Schema(
   {
     user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      type:     mongoose.Schema.Types.ObjectId,
+      ref:      "User",
       required: true,
-      index: true
+      index:    true
     },
 
     email: {
-      type: String,
+      type:     String,
       required: true,
-      index: true
+      index:    true
     },
 
     items: [{
       product: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Product",
+        type:     mongoose.Schema.Types.ObjectId,
+        ref:      "Product",
         required: true
       },
       name:     String,
@@ -124,27 +133,33 @@ const checkoutSchema = new mongoose.Schema(
         default: false,
         index:   true
       },
-      abandonedAt:      Date,
-      abandonedAtStep:  String,
-
-      recoveryEmailSent:  { type: Boolean, default: false },
+      firstAbandonedAt: Date,
+      abandonedAt:     Date,
+      abandonedAtStep: String,
+      reAbandoned: { type: Boolean, default: false, index: true },
+      failedRecoveries: { type: Number, default: 0 },
+      
+      // ── Recovery email audit ───────────────────────────────────────────
+      recoveryEmailSent:   { type: Boolean, default: false },
       recoveryEmailSentAt: Date,
-      recoveryEmailCount: { type: Number, default: 0 },
+      recoveryEmailCount:  { type: Number, default: 0 },
+      pendingEmailAck: { type: Boolean, default: false },
 
-      // ── NEW: last recovery token issued ─────────────────
-      // Stored for audit/reference only — NOT used for verification.
-      // Verification is done by JWT signature via recoveryToken.js.
-      // Lets you see in the DB which token was last generated,
-      // and lets the recovery route do a secondary ownership check
-      // if you ever want to invalidate tokens early.
-      lastRecoveryToken:       { type: String, select: false },
-      lastRecoveryTokenIssuedAt: Date,
-      // ────────────────────────────────────────────────────
 
-      recovered:        { type: Boolean, default: false },
-      recoveredAt:      Date,
-      recoveryTimeframe: Number,
-      likelyFromEmail:  Boolean
+      lastRecoveryToken:           { type: String,  select: false },
+      lastRecoveryTokenId:         { type: String,  select: false },
+      lastRecoveryTokenIssuedAt:   Date,
+      lastRecoveryTokenExpiredAt:  Date,
+
+
+      recoveryLinkClickedAt:  Date,
+      recoveryLinkClickCount: { type: Number, default: 0 },
+
+      // ── Conversion attribution ─────────────────────────────────────────
+      recovered:         { type: Boolean, default: false },
+      recoveredAt:       Date,
+      recoveryTimeframe: Number,   // hours between last email send and conversion
+      likelyFromEmail:   Boolean   // true if converted within 72h of email send
     },
 
     conversion: {
@@ -192,7 +207,7 @@ const checkoutSchema = new mongoose.Schema(
     expiresAt: { type: Date }
   },
   {
-    timestamps: true,
+    timestamps:  true,
     toJSON:  { virtuals: true },
     toObject: { virtuals: true }
   }
@@ -222,12 +237,22 @@ checkoutSchema.index(
 
 checkoutSchema.index(
   {
-    'abandonment.isAbandoned':     1,
+    'abandonment.isAbandoned':       1,
     'abandonment.recoveryEmailSent': 1,
-    'conversion.isConverted':      1,
-    status:                        1
+    'conversion.isConverted':        1,
+    status:                          1
   },
   { name: 'recovery_email_idx' }
+);
+
+
+checkoutSchema.index(
+  {
+    'abandonment.reAbandoned':    1,
+    'conversion.isConverted':     1,
+    'abandonment.abandonedAt':    -1
+  },
+  { name: 're_abandonment_idx' }
 );
 
 // ============================================
@@ -240,7 +265,8 @@ checkoutSchema.virtual('minutesSinceLastActivity').get(function () {
 });
 
 checkoutSchema.virtual('shouldBeAbandoned').get(function () {
-  const ABANDONMENT_THRESHOLD_HOURS = parseFloat(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
+  const ABANDONMENT_THRESHOLD_HOURS =
+    parseFloat(process.env.ABANDONMENT_THRESHOLD_HOURS) || 24;
   return (
     this.status === 'pending' &&
     this.minutesSinceLastActivity >= ABANDONMENT_THRESHOLD_HOURS * 60
@@ -255,6 +281,7 @@ checkoutSchema.virtual('recoveryPriority').get(function () {
 // STATIC METHODS
 // ============================================
 
+
 checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) {
   const stats = await this.aggregate([
     { $match: { createdAt: { $gte: startDate, $lte: endDate } } },
@@ -262,47 +289,99 @@ checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) 
       $group: {
         _id:       null,
         total:     { $sum: 1 },
-        abandoned: { $sum: { $cond: ['$abandonment.isAbandoned', 1, 0] } },
+
+        abandoned: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ['$abandonment.isAbandoned', true]  },
+                  { $eq: ['$conversion.isConverted', false] }
+                ]
+              },
+              1, 0
+            ]
+          }
+        },
+
         converted: { $sum: { $cond: ['$conversion.isConverted', 1, 0] } },
-        pending:   { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
-        expired:   { $sum: { $cond: [{ $eq: ['$status', 'expired'] }, 1, 0] } }
+        pending:   { $sum: { $cond: [{ $eq: ['$status', 'pending']  }, 1, 0] } },
+        expired:   { $sum: { $cond: [{ $eq: ['$status', 'expired']  }, 1, 0] } },
+
+        // Recovered = was abandoned AND was eventually converted.
+        // Used to compute recoveryRate accurately at the DB layer.
+        recoveredCount: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ['$abandonment.isAbandoned', true] },
+                  { $eq: ['$conversion.isConverted',  true] }
+                ]
+              },
+              1, 0
+            ]
+          }
+        },
+
+
+        totalEverAbandoned: {
+          $sum: { $cond: ['$abandonment.isAbandoned', 1, 0] }
+        }
       }
     }
   ]);
 
   const result = stats[0] || {
-    total: 0, abandoned: 0, converted: 0, pending: 0, expired: 0
+    total: 0, abandoned: 0, converted: 0, pending: 0, expired: 0,
+    recoveredCount: 0, totalEverAbandoned: 0
   };
 
+  // completedCheckouts = truly abandoned (unrecovered) + all converted
+  // This is the denominator for abandonmentRate.
   const completedCheckouts = result.abandoned + result.converted;
-  const rate =
+
+  const abandonmentRate =
     completedCheckouts > 0
       ? (result.abandoned / completedCheckouts) * 100
       : 0;
 
+  const conversionRate =
+    completedCheckouts > 0
+      ? (result.converted / completedCheckouts) * 100
+      : 0;
+
+
+  const recoveryRate =
+    result.totalEverAbandoned > 0
+      ? (result.recoveredCount / result.totalEverAbandoned) * 100
+      : 0;
+
   return {
-    totalCheckouts:     result.total,
-    abandonedCheckouts: result.abandoned,
-    convertedCheckouts: result.converted,
-    pendingCheckouts:   result.pending,
-    expiredCheckouts:   result.expired,
+    totalCheckouts:      result.total,
+    abandonedCheckouts:  result.abandoned,        // unrecovered abandoned only
+    convertedCheckouts:  result.converted,
+    pendingCheckouts:    result.pending,
+    expiredCheckouts:    result.expired,
     completedCheckouts,
-    abandonmentRate: Math.round(rate * 100) / 100,
-    conversionRate:
-      completedCheckouts > 0
-        ? Math.round((result.converted / completedCheckouts) * 10000) / 100
-        : 0
+    recoveredOrders:     result.recoveredCount,   // carts that were abandoned then paid
+    totalEverAbandoned:  result.totalEverAbandoned,
+    abandonmentRate:     Math.round(abandonmentRate * 100) / 100,
+    conversionRate:      Math.round(conversionRate  * 100) / 100,
+    recoveryRate:        Math.round(recoveryRate    * 100) / 100
   };
 };
 
+
 checkoutSchema.statics.getRecoveryOpportunities = async function (limit = 50) {
   return this.find({
-    'abandonment.isAbandoned':      true,
+    'abandonment.isAbandoned':       true,
     'abandonment.recoveryEmailSent': false,
+    'abandonment.recovered':         false,
     'conversion.isConverted':        false,
     status:                          'abandoned'
   })
-    .populate('user', 'firstName lastName email')
+    .populate('user',          'firstName lastName email')
     .populate('items.product', 'name images')
     .sort({ 'pricing.totalPrice': -1 })
     .limit(limit)
@@ -313,19 +392,45 @@ checkoutSchema.statics.getRecoveryOpportunities = async function (limit = 50) {
 // INSTANCE METHODS
 // ============================================
 
+
 checkoutSchema.methods.updateStep = function (step) {
   this.currentStep = step;
-  this.stepsCompleted.push({ step, completedAt: new Date() });
+
+  const existing = this.stepsCompleted.find(s => s.step === step);
+  if (existing) {
+    existing.completedAt = new Date();
+  } else {
+    this.stepsCompleted.push({ step, completedAt: new Date() });
+  }
+
   this.lastActivityAt = new Date();
 };
 
+
 checkoutSchema.methods.markAsAbandoned = function () {
-  this.abandonment.isAbandoned    = true;
-  this.abandonment.abandonedAt    = new Date();
+  // The actual inactivity start — not the sweep time.
+  const actualAbandonmentTime = this.lastActivityAt || new Date();
+
+  const isFailedRecovery =
+    this.abandonment.recoveryEmailSent === true &&
+    !!this.abandonment.recoveryLinkClickedAt;
+
+  if (isFailedRecovery) {
+    this.abandonment.failedRecoveries  = (this.abandonment.failedRecoveries || 0) + 1;
+    this.abandonment.reAbandoned       = true;
+  } else {
+    if (!this.abandonment.firstAbandonedAt) {
+      this.abandonment.firstAbandonedAt = actualAbandonmentTime;
+    }
+  }
+
+  this.abandonment.isAbandoned     = true;
+  this.abandonment.abandonedAt     = actualAbandonmentTime;
   this.abandonment.abandonedAtStep = this.currentStep;
-  this.status                     = 'abandoned';
-  this._shouldInvalidateCache     = true;
+  this.status                      = 'abandoned';
+  this._shouldInvalidateCache      = true;
 };
+
 
 checkoutSchema.methods.markAsConverted = function (orderId, paymentReference) {
   this.conversion.isConverted      = true;
@@ -352,9 +457,9 @@ checkoutSchema.methods.markAsConverted = function (orderId, paymentReference) {
 };
 
 checkoutSchema.methods.canSendRecoveryEmail = function () {
-  const MAX_ATTEMPTS  = parseInt(process.env.MAX_RECOVERY_ATTEMPTS)  || 3;
+  const MAX_ATTEMPTS   = parseInt(process.env.MAX_RECOVERY_ATTEMPTS)  || 3;
   const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
-  const MAX_AGE_DAYS  = 7;
+  const MAX_AGE_DAYS   = 7;
 
   if (this.conversion.isConverted) {
     return { canSend: false, reason: 'Checkout already converted' };
@@ -362,6 +467,15 @@ checkoutSchema.methods.canSendRecoveryEmail = function () {
 
   if (this.abandonment.recovered) {
     return { canSend: false, reason: 'Checkout already recovered' };
+  }
+
+  // FIX: a previous send incremented the count and set pendingEmailAck but
+  // save() failed — block until the state is confirmed or rolled back.
+  if (this.abandonment.pendingEmailAck) {
+    return {
+      canSend: false,
+      reason:  'A previous send is pending confirmation. Please retry in a moment.'
+    };
   }
 
   if (this.abandonment.recoveryEmailCount >= MAX_ATTEMPTS) {
@@ -400,9 +514,13 @@ checkoutSchema.methods.canSendRecoveryEmail = function () {
   return { canSend: true };
 };
 
+
 checkoutSchema.methods.markRecoveryEmailSent = function () {
   const canSend = this.canSendRecoveryEmail();
   if (!canSend.canSend) throw new Error(canSend.reason);
+
+  // Signal that a send is in-flight — cleared only after confirmed save.
+  this.abandonment.pendingEmailAck     = true;
 
   this.abandonment.recoveryEmailSent   = true;
   this.abandonment.recoveryEmailSentAt = new Date();
@@ -410,30 +528,64 @@ checkoutSchema.methods.markRecoveryEmailSent = function () {
   this._shouldInvalidateCache          = true;
 };
 
-/**
- * Generate a signed JWT recovery token for this checkout and
- * store a reference on the document (select: false — never sent
- * to the client in normal queries).
- *
- * Call checkout.save() after this to persist the audit fields.
- *
- * @returns {string} signed JWT — pass this to recoveryEmailService
- */
+
+checkoutSchema.methods.acknowledgeEmailSent = function () {
+  this.abandonment.pendingEmailAck = false;
+};
+
+checkoutSchema.methods.recordRecoveryLinkClick = function () {
+  if (!this.abandonment.recoveryLinkClickedAt) {
+    this.abandonment.recoveryLinkClickedAt = new Date();
+  }
+  this.abandonment.recoveryLinkClickCount =
+    (this.abandonment.recoveryLinkClickCount || 0) + 1;
+};
+
+
 checkoutSchema.methods.generateRecoveryToken = function () {
-  // Reuse the canSendRecoveryEmail guard so we never issue a token
-  // for a checkout that can't legally receive one
   const canSend = this.canSendRecoveryEmail();
   if (!canSend.canSend) throw new Error(canSend.reason);
 
-  const token = generateRecoveryToken({
-    checkoutId: this._id,
-    userId:     this.user,
-    email:      this.email,
-  });
+  const DEFAULT_TOKEN_TTL_SECONDS =
+    parseInt(process.env.RECOVERY_TOKEN_TTL_SECONDS) || 72 * 60 * 60;
 
-  // Audit trail — stored but never returned by default queries
-  this.abandonment.lastRecoveryToken        = token;
-  this.abandonment.lastRecoveryTokenIssuedAt = new Date();
+  let expiresInSeconds = DEFAULT_TOKEN_TTL_SECONDS;
+
+  if (this.expiresAt) {
+    const secondsUntilDocExpiry = Math.floor(
+      (this.expiresAt.getTime() - Date.now()) / 1000
+    );
+    // Cap: never let the token outlive the document.
+    if (secondsUntilDocExpiry > 0 && secondsUntilDocExpiry < expiresInSeconds) {
+      expiresInSeconds = secondsUntilDocExpiry;
+    }
+    // If the document is already at or past its expiry, reject immediately.
+    if (secondsUntilDocExpiry <= 0) {
+      throw new Error('This checkout has expired and cannot issue a recovery token.');
+    }
+  }
+
+  // ── Generate a stable jti for this token ──────────────────────────────
+  // Using a simple timestamp+random string. If your recoveryToken utility
+  // generates its own jti internally, extract and return it instead.
+  const jti = `${this._id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+
+  const token = generateRecoveryToken(
+    {
+      checkoutId: this._id,
+      userId:     this.user,
+      email:      this.email,
+    },
+    {
+      expiresIn: expiresInSeconds,
+      jti,
+    }
+  );
+
+  // ── Audit trail ───────────────────────────────────────────────────────
+  this.abandonment.lastRecoveryToken          = token;
+  this.abandonment.lastRecoveryTokenId        = jti;
+  this.abandonment.lastRecoveryTokenIssuedAt  = new Date();
 
   return token;
 };
