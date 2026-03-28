@@ -12,8 +12,6 @@ import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
 // ============================================
 
 export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, next) => {
-  // Sweep-on-read: mark any stale checkouts before aggregation runs.
-  // A sweep failure must never break the analytics response.
   try {
     await markStaleCheckouts();
   } catch (sweepErr) {
@@ -42,22 +40,25 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       : 0;
 
   const [abandonedValue, abandonmentByStep, recoveryStats] = await Promise.all([
+    // Total value sitting in abandoned (unrecovered) carts
     Checkout.aggregate([
       {
         $match: {
           "abandonment.isAbandoned": true,
+          "conversion.isConverted":  false,
           createdAt: { $gte: currentPeriodStart }
         }
       },
       {
         $group: {
-          _id: null,
+          _id:      null,
           totalValue: { $sum: "$pricing.totalPrice" },
-          avgValue: { $avg: "$pricing.totalPrice" },
-          count: { $sum: 1 }
+          avgValue:   { $avg: "$pricing.totalPrice" },
+          count:      { $sum: 1 }
         }
       }
     ]),
+
     Checkout.aggregate([
       {
         $match: {
@@ -67,13 +68,17 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       },
       {
         $group: {
-          _id: "$abandonment.abandonedAtStep",
-          count: { $sum: 1 },
+          _id: {
+            $ifNull: ["$abandonment.firstAbandonedAtStep", "$abandonment.abandonedAtStep"]
+          },
+          count:      { $sum: 1 },
           totalValue: { $sum: "$pricing.totalPrice" }
         }
       },
       { $sort: { count: -1 } }
     ]),
+
+    // Recovery summary — emails, conversions, priorities, re-abandonments
     Checkout.aggregate([
       {
         $match: {
@@ -83,9 +88,10 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       },
       {
         $group: {
-          _id: null,
+          _id:            null,
           totalAbandoned: { $sum: 1 },
-          emailsSent: { $sum: "$abandonment.recoveryEmailCount" },
+          emailsSent:     { $sum: "$abandonment.recoveryEmailCount" },
+
           recovered: {
             $sum: { $cond: ["$conversion.isConverted", 1, 0] }
           },
@@ -94,17 +100,17 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
               $cond: ["$conversion.isConverted", "$pricing.totalPrice", 0]
             }
           },
+
           highPriority: {
             $sum: {
               $cond: [
                 {
                   $and: [
                     { $gte: ["$pricing.totalPrice", 100] },
-                    { $eq: ["$conversion.isConverted", false] }
+                    { $eq:  ["$conversion.isConverted", false] }
                   ]
                 },
-                1,
-                0
+                1, 0
               ]
             }
           },
@@ -116,6 +122,42 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
                 0
               ]
             }
+          },
+
+          // Re-abandoned: clicked the link but abandoned again
+          reAbandonedCount: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$abandonment.reAbandoned",      true]  },
+                    { $eq: ["$conversion.isConverted",       false] }
+                  ]
+                },
+                1, 0
+              ]
+            }
+          },
+          failedRecoveryRevenue: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ["$abandonment.reAbandoned",      true]  },
+                    { $eq: ["$conversion.isConverted",       false] }
+                  ]
+                },
+                "$pricing.totalPrice",
+                0
+              ]
+            }
+          },
+
+          // Organic recoveries (converted without active recovery session)
+          organicRecoveryCount: {
+            $sum: {
+              $cond: [{ $eq: ["$abandonment.organicRecovery", true] }, 1, 0]
+            }
           }
         }
       }
@@ -123,29 +165,31 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
   ]);
 
   const recoveryData = recoveryStats[0] || {
-    totalAbandoned: 0,
-    emailsSent: 0,
-    recovered: 0,
-    recoveredValue: 0,
-    highPriority: 0,
-    recoverableValue: 0
+    totalAbandoned:       0,
+    emailsSent:           0,
+    recovered:            0,
+    recoveredValue:       0,
+    highPriority:         0,
+    recoverableValue:     0,
+    reAbandonedCount:     0,
+    failedRecoveryRevenue: 0,
+    organicRecoveryCount: 0
   };
 
   const totalAbandonedCheckouts = currentStats.abandonedCheckouts || 1;
 
+  const stepLabels = {
+    'shipping_info':      'Shipping Information',
+    'order_confirmation': 'Order Confirmation',
+    'payment_selection':  'Payment Selection',
+    'payment_gateway':    'Payment Gateway',
+    'payment_failed':     'Payment Failed',
+  };
+
   const stepBreakdown = abandonmentByStep.length > 0
     ? abandonmentByStep.map(step => {
-        const stepName = step._id || 'unknown';
+        const stepName   = step._id || 'unknown';
         const dropOffRate = (step.count / totalAbandonedCheckouts) * 100;
-
-        const stepLabels = {
-          'shipping_info':      'Shipping Information',
-          'order_confirmation': 'Order Confirmation',
-          'payment_selection':  'Payment Selection',
-          'payment_gateway':    'Payment Gateway',
-          'payment_failed':     'Payment Failed',
-        };
-
         return {
           step:        stepLabels[stepName] || stepName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
           count:       step.count,
@@ -159,17 +203,23 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     abandonmentRate:    Math.round(currentStats.abandonmentRate * 10) / 10,
     completedCheckouts: currentStats.completedCheckouts || 0,
     abandonedCheckouts: currentStats.abandonedCheckouts || 0,
-    totalCheckouts:     currentStats.totalCheckouts || 0,
+    totalCheckouts:     currentStats.totalCheckouts     || 0,
     lostRevenue:        Math.round((abandonedValue[0]?.totalValue || 0) * 100) / 100,
     recoveryRate:       Math.round(currentStats.recoveryRate * 10) / 10,
     stepBreakdown,
-    recoverableRevenue: Math.round(recoveryData.recoverableValue * 100) / 100,
+    recoverableRevenue: Math.round(recoveryData.recoverableValue    * 100) / 100,
     highPriority:       recoveryData.highPriority,
     emailsSent:         recoveryData.emailsSent,
     recoveredOrders:    recoveryData.recovered,
-    recoveredValue:     Math.round(recoveryData.recoveredValue * 100) / 100,
+    recoveredValue:     Math.round(recoveryData.recoveredValue      * 100) / 100,
     avgAbandonedCheckoutValue: Math.round((abandonedValue[0]?.avgValue || 0) * 100) / 100,
     trend:              Math.round(trend * 100) / 100,
+
+    // Re-abandonment (failed recovery) metrics
+    reAbandonedCount:       recoveryData.reAbandonedCount,
+    failedRecoveryRevenue:  Math.round(recoveryData.failedRecoveryRevenue * 100) / 100,
+    organicRecoveryCount:   recoveryData.organicRecoveryCount,
+
     previousPeriod: {
       abandonmentRate:    Math.round(previousStats.abandonmentRate * 10) / 10,
       completedCheckouts: previousStats.completedCheckouts || 0,
@@ -186,7 +236,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
 // ============================================
 
 export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next) => {
-  // Sweep-on-read: mark any stale checkouts before the list query runs.
   try {
     await markStaleCheckouts();
   } catch (sweepErr) {
@@ -194,16 +243,17 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
   }
 
   const {
-    hours    = 24,
-    minValue = 0,
-    limit    = 50,
-    page     = 1,
-    sortBy   = "priority",
+    hours       = 24,
+    minValue    = 0,
+    limit       = 50,
+    page        = 1,
+    sortBy      = "priority",
     emailSent,
     recovered,
+    reAbandoned,  // NEW: filter for failed-recovery carts only
   } = req.query;
 
-  const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}_es${emailSent ?? ''}_rec${recovered ?? ''}`;
+  const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}_es${emailSent ?? ''}_rec${recovered ?? ''}_rea${reAbandoned ?? ''}`;
   const cached = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
 
@@ -226,21 +276,21 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     delete query['conversion.isConverted'];
   }
 
-  // ── DB-level sort for value and date ─────────────────────────────────────
-  // Priority cannot be sorted at DB level (computed virtual) so we fetch a
-  // capped set and sort in memory. Value and date sort entirely in the DB.
+  // Filter to carts that clicked the link but abandoned again (failed recoveries)
+  if (reAbandoned === 'true')  query['abandonment.reAbandoned'] = true;
+  if (reAbandoned === 'false') query['abandonment.reAbandoned'] = { $ne: true };
+
   const DB_SORT_MAP = {
     value: { 'pricing.totalPrice':      -1 },
     date:  { 'abandonment.abandonedAt': -1 },
   };
 
-  const PRIORITY_FETCH_CAP = 500; // memory bound for in-memory priority sort
+  const PRIORITY_FETCH_CAP = 500;
 
   let checkouts;
   let totalCheckouts;
 
   if (sortBy === 'priority') {
-    // Fetch capped set for in-memory priority sort — cannot do this in DB
     const [raw, count] = await Promise.all([
       Checkout.find(query)
         .populate('user',          'firstName lastName email')
@@ -267,7 +317,6 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     totalCheckouts = count;
 
   } else {
-    // DB-level sort + pagination for value and date
     const dbSort = DB_SORT_MAP[sortBy] || { 'abandonment.abandonedAt': -1 };
 
     const [raw, count] = await Promise.all([
@@ -295,14 +344,14 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     totalCheckouts = count;
   }
 
-  // ── Summary stats via aggregation — never computed from loaded docs ───────
+  // Summary stats via aggregation — never computed from loaded docs
   const [summaryResult] = await Checkout.aggregate([
     { $match: query },
     {
       $group: {
-        _id:           null,
-        totalValue:    { $sum: '$pricing.totalPrice' },
-        avgValue:      { $avg: '$pricing.totalPrice' },
+        _id:         null,
+        totalValue:  { $sum: '$pricing.totalPrice' },
+        avgValue:    { $avg: '$pricing.totalPrice' },
         highPriority: {
           $sum: {
             $cond: [
@@ -312,16 +361,21 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
                   { $eq:  ['$conversion.isConverted', false] }
                 ]
               },
-              1,
-              0
+              1, 0
             ]
+          }
+        },
+        // How many in this filtered set are re-abandoned (failed recovery)
+        reAbandonedCount: {
+          $sum: {
+            $cond: [{ $eq: ['$abandonment.reAbandoned', true] }, 1, 0]
           }
         }
       }
     }
   ]);
 
-  const summary = summaryResult || { totalValue: 0, avgValue: 0, highPriority: 0 };
+  const summary    = summaryResult || { totalValue: 0, avgValue: 0, highPriority: 0, reAbandonedCount: 0 };
   const totalPages = Math.ceil(totalCheckouts / parseInt(limit));
 
   const response = {
@@ -334,9 +388,10 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
       hasPrevPage:    parseInt(page) > 1
     },
     summary: {
-      totalValue:             Math.round(summary.totalValue    * 100) / 100,
-      avgValue:               Math.round(summary.avgValue      * 100) / 100,
-      highPriorityCheckouts:  summary.highPriority
+      totalValue:             Math.round(summary.totalValue * 100) / 100,
+      avgValue:               Math.round(summary.avgValue   * 100) / 100,
+      highPriorityCheckouts:  summary.highPriority,
+      reAbandonedCount:       summary.reAbandonedCount
     }
   };
 
@@ -360,7 +415,7 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
   const response = {
     opportunities,
     summary: {
-      totalOpportunities:   opportunities.length,
+      totalOpportunities:    opportunities.length,
       totalPotentialRevenue: opportunities.reduce(
         (sum, c) => sum + c.pricing.totalPrice, 0
       ),
@@ -377,9 +432,66 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
 });
 
 // ============================================
-// MARK RECOVERY EMAIL SENT — UPDATED
-// Now actually generates a token and sends the email
-// before updating the model audit fields.
+// RE-ABANDONMENT ANALYTICS
+// New endpoint: breakdowns for carts that clicked the recovery link
+// but abandoned again without converting (failed recoveries).
+// @route GET /api/v1/analytics/checkout/re-abandonment
+// @access Admin
+// ============================================
+
+export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next) => {
+  const { timeframe = "month" } = req.query;
+  validateTimeframe(timeframe, next);
+
+  const cacheKey = `checkout_re_abandonment_${timeframe}`;
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
+  const { currentPeriodStart, previousPeriodStart, previousPeriodEnd } =
+    getDateRanges(timeframe);
+
+  const [current, previous] = await Promise.all([
+    Checkout.getReAbandonmentAnalytics(currentPeriodStart, new Date()),
+    Checkout.getReAbandonmentAnalytics(previousPeriodStart, previousPeriodEnd)
+  ]);
+
+  const stepLabels = {
+    'shipping_info':      'Shipping Information',
+    'order_confirmation': 'Order Confirmation',
+    'payment_selection':  'Payment Selection',
+    'payment_gateway':    'Payment Gateway',
+    'payment_failed':     'Payment Failed',
+  };
+
+  const response = {
+    current: {
+      ...current,
+      stepBreakdown: current.stepBreakdown.map(s => ({
+        ...s,
+        stepLabel: stepLabels[s.step] || s.step.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+      }))
+    },
+    previous: {
+      total:            previous.total,
+      totalRevenueLost: previous.totalRevenueLost,
+      avgCartValue:     previous.avgCartValue
+    },
+    trend: {
+      totalChange: previous.total > 0
+        ? Math.round(((current.total - previous.total) / previous.total) * 10000) / 100
+        : 0,
+      revenueLostChange: previous.totalRevenueLost > 0
+        ? Math.round(((current.totalRevenueLost - previous.totalRevenueLost) / previous.totalRevenueLost) * 10000) / 100
+        : 0
+    }
+  };
+
+  await setCache(cacheKey, response, 300);
+  res.status(200).json({ success: true, ...response });
+});
+
+// ============================================
+// MARK RECOVERY EMAIL SENT
 // ============================================
 
 export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => {
@@ -409,7 +521,10 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
   checkout.markRecoveryEmailSent();
   await checkout.save();
 
-  const canSendNext = checkout.canSendRecoveryEmail();
+  checkout.acknowledgeEmailSent();
+  await checkout.save();
+
+  const canSendNext    = checkout.canSendRecoveryEmail();
   const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
   const nextAvailableAt = new Date(
     checkout.abandonment.recoveryEmailSentAt.getTime() +
@@ -420,18 +535,18 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
     success: true,
     message: `Recovery email #${checkout.abandonment.recoveryEmailCount} sent successfully`,
     result: {
-      checkoutId:          checkout._id,
-      recipient:           checkout.email,
-      attemptNumber:       checkout.abandonment.recoveryEmailCount,
-      sentAt:              checkout.abandonment.recoveryEmailSentAt,
-      nextAvailableAt:     canSendNext.canSend ? null : nextAvailableAt,
-      attemptsRemaining:   Math.max(
+      checkoutId:        checkout._id,
+      recipient:         checkout.email,
+      attemptNumber:     checkout.abandonment.recoveryEmailCount,
+      sentAt:            checkout.abandonment.recoveryEmailSentAt,
+      nextAvailableAt:   canSendNext.canSend ? null : nextAvailableAt,
+      attemptsRemaining: Math.max(
         0,
         (parseInt(process.env.MAX_RECOVERY_ATTEMPTS) || 3) -
           checkout.abandonment.recoveryEmailCount
       ),
-      canSendAnother:      canSendNext.canSend,
-      cooldownReason:      canSendNext.canSend ? null : canSendNext.reason
+      canSendAnother: canSendNext.canSend,
+      cooldownReason: canSendNext.canSend ? null : canSendNext.reason
     }
   });
 });
@@ -440,5 +555,6 @@ export default {
   getCheckoutAbandonmentStats,
   getAbandonedCheckoutsList,
   getRecoveryOpportunities,
+  getReAbandonmentAnalytics,
   markRecoveryEmailSent
 };

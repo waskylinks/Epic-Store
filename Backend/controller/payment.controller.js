@@ -407,6 +407,7 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 // @route POST /api/v1/payment/verify
 // @access Private
 // ============================================
+
 export const verifyPaymentController = handleAsyncError(async (req, res, next) => {
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
@@ -418,12 +419,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // ── STEP 1: Load Redis session ────────────────────────────────────────────
-
+  // Load Redis session 
   const session = await getPaymentSession(reference);
 
   if (!session) {
-
     const orphanOrder = await Order.findOne({
       $or: [
         { "paymentInfo.reference":             reference },
@@ -433,7 +432,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     }).lean();
 
     if (orphanOrder) {
-
       return res.status(200).json({
         success:    true,
         message:    "Payment already verified — returning existing order",
@@ -449,7 +447,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // ── STEP 2: Validate session integrity ───────────────────────────────────
+  //  Validate session integrity 
   if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
@@ -466,30 +464,30 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const orderReference = session.reference;
 
-  // ── STEP 4: Ownership check ───────────────────────────────────────────────
+  // Ownership check 
   if (session.userId !== userId.toString()) {
     return next(new HandleError(
       "This payment session does not belong to your account", 403
     ));
   }
 
-  //  Gateway match ─────────────────────────────────────────────────
+  //Gateway match 
   if (session.gateway !== gateway) {
     return next(new HandleError(
       `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
 
+  //  Idempotency check 
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference":             orderReference },
       { "paymentInfo.stripePaymentIntentId": reference      },
-      { "paymentInfo.reference":             reference       }  // covers alias edge case
+      { "paymentInfo.reference":             reference       }
     ]
   }).lean();
 
   if (existingOrder) {
-    // Clean up the session since we're done with it
     await deletePaymentSession(reference).catch(() => {});
     if (reference !== orderReference) await deletePaymentSession(orderReference).catch(() => {});
 
@@ -501,7 +499,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     });
   }
 
-
+  //  Gateway verification
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
@@ -530,14 +528,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     raw:      gatewayResponse
   } = gatewayData;
 
-  // ── STEP 8: Currency check ────────────────────────────────────────────────
+  // Currency check 
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
       `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
 
-  // ── STEP 9: Amount tolerance check ───────────────────────────────────────
+  //Amount tolerance check 
   const tolerance  = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
@@ -547,7 +545,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // ── STEP 10: Load user ────────────────────────────────────────────────────
+  // Load user
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
 
@@ -555,7 +553,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   const isFirstPurchase = userOrderCount === 0;
   const purchaseNumber  = userOrderCount + 1;
 
-  // ── STEP 11: Fraud and fulfillment metadata ───────────────────────────────
+  // Fraud and fulfillment metadata
   const fraudCheck = calculateFraudRisk(
     {
       totalPrice:   session.totalPrice,
@@ -568,7 +566,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
-  // ── STEP 12: Build order data ─────────────────────────────────────────────
+  //  Build order data 
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -617,6 +615,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     fulfillmentSLA,
   };
 
+  // Create order 
   let order;
   try {
     order = await Order.create(orderData);
@@ -631,7 +630,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch {
-    // Non-fatal — order is valid without populated refs. Client has enough data.
+    // Non-fatal — order is valid without populated refs.
   }
 
   res.status(200).json({
@@ -641,6 +640,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     idempotent: false,
   });
 
+  // Post-payment async tasks 
   setImmediate(() => {
 
     Checkout.findOne({
@@ -652,6 +652,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       .then(checkout => {
         if (!checkout) return;
 
+        const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
+        const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
+        const sessionWasActive   = checkout.abandonment?.recoverySessionActive === true;
+        const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
+
+        if (wasAbandoned && emailWasSent && !sessionWasActive) {
+          checkout.abandonment.organicRecovery = true;
+        }
+        if (linkWasEverClicked) {
+          checkout.computeRecoveryCartDiff(order.orderItems);
+        }
+
         checkout.markAsConverted(order._id, orderReference);
         return checkout.save();
       })
@@ -659,7 +671,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.error('[payment] Failed to mark checkout as converted:', err.message)
       );
 
-    // ── 16b: Discount usage + analytics ────────────────────────────────────
+    //  Discount usage + analytics 
     if (session.discount) {
       const discountLookup = session.discount.discountId
         ? Discount.findById(session.discount.discountId)
@@ -688,10 +700,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       syncBaselineAfterNonDiscountedOrder().catch(() => {});
     }
 
-    // ── 16c: Customer analytics ─────────────────────────────────────────────
+    // Customer analytics 
     syncCustomerAfterOrder(order._id).catch(() => {});
 
-    // ── 16d: Receipt ────────────────────────────────────────────────────────
+    // Receipt 
     createReceiptIfNotExists({
       orderId:        order._id,
       userId,
@@ -714,7 +726,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       }),
     }).catch(() => {});
 
-
+    // Session cleanup 
     Promise.all([
       deletePaymentSession(reference),
       reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
@@ -722,5 +734,5 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     invalidatePaymentCaches().catch(() => {});
 
-  }); // end setImmediate
+  }); 
 });

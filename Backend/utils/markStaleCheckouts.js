@@ -34,7 +34,7 @@ export const markStaleCheckouts = async () => {
 
     const staleCheckouts = await Checkout.find(query)
       .select(
-        '_id status lastActivityAt abandonment conversion currentStep'
+        '_id status lastActivityAt currentStep abandonment conversion'
       )
       .sort({ _id: 1 })
       .limit(BATCH_SIZE);
@@ -59,8 +59,20 @@ export const markStaleCheckouts = async () => {
           checkout.abandonment?.recoveryEmailSent === true &&
           !!checkout.abandonment?.recoveryLinkClickedAt;
 
+        // ── Pre-mark: write post-recovery step BEFORE calling markAsAbandoned
+        // markAsAbandoned writes postRecoveryAbandonedAtStep from currentStep
+        // internally, but we log it here for observability before the mutation.
+        if (isFailedRecovery) {
+          console.log(
+            `[markStaleCheckouts] Re-abandonment detected: checkout=${checkout._id}` +
+            ` | postRecoveryStep=${checkout.currentStep}` +
+            ` | failedRecoveries=${(checkout.abandonment.failedRecoveries || 0) + 1}`
+          );
+        }
+
         checkout.markAsAbandoned();
 
+        // Suppress per-doc cache invalidation — bulk flush runs after the pass.
         checkout._shouldInvalidateCache = false;
 
         await checkout.save();
@@ -68,11 +80,6 @@ export const markStaleCheckouts = async () => {
 
         if (isFailedRecovery) {
           reAbandoned++;
-
-          console.log(
-            `[markStaleCheckouts] Re-abandoned (failed recovery): checkout=${checkout._id}` +
-            ` | failedRecoveries=${checkout.abandonment.failedRecoveries}`
-          );
         }
       } catch (err) {
         errors++;
@@ -95,7 +102,7 @@ export const markStaleCheckouts = async () => {
     }
   }
 
-
+  // ── SECONDARY PASS: mark expired recovery tokens ──────────────────────────
   try {
     const tokenExpiryThreshold = new Date(
       Date.now() - RECOVERY_TOKEN_TTL_SECONDS * 1000
@@ -103,19 +110,43 @@ export const markStaleCheckouts = async () => {
 
     await Checkout.updateMany(
       {
-        'abandonment.lastRecoveryTokenIssuedAt': { $lte: tokenExpiryThreshold },
-        'abandonment.recoveryLinkClickedAt':     { $exists: false },
+        'abandonment.lastRecoveryTokenIssuedAt':  { $lte: tokenExpiryThreshold },
+        'abandonment.recoveryLinkClickedAt':      { $exists: false },
         'abandonment.lastRecoveryTokenExpiredAt': { $exists: false },
-        'conversion.isConverted':                false
+        'conversion.isConverted':                 false
       },
       {
         $set: { 'abandonment.lastRecoveryTokenExpiredAt': new Date() }
       }
     );
   } catch (err) {
-    // Non-fatal — secondary pass failure must not affect the primary result.
     console.error(
       '[markStaleCheckouts] Secondary pass (token expiry write) failed:',
+      err.message
+    );
+  }
+
+  // ── TERTIARY PASS: clear stale recoverySessionActive flags ────────────────
+  // If a checkout has recoverySessionActive: true but was just swept as
+  // abandoned (or was already abandoned), the flag must be cleared so it
+  // does not mislead the next sweep or the payment controller.
+  // markAsAbandoned clears it inline, but this pass catches any edge cases
+  // where the flag was set but the checkout was already in 'abandoned' status
+  // (e.g. a previous sweep ran before redeemRecoveryToken could restore it).
+  try {
+    await Checkout.updateMany(
+      {
+        'abandonment.recoverySessionActive': true,
+        status:                              'abandoned',
+        'conversion.isConverted':            false
+      },
+      {
+        $set: { 'abandonment.recoverySessionActive': false }
+      }
+    );
+  } catch (err) {
+    console.error(
+      '[markStaleCheckouts] Tertiary pass (recoverySessionActive clear) failed:',
       err.message
     );
   }
