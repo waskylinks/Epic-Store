@@ -1,13 +1,4 @@
-// operationsSlice.js
-// Covers: checkout abandonment, product analytics, fulfillment, SLA breaches,
-// fraud, shipping carriers, shipment tracking, cancellations, high-risk orders,
-// and refunds.
-//
-// Returns analytics has been extracted to its own dedicated slice:
-// returnAnalyticsSlice.js
-//
-// These domains share the order fulfilment health theme and none are large
-// enough individually to justify a dedicated file.
+
 
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
@@ -16,7 +7,7 @@ const API_BASE = "/api/v1";
 
 const isAbortError = (error) =>
     error?.code === "ERR_CANCELED" ||
-    error?.name === "AbortError" ||
+    error?.name === "AbortError"   ||
     error?.name === "CanceledError";
 
 // ============================================
@@ -44,7 +35,16 @@ export const fetchCheckoutAbandonmentStats = createAsyncThunk(
 export const fetchAbandonedCheckouts = createAsyncThunk(
     "operations/fetchAbandonedCheckouts",
     async (
-        { hours = 24, minValue = 0, limit = 50, page = 1, sortBy = "priority" },
+        {
+            hours    = 24,
+            minValue = 0,
+            limit    = 50,
+            page     = 1,
+            sortBy   = "priority",
+            // FIX: reAbandoned filter param added so admins can isolate
+            // carts that went through a failed recovery cycle.
+            reAbandoned,
+        },
         { rejectWithValue, signal }
     ) => {
         try {
@@ -55,6 +55,10 @@ export const fetchAbandonedCheckouts = createAsyncThunk(
                 page:     page.toString(),
                 sortBy,
             });
+            if (reAbandoned !== undefined && reAbandoned !== null) {
+                params.append('reAbandoned', reAbandoned.toString());
+            }
+
             const { data } = await axios.get(
                 `${API_BASE}/analytics/checkout/abandoned-list?${params.toString()}`,
                 { signal }
@@ -371,7 +375,6 @@ export const fetchHighRiskOrders = createAsyncThunk(
 
 // ============================================
 // THUNKS — REFUNDS
-// (Returns has been moved to returnAnalyticsSlice.js)
 // ============================================
 
 export const fetchRefundOverview = createAsyncThunk(
@@ -445,6 +448,8 @@ const operationsSlice = createSlice({
         emailSendLoading:      {},
         emailSendResults:      {},
         emailSendError:        {},
+        reAbandonedCount:    0,
+        failedRecoveriesCount: 0,
 
         // Products
         productPerformance:     null,
@@ -494,6 +499,13 @@ const operationsSlice = createSlice({
                 if (action.payload._timeframe === state.activeTimeframe) {
                     const { _timeframe, ...data } = action.payload;
                     state.checkoutAbandonment = data;
+
+                    // FIX: surface reAbandoned and failedRecoveries counts if
+                    // the backend returns them so downstream components and
+                    // filters have them available in state.
+                    if (typeof data.failedRecoveriesCount === 'number') {
+                        state.failedRecoveriesCount = data.failedRecoveriesCount;
+                    }
                 }
             })
             .addCase(fetchCheckoutAbandonmentStats.rejected, (state, action) => {
@@ -502,6 +514,12 @@ const operationsSlice = createSlice({
 
             .addCase(fetchAbandonedCheckouts.fulfilled, (state, action) => {
                 state.abandonedCheckouts = action.payload;
+
+                // FIX: capture reAbandoned segment count if returned by backend
+                // so the filter badge and KPI strip can display it.
+                if (typeof action.payload.reAbandonedCount === 'number') {
+                    state.reAbandonedCount = action.payload.reAbandonedCount;
+                }
             })
             .addCase(fetchAbandonedCheckouts.rejected, (state, action) => {
                 if (!action.payload?.aborted) state.error = action.payload;
@@ -515,10 +533,14 @@ const operationsSlice = createSlice({
             })
 
             // markRecoveryEmailSent — keyed loading/error per checkoutId so
-            // individual rows show their own spinner without blocking the list
+            // individual rows show their own spinner without blocking the list.
             .addCase(markRecoveryEmailSent.pending, (state, action) => {
-                state.emailSendLoading[action.meta.arg] = true;
-                delete state.emailSendError[action.meta.arg];
+                const checkoutId = action.meta.arg;
+                state.emailSendLoading[checkoutId] = true;
+                // FIX: delete the previous error BEFORE the retry attempt is
+                // visible in the UI so the old error ! indicator doesn't flash
+                // during the in-flight request.
+                delete state.emailSendError[checkoutId];
             })
             .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
                 const { checkoutId, result } = action.payload;
@@ -526,6 +548,7 @@ const operationsSlice = createSlice({
                 state.emailSendResults[checkoutId] = result;
                 state.success = true;
                 state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
+
 
                 const list = state.abandonedCheckouts?.abandonedCheckouts;
                 if (Array.isArray(list)) {
@@ -543,6 +566,7 @@ const operationsSlice = createSlice({
                     }
                 }
 
+                // ── recoveryOpportunities list ───────────────────────────────
                 const opps = state.recoveryOpportunities?.opportunities;
                 if (Array.isArray(opps)) {
                     const idx = opps.findIndex((c) => c._id === checkoutId);
@@ -627,7 +651,7 @@ const operationsSlice = createSlice({
                 if (!action.payload?.aborted) state.error = action.payload;
             });
 
-        // ── FULFILLMENT & OPERATIONS ─────────────────────────────────────────
+        // ── FULFILLMENT & OPERATIONS ──────────────────────────────────────────
         builder
             .addCase(fetchFulfillmentAnalytics.fulfilled, (state, action) => {
                 if (action.payload._timeframe !== state.activeTimeframe) return;
@@ -695,9 +719,7 @@ const operationsSlice = createSlice({
                           ) / 100
                         : 0;
                 const rejectedEntry  = reviewDecs.find((d) => d._id === "Rejected");
-                const confirmedFraud = rejectedEntry
-                    ? rejectedEntry.count || 0
-                    : 0;
+                const confirmedFraud = rejectedEntry ? rejectedEntry.count || 0 : 0;
                 state.fraudAnalytics = {
                     fraudRate,
                     flaggedOrders,

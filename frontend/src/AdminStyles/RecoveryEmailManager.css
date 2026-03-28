@@ -583,3 +583,82 @@
   .rem-page { background: white; }
   .rem-body { padding: 16px; max-width: 100%; }
 }
+
+/* ================================================================
+   RecoveryEmailManager.css — ADDITIONS
+   Append these rules to the bottom of RecoveryEmailManager.css
+   ================================================================ */
+
+/* ── Bulk send confirmation banner ──────────────────────────── */
+.rem-confirm-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 18px;
+  background: #fffbeb;
+  border: 1px solid #fbbf24;
+  border-radius: var(--rem-radius-sm);
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--rem-text-sec);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.rem-confirm-banner strong {
+  font-weight: 800;
+  color: var(--rem-text);
+}
+
+.rem-confirm-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rem-confirm-btn {
+  padding: 7px 16px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: var(--rem-transition);
+  white-space: nowrap;
+}
+
+.rem-confirm-btn--cancel {
+  background: #fff;
+  border-color: var(--rem-border);
+  color: var(--rem-text-muted);
+}
+
+.rem-confirm-btn--cancel:hover {
+  border-color: var(--rem-border-md);
+  color: var(--rem-text);
+}
+
+.rem-confirm-btn--go {
+  background: var(--rem-coral);
+  color: #fff;
+  border-color: var(--rem-coral);
+}
+
+.rem-confirm-btn--go:hover {
+  background: #ff5252;
+  border-color: #ff5252;
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.35);
+}
+
+/* ── Accessible error indicator ─────────────────────────────── */
+
+@media (max-width: 768px) {
+  .rem-send-err {
+    padding: 3px 8px;
+    font-size: 12px;
+    min-width: 28px;
+    text-align: center;
+  }
+}

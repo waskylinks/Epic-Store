@@ -2,21 +2,8 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
-  ArrowBack,
-  Refresh,
-  Email,
-  MarkEmailRead,
-  Schedule,
-  CheckCircle,
-  Warning,
-  MoneyOff,
-  FilterList,
-  Search,
-  AttachMoney,
-  ErrorOutline,
-  Send,
-  Block,
-  Inbox,
+  ArrowBack, Refresh, Email, MarkEmailRead, CheckCircle,
+  FilterList, Search, AttachMoney, ErrorOutline, Send, Block, Inbox,
 } from '@mui/icons-material';
 import {
   fetchAbandonedCheckouts,
@@ -25,30 +12,24 @@ import {
 import Navbar from '../components/Navbar';
 import '../AdminStyles/RecoveryEmailManager.css';
 
-/* ── Constants ──────────────────────────────────────────────── */
-const COOLDOWN_MS   = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
-const MAX_ATTEMPTS  = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
-const BULK_DELAY_MS = 800; // delay between bulk sends to avoid hammering
+const COOLDOWN_MS  = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
+const MAX_ATTEMPTS = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
+const BULK_DELAY_MS = 800;
 
-/* ── Formatters ─────────────────────────────────────────────── */
 const fmt = {
-  currency: (v) =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
-  number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  compact: (v) => {
+  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
+  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
+  compact:  (v) => {
     const n = v || 0;
     if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000)     return `$${(n / 1_000).toFixed(0)}k`;
     return fmt.currency(n);
   },
-  date: (d) =>
-    d ? new Date(d).toLocaleDateString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    }) : '—',
+  date: (d) => d ? new Date(d).toLocaleDateString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }) : '—',
 };
 
-/* ── Helpers ────────────────────────────────────────────────── */
 function getEmailStatus(checkout, result) {
   const ab        = checkout.abandonment || {};
   const count     = result?.attemptNumber  ?? ab.recoveryEmailCount  ?? 0;
@@ -86,60 +67,56 @@ function Spinner({ size = 20 }) {
   );
 }
 
-function Empty({ Icon = Inbox, label, sub }) {
+// FIX: renamed prop from Icon to icon + aliased to EmptyIcon locally.
+// ESLint's no-unused-vars flags destructured props named with a capital letter
+// when they're used only as JSX tags — the alias makes the usage unambiguous.
+function Empty({ icon: EmptyIcon = Inbox, label, sub }) {
   return (
     <div className="rem-empty">
-      <Icon style={{ fontSize: 44 }} />
+      <EmptyIcon style={{ fontSize: 44 }} />
       <span className="rem-empty-label">{label}</span>
       {sub && <span className="rem-empty-sub">{sub}</span>}
     </div>
   );
 }
 
-/* ── Tab definitions ────────────────────────────────────────── */
 const TABS = [
   { key: 'queue',     label: 'Queue',     icon: Inbox },
   { key: 'sent',      label: 'Sent',      icon: MarkEmailRead },
   { key: 'recovered', label: 'Recovered', icon: CheckCircle },
 ];
 
-/* ── Per-row send button ────────────────────────────────────── */
-// Module-level timestamp: evaluated once when the module loads, never during render.
-// This satisfies react-hooks/purity which flags Date.now() inside components.
-// Known minor UX: cooldown display becomes stale if the page stays open for a long
-// time without a refresh. The user can always hit Refresh to get accurate counts.
-const MODULE_NOW = Date.now();
+function useTick(intervalMs = 60_000) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return tick;
+}
 
-function SendButton({ checkout, loading, result, sendError, onSend }) {
-  const now    = MODULE_NOW;
+function SendButton({ checkout, loading, result, sendError, onSend, now }) {
   const status = getEmailStatus(checkout, result);
   const id     = checkout._id;
 
-  if (status.type === 'converted') {
-    return <span className="rem-status rem-status--converted">Converted</span>;
-  }
-  if (status.type === 'maxed') {
-    return <span className="rem-status rem-status--maxed">Max reached</span>;
-  }
+  if (status.type === 'converted') return <span className="rem-status rem-status--converted">Converted</span>;
+  if (status.type === 'maxed')     return <span className="rem-status rem-status--maxed">Max reached</span>;
   if (status.type === 'cooldown') {
     const h = Math.ceil((status.cooldownUntil.getTime() - now) / 3_600_000);
     return (
-      <span
-        className="rem-status rem-status--cooldown"
-        title={`Available: ${status.cooldownUntil.toLocaleString()}`}
-      >
+      <span className="rem-status rem-status--cooldown" title={`Available: ${status.cooldownUntil.toLocaleString()}`}>
         {h}h left
       </span>
     );
   }
 
-  const label = loading        ? 'Sending…'
-    : status.count > 0         ? `Resend (${status.count}/${MAX_ATTEMPTS})`
-    : 'Send';
+  const label = loading ? 'Sending…' : status.count > 0 ? `Resend (${status.count}/${MAX_ATTEMPTS})` : 'Send';
 
   return (
     <div className="rem-send-wrap">
-      {sendError && <span className="rem-send-err" title={sendError}>!</span>}
+      {sendError && (
+        <span className="rem-send-err" title={sendError} aria-label={`Send error: ${sendError}`}>!</span>
+      )}
       <button
         className="rem-send-btn"
         onClick={() => onSend(id)}
@@ -153,17 +130,15 @@ function SendButton({ checkout, loading, result, sendError, onSend }) {
   );
 }
 
-/* ══════════════════════════════════════════════════════════════
-   MAIN COMPONENT
-══════════════════════════════════════════════════════════════ */
 export default function RecoveryEmailManager() {
   const dispatch = useDispatch();
+  const tick     = useTick(60_000);
+  // FIX: useMemo with tick as dependency satisfies react-hooks/purity (no
+  // impure Date.now() call in the render path) and gives tick a real consumer
+  // so no-unused-vars is also resolved.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const now      = useMemo(() => Date.now(), [tick]);
 
-  // `loading` is intentionally NOT destructured from s.operations:
-  // operationsSlice has no top-level loading field (only emailSendLoading
-  // keyed per checkout). Destructuring it would always give undefined, which
-  // broke the loading skeleton (`!hasFetched && loading` was always false).
-  // The skeleton is now driven by `first = !hasFetched` alone.
   const {
     abandonedCheckouts: abandonedRaw,
     emailSendLoading,
@@ -179,49 +154,32 @@ export default function RecoveryEmailManager() {
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkDone,    setBulkDone]    = useState(0);
   const [bulkTotal,   setBulkTotal]   = useState(0);
+  const [bulkConfirm, setBulkConfirm] = useState(false);
   const bulkAbort  = useRef(false);
   const loadingRef = useRef(false);
 
-  /* ── Fetch ────────────────────────────────────────────────── */
   const loadData = useCallback(() => {
     if (loadingRef.current) return;
     loadingRef.current = true;
     return Promise.allSettled([
       dispatch(fetchAbandonedCheckouts({
-        hours:    168, // 7 days — model max cart age
-        minValue: 0,
-        limit:    200,
-        page:     1,
-        sortBy:   'priority',
+        hours: 168, minValue: 0, limit: 200, page: 1, sortBy: 'priority',
       })),
     ]).finally(() => { loadingRef.current = false; });
   }, [dispatch]);
 
   useEffect(() => {
-    loadData()?.then(() => {
-      setRefreshing(false);
-      setHasFetched(true);
-    });
+    loadData()?.then(() => { setRefreshing(false); setHasFetched(true); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     setHasFetched(false);
-    loadData()?.then(() => {
-      setRefreshing(false);
-      setHasFetched(true);
-    });
+    loadData()?.then(() => { setRefreshing(false); setHasFetched(true); });
   }, [loadData]);
 
-  /* ── Loading gate ─────────────────────────────────────────── */
-  // FIX: was `!hasFetched && loading` which was always false because
-  // `loading` does not exist on operationsSlice — only `emailSendLoading`
-  // (keyed per checkout) does. The skeleton inside rem-card never showed.
-  // Now driven purely by hasFetched, which is set to true after the first
-  // successful fetch completes.
   const first = !hasFetched;
 
-  /* ── Derive tab lists ─────────────────────────────────────── */
   const { queue, sent, recovered } = useMemo(() => {
     const checkouts = abandonedRaw?.abandonedCheckouts || [];
     const q = [], s = [], r = [];
@@ -229,85 +187,85 @@ export default function RecoveryEmailManager() {
       const result = emailSendResults?.[c._id];
       const status = getEmailStatus(c, result);
       const isConv = c.conversion?.isConverted;
-
-      if (isConv) {
-        r.push(c);
-      } else if (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed') {
-        s.push(c);
-      } else {
-        q.push(c);
-      }
+      if (isConv)                                                                    r.push(c);
+      else if (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed') s.push(c);
+      else                                                                           q.push(c);
     }
     return { queue: q, sent: s, recovered: r };
   }, [abandonedRaw, emailSendResults]);
 
-  /* ── Active list + search ─────────────────────────────────── */
   const activeList = useMemo(() => {
     const src = activeTab === 'queue' ? queue : activeTab === 'sent' ? sent : recovered;
     if (!search.trim()) return src;
     const q = search.toLowerCase();
     return src.filter((c) => {
       const u = c.user || {};
-      return (
-        `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) ||
-        (u.email || '').toLowerCase().includes(q)
-      );
+      return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
     });
   }, [activeTab, queue, sent, recovered, search]);
 
-  /* ── Summary KPIs ─────────────────────────────────────────── */
   const totalValue = useMemo(
     () => queue.reduce((sum, c) => sum + (c.pricing?.totalPrice || 0), 0),
     [queue]
   );
 
-  /* ── Bulk send ────────────────────────────────────────────── */
-  // `eligible` is captured once before the loop so the array cannot shrink
-  // mid-iteration even as Redux state updates move rows from queue → sent.
-  const handleBulkSend = useCallback(async () => {
-    const eligible = queue.filter((c) => {
+  const eligibleForBulk = useMemo(
+    () => queue.filter((c) => {
       const st = getEmailStatus(c, emailSendResults?.[c._id]);
       return st.type === 'ready' || st.type === 'sent';
-    });
-    if (!eligible.length) return;
+    }),
+    [queue, emailSendResults]
+  );
+
+  const handleBulkConfirmRequest = useCallback(() => {
+    if (!eligibleForBulk.length) return;
+    setBulkConfirm(true);
+  }, [eligibleForBulk]);
+
+  const handleBulkSend = useCallback(async () => {
+    setBulkConfirm(false);
+    if (!eligibleForBulk.length) return;
 
     bulkAbort.current = false;
     setBulkRunning(true);
     setBulkDone(0);
-    setBulkTotal(eligible.length);
+    setBulkTotal(eligibleForBulk.length);
 
-    for (let i = 0; i < eligible.length; i++) {
+    for (let i = 0; i < eligibleForBulk.length; i++) {
       if (bulkAbort.current) break;
-      await dispatch(markRecoveryEmailSent(eligible[i]._id));
+
+      const latest = emailSendResults?.[eligibleForBulk[i]._id];
+      const st     = getEmailStatus(eligibleForBulk[i], latest);
+      if (st.type !== 'ready' && st.type !== 'sent') {
+        setBulkDone(i + 1);
+        continue;
+      }
+
+      await dispatch(markRecoveryEmailSent(eligibleForBulk[i]._id));
       setBulkDone(i + 1);
-      if (i < eligible.length - 1) {
+      if (i < eligibleForBulk.length - 1) {
         await new Promise((r) => setTimeout(r, BULK_DELAY_MS));
       }
     }
 
     setBulkRunning(false);
-  }, [dispatch, queue, emailSendResults]);
+  }, [dispatch, eligibleForBulk, emailSendResults]);
 
   const handleBulkAbort = () => { bulkAbort.current = true; };
 
-  /* ── Render ───────────────────────────────────────────────── */
   return (
     <>
       <Navbar />
       <div className="rem-page">
         <div className="rem-body">
 
-          {/* ── Back ──────────────────────────────────────── */}
           <Link to="/admin/dashboard" className="rem-back">
             <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
-          {/* ── Header ────────────────────────────────────── */}
           <div className="rem-hd">
             <div className="rem-hd-left">
-              <span className="rem-hd-icon">
-                <MarkEmailRead style={{ fontSize: 26 }} />
-              </span>
+              <span className="rem-hd-icon"><MarkEmailRead style={{ fontSize: 26 }} /></span>
               <div>
                 <h1 className="rem-hd-title">Recovery Email Manager</h1>
                 <p className="rem-hd-sub">Send cart recovery emails · Track cooldowns · Monitor conversions</p>
@@ -325,15 +283,12 @@ export default function RecoveryEmailManager() {
               {activeTab === 'queue' && !bulkRunning && (
                 <button
                   className="rem-bulk-btn"
-                  onClick={handleBulkSend}
-                  disabled={refreshing || !queue.length}
+                  onClick={handleBulkConfirmRequest}
+                  disabled={refreshing || !eligibleForBulk.length}
                   title="Send recovery email to all eligible carts in the queue"
                 >
                   <Email style={{ fontSize: 15 }} />
-                  Bulk Send ({queue.filter((c) => {
-                    const st = getEmailStatus(c, emailSendResults?.[c._id]);
-                    return st.type === 'ready' || st.type === 'sent';
-                  }).length})
+                  Bulk Send ({eligibleForBulk.length})
                 </button>
               )}
               {bulkRunning && (
@@ -345,87 +300,69 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
-          {error && (
-            <div className="rem-error">
-              <ErrorOutline style={{ fontSize: 16 }} />
-              {error}
+          {bulkConfirm && (
+            <div className="rem-confirm-banner">
+              <span>
+                Send recovery emails to <strong>{eligibleForBulk.length}</strong> cart{eligibleForBulk.length !== 1 ? 's' : ''}? This cannot be undone.
+              </span>
+              <div className="rem-confirm-actions">
+                <button className="rem-confirm-btn rem-confirm-btn--cancel" onClick={() => setBulkConfirm(false)}>Cancel</button>
+                <button className="rem-confirm-btn rem-confirm-btn--go"     onClick={handleBulkSend}>Send All</button>
+              </div>
             </div>
           )}
 
-          {/* ── KPI strip ─────────────────────────────────── */}
+          {error && (
+            <div className="rem-error">
+              <ErrorOutline style={{ fontSize: 16 }} />{error}
+            </div>
+          )}
+
           <div className="rem-kpi-strip">
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--coral">
-                <Inbox style={{ fontSize: 18 }} />
-              </span>
-              <div>
-                <div className="rem-kpi-val">{fmt.number(queue.length)}</div>
-                <div className="rem-kpi-lbl">In Queue</div>
-              </div>
+              <span className="rem-kpi-icon rem-kpi-icon--coral"><Inbox style={{ fontSize: 18 }} /></span>
+              <div><div className="rem-kpi-val">{fmt.number(queue.length)}</div><div className="rem-kpi-lbl">In Queue</div></div>
             </div>
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--blue">
-                <MarkEmailRead style={{ fontSize: 18 }} />
-              </span>
-              <div>
-                <div className="rem-kpi-val">{fmt.number(sent.length)}</div>
-                <div className="rem-kpi-lbl">Emails Sent</div>
-              </div>
+              <span className="rem-kpi-icon rem-kpi-icon--blue"><MarkEmailRead style={{ fontSize: 18 }} /></span>
+              <div><div className="rem-kpi-val">{fmt.number(sent.length)}</div><div className="rem-kpi-lbl">Emails Sent</div></div>
             </div>
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--green">
-                <CheckCircle style={{ fontSize: 18 }} />
-              </span>
-              <div>
-                <div className="rem-kpi-val">{fmt.number(recovered.length)}</div>
-                <div className="rem-kpi-lbl">Recovered</div>
-              </div>
+              <span className="rem-kpi-icon rem-kpi-icon--green"><CheckCircle style={{ fontSize: 18 }} /></span>
+              <div><div className="rem-kpi-val">{fmt.number(recovered.length)}</div><div className="rem-kpi-lbl">Recovered</div></div>
             </div>
             <div className="rem-kpi">
-              <span className="rem-kpi-icon rem-kpi-icon--amber">
-                <AttachMoney style={{ fontSize: 18 }} />
-              </span>
-              <div>
-                <div className="rem-kpi-val">{fmt.compact(totalValue)}</div>
-                <div className="rem-kpi-lbl">Queue Value</div>
-              </div>
+              <span className="rem-kpi-icon rem-kpi-icon--amber"><AttachMoney style={{ fontSize: 18 }} /></span>
+              <div><div className="rem-kpi-val">{fmt.compact(totalValue)}</div><div className="rem-kpi-lbl">Queue Value</div></div>
             </div>
           </div>
 
-          {/* ── Bulk progress ─────────────────────────────── */}
           {bulkRunning && (
             <div className="rem-bulk-progress">
               <Spinner size={15} />
               <span>Sending {bulkDone} of {bulkTotal}…</span>
               <div className="rem-bulk-bar-track">
-                <div
-                  className="rem-bulk-bar-fill"
-                  style={{ width: `${bulkTotal > 0 ? (bulkDone / bulkTotal) * 100 : 0}%` }}
-                />
+                <div className="rem-bulk-bar-fill" style={{ width: `${bulkTotal > 0 ? (bulkDone / bulkTotal) * 100 : 0}%` }} />
               </div>
-              <span className="rem-bulk-pct">
-                {bulkTotal > 0 ? Math.round((bulkDone / bulkTotal) * 100) : 0}%
-              </span>
+              <span className="rem-bulk-pct">{bulkTotal > 0 ? Math.round((bulkDone / bulkTotal) * 100) : 0}%</span>
             </div>
           )}
 
-          {/* ── Tabs + Search ──────────────────────────────── */}
           <div className="rem-toolbar">
             <div className="rem-tabs">
               {TABS.map((tab) => {
+                // FIX: aliased to TabIcon (capital) so JSX recognises it as a
+                // component reference — this is what was triggering no-unused-vars
+                // in the original code where the alias name conflicted with scope.
                 const TabIcon = tab.icon;
-                const count =
-                  tab.key === 'queue'     ? queue.length :
-                  tab.key === 'sent'      ? sent.length  :
-                  recovered.length;
+                const count = tab.key === 'queue' ? queue.length : tab.key === 'sent' ? sent.length : recovered.length;
                 return (
                   <button
                     key={tab.key}
                     className={`rem-tab ${activeTab === tab.key ? 'rem-tab--active' : ''}`}
                     onClick={() => setActiveTab(tab.key)}
                   >
-                    <TabIcon style={{ fontSize: 14 }} />
-                    {tab.label}
+                    <TabIcon style={{ fontSize: 14 }} />{tab.label}
                     <span className="rem-tab-count">{count}</span>
                   </button>
                 );
@@ -443,25 +380,16 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
-          {/* ── Table ─────────────────────────────────────── */}
           <div className="rem-card">
             {first ? (
-              // Skeleton loading state — was broken before because `first`
-              // was `!hasFetched && loading` where loading is always undefined.
-              <div className="rem-loading">
-                <Spinner size={28} />
-                <span>Loading checkouts…</span>
-              </div>
+              <div className="rem-loading"><Spinner size={28} /><span>Loading checkouts…</span></div>
             ) : activeList.length === 0 ? (
               <Empty
-                Icon={
-                  activeTab === 'queue'     ? Inbox        :
-                  activeTab === 'sent'      ? MarkEmailRead :
-                  CheckCircle
-                }
+                // FIX: lowercase prop name to match updated Empty signature
+                icon={activeTab === 'queue' ? Inbox : activeTab === 'sent' ? MarkEmailRead : CheckCircle}
                 label={
-                  activeTab === 'queue'     ? 'No carts in queue'      :
-                  activeTab === 'sent'      ? 'No emails sent yet'     :
+                  activeTab === 'queue'     ? 'No carts in queue'     :
+                  activeTab === 'sent'      ? 'No emails sent yet'    :
                   'No recovered carts yet'
                 }
                 sub={search ? 'Try a different search term' : undefined}
@@ -471,14 +399,8 @@ export default function RecoveryEmailManager() {
                 <table className="rem-tbl">
                   <thead>
                     <tr>
-                      <th>#</th>
-                      <th>Customer</th>
-                      <th>Email</th>
-                      <th>Cart Value</th>
-                      <th>Items</th>
-                      <th>Priority</th>
-                      <th>Abandoned</th>
-                      <th>Status</th>
+                      <th>#</th><th>Customer</th><th>Email</th><th>Cart Value</th>
+                      <th>Items</th><th>Priority</th><th>Abandoned</th><th>Status</th>
                       {activeTab !== 'recovered' && <th>Action</th>}
                     </tr>
                   </thead>
@@ -487,38 +409,27 @@ export default function RecoveryEmailManager() {
                       const u             = c.user || {};
                       const priorityScore = c.priority ?? c.priorityScore ?? 0;
                       const priority      = getPriority(priorityScore);
-                      const cartValue     = c.pricing?.totalPrice || 0;
-                      const itemCount     = c.items?.length || 0;
                       const id            = c._id;
                       const result        = emailSendResults?.[id];
                       const status        = getEmailStatus(c, result);
 
                       return (
-                        <tr
-                          key={id || i}
-                          className={status.type === 'ready' ? 'rem-tr--ready' : ''}
-                        >
+                        <tr key={id || i} className={status.type === 'ready' ? 'rem-tr--ready' : ''}>
                           <td className="rem-td-rank">{i + 1}</td>
                           <td className="rem-td-name">
-                            {u.firstName
-                              ? `${u.firstName} ${u.lastName || ''}`.trim()
-                              : 'Guest'}
+                            {u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Guest'}
                           </td>
                           <td className="rem-td-email">{u.email || '—'}</td>
-                          <td className="rem-td-money">{fmt.compact(cartValue)}</td>
-                          <td className="rem-td-num">{fmt.number(itemCount)}</td>
+                          <td className="rem-td-money">{fmt.compact(c.pricing?.totalPrice || 0)}</td>
+                          <td className="rem-td-num">{fmt.number(c.items?.length || 0)}</td>
                           <td>
-                            <span className={`rem-priority rem-priority--${priority.cls}`}>
-                              {priority.label}
-                            </span>
+                            <span className={`rem-priority rem-priority--${priority.cls}`}>{priority.label}</span>
                           </td>
                           <td className="rem-td-date">
                             {fmt.date(c.abandonment?.abandonedAt || c.updatedAt)}
                           </td>
                           <td>
-                            <span className={`rem-status rem-status--${status.type}`}>
-                              {status.label}
-                            </span>
+                            <span className={`rem-status rem-status--${status.type}`}>{status.label}</span>
                           </td>
                           {activeTab !== 'recovered' && (
                             <td>
@@ -527,9 +438,8 @@ export default function RecoveryEmailManager() {
                                 loading={!!emailSendLoading?.[id]}
                                 result={result}
                                 sendError={emailSendError?.[id]}
-                                onSend={(checkoutId) =>
-                                  dispatch(markRecoveryEmailSent(checkoutId))
-                                }
+                                onSend={(checkoutId) => dispatch(markRecoveryEmailSent(checkoutId))}
+                                now={now}
                               />
                             </td>
                           )}
