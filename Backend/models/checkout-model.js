@@ -308,8 +308,6 @@ checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) 
         pending:   { $sum: { $cond: [{ $eq: ['$status', 'pending']  }, 1, 0] } },
         expired:   { $sum: { $cond: [{ $eq: ['$status', 'expired']  }, 1, 0] } },
 
-        // Recovered = was abandoned AND was eventually converted.
-        // Used to compute recoveryRate accurately at the DB layer.
         recoveredCount: {
           $sum: {
             $cond: [
@@ -324,7 +322,6 @@ checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) 
           }
         },
 
-
         totalEverAbandoned: {
           $sum: { $cond: ['$abandonment.isAbandoned', 1, 0] }
         }
@@ -337,20 +334,18 @@ checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) 
     recoveredCount: 0, totalEverAbandoned: 0
   };
 
-  // completedCheckouts = truly abandoned (unrecovered) + all converted
-  // This is the denominator for abandonmentRate.
-  const completedCheckouts = result.abandoned + result.converted;
+  const resolvedCheckouts  = result.abandoned + result.converted; // denominator for rates
+  const completedCheckouts = result.converted;                    // paid orders only
 
   const abandonmentRate =
-    completedCheckouts > 0
-      ? (result.abandoned / completedCheckouts) * 100
+    resolvedCheckouts > 0
+      ? (result.abandoned / resolvedCheckouts) * 100
       : 0;
 
   const conversionRate =
-    completedCheckouts > 0
-      ? (result.converted / completedCheckouts) * 100
+    resolvedCheckouts > 0
+      ? (result.converted / resolvedCheckouts) * 100
       : 0;
-
 
   const recoveryRate =
     result.totalEverAbandoned > 0
@@ -359,12 +354,12 @@ checkoutSchema.statics.getAbandonmentRate = async function (startDate, endDate) 
 
   return {
     totalCheckouts:      result.total,
-    abandonedCheckouts:  result.abandoned,        // unrecovered abandoned only
+    abandonedCheckouts:  result.abandoned,
     convertedCheckouts:  result.converted,
     pendingCheckouts:    result.pending,
     expiredCheckouts:    result.expired,
-    completedCheckouts,
-    recoveredOrders:     result.recoveredCount,   // carts that were abandoned then paid
+    completedCheckouts,                     // ← now means paid/converted only
+    recoveredOrders:     result.recoveredCount,
     totalEverAbandoned:  result.totalEverAbandoned,
     abandonmentRate:     Math.round(abandonmentRate * 100) / 100,
     conversionRate:      Math.round(conversionRate  * 100) / 100,
