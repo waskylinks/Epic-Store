@@ -224,3 +224,46 @@
   font-weight: 700;
   color: #059669;
 }
+
+.discount-balance-stale-notice {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding-top: 4px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: #92400e;           /* amber-800 */
+  background: #fef3c7;      /* amber-100 */
+  border: 1px solid #fde68a;/* amber-200 */
+  border-radius: 6px;
+  padding: 3px 8px;
+  line-height: 1.4;
+}
+
+.discount-balance-stale-notice svg {
+  flex-shrink: 0;
+  font-size: 0.78rem;
+  color: #d97706;           /* amber-600 */
+}
+
+.discount-balance-row:empty {
+  display: none;
+}
+
+.ec-item-approx-tilde {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ec-text-muted);
+  vertical-align: super;
+  margin-right: 1px;
+  letter-spacing: 0;
+}
+
+
+.ec-item-total-price [title] {
+  cursor: help;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}

@@ -32,21 +32,6 @@ function CartItem({ item }) {
   }, [item.quantity]);
 
   // ── Discount eligibility ───────────────────────────────────────────────────
-  // A category restriction is active when:
-  //   1. A discount is applied
-  //   2. eligibleProductCategories is a non-empty array (meaning the code is
-  //      not a blanket discount — it targets specific product categories)
-  //
-  // When the restriction is active, each item is checked against the list.
-  // If eligibleProductCategories is empty the discount applies to all items
-  // and no badge is needed — the summary line already communicates the saving.
-  //
-  // We deliberately do NOT show a per-item discounted price here.
-  // The authoritative discount amount comes from the server. Reproducing that
-  // math per-item on the frontend risks drift (e.g. maxDiscountAmount caps,
-  // future conditions) and would create a trust gap right before payment.
-  // The badge tells the user WHICH items qualified; the Order Summary tells
-  // them HOW MUCH was saved — clean separation of concerns.
   const isCategoryRestricted =
     discount.applied &&
     Array.isArray(discount.eligibleProductCategories) &&
@@ -58,6 +43,9 @@ function CartItem({ item }) {
     discount.eligibleProductCategories.includes(item.category);
 
   const isIneligible = isCategoryRestricted && !isEligible;
+
+  // For unrestricted discounts, every item is eligible for the badge.
+  const isUnrestrictedEligible = discount.applied && !isCategoryRestricted;
   // ──────────────────────────────────────────────────────────────────────────
 
   const isInWishlist = wishlistItems.some(wishItem => {
@@ -198,6 +186,27 @@ function CartItem({ item }) {
 
   const itemTotal = item.price * quantity;
 
+
+  const showPerItemDiscount = isEligible || isUnrestrictedEligible;
+
+  let discountedItemTotal = null;
+  let discountedIsApprox  = false;
+
+  if (showPerItemDiscount && discount.applied) {
+    if (discount.type === 'percentage') {
+      discountedItemTotal = itemTotal * (1 - discount.value / 100);
+      discountedIsApprox  = false;
+    } else if (discount.type === 'fixed') {
+      const eligibleSubtotal = discount.eligibleSubtotal ?? 0;
+      if (eligibleSubtotal > 0 && discount.discountAmount > 0) {
+        const share          = itemTotal / eligibleSubtotal;
+        discountedItemTotal  = Math.max(0, itemTotal - share * discount.discountAmount);
+        discountedIsApprox   = true;
+      }
+    }
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   return (
     <div className={`ec-item${isIneligible ? ' ec-item--ineligible' : ''}`}>
       <div className="ec-item-info">
@@ -220,7 +229,7 @@ function CartItem({ item }) {
           </p>
 
           {/* ── Discount eligibility badge ─────────────────────────────── */}
-          {isEligible && (
+          {(isEligible || isUnrestrictedEligible) && (
             <span className="ec-item-discount-badge">
               <FiTag />
               {discount.code} applied
@@ -273,30 +282,29 @@ function CartItem({ item }) {
         </button>
       </div>
 
-      {/* Item total — always shows original undiscounted price.
-          The per-item discounted price is intentionally NOT shown here.
-          See discount eligibility comment above for rationale. */}
+      {/* ── Item total */}
       <div className="ec-item-total">
         <span className="ec-item-total-price">
-        {isEligible && discount.type === 'percentage' ? (
-          <>
-            <span style={{ 
-              textDecoration: 'line-through', 
-              fontSize: '12px',
-              color: '#999',
-              display: 'block'
-            }}>
-              {formatUSD(itemTotal)}
-            </span>
-            <span>
-              {formatUSD(itemTotal * (1 - discount.value / 100))}
-            </span>
-          </>
-        ) : (
-          formatUSD(itemTotal)
-        )}
+          {discountedItemTotal !== null ? (
+            <>
+              <span style={{ 
+                textDecoration: 'line-through', 
+                fontSize: '12px',
+                color: '#999',
+                display: 'block'
+              }}>
+                {formatUSD(itemTotal)}
+              </span>
+              <span>
+                {discountedIsApprox && <span className="ec-item-approx-tilde">~</span>}
+                {formatUSD(discountedItemTotal)}
+              </span>
+            </>
+          ) : (
+            formatUSD(itemTotal)
+          )}
         </span>
-     </div>
+      </div>
 
       <div className="ec-item-action">
         <button 

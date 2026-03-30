@@ -1,7 +1,6 @@
 import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
 import axios from "axios";
 
-// Builds a query string, dropping undefined/null/"" values
 const toQueryString = (obj = {}) => {
   const params = new URLSearchParams();
   Object.entries(obj).forEach(([key, val]) => {
@@ -11,8 +10,6 @@ const toQueryString = (obj = {}) => {
   return str ? `?${str}` : "";
 };
 
-// Fields stripped before PUT /api/v1/discounts/:id.
-// Backend allowedUpdates: description, status, validFrom, validUntil, usageLimit, conditions, notes
 const UPDATE_STRIP_KEYS = new Set([
   "code", "type", "value", "category", "audience",
   "createdBy", "usageHistory", "usageHistoryTotal", "usageHistoryCapped",
@@ -123,7 +120,6 @@ export const deleteDiscount = createAsyncThunk(
         alreadyInactive: data.message === "Discount was already inactive",
       };
     } catch (err) {
-      // 403: fraud protection window — message only, no deletionEligibleAt in body
       return rejectWithValue({
         message: err.response?.data?.message ?? "Failed to deactivate discount",
         status:  err.response?.status,
@@ -152,7 +148,6 @@ export const createCompensationDiscount = createAsyncThunk(
     }
   }
 );
-
 
 export const createDiscountForUsers = createAsyncThunk(
   "adminDiscount/createDiscountForUsers",
@@ -285,6 +280,8 @@ const initialState = {
   purgeLogLoading:      false,
   actionLoading:        false,
 
+  cleanupRefreshing: false,
+
   vipLoading:             false,
   vipError:               null,
   vipSuccess:             false,
@@ -363,14 +360,17 @@ const adminDiscountSlice = createSlice({
       })
       .addCase(getAllDiscounts.fulfilled, (state, action) => {
         state.discountsLoading = false;
+        // FIX #22: clear cleanupRefreshing once the post-cleanup re-fetch lands.
+        state.cleanupRefreshing = false;
         if (!action.payload._isCursorPage) {
           state.discounts  = action.payload.discounts  ?? [];
           state.pagination = action.payload.pagination ?? null;
         }
       })
       .addCase(getAllDiscounts.rejected, (state, action) => {
-        state.discountsLoading = false;
-        state.error            = action.payload;
+        state.discountsLoading  = false;
+        state.cleanupRefreshing = false;
+        state.error             = action.payload;
       });
 
     builder
@@ -528,22 +528,26 @@ const adminDiscountSlice = createSlice({
         state.actionLoading = true;
         state.error         = null;
       })
+
       .addCase(triggerCleanup.fulfilled, (state, action) => {
-        state.actionLoading = false;
-        state.success       = true;
-        state.message       = action.payload.message;
-        state.cleanupResult = {
+        state.actionLoading    = false;
+        state.success          = true;
+        state.message          = action.payload.message;
+        state.cleanupResult    = {
           expired: action.payload.expired ?? 0,
           deleted: action.payload.deleted ?? 0,
         };
-        state.discounts     = [];
-        state.pagination    = null;
-        state.stats         = null;
-        state.categoryStats = [];
+        // Clear stale data and signal that a refresh is in progress.
+        state.discounts        = [];
+        state.pagination       = null;
+        state.stats            = null;
+        state.categoryStats    = [];
+        state.cleanupRefreshing = true; // cleared by getAllDiscounts.fulfilled
       })
       .addCase(triggerCleanup.rejected, (state, action) => {
-        state.actionLoading = false;
-        state.error         = action.payload;
+        state.actionLoading    = false;
+        state.cleanupRefreshing = false;
+        state.error            = action.payload;
       });
 
     builder
