@@ -3,6 +3,7 @@ import HandleError from "../utils/handleError.js";
 import Product from '../models/product-model.js';
 import Discount from '../models/discount-model.js';
 import { deleteCachePattern } from '../utils/redis.js';
+import Cart from '../models/cart-model.js';
 
 // ============================================
 // SHARED PRICE RESOLUTION
@@ -50,7 +51,7 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// ADD TO CART
+// ADD TO CART  (FIXED — now persists to DB)
 // ============================================
 
 export const addToCart = handleAsyncError(async (req, res, next) => {
@@ -59,12 +60,8 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   if (!productId) return next(new HandleError('Product ID is required', 400));
 
   const product = await Product.findById(productId);
-
-  if (!product) return next(new HandleError('Product not found', 404));
-
-  if (product.status !== 'published') {
-    return next(new HandleError('Product is not available', 400));
-  }
+  if (!product)                        return next(new HandleError('Product not found', 404));
+  if (product.status !== 'published')  return next(new HandleError('Product is not available', 400));
 
   const availableStock = product.inventory?.stock ?? product.stock ?? 0;
   if (availableStock < quantity) {
@@ -72,24 +69,43 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   }
 
   const currentPrice = resolveProductPrice(product);
-  if (currentPrice === 0) {
-    return next(new HandleError('Product has no valid price', 500));
-  }
+  if (currentPrice === 0) return next(new HandleError('Product has no valid price', 500));
 
-  try {
-    await product.incrementCart(true);
-  } catch {
-    // Analytics failure must not abort the cart operation
-  }
+  // ── Persist to DB (upsert cart doc, upsert item inside it) ───────────────
+  if (req.user?._id) {
+    const cart = await Cart.findOneAndUpdate(
+      { user: req.user._id },
+      { $setOnInsert: { user: req.user._id } },
+      { upsert: true, new: true }
+    );
 
+    const existingItem = cart.cartItems.find(
+      i => String(i.product) === String(productId)
+    );
+
+    if (existingItem) {
+      existingItem.quantity = Math.min(existingItem.quantity + quantity, availableStock);
+    } else {
+      cart.cartItems.push({ product: productId, quantity });
+    }
+
+    if (cart.cartItems.length >= 100) {
+      return next(new HandleError('Cart limit reached (100 items)', 400));
+    }
+
+    await cart.save();
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  try { await product.incrementCart(true); } catch { /* analytics non-fatal */ }
   Promise.all([
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
   return res.status(200).json({
-    success: true,
-    message: 'Item added to cart',
+    success:  true,
+    message:  'Item added to cart',
     item: {
       product:  product._id,
       name:     product.name,
@@ -102,7 +118,20 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// UPDATE CART ITEM
+// GET CART  (required by syncServerCart)
+// GET /api/v1/cart  — auth required
+// ============================================
+
+export const getUserCart = handleAsyncError(async (req, res) => {
+  const cart = await Cart.findOne({ user: req.user._id }).lean();
+  return res.status(200).json({
+    success:   true,
+    cartItems: cart?.cartItems ?? []
+  });
+});
+
+// ============================================
+// UPDATE CART ITEM  (FIXED — now persists to DB)
 // ============================================
 
 export const updateCartItem = handleAsyncError(async (req, res, next) => {
@@ -111,10 +140,7 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
   if (!productId || !quantity) {
     return next(new HandleError('Product ID and quantity are required', 400));
   }
-
-  if (quantity < 1) {
-    return next(new HandleError('Quantity must be at least 1', 400));
-  }
+  if (quantity < 1) return next(new HandleError('Quantity must be at least 1', 400));
 
   const product = await Product.findById(productId);
   if (!product) return next(new HandleError('Product not found', 404));
@@ -124,73 +150,85 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
     return next(new HandleError(`Only ${availableStock} items available in stock`, 400));
   }
 
+  const finalQuantity = Math.min(quantity, availableStock);
+
+  // ── Persist to DB ─────────────────────────────────────────────────────────
+  if (req.user?._id) {
+    await Cart.findOneAndUpdate(
+      { user: req.user._id, 'cartItems.product': productId },
+      { $set: { 'cartItems.$.quantity': finalQuantity } }
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   return res.status(200).json({
     success: true,
     message: 'Cart updated',
-    item: {
-      product:  product._id,
-      quantity: Math.min(quantity, availableStock)
-    }
+    item:    { product: product._id, quantity: finalQuantity }
   });
 });
 
 // ============================================
-// REMOVE FROM CART
+// REMOVE FROM CART  (FIXED — now persists to DB)
 // ============================================
 
 export const removeFromCart = handleAsyncError(async (req, res, next) => {
   const { productId } = req.params;
-
   if (!productId) return next(new HandleError('Product ID is required', 400));
+
+  // ── Persist to DB ─────────────────────────────────────────────────────────
+  if (req.user?._id) {
+    await Cart.findOneAndUpdate(
+      { user: req.user._id },
+      { $pull: { cartItems: { product: productId } } }
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
 
   try {
     const product = await Product.findById(productId);
-    if (product) {
-      await product.incrementCart(false);
-    }
-  } catch {
-    // Analytics failure must not abort the remove operation
-  }
+    if (product) await product.incrementCart(false);
+  } catch { /* analytics non-fatal */ }
 
   deleteCachePattern('product_conversion*').catch(() => {});
 
-  return res.status(200).json({
-    success:   true,
-    message:   'Item removed from cart',
-    productId
-  });
+  return res.status(200).json({ success: true, message: 'Item removed from cart', productId });
 });
 
 // ============================================
-// CLEAR CART
+// CLEAR CART  (FIXED — now persists to DB)
 // ============================================
 
 export const clearCart = handleAsyncError(async (req, res, next) => {
   const { items } = req.body ?? {};
 
+  // ── Persist to DB ─────────────────────────────────────────────────────────
+  if (req.user?._id) {
+    await Cart.findOneAndUpdate(
+      { user: req.user._id },
+      { $set: { cartItems: [] } },
+      { upsert: true }
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (items && items.length > 0) {
     try {
       for (const item of items) {
-        await Product.findByIdAndUpdate(
-          item.product,
-          [
-            {
-              $set: {
-                'analytics.addedToCart': {
-                  $max: [
-                    { $subtract: ['$analytics.addedToCart', item.quantity || 1] },
-                    0
-                  ]
-                }
+        await Product.findByIdAndUpdate(item.product, [
+          {
+            $set: {
+              'analytics.addedToCart': {
+                $max: [
+                  { $subtract: ['$analytics.addedToCart', item.quantity || 1] },
+                  0
+                ]
               }
             }
-          ]
-        );
+          }
+        ]);
       }
-    } catch {
-      // Analytics failure must not abort the clear operation
-    }
-
+    } catch { /* analytics non-fatal */ }
     deleteCachePattern('product_conversion*').catch(() => {});
   }
 
