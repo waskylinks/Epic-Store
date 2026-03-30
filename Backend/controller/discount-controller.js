@@ -8,16 +8,17 @@ import crypto from "crypto";
 import Order from "../models/order-model.js";
 import mongoose from "mongoose";
 import redis from "../utils/redis.js";
-import {syncDiscountAfterRedemption} from '../Services/discount-analytics-service.js'
+
+// FIX #6/#7: syncDiscountAfterRedemption is NO LONGER imported here.
+// It must only fire after a confirmed payment in the payment controller,
+// not at /validate time. Calling it here caused usage to be recorded
+// before payment was confirmed, and generated spurious analytics syncs
+// on every UI-triggered validation call.
 
 // ============================================
 // HELPERS
 // ============================================
 
-/**
- * Builds a clean performedBy snapshot from req.user.
- * Called by every controller that writes an audit entry.
- */
 const auditActor = (user) => ({
   _id:       user._id,
   firstName: user.firstName ?? null,
@@ -26,24 +27,10 @@ const auditActor = (user) => ({
   system:    false,
 });
 
-/**
- * Escapes a string for safe use inside a MongoDB $regex query.
- * Prevents ReDoS attacks via user-controlled search parameters.
- */
 const escapeRegex = (str) => str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/**
- * Returns true only when s is a valid 24-hex-char MongoDB ObjectId string.
- */
 const isValidObjectId = (s) => mongoose.Types.ObjectId.isValid(s);
 
-/**
- * Validates an array of product category strings against the canonical list.
- * Returns { valid: true } or { valid: false, invalid: [...] }.
- *
- * NEW — used by createDiscount and createDiscountForUsers to guard
- * eligibleProductCategories before any DB write.
- */
 const validateProductCategories = (cats) => {
   if (!Array.isArray(cats) || cats.length === 0) {
     return { valid: true, invalid: [] };
@@ -52,15 +39,11 @@ const validateProductCategories = (cats) => {
   return { valid: invalid.length === 0, invalid };
 };
 
-/**
- * Invalidates the stats cache so the next getDiscountStats call re-aggregates.
- * Called by any controller that mutates the discount collection.
- */
 const invalidateStatsCache = async () => {
   try {
     await redis.del("discount:stats");
   } catch {
-    // Redis failure must never block a discount write — swallow silently.
+    // Redis failure must never block a discount write.
   }
 };
 
@@ -68,30 +51,19 @@ const invalidateStatsCache = async () => {
 // ADMIN: CREATE DISCOUNT
 // ============================================
 
-/**
- * @route POST /api/v1/discounts
- * @access Admin
- *
- * NEW field accepted in request body:
- *   eligibleProductCategories {String[]} — optional; restricts the discount
- *     to carts that contain at least one item from the listed product
- *     categories. Must be a subset of the canonical PRODUCT_CATEGORIES list.
- *     Omit (or pass []) for no category restriction.
- */
 export const createDiscount = handleAsyncError(async (req, res, next) => {
   const {
     code, description, type, value, category,
     audience,
     validFrom, validUntil, usageLimit, conditions, notes,
     relatedOrder, relatedReturn,
-    eligibleProductCategories,   // NEW
+    eligibleProductCategories,
   } = req.body;
 
   if (!code || !description || !type || !value || !category || !validUntil) {
     return next(new HandleError("Missing required fields", 400));
   }
 
-  // Validate optional ObjectId fields before any DB call
   if (relatedOrder && !isValidObjectId(relatedOrder)) {
     return next(new HandleError("Invalid relatedOrder id", 400));
   }
@@ -99,7 +71,6 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid relatedReturn id", 400));
   }
 
-  // NEW — validate product category restriction if supplied
   let resolvedEligibleProductCategories = [];
   if (eligibleProductCategories !== undefined && eligibleProductCategories !== null) {
     if (!Array.isArray(eligibleProductCategories)) {
@@ -122,19 +93,11 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
 
   const resolvedAudience = audience === "all" ? "all" : "specific";
 
-  // Pre-flight uniqueness check — still useful as an early 400, but we no longer
-  // rely on it as the sole guard (race condition handled by try/catch below).
-  const existingDiscount = await Discount.findOne({
-    code: code.toUpperCase(),
-  }).lean();
+  const existingDiscount = await Discount.findOne({ code: code.toUpperCase() }).lean();
   if (existingDiscount) {
     return next(new HandleError("Discount code already exists", 400));
   }
 
-  // Merge incoming conditions with the new eligibleProductCategories so
-  // other condition fields (e.g. minPurchaseAmount from `conditions`) are
-  // preserved.  eligibleProductCategories is hoisted to the top level of
-  // req.body to keep the API surface explicit and avoid deeply nested input.
   const mergedConditions = {
     ...(conditions || {}),
     eligibleProductCategories: resolvedEligibleProductCategories,
@@ -167,13 +130,9 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
     performedBy:  auditActor(req.user),
     meta: {
       audience:    resolvedAudience,
-      type,
-      value,
-      category,
-      validUntil,
+      type, value, category, validUntil,
       relatedReturn:  relatedReturn  ?? null,
       relatedOrder:   relatedOrder   ?? null,
-      // NEW — log which product categories are restricted (empty = unrestricted)
       eligibleProductCategories: resolvedEligibleProductCategories,
     },
   });
@@ -191,14 +150,6 @@ export const createDiscount = handleAsyncError(async (req, res, next) => {
 // ADMIN: UPDATE DISCOUNT
 // ============================================
 
-/**
- * @route PUT /api/v1/discounts/:id
- * @access Admin
- *
- * NEW: 'eligibleProductCategories' is now an allowed update field.
- * Pass [] to remove a product-category restriction.
- * Pass a valid subset of PRODUCT_CATEGORIES to set or change it.
- */
 export const updateDiscount = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -210,7 +161,7 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     "description", "status", "validFrom", "validUntil",
     "usageLimit", "conditions", "notes",
     "eligibleProductCategories",
-    "remainingBalance",  
+    "remainingBalance",
   ];
 
   const updates = {};
@@ -219,43 +170,37 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
   });
 
   if (updates.remainingBalance !== undefined) {
-  const rb = Number(updates.remainingBalance);
-  if (isNaN(rb) || rb < 0) {
-    return next(new HandleError("remainingBalance must be a non-negative number", 400));
-  }
-  const peek = await Discount.findById(id).select("value type").lean();
-  if (!peek) return next(new HandleError("Discount not found", 404));
-  if (peek.type !== "fixed") {
-    return next(new HandleError("remainingBalance can only be set on fixed-type discounts", 400));
-  }
-  if (rb > peek.value) {
-    return next(new HandleError(`remainingBalance cannot exceed face value ($${peek.value})`, 400));
-  }
-  updates.remainingBalance = rb;
-}
+    const rb = Number(updates.remainingBalance);
+    if (isNaN(rb) || rb < 0) {
+      return next(new HandleError("remainingBalance must be a non-negative number", 400));
+    }
+    const peek = await Discount.findById(id).select("value type usageLimit remainingBalance").lean();
+    if (!peek) return next(new HandleError("Discount not found", 404));
+    if (peek.type !== "fixed") {
+      return next(new HandleError("remainingBalance can only be set on fixed-type discounts", 400));
+    }
+    if (rb > peek.value) {
+      return next(new HandleError(`remainingBalance cannot exceed face value ($${peek.value})`, 400));
+    }
 
-  // NEW — eligibleProductCategories handling.
-  //
-  // Admins may supply it in two ways:
-  //   A) Top-level key:  { eligibleProductCategories: [...] }
-  //   B) Inside conditions object: { conditions: { eligibleProductCategories: [...] } }
-  //
-  // CRITICAL PATH-COLLISION FIX:
-  //   MongoDB's $set operator rejects a document that contains BOTH a dotted path
-  //   ('conditions.eligibleProductCategories') AND its parent object ('conditions')
-  //   in the same operation:
-  //     MongoServerError: Updating the path 'conditions' would create a conflict
-  //     at 'conditions.eligibleProductCategories'
-  //
-  //   Resolution strategy:
-  //   - If top-level alias is supplied AND conditions object is also supplied,
-  //     merge eligibleProductCategories into the conditions object and use $set
-  //     on 'conditions' only (no dotted-path key).
-  //   - If only the top-level alias is supplied (no conditions object), use the
-  //     dotted path 'conditions.eligibleProductCategories' for a surgical update.
-  //   - If only conditions object is supplied, validate the nested value if present.
-  //   Either way, delete the top-level 'eligibleProductCategories' key so it never
-  //   reaches the $set call.
+    // FIX #8: block restoring a partially-used balance without an explicit
+    // forceReset flag. Without this guard, an admin can inadvertently re-credit
+    // a used balance (e.g. resetting from $20 → $50 when $30 was already spent).
+    const amountUsed = peek.value - (peek.remainingBalance ?? peek.value);
+    const wouldRestore = rb > (peek.remainingBalance ?? peek.value);
+    if (wouldRestore && !req.body.forceReset) {
+      return next(
+        new HandleError(
+          `This code has already used $${amountUsed.toFixed(2)} of its $${peek.value} balance. ` +
+          `Setting remainingBalance to $${rb.toFixed(2)} would restore used balance. ` +
+          `Pass forceReset: true to confirm this is intentional.`,
+          400
+        )
+      );
+    }
+
+    updates.remainingBalance = rb;
+  }
 
   if (updates.eligibleProductCategories !== undefined) {
     if (!Array.isArray(updates.eligibleProductCategories)) {
@@ -275,25 +220,18 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     }
 
     if (updates.conditions !== undefined) {
-      // Both supplied — merge into the conditions object to avoid path collision.
       updates.conditions.eligibleProductCategories = updates.eligibleProductCategories;
     } else {
-      // Only top-level alias supplied — use dotted path for surgical $set.
       updates["conditions.eligibleProductCategories"] = updates.eligibleProductCategories;
     }
-    // Remove the top-level key regardless — it must never reach $set directly.
     delete updates.eligibleProductCategories;
   }
 
-  // If conditions object is supplied (with or without the top-level alias),
-  // validate eligibleProductCategories within it if present.
   if (
     updates.conditions !== undefined &&
     updates.conditions.eligibleProductCategories !== undefined
   ) {
-    const catCheck = validateProductCategories(
-      updates.conditions.eligibleProductCategories
-    );
+    const catCheck = validateProductCategories(updates.conditions.eligibleProductCategories);
     if (!catCheck.valid) {
       return next(
         new HandleError(
@@ -309,7 +247,6 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("No valid fields provided for update", 400));
   }
 
-  // Guard against resurrecting a genuinely expired discount.
   if (updates.status === "active") {
     const now = new Date();
     let effectiveValidUntil;
@@ -330,7 +267,6 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // Atomic update — pre-image captured, no TOCTOU race.
   const before = await Discount.findOneAndUpdate(
     { _id: id },
     { $set: updates },
@@ -362,6 +298,11 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
         after:  afterSnapshot,
         ...(changedFields.includes("status") &&
           updates.status === "active" && { statusResurrected: true }),
+        // FIX #8: flag forced balance restores in the audit trail
+        ...(req.body.forceReset && changedFields.includes("remainingBalance") && {
+          balanceForceReset: true,
+          forceResetBy: req.user._id,
+        }),
       },
     });
   }
@@ -381,10 +322,6 @@ export const updateDiscount = handleAsyncError(async (req, res, next) => {
 // ADMIN: DELETE DISCOUNT (soft)
 // ============================================
 
-/**
- * @route DELETE /api/v1/discounts/:id
- * @access Admin
- */
 export const deleteDiscount = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -459,14 +396,11 @@ export const deleteDiscount = handleAsyncError(async (req, res, next) => {
 // ADMIN: GET ALL DISCOUNTS (cursor-based pagination)
 // ============================================
 
-/**
- * @route GET /api/v1/discounts
- * @access Admin
- *
- * NEW query param:
- *   productCategory {String} — filter discounts that include a specific
- *     product category in their eligibleProductCategories restriction.
- */
+// FIX #9: added comment clarifying filter semantics — productCategory only
+// matches codes that are *explicitly restricted* to that category.
+// Unrestricted codes (eligibleProductCategories: []) that also apply to the
+// category are excluded. The UI label should read "Restricted to category"
+// rather than "Applies to category" to avoid operator confusion.
 export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
   const { status, category, type, search, cursor, productCategory } = req.query;
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
@@ -476,7 +410,11 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
   if (category) filter.category = category;
   if (type)     filter.type     = type;
 
-  // NEW — filter by product category restriction
+  // NOTE (FIX #9): this filter returns only codes *restricted* to productCategory
+  // (i.e. eligibleProductCategories contains that value). Unrestricted codes with
+  // an empty eligibleProductCategories array that would also apply to the category
+  // are intentionally excluded. The UI label should read "Restricted to category"
+  // to make this semantics clear to admins.
   if (productCategory) {
     if (!PRODUCT_CATEGORIES.includes(productCategory)) {
       return next(
@@ -500,9 +438,7 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
 
   if (cursor) {
     try {
-      const { id } = JSON.parse(
-        Buffer.from(cursor, "base64").toString("utf8")
-      );
+      const { id } = JSON.parse(Buffer.from(cursor, "base64").toString("utf8"));
       if (!isValidObjectId(id)) throw new Error("invalid id in cursor");
       filter._id = { $lt: new mongoose.Types.ObjectId(id) };
     } catch {
@@ -540,10 +476,6 @@ export const getAllDiscounts = handleAsyncError(async (req, res, next) => {
 // ============================================
 const USAGE_HISTORY_CAP = 100;
 
-/**
- * @route GET /api/v1/discounts/:id
- * @access Admin
- */
 export const getDiscountById = handleAsyncError(async (req, res, next) => {
   const { id } = req.params;
 
@@ -554,10 +486,7 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
   const discount = await Discount.findById(id)
     .populate("createdBy", "firstName lastName email")
     .populate("relatedOrder", "orderNumber totalPrice")
-    .populate(
-      "relatedReturn",
-      "returnInfo.rmaNumber returnInfo.status returnInfo.discountValue"
-    )
+    .populate("relatedReturn", "returnInfo.rmaNumber returnInfo.status returnInfo.discountValue")
     .populate("usageHistory.user",  "firstName lastName email")
     .populate("usageHistory.order", "orderNumber");
 
@@ -569,8 +498,8 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
   }
 
   const discountObj = discount.toObject({ virtuals: true });
-  discountObj.usageHistoryTotal   = total;
-  discountObj.usageHistoryCapped  = total > USAGE_HISTORY_CAP;
+  discountObj.usageHistoryTotal  = total;
+  discountObj.usageHistoryCapped = total > USAGE_HISTORY_CAP;
 
   res.status(200).json({ success: true, discount: discountObj });
 });
@@ -579,30 +508,21 @@ export const getDiscountById = handleAsyncError(async (req, res, next) => {
 // ADMIN: CREATE COMPENSATION DISCOUNT
 // ============================================
 
-/**
- * @route POST /api/v1/discounts/create-compensation
- * @access Admin
- */
+// FIX #10: added comment noting the theoretical duplicate window that exists
+// if the first discount was hard-deleted by the cleanup job before the duplicate
+// check runs. The findOne({ relatedReturn }) guard disappears in that case.
+// This is unlikely (cleanup only targets codes older than 90 days) but worth noting.
 export const createCompensationDiscount = handleAsyncError(async (req, res, next) => {
   const {
-    userId,
-    amount,
-    reason,
-    category,
-    validDays = 30,
-    relatedOrder,
-    relatedReturn,
+    userId, amount, reason, category,
+    validDays = 30, relatedOrder, relatedReturn,
   } = req.body;
 
   if (!userId || !category) {
-    return next(
-      new HandleError("Missing required fields: userId, category", 400)
-    );
+    return next(new HandleError("Missing required fields: userId, category", 400));
   }
 
-  if (!isValidObjectId(userId)) {
-    return next(new HandleError("Invalid userId", 400));
-  }
+  if (!isValidObjectId(userId)) return next(new HandleError("Invalid userId", 400));
   if (relatedOrder && !isValidObjectId(relatedOrder)) {
     return next(new HandleError("Invalid relatedOrder id", 400));
   }
@@ -612,12 +532,17 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
 
   const parsedDays = parseInt(validDays, 10);
   if (isNaN(parsedDays) || parsedDays <= 0 || parsedDays > 365) {
-    return next(
-      new HandleError("validDays must be a positive integer between 1 and 365", 400)
-    );
+    return next(new HandleError("validDays must be a positive integer between 1 and 365", 400));
   }
 
   if (relatedReturn) {
+    // FIX #10: this duplicate guard works correctly in the normal case.
+    // THEORETICAL GAP: if the first discount was hard-deleted by the cleanup job
+    // (deleteOldExpired) before this check runs, the guard disappears and a second
+    // discount could be created for the same return. In practice this is extremely
+    // unlikely because: (a) cleanup only targets codes older than 90 days, and
+    // (b) compensation codes have a 30-day deletion protection window. No code fix
+    // is warranted, but the dependency should be documented here for future maintainers.
     const existing = await Discount.findOne({ relatedReturn }).lean();
     if (existing) {
       return res.status(409).json({
@@ -639,9 +564,7 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
       .select("returnInfo.status returnInfo.discountValue")
       .lean();
 
-    if (!order) {
-      return next(new HandleError("Related return order not found", 404));
-    }
+    if (!order) return next(new HandleError("Related return order not found", 404));
 
     const allowedStatuses = ["awaiting_discount", "completed"];
     if (!allowedStatuses.includes(order.returnInfo?.status)) {
@@ -657,10 +580,8 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     finalAmount = order.returnInfo?.discountValue;
 
     if (
-      finalAmount === undefined ||
-      finalAmount === null ||
-      isNaN(Number(finalAmount)) ||
-      Number(finalAmount) <= 0
+      finalAmount === undefined || finalAmount === null ||
+      isNaN(Number(finalAmount)) || Number(finalAmount) <= 0
     ) {
       return next(
         new HandleError(
@@ -700,16 +621,10 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
       category,
       audience: "specific",
       validUntil,
-      usageLimit: {
-        totalUses:   1,
-        usesPerUser: 1,
-      },
+      usageLimit: { totalUses: 1, usesPerUser: 1 },
       conditions: {
-        eligibleUsers:              [userId],
-        minPurchaseAmount:          0,
-        // Compensation discounts are never category-restricted —
-        // they compensate the user for a specific loss and should
-        // be usable on any purchase.
+        eligibleUsers:             [userId],
+        minPurchaseAmount:         0,
         eligibleProductCategories: [],
       },
       notes: relatedReturn
@@ -721,9 +636,7 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
     });
   } catch (err) {
     if (err.code === 11000) {
-      return next(
-        new HandleError("Code generation collision — please retry", 409)
-      );
+      return next(new HandleError("Code generation collision — please retry", 409));
     }
     return next(err);
   }
@@ -756,60 +669,53 @@ export const createCompensationDiscount = handleAsyncError(async (req, res, next
 // PUBLIC: VALIDATE DISCOUNT CODE
 // ============================================
 
-/**
- * @route POST /api/v1/discounts/validate
- * @access Public
- *
- * NEW: items[] is now required for category-restricted discount codes.
- * Each item must have the shape: { category: String, price: Number, quantity: Number }
- *
- * For unrestricted codes, items[] remains optional (pass [] or omit entirely).
- */
+// FIX #6: recordUsage() is NO LONGER called here. Usage is recorded only
+// after a confirmed payment in verifyPaymentController. Calling it at
+// /validate time caused discounts to be consumed on cart abandonment or
+// payment failure with no reversal mechanism.
+//
+// FIX #7: syncDiscountAfterRedemption is also removed from this endpoint.
+// Because validate could be called by the UI on input-blur without the user
+// completing checkout, syncing here inflated redemption counts and generated
+// premature analytics records.
 export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
   const { code, cartTotal, items } = req.body;
- 
+
   if (!code) return next(new HandleError("Discount code is required", 400));
   if (!cartTotal || cartTotal <= 0)
     return next(new HandleError("Invalid cart total", 400));
- 
+
   const normalizedItems = Array.isArray(items) ? items : [];
- 
+
   const discount = await Discount.findActiveByCode(code);
   if (!discount)
     return next(new HandleError("Invalid or expired discount code", 400));
- 
+
   const userId = req.user?._id;
- 
+
   if (discount.audience === "specific" && !userId) {
     return next(
-      new HandleError(
-        "You must be logged in to use this discount code",
-        401
-      )
+      new HandleError("You must be logged in to use this discount code", 401)
     );
   }
- 
+
   if (userId) {
     const canUse = await discount.canUserUse(userId);
-    if (!canUse.canUse)
-      return next(new HandleError(canUse.reason, 400));
+    if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
   }
- 
+
   const validation = discount.validateCart(cartTotal, normalizedItems, userId);
-  if (!validation.valid)
-    return next(new HandleError(validation.reason, 400));
- 
+  if (!validation.valid) return next(new HandleError(validation.reason, 400));
+
   const discountAmount = discount.calculateDiscount(cartTotal, normalizedItems);
- 
+
   const eligibleCats = discount.conditions?.eligibleProductCategories ?? [];
- 
+
   const eligibleSubtotal =
     eligibleCats.length > 0 && normalizedItems.length > 0
       ? Math.round(
           normalizedItems
-            .filter(
-              (item) => item?.category && eligibleCats.includes(item.category)
-            )
+            .filter((item) => item?.category && eligibleCats.includes(item.category))
             .reduce((sum, item) => {
               const price = Number(item.price) || 0;
               const qty   = Number(item.quantity) || 1;
@@ -817,25 +723,17 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
             }, 0) * 100
         ) / 100
       : Math.round(cartTotal * 100) / 100;
- 
-  const ineligibleSubtotal =
-    Math.round((cartTotal - eligibleSubtotal) * 100) / 100;
- 
-  const { isFirstUse } = await discount.recordUsage(
-    userId ?? null,
-    null,
-    discountAmount
-  );
- 
-  // ── NEW: trigger analytics sync fire-and-forget ───────────────────────────
-  // Must fire AFTER recordUsage() so the sync sees the updated usageHistory.
-  // Errors are swallowed — analytics must never surface to the customer.
-  syncDiscountAfterRedemption(discount.code).catch(() => {});
- 
+
+  const ineligibleSubtotal = Math.round((cartTotal - eligibleSubtotal) * 100) / 100;
+
+  // FIX #6/#7: recordUsage() and syncDiscountAfterRedemption() removed.
+  // No side-effects at validation time — this is now a pure read + compute.
+  // Usage is recorded in verifyPaymentController after payment succeeds.
+
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
-    action:       "used",
+    action:       "validated",
     performedBy:  userId
       ? {
           _id:       userId,
@@ -847,21 +745,15 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
       : { system: true },
     meta: {
       userId:        userId ?? null,
-      orderId:       null,
       discountAmount,
       cartTotal,
-      isFirstUse,
       itemCategories: normalizedItems
         .map((i) => i?.category)
         .filter(Boolean)
         .filter((v, idx, arr) => arr.indexOf(v) === idx),
-      ...(isFirstUse && {
-        lockedAt:           discount.lockedAt,
-        deletionEligibleAt: discount.deletionEligibleAt,
-      }),
     },
   });
- 
+
   res.status(200).json({
     success: true,
     valid:   true,
@@ -881,16 +773,11 @@ export const validateDiscountCode = handleAsyncError(async (req, res, next) => {
     },
   });
 });
- 
 
 // ============================================
 // PUBLIC: GET ACTIVE PROMOS
 // ============================================
 
-/**
- * @route GET /api/v1/discounts/promos
- * @access Public
- */
 export const getActivePromos = handleAsyncError(async (req, res, next) => {
   const promos = await Discount.getActivePromos();
   res.status(200).json({ success: true, promos });
@@ -900,10 +787,6 @@ export const getActivePromos = handleAsyncError(async (req, res, next) => {
 // USER: GET MY DISCOUNTS
 // ============================================
 
-/**
- * @route GET /api/v1/discounts/my-discounts
- * @access Private
- */
 export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const now = new Date();
@@ -954,35 +837,29 @@ export const getMyDiscounts = handleAsyncError(async (req, res, next) => {
 // USER: HAS NEW DISCOUNTS (Navbar dot)
 // ============================================
 
-/**
- * @route GET /api/v1/discounts/has-new
- * @access Private
- */
 export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
   const user = req.user;
   const now  = new Date();
- 
-  // FIX 2: fall back to user.createdAt instead of {} so a brand-new user
-  // doesn't see a dot for every discount that predates their account.
+
   const since = user.lastSeenDiscountsAt ?? user.createdAt ?? now;
   const sinceFilter = { createdAt: { $gt: since } };
- 
+
   const [newestBroadcast, newestPersonal] = await Promise.all([
     Discount.findOne({
       audience:   "all",
       status:     "active",
-      validFrom:  { $lte: now },   // FIX 1: must already be active
+      validFrom:  { $lte: now },
       validUntil: { $gte: now },
       ...sinceFilter,
     })
       .sort({ createdAt: -1 })
       .select("createdAt")
       .lean(),
- 
+
     Discount.findOne({
       audience:                   "specific",
       status:                     "active",
-      validFrom:                  { $lte: now },   // FIX 1: must already be active
+      validFrom:                  { $lte: now },
       validUntil:                 { $gte: now },
       "conditions.eligibleUsers": user._id,
       ...sinceFilter,
@@ -991,9 +868,9 @@ export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
       .select("createdAt")
       .lean(),
   ]);
- 
+
   const hasNew = !!(newestBroadcast || newestPersonal);
- 
+
   res.status(200).json({ hasNew });
 });
 
@@ -1001,12 +878,8 @@ export const hasNewDiscounts = handleAsyncError(async (req, res, next) => {
 // ADMIN: GET DISCOUNT STATS
 // ============================================
 const STATS_CACHE_KEY = "discount:stats";
-const STATS_CACHE_TTL = 60; // seconds
+const STATS_CACHE_TTL = 60;
 
-/**
- * @route GET /api/v1/discounts/stats
- * @access Admin
- */
 export const getDiscountStats = handleAsyncError(async (req, res, next) => {
   try {
     const cached = await redis.get(STATS_CACHE_KEY);
@@ -1028,14 +901,8 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
           activeDiscounts: {
             $sum: {
               $cond: [
-                {
-                  $and: [
-                    { $eq: ["$status", "active"] },
-                    { $gte: ["$validUntil", now] },
-                  ],
-                },
-                1,
-                0,
+                { $and: [{ $eq: ["$status", "active"] }, { $gte: ["$validUntil", now] }] },
+                1, 0,
               ],
             },
           },
@@ -1062,36 +929,22 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
           active: {
             $sum: {
               $cond: [
-                {
-                  $and: [
-                    { $eq: ["$status", "active"] },
-                    { $gte: ["$validUntil", now] },
-                  ],
-                },
-                1,
-                0,
+                { $and: [{ $eq: ["$status", "active"] }, { $gte: ["$validUntil", now] }] },
+                1, 0,
               ],
             },
           },
-          inactive: {
-            $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] }
-          },
+          inactive:    { $sum: { $cond: [{ $eq: ["$status", "inactive"] }, 1, 0] } },
           expired: {
             $sum: {
               $cond: [
                 {
                   $or: [
                     { $eq: ["$status", "expired"] },
-                    {
-                      $and: [
-                        { $eq: ["$status", "active"] },
-                        { $lt: ["$validUntil", now] },
-                      ],
-                    },
+                    { $and: [{ $eq: ["$status", "active"] }, { $lt: ["$validUntil", now] }] },
                   ],
                 },
-                1,
-                0,
+                1, 0,
               ],
             },
           },
@@ -1106,13 +959,8 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
   const payload = {
     stats,
     overall: overall[0] || {
-      total:       0,
-      active:      0,
-      inactive:    0,
-      expired:     0,
-      totalUses:   0,
-      vip:         0,
-      blackfriday: 0,
+      total: 0, active: 0, inactive: 0, expired: 0,
+      totalUses: 0, vip: 0, blackfriday: 0,
     },
   };
 
@@ -1124,16 +972,11 @@ export const getDiscountStats = handleAsyncError(async (req, res, next) => {
 
   res.status(200).json({ success: true, ...payload });
 });
- 
 
 // ============================================
 // ADMIN: TRIGGER MANUAL CLEANUP
 // ============================================
 
-/**
- * @route POST /api/v1/discounts/cleanup
- * @access Admin
- */
 export const triggerCleanup = handleAsyncError(async (req, res, next) => {
   const { daysOld = 90 } = req.body;
 
@@ -1149,7 +992,7 @@ export const triggerCleanup = handleAsyncError(async (req, res, next) => {
     },
   });
 
-  const [expired, deleted] = await Promise.all([
+  const [expiredCount, deleteResult] = await Promise.all([
     Discount.bulkExpireStale(),
     Discount.deleteOldExpired(daysOld),
   ]);
@@ -1159,8 +1002,8 @@ export const triggerCleanup = handleAsyncError(async (req, res, next) => {
   res.status(200).json({
     success: true,
     message: "Cleanup complete",
-    expired,
-    deleted,
+    expired: expiredCount,
+    deleted: deleteResult.totalDeleted,
   });
 });
 
@@ -1168,10 +1011,6 @@ export const triggerCleanup = handleAsyncError(async (req, res, next) => {
 // ADMIN: GET FULL AUDIT LOG (paginated)
 // ============================================
 
-/**
- * @route GET /api/v1/discounts/audit
- * @access Admin
- */
 export const getAuditLog = handleAsyncError(async (req, res, next) => {
   const {
     action, discountCode, performedById,
@@ -1184,16 +1023,9 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
 
   const limit = Math.min(parseInt(req.query.limit) || 20, 100);
 
-  const { logs, hasNextPage, nextCursor } =
-    await DiscountAuditLog.getPaginated({
-      action,
-      discountCode,
-      performedById,
-      dateFrom,
-      dateTo,
-      cursor,
-      limit,
-    });
+  const { logs, hasNextPage, nextCursor } = await DiscountAuditLog.getPaginated({
+    action, discountCode, performedById, dateFrom, dateTo, cursor, limit,
+  });
 
   res.status(200).json({
     success: true,
@@ -1206,10 +1038,6 @@ export const getAuditLog = handleAsyncError(async (req, res, next) => {
 // ADMIN: GET AUDIT LOG FOR SINGLE DISCOUNT
 // ============================================
 
-/**
- * @route GET /api/v1/discounts/audit/:discountId
- * @access Admin
- */
 export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
   const { discountId } = req.params;
 
@@ -1228,16 +1056,6 @@ export const getDiscountAuditLog = handleAsyncError(async (req, res, next) => {
 
 const MAX_ELIGIBLE_USERS = 500;
 
-/**
- * @route POST /api/v1/discounts/create-for-user
- * @access Admin
- *
- * NEW field accepted in request body:
- *   eligibleProductCategories {String[]} — optional; restricts the discount
- *     to carts that contain at least one item from the listed product
- *     categories. Must be a subset of PRODUCT_CATEGORIES.
- *     Omit (or pass []) for no category restriction.
- */
 export const createDiscountForUsers = handleAsyncError(async (req, res, next) => {
   const {
     userIds      = [],
@@ -1257,10 +1075,8 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     excludeSaleItems     = false,
     notes,
     audience,
-    eligibleProductCategories,   // NEW
+    eligibleProductCategories,
   } = req.body;
-
-  // ── Step 1: Basic field validation ────────────────────────────────────────
 
   if (audience === "all") {
     return next(
@@ -1273,12 +1089,7 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   }
 
   if (!description || !type || value === undefined || value === null || !category) {
-    return next(
-      new HandleError(
-        "Missing required fields: description, type, value, category",
-        400
-      )
-    );
+    return next(new HandleError("Missing required fields: description, type, value, category", 400));
   }
 
   if (!["percentage", "fixed"].includes(type)) {
@@ -1290,9 +1101,7 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     return next(new HandleError("value must be a positive number", 400));
   }
   if (type === "percentage" && numericValue > 100) {
-    return next(
-      new HandleError("Percentage discount value cannot exceed 100", 400)
-    );
+    return next(new HandleError("Percentage discount value cannot exceed 100", 400));
   }
 
   const hasUserIds = Array.isArray(userIds) && userIds.length > 0;
@@ -1306,28 +1115,20 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     );
   }
 
-  // ── Step 2: usesPerUser validation ────────────────────────────────────────
   const parsedUsesPerUser = parseInt(usesPerUser, 10);
   if (isNaN(parsedUsesPerUser) || parsedUsesPerUser < 1) {
-    return next(
-      new HandleError("usesPerUser must be a positive integer", 400)
-    );
+    return next(new HandleError("usesPerUser must be a positive integer", 400));
   }
 
-  // ── Step 3: totalUses validation ──────────────────────────────────────────
   let parsedTotalUses = null;
   if (totalUses !== undefined && totalUses !== null) {
     parsedTotalUses = parseInt(totalUses, 10);
     if (isNaN(parsedTotalUses) || parsedTotalUses < 1) {
-      return next(
-        new HandleError("totalUses must be a positive integer when provided", 400)
-      );
+      return next(new HandleError("totalUses must be a positive integer when provided", 400));
     }
   }
 
-  // ── Step 4: validUntil / validDays resolution ─────────────────────────────
   let resolvedValidUntil;
-
   if (validUntil) {
     resolvedValidUntil = new Date(validUntil);
     if (isNaN(resolvedValidUntil.getTime())) {
@@ -1339,31 +1140,18 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
   } else if (validDays !== undefined) {
     const parsedDays = parseInt(validDays, 10);
     if (isNaN(parsedDays) || parsedDays < 1 || parsedDays > 365) {
-      return next(
-        new HandleError(
-          "validDays must be a positive integer between 1 and 365",
-          400
-        )
-      );
+      return next(new HandleError("validDays must be a positive integer between 1 and 365", 400));
     }
     resolvedValidUntil = new Date();
     resolvedValidUntil.setDate(resolvedValidUntil.getDate() + parsedDays);
   } else {
-    return next(
-      new HandleError(
-        "Either validUntil or validDays is required",
-        400
-      )
-    );
+    return next(new HandleError("Either validUntil or validDays is required", 400));
   }
 
-  // ── Step 4b: eligibleProductCategories validation (NEW) ───────────────────
   let resolvedEligibleProductCategories = [];
   if (eligibleProductCategories !== undefined && eligibleProductCategories !== null) {
     if (!Array.isArray(eligibleProductCategories)) {
-      return next(
-        new HandleError("eligibleProductCategories must be an array of strings", 400)
-      );
+      return next(new HandleError("eligibleProductCategories must be an array of strings", 400));
     }
     const catCheck = validateProductCategories(eligibleProductCategories);
     if (!catCheck.valid) {
@@ -1378,34 +1166,20 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     resolvedEligibleProductCategories = eligibleProductCategories;
   }
 
-  // ── Step 5: ObjectId format validation on raw userIds ─────────────────────
   if (hasUserIds) {
     const invalidIds = userIds.filter((id) => !isValidObjectId(id));
     if (invalidIds.length > 0) {
       return next(
-        new HandleError(
-          `Invalid ObjectId format in userIds: ${invalidIds.join(", ")}`,
-          400
-        )
+        new HandleError(`Invalid ObjectId format in userIds: ${invalidIds.join(", ")}`, 400)
       );
     }
   }
 
-  // ── Step 6: Email → ObjectId resolution ───────────────────────────────────
   let emailIds = [];
-
   if (hasEmails) {
-    const foundByEmail = await User.find({ email: { $in: emails } })
-      .select("_id email")
-      .lean();
-
-    const resolvedEmailMap = new Map(
-      foundByEmail.map((u) => [u.email.toLowerCase(), u._id])
-    );
-
-    const unresolvedEmails = emails.filter(
-      (e) => !resolvedEmailMap.has(e.toLowerCase())
-    );
+    const foundByEmail = await User.find({ email: { $in: emails } }).select("_id email").lean();
+    const resolvedEmailMap = new Map(foundByEmail.map((u) => [u.email.toLowerCase(), u._id]));
+    const unresolvedEmails = emails.filter((e) => !resolvedEmailMap.has(e.toLowerCase()));
     if (unresolvedEmails.length > 0) {
       return next(
         new HandleError(
@@ -1414,23 +1188,17 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
         )
       );
     }
-
     emailIds = foundByEmail.map((u) => u._id);
   }
 
-  // ── Step 7: Merge + deduplicate ───────────────────────────────────────────
   const rawIdStrings   = hasUserIds ? userIds.map((id) => id.toString()) : [];
   const emailIdStrings = emailIds.map((id) => id.toString());
-
   const uniqueIdStrings = [...new Set([...rawIdStrings, ...emailIdStrings])];
-  const mergedIds = uniqueIdStrings.map(
-    (s) => new mongoose.Types.ObjectId(s)
-  );
+  const mergedIds = uniqueIdStrings.map((s) => new mongoose.Types.ObjectId(s));
 
   if (mergedIds.length === 0) {
     return next(new HandleError("No valid target users after deduplication", 400));
   }
-
   if (mergedIds.length > MAX_ELIGIBLE_USERS) {
     return next(
       new HandleError(
@@ -1441,40 +1209,27 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     );
   }
 
-  // ── Step 8: DB existence validation for all merged ids ───────────────────
-  const foundUsers = await User.find({ _id: { $in: mergedIds } })
-    .select("_id")
-    .lean();
-
+  const foundUsers = await User.find({ _id: { $in: mergedIds } }).select("_id").lean();
   if (foundUsers.length !== mergedIds.length) {
     const foundSet   = new Set(foundUsers.map((u) => u._id.toString()));
     const missingIds = mergedIds
       .filter((id) => !foundSet.has(id.toString()))
       .map((id) => id.toString());
-
     return next(
-      new HandleError(
-        `The following userIds do not exist: ${missingIds.join(", ")}`,
-        400
-      )
+      new HandleError(`The following userIds do not exist: ${missingIds.join(", ")}`, 400)
     );
   }
 
-  // ── Step 9: Code resolution ───────────────────────────────────────────────
   let resolvedCode;
-
   if (code) {
     resolvedCode = code.toUpperCase();
     const existing = await Discount.findOne({ code: resolvedCode }).lean();
-    if (existing) {
-      return next(new HandleError("Discount code already exists", 400));
-    }
+    if (existing) return next(new HandleError("Discount code already exists", 400));
   } else {
     const suffix = crypto.randomBytes(4).toString("hex").toUpperCase();
     resolvedCode = `${category.toUpperCase()}-VIP-${suffix}`;
   }
 
-  // ── Step 10: Create the discount ─────────────────────────────────────────
   let discount;
   try {
     discount = await Discount.create({
@@ -1486,28 +1241,22 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
       audience:    "specific",
       validFrom:   validFrom ? new Date(validFrom) : new Date(),
       validUntil:  resolvedValidUntil,
-      usageLimit: {
-        totalUses:   parsedTotalUses,
-        usesPerUser: parsedUsesPerUser,
-      },
+      usageLimit: { totalUses: parsedTotalUses, usesPerUser: parsedUsesPerUser },
       conditions: {
         eligibleUsers:             mergedIds,
         minPurchaseAmount:         Number(minPurchaseAmount) || 0,
         firstOrderOnly:            Boolean(firstOrderOnly),
         excludeSaleItems:          Boolean(excludeSaleItems),
-        eligibleProductCategories: resolvedEligibleProductCategories,  // NEW
+        eligibleProductCategories: resolvedEligibleProductCategories,
       },
       notes,
       createdBy: req.user._id,
     });
   } catch (err) {
-    if (err.code === 11000) {
-      return next(new HandleError("Discount code already exists", 400));
-    }
+    if (err.code === 11000) return next(new HandleError("Discount code already exists", 400));
     return next(err);
   }
 
-  // ── Step 11: Audit entry ──────────────────────────────────────────────────
   await DiscountAuditLog.log({
     discountId:   discount._id,
     discountCode: discount.code,
@@ -1516,21 +1265,17 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
     meta: {
       audience:                  "specific",
       vipDiscount:               true,
-      type,
-      value:                     numericValue,
-      category,
+      type, value: numericValue, category,
       validUntil:                resolvedValidUntil,
       eligibleUsers:             mergedIds,
       eligibleCount:             mergedIds.length,
       usesPerUser:               parsedUsesPerUser,
       totalUses:                 parsedTotalUses,
       autoGeneratedCode:         !code,
-      // NEW — log category restriction in audit trail
       eligibleProductCategories: resolvedEligibleProductCategories,
     },
   });
 
-  // ── Step 12: Cache invalidation ───────────────────────────────────────────
   await invalidateStatsCache();
 
   return res.status(201).json({
@@ -1545,10 +1290,6 @@ export const createDiscountForUsers = handleAsyncError(async (req, res, next) =>
 // ADMIN: GET PURGE LOG
 // ============================================
 
-/**
- * @route GET /api/v1/discounts/audit/purge-log
- * @access Admin
- */
 export const getPurgeLog = handleAsyncError(async (req, res, next) => {
   const [purgeLog, latestPurge] = await Promise.all([
     AuditPurgeLog.getAll(),
@@ -1559,13 +1300,7 @@ export const getPurgeLog = handleAsyncError(async (req, res, next) => {
   sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
   const showBanner =
-    latestPurge !== null &&
-    new Date(latestPurge.purgedAt) > sevenDaysAgo;
+    latestPurge !== null && new Date(latestPurge.purgedAt) > sevenDaysAgo;
 
-  res.status(200).json({
-    success: true,
-    purgeLog,
-    latestPurge,
-    showBanner,
-  });
+  res.status(200).json({ success: true, purgeLog, latestPurge, showBanner });
 });

@@ -7,7 +7,7 @@ import {
   syncAllDiscountAnalytics,
   getDiscountAnalyticsSummary,
 } from "../Services/discount-analytics-service.js";
-import { getCache, setCache } from "../utils/redis.js";
+import { getCache, setCache, deleteCache } from "../utils/redis.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import mongoose from "mongoose";
@@ -27,18 +27,6 @@ const parsePositiveInt = (val, defaultVal) => {
 // BALANCE FIELD GUARD
 // ============================================
 
-// Balance / exhaustion data is only meaningful for fixed discounts issued
-// to a specific (targeted) audience — compensation codes, VIP entitlements, etc.
-//
-// For broadcast (audience: 'all') fixed codes, remainingBalance is a single
-// shared pool counter that decrements across ALL redemptions collectively.
-// It does NOT represent a per-user entitlement and has no analytical value
-// in the analytics layer — the relevant signals are redemptions, unique users,
-// revenue influenced, and product category breakdown.
-//
-// This helper nulls out the three balance fields on any analytics document
-// that does not meet the specific+fixed criteria, ensuring the API never
-// serves misleading data regardless of what is stored in the DB.
 const stripBalanceIfNotApplicable = (analyticsDoc) => {
   if (!analyticsDoc) return analyticsDoc;
 
@@ -55,22 +43,23 @@ const stripBalanceIfNotApplicable = (analyticsDoc) => {
   return analyticsDoc;
 };
 
-// Apply to an array of analytics docs (used by list endpoints).
 const stripBalanceFromList = (docs) => docs.map(stripBalanceIfNotApplicable);
 
 // ============================================
 // SHARED LOOKUP HELPER
 // ============================================
 
-// Finds a DiscountAnalytics document by either:
-//   1. discountId field  — the Discount document's _id (primary)
-//   2. analytics _id     — the DiscountAnalytics document's own _id (fallback)
-//
-// This makes every detail endpoint resilient regardless of which ID
-// the frontend sends — both the analytics doc's own _id and the
-// originating Discount's _id resolve to the correct document.
 const findAnalyticsByEitherId = (id, projection = null) => {
-  const q = { $or: [{ discountId: id }, { _id: mongoose.Types.ObjectId.isValid(id) ? new mongoose.Types.ObjectId(id) : id }] };
+  const q = {
+    $or: [
+      { discountId: id },
+      {
+        _id: mongoose.Types.ObjectId.isValid(id)
+          ? new mongoose.Types.ObjectId(id)
+          : id,
+      },
+    ],
+  };
   return projection
     ? DiscountAnalytics.findOne(q, projection).lean()
     : DiscountAnalytics.findOne(q).lean();
@@ -80,15 +69,36 @@ const findAnalyticsByEitherId = (id, projection = null) => {
 // CACHE KEYS & TTLs
 // ============================================
 
+const STALE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+
 const CACHE = {
-  OVERVIEW:        { key: "discount_analytics_overview",        ttl: 300  },
-  ROI_BY_CATEGORY: { key: "discount_analytics_roi_by_category", ttl: 300  },
-  ROI_BY_TYPE:     { key: "discount_analytics_roi_by_type",     ttl: 300  },
-  TOP_PERFORMERS:  { key: "discount_analytics_top_performers",  ttl: 300  },
+  OVERVIEW:        { key: "discount_analytics_overview",        ttl: 300 },
+  ROI_BY_CATEGORY: { key: "discount_analytics_roi_by_category", ttl: 300 },
+  ROI_BY_TYPE:     { key: "discount_analytics_roi_by_type",     ttl: 300 },
+  TOP_PERFORMERS:  { key: "discount_analytics_top_performers",  ttl: 300 },
   TRENDS:          (timeframe) => ({
     key: `discount_analytics_trends_${timeframe}`,
     ttl: 600,
   }),
+};
+
+
+const buildTopPerformersCacheKeys = () => {
+  const limits   = [5, 10, 20, 50];
+  const sortBys  = ["roi", "revenue", "redemptions"];
+  const categories = [
+    "all", "promo", "refund", "return", "loyalty",
+    "affiliate", "support", "blackfriday",
+  ];
+  const keys = [];
+  for (const limit of limits) {
+    for (const cat of categories) {
+      for (const sortBy of sortBys) {
+        keys.push(`${CACHE.TOP_PERFORMERS.key}_${limit}_${cat}_${sortBy}`);
+      }
+    }
+  }
+  return keys;
 };
 
 // ============================================
@@ -133,11 +143,7 @@ export const getDiscountAnalyticsOverview = handleAsyncError(
         : null;
 
     const response = {
-      overall: {
-        ...overall,
-        redemptionRate,
-        overallROI,
-      },
+      overall: { ...overall, redemptionRate, overallROI },
       byCategory:      summary.byCategory      ?? [],
       byType:          summary.byType           ?? [],
       topByROI:        summary.topByROI         ?? [],
@@ -168,9 +174,10 @@ export const getROIByCategory = handleAsyncError(async (req, res, next) => {
     totalRedemptions:       cat.totalRedemptions,
     totalDiscountCost:      Math.round(cat.totalDiscountCost * 100) / 100,
     totalRevenueInfluenced: Math.round(cat.totalRevenueInfluenced * 100) / 100,
-    roi: cat.computedROI !== null && cat.computedROI !== undefined
-      ? Math.round(cat.computedROI * 100) / 100
-      : null,
+    roi:
+      cat.computedROI !== null && cat.computedROI !== undefined
+        ? Math.round(cat.computedROI * 100) / 100
+        : null,
     avgAOV: Math.round((cat.avgAOV ?? 0) * 100) / 100,
   }));
 
@@ -259,14 +266,8 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
   };
 
   const filter = { "redemptions.total": { $gt: 0 } };
-
-  if (sortBy === "roi") {
-    filter["financials.roi"] = { $ne: null };
-  }
-
-  if (category) {
-    filter["meta.category"] = category;
-  }
+  if (sortBy === "roi") filter["financials.roi"] = { $ne: null };
+  if (category)         filter["meta.category"]  = category;
 
   const topCodes = await DiscountAnalytics.find(filter)
     .sort(sortFieldMap[sortBy])
@@ -280,9 +281,6 @@ export const getTopPerformers = handleAsyncError(async (req, res, next) => {
       "baseline.aovLiftPercent peakUsage"
     )
     .lean();
-
-  // Balance fields are not included in the top performers projection —
-  // this endpoint is leaderboard-only so no stripping is required here.
 
   const response = {
     sortBy,
@@ -321,11 +319,7 @@ export const getRedemptionTrends = handleAsyncError(async (req, res, next) => {
   const trends = await DiscountAnalytics.aggregate([
     { $match: matchFilter },
     { $unwind: "$dailyRedemptions" },
-    {
-      $match: {
-        "dailyRedemptions.date": { $gte: currentPeriodStart },
-      },
-    },
+    { $match: { "dailyRedemptions.date": { $gte: currentPeriodStart } } },
     {
       $group: {
         _id:               "$dailyRedemptions.date",
@@ -414,10 +408,10 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       return next(new HandleError("Invalid discountId", 400));
     }
 
-    // Primary lookup: try both discountId field and analytics _id
     let analytics = await findAnalyticsByEitherId(discountId);
 
     if (!analytics) {
+      // No document at all — trigger on-demand sync if the discount has been used.
       const discount = await Discount.findById(discountId).select("_id code usageLimit").lean();
 
       if (discount && discount.usageLimit?.currentUses > 0) {
@@ -427,6 +421,15 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
         } catch (err) {
           console.error(`[DA:detail] on-demand sync failed:`, err?.message);
         }
+      }
+    } else {
+      const lastSynced = analytics.lastSyncedAt ? new Date(analytics.lastSyncedAt) : null;
+      const isStale    = !lastSynced || (Date.now() - lastSynced.getTime() > STALE_THRESHOLD_MS);
+
+      if (isStale) {
+        syncDiscountAnalytics(discountId).catch((err) => {
+          console.error(`[DA:detail] background stale re-sync failed for ${discountId}:`, err?.message);
+        });
       }
     }
 
@@ -440,11 +443,20 @@ export const getDiscountAnalyticsDetail = handleAsyncError(
       );
     }
 
-    // Strip balance fields for broadcast fixed codes — they represent a shared
-    // pool counter, not a per-user entitlement, so they have no meaning here.
     analytics = stripBalanceIfNotApplicable(analytics);
 
-    res.status(200).json({ success: true, analytics });
+    const lastSynced     = analytics.lastSyncedAt ? new Date(analytics.lastSyncedAt) : null;
+    const isStaleForClient = !lastSynced || (Date.now() - lastSynced.getTime() > STALE_THRESHOLD_MS);
+
+    res.status(200).json({
+      success: true,
+      analytics,
+      meta: {
+        isStale:      isStaleForClient,
+        lastSyncedAt: analytics.lastSyncedAt ?? null,
+        staleSyncTriggered: isStaleForClient,
+      },
+    });
   }
 );
 
@@ -461,11 +473,11 @@ export const getDiscountSegmentBreakdown = handleAsyncError(
     }
 
     const analytics = await findAnalyticsByEitherId(discountId, {
-      discountCode:       1,
-      segmentBreakdown:   1,
-      valueTierBreakdown: 1,
+      discountCode:        1,
+      segmentBreakdown:    1,
+      valueTierBreakdown:  1,
       "redemptions.total": 1,
-      lastSyncedAt:       1,
+      lastSyncedAt:        1,
     });
 
     if (!analytics) {
@@ -545,13 +557,7 @@ export const getDiscountRedemptionTrend = handleAsyncError(
 
 export const getAllDiscountAnalytics = handleAsyncError(
   async (req, res, next) => {
-    const {
-      category,
-      type,
-      audience,
-      cursor,
-      sortBy = "revenue",
-    } = req.query;
+    const { category, type, audience, cursor, sortBy = "revenue" } = req.query;
 
     const limit          = Math.min(parsePositiveInt(req.query.limit, 20), 100);
     const minRedemptions = parsePositiveInt(req.query.minRedemptions, 0);
@@ -574,7 +580,6 @@ export const getAllDiscountAnalytics = handleAsyncError(
     };
 
     const filter = {};
-
     if (category)  filter["meta.category"] = category;
     if (type)      filter["meta.type"]     = type;
     if (audience)  filter["meta.audience"] = audience;
@@ -582,16 +587,13 @@ export const getAllDiscountAnalytics = handleAsyncError(
     if (minRedemptions > 0) {
       filter["redemptions.total"] = { $gte: minRedemptions };
     }
-
     if (sortBy === "roi") {
       filter["financials.roi"] = { $ne: null };
     }
 
     if (cursor) {
       try {
-        const { id } = JSON.parse(
-          Buffer.from(cursor, "base64").toString("utf8")
-        );
+        const { id } = JSON.parse(Buffer.from(cursor, "base64").toString("utf8"));
         if (!isValidObjectId(id)) throw new Error("invalid id in cursor");
         filter._id = { $lt: new mongoose.Types.ObjectId(id) };
       } catch {
@@ -617,17 +619,12 @@ export const getAllDiscountAnalytics = handleAsyncError(
     const hasNextPage = docs.length > limit;
     if (hasNextPage) docs.pop();
 
-    // Strip balance fields from broadcast fixed codes before sending to client.
-    // This ensures the list view never shows a misleading shared pool balance
-    // as if it were a per-user entitlement figure.
     const analytics = stripBalanceFromList(docs);
 
     let nextCursor = null;
     if (hasNextPage && analytics.length > 0) {
       const last = analytics[analytics.length - 1];
-      nextCursor = Buffer.from(
-        JSON.stringify({ id: last._id })
-      ).toString("base64");
+      nextCursor = Buffer.from(JSON.stringify({ id: last._id })).toString("base64");
     }
 
     res.status(200).json({
@@ -659,7 +656,6 @@ export const syncSingleDiscountAnalytics = handleAsyncError(
       const analyticsRaw = await syncDiscountAnalytics(discountId);
       await invalidateAllAnalyticsCache();
 
-      // Apply the same balance guard to the synced document returned to the client.
       const analytics = stripBalanceIfNotApplicable(
         analyticsRaw?.toObject ? analyticsRaw.toObject() : analyticsRaw
       );
@@ -714,15 +710,19 @@ export const getStaleSyncReport = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 const invalidateAllAnalyticsCache = async () => {
-  const keys = [
+  const fixedKeys = [
     CACHE.OVERVIEW.key,
     CACHE.ROI_BY_CATEGORY.key,
     CACHE.ROI_BY_TYPE.key,
   ];
 
+  const topPerformersKeys = buildTopPerformersCacheKeys();
+
+  const allKeys = [...fixedKeys, ...topPerformersKeys];
+
   await Promise.allSettled(
-    keys.map((key) =>
-      setCache(key, null, 1).catch(() => {})
+    allKeys.map((key) =>
+      deleteCache(key).catch(() => {})
     )
   );
 };

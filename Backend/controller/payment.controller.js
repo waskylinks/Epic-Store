@@ -419,7 +419,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // Load Redis session 
+  // Load Redis session
   const session = await getPaymentSession(reference);
 
   if (!session) {
@@ -447,7 +447,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  //  Validate session integrity 
+  // Validate session integrity
   if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
@@ -464,21 +464,21 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const orderReference = session.reference;
 
-  // Ownership check 
+  // Ownership check
   if (session.userId !== userId.toString()) {
     return next(new HandleError(
       "This payment session does not belong to your account", 403
     ));
   }
 
-  //Gateway match 
+  // Gateway match
   if (session.gateway !== gateway) {
     return next(new HandleError(
       `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
 
-  //  Idempotency check 
+  // Idempotency check
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference":             orderReference },
@@ -499,7 +499,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     });
   }
 
-  //  Gateway verification
+  // Gateway verification
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
@@ -528,14 +528,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     raw:      gatewayResponse
   } = gatewayData;
 
-  // Currency check 
+  // Currency check
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
       `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
 
-  //Amount tolerance check 
+  // Amount tolerance check
   const tolerance  = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
@@ -553,20 +553,15 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   const isFirstPurchase = userOrderCount === 0;
   const purchaseNumber  = userOrderCount + 1;
 
-  // Fraud and fulfillment metadata
   const fraudCheck = calculateFraudRisk(
-    {
-      totalPrice:   session.totalPrice,
-      shippingInfo: session.shippingInfo,
-      orderItems:   session.orderItems
-    },
+    { totalPrice: session.totalPrice, shippingInfo: session.shippingInfo, orderItems: session.orderItems },
     user,
     { gateway, gatewayResponse }
   );
 
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
-  //  Build order data 
+  // Build order data
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -615,7 +610,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     fulfillmentSLA,
   };
 
-  // Create order 
+  // Create order
   let order;
   try {
     order = await Order.create(orderData);
@@ -640,9 +635,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     idempotent: false,
   });
 
-  // Post-payment async tasks 
+  // Post-payment async tasks
   setImmediate(() => {
 
+    // Abandoned checkout recovery
     Checkout.findOne({
       user:                     userId,
       'conversion.isConverted': false,
@@ -651,7 +647,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       .sort({ lastActivityAt: -1 })
       .then(checkout => {
         if (!checkout) return;
-
         const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
         const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
         const sessionWasActive   = checkout.abandonment?.recoverySessionActive === true;
@@ -663,7 +658,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         if (linkWasEverClicked) {
           checkout.computeRecoveryCartDiff(order.orderItems);
         }
-
         checkout.markAsConverted(order._id, orderReference);
         return checkout.save();
       })
@@ -671,8 +665,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         console.error('[payment] Failed to mark checkout as converted:', err.message)
       );
 
-    //  Discount usage + analytics 
+    // FIX #6/#13: discount usage is recorded HERE (after payment succeeds),
+    // not at /validate time. This ensures:
+    //   - Usage is only counted for completed purchases.
+    //   - The single analytics sync (syncDiscountAfterOrderCreated) fires once
+    //     with complete order data, eliminating the premature/duplicate sync
+    //     that previously fired at /validate time (fix #7/#13).
     if (session.discount) {
+      // FIX #12: prefer discountId for the lookup. Only fall back to code-based
+      // findOne if discountId is missing. If neither resolves, log a structured
+      // error (not just a console message) so it can be caught by alerting tools.
+      // Note: if the code was administratively changed or deactivated between
+      // payment init and verify, the code-based fallback may return null —
+      // this is logged but cannot be auto-recovered without a retry queue.
       const discountLookup = session.discount.discountId
         ? Discount.findById(session.discount.discountId)
         : Discount.findOne({ code: session.discount.code?.toUpperCase() });
@@ -680,30 +685,64 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       discountLookup
         .then(discount => {
           if (!discount) {
+            // FIX #12: structured error log for alerting (e.g. Datadog, Sentry).
+            // A console.error is insufficient for a financial discrepancy — the
+            // order succeeded but usage was not recorded.
             console.error(
-              `[payment] recordUsage skipped — discount not found. ` +
-              `id=${session.discount.discountId} code=${session.discount.code}`
+              JSON.stringify({
+                level:     "ERROR",
+                event:     "discount_record_usage_skipped",
+                reason:    "discount_not_found",
+                orderId:   order._id,
+                discountId: session.discount.discountId ?? null,
+                code:      session.discount.code ?? null,
+                message:
+                  "Discount document not found at recordUsage time. The discount may have " +
+                  "been administratively deleted or the code changed after payment was initiated. " +
+                  "Usage counts and remainingBalance were NOT decremented — manual reconciliation required.",
+              })
             );
             return;
           }
           return discount.recordUsage(userId, order._id, session.discount.discountAmount);
         })
         .then(() => {
+          // FIX #13: only one sync fires here — syncDiscountAfterOrderCreated —
+          // with complete order revenue data. The premature syncDiscountAfterRedemption
+          // that previously fired at /validate time has been removed, eliminating
+          // double-syncing and inflated redemption counts.
           syncDiscountAfterOrderCreated(order).catch(() => {});
         })
-        .catch(err =>
+        .catch(err => {
+          // FIX #11: log structured error. There is currently no retry queue —
+          // if recordUsage() throws (e.g. Mongoose validation error, network
+          // blip, or lost balance race), the order is confirmed to the customer
+          // but usage is not recorded. This is the known gap. Until a retry
+          // queue or outbox pattern is implemented, this log must be monitored
+          // and reconciled manually against usageHistory vs currentUses.
           console.error(
-            '[payment] recordUsage failed for order', order._id, ':', err?.message ?? err
-          )
-        );
+            JSON.stringify({
+              level:     "ERROR",
+              event:     "discount_record_usage_failed",
+              orderId:   order._id,
+              discountId: session.discount.discountId ?? null,
+              code:      session.discount.code ?? null,
+              error:     err?.message ?? String(err),
+              message:
+                "recordUsage() threw after order creation. Usage counts and remainingBalance " +
+                "were NOT decremented. Manual reconciliation required. " +
+                "TODO: implement retry queue / transactional outbox to prevent silent free redemptions.",
+            })
+          );
+        });
     } else {
       syncBaselineAfterNonDiscountedOrder().catch(() => {});
     }
 
-    // Customer analytics 
+    // Customer analytics
     syncCustomerAfterOrder(order._id).catch(() => {});
 
-    // Receipt 
+    // Receipt
     createReceiptIfNotExists({
       orderId:        order._id,
       userId,
@@ -726,13 +765,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       }),
     }).catch(() => {});
 
-    // Session cleanup 
+    // Session cleanup
     Promise.all([
       deletePaymentSession(reference),
       reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
     ]).catch(() => {});
 
     invalidatePaymentCaches().catch(() => {});
-
-  }); 
+  });
 });

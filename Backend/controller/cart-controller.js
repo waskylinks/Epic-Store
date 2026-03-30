@@ -400,21 +400,16 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  if (userId) {
-    const canUse = await discount.canUserUse(userId);
-    if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
-  }
+
+  const canUse = await discount.canUserUse(userId ?? null);
+  if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
 
   const validation = discount.validateCart(itemPrice, validItems, userId);
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
 
-  // calculateDiscount() caps the amount to remainingBalance internally
-  // for fixed-type codes, so discountAmount is always safe to use directly.
   const discountAmount = discount.calculateDiscount(itemPrice, validItems);
 
-  // NEW: project what balance will remain after this checkout completes.
-  // Null for percentage codes — balance tracking only applies to fixed type.
   const balanceAfterThisUse =
     discount.type === 'fixed' && discount.remainingBalance !== null
       ? Math.max(0, discount.remainingBalance - discountAmount)
@@ -425,32 +420,23 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   const eligibleSubtotal = eligibleCats.length > 0
     ? Math.round(
         validItems
-          .filter(
-            (item) =>
-              item.category &&
-              eligibleCats.includes(item.category)
-          )
+          .filter((item) => item.category && eligibleCats.includes(item.category))
           .reduce((sum, item) => sum + item.itemTotal, 0)
         * 100
       ) / 100
     : Math.round(itemPrice * 100) / 100;
 
   const ineligibleSubtotal    = Math.round((itemPrice - eligibleSubtotal) * 100) / 100;
+  const originalItemPrice     = Math.round(itemPrice * 100) / 100;
   const discountedItemPrice   = Math.max(0, itemPrice - discountAmount);
   const taxPrice              = Math.round(discountedItemPrice * 0.18 * 100) / 100;
   const shippingPrice         = discountedItemPrice >= 500 ? 0 : 50;
-  const totalPrice            =
-    Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
+  const totalPrice            = Math.round((discountedItemPrice + taxPrice + shippingPrice) * 100) / 100;
 
   return res.status(200).json({
     success:        true,
     appliedPending: true,
     discount: {
-      // FIX: include the discount document's _id so the cart Redux state
-      // can store it and forward it in the discountSnapshot to the payment
-      // controller. Without this, session.discount.discountId is always null
-      // and recordUsage() is never called after a successful payment —
-      // meaning usage counts and usageHistory never update.
       id:             discount._id.toString(),
       code:           discount.code,
       type:           discount.type,
@@ -460,13 +446,13 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       eligibleProductCategories: eligibleCats,
       eligibleSubtotal,
       ineligibleSubtotal,
-      // NEW: partial fixed-discount balance fields (null for percentage codes)
       remainingBalance: discount.remainingBalance ?? null,
       balanceAfterUse:  balanceAfterThisUse,
       isPartialAllowed: discount.isPartialAllowed ?? true,
+      originalItemPrice,
     },
     pricing: {
-      itemPrice:           Math.round(itemPrice * 100) / 100,
+      itemPrice:           originalItemPrice,
       discountAmount:      Math.round(discountAmount * 100) / 100,
       discountedItemPrice: Math.round(discountedItemPrice * 100) / 100,
       taxPrice,
