@@ -8,18 +8,10 @@ export const register = createAsyncThunk(
   "user/register",
   async (userData, { rejectWithValue }) => {
     try {
-      console.log('📤 userSlice - Sending registration:', userData);
-      
-      const config = { 
-        headers: { 
-          "Content-Type": "application/json"
-        } 
-      };
-      
+      const config = { headers: { "Content-Type": "application/json" } };
       const { data } = await axios.post("/api/v1/register", userData, config);
       return data;
     } catch (error) {
-      console.error('❌ Registration error:', error.response?.data);
       return rejectWithValue(
         error.response?.data || { message: "Registration failed. Try again later." }
       );
@@ -59,6 +51,8 @@ export const loadUser = createAsyncThunk(
 );
 
 // LOGOUT
+// NOTE: cartSlice listens to logout.fulfilled and logout.rejected via cross-slice
+// extraReducers to clear localStorage immediately on any logout outcome.
 export const logout = createAsyncThunk(
   "user/logout",
   async (_, { rejectWithValue }) => {
@@ -75,6 +69,7 @@ export const logout = createAsyncThunk(
 
 // VERIFY EMAIL
 // NOTE: Server syncs customer analytics on successful verification (new user onboarding)
+// NOTE: cartSlice listens to verifyEmail.fulfilled to reset cart for newly authenticated user
 export const verifyEmail = createAsyncThunk(
   "user/verifyEmail",
   async ({ email, code }, { rejectWithValue }) => {
@@ -118,37 +113,28 @@ export const updateProfile = createAsyncThunk(
   "user/updateProfile",
   async (userData, { rejectWithValue }) => {
     try {
-      console.log('📤 userSlice - Updating profile');
-      
       let profileData = {};
-      
+
       if (userData instanceof FormData) {
-        const name = userData.get('name');
-        const email = userData.get('email');
+        const name   = userData.get('name');
+        const email  = userData.get('email');
         const avatar = userData.get('avatar');
-        
+
         if (name) {
-          const nameParts = name.trim().split(' ');
+          const nameParts      = name.trim().split(' ');
           profileData.firstName = nameParts[0] || '';
-          profileData.lastName = nameParts.slice(1).join(' ') || nameParts[0] || '';
+          profileData.lastName  = nameParts.slice(1).join(' ') || nameParts[0] || '';
         }
-        
-        if (email) profileData.email = email;
+        if (email)                   profileData.email  = email;
         if (avatar && avatar !== '') profileData.avatar = avatar;
       } else {
         profileData = userData;
       }
-      
-      console.log('📤 userSlice - Sending:', profileData);
-      
+
       const config = { headers: { "Content-Type": "application/json" } };
       const { data } = await axios.put("/api/v1/profile/update", profileData, config);
-      
-      console.log('✅ userSlice - Update response:', data);
-      
       return data;
     } catch (error) {
-      console.error('❌ userSlice - Update error:', error.response?.data);
       return rejectWithValue(
         error.response?.data || { message: "Profile update failed." }
       );
@@ -231,20 +217,18 @@ export const resetPassword = createAsyncThunk(
 const userSlice = createSlice({
   name: "user",
   initialState: {
-    user: null,
-    loading: false,
-    error: null,
-    success: false,
-    message: null,
-    isAuthenticated: false,
+    user:              null,
+    loading:           false,
+    error:             null,
+    success:           false,
+    message:           null,
+    isAuthenticated:   false,
     needsVerification: false,
     verificationEmail: null,
-    initializing: true,
-    codeVerified: false,
+    initializing:      true,
+    codeVerified:      false,
     // analyticsReady is intentionally NOT tracked here.
     // syncCustomerAnalytics runs server-side inside verifyEmail and updateProfile.
-    // No client-side state is needed — consumers can rely on the user object being
-    // up-to-date after those actions fulfill.
   },
   reducers: {
     removeErrors: (state) => {
@@ -260,16 +244,13 @@ const userSlice = createSlice({
     },
     clearCodeVerifiedState: (state) => {
       state.codeVerified = false;
-    }
+    },
   },
   extraReducers: (builder) => {
 
     // REGISTER
     builder
-      .addCase(register.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(register.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(register.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
@@ -281,27 +262,24 @@ const userSlice = createSlice({
       })
       .addCase(register.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message || "Registration failed.";
+        state.error   = action.payload?.message || "Registration failed.";
       });
 
     // LOGIN
     builder
-      .addCase(login.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(login.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(login.fulfilled, (state, action) => {
-        state.loading = false;
-        state.success = action.payload.success;
-        state.user = action.payload.user || null;
-        state.isAuthenticated = Boolean(action.payload.user);
+        state.loading          = false;
+        state.success          = action.payload.success;
+        state.user             = action.payload.user || null;
+        state.isAuthenticated  = Boolean(action.payload.user);
         state.needsVerification = false;
         state.verificationEmail = null;
       })
       .addCase(login.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload?.message || "Login failed.";
-        state.user = null;
+        state.loading         = false;
+        state.error           = action.payload?.message || "Login failed.";
+        state.user            = null;
         state.isAuthenticated = false;
         if (action.payload?.needsVerification) {
           state.needsVerification = true;
@@ -311,63 +289,55 @@ const userSlice = createSlice({
 
     // LOAD USER
     builder
-      .addCase(loadUser.pending, (state) => { 
-        state.loading = true; 
-      })
+      .addCase(loadUser.pending,   (state) => { state.loading = true; })
       .addCase(loadUser.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload.user || null;
+        state.loading         = false;
+        state.user            = action.payload.user || null;
         state.isAuthenticated = Boolean(action.payload.user);
-        state.initializing = false;
+        state.initializing    = false;
       })
       .addCase(loadUser.rejected, (state) => {
-        state.loading = false;
-        state.user = null;
+        state.loading         = false;
+        state.user            = null;
         state.isAuthenticated = false;
-        state.initializing = false;
+        state.initializing    = false;
       });
 
     // LOGOUT
     builder
-      .addCase(logout.pending, (state) => { 
-        state.loading = true; 
-      })
+      .addCase(logout.pending,   (state) => { state.loading = true; })
       .addCase(logout.fulfilled, (state) => {
-        state.loading = false;
-        state.user = null;
+        state.loading         = false;
+        state.user            = null;
         state.isAuthenticated = false;
       })
       .addCase(logout.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload?.message;
+        // Still log the user out client-side even if the server call fails.
+        state.loading         = false;
+        state.user            = null;
+        state.isAuthenticated = false;
+        state.error           = action.payload?.message;
       });
 
     // VERIFY EMAIL
-    // Analytics: server calls syncCustomerAnalytics here — no client action needed
     builder
-      .addCase(verifyEmail.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(verifyEmail.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(verifyEmail.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload.user || null;
-        state.isAuthenticated = Boolean(action.payload.user);
-        state.success = true;
+        state.loading           = false;
+        state.user              = action.payload.user || null;
+        state.isAuthenticated   = Boolean(action.payload.user);
+        state.success           = true;
         state.needsVerification = false;
         state.verificationEmail = null;
       })
       .addCase(verifyEmail.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message;
+        state.error   = action.payload?.message;
       });
 
     // RESEND VERIFICATION CODE
     builder
-      .addCase(resendVerificationCode.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(resendVerificationCode.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(resendVerificationCode.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
@@ -375,48 +345,38 @@ const userSlice = createSlice({
       })
       .addCase(resendVerificationCode.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message;
+        state.error   = action.payload?.message;
       });
 
     // UPDATE PROFILE
-    // Analytics: server calls syncCustomerAnalytics here — no client action needed
     builder
-      .addCase(updateProfile.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(updateProfile.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(updateProfile.fulfilled, (state, action) => {
-        state.loading = false;
-        state.user = action.payload.user || state.user;
-        state.success = action.payload.success;
-        state.message = action.payload.message;
+        state.loading  = false;
+        state.user     = action.payload.user || state.user;
+        state.success  = action.payload.success;
+        state.message  = action.payload.message;
       })
       .addCase(updateProfile.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message;
+        state.error   = action.payload?.message;
       });
 
     // UPDATE PASSWORD
     builder
-      .addCase(updatePassword.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(updatePassword.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(updatePassword.fulfilled, (state, action) => {
         state.loading = false;
         state.success = action.payload?.success;
       })
       .addCase(updatePassword.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message;
+        state.error   = action.payload?.message;
       });
 
     // FORGOT PASSWORD
     builder
-      .addCase(forgotPassword.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(forgotPassword.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(forgotPassword.fulfilled, (state, action) => {
         state.loading = false;
         state.success = true;
@@ -424,55 +384,47 @@ const userSlice = createSlice({
       })
       .addCase(forgotPassword.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message;
+        state.error   = action.payload?.message;
       });
 
     // VERIFY RESET CODE
     builder
-      .addCase(verifyResetCode.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-        state.codeVerified = false;
-      })
+      .addCase(verifyResetCode.pending,   (state) => { state.loading = true; state.error = null; state.codeVerified = false; })
       .addCase(verifyResetCode.fulfilled, (state, action) => {
-        state.loading = false;
-        state.success = true;
+        state.loading      = false;
+        state.success      = true;
         state.codeVerified = true;
-        state.message = action.payload?.message;
+        state.message      = action.payload?.message;
       })
       .addCase(verifyResetCode.rejected, (state, action) => {
-        state.loading = false;
-        state.error = action.payload?.message;
+        state.loading      = false;
+        state.error        = action.payload?.message;
         state.codeVerified = false;
       });
 
     // RESET PASSWORD
     builder
-      .addCase(resetPassword.pending, (state) => { 
-        state.loading = true; 
-        state.error = null; 
-      })
+      .addCase(resetPassword.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(resetPassword.fulfilled, (state, action) => {
-        state.loading = false;
-        state.success = true;
-        state.user = action.payload.user || null;
+        state.loading         = false;
+        state.success         = true;
+        state.user            = action.payload.user || null;
         state.isAuthenticated = Boolean(action.payload.user);
-        state.codeVerified = false;
+        state.codeVerified    = false;
       })
       .addCase(resetPassword.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload?.message;
+        state.error   = action.payload?.message;
       });
-
-  }
+  },
 });
 
 // ======================= EXPORTS =======================
-export const { 
-  removeErrors, 
-  removeSuccess, 
+export const {
+  removeErrors,
+  removeSuccess,
   clearVerificationState,
-  clearCodeVerifiedState 
+  clearCodeVerifiedState,
 } = userSlice.actions;
 
 export default userSlice.reducer;

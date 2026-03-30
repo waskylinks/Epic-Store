@@ -16,9 +16,9 @@ function ProtectedRoute({element, adminOnly = false}) {
         return <Navigate to='/login' state={{ from: location }}/>
     }
 
-    if(adminOnly && user.role !== 'admin') {
-        return <Navigate to='/' />
-    }
+    if (adminOnly && !['admin', 'superAdmin'].includes(user?.role)) {
+    return <Navigate to='/' />
+}
 
 
   return element

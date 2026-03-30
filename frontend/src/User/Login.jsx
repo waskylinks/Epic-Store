@@ -4,6 +4,7 @@ import '../UserStyles/OAuthButtons.css';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { login, removeErrors, removeSuccess, clearVerificationState } from '../features/products/userSlice';
+import { syncServerCart } from '../features/cart/cartSlice';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import FacebookSignInButton from '../components/FacebookSignInButton';
 import {
@@ -16,11 +17,13 @@ import {
 } from '@mui/icons-material';
 
 function Login() {
-    const [loginEmail, setLoginEmail] = useState('');
+    const [loginEmail, setLoginEmail]       = useState('');
     const [loginPassword, setLoginPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
+    const [showPassword, setShowPassword]   = useState(false);
 
-    const { error, loading, isAuthenticated, needsVerification, verificationEmail } = useSelector(state => state.user);
+    const { error, loading, isAuthenticated, needsVerification, verificationEmail } =
+        useSelector(state => state.user);
+
     const location = useLocation();
     const dispatch = useDispatch();
     const navigate = useNavigate();
@@ -29,33 +32,21 @@ function Login() {
 
     const logInSubmit = (e) => {
         e.preventDefault();
-        
-        // Clear any previous errors
         dispatch(removeErrors());
-        
-        // Basic validation
-        if (!loginEmail.trim() || !loginPassword.trim()) {
-            return;
-        }
-
+        if (!loginEmail.trim() || !loginPassword.trim()) return;
         dispatch(login({ email: loginEmail.trim(), password: loginPassword }));
     };
 
     const togglePasswordVisibility = () => setShowPassword(!showPassword);
 
-    // Clear errors when user starts typing
     const handleEmailChange = (e) => {
         setLoginEmail(e.target.value);
-        if (error) {
-            dispatch(removeErrors());
-        }
+        if (error) dispatch(removeErrors());
     };
 
     const handlePasswordChange = (e) => {
         setLoginPassword(e.target.value);
-        if (error) {
-            dispatch(removeErrors());
-        }
+        if (error) dispatch(removeErrors());
     };
 
     // Redirect if login fails due to unverified email
@@ -66,52 +57,44 @@ function Login() {
         }
     }, [needsVerification, verificationEmail, navigate, dispatch]);
 
-    // Redirect after successful login
+    // After successful login: sync the server cart THEN redirect.
+    // This ensures User B never sees User A's stale localStorage cart.
     useEffect(() => {
         if (isAuthenticated) {
-            navigate(redirect);
+            dispatch(syncServerCart()).finally(() => {
+                navigate(redirect);
+            });
         }
-    }, [isAuthenticated, redirect, navigate]);
+    }, [isAuthenticated, redirect, navigate, dispatch]);
 
     // Cleanup on mount and unmount
     useEffect(() => {
-        // Clear errors on mount
         dispatch(removeErrors());
         dispatch(removeSuccess());
-
         return () => {
-            // Clear errors on unmount
             dispatch(removeErrors());
             dispatch(removeSuccess());
         };
     }, [dispatch]);
 
-    // Benefits data
     const benefits = [
         { icon: <LocalShipping />, text: 'Free shipping on orders over $50' },
-        { icon: <Security />, text: 'Secure & encrypted payments' },
-        { icon: <CardGiftcard />, text: 'Exclusive member discounts' },
-        { icon: <VerifiedUser />, text: '24/7 customer support' }
+        { icon: <Security />,      text: 'Secure & encrypted payments' },
+        { icon: <CardGiftcard />,  text: 'Exclusive member discounts' },
+        { icon: <VerifiedUser />,  text: '24/7 customer support' },
     ];
 
     return (
         <div className="auth-page">
             <div className="auth-container">
-                
+
                 {/* LEFT SIDE - Brand & Visual Content (Hidden on Mobile) */}
                 <div className="auth-visual-side">
-                    {/* 🎯 IMAGE AREA 1: Main Hero Image/Background */}
-                    {/* Recommended: Full-height lifestyle image or product showcase */}
                     <div className="visual-background">
-                        {/* REPLACE THIS COMMENT WITH: 
-                            <img src="/images/login-hero.jpg" alt="Epic Store" className="hero-image" />
-                            OR use a gradient background as shown below
-                        */}
                         <div className="gradient-overlay"></div>
                     </div>
 
                     <div className="visual-content">
-                        {/* Brand Logo */}
                         <div className="visual-logo">
                             <StorefrontIcon className="visual-logo-icon" />
                             <span className="visual-logo-text">
@@ -119,17 +102,12 @@ function Login() {
                             </span>
                         </div>
 
-                        {/* Main Heading */}
                         <div className="visual-heading">
                             <h1>Welcome Back to Your Shopping Paradise</h1>
                             <p>Sign in to access exclusive deals, track your orders, and enjoy a personalized shopping experience.</p>
                         </div>
 
-                        {/* 🎯 IMAGE AREA 2: Featured Products Carousel */}
-                        {/* Recommended: Add a carousel of featured products or customer testimonials */}
                         <div className="visual-carousel">
-                            {/* REPLACE THIS WITH YOUR CAROUSEL COMPONENT */}
-                            {/* Example: <ProductCarousel /> or <TestimonialSlider /> */}
                             <div className="carousel-placeholder">
                                 <div className="carousel-item active">
                                     <div className="carousel-content">
@@ -141,7 +119,6 @@ function Login() {
                             </div>
                         </div>
 
-                        {/* Benefits Grid */}
                         <div className="visual-benefits">
                             {benefits.map((benefit, index) => (
                                 <div key={index} className="benefit-item">
@@ -151,7 +128,6 @@ function Login() {
                             ))}
                         </div>
 
-                        {/* Social Proof */}
                         <div className="visual-social-proof">
                             <div className="social-proof-stats">
                                 <div className="stat-item">
@@ -171,11 +147,10 @@ function Login() {
                     </div>
                 </div>
 
-                {/* RIGHT SIDE - Login Form (Always Visible) */}
+                {/* RIGHT SIDE - Login Form */}
                 <div className="auth-form-side">
                     <div className="auth-form-wrapper">
-                        
-                        {/* Mobile Logo (Only visible on mobile) */}
+
                         <div className="mobile-logo">
                             <StorefrontIcon className="mobile-logo-icon" />
                             <span className="mobile-logo-text">
@@ -184,13 +159,11 @@ function Login() {
                         </div>
 
                         <form className='auth-form' onSubmit={logInSubmit}>
-                            {/* Form Header */}
                             <div className="form-header">
                                 <h2>Sign in to your account</h2>
                                 <p>Welcome back! Please enter your details.</p>
                             </div>
 
-                            {/* Error message */}
                             {error && (
                                 <div className="error-message">
                                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -202,38 +175,34 @@ function Login() {
                                 </div>
                             )}
 
-                            {/* OAuth Buttons */}
                             <div className="oauth-buttons-container">
                                 <GoogleSignInButton text="Continue with Google" />
                                 <FacebookSignInButton text="Continue with Facebook" />
                             </div>
 
-                            {/* Divider */}
                             <div className="oauth-divider">
                                 <span>or continue with email</span>
                             </div>
 
-                            {/* Email Input */}
                             <div className="input-group">
                                 <label>Email address</label>
-                                <input 
-                                    type="email" 
-                                    placeholder='you@example.com' 
-                                    value={loginEmail} 
+                                <input
+                                    type="email"
+                                    placeholder='you@example.com'
+                                    value={loginEmail}
                                     onChange={handleEmailChange}
                                     disabled={loading}
                                     required
                                 />
                             </div>
 
-                            {/* Password Input */}
                             <div className="input-group password-group">
                                 <label>Password</label>
                                 <div className="password-input-wrapper">
-                                    <input 
-                                        type={showPassword ? "text" : "password"} 
-                                        placeholder='Enter your password' 
-                                        value={loginPassword} 
+                                    <input
+                                        type={showPassword ? "text" : "password"}
+                                        placeholder='Enter your password'
+                                        value={loginPassword}
                                         onChange={handlePasswordChange}
                                         disabled={loading}
                                         required
@@ -260,8 +229,10 @@ function Login() {
                                 </div>
                             </div>
 
-                            {/* Submit Button */}
-                            <button className="auth-submit-btn" disabled={loading || !loginEmail.trim() || !loginPassword.trim()}>
+                            <button
+                                className="auth-submit-btn"
+                                disabled={loading || !loginEmail.trim() || !loginPassword.trim()}
+                            >
                                 {loading ? (
                                     <span className="button-loading">
                                         <svg className="spinner" viewBox="0 0 24 24">
@@ -273,13 +244,13 @@ function Login() {
                                 ) : 'Sign in'}
                             </button>
 
-                            {/* Footer Links */}
                             <div className="form-footer">
                                 <p className="form-link">
                                     <Link to='/password/forgot'>Forgot your password?</Link>
                                 </p>
                                 <p className="form-link">
-                                    Don't have an account? <Link to='/register' className="highlight-link">Sign up</Link>
+                                    Don't have an account?{' '}
+                                    <Link to='/register' className="highlight-link">Sign up</Link>
                                 </p>
                             </div>
                         </form>

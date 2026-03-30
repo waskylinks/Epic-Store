@@ -7,6 +7,7 @@ import Register from './User/Register';
 import Login from './User/Login';
 import { useDispatch, useSelector } from 'react-redux';
 import { loadUser } from './features/products/userSlice';
+import { syncServerCart } from './features/cart/cartSlice';
 import Profile from './User/Profile';
 import VerifyEmail from './User/VerifyEmail';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -57,7 +58,7 @@ import DiscountAnalytics from './Admin/DiscountAnalytics';
 import ReturnAnalytics from './Admin/ReturnAnalytics';
 
 function App() {
-  const { initializing } = useSelector(state => state.user);
+  const { initializing, isAuthenticated } = useSelector(state => state.user);
   const dispatch = useDispatch();
 
   // Initialize session tracking for analytics
@@ -77,6 +78,12 @@ function App() {
   useEffect(() => {
     dispatch(loadUser());
   }, [dispatch]);
+
+  useEffect(() => {
+  if (!initializing && isAuthenticated) {
+    dispatch(syncServerCart());
+  }
+}, [initializing, isAuthenticated, dispatch]);
 
   // Prevent routes from rendering until loadUser() finishes
   if (initializing) {

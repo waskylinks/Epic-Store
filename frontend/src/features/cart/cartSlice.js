@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
+import { logout, login, verifyEmail, loadUser } from "../products/userSlice";
 
 // ============================================
 // ASYNC THUNKS - SERVER-SIDE CART OPERATIONS
@@ -147,6 +148,24 @@ export const removeDiscountCode = createAsyncThunk(
   async () => ({ success: true })
 );
 
+// ─── NEW: Pull this user's cart from the server and replace localStorage ──────
+// Call this after login/loadUser to ensure the correct user's cart is loaded.
+// This prevents stale cart data from a previous user bleeding into a new session.
+export const syncServerCart = createAsyncThunk(
+  "cart/syncServerCart",
+  async (_, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.get("/api/v1/cart");
+      // Expected response shape: { cartItems: [{ product, quantity }, ...] }
+      return data;
+    } catch (error) {
+      return rejectWithValue(
+        error.response?.data?.message || "Failed to sync cart"
+      );
+    }
+  }
+);
+
 // ============================================
 // INITIAL STATE
 // ============================================
@@ -163,9 +182,9 @@ const initialDiscount = {
   eligibleProductCategories: [],
   appliedPending:            false,
   applied:                   false,
-  remainingBalance: null,       
-  balanceAfterUse: null,        
-  isPartialAllowed: true, 
+  remainingBalance:          null,
+  balanceAfterUse:           null,
+  isPartialAllowed:          true,
 };
 
 const initialPricing = {
@@ -174,6 +193,17 @@ const initialPricing = {
   shippingPrice: 0,
   totalPrice:    0,
   currency:      'USD',
+};
+
+// Helper: reset all cart state to blank (used on logout and user-switch)
+const resetCartState = (state) => {
+  state.cartItems    = [];
+  state.cartDetails  = [];
+  state.shippingInfo = {};
+  state.pricing      = initialPricing;
+  state.discount     = initialDiscount;
+  localStorage.removeItem("cartItems");
+  localStorage.removeItem("shippingInfo");
 };
 
 const initialState = {
@@ -210,15 +240,7 @@ const cartSlice = createSlice({
     },
 
     clearCart: (state) => {
-      state.cartItems    = [];
-      state.cartDetails  = [];
-      state.shippingInfo = {};
-      state.pricing      = initialPricing;
-      state.discount     = initialDiscount;
-
-      localStorage.removeItem("cartItems");
-      localStorage.removeItem("shippingInfo");
-
+      resetCartState(state);
       state.message = "Cart cleared";
       state.success = true;
     },
@@ -232,6 +254,34 @@ const cartSlice = createSlice({
   },
 
   extraReducers: (builder) => {
+
+    // ──────────────────────────────────────────────
+    // SYNC SERVER CART (called after login / loadUser)
+    // Overwrites localStorage with the authenticated user's real server cart.
+    // This is the primary fix for cart data leaking between users on shared devices.
+    // ──────────────────────────────────────────────
+    builder
+      .addCase(syncServerCart.pending, (state) => {
+        state.loading = true;
+        state.error   = null;
+      })
+      .addCase(syncServerCart.fulfilled, (state, action) => {
+        const serverItems     = action.payload.cartItems || [];
+        state.cartItems       = serverItems;
+        state.cartDetails     = [];   // Cart.jsx useEffect will re-fetch details
+        state.discount        = initialDiscount;
+        state.pricing         = initialPricing;
+        state.loading         = false;
+        localStorage.setItem("cartItems", JSON.stringify(serverItems));
+      })
+      .addCase(syncServerCart.rejected, (state, action) => {
+        // Non-fatal: log it but don't break the UI.
+        // If the sync fails the user still sees their localStorage cart;
+        // they may just need to refresh.
+        state.loading = false;
+        state.error   = action.payload || "Failed to sync cart";
+      });
+
     // ──────────────────────────────────────────────
     // GET CART DETAILS
     // ──────────────────────────────────────────────
@@ -347,15 +397,7 @@ const cartSlice = createSlice({
         state.error   = null;
       })
       .addCase(clearEntireCart.fulfilled, (state) => {
-        state.cartItems    = [];
-        state.cartDetails  = [];
-        state.shippingInfo = {};
-        state.pricing      = initialPricing;
-        state.discount     = initialDiscount;
-
-        localStorage.removeItem("cartItems");
-        localStorage.removeItem("shippingInfo");
-
+        resetCartState(state);
         state.message = "Cart cleared successfully";
         state.success = true;
         state.loading = false;
@@ -423,9 +465,9 @@ const cartSlice = createSlice({
           eligibleProductCategories: discount.eligibleProductCategories ?? [],
           appliedPending:            appliedPending ?? true,
           applied:                   true,
-          remainingBalance: discount.remainingBalance  ?? null,
-          balanceAfterUse:  discount.balanceAfterUse   ?? null,
-          isPartialAllowed: discount.isPartialAllowed  ?? true,
+          remainingBalance:          discount.remainingBalance  ?? null,
+          balanceAfterUse:           discount.balanceAfterUse   ?? null,
+          isPartialAllowed:          discount.isPartialAllowed  ?? true,
         };
 
         state.pricing = pricing;
@@ -466,6 +508,42 @@ const cartSlice = createSlice({
         state.pricing  = initialPricing;
         state.message  = "Discount removed";
         state.success  = true;
+      });
+
+    // ──────────────────────────────────────────────
+    // CROSS-SLICE: LOGOUT — wipe cart from localStorage immediately
+    // This prevents User A's cart from appearing when User B logs in
+    // on the same device.
+    // ──────────────────────────────────────────────
+    builder
+      .addCase(logout.fulfilled, (state) => {
+        resetCartState(state);
+      })
+      .addCase(logout.rejected, (state) => {
+        // Wipe locally even if the server logout call fails,
+        // so the device is always left in a clean state.
+        resetCartState(state);
+      });
+
+    // ──────────────────────────────────────────────
+    // CROSS-SLICE: LOGIN / VERIFY EMAIL / LOAD USER
+    // Trigger a server cart sync immediately after any successful
+    // authentication event so the correct user's cart loads straight away.
+    // The actual sync is dispatched from Login.jsx / App.jsx (see those files).
+    // We clear stale localStorage here as a safety net so the old cart
+    // is never briefly visible before syncServerCart resolves.
+    // ──────────────────────────────────────────────
+    builder
+      .addCase(login.fulfilled, (state) => {
+        resetCartState(state);
+      })
+      .addCase(verifyEmail.fulfilled, (state) => {
+        resetCartState(state);
+      })
+      .addCase(loadUser.fulfilled, (state) => {
+        // Only wipe if we currently have items that might belong to a different
+        // user. syncServerCart (dispatched by App.jsx) will refill correctly.
+        resetCartState(state);
       });
   },
 });
