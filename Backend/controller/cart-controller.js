@@ -60,8 +60,8 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   if (!productId) return next(new HandleError('Product ID is required', 400));
 
   const product = await Product.findById(productId);
-  if (!product)                        return next(new HandleError('Product not found', 404));
-  if (product.status !== 'published')  return next(new HandleError('Product is not available', 400));
+  if (!product)                       return next(new HandleError('Product not found', 404));
+  if (product.status !== 'published') return next(new HandleError('Product is not available', 400));
 
   const availableStock = product.inventory?.stock ?? product.stock ?? 0;
   if (availableStock < quantity) {
@@ -71,31 +71,29 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   const currentPrice = resolveProductPrice(product);
   if (currentPrice === 0) return next(new HandleError('Product has no valid price', 500));
 
-  // ── Persist to DB (upsert cart doc, upsert item inside it) ───────────────
-  if (req.user?._id) {
-    const cart = await Cart.findOneAndUpdate(
-      { user: req.user._id },
-      { $setOnInsert: { user: req.user._id } },
-      { upsert: true, new: true }
-    );
+  // ── Persist to DB ──────────────────────────────────────────────────────
+  const cart = await Cart.findOneAndUpdate(
+    { user: req.user._id },
+    { $setOnInsert: { user: req.user._id } },
+    { upsert: true, new: true }
+  );
 
-    const existingItem = cart.cartItems.find(
-      i => String(i.product) === String(productId)
-    );
+  const existingItem = cart.cartItems.find(
+    i => String(i.product) === String(productId)
+  );
 
-    if (existingItem) {
-      existingItem.quantity = Math.min(existingItem.quantity + quantity, availableStock);
-    } else {
-      cart.cartItems.push({ product: productId, quantity });
-    }
-
+  if (existingItem) {
+    existingItem.quantity = Math.min(existingItem.quantity + quantity, availableStock);
+  } else {
+    // ── Check limit BEFORE pushing, not after ──────────────────────────
     if (cart.cartItems.length >= 100) {
       return next(new HandleError('Cart limit reached (100 items)', 400));
     }
-
-    await cart.save();
+    cart.cartItems.push({ product: productId, quantity });
   }
-  // ─────────────────────────────────────────────────────────────────────────
+
+  await cart.save();
+  // ──────────────────────────────────────────────────────────────────────
 
   try { await product.incrementCart(true); } catch { /* analytics non-fatal */ }
   Promise.all([
@@ -104,8 +102,8 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   ]).catch(() => {});
 
   return res.status(200).json({
-    success:  true,
-    message:  'Item added to cart',
+    success: true,
+    message: 'Item added to cart',
     item: {
       product:  product._id,
       name:     product.name,

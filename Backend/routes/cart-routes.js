@@ -6,7 +6,8 @@ import {
   removeFromCart,
   clearCart,
   validateCheckout,
-  applyDiscountCode
+  applyDiscountCode,
+  getUserCart 
 } from '../controller/cart-controller.js';
 
 import { verifyUserAuth } from '../middleware/user-auth.js';
@@ -29,28 +30,28 @@ router.post('/details', getCartDetails);
  * @route POST /api/v1/cart/add
  * @access Public
  */
-router.post('/add', addToCart);
+router.post('/add', verifyUserAuth, addToCart);
 
 /**
  * Update cart item quantity
  * @route PUT /api/v1/cart/update
  * @access Public
  */
-router.put('/update', updateCartItem);
+router.put('/update', verifyUserAuth, updateCartItem);
 
 /**
  * Remove item from cart
  * @route DELETE /api/v1/cart/remove/:productId
  * @access Public
  */
-router.delete('/remove/:productId', removeFromCart);
+router.delete('/remove/:productId', verifyUserAuth, removeFromCart);
 
 /**
  * Clear entire cart
  * @route DELETE /api/v1/cart/clear
  * @access Public
  */
-router.delete('/clear', clearCart);
+router.delete('/clear', verifyUserAuth, clearCart);
 
 // ============================================
 // CHECKOUT FLOW
@@ -61,7 +62,7 @@ router.delete('/clear', clearCart);
  * @route POST /api/v1/cart/checkout/validate
  * @access Public
  */
-router.post('/checkout/validate', validateCheckout);
+router.post('/checkout/validate', verifyUserAuth, validateCheckout);
 
 /**
  * Apply discount code (integrated with Discount model)
@@ -69,5 +70,12 @@ router.post('/checkout/validate', validateCheckout);
  * @access Public
  */
 router.post('/apply-discount', verifyUserAuth, applyDiscountCode);
+
+/**
+ * Get user's cart
+ * @route GET /api/v1/cart
+ * @access Public
+ */
+router.get('/', verifyUserAuth, getUserCart);
 
 export default router;
