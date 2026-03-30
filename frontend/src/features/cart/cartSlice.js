@@ -1,6 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
-import { logout, login, verifyEmail, loadUser } from "../products/userSlice";
+import { logout, login, verifyEmail } from "../products/userSlice";
 
 // ============================================
 // ASYNC THUNKS - SERVER-SIDE CART OPERATIONS
@@ -510,42 +510,21 @@ const cartSlice = createSlice({
         state.success  = true;
       });
 
-    // ──────────────────────────────────────────────
-    // CROSS-SLICE: LOGOUT — wipe cart from localStorage immediately
-    // This prevents User A's cart from appearing when User B logs in
-    // on the same device.
-    // ──────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// CROSS-SLICE: LOGOUT — wipe cart from localStorage immediately
+// ──────────────────────────────────────────────
     builder
-      .addCase(logout.fulfilled, (state) => {
-        resetCartState(state);
-      })
-      .addCase(logout.rejected, (state) => {
-        // Wipe locally even if the server logout call fails,
-        // so the device is always left in a clean state.
-        resetCartState(state);
-      });
+      .addCase(logout.fulfilled, (state) => { resetCartState(state); })
+      .addCase(logout.rejected,  (state) => { resetCartState(state); });
 
     // ──────────────────────────────────────────────
     // CROSS-SLICE: LOGIN / VERIFY EMAIL / LOAD USER
-    // Trigger a server cart sync immediately after any successful
-    // authentication event so the correct user's cart loads straight away.
-    // The actual sync is dispatched from Login.jsx / App.jsx (see those files).
-    // We clear stale localStorage here as a safety net so the old cart
-    // is never briefly visible before syncServerCart resolves.
-    // ──────────────────────────────────────────────
+
     builder
-      .addCase(login.fulfilled, (state) => {
-        resetCartState(state);
-      })
-      .addCase(verifyEmail.fulfilled, (state) => {
-        resetCartState(state);
-      })
-      .addCase(loadUser.fulfilled, (state) => {
-        // Only wipe if we currently have items that might belong to a different
-        // user. syncServerCart (dispatched by App.jsx) will refill correctly.
-        resetCartState(state);
-      });
-  },
+      .addCase(login.fulfilled,        (state) => { resetCartState(state); })
+      .addCase(verifyEmail.fulfilled,  (state) => { resetCartState(state); });
+      },
+
 });
 
 // ============================================
