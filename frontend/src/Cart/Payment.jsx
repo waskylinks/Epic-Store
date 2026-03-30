@@ -19,7 +19,7 @@ import {
   removePaymentMessage,
   clearPaymentData
 } from "../features/cart/paymentSlice";
-import { clearCart } from "../features/cart/cartSlice";
+import { clearEntireCart  } from "../features/cart/cartSlice";
 import {
   clearCheckout,
   selectCheckoutSession,
@@ -197,7 +197,7 @@ function Payment() {
           .then(() => {
             // Payment succeeded — suppress abandonment hook on unmount
             setIntentionalProceed();
-            dispatch(clearCart());
+            dispatch(clearEntireCart());
             dispatch(clearPaymentData());
             dispatch(clearCheckout());
             navigate(`/order/success?reference=${ref}`);
@@ -269,7 +269,7 @@ function Payment() {
             .then(() => {
               // Payment succeeded — suppress abandonment hook on unmount
               setIntentionalProceed();
-              dispatch(clearCart());
+              dispatch(clearEntireCart());
               dispatch(clearPaymentData());
               dispatch(clearCheckout());
               setTimeout(() => navigate(`/order/success?reference=${txRef}`), 500);
@@ -413,7 +413,7 @@ const handleInitializePayment = async () => {
       .then(() => {
         // Payment succeeded — suppress abandonment hook on unmount
         setIntentionalProceed();
-        dispatch(clearCart());
+        dispatch(clearEntireCart());
         dispatch(clearPaymentData());
         dispatch(clearCheckout());
         navigate(`/order/success?reference=${successReference}`);
