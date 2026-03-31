@@ -126,13 +126,6 @@ export const markStaleCheckouts = async () => {
     );
   }
 
-  // ── TERTIARY PASS: clear stale recoverySessionActive flags ────────────────
-  // If a checkout has recoverySessionActive: true but was just swept as
-  // abandoned (or was already abandoned), the flag must be cleared so it
-  // does not mislead the next sweep or the payment controller.
-  // markAsAbandoned clears it inline, but this pass catches any edge cases
-  // where the flag was set but the checkout was already in 'abandoned' status
-  // (e.g. a previous sweep ran before redeemRecoveryToken could restore it).
   try {
     await Checkout.updateMany(
       {

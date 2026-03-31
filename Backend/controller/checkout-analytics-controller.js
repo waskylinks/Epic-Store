@@ -3,9 +3,20 @@ import HandleError from "../utils/handleError.js";
 import Checkout, { calculatePriorityScore } from "../models/checkout-model.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
-import { getCache, setCache } from "../utils/redis.js";
+import { getCache, setCache,deleteCachePattern } from "../utils/redis.js";
 import { sendRecoveryEmail } from "../Services/recoveryEmailService.js";
 import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
+
+
+
+const invalidateCheckoutCaches = () =>
+  Promise.all([
+    deleteCachePattern('checkout_abandonment_*'),
+    deleteCachePattern('checkout_recovery_*'),
+    deleteCachePattern('abandoned_list:*'),
+    deleteCachePattern('admin_stats*'),
+    deleteCachePattern('analytics_*'),
+  ]);
 
 // ============================================
 // CHECKOUT ABANDONMENT STATS
@@ -493,7 +504,6 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
 // ============================================
 // MARK RECOVERY EMAIL SENT
 // ============================================
-
 export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => {
   const { checkoutId } = req.params;
 
@@ -503,6 +513,14 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
 
   if (!checkout) {
     return next(new HandleError("Checkout not found", 404));
+  }
+
+  // Clear any stale pendingEmailAck left over from a previously crashed request.
+  // canSendRecoveryEmail() blocks sends when this flag is true, so a crash
+  // between markRecoveryEmailSent() and acknowledgeEmailSent() would permanently
+  // lock the checkout unless we reset it here before the guard runs.
+  if (checkout.abandonment.pendingEmailAck) {
+    checkout.abandonment.pendingEmailAck = false;
   }
 
   let token;
@@ -523,15 +541,15 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
   await checkout.save();
 
   // fire-and-forget — never block the response on cache invalidation
-  invalidateCheckoutCaches().catch(err =>
-    console.error('Failed to invalidate caches after recovery email:', err)
+  invalidateCheckoutCaches().catch((err) =>
+    console.error("Failed to invalidate caches after recovery email:", err)
   );
 
-  const canSendNext    = checkout.canSendRecoveryEmail();
+  const canSendNext = checkout.canSendRecoveryEmail();
   const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
   const nextAvailableAt = new Date(
     checkout.abandonment.recoveryEmailSentAt.getTime() +
-    COOLDOWN_HOURS * 60 * 60 * 1000
+      COOLDOWN_HOURS * 60 * 60 * 1000
   );
 
   res.status(200).json({
