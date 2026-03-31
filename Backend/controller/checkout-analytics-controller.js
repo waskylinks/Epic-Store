@@ -519,10 +519,13 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
   }
 
   checkout.markRecoveryEmailSent();
-  await checkout.save();
-
   checkout.acknowledgeEmailSent();
   await checkout.save();
+
+  // fire-and-forget — never block the response on cache invalidation
+  invalidateCheckoutCaches().catch(err =>
+    console.error('Failed to invalidate caches after recovery email:', err)
+  );
 
   const canSendNext    = checkout.canSendRecoveryEmail();
   const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
@@ -546,8 +549,8 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
           checkout.abandonment.recoveryEmailCount
       ),
       canSendAnother: canSendNext.canSend,
-      cooldownReason: canSendNext.canSend ? null : canSendNext.reason
-    }
+      cooldownReason: canSendNext.canSend ? null : canSendNext.reason,
+    },
   });
 });
 

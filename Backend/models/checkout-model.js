@@ -1047,7 +1047,7 @@ checkoutSchema.post('save', async function (doc, next) {
       console.error('Cache invalidation failed:', error);
     }
   }
-  next();
+
 });
 
 export default mongoose.model("Checkout", checkoutSchema);
