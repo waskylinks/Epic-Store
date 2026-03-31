@@ -107,24 +107,27 @@ export const fetchReAbandonmentAnalytics = createAsyncThunk(
     }
 );
 
+// operationsSlice.js — thunk
 export const markRecoveryEmailSent = createAsyncThunk(
-    "operations/markRecoveryEmailSent",
-    async (checkoutId, { rejectWithValue }) => {
-        try {
-            const { data } = await axios.post(
-                `${API_BASE}/analytics/checkout/${checkoutId}/mark-recovery-sent`,
-                {},
-                { withCredentials: true }
-            );
-            return { checkoutId, result: data.result };
-        } catch (error) {
-            return rejectWithValue({
-                checkoutId,
-                message:
-                    error.response?.data?.message || "Failed to send recovery email",
-            });
-        }
+  "operations/markRecoveryEmailSent",
+  async (checkoutId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/analytics/checkout/${checkoutId}/mark-recovery-sent`,
+        {}
+        // ← no withCredentials, matches every other thunk in this file
+      );
+      return {
+        checkoutId,
+        result: data.result,
+      };
+    } catch (error) {
+      return rejectWithValue({
+        checkoutId,
+        message: error.response?.data?.message || "Failed to send recovery email",
+      });
     }
+  }
 );
 
 // ============================================
@@ -543,18 +546,27 @@ const operationsSlice = createSlice({
                 if (!action.payload?.aborted) state.error = action.payload;
             })
 
-            // markRecoveryEmailSent — per-checkout keyed loading/error
             .addCase(markRecoveryEmailSent.pending, (state, action) => {
-                const checkoutId = action.meta.arg;
-                state.emailSendLoading[checkoutId] = true;
-                // Clear previous error before retry so stale ! indicator disappears
-                delete state.emailSendError[checkoutId];
+            const checkoutId = action.meta.arg;
+            console.log('PENDING — arg type:', typeof checkoutId, '| value:', checkoutId);
+            state.emailSendLoading[checkoutId] = true;
+            delete state.emailSendError[checkoutId];
             })
+
             .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
                 const { checkoutId, result } = action.payload;
-                if (!checkoutId || !result) return;
+
+                  console.log('FULFILLED payload:', JSON.stringify(action.payload, null, 2));
+                    console.log('FULFILLED checkoutId:', checkoutId, '| result:', result);
+                    console.log('FULFILLED loading before:', { ...state.emailSendLoading });
+
+                  if (!checkoutId || !result) {
+                        console.log('❌ EARLY RETURN — checkoutId:', checkoutId, '| result:', result);
+                        return;
+                    }
 
                 state.emailSendLoading[checkoutId] = false;
+                 console.log('FULFILLED loading after:', { ...state.emailSendLoading });
                 state.emailSendResults[checkoutId] = result;
                 state.success = true;
                 state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
@@ -591,12 +603,15 @@ const operationsSlice = createSlice({
                     }
                 }
             })
+
             .addCase(markRecoveryEmailSent.rejected, (state, action) => {
-                const { checkoutId, message } = action.payload;
+                console.log('❌ REJECTED payload:', action.payload);  // ← add this
+                const { checkoutId, message } = action.payload || {};  // ← guard the destructure
+                if (!checkoutId) return;
                 state.emailSendLoading[checkoutId] = false;
                 state.emailSendError[checkoutId]   = message;
                 state.error = message;
-            });
+            })
 
         // ── PRODUCTS ─────────────────────────────────────────────────────────
         builder

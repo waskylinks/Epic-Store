@@ -589,7 +589,10 @@ export default function RecoveryEmailManager() {
                                 loading={!!emailSendLoading?.[id]}
                                 result={result}
                                 sendError={emailSendError?.[id]}
-                                onSend={(checkoutId) => dispatch(markRecoveryEmailSent(checkoutId))}
+                                onSend={(checkoutId) => {
+                                  console.log('DISPATCHING — id type:', typeof checkoutId, '| value:', checkoutId);
+                                  dispatch(markRecoveryEmailSent(checkoutId));
+                                }}
                                 now={now}
                               />
                             </td>
