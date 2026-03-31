@@ -107,7 +107,6 @@ export const fetchReAbandonmentAnalytics = createAsyncThunk(
     }
 );
 
-// operationsSlice.js — thunk
 export const markRecoveryEmailSent = createAsyncThunk(
   "operations/markRecoveryEmailSent",
   async (checkoutId, { rejectWithValue }) => {
@@ -115,8 +114,16 @@ export const markRecoveryEmailSent = createAsyncThunk(
       const { data } = await axios.post(
         `${API_BASE}/analytics/checkout/${checkoutId}/mark-recovery-sent`,
         {}
-        // ← no withCredentials, matches every other thunk in this file
       );
+
+      // Guard: if backend didn't return result, treat as error
+      if (!data.result) {
+        return rejectWithValue({
+          checkoutId,
+          message: data.message || "No result returned from server",
+        });
+      }
+
       return {
         checkoutId,
         result: data.result,
@@ -554,63 +561,56 @@ const operationsSlice = createSlice({
             })
 
             .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
-                const { checkoutId, result } = action.payload;
+            const { checkoutId, result } = action.payload ?? {};
 
-                  console.log('FULFILLED payload:', JSON.stringify(action.payload, null, 2));
-                    console.log('FULFILLED checkoutId:', checkoutId, '| result:', result);
-                    console.log('FULFILLED loading before:', { ...state.emailSendLoading });
-
-                  if (!checkoutId || !result) {
-                        console.log('❌ EARLY RETURN — checkoutId:', checkoutId, '| result:', result);
-                        return;
-                    }
-
+            // ← ALWAYS clear loading first, no matter what
+            if (checkoutId) {
                 state.emailSendLoading[checkoutId] = false;
-                 console.log('FULFILLED loading after:', { ...state.emailSendLoading });
-                state.emailSendResults[checkoutId] = result;
-                state.success = true;
-                state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
+                delete state.emailSendError[checkoutId];
+            }
 
-                // Shared patch applied to both list stores
-                const patch = {
-                    recoveryEmailSent:   true,
-                    recoveryEmailSentAt: result.sentAt,
-                    recoveryEmailCount:  result.attemptNumber,
-                    pendingEmailAck:     false,
-                };
+            if (!checkoutId || !result) return; // safe to early-return now
 
-                // Patch abandonedCheckouts list
-                const list = state.abandonedCheckouts?.abandonedCheckouts;
-                if (Array.isArray(list)) {
-                    const idx = list.findIndex((c) => c._id === checkoutId);
-                    if (idx !== -1) {
-                        list[idx] = {
-                            ...list[idx],
-                            abandonment: { ...list[idx].abandonment, ...patch },
-                        };
-                    }
-                }
+            state.emailSendResults[checkoutId] = result;
+            state.success = true;
+            state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
 
-                // Patch recoveryOpportunities list
-                const opps = state.recoveryOpportunities?.opportunities;
-                if (Array.isArray(opps)) {
-                    const idx = opps.findIndex((c) => c._id === checkoutId);
-                    if (idx !== -1) {
-                        opps[idx] = {
-                            ...opps[idx],
-                            abandonment: { ...opps[idx].abandonment, ...patch },
-                        };
-                    }
-                }
+            const patch = {
+                recoveryEmailSent:   true,
+                recoveryEmailSentAt: result.sentAt,
+                recoveryEmailCount:  result.attemptNumber,
+                pendingEmailAck:     false,
+            };
+
+            const list = state.abandonedCheckouts?.abandonedCheckouts;
+            if (Array.isArray(list)) {
+                const idx = list.findIndex((c) => c._id === checkoutId);
+                if (idx !== -1) list[idx] = { ...list[idx], abandonment: { ...list[idx].abandonment, ...patch } };
+            }
+
+            const opps = state.recoveryOpportunities?.opportunities;
+            if (Array.isArray(opps)) {
+                const idx = opps.findIndex((c) => c._id === checkoutId);
+                if (idx !== -1) opps[idx] = { ...opps[idx], abandonment: { ...opps[idx].abandonment, ...patch } };
+            }
             })
 
             .addCase(markRecoveryEmailSent.rejected, (state, action) => {
-                console.log('❌ REJECTED payload:', action.payload);  // ← add this
-                const { checkoutId, message } = action.payload || {};  // ← guard the destructure
-                if (!checkoutId) return;
+            const { checkoutId, message } = action.payload ?? {};
+
+            // ← ALWAYS clear loading first
+            if (checkoutId) {
                 state.emailSendLoading[checkoutId] = false;
-                state.emailSendError[checkoutId]   = message;
-                state.error = message;
+                state.emailSendError[checkoutId] = message;
+            } else {
+                Object.keys(state.emailSendLoading).forEach(id => {
+                if (state.emailSendLoading[id]) {
+                    state.emailSendLoading[id] = false;
+                }
+                });
+            }
+
+            if (message) state.error = message;
             })
 
         // ── PRODUCTS ─────────────────────────────────────────────────────────

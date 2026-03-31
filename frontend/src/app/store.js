@@ -2,11 +2,11 @@ import { configureStore } from "@reduxjs/toolkit";
 import productReducer from '../features/products/productSlice';
 import userReducer from '../features/products/userSlice';
 import cartReducer from '../features/cart/cartSlice';
-import paymentReducer from '../features/cart/paymentSlice'
-import orderReducer from '../features/cart/orderSlice'
-import receiptReducer from '../features/cart/receiptSlice'
-import adminReducer from '../features/admin/adminSlice'
-import refundReducer from '../features/refunds/refundSlice'
+import paymentReducer from '../features/cart/paymentSlice';
+import orderReducer from '../features/cart/orderSlice';
+import receiptReducer from '../features/cart/receiptSlice';
+import adminReducer from '../features/admin/adminSlice';
+import refundReducer from '../features/refunds/refundSlice';
 import publicProductsReducer from '../features/publicProducts/publicProductsSlice';
 import wishlistReducer from '../features/products/wishlistSlice';
 import shippingReducer from '../features/shipping/shippingSlice';
@@ -26,28 +26,26 @@ import attributionReducer from '../features/analytics/attributionSlice';
 import operationsReducer from '../features/analytics/operationsSlice';
 import returnAnalyticsReducer from '../features/analytics/returnAnalyticsSlice';
 
-
-
 export const store = configureStore({
     reducer: {
-        product: productReducer,
-        user: userReducer,
-        cart: cartReducer,
-        payment: paymentReducer,
-        receipt: receiptReducer,
-        order: orderReducer,
-        admin: adminReducer,
-        publicProducts: publicProductsReducer,
-        wishlist: wishlistReducer,
-        shipping: shippingReducer,
-        checkout: checkoutReducer,
-        adminRefund: adminRefundReducer,
-        adminReturn: adminReturnReducer,
-        adminProducts: adminProductReducer,
-        refund: refundReducer,
-        return: returnReducer,
-        adminDiscount: adminDiscountReducer,
-        userDiscount: userDiscountReducer,
+        product:           productReducer,
+        user:              userReducer,
+        cart:              cartReducer,
+        payment:           paymentReducer,
+        receipt:           receiptReducer,
+        order:             orderReducer,
+        admin:             adminReducer,
+        publicProducts:    publicProductsReducer,
+        wishlist:          wishlistReducer,
+        shipping:          shippingReducer,
+        checkout:          checkoutReducer,
+        adminRefund:       adminRefundReducer,
+        adminReturn:       adminReturnReducer,
+        adminProducts:     adminProductReducer,
+        refund:            refundReducer,
+        return:            returnReducer,
+        adminDiscount:     adminDiscountReducer,
+        userDiscount:      userDiscountReducer,
         discountAnalytics: discountAnalyticsReducer,
         coreAnalytics:     coreAnalyticsReducer,
         dashboard:         dashboardReducer,
@@ -55,7 +53,12 @@ export const store = configureStore({
         customerAnalytics: customerAnalyticsReducer,
         attribution:       attributionReducer,
         operations:        operationsReducer,
-        returnAnalytics: returnAnalyticsReducer,
+        returnAnalytics:   returnAnalyticsReducer,
+    },
 
-    }
+    middleware: (getDefaultMiddleware) =>
+        getDefaultMiddleware({
+            immutableCheck:    { warnAfter: 128 },
+            serializableCheck: { warnAfter: 128 },
+        }),
 });
