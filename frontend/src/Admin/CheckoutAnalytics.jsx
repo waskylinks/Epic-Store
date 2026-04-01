@@ -16,7 +16,6 @@ import {
   fetchRecoveryOpportunities,
   fetchAbandonedCheckouts,
   fetchReAbandonmentAnalytics,
-  markRecoveryEmailSent,
 } from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CheckoutAnalytics.css';

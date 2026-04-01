@@ -6,16 +6,21 @@ import {
   Search, AttachMoney, ErrorOutline, Send, Block, Inbox,
   Loop, PersonSearch, SwapHoriz,
 } from '@mui/icons-material';
+import { fetchAbandonedCheckouts } from '../features/analytics/operationsSlice';
 import {
-  fetchAbandonedCheckouts,
-  sendDirectRecoveryEmail,          // ← new isolated thunk
-} from '../features/analytics/operationsSlice';
+  dispatchRecoveryEmail,
+  clearAllEmailResults,
+} from '../features/admin/recoveryEmailSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/RecoveryEmailManager.css';
 
-const COOLDOWN_MS  = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
-const MAX_ATTEMPTS = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
+const COOLDOWN_MS   = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
+const MAX_ATTEMPTS  = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 const BULK_DELAY_MS = 800;
+
+// ============================================
+// FORMATTERS
+// ============================================
 
 const fmt = {
   currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
@@ -29,27 +34,28 @@ const fmt = {
   date: (d) => d ? new Date(d).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }) : '—',
-  hours: (h) => h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(1)}h`,
 };
 
+// ============================================
+// PURE EMAIL STATUS RESOLVER
+// Reads only from primitives — no object references, no Redux state.
+// Called with the checkout's own abandonment fields PLUS the send result
+// from recoveryEmailSlice (if any). Both sources are merged at call-site
+// before being passed in, so this function is always pure and deterministic.
+// ============================================
+
 /**
- * getEmailStatus
- * Accepts `now` as a parameter so the result is deterministic and
- * consistent across all call-sites (partition, bulk eligibility, SendButton).
+ * resolveEmailStatus
+ * @param {object} fields - flat primitive fields describing email state
+ * @param {number} now    - current timestamp (ms)
+ * @returns {{ type: string, label: string, count: number, cooldownUntil?: Date }}
  */
-function getEmailStatus(checkout, result, now = Date.now()) {
-  const ab = checkout?.abandonment || {};
-
-  const count  = Number(result?.attemptNumber ?? ab.recoveryEmailCount ?? 0);
-  const sentAt = result?.sentAt         ?? ab.recoveryEmailSentAt ?? null;
-  const nextAt = result?.nextAvailableAt ?? ab._nextAvailableAt   ?? null;
-  const converted = checkout?.conversion?.isConverted === true;
-
-  if (converted) return { type: 'converted', label: 'Converted', count };
+function resolveEmailStatus({ count, sentAt, nextAvailableAt, isConverted }, now) {
+  if (isConverted) return { type: 'converted', label: 'Converted', count };
 
   const cooldownUntil =
-    nextAt ? new Date(nextAt) :
-    sentAt ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS) :
+    nextAvailableAt ? new Date(nextAvailableAt) :
+    sentAt          ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS) :
     null;
 
   const inCooldown = Boolean(cooldownUntil && cooldownUntil.getTime() > now);
@@ -60,11 +66,43 @@ function getEmailStatus(checkout, result, now = Date.now()) {
   return                            { type: 'ready',    label: 'Ready',                 count };
 }
 
+/**
+ * extractEmailFields
+ * Pulls the flat primitive email fields out of a checkout + an optional
+ * send result from recoveryEmailSlice. The send result always wins if present
+ * since it reflects the most recent server response.
+ * Returns a plain object of primitives — no Date objects, no references.
+ */
+function extractEmailFields(checkout, sendResult) {
+  const ab = checkout?.abandonment ?? {};
+
+  // sendResult fields take priority — they are the server's authoritative values
+  const count          = Number(sendResult?.attemptNumber   ?? ab.recoveryEmailCount  ?? 0);
+  const sentAt         = sendResult?.sentAt                  ?? ab.recoveryEmailSentAt ?? null;
+  const nextAvailableAt = sendResult?.nextAvailableAt        ?? null;
+  const isConverted    = checkout?.conversion?.isConverted   === true;
+
+  return {
+    count:          count,
+    sentAt:         sentAt   ? String(sentAt)          : null,
+    nextAvailableAt: nextAvailableAt ? String(nextAvailableAt) : null,
+    isConverted,
+  };
+}
+
+// ============================================
+// PRIORITY
+// ============================================
+
 function getPriority(score) {
   if (score >= 70) return { label: 'High',   cls: 'high' };
   if (score >= 40) return { label: 'Medium', cls: 'med' };
   return                  { label: 'Low',    cls: 'low' };
 }
+
+// ============================================
+// STEP LABELS
+// ============================================
 
 const STEP_LABEL_MAP = {
   'shipping_info':      'Shipping Info',
@@ -76,6 +114,10 @@ const STEP_LABEL_MAP = {
 const resolveStep = (s = '') =>
   STEP_LABEL_MAP[s] || s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
+// ============================================
+// SUB-COMPONENTS
+// ============================================
+
 function Spinner({ size = 20 }) {
   return (
     <span
@@ -85,10 +127,10 @@ function Spinner({ size = 20 }) {
   );
 }
 
-function Empty({ icon: EmptyIcon = Inbox, label, sub }) {
+function Empty({ icon: Icon = Inbox, label, sub }) {
   return (
     <div className="rem-empty">
-      <EmptyIcon style={{ fontSize: 44 }} />
+      <Icon style={{ fontSize: 44 }} />
       <span className="rem-empty-label">{label}</span>
       {sub && <span className="rem-empty-sub">{sub}</span>}
     </div>
@@ -117,7 +159,7 @@ function CartDiffBadge({ diff }) {
   return (
     <span
       className={`rem-diff-badge rem-diff-badge--${cls}`}
-      title={`Cart changed after recovery link click: ${parts.join(', ')}. Value delta: ${valueDelta >= 0 ? '+' : ''}${fmt.currency(valueDelta)}`}
+      title={`Cart changed after recovery: ${parts.join(', ')}. Delta: ${valueDelta >= 0 ? '+' : ''}${fmt.currency(valueDelta)}`}
     >
       <SwapHoriz style={{ fontSize: 11 }} />
       {parts.slice(0, 2).join(', ')}
@@ -126,33 +168,13 @@ function CartDiffBadge({ diff }) {
   );
 }
 
-const TABS = [
-  { key: 'queue',        label: 'Queue',           icon: Inbox },
-  { key: 'sent',         label: 'Sent',            icon: MarkEmailRead },
-  { key: 'reabandoned',  label: 'Failed Recovery', icon: Loop },
-  { key: 'recovered',    label: 'Recovered',       icon: CheckCircle },
-];
-
-function useTick(intervalMs = 60_000) {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return tick;
-}
-
 /**
  * SendButton
- * Uses the isolated directEmail* keys exclusively.
- * `now` is passed in so cooldown math matches the same timestamp
- * used by the partition logic — no hidden Date.now() drift.
+ * Receives already-resolved status and loading/error state.
+ * Does zero Redux reads itself — all data flows in via props.
+ * `onSend` is the only side effect it triggers.
  */
-function SendButton({ checkout, loading, sendError, onSend, now, justSent }) {
-  // result is already merged into checkout.abandonment via hydratedCheckouts,
-  // so we pass null here and let getEmailStatus read from the checkout directly.
-  const status = getEmailStatus(checkout, null, now);
-  const id     = checkout._id;
+function SendButton({ status, loading, sendError, onSend, checkoutId, justSent, now }) {
   const isBusy = Boolean(loading);
 
   if (status.type === 'converted') return <span className="rem-status rem-status--converted">Converted</span>;
@@ -168,9 +190,11 @@ function SendButton({ checkout, loading, sendError, onSend, now, justSent }) {
 
   const label = isBusy
     ? 'Sending…'
-    : status.count > 0
-      ? `Resend (${status.count}/${MAX_ATTEMPTS})`
-      : 'Send';
+    : justSent
+      ? 'Sent!'
+      : status.count > 0
+        ? `Resend (${status.count}/${MAX_ATTEMPTS})`
+        : 'Send';
 
   return (
     <div className="rem-send-wrap">
@@ -179,72 +203,95 @@ function SendButton({ checkout, loading, sendError, onSend, now, justSent }) {
       )}
       <button
         className={`rem-send-btn${justSent ? ' rem-send-btn--success' : ''}`}
-        onClick={() => !isBusy && onSend(id)}
+        onClick={() => !isBusy && onSend(checkoutId)}
         disabled={isBusy}
         title={
-          isBusy
-            ? 'Sending recovery email...'
-            : status.count > 0
-              ? `Attempt ${status.count + 1} of ${MAX_ATTEMPTS}`
-              : 'Send recovery email'
+          isBusy    ? 'Sending recovery email...' :
+          justSent  ? 'Email sent successfully'   :
+          status.count > 0 ? `Attempt ${status.count + 1} of ${MAX_ATTEMPTS}` :
+          'Send recovery email'
         }
       >
-        {isBusy
-          ? <Spinner size={13} />
-          : justSent
-            ? <CheckCircle style={{ fontSize: 13 }} />
-            : <Send style={{ fontSize: 13 }} />
-        }
-        {isBusy ? 'Sending…' : justSent ? 'Sent!' : label}
+        {isBusy   ? <Spinner size={13} />                      :
+         justSent ? <CheckCircle style={{ fontSize: 13 }} />   :
+                    <Send style={{ fontSize: 13 }} />}
+        {label}
       </button>
     </div>
   );
 }
 
+// ============================================
+// TABS
+// ============================================
+
+const TABS = [
+  { key: 'queue',       label: 'Queue',           icon: Inbox },
+  { key: 'sent',        label: 'Sent',            icon: MarkEmailRead },
+  { key: 'reabandoned', label: 'Failed Recovery', icon: Loop },
+  { key: 'recovered',   label: 'Recovered',       icon: CheckCircle },
+];
+
+// ============================================
+// HOOKS
+// ============================================
+
+function useTick(intervalMs = 60_000) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return tick;
+}
+
+/**
+ * useJustSent
+ * Tracks which checkout IDs had a send succeed in the last N ms.
+ * Completely local — no Redux involvement.
+ */
+function useJustSent(durationMs = 4000) {
+  const [ids, setIds]  = useState({});
+  const timers         = useRef({});
+
+  const mark = useCallback((checkoutId) => {
+    setIds((prev) => ({ ...prev, [checkoutId]: true }));
+    if (timers.current[checkoutId]) clearTimeout(timers.current[checkoutId]);
+    timers.current[checkoutId] = setTimeout(() => {
+      setIds((prev) => { const n = { ...prev }; delete n[checkoutId]; return n; });
+      delete timers.current[checkoutId];
+    }, durationMs);
+  }, [durationMs]);
+
+  useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
+
+  return { ids, mark };
+}
+
+// ============================================
+// PAGE
+// ============================================
+
 export default function RecoveryEmailManager() {
   const dispatch = useDispatch();
   const tick     = useTick(60_000);
+  // Stable `now` that updates every minute — same value used by all
+  // resolveEmailStatus calls in this render, preventing drift between rows.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const now = useMemo(() => Date.now(), [tick]);
 
-  const {
-    abandonedCheckouts: abandonedRaw,
-    // Legacy keys — kept in selector but no longer used for send flow
-    error,
-    // New isolated keys
-    directEmailLoading,
-    directEmailResults,
-    directEmailError,
-  } = useSelector((s) => s.operations);
+  // ── Selectors — two completely independent slices ──────────────────────
 
-  // Track which rows had a *just-sent* result so we can show the
-  // success badge. We clear each entry after 4 seconds automatically.
-  const [justSentIds, setJustSentIds] = useState({});
-  const justSentTimers = useRef({});
+  // operationsSlice: raw checkout list data only
+  const abandonedCheckouts = useSelector((s) => s.operations.abandonedCheckouts);
+  const fetchError         = useSelector((s) => s.operations.error);
 
-  const markJustSent = useCallback((checkoutId) => {
-    setJustSentIds((prev) => ({ ...prev, [checkoutId]: true }));
-    // Clear any existing timer for this id
-    if (justSentTimers.current[checkoutId]) {
-      clearTimeout(justSentTimers.current[checkoutId]);
-    }
-    justSentTimers.current[checkoutId] = setTimeout(() => {
-      setJustSentIds((prev) => {
-        const next = { ...prev };
-        delete next[checkoutId];
-        return next;
-      });
-      delete justSentTimers.current[checkoutId];
-    }, 4000);
-  }, []);
+  // recoveryEmailSlice: email send state only
+  const emailLoading = useSelector((s) => s.recoveryEmail.loading);
+  const emailResults = useSelector((s) => s.recoveryEmail.results);
+  const emailErrors  = useSelector((s) => s.recoveryEmail.errors);
 
-  // Clean up timers on unmount
-  useEffect(() => {
-    return () => {
-      Object.values(justSentTimers.current).forEach(clearTimeout);
-    };
-  }, []);
-
+  // ── Local UI state ─────────────────────────────────────────────────────
   const [activeTab,   setActiveTab]   = useState('queue');
   const [search,      setSearch]      = useState('');
   const [hasFetched,  setHasFetched]  = useState(false);
@@ -256,6 +303,9 @@ export default function RecoveryEmailManager() {
   const bulkAbort  = useRef(false);
   const loadingRef = useRef(false);
 
+  const { ids: justSentIds, mark: markJustSent } = useJustSent(4000);
+
+  // ── Data loading ───────────────────────────────────────────────────────
   const loadData = useCallback(() => {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -273,66 +323,55 @@ export default function RecoveryEmailManager() {
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     setHasFetched(false);
+    // Clear stale send results so the refreshed list isn't shown stale status
+    dispatch(clearAllEmailResults());
     loadData()?.then(() => { setRefreshing(false); setHasFetched(true); });
-  }, [loadData]);
+  }, [dispatch, loadData]);
 
-  const first = !hasFetched;
+  // ── Email send handler ─────────────────────────────────────────────────
+  // Isolated: only dispatches to recoveryEmailSlice.
+  // Does NOT touch operationsSlice state in any way.
+  const handleSend = useCallback(async (checkoutId) => {
+    try {
+      await dispatch(dispatchRecoveryEmail(checkoutId)).unwrap();
+      markJustSent(checkoutId);
+    } catch (err) {
+      // Error stored in recoveryEmailSlice.errors[checkoutId] — shown per-row
+      console.error('[RecoveryEmailManager] Send failed:', err);
+    }
+  }, [dispatch, markJustSent]);
 
-  /**
-   * hydratedCheckouts
-   * Merges directEmailResults into each checkout so every downstream
-   * consumer (partition, row render, SendButton) reads from one coherent
-   * source of truth. emailSendResults is intentionally NOT used here —
-   * the new flow owns directEmailResults exclusively.
-   */
-  const hydratedCheckouts = useMemo(() => {
-    const raw = abandonedRaw?.abandonedCheckouts || [];
-
-    return raw.map((checkout) => {
-      const id     = checkout._id;
-      const result = directEmailResults?.[id];
-
-      if (!result) return checkout;
-
-      return {
-        ...checkout,
-        abandonment: {
-          ...checkout.abandonment,
-          recoveryEmailSent:   true,
-          recoveryEmailSentAt: result.sentAt,
-          recoveryEmailCount:  result.attemptNumber,
-          pendingEmailAck:     false,
-          // Expose server-side cooldown deadline so getEmailStatus uses the
-          // authoritative value rather than estimating from COOLDOWN_MS.
-          _nextAvailableAt:    result.nextAvailableAt ?? null,
-        },
-      };
-    });
-  }, [abandonedRaw, directEmailResults]);
-
-  // Partition from hydratedCheckouts — single coherent source of truth.
+  // ── Partition checkouts into tabs ──────────────────────────────────────
+  // This is the ONLY place where data from both slices is combined.
+  // We do NOT mutate anything — we read checkout fields and email result
+  // fields separately, resolve status from primitives, and sort into buckets.
+  // The checkouts themselves are never modified.
   const { queue, sent, reAbandoned, recovered } = useMemo(() => {
+    const raw = abandonedCheckouts?.abandonedCheckouts ?? [];
     const q = [], s = [], r = [], rec = [];
 
-    for (const c of hydratedCheckouts) {
-      const status = getEmailStatus(c, null, now);
-      const isConv = c.conversion?.isConverted;
-      const isReAb = c.abandonment?.reAbandoned === true;
+    for (const checkout of raw) {
+      const id         = checkout._id;
+      const sendResult = emailResults[id] ?? null;
+      const fields     = extractEmailFields(checkout, sendResult);
+      const status     = resolveEmailStatus(fields, now);
+      const isReAb     = checkout.abandonment?.reAbandoned === true;
 
-      if (isConv) {
-        rec.push(c);
+      if (fields.isConverted) {
+        rec.push({ checkout, status });
       } else if (isReAb) {
-        r.push(c);
+        r.push({ checkout, status });
       } else if (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed') {
-        s.push(c);
+        s.push({ checkout, status });
       } else {
-        q.push(c);
+        q.push({ checkout, status });
       }
     }
-    return { queue: q, sent: s, reAbandoned: r, recovered: rec };
-  }, [hydratedCheckouts, now]);
 
-  const activeList = useMemo(() => {
+    return { queue: q, sent: s, reAbandoned: r, recovered: rec };
+  }, [abandonedCheckouts, emailResults, now]);
+
+  const activeEntries = useMemo(() => {
     const src =
       activeTab === 'queue'       ? queue       :
       activeTab === 'sent'        ? sent        :
@@ -341,7 +380,7 @@ export default function RecoveryEmailManager() {
 
     if (!search.trim()) return src;
     const q = search.toLowerCase();
-    return src.filter((c) => {
+    return src.filter(({ checkout: c }) => {
       const u = c.user || {};
       return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) ||
              (u.email || '').toLowerCase().includes(q);
@@ -349,29 +388,22 @@ export default function RecoveryEmailManager() {
   }, [activeTab, queue, sent, reAbandoned, recovered, search]);
 
   const totalValue = useMemo(
-    () => queue.reduce((sum, c) => sum + (c.pricing?.totalPrice || 0), 0),
+    () => queue.reduce((sum, { checkout: c }) => sum + (c.pricing?.totalPrice || 0), 0),
     [queue]
   );
 
   const reAbandonedRevenue = useMemo(
-    () => reAbandoned.reduce((sum, c) => sum + (c.pricing?.totalPrice || 0), 0),
+    () => reAbandoned.reduce((sum, { checkout: c }) => sum + (c.pricing?.totalPrice || 0), 0),
     [reAbandoned]
   );
 
+  // Eligible for bulk = queue entries whose status is ready or sent (resend)
   const eligibleForBulk = useMemo(
-    () => queue.filter((c) => {
-      // Result already merged into c — pass null
-      const st = getEmailStatus(c, null, now);
-      return st.type === 'ready' || st.type === 'sent';
-    }),
-    [queue, now]
+    () => queue.filter(({ status }) => status.type === 'ready' || status.type === 'sent'),
+    [queue]
   );
 
-  const handleBulkConfirmRequest = useCallback(() => {
-    if (!eligibleForBulk.length) return;
-    setBulkConfirm(true);
-  }, [eligibleForBulk]);
-
+  // ── Bulk send ──────────────────────────────────────────────────────────
   const handleBulkSend = useCallback(async () => {
     setBulkConfirm(false);
     if (!eligibleForBulk.length) return;
@@ -384,33 +416,33 @@ export default function RecoveryEmailManager() {
     for (let i = 0; i < eligibleForBulk.length; i++) {
       if (bulkAbort.current) break;
 
-      const st = getEmailStatus(eligibleForBulk[i], null, Date.now());
-      if (st.type !== 'ready' && st.type !== 'sent') {
+      const { checkout, status } = eligibleForBulk[i];
+      if (status.type !== 'ready' && status.type !== 'sent') {
         setBulkDone(i + 1);
         continue;
       }
 
       try {
-        await dispatch(sendDirectRecoveryEmail(eligibleForBulk[i]._id)).unwrap();
-        markJustSent(eligibleForBulk[i]._id);
+        await dispatch(dispatchRecoveryEmail(checkout._id)).unwrap();
+        markJustSent(checkout._id);
       } catch (err) {
-        console.error(`Bulk send failed for ${eligibleForBulk[i]._id}:`, err);
+        console.error(`[Bulk] Send failed for ${checkout._id}:`, err);
       }
 
       setBulkDone(i + 1);
       if (i < eligibleForBulk.length - 1) {
-        await new Promise((r) => setTimeout(r, BULK_DELAY_MS));
+        await new Promise((res) => setTimeout(res, BULK_DELAY_MS));
       }
     }
 
     setBulkRunning(false);
   }, [dispatch, eligibleForBulk, markJustSent]);
 
-  const handleBulkAbort = () => { bulkAbort.current = true; };
-
   const showActionCol       = activeTab !== 'recovered';
   const showReAbandonedCols = activeTab === 'reabandoned';
+  const first               = !hasFetched;
 
+  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <>
       <Navbar />
@@ -421,6 +453,7 @@ export default function RecoveryEmailManager() {
             <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
+          {/* ── Header ──────────────────────────────────────────────────── */}
           <div className="rem-hd">
             <div className="rem-hd-left">
               <span className="rem-hd-icon"><MarkEmailRead style={{ fontSize: 26 }} /></span>
@@ -441,7 +474,7 @@ export default function RecoveryEmailManager() {
               {activeTab === 'queue' && !bulkRunning && (
                 <button
                   className="rem-bulk-btn"
-                  onClick={handleBulkConfirmRequest}
+                  onClick={() => eligibleForBulk.length && setBulkConfirm(true)}
                   disabled={refreshing || !eligibleForBulk.length}
                   title="Send recovery email to all eligible carts in the queue"
                 >
@@ -450,7 +483,7 @@ export default function RecoveryEmailManager() {
                 </button>
               )}
               {bulkRunning && (
-                <button className="rem-bulk-abort-btn" onClick={handleBulkAbort}>
+                <button className="rem-bulk-abort-btn" onClick={() => { bulkAbort.current = true; }}>
                   <Block style={{ fontSize: 14 }} />
                   Stop ({bulkDone}/{bulkTotal})
                 </button>
@@ -458,6 +491,7 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
+          {/* ── Bulk confirm ────────────────────────────────────────────── */}
           {bulkConfirm && (
             <div className="rem-confirm-banner">
               <span>
@@ -470,13 +504,13 @@ export default function RecoveryEmailManager() {
             </div>
           )}
 
-          {error && (
+          {fetchError && (
             <div className="rem-error">
-              <ErrorOutline style={{ fontSize: 16 }} />{error}
+              <ErrorOutline style={{ fontSize: 16 }} />{fetchError}
             </div>
           )}
 
-          {/* ── KPI strip ──────────────────────────────────────────────── */}
+          {/* ── KPI strip ───────────────────────────────────────────────── */}
           <div className="rem-kpi-strip">
             <div className="rem-kpi">
               <span className="rem-kpi-icon rem-kpi-icon--coral"><Inbox style={{ fontSize: 18 }} /></span>
@@ -510,6 +544,7 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
+          {/* ── Bulk progress ────────────────────────────────────────────── */}
           {bulkRunning && (
             <div className="rem-bulk-progress">
               <Spinner size={15} />
@@ -557,7 +592,7 @@ export default function RecoveryEmailManager() {
             </div>
           </div>
 
-          {/* ── Failed Recovery context banner ───────────────────────────── */}
+          {/* ── Failed Recovery banner ───────────────────────────────────── */}
           {activeTab === 'reabandoned' && reAbandoned.length > 0 && (
             <div className="rem-context-banner">
               <Loop style={{ fontSize: 16, color: '#7C3AED' }} />
@@ -573,12 +608,12 @@ export default function RecoveryEmailManager() {
           <div className="rem-card">
             {first ? (
               <div className="rem-loading"><Spinner size={28} /><span>Loading checkouts…</span></div>
-            ) : activeList.length === 0 ? (
+            ) : activeEntries.length === 0 ? (
               <Empty
                 icon={
-                  activeTab === 'queue'       ? Inbox        :
+                  activeTab === 'queue'       ? Inbox         :
                   activeTab === 'sent'        ? MarkEmailRead :
-                  activeTab === 'reabandoned' ? Loop         :
+                  activeTab === 'reabandoned' ? Loop          :
                   CheckCircle
                 }
                 label={
@@ -609,24 +644,17 @@ export default function RecoveryEmailManager() {
                     </tr>
                   </thead>
                   <tbody>
-                    {activeList.slice(0, 100).map((c, i) => {
+                    {activeEntries.slice(0, 100).map(({ checkout: c, status }, i) => {
+                      const id            = c._id;
                       const u             = c.user || {};
                       const priorityScore = c.priority ?? c.priorityScore ?? 0;
                       const priority      = getPriority(priorityScore);
-                      const id            = c._id;
-
-                      // Status reads from the hydrated checkout — result is
-                      // already merged into c.abandonment via hydratedCheckouts.
-                      const status = getEmailStatus(c, null, now);
-
-                      const firstStep        = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
-                      const postRecovStep    = c.abandonment?.postRecoveryAbandonedAtStep;
-                      const cartDiff         = c.abandonment?.recoveryCartDiff;
-                      const isOrganic        = c.abandonment?.organicRecovery === true;
-                      const failedRecoveries = c.abandonment?.failedRecoveries || 0;
-
-                      // justSent: true for 4 seconds after a successful send
-                      const justSent = Boolean(justSentIds[id]);
+                      const firstStep     = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
+                      const postRecovStep = c.abandonment?.postRecoveryAbandonedAtStep;
+                      const cartDiff      = c.abandonment?.recoveryCartDiff;
+                      const isOrganic     = c.abandonment?.organicRecovery === true;
+                      const failedCount   = c.abandonment?.failedRecoveries || 0;
+                      const justSent      = Boolean(justSentIds[id]);
 
                       return (
                         <tr key={id || i} className={status.type === 'ready' ? 'rem-tr--ready' : ''}>
@@ -635,7 +663,7 @@ export default function RecoveryEmailManager() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               {u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Guest'}
                               {isOrganic && (
-                                <span className="rem-flag rem-flag--organic" title="Converted without using recovery link (organic recovery)">
+                                <span className="rem-flag rem-flag--organic" title="Converted without using recovery link">
                                   <PersonSearch style={{ fontSize: 10 }} /> Organic
                                 </span>
                               )}
@@ -647,65 +675,53 @@ export default function RecoveryEmailManager() {
                           <td>
                             <span className={`rem-priority rem-priority--${priority.cls}`}>{priority.label}</span>
                           </td>
-                          <td className="rem-td-step">
-                            {resolveStep(firstStep) || '—'}
-                          </td>
+                          <td className="rem-td-step">{resolveStep(firstStep) || '—'}</td>
+
                           {showReAbandonedCols && (
                             <td className="rem-td-step rem-td-step--post">
-                              {postRecovStep ? (
-                                <span style={{ color: '#7C3AED', fontWeight: 700 }}>
-                                  {resolveStep(postRecovStep)}
-                                </span>
-                              ) : '—'}
-                              {failedRecoveries > 1 && (
-                                <span className="rem-fail-count" title={`${failedRecoveries} failed recovery attempts`}>
-                                  ×{failedRecoveries}
+                              {postRecovStep
+                                ? <span style={{ color: '#7C3AED', fontWeight: 700 }}>{resolveStep(postRecovStep)}</span>
+                                : '—'}
+                              {failedCount > 1 && (
+                                <span className="rem-fail-count" title={`${failedCount} failed recovery attempts`}>
+                                  ×{failedCount}
                                 </span>
                               )}
                             </td>
                           )}
                           {showReAbandonedCols && (
-                            <td>
-                              <CartDiffBadge diff={cartDiff} />
-                            </td>
+                            <td><CartDiffBadge diff={cartDiff} /></td>
                           )}
+
                           <td className="rem-td-date">
                             {fmt.date(c.abandonment?.abandonedAt || c.updatedAt)}
                           </td>
+
                           <td>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                               <span className={`rem-status rem-status--${status.type}`}>
                                 {status.label}
                               </span>
-                              {/* Success badge — visible for 4 s after a send,
-                                  then fades out via CSS transition */}
                               {justSent && (
                                 <span
                                   className="rem-status rem-status--just-sent"
-                                  title={`Sent at ${fmt.date(directEmailResults?.[id]?.sentAt)}`}
+                                  title={`Sent at ${fmt.date(emailResults[id]?.sentAt)}`}
                                 >
                                   <CheckCircle style={{ fontSize: 11 }} /> Sent ✓
                                 </span>
                               )}
                             </div>
                           </td>
+
                           {showActionCol && (
                             <td>
                               <SendButton
-                                checkout={c}
-                                loading={!!directEmailLoading?.[id]}
-                                sendError={directEmailError?.[id]}
+                                checkoutId={id}
+                                status={status}
+                                loading={!!emailLoading[id]}
+                                sendError={emailErrors[id]}
                                 justSent={justSent}
-                                onSend={async (checkoutId) => {
-                                  try {
-                                    await dispatch(
-                                      sendDirectRecoveryEmail(checkoutId)
-                                    ).unwrap();
-                                    markJustSent(checkoutId);
-                                  } catch (err) {
-                                    console.error('Recovery email send failed:', err);
-                                  }
-                                }}
+                                onSend={handleSend}
                                 now={now}
                               />
                             </td>
@@ -719,9 +735,9 @@ export default function RecoveryEmailManager() {
             )}
           </div>
 
-          {activeList.length > 100 && (
+          {activeEntries.length > 100 && (
             <p className="rem-truncation-note">
-              Showing 100 of {activeList.length} — use search to narrow results
+              Showing 100 of {activeEntries.length} — use search to narrow results
             </p>
           )}
 

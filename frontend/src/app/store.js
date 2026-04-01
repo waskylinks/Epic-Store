@@ -25,6 +25,7 @@ import customerAnalyticsReducer from '../features/analytics/customerAnalyticsSli
 import attributionReducer from '../features/analytics/attributionSlice';
 import operationsReducer from '../features/analytics/operationsSlice';
 import returnAnalyticsReducer from '../features/analytics/returnAnalyticsSlice';
+import recoveryEmailReducer from '../features/admin/recoveryEmailSlice';
 
 export const store = configureStore({
     reducer: {
@@ -53,6 +54,7 @@ export const store = configureStore({
         customerAnalytics: customerAnalyticsReducer,
         attribution:       attributionReducer,
         operations:        operationsReducer,
+        recoveryEmail: recoveryEmailReducer, 
         returnAnalytics:   returnAnalyticsReducer,
     },
 
