@@ -7,6 +7,7 @@ import {
   getRecoveryOpportunities,
   markRecoveryEmailSent,
   getReAbandonmentAnalytics, 
+  sendRecoveryEmail_v2,
 } from '../controller/checkout-analytics-controller.js';
 
 const router = express.Router();
