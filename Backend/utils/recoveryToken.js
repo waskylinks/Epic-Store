@@ -90,10 +90,4 @@ export const RECOVERY_TOKEN_TTL_SECONDS = EXPIRY_SECONDS;
  * @param {string} token
  * @returns {Object|null} decoded payload, or null if token is malformed
  */
-export const decodeRecoveryToken = (token) => {
-  try {
-    return jwt.decode(token);
-  } catch {
-    return null;
-  }
-};
+export const decodeRecoveryToken = (token) => jwt.decode(token);

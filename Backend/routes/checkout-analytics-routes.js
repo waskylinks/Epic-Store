@@ -5,9 +5,8 @@ import {
   getCheckoutAbandonmentStats,
   getAbandonedCheckoutsList,
   getRecoveryOpportunities,
-  markRecoveryEmailSent,
   getReAbandonmentAnalytics, 
-  sendRecoveryEmail_v2,
+  
 } from '../controller/checkout-analytics-controller.js';
 
 const router = express.Router();
@@ -57,19 +56,5 @@ router.get("/re-abandonment",
   adminAnalyticsLimiter,         
   getReAbandonmentAnalytics
 ); 
-
-/**
- * Mark recovery email sent
- * @route POST /api/v1/analytics/checkout/:checkoutId/mark-recovery-sent
- * @access Admin
- */
-router.post(
-  '/:checkoutId/mark-recovery-sent',
-  verifyUserAuth,
-  roleBaseAccess('admin', "superAdmin"),
-  markRecoveryEmailSent
-);
-
-router.post('/:checkoutId/send-recovery-email', verifyUserAuth, roleBaseAccess('admin','superAdmin'), sendRecoveryEmail_v2);
 
 export default router;
