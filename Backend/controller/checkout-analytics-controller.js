@@ -3,10 +3,9 @@ import HandleError from "../utils/handleError.js";
 import Checkout, { calculatePriorityScore } from "../models/checkout-model.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
-import { getCache, setCache,deleteCachePattern } from "../utils/redis.js";
+import { getCache, setCache, deleteCachePattern } from "../utils/redis.js";
 import { sendRecoveryEmail } from "../Services/recoveryEmailService.js";
 import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
-
 
 
 const invalidateCheckoutCaches = () =>
@@ -51,7 +50,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       : 0;
 
   const [abandonedValue, abandonmentByStep, recoveryStats] = await Promise.all([
-    // Total value sitting in abandoned (unrecovered) carts
     Checkout.aggregate([
       {
         $match: {
@@ -62,7 +60,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       },
       {
         $group: {
-          _id:      null,
+          _id:        null,
           totalValue: { $sum: "$pricing.totalPrice" },
           avgValue:   { $avg: "$pricing.totalPrice" },
           count:      { $sum: 1 }
@@ -89,7 +87,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       { $sort: { count: -1 } }
     ]),
 
-    // Recovery summary — emails, conversions, priorities, re-abandonments
     Checkout.aggregate([
       {
         $match: {
@@ -135,7 +132,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
             }
           },
 
-          // Re-abandoned: clicked the link but abandoned again
           reAbandonedCount: {
             $sum: {
               $cond: [
@@ -164,7 +160,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
             }
           },
 
-          // Organic recoveries (converted without active recovery session)
           organicRecoveryCount: {
             $sum: {
               $cond: [{ $eq: ["$abandonment.organicRecovery", true] }, 1, 0]
@@ -176,15 +171,15 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
   ]);
 
   const recoveryData = recoveryStats[0] || {
-    totalAbandoned:       0,
-    emailsSent:           0,
-    recovered:            0,
-    recoveredValue:       0,
-    highPriority:         0,
-    recoverableValue:     0,
-    reAbandonedCount:     0,
+    totalAbandoned:        0,
+    emailsSent:            0,
+    recovered:             0,
+    recoveredValue:        0,
+    highPriority:          0,
+    recoverableValue:      0,
+    reAbandonedCount:      0,
     failedRecoveryRevenue: 0,
-    organicRecoveryCount: 0
+    organicRecoveryCount:  0
   };
 
   const totalAbandonedCheckouts = currentStats.abandonedCheckouts || 1;
@@ -199,7 +194,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
 
   const stepBreakdown = abandonmentByStep.length > 0
     ? abandonmentByStep.map(step => {
-        const stepName   = step._id || 'unknown';
+        const stepName    = step._id || 'unknown';
         const dropOffRate = (step.count / totalAbandonedCheckouts) * 100;
         return {
           step:        stepLabels[stepName] || stepName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
@@ -226,7 +221,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     avgAbandonedCheckoutValue: Math.round((abandonedValue[0]?.avgValue || 0) * 100) / 100,
     trend:              Math.round(trend * 100) / 100,
 
-    // Re-abandonment (failed recovery) metrics
     reAbandonedCount:       recoveryData.reAbandonedCount,
     failedRecoveryRevenue:  Math.round(recoveryData.failedRecoveryRevenue * 100) / 100,
     organicRecoveryCount:   recoveryData.organicRecoveryCount,
@@ -261,7 +255,7 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     sortBy      = "priority",
     emailSent,
     recovered,
-    reAbandoned,  // NEW: filter for failed-recovery carts only
+    reAbandoned,
   } = req.query;
 
   const cacheKey = `abandoned_list:${hours}_${minValue}_${limit}_${page}_${sortBy}_es${emailSent ?? ''}_rec${recovered ?? ''}_rea${reAbandoned ?? ''}`;
@@ -287,7 +281,6 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     delete query['conversion.isConverted'];
   }
 
-  // Filter to carts that clicked the link but abandoned again (failed recoveries)
   if (reAbandoned === 'true')  query['abandonment.reAbandoned'] = true;
   if (reAbandoned === 'false') query['abandonment.reAbandoned'] = { $ne: true };
 
@@ -355,7 +348,6 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     totalCheckouts = count;
   }
 
-  // Summary stats via aggregation — never computed from loaded docs
   const [summaryResult] = await Checkout.aggregate([
     { $match: query },
     {
@@ -376,7 +368,6 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
             ]
           }
         },
-        // How many in this filtered set are re-abandoned (failed recovery)
         reAbandonedCount: {
           $sum: {
             $cond: [{ $eq: ['$abandonment.reAbandoned', true] }, 1, 0]
@@ -444,10 +435,6 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
 
 // ============================================
 // RE-ABANDONMENT ANALYTICS
-// New endpoint: breakdowns for carts that clicked the recovery link
-// but abandoned again without converting (failed recoveries).
-// @route GET /api/v1/analytics/checkout/re-abandonment
-// @access Admin
 // ============================================
 
 export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next) => {
@@ -502,8 +489,15 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
 });
 
 // ============================================
-// MARK RECOVERY EMAIL SENT
+// MARK RECOVERY EMAIL SENT (legacy)
 // ============================================
+
+/**
+ * markRecoveryEmailSent
+ * Legacy controller — kept so the existing route and any other callers
+ * continue to work. The RecoveryEmailManager now uses sendRecoveryEmail_v2
+ * via the POST /:checkoutId/send-recovery-email route instead.
+ */
 export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => {
   const { checkoutId } = req.params;
 
@@ -515,10 +509,6 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
     return next(new HandleError("Checkout not found", 404));
   }
 
-  // Clear any stale pendingEmailAck left over from a previously crashed request.
-  // canSendRecoveryEmail() blocks sends when this flag is true, so a crash
-  // between markRecoveryEmailSent() and acknowledgeEmailSent() would permanently
-  // lock the checkout unless we reset it here before the guard runs.
   if (checkout.abandonment.pendingEmailAck) {
     checkout.abandonment.pendingEmailAck = false;
   }
@@ -540,24 +530,23 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
   checkout.acknowledgeEmailSent();
   await checkout.save();
 
-  // fire-and-forget — never block the response on cache invalidation
   invalidateCheckoutCaches().catch((err) =>
     console.error("Failed to invalidate caches after recovery email:", err)
   );
 
-  const canSendNext = checkout.canSendRecoveryEmail();
-  const COOLDOWN_HOURS = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
+  const COOLDOWN_HOURS  = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
+  const canSendNext     = checkout.canSendRecoveryEmail();
   const nextAvailableAt = new Date(
     checkout.abandonment.recoveryEmailSentAt.getTime() +
       COOLDOWN_HOURS * 60 * 60 * 1000
   );
 
-  res.status(200).json({
+  return res.status(200).json({
     success: true,
     message: `Recovery email #${checkout.abandonment.recoveryEmailCount} sent successfully`,
     result: {
       checkoutId:        checkout._id,
-      recipient:         checkout.email,
+      recipient:         checkout.email || checkout.user?.email || null,
       attemptNumber:     checkout.abandonment.recoveryEmailCount,
       sentAt:            checkout.abandonment.recoveryEmailSentAt,
       nextAvailableAt:   canSendNext.canSend ? null : nextAvailableAt,
@@ -572,10 +561,97 @@ export const markRecoveryEmailSent = handleAsyncError(async (req, res, next) => 
   });
 });
 
+// ============================================
+// SEND RECOVERY EMAIL V2 (isolated)
+// ============================================
+
+/**
+ * sendRecoveryEmail_v2
+ *
+ * Isolated controller for the RecoveryEmailManager's new send flow.
+ * Key differences from markRecoveryEmailSent:
+ *   - Returns a flat response (no nested `result` wrapper) — the thunk
+ *     payload destructures fields directly, eliminating the undefined-result
+ *     edge case that caused the loading state to get stuck.
+ *   - Cache invalidation is fire-and-forget so it never delays the response.
+ *   - canSendRecoveryEmail() is checked upfront and returns a 400 immediately,
+ *     rather than letting generateRecoveryToken() throw mid-flight.
+ */
+export const sendRecoveryEmail_v2 = handleAsyncError(async (req, res, next) => {
+  const { checkoutId } = req.params;
+
+  const checkout = await Checkout.findById(checkoutId)
+    .populate('user', 'firstName lastName email')
+    .populate('items.product', 'name images pricing');
+
+  if (!checkout) {
+    return next(new HandleError('Checkout not found', 404));
+  }
+
+  // Guard up front — return a clean 400 before touching any state.
+  const canSend = checkout.canSendRecoveryEmail();
+  if (!canSend.canSend) {
+    return next(new HandleError(canSend.reason, 400));
+  }
+
+  // Clear any stale pending-ack flag from a previous failed attempt.
+  if (checkout.abandonment.pendingEmailAck) {
+    checkout.abandonment.pendingEmailAck = false;
+  }
+
+  let token;
+  try {
+    token = checkout.generateRecoveryToken();
+  } catch (err) {
+    return next(new HandleError(err.message, 400));
+  }
+
+  try {
+    await sendRecoveryEmail({ checkout, token });
+  } catch (err) {
+    return next(new HandleError(`Email delivery failed: ${err.message}`, 500));
+  }
+
+  checkout.markRecoveryEmailSent();
+  checkout.acknowledgeEmailSent();
+  await checkout.save();
+
+  // Fire-and-forget — never block the response on cache ops.
+  invalidateCheckoutCaches().catch((err) =>
+    console.error('[sendRecoveryEmail_v2] Cache invalidation failed:', err)
+  );
+
+  const COOLDOWN_HOURS  = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
+  const canSendNext     = checkout.canSendRecoveryEmail();
+  const nextAvailableAt = new Date(
+    checkout.abandonment.recoveryEmailSentAt.getTime() +
+      COOLDOWN_HOURS * 60 * 60 * 1000
+  );
+
+  // Flat response — no nested `result` wrapper.
+  // The thunk destructures these fields directly so there is no
+  // intermediate `data.result` access that could resolve to undefined.
+  return res.status(200).json({
+    success:           true,
+    checkoutId:        checkout._id,
+    recipient:         checkout.email || checkout.user?.email || null,
+    attemptNumber:     checkout.abandonment.recoveryEmailCount,
+    sentAt:            checkout.abandonment.recoveryEmailSentAt,
+    nextAvailableAt:   canSendNext.canSend ? null : nextAvailableAt,
+    attemptsRemaining: Math.max(
+      0,
+      (parseInt(process.env.MAX_RECOVERY_ATTEMPTS) || 3) -
+        checkout.abandonment.recoveryEmailCount
+    ),
+    canSendAnother:    canSendNext.canSend,
+  });
+});
+
 export default {
   getCheckoutAbandonmentStats,
   getAbandonedCheckoutsList,
   getRecoveryOpportunities,
   getReAbandonmentAnalytics,
-  markRecoveryEmailSent
+  markRecoveryEmailSent,
+  sendRecoveryEmail_v2,
 };

@@ -69,4 +69,6 @@ router.post(
   markRecoveryEmailSent
 );
 
+router.post('/:checkoutId/send-recovery-email', verifyUserAuth, roleBaseAccess('admin','superAdmin'), sendRecoveryEmail_v2);
+
 export default router;

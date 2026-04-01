@@ -10,9 +10,7 @@ export const sendRecoveryEmail = async ({ checkout, token }) => {
   const firstName = user.firstName || 'there';
   const recipient = checkout.email; // always stored directly on checkout
 
-  // ── Attempt number ────────────────────────────────────────────────────────
-
-  const attemptNumber = checkout.abandonment?.recoveryEmailCount ?? 1;
+  const attemptNumber = (checkout.abandonment?.recoveryEmailCount ?? 0) + 1;
 
   // ── Recovery URL ──────────────────────────────────────────────────────────
 
@@ -33,6 +31,7 @@ export const sendRecoveryEmail = async ({ checkout, token }) => {
     checkout.pricing?.currency === 'USD' ? '$' : checkout.pricing?.currency || '$';
 
   // ── Render template ───────────────────────────────────────────────────────
+
   const { subject, html, text } = emailTemplates.cartRecoveryEmail({
     firstName,
     items,
@@ -41,22 +40,20 @@ export const sendRecoveryEmail = async ({ checkout, token }) => {
     attemptNumber,
     currency,
   });
-
-  // ── Send ──────────────────────────────────────────────────────────────────
   const result = await sendEmail({ email: recipient, subject, html, text });
 
   if (process.env.NODE_ENV === 'development') {
     console.log(
-      `📧 Recovery email #${attemptNumber} sent to ${recipient}`,
+      ` Recovery email #${attemptNumber} sent to ${recipient}`,
       `| Checkout: ${checkout._id}`,
-      `| Accepted: ${result.accepted}`,
+      `| Accepted: ${result.info?.accepted?.[0] ?? '—'}`,
       `| MessageId: ${result.info?.messageId || '—'}`
     );
   }
 
   return {
     success:   true,
-    accepted:  result.accepted,
+    accepted:  result.info?.accepted ?? null,
     messageId: result.info?.messageId || null,
     recipient,
     attempt:   attemptNumber,
