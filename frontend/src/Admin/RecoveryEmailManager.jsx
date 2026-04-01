@@ -8,7 +8,7 @@ import {
 } from '@mui/icons-material';
 import {
   fetchAbandonedCheckouts,
-  markRecoveryEmailSent,
+  sendDirectRecoveryEmail,          // ← new isolated thunk
 } from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/RecoveryEmailManager.css';
@@ -32,12 +32,18 @@ const fmt = {
   hours: (h) => h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(1)}h`,
 };
 
-function getEmailStatus(checkout, result) {
-  const ab        = checkout.abandonment || {};
-  const count     = result?.attemptNumber  ?? ab.recoveryEmailCount  ?? 0;
-  const sentAt    = result?.sentAt         ?? ab.recoveryEmailSentAt ?? null;
-  const nextAt    = result?.nextAvailableAt ?? null;
-  const converted = checkout.conversion?.isConverted;
+/**
+ * getEmailStatus
+ * Accepts `now` as a parameter so the result is deterministic and
+ * consistent across all call-sites (partition, bulk eligibility, SendButton).
+ */
+function getEmailStatus(checkout, result, now = Date.now()) {
+  const ab = checkout?.abandonment || {};
+
+  const count  = Number(result?.attemptNumber ?? ab.recoveryEmailCount ?? 0);
+  const sentAt = result?.sentAt         ?? ab.recoveryEmailSentAt ?? null;
+  const nextAt = result?.nextAvailableAt ?? ab._nextAvailableAt   ?? null;
+  const converted = checkout?.conversion?.isConverted === true;
 
   if (converted) return { type: 'converted', label: 'Converted', count };
 
@@ -46,7 +52,7 @@ function getEmailStatus(checkout, result) {
     sentAt ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS) :
     null;
 
-  const inCooldown = !!(cooldownUntil && cooldownUntil.getTime() > Date.now());
+  const inCooldown = Boolean(cooldownUntil && cooldownUntil.getTime() > now);
 
   if (count >= MAX_ATTEMPTS) return { type: 'maxed',    label: `Max (${MAX_ATTEMPTS})`, count };
   if (inCooldown)            return { type: 'cooldown', label: 'Cooldown',              count, cooldownUntil };
@@ -60,9 +66,6 @@ function getPriority(score) {
   return                  { label: 'Low',    cls: 'low' };
 }
 
-// Resolve the step label to display for a checkout.
-// Always shows firstAbandonedAtStep when available — for re-abandoned carts
-// this is the original step, postRecoveryAbandonedAtStep is shown separately.
 const STEP_LABEL_MAP = {
   'shipping_info':      'Shipping Info',
   'order_confirmation': 'Order Confirm',
@@ -92,9 +95,6 @@ function Empty({ icon: EmptyIcon = Inbox, label, sub }) {
   );
 }
 
-// ── Cart diff indicator ────────────────────────────────────────────────────
-// Shows a compact summary of what changed between the recovery cart snapshot
-// and the actual purchase (or the current cart state for re-abandoned carts).
 function CartDiffBadge({ diff }) {
   if (!diff) return null;
 
@@ -142,9 +142,18 @@ function useTick(intervalMs = 60_000) {
   return tick;
 }
 
-function SendButton({ checkout, loading, result, sendError, onSend, now }) {
-  const status = getEmailStatus(checkout, result);
+/**
+ * SendButton
+ * Uses the isolated directEmail* keys exclusively.
+ * `now` is passed in so cooldown math matches the same timestamp
+ * used by the partition logic — no hidden Date.now() drift.
+ */
+function SendButton({ checkout, loading, sendError, onSend, now, justSent }) {
+  // result is already merged into checkout.abandonment via hydratedCheckouts,
+  // so we pass null here and let getEmailStatus read from the checkout directly.
+  const status = getEmailStatus(checkout, null, now);
   const id     = checkout._id;
+  const isBusy = Boolean(loading);
 
   if (status.type === 'converted') return <span className="rem-status rem-status--converted">Converted</span>;
   if (status.type === 'maxed')     return <span className="rem-status rem-status--maxed">Max reached</span>;
@@ -157,7 +166,11 @@ function SendButton({ checkout, loading, result, sendError, onSend, now }) {
     );
   }
 
-  const label = loading ? 'Sending…' : status.count > 0 ? `Resend (${status.count}/${MAX_ATTEMPTS})` : 'Send';
+  const label = isBusy
+    ? 'Sending…'
+    : status.count > 0
+      ? `Resend (${status.count}/${MAX_ATTEMPTS})`
+      : 'Send';
 
   return (
     <div className="rem-send-wrap">
@@ -165,13 +178,24 @@ function SendButton({ checkout, loading, result, sendError, onSend, now }) {
         <span className="rem-send-err" title={sendError} aria-label={`Send error: ${sendError}`}>!</span>
       )}
       <button
-        className="rem-send-btn"
-        onClick={() => onSend(id)}
-        disabled={loading}
-        title={status.count > 0 ? `Attempt ${status.count + 1} of ${MAX_ATTEMPTS}` : 'Send recovery email'}
+        className={`rem-send-btn${justSent ? ' rem-send-btn--success' : ''}`}
+        onClick={() => !isBusy && onSend(id)}
+        disabled={isBusy}
+        title={
+          isBusy
+            ? 'Sending recovery email...'
+            : status.count > 0
+              ? `Attempt ${status.count + 1} of ${MAX_ATTEMPTS}`
+              : 'Send recovery email'
+        }
       >
-        {loading ? <Spinner size={13} /> : <Send style={{ fontSize: 13 }} />}
-        {label}
+        {isBusy
+          ? <Spinner size={13} />
+          : justSent
+            ? <CheckCircle style={{ fontSize: 13 }} />
+            : <Send style={{ fontSize: 13 }} />
+        }
+        {isBusy ? 'Sending…' : justSent ? 'Sent!' : label}
       </button>
     </div>
   );
@@ -181,15 +205,45 @@ export default function RecoveryEmailManager() {
   const dispatch = useDispatch();
   const tick     = useTick(60_000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const now      = useMemo(() => Date.now(), [tick]);
+  const now = useMemo(() => Date.now(), [tick]);
 
   const {
     abandonedCheckouts: abandonedRaw,
-    emailSendLoading,
-    emailSendResults,
-    emailSendError,
+    // Legacy keys — kept in selector but no longer used for send flow
     error,
+    // New isolated keys
+    directEmailLoading,
+    directEmailResults,
+    directEmailError,
   } = useSelector((s) => s.operations);
+
+  // Track which rows had a *just-sent* result so we can show the
+  // success badge. We clear each entry after 4 seconds automatically.
+  const [justSentIds, setJustSentIds] = useState({});
+  const justSentTimers = useRef({});
+
+  const markJustSent = useCallback((checkoutId) => {
+    setJustSentIds((prev) => ({ ...prev, [checkoutId]: true }));
+    // Clear any existing timer for this id
+    if (justSentTimers.current[checkoutId]) {
+      clearTimeout(justSentTimers.current[checkoutId]);
+    }
+    justSentTimers.current[checkoutId] = setTimeout(() => {
+      setJustSentIds((prev) => {
+        const next = { ...prev };
+        delete next[checkoutId];
+        return next;
+      });
+      delete justSentTimers.current[checkoutId];
+    }, 4000);
+  }, []);
+
+  // Clean up timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(justSentTimers.current).forEach(clearTimeout);
+    };
+  }, []);
 
   const [activeTab,   setActiveTab]   = useState('queue');
   const [search,      setSearch]      = useState('');
@@ -224,21 +278,50 @@ export default function RecoveryEmailManager() {
 
   const first = !hasFetched;
 
-  // ── Partition checkouts into tabs ────────────────────────────────────────
+  /**
+   * hydratedCheckouts
+   * Merges directEmailResults into each checkout so every downstream
+   * consumer (partition, row render, SendButton) reads from one coherent
+   * source of truth. emailSendResults is intentionally NOT used here —
+   * the new flow owns directEmailResults exclusively.
+   */
+  const hydratedCheckouts = useMemo(() => {
+    const raw = abandonedRaw?.abandonedCheckouts || [];
+
+    return raw.map((checkout) => {
+      const id     = checkout._id;
+      const result = directEmailResults?.[id];
+
+      if (!result) return checkout;
+
+      return {
+        ...checkout,
+        abandonment: {
+          ...checkout.abandonment,
+          recoveryEmailSent:   true,
+          recoveryEmailSentAt: result.sentAt,
+          recoveryEmailCount:  result.attemptNumber,
+          pendingEmailAck:     false,
+          // Expose server-side cooldown deadline so getEmailStatus uses the
+          // authoritative value rather than estimating from COOLDOWN_MS.
+          _nextAvailableAt:    result.nextAvailableAt ?? null,
+        },
+      };
+    });
+  }, [abandonedRaw, directEmailResults]);
+
+  // Partition from hydratedCheckouts — single coherent source of truth.
   const { queue, sent, reAbandoned, recovered } = useMemo(() => {
-    const checkouts = abandonedRaw?.abandonedCheckouts || [];
     const q = [], s = [], r = [], rec = [];
 
-    for (const c of checkouts) {
-      const result = emailSendResults?.[c._id];
-      const status = getEmailStatus(c, result);
+    for (const c of hydratedCheckouts) {
+      const status = getEmailStatus(c, null, now);
       const isConv = c.conversion?.isConverted;
       const isReAb = c.abandonment?.reAbandoned === true;
 
       if (isConv) {
         rec.push(c);
       } else if (isReAb) {
-        // Re-abandoned always goes to its own tab regardless of email status
         r.push(c);
       } else if (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed') {
         s.push(c);
@@ -247,7 +330,7 @@ export default function RecoveryEmailManager() {
       }
     }
     return { queue: q, sent: s, reAbandoned: r, recovered: rec };
-  }, [abandonedRaw, emailSendResults]);
+  }, [hydratedCheckouts, now]);
 
   const activeList = useMemo(() => {
     const src =
@@ -277,10 +360,11 @@ export default function RecoveryEmailManager() {
 
   const eligibleForBulk = useMemo(
     () => queue.filter((c) => {
-      const st = getEmailStatus(c, emailSendResults?.[c._id]);
+      // Result already merged into c — pass null
+      const st = getEmailStatus(c, null, now);
       return st.type === 'ready' || st.type === 'sent';
     }),
-    [queue, emailSendResults]
+    [queue, now]
   );
 
   const handleBulkConfirmRequest = useCallback(() => {
@@ -300,14 +384,19 @@ export default function RecoveryEmailManager() {
     for (let i = 0; i < eligibleForBulk.length; i++) {
       if (bulkAbort.current) break;
 
-      const latest = emailSendResults?.[eligibleForBulk[i]._id];
-      const st     = getEmailStatus(eligibleForBulk[i], latest);
+      const st = getEmailStatus(eligibleForBulk[i], null, Date.now());
       if (st.type !== 'ready' && st.type !== 'sent') {
         setBulkDone(i + 1);
         continue;
       }
 
-      await dispatch(markRecoveryEmailSent(eligibleForBulk[i]._id));
+      try {
+        await dispatch(sendDirectRecoveryEmail(eligibleForBulk[i]._id)).unwrap();
+        markJustSent(eligibleForBulk[i]._id);
+      } catch (err) {
+        console.error(`Bulk send failed for ${eligibleForBulk[i]._id}:`, err);
+      }
+
       setBulkDone(i + 1);
       if (i < eligibleForBulk.length - 1) {
         await new Promise((r) => setTimeout(r, BULK_DELAY_MS));
@@ -315,12 +404,11 @@ export default function RecoveryEmailManager() {
     }
 
     setBulkRunning(false);
-  }, [dispatch, eligibleForBulk, emailSendResults]);
+  }, [dispatch, eligibleForBulk, markJustSent]);
 
   const handleBulkAbort = () => { bulkAbort.current = true; };
 
-  // ── Columns vary per tab ───────────────────────────────────────────────────
-  const showActionCol   = activeTab !== 'recovered';
+  const showActionCol       = activeTab !== 'recovered';
   const showReAbandonedCols = activeTab === 'reabandoned';
 
   return (
@@ -494,8 +582,8 @@ export default function RecoveryEmailManager() {
                   CheckCircle
                 }
                 label={
-                  activeTab === 'queue'       ? 'No carts in queue'          :
-                  activeTab === 'sent'        ? 'No emails sent yet'         :
+                  activeTab === 'queue'       ? 'No carts in queue'                  :
+                  activeTab === 'sent'        ? 'No emails sent yet'                 :
                   activeTab === 'reabandoned' ? 'No failed recoveries — great news!' :
                   'No recovered carts yet'
                 }
@@ -526,14 +614,19 @@ export default function RecoveryEmailManager() {
                       const priorityScore = c.priority ?? c.priorityScore ?? 0;
                       const priority      = getPriority(priorityScore);
                       const id            = c._id;
-                      const result        = emailSendResults?.[id];
-                      const status        = getEmailStatus(c, result);
 
-                      const firstStep       = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
-                      const postRecovStep   = c.abandonment?.postRecoveryAbandonedAtStep;
-                      const cartDiff        = c.abandonment?.recoveryCartDiff;
-                      const isOrganic       = c.abandonment?.organicRecovery === true;
+                      // Status reads from the hydrated checkout — result is
+                      // already merged into c.abandonment via hydratedCheckouts.
+                      const status = getEmailStatus(c, null, now);
+
+                      const firstStep        = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
+                      const postRecovStep    = c.abandonment?.postRecoveryAbandonedAtStep;
+                      const cartDiff         = c.abandonment?.recoveryCartDiff;
+                      const isOrganic        = c.abandonment?.organicRecovery === true;
                       const failedRecoveries = c.abandonment?.failedRecoveries || 0;
+
+                      // justSent: true for 4 seconds after a successful send
+                      const justSent = Boolean(justSentIds[id]);
 
                       return (
                         <tr key={id || i} className={status.type === 'ready' ? 'rem-tr--ready' : ''}>
@@ -580,18 +673,38 @@ export default function RecoveryEmailManager() {
                             {fmt.date(c.abandonment?.abandonedAt || c.updatedAt)}
                           </td>
                           <td>
-                            <span className={`rem-status rem-status--${status.type}`}>{status.label}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span className={`rem-status rem-status--${status.type}`}>
+                                {status.label}
+                              </span>
+                              {/* Success badge — visible for 4 s after a send,
+                                  then fades out via CSS transition */}
+                              {justSent && (
+                                <span
+                                  className="rem-status rem-status--just-sent"
+                                  title={`Sent at ${fmt.date(directEmailResults?.[id]?.sentAt)}`}
+                                >
+                                  <CheckCircle style={{ fontSize: 11 }} /> Sent ✓
+                                </span>
+                              )}
+                            </div>
                           </td>
                           {showActionCol && (
                             <td>
                               <SendButton
                                 checkout={c}
-                                loading={!!emailSendLoading?.[id]}
-                                result={result}
-                                sendError={emailSendError?.[id]}
-                                onSend={(checkoutId) => {
-                                  console.log('DISPATCHING — id type:', typeof checkoutId, '| value:', checkoutId);
-                                  dispatch(markRecoveryEmailSent(checkoutId));
+                                loading={!!directEmailLoading?.[id]}
+                                sendError={directEmailError?.[id]}
+                                justSent={justSent}
+                                onSend={async (checkoutId) => {
+                                  try {
+                                    await dispatch(
+                                      sendDirectRecoveryEmail(checkoutId)
+                                    ).unwrap();
+                                    markJustSent(checkoutId);
+                                  } catch (err) {
+                                    console.error('Recovery email send failed:', err);
+                                  }
                                 }}
                                 now={now}
                               />

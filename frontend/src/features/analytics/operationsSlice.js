@@ -41,7 +41,7 @@ export const fetchAbandonedCheckouts = createAsyncThunk(
             sortBy      = "priority",
             emailSent,
             recovered,
-            reAbandoned, // filter for failed-recovery carts
+            reAbandoned,
         },
         { rejectWithValue, signal }
     ) => {
@@ -107,6 +107,8 @@ export const fetchReAbandonmentAnalytics = createAsyncThunk(
     }
 );
 
+// Legacy thunk — kept so any other page that still imports it won't break.
+// The RecoveryEmailManager no longer dispatches this; use sendDirectRecoveryEmail instead.
 export const markRecoveryEmailSent = createAsyncThunk(
   "operations/markRecoveryEmailSent",
   async (checkoutId, { rejectWithValue }) => {
@@ -116,7 +118,6 @@ export const markRecoveryEmailSent = createAsyncThunk(
         {}
       );
 
-      // Guard: if backend didn't return result, treat as error
       if (!data.result) {
         return rejectWithValue({
           checkoutId,
@@ -126,7 +127,49 @@ export const markRecoveryEmailSent = createAsyncThunk(
 
       return {
         checkoutId,
-        result: data.result,
+        result:  data.result,
+        message: data.message,
+        success: data.success,
+      };
+    } catch (error) {
+      return rejectWithValue({
+        checkoutId,
+        message: error.response?.data?.message || "Failed to send recovery email",
+      });
+    }
+  }
+);
+
+// ============================================
+// THUNK — ISOLATED SEND (new)
+// ============================================
+
+/**
+ * sendDirectRecoveryEmail
+ *
+ * Completely isolated from markRecoveryEmailSent. Uses its own Redux keys:
+ *   directEmailLoading / directEmailResults / directEmailError
+ *
+ * Hits the new POST /:checkoutId/send-recovery-email endpoint which returns
+ * a flat response (no nested `result` wrapper) so the thunk payload is
+ * simpler and can never be undefined.
+ */
+export const sendDirectRecoveryEmail = createAsyncThunk(
+  "operations/sendDirectRecoveryEmail",
+  async (checkoutId, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(
+        `${API_BASE}/analytics/checkout/${checkoutId}/send-recovery-email`,
+        {}
+      );
+      return {
+        checkoutId,
+        sentAt:            data.sentAt,
+        attemptNumber:     data.attemptNumber,
+        recipient:         data.recipient,
+        nextAvailableAt:   data.nextAvailableAt   ?? null,
+        canSendAnother:    data.canSendAnother     ?? false,
+        attemptsRemaining: data.attemptsRemaining  ?? 0,
       };
     } catch (error) {
       return rejectWithValue({
@@ -471,9 +514,18 @@ const operationsSlice = createSlice({
         abandonedCheckouts:     null,
         recoveryOpportunities:  null,
         reAbandonmentAnalytics: null,
-        emailSendLoading:       {},
-        emailSendResults:       {},
-        emailSendError:         {},
+
+        // Legacy send keys — kept for backward compat, no longer used by
+        // RecoveryEmailManager. Safe to remove once all callers are migrated.
+        emailSendLoading: {},
+        emailSendResults: {},
+        emailSendError:   {},
+
+        // Isolated send keys — owned exclusively by sendDirectRecoveryEmail.
+        // These three keys are the single source of truth for the send flow.
+        directEmailLoading: {},   // { [checkoutId]: boolean }
+        directEmailResults: {},   // { [checkoutId]: { sentAt, attemptNumber, ... } }
+        directEmailError:   {},   // { [checkoutId]: string }
 
         // Products
         productPerformance:     null,
@@ -553,65 +605,177 @@ const operationsSlice = createSlice({
                 if (!action.payload?.aborted) state.error = action.payload;
             })
 
+            // ── LEGACY send (markRecoveryEmailSent) ──────────────────────────
+            // Kept intact — no changes. Any page still using this will
+            // continue to work exactly as before.
             .addCase(markRecoveryEmailSent.pending, (state, action) => {
-            const checkoutId = action.meta.arg;
-            console.log('PENDING — arg type:', typeof checkoutId, '| value:', checkoutId);
-            state.emailSendLoading[checkoutId] = true;
-            delete state.emailSendError[checkoutId];
-            })
-
-            .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
-            const { checkoutId, result } = action.payload ?? {};
-
-            // ← ALWAYS clear loading first, no matter what
-            if (checkoutId) {
-                state.emailSendLoading[checkoutId] = false;
+                const checkoutId = action.meta.arg;
+                state.emailSendLoading[checkoutId] = true;
                 delete state.emailSendError[checkoutId];
-            }
-
-            if (!checkoutId || !result) return; // safe to early-return now
-
-            state.emailSendResults[checkoutId] = result;
-            state.success = true;
-            state.message = `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
-
-            const patch = {
-                recoveryEmailSent:   true,
-                recoveryEmailSentAt: result.sentAt,
-                recoveryEmailCount:  result.attemptNumber,
-                pendingEmailAck:     false,
-            };
-
-            const list = state.abandonedCheckouts?.abandonedCheckouts;
-            if (Array.isArray(list)) {
-                const idx = list.findIndex((c) => c._id === checkoutId);
-                if (idx !== -1) list[idx] = { ...list[idx], abandonment: { ...list[idx].abandonment, ...patch } };
-            }
-
-            const opps = state.recoveryOpportunities?.opportunities;
-            if (Array.isArray(opps)) {
-                const idx = opps.findIndex((c) => c._id === checkoutId);
-                if (idx !== -1) opps[idx] = { ...opps[idx], abandonment: { ...opps[idx].abandonment, ...patch } };
-            }
+                state.success = false;
+                state.message = null;
+                state.error   = null;
             })
+            .addCase(markRecoveryEmailSent.fulfilled, (state, action) => {
+                const { checkoutId, result, message } = action.payload ?? {};
 
-            .addCase(markRecoveryEmailSent.rejected, (state, action) => {
-            const { checkoutId, message } = action.payload ?? {};
-
-            // ← ALWAYS clear loading first
-            if (checkoutId) {
-                state.emailSendLoading[checkoutId] = false;
-                state.emailSendError[checkoutId] = message;
-            } else {
-                Object.keys(state.emailSendLoading).forEach(id => {
-                if (state.emailSendLoading[id]) {
-                    state.emailSendLoading[id] = false;
+                if (checkoutId) {
+                    state.emailSendLoading[checkoutId] = false;
+                    delete state.emailSendError[checkoutId];
                 }
-                });
-            }
 
-            if (message) state.error = message;
+                if (!checkoutId || !result) return;
+
+                state.emailSendResults[checkoutId] = result;
+                state.success = true;
+                state.message = message || `Recovery email #${result.attemptNumber} sent to ${result.recipient}`;
+
+                const patch = {
+                    recoveryEmailSent:   true,
+                    recoveryEmailSentAt: result.sentAt,
+                    recoveryEmailCount:  result.attemptNumber,
+                    pendingEmailAck:     false,
+                };
+
+                if (Array.isArray(state.abandonedCheckouts?.abandonedCheckouts)) {
+                    const idx = state.abandonedCheckouts.abandonedCheckouts
+                        .findIndex((c) => c._id === checkoutId);
+                    if (idx !== -1) {
+                        state.abandonedCheckouts.abandonedCheckouts[idx] = {
+                            ...state.abandonedCheckouts.abandonedCheckouts[idx],
+                            abandonment: {
+                                ...state.abandonedCheckouts.abandonedCheckouts[idx].abandonment,
+                                ...patch,
+                            },
+                        };
+                    }
+                }
+
+                if (Array.isArray(state.recoveryOpportunities?.opportunities)) {
+                    const idx = state.recoveryOpportunities.opportunities
+                        .findIndex((c) => c._id === checkoutId);
+                    if (idx !== -1) {
+                        state.recoveryOpportunities.opportunities[idx] = {
+                            ...state.recoveryOpportunities.opportunities[idx],
+                            abandonment: {
+                                ...state.recoveryOpportunities.opportunities[idx].abandonment,
+                                ...patch,
+                            },
+                        };
+                    }
+                }
             })
+            .addCase(markRecoveryEmailSent.rejected, (state, action) => {
+                const { checkoutId, message } = action.payload ?? {};
+
+                if (checkoutId) {
+                    state.emailSendLoading[checkoutId] = false;
+                    state.emailSendError[checkoutId]   = message;
+                } else {
+                    Object.keys(state.emailSendLoading).forEach((id) => {
+                        if (state.emailSendLoading[id]) {
+                            state.emailSendLoading[id] = false;
+                        }
+                    });
+                }
+
+                if (message) state.error = message;
+            })
+
+            // ── ISOLATED SEND (sendDirectRecoveryEmail) ──────────────────────
+            // Owns only directEmailLoading / directEmailResults / directEmailError.
+            // Never touches success / message / error or the legacy email* keys.
+            .addCase(sendDirectRecoveryEmail.pending, (state, action) => {
+                const id = action.meta.arg;
+                state.directEmailLoading[id] = true;
+                delete state.directEmailError[id];
+                // Intentionally does NOT clear success/message/error —
+                // this flow is fully self-contained.
+            })
+            .addCase(sendDirectRecoveryEmail.fulfilled, (state, action) => {
+                const {
+                    checkoutId,
+                    sentAt,
+                    attemptNumber,
+                    recipient,
+                    nextAvailableAt,
+                    canSendAnother,
+                    attemptsRemaining,
+                } = action.payload;
+
+                // Always clear loading first — guaranteed even if the
+                // write-through below throws.
+                state.directEmailLoading[checkoutId] = false;
+                delete state.directEmailError[checkoutId];
+
+                // Store result under its own isolated key.
+                state.directEmailResults[checkoutId] = {
+                    sentAt,
+                    attemptNumber,
+                    recipient,
+                    nextAvailableAt,
+                    canSendAnother,
+                    attemptsRemaining,
+                };
+
+                // Write-through to abandonedCheckouts so hydratedCheckouts
+                // on the page reflects the updated abandonment data without
+                // needing a full refetch.
+                const patch = {
+                    recoveryEmailSent:   true,
+                    recoveryEmailSentAt: sentAt,
+                    recoveryEmailCount:  attemptNumber,
+                    pendingEmailAck:     false,
+                };
+
+                if (Array.isArray(state.abandonedCheckouts?.abandonedCheckouts)) {
+                    const idx = state.abandonedCheckouts.abandonedCheckouts
+                        .findIndex((c) => c._id === checkoutId);
+                    if (idx !== -1) {
+                        state.abandonedCheckouts.abandonedCheckouts[idx] = {
+                            ...state.abandonedCheckouts.abandonedCheckouts[idx],
+                            abandonment: {
+                                ...state.abandonedCheckouts.abandonedCheckouts[idx].abandonment,
+                                ...patch,
+                            },
+                        };
+                    }
+                }
+
+                // Also write-through to recoveryOpportunities if loaded,
+                // so other pages that display that list stay consistent.
+                if (Array.isArray(state.recoveryOpportunities?.opportunities)) {
+                    const idx = state.recoveryOpportunities.opportunities
+                        .findIndex((c) => c._id === checkoutId);
+                    if (idx !== -1) {
+                        state.recoveryOpportunities.opportunities[idx] = {
+                            ...state.recoveryOpportunities.opportunities[idx],
+                            abandonment: {
+                                ...state.recoveryOpportunities.opportunities[idx].abandonment,
+                                ...patch,
+                            },
+                        };
+                    }
+                }
+            })
+            .addCase(sendDirectRecoveryEmail.rejected, (state, action) => {
+                const { checkoutId, message } = action.payload ?? {};
+
+                if (checkoutId) {
+                    state.directEmailLoading[checkoutId] = false;
+                    state.directEmailError[checkoutId]   = message ?? "Unknown error";
+                } else {
+                    // Fallback: clear any stuck loading flags when checkoutId
+                    // wasn't surfaced in the rejection payload.
+                    Object.keys(state.directEmailLoading).forEach((id) => {
+                        if (state.directEmailLoading[id]) {
+                            state.directEmailLoading[id] = false;
+                        }
+                    });
+                }
+                // Intentionally does NOT set state.error — errors are shown
+                // per-row via directEmailError[checkoutId] in the UI.
+            });
 
         // ── PRODUCTS ─────────────────────────────────────────────────────────
         builder
