@@ -35,8 +35,10 @@ import checkoutRoutes from './routes/checkout-routes.js';
 import analyticsRoutes from './routes/analytics-routes-index.js';
 import adminStatsRoutes from './routes/admin-stats-routes.js';
 import discountAnalyticsRoutes from './routes/discount-analytics-routes.js';
+import recoveryEmailRoutes from './routes/recovery-email-routes.js'
 import seoRoutes from './routes/seo-routes.js';
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
+
 
 import './config/passport.js';
 
@@ -193,6 +195,7 @@ app.use('/api/v1', seoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/admin', adminStatsRoutes);
 app.use("/api/v1/discount-analytics", discountAnalyticsRoutes);
+app.use("/api/v1/checkout/recovery-email", recoveryEmailRoutes);
 
 app.use(redirectHandler);
 
