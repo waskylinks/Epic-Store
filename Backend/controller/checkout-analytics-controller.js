@@ -4,7 +4,6 @@ import Checkout, { calculatePriorityScore } from "../models/checkout-model.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getCache, setCache, deleteCachePattern } from "../utils/redis.js";
-import { sendRecoveryEmail } from "../Services/recoveryEmailService.js";
 import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
 
 
