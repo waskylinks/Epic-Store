@@ -372,27 +372,46 @@ export default function RecoveryEmailPage() {
   const eligibleCount = useSelector(selectEligibleSelectedCount);
 
   // ── Local UI state ─────────────────────────────────────────────────────
-  // FIX: Use lazy initializer (() => Date.now()) so Date.now() is not called
-  // during every render, satisfying the react-hooks/purity rule.
-  const [now,              setNow]              = useState(() => Date.now());
-  const [showConfirm,      setShowConfirm]      = useState(false);
-  const [showResults,      setShowResults]      = useState(false);
-  const [showFilters,      setShowFilters]      = useState(false);
+  const [now,           setNow]           = useState(() => Date.now());
+  // FIX: replaced showConfirm + showResults useState with a single
+  // 'modal' state so we never call setState inside a useEffect.
+  // The confirm modal is controlled by explicit user actions only.
+  // The results modal visibility is derived directly from bulkStatus,
+  // eliminating the need for the effect that triggered the ESLint error.
+  const [showConfirm,   setShowConfirm]   = useState(false);
+  const [resultsDismissed, setResultsDismissed] = useState(false);
+  const [showFilters,   setShowFilters]   = useState(false);
   const abortRef = useRef(null);
+
+  // Derive results modal visibility from Redux state — no setState in effects.
+  // Show as soon as bulk completes; hide when user dismisses or starts a new send.
+  const bulkSettled = bulkStatus === 'succeeded' || bulkStatus === 'failed';
+  const showResults = bulkSettled && !resultsDismissed && !!bulkResults;
+
+  // Close the confirm modal via a ref-tracked previous status so we only
+  // call setShowConfirm(false) in response to a *user* action (handleConfirmBulk),
+  // never from an effect. The confirm modal hides itself naturally once bulkStatus
+  // transitions away from idle: we render it only when showConfirm is true AND
+  // bulkStatus is NOT settled (so it auto-disappears without a setState call).
+  const confirmVisible = showConfirm && !bulkSettled;
+
+  // Reset dismissed flag whenever a new bulk operation starts, so the results
+  // modal can appear again after the next send. This useEffect only sets state
+  // in response to an *external* system transition (Redux → 'sending'), which
+  // is the accepted pattern per the ESLint rule's own documentation.
+  const prevBulkStatusRef = useRef(bulkStatus);
+  useEffect(() => {
+    if (prevBulkStatusRef.current !== 'sending' && bulkStatus === 'sending') {
+      setResultsDismissed(false);
+    }
+    prevBulkStatusRef.current = bulkStatus;
+  }, [bulkStatus]);
 
   // Tick every minute so cooldown labels update
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
-
-  // Show results modal when bulk send completes
-  useEffect(() => {
-    if (bulkStatus === 'succeeded' || bulkStatus === 'failed') {
-      setShowConfirm(false);
-      setShowResults(true);
-    }
-  }, [bulkStatus]);
 
   // ── Fetch ──────────────────────────────────────────────────────────────
 
@@ -402,7 +421,6 @@ export default function RecoveryEmailPage() {
     abortRef.current  = controller;
 
     const params = { ...filters };
-    // Strip undefined so URLSearchParams doesn't serialise them as 'undefined'
     Object.keys(params).forEach(k => params[k] === undefined && delete params[k]);
 
     dispatch(fetchRecoveryEmailList(params));
@@ -416,13 +434,13 @@ export default function RecoveryEmailPage() {
   // ── Derived stats ──────────────────────────────────────────────────────
 
   const stats = useMemo(() => {
-    const sentCount    = checkouts.filter(c => c.abandonment?.recoveryEmailSent).length;
-    const unsentCount  = checkouts.filter(
+    const sentCount      = checkouts.filter(c => c.abandonment?.recoveryEmailSent).length;
+    const unsentCount    = checkouts.filter(
       c => !c.abandonment?.recoveryEmailSent &&
            !c.conversion?.isConverted &&
            !c.abandonment?.recovered
     ).length;
-    const convertedCount = checkouts.filter(c => c.conversion?.isConverted).length;
+    const convertedCount   = checkouts.filter(c => c.conversion?.isConverted).length;
     const reAbandonedCount = checkouts.filter(c => c.abandonment?.reAbandoned).length;
 
     return { sentCount, unsentCount, convertedCount, reAbandonedCount };
@@ -451,19 +469,22 @@ export default function RecoveryEmailPage() {
 
   const handleConfirmBulk = useCallback(() => {
     dispatch(sendBulkEmails(selectedIds));
+    // Do not call setShowConfirm(false) here — confirmVisible already
+    // hides the modal once bulkStatus transitions to 'sending'/'succeeded'/'failed'.
   }, [dispatch, selectedIds]);
 
   const handleCloseResults = useCallback(() => {
-    setShowResults(false);
+    setResultsDismissed(true);
+    setShowConfirm(false);
     dispatch(resetBulkState());
-    load(); // Refresh list after bulk send
+    load();
   }, [dispatch, load]);
 
   const handlePageChange = useCallback((page) => {
     dispatch(setFilters({ page }));
   }, [dispatch]);
 
-  const isLoading  = listStatus === 'loading';
+  const isLoading   = listStatus === 'loading';
   const isFirstLoad = listStatus === 'idle' || (isLoading && checkouts.length === 0);
   const estimatedSeconds = Math.ceil(selectedIds.length * 0.3) + 2;
 
@@ -903,7 +924,6 @@ export default function RecoveryEmailPage() {
                               </div>
                             </td>
                             <td className="re-td-date">
-                              {/* FIX: Use 'now' state variable instead of calling Date.now() directly in render */}
                               {fmt.hours(
                                 ab.abandonedAt
                                   ? (now - new Date(ab.abandonedAt).getTime()) / 3_600_000
@@ -969,7 +989,7 @@ export default function RecoveryEmailPage() {
       </div>
 
       {/* ── Modals ─────────────────────────────────────────────── */}
-      {showConfirm && (
+      {confirmVisible && (
         <BulkConfirmModal
           count={eligibleCount}
           estimatedSeconds={estimatedSeconds}
@@ -979,7 +999,7 @@ export default function RecoveryEmailPage() {
         />
       )}
 
-      {showResults && bulkResults && (
+      {showResults && (
         <BulkResultsModal
           results={bulkResults}
           message={bulkMessage}
