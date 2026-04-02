@@ -34,35 +34,36 @@ export const fetchRecoveryEmailList = createAsyncThunk(
   }
 );
 
-/**
- * Send a single recovery email for one checkout.
- * The API returns { success: false, skipped: true, reason } as a 400
- * for expected business-logic gates (cooldown, max attempts, etc.).
- * A true failure (provider down, DB error) returns { success: false, error }
- * as a 500 and lands in the rejected path.
- */
+// In recoveryEmailSlice.js
+
 export const sendSingleEmail = createAsyncThunk(
   'recoveryEmail/sendSingleEmail',
   async (checkoutId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(`${BASE}/${checkoutId}/send`);
+      const { data } = await axios.post(
+        `/api/v1/checkout/recovery-email/${checkoutId}/send`
+      );
       return { checkoutId, ...data };
     } catch (err) {
       const responseData = err.response?.data;
 
-      // 400 with skipped: true — expected gate, not a system crash
       if (err.response?.status === 400 && responseData?.skipped) {
         return rejectWithValue({
-          checkoutId,
+          checkoutId,          // ← always include checkoutId
           skipped: true,
-          reason:  responseData.reason || 'Send not allowed at this time',
+          reason: responseData.reason || 'Send not allowed at this time',
         });
       }
 
+      // Always return checkoutId so the rejected reducer can find the row
       return rejectWithValue({
-        checkoutId,
+        checkoutId,            // ← always include checkoutId
         skipped: false,
-        error:   responseData?.error || err.message || 'Failed to send recovery email',
+        error:
+          responseData?.error ||
+          responseData?.message ||
+          err.message ||
+          'Failed to send recovery email',
       });
     }
   }
@@ -258,14 +259,23 @@ const recoveryEmailSlice = createSlice({
         }
       })
       .addCase(sendSingleEmail.rejected, (state, action) => {
+        const checkoutId = action.payload?.checkoutId ?? action.meta.arg;
+
+        if (!checkoutId) return;
+
         const payload = action.payload;
-        if (!payload) return;
 
-        const { checkoutId, skipped, reason, error } = payload;
+        if (!payload) {
+          state.sendStates[checkoutId] = {
+            status: 'failed',
+            error: action.error?.message || 'Request failed',
+          };
+          return;
+        }
 
-        state.sendStates[checkoutId] = skipped
-          ? { status: 'skipped', reason }
-          : { status: 'failed',  error: error || 'Unknown error' };
+        state.sendStates[checkoutId] = payload.skipped
+          ? { status: 'skipped', reason: payload.reason }
+          : { status: 'failed', error: payload.error || 'Unknown error' };
       });
 
     // ── sendBulkEmails ────────────────────────────────────────────────────
