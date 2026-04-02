@@ -1,10 +1,10 @@
 import express from 'express';
-import {verifyUserAuth, roleBaseAccess} from '../middleware/user-auth'
-import { adminAnalyticsLimiter } from '../middleware/rateLimiter'
+import { verifyUserAuth, roleBaseAccess } from "../middleware/user-auth.js";
+import { adminAnalyticsLimiter } from '../middleware/rateLimiter.js'
 import { 
     sendSingleRecoveryEmail, 
     sendBulkRecoveryEmailsController,
- } from '../controller/recovery-email-controller'
+ } from '../controller/recovery-email-controller.js'
 
  const router = express.Router();
 
