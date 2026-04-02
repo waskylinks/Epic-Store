@@ -2,727 +2,987 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
-  ArrowBack, Refresh, Email, MarkEmailRead, CheckCircle,
-  Search, AttachMoney, ErrorOutline, Send, Block, Inbox,
-  Loop, PersonSearch, SwapHoriz,
+  ArrowBack, Refresh, Email, Send, CheckCircle,
+  Warning, AttachMoney, Loop, ErrorOutline,
+  SelectAll, Close, FilterList, MoneyOff,
+  MarkEmailRead, Bolt, PersonSearch,
 } from '@mui/icons-material';
-import { fetchAbandonedCheckouts } from '../features/analytics/operationsSlice';
-import { dispatchRecoveryEmail, clearResults } from '../features/admin/recoveryEmailSlice';
 import Navbar from '../components/Navbar';
-import '../AdminStyles/RecoveryEmailManager.css';
+import {
+  fetchRecoveryEmailList,
+  sendSingleEmail,
+  sendBulkEmails,
+  setFilters,
+  resetFilters,
+  toggleSelectId,
+  selectAllIds,
+  clearSelection,
+  resetBulkState,
+  resetSendState,
+  selectRecoveryCheckouts,
+  selectRecoveryListStatus,
+  selectRecoveryListError,
+  selectRecoveryPagination,
+  selectRecoveryListSummary,
+  selectRecoveryFilters,
+  selectSelectedIds,
+  selectBulkStatus,
+  selectBulkResults,
+  selectBulkError,
+  selectBulkMessage,
+  selectSendState,
+  selectAnySending,
+  selectEligibleSelectedCount,
+} from '../features/admin/recoveryEmailSlice';
+import '../AdminStyles/RecoveryEmail.css';
 
-const COOLDOWN_MS   = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24) * 3_600_000;
-const MAX_ATTEMPTS  = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
-const BULK_DELAY_MS = 800;
+// ============================================
+// CONSTANTS
+// ============================================
 
-console.log('[REM] Module loaded — COOLDOWN_MS:', COOLDOWN_MS, '| MAX_ATTEMPTS:', MAX_ATTEMPTS);
+const MAX_ATTEMPTS   = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS,  10) || 3;
+const COOLDOWN_MS    = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS, 10) || 24) * 3_600_000;
+const BULK_CAP       = 100;
 
 // ============================================
 // FORMATTERS
 // ============================================
 
 const fmt = {
-  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
-  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  compact:  (v) => {
+  currency: (v) =>
+    new Intl.NumberFormat('en-US', {
+      style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+    }).format(v || 0),
+  compact: (v) => {
     const n = v || 0;
     if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000)     return `$${(n / 1_000).toFixed(0)}k`;
+    if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}k`;
     return fmt.currency(n);
   },
-  date: (d) => d ? new Date(d).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  }) : '—',
+  number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
+  pct:    (v) => `${(v || 0).toFixed(1)}%`,
+  date: (d) =>
+    d
+      ? new Date(d).toLocaleDateString('en-US', {
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
+        })
+      : '—',
+  hours: (h) =>
+    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m ago` : `${h.toFixed(0)}h ago`,
 };
-
-// ============================================
-// EMAIL STATUS
-// sendResult (from slice) always wins over checkout fields.
-// ============================================
-
-function getEmailFields(checkout, sendResult) {
-  const ab = checkout?.abandonment ?? {};
-  const fields = {
-    count:           Number(sendResult?.attemptNumber    ?? ab.recoveryEmailCount  ?? 0),
-    sentAt:          sendResult?.sentAt                   ?? ab.recoveryEmailSentAt ?? null,
-    nextAvailableAt: sendResult?.nextAvailableAt          ?? null,
-    isConverted:     checkout?.conversion?.isConverted    === true,
-  };
-  console.log('[getEmailFields] id:', checkout?._id, '| sendResult:', sendResult ? '✅' : 'null', '| fields:', fields);
-  return fields;
-}
-
-function getEmailStatus({ count, sentAt, nextAvailableAt, isConverted }, now) {
-  if (isConverted) return { type: 'converted', label: 'Converted', count };
-
-  const cooldownUntil =
-    nextAvailableAt ? new Date(nextAvailableAt) :
-    sentAt          ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS) :
-    null;
-
-  const inCooldown = Boolean(cooldownUntil && cooldownUntil.getTime() > now);
-
-  let status;
-  if (count >= MAX_ATTEMPTS) status = { type: 'maxed',    label: `Max (${MAX_ATTEMPTS})`, count };
-  else if (inCooldown)       status = { type: 'cooldown', label: 'Cooldown',              count, cooldownUntil };
-  else if (count > 0)        status = { type: 'sent',     label: `Sent (${count})`,       count };
-  else                       status = { type: 'ready',    label: 'Ready',                 count };
-
-  console.log('[getEmailStatus] count:', count, '| inCooldown:', inCooldown, '| resolved type:', status.type);
-  return status;
-}
-
-// ============================================
-// HELPERS
-// ============================================
-
-function getPriority(score) {
-  if (score >= 70) return { label: 'High',   cls: 'high' };
-  if (score >= 40) return { label: 'Medium', cls: 'med' };
-  return                  { label: 'Low',    cls: 'low' };
-}
 
 const STEP_LABELS = {
-  'shipping_info':      'Shipping Info',
-  'order_confirmation': 'Order Confirm',
-  'payment_selection':  'Pmt Selection',
-  'payment_gateway':    'Pmt Gateway',
-  'payment_failed':     'Pmt Failed',
+  shipping_info:      'Shipping',
+  order_confirmation: 'Order Confirm',
+  payment_selection:  'Pmt Selection',
+  payment_gateway:    'Pmt Gateway',
+  payment_failed:     'Pmt Failed',
 };
+
 const resolveStep = (s = '') =>
   STEP_LABELS[s] || s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-// ============================================
-// SUB-COMPONENTS
-// ============================================
-
-function Spinner({ size = 20 }) {
-  return (
-    <span
-      className="rem-spinner"
-      style={{ width: size, height: size, borderWidth: size > 16 ? 3 : 2 }}
-    />
-  );
+function getPriority(score) {
+  if (score >= 70) return { label: 'High',   cls: 're-priority--high' };
+  if (score >= 40) return { label: 'Medium', cls: 're-priority--med' };
+  return               { label: 'Low',    cls: 're-priority--low' };
 }
 
-function Empty({ icon: Icon = Inbox, label, sub }) {
+// ============================================
+// SMALL COMPONENTS
+// ============================================
+
+function Spinner({ h = 200 }) {
   return (
-    <div className="rem-empty">
-      <Icon style={{ fontSize: 44 }} />
-      <span className="rem-empty-label">{label}</span>
-      {sub && <span className="rem-empty-sub">{sub}</span>}
+    <div className="re-loading" style={{ minHeight: h }}>
+      <div className="re-spinner" /><span>Loading…</span>
     </div>
   );
 }
 
-function CartDiffBadge({ diff }) {
-  if (!diff) return null;
-  const parts = [];
-  if (diff.itemsAdded   > 0) parts.push(`+${diff.itemsAdded} added`);
-  if (diff.itemsRemoved > 0) parts.push(`-${diff.itemsRemoved} removed`);
-  if (diff.qtyIncreased > 0) parts.push(`↑ qty`);
-  if (diff.qtyDecreased > 0) parts.push(`↓ qty`);
-  if (diff.discountChangedAfterRecovery) parts.push('disc. changed');
-
-  if (parts.length === 0) return (
-    <span className="rem-diff-badge rem-diff-badge--unchanged" title="Cart unchanged">
-      <SwapHoriz style={{ fontSize: 11 }} /> Unchanged
-    </span>
-  );
-
-  const valueDelta = diff.valueDelta ?? 0;
-  const cls = valueDelta > 0 ? 'pos' : valueDelta < 0 ? 'neg' : 'unchanged';
+function Empty({ label = 'No data available', h = 200 }) {
   return (
-    <span
-      className={`rem-diff-badge rem-diff-badge--${cls}`}
-      title={`${parts.join(', ')}. Delta: ${valueDelta >= 0 ? '+' : ''}${fmt.currency(valueDelta)}`}
-    >
-      <SwapHoriz style={{ fontSize: 11 }} />
-      {parts.slice(0, 2).join(', ')}{parts.length > 2 && ` +${parts.length - 2}`}
-    </span>
+    <div className="re-empty" style={{ minHeight: h }}>
+      <Email style={{ fontSize: 40, color: '#9ca3af' }} />
+      <span>{label}</span>
+    </div>
   );
 }
 
-// Purely presentational — no Redux reads, no side effects.
-function SendButton({ status, loading, sendError, onSend, checkoutId, justSent, now }) {
-  console.log('[SendButton] render — id:', checkoutId, '| loading:', loading, '| justSent:', justSent, '| status:', status.type);
+function KpiSkel() {
+  return (
+    <div className="re-kpi re-kpi--skel">
+      <div className="re-skel" style={{ width: 40, height: 40, borderRadius: 10, marginBottom: 14 }} />
+      <div className="re-skel" style={{ width: '55%', height: 10, marginBottom: 8 }} />
+      <div className="re-skel" style={{ width: '75%', height: 26 }} />
+    </div>
+  );
+}
 
-  if (status.type === 'converted') return <span className="rem-status rem-status--converted">Converted</span>;
-  if (status.type === 'maxed')     return <span className="rem-status rem-status--maxed">Max reached</span>;
-  if (status.type === 'cooldown') {
-    const h = Math.ceil((status.cooldownUntil.getTime() - now) / 3_600_000);
+// Per-row send button — reads from Redux send state
+function SendButton({ checkoutId, now }) {
+  const dispatch   = useDispatch();
+  const anySending = useSelector(selectAnySending);
+  const sendState  = useSelector(selectSendState(checkoutId));
+  const checkout   = useSelector(state =>
+    state.recoveryEmail.checkouts.find(c => c._id === checkoutId)
+  );
+
+  if (!checkout) return null;
+
+  const ab         = checkout.abandonment || {};
+  const converted  = checkout.conversion?.isConverted;
+  const count      = sendState.emailCount ?? ab.recoveryEmailCount  ?? 0;
+  const sentAt     = sendState.sentAt     ?? ab.recoveryEmailSentAt ?? null;
+
+  const cooldownUntil = sentAt
+    ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS)
+    : null;
+
+  const inCooldown = !!(cooldownUntil && cooldownUntil.getTime() > now);
+  const maxReached = count >= MAX_ATTEMPTS;
+  const isSending  = sendState.status === 'sending';
+
+  if (converted) {
+    return <span className="re-status-pill re-status-pill--converted">Converted</span>;
+  }
+  if (maxReached) {
     return (
-      <span className="rem-status rem-status--cooldown" title={`Available: ${status.cooldownUntil.toLocaleString()}`}>
-        {h}h left
+      <span className="re-status-pill re-status-pill--maxed">
+        Max ({MAX_ATTEMPTS}/{MAX_ATTEMPTS})
       </span>
     );
   }
+  if (inCooldown) {
+    const hLeft = Math.ceil((cooldownUntil.getTime() - now) / 3_600_000);
+    return (
+      <span
+        className="re-status-pill re-status-pill--cooldown"
+        title={`Next send: ${cooldownUntil.toLocaleString()}`}
+      >
+        {hLeft}h cooldown
+      </span>
+    );
+  }
+  if (sendState.status === 'skipped') {
+    return (
+      <div className="re-send-cell">
+        <span className="re-status-pill re-status-pill--skipped" title={sendState.reason}>
+          Skipped
+        </span>
+        <button
+          className="re-btn re-btn--ghost re-btn--xs"
+          onClick={() => dispatch(resetSendState(checkoutId))}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  if (sendState.status === 'failed') {
+    return (
+      <div className="re-send-cell">
+        <span
+          className="re-status-pill re-status-pill--failed"
+          title={sendState.error}
+        >
+          Failed
+        </span>
+        <button
+          className="re-btn re-btn--ghost re-btn--xs"
+          onClick={() => dispatch(resetSendState(checkoutId))}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
-  const label =
-    loading  ? 'Sending…' :
-    justSent ? 'Sent!'    :
-    status.count > 0 ? `Resend (${status.count}/${MAX_ATTEMPTS})` : 'Send';
+  const label = isSending
+    ? 'Sending…'
+    : count > 0
+    ? `Resend (${count}/${MAX_ATTEMPTS})`
+    : 'Send Email';
 
   return (
-    <div className="rem-send-wrap">
-      {sendError && <span className="rem-send-err" title={sendError}>!</span>}
-      <button
-        className={`rem-send-btn${justSent ? ' rem-send-btn--success' : ''}`}
-        onClick={() => {
-          console.log('[SendButton] clicked — id:', checkoutId, '| loading:', loading);
-          if (!loading) onSend(checkoutId);
-        }}
-        disabled={loading}
-        title={
-          loading  ? 'Sending recovery email...' :
-          justSent ? 'Email sent successfully'   :
-          status.count > 0 ? `Attempt ${status.count + 1} of ${MAX_ATTEMPTS}` : 'Send recovery email'
-        }
-      >
-        {loading  ? <Spinner size={13} />                    :
-         justSent ? <CheckCircle style={{ fontSize: 13 }} /> :
-                    <Send style={{ fontSize: 13 }} />}
-        {label}
-      </button>
+    <button
+      className="re-btn re-btn--send"
+      onClick={() => dispatch(sendSingleEmail(checkoutId))}
+      disabled={isSending || anySending}
+      title={count > 0 ? `Send attempt ${count + 1} of ${MAX_ATTEMPTS}` : 'Send first recovery email'}
+    >
+      {isSending
+        ? <span className="re-inline-spinner" />
+        : <Send style={{ fontSize: 12 }} />
+      }
+      {label}
+    </button>
+  );
+}
+
+// Bulk results modal
+function BulkResultsModal({ results, message, onClose }) {
+  if (!results) return null;
+  const { sent = [], skipped = [], failed = [], summary = {} } = results;
+
+  return (
+    <div className="re-modal-overlay" onClick={onClose}>
+      <div className="re-modal" onClick={e => e.stopPropagation()}>
+        <div className="re-modal-hd">
+          <h3 className="re-modal-title">Bulk Send Results</h3>
+          <button className="re-modal-close" onClick={onClose}>
+            <Close style={{ fontSize: 18 }} />
+          </button>
+        </div>
+
+        <div className="re-modal-summary">
+          <div className="re-modal-stat re-modal-stat--sent">
+            <div className="re-modal-stat-val">{summary.sent ?? sent.length}</div>
+            <div className="re-modal-stat-label">Sent</div>
+          </div>
+          <div className="re-modal-stat re-modal-stat--skipped">
+            <div className="re-modal-stat-val">{summary.skipped ?? skipped.length}</div>
+            <div className="re-modal-stat-label">Skipped</div>
+          </div>
+          <div className="re-modal-stat re-modal-stat--failed">
+            <div className="re-modal-stat-val">{summary.failed ?? failed.length}</div>
+            <div className="re-modal-stat-label">Failed</div>
+          </div>
+        </div>
+
+        {message && (
+          <p className="re-modal-message">{message}</p>
+        )}
+
+        {failed.length > 0 && (
+          <div className="re-modal-section">
+            <p className="re-modal-section-title">Failed sends</p>
+            <div className="re-modal-list">
+              {failed.map((f, i) => (
+                <div key={i} className="re-modal-list-item re-modal-list-item--failed">
+                  <span className="re-modal-list-id">{f.id}</span>
+                  <span className="re-modal-list-reason">{f.error}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {skipped.length > 0 && (
+          <div className="re-modal-section">
+            <p className="re-modal-section-title">Skipped (expected gates)</p>
+            <div className="re-modal-list">
+              {skipped.slice(0, 10).map((s, i) => (
+                <div key={i} className="re-modal-list-item re-modal-list-item--skipped">
+                  <span className="re-modal-list-id">{s.id}</span>
+                  <span className="re-modal-list-reason">{s.reason}</span>
+                </div>
+              ))}
+              {skipped.length > 10 && (
+                <p className="re-modal-more">+{skipped.length - 10} more skipped</p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <button className="re-btn re-btn--primary re-modal-done" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Confirm bulk send modal
+function BulkConfirmModal({ count, estimatedSeconds, onConfirm, onCancel, sending }) {
+  return (
+    <div className="re-modal-overlay" onClick={onCancel}>
+      <div className="re-modal re-modal--sm" onClick={e => e.stopPropagation()}>
+        <div className="re-modal-hd">
+          <h3 className="re-modal-title">Confirm bulk send</h3>
+          <button className="re-modal-close" onClick={onCancel} disabled={sending}>
+            <Close style={{ fontSize: 18 }} />
+          </button>
+        </div>
+
+        <div className="re-confirm-body">
+          <div className="re-confirm-icon">
+            <Email style={{ fontSize: 28, color: '#ff3c3c' }} />
+          </div>
+          <p className="re-confirm-text">
+            You are about to send recovery emails to
+            <strong> {fmt.number(count)} customer{count !== 1 ? 's' : ''}</strong>.
+            This cannot be undone.
+          </p>
+          <p className="re-confirm-sub">
+            Estimated time: ~{estimatedSeconds < 60
+              ? `${estimatedSeconds}s`
+              : `${Math.ceil(estimatedSeconds / 60)}min`}
+          </p>
+          <p className="re-confirm-warn">
+            Checkouts already converted, in cooldown, or at max attempts will be skipped automatically.
+          </p>
+        </div>
+
+        <div className="re-confirm-actions">
+          <button
+            className="re-btn re-btn--ghost"
+            onClick={onCancel}
+            disabled={sending}
+          >
+            Cancel
+          </button>
+          <button
+            className="re-btn re-btn--danger"
+            onClick={onConfirm}
+            disabled={sending}
+          >
+            {sending
+              ? <><span className="re-inline-spinner re-inline-spinner--dark" />Sending…</>
+              : <><Send style={{ fontSize: 14 }} />Send {fmt.number(count)} emails</>
+            }
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
 
 // ============================================
-// TABS
+// MAIN PAGE
 // ============================================
 
-const TABS = [
-  { key: 'queue',       label: 'Queue',           icon: Inbox        },
-  { key: 'sent',        label: 'Sent',            icon: MarkEmailRead },
-  { key: 'reabandoned', label: 'Failed Recovery', icon: Loop         },
-  { key: 'recovered',   label: 'Recovered',       icon: CheckCircle  },
-];
-
-// ============================================
-// HOOKS
-// ============================================
-
-// Ticks every minute so cooldown timers stay accurate without re-fetching.
-function useTick(ms = 60_000) {
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick(t => t + 1), ms);
-    return () => clearInterval(id);
-  }, [ms]);
-  return tick;
-}
-
-// Tracks which checkout IDs just had a successful send.
-// These IDs are PINNED in the queue tab for `durationMs` so the
-// "Sent!" flash is visible before the row migrates to the Sent tab.
-function useJustSent(durationMs = 4000) {
-  const [ids, setIds] = useState({});
-  const timers        = useRef({});
-
-  const mark = useCallback((id) => {
-    console.log('[useJustSent] marking id:', id);
-    setIds(prev => ({ ...prev, [id]: true }));
-    clearTimeout(timers.current[id]);
-    timers.current[id] = setTimeout(() => {
-      console.log('[useJustSent] pin expired — releasing id:', id);
-      setIds(prev => { const n = { ...prev }; delete n[id]; return n; });
-      delete timers.current[id];
-    }, durationMs);
-  }, [durationMs]);
-
-  useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
-  return { ids, mark };
-}
-
-// ============================================
-// PAGE
-// ============================================
-
-export default function RecoveryEmailManager() {
-  console.log('[REM] Component rendering');
-
+export default function RecoveryEmailPage() {
   const dispatch = useDispatch();
-  const tick     = useTick();
-  // Single stable `now` per render — prevents per-row drift in cooldown display.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const now = useMemo(() => Date.now(), [tick]);
 
-  // ── Selectors ──────────────────────────────────────────────────────────
-  const abandonedCheckouts = useSelector(s => s.operations.abandonedCheckouts);
-  const fetchError         = useSelector(s => s.operations.error);
-  const emailLoading       = useSelector(s => {
-    console.log('[SELECTOR] emailLoading:', JSON.stringify(s.recoveryEmail.loading));
-    return s.recoveryEmail.loading;
-  });
-  const emailResults = useSelector(s => {
-    console.log('[SELECTOR] emailResults keys:', Object.keys(s.recoveryEmail.results));
-    return s.recoveryEmail.results;
-  });
-  const emailErrors = useSelector(s => s.recoveryEmail.errors);
+  // ── Redux state ────────────────────────────────────────────────────────
+  const checkouts     = useSelector(selectRecoveryCheckouts);
+  const listStatus    = useSelector(selectRecoveryListStatus);
+  const listError     = useSelector(selectRecoveryListError);
+  const pagination    = useSelector(selectRecoveryPagination);
+  const listSummary   = useSelector(selectRecoveryListSummary);
+  const filters       = useSelector(selectRecoveryFilters);
+  const selectedIds   = useSelector(selectSelectedIds);
+  const bulkStatus    = useSelector(selectBulkStatus);
+  const bulkResults   = useSelector(selectBulkResults);
+  const bulkError     = useSelector(selectBulkError);
+  const bulkMessage   = useSelector(selectBulkMessage);
+  const anySending    = useSelector(selectAnySending);
+  const eligibleCount = useSelector(selectEligibleSelectedCount);
 
   // ── Local UI state ─────────────────────────────────────────────────────
-  const [activeTab,   setActiveTab]   = useState('queue');
-  const [search,      setSearch]      = useState('');
-  const [hasFetched,  setHasFetched]  = useState(false);
-  const [refreshing,  setRefreshing]  = useState(false);
-  const [bulkRunning, setBulkRunning] = useState(false);
-  const [bulkDone,    setBulkDone]    = useState(0);
-  const [bulkTotal,   setBulkTotal]   = useState(0);
-  const [bulkConfirm, setBulkConfirm] = useState(false);
-  const bulkAbort  = useRef(false);
-  const loadingRef = useRef(false);
+  const [now,              setNow]              = useState(Date.now());
+  const [showConfirm,      setShowConfirm]      = useState(false);
+  const [showResults,      setShowResults]      = useState(false);
+  const [showFilters,      setShowFilters]      = useState(false);
+  const abortRef = useRef(null);
 
-  const { ids: justSentIds, mark: markJustSent } = useJustSent(4000);
+  // Tick every minute so cooldown labels update
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
-  // ── Data loading ───────────────────────────────────────────────────────
-  const loadData = useCallback(() => {
-    if (loadingRef.current) {
-      console.log('[REM] loadData skipped — already in flight');
-      return Promise.resolve();
+  // Show results modal when bulk send completes
+  useEffect(() => {
+    if (bulkStatus === 'succeeded' || bulkStatus === 'failed') {
+      setShowConfirm(false);
+      setShowResults(true);
     }
-    loadingRef.current = true;
-    console.log('[REM] loadData — dispatching fetchAbandonedCheckouts');
-    return dispatch(fetchAbandonedCheckouts({
-      hours: 168, minValue: 0, limit: 200, page: 1, sortBy: 'priority',
-    })).finally(() => {
-      loadingRef.current = false;
-      console.log('[REM] loadData complete');
-    });
-  }, [dispatch]);
+  }, [bulkStatus]);
+
+  // ── Fetch ──────────────────────────────────────────────────────────────
+
+  const load = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller  = new AbortController();
+    abortRef.current  = controller;
+
+    const params = { ...filters };
+    // Strip undefined so URLSearchParams doesn't serialise them as 'undefined'
+    Object.keys(params).forEach(k => params[k] === undefined && delete params[k]);
+
+    dispatch(fetchRecoveryEmailList(params));
+  }, [dispatch, filters]);
 
   useEffect(() => {
-    console.log('[REM] Initial mount — calling loadData');
-    loadData().then(() => {
-      console.log('[REM] Initial load done — hasFetched = true');
-      setHasFetched(true);
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    load();
+    return () => abortRef.current?.abort();
+  }, [load]);
 
-  const handleRefresh = useCallback(() => {
-    console.log('[REM] handleRefresh called');
-    setRefreshing(true);
-    setHasFetched(false);
-    dispatch(clearResults());
-    loadData().then(() => {
-      setRefreshing(false);
-      setHasFetched(true);
-      console.log('[REM] Refresh complete');
-    });
-  }, [dispatch, loadData]);
+  // ── Derived stats ──────────────────────────────────────────────────────
 
-  // ── Send handler ───────────────────────────────────────────────────────
-  // Uses fulfilled.match instead of .unwrap() — dispatch always resolves,
-  // slice pending/fulfilled/rejected always fire, loading never gets stuck.
-  const handleSend = useCallback(async (checkoutId) => {
-    console.log('[handleSend] called — checkoutId:', checkoutId);
-    const result = await dispatch(dispatchRecoveryEmail(checkoutId));
-    console.log('[handleSend] dispatch resolved — result.type:', result.type);
-    console.log('[handleSend] result.payload:', JSON.stringify(result.payload, null, 2));
+  const stats = useMemo(() => {
+    const sentCount    = checkouts.filter(c => c.abandonment?.recoveryEmailSent).length;
+    const unsentCount  = checkouts.filter(
+      c => !c.abandonment?.recoveryEmailSent &&
+           !c.conversion?.isConverted &&
+           !c.abandonment?.recovered
+    ).length;
+    const convertedCount = checkouts.filter(c => c.conversion?.isConverted).length;
+    const reAbandonedCount = checkouts.filter(c => c.abandonment?.reAbandoned).length;
 
-    if (dispatchRecoveryEmail.fulfilled.match(result)) {
-      console.log('[handleSend] ✅ fulfilled — marking justSent for:', checkoutId);
-      markJustSent(checkoutId);
+    return { sentCount, unsentCount, convertedCount, reAbandonedCount };
+  }, [checkouts]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────
+
+  const handleFilterChange = useCallback((key, value) => {
+    dispatch(setFilters({ [key]: value }));
+  }, [dispatch]);
+
+  const handleSelectAll = useCallback(() => {
+    if (selectedIds.length === checkouts.filter(
+      c => !c.conversion?.isConverted && !c.abandonment?.recovered
+    ).length) {
+      dispatch(clearSelection());
     } else {
-      console.warn('[handleSend] ❌ not fulfilled — type:', result.type, '| payload:', result.payload);
+      dispatch(selectAllIds());
     }
-  }, [dispatch, markJustSent]);
+  }, [dispatch, selectedIds.length, checkouts]);
 
-  // ── Partition checkouts into tabs ──────────────────────────────────────
-  //
-  // KEY FIX: justSentIds pins a row in the queue tab for 4 seconds after
-  // a successful send. Without this, the row immediately migrates to the
-  // Sent tab the moment emailResults updates — the user never sees "Sent!"
-  // and it looks like the button is stuck in "Sending…".
-  //
-  const { queue, sent, reAbandoned, recovered } = useMemo(() => {
-    const raw = abandonedCheckouts?.abandonedCheckouts ?? [];
-    console.log('[useMemo:partition] raw count:', raw.length, '| justSentIds:', Object.keys(justSentIds), '| emailResults keys:', Object.keys(emailResults));
+  const handleBulkSend = useCallback(() => {
+    if (selectedIds.length === 0 || selectedIds.length > BULK_CAP) return;
+    setShowConfirm(true);
+  }, [selectedIds]);
 
-    const q = [], s = [], r = [], rec = [];
+  const handleConfirmBulk = useCallback(() => {
+    dispatch(sendBulkEmails(selectedIds));
+  }, [dispatch, selectedIds]);
 
-    for (const checkout of raw) {
-      const id         = String(checkout._id);
-      const sendResult = emailResults[id] ?? null;
-      const fields     = getEmailFields(checkout, sendResult);
-      const status     = getEmailStatus(fields, now);
-      const isReAb     = checkout.abandonment?.reAbandoned === true;
+  const handleCloseResults = useCallback(() => {
+    setShowResults(false);
+    dispatch(resetBulkState());
+    load(); // Refresh list after bulk send
+  }, [dispatch, load]);
 
-      // Pin this row in queue if it just sent — don't let it migrate tabs
-      // until the justSent flash expires (4s). This is why the button
-      // appeared stuck: the row vanished before loading cleared visually.
-      const isPinned = Boolean(justSentIds[id]);
+  const handlePageChange = useCallback((page) => {
+    dispatch(setFilters({ page }));
+  }, [dispatch]);
 
-      console.log('[useMemo:partition] id:', id, '| status:', status.type, '| isPinned:', isPinned, '| isReAb:', isReAb);
+  const isLoading  = listStatus === 'loading';
+  const isFirstLoad = listStatus === 'idle' || (isLoading && checkouts.length === 0);
+  const estimatedSeconds = Math.ceil(selectedIds.length * 0.3) + 2;
 
-      if (fields.isConverted) {
-        rec.push({ checkout, status });
-      } else if (isReAb) {
-        r.push({ checkout, status });
-      } else if (!isPinned && (status.type === 'sent' || status.type === 'cooldown' || status.type === 'maxed')) {
-        s.push({ checkout, status });
-      } else {
-        // isPinned rows stay here in queue regardless of status
-        q.push({ checkout, status });
-      }
-    }
-
-    console.log('[useMemo:partition] result — queue:', q.length, '| sent:', s.length, '| reAbandoned:', r.length, '| recovered:', rec.length);
-    return { queue: q, sent: s, reAbandoned: r, recovered: rec };
-  }, [abandonedCheckouts, emailResults, justSentIds, now]);
-
-  const activeEntries = useMemo(() => {
-    const src =
-      activeTab === 'queue'       ? queue       :
-      activeTab === 'sent'        ? sent        :
-      activeTab === 'reabandoned' ? reAbandoned :
-      recovered;
-
-    if (!search.trim()) return src;
-    const q = search.toLowerCase();
-    return src.filter(({ checkout: c }) => {
-      const u = c.user || {};
-      return `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) ||
-             (u.email || '').toLowerCase().includes(q);
-    });
-  }, [activeTab, queue, sent, reAbandoned, recovered, search]);
-
-  const totalValue = useMemo(
-    () => queue.reduce((sum, { checkout: c }) => sum + (c.pricing?.totalPrice || 0), 0),
-    [queue]
+  const eligibleForSelectAll = checkouts.filter(
+    c => !c.conversion?.isConverted && !c.abandonment?.recovered
   );
+  const allSelected = eligibleForSelectAll.length > 0 &&
+    selectedIds.length === eligibleForSelectAll.length;
 
-  const reAbandonedRevenue = useMemo(
-    () => reAbandoned.reduce((sum, { checkout: c }) => sum + (c.pricing?.totalPrice || 0), 0),
-    [reAbandoned]
-  );
+  // ============================================
+  // RENDER
+  // ============================================
 
-  // Eligible = queue rows that are ready or already sent (resend eligible)
-  // Pinned rows are included since they're still in queue during the flash
-  const eligibleForBulk = useMemo(
-    () => queue.filter(({ status }) => status.type === 'ready' || status.type === 'sent'),
-    [queue]
-  );
-
-  // ── Bulk send ──────────────────────────────────────────────────────────
-  const handleBulkSend = useCallback(async () => {
-    console.log('[handleBulkSend] called — eligibleForBulk:', eligibleForBulk.length);
-    setBulkConfirm(false);
-    if (!eligibleForBulk.length) return;
-
-    bulkAbort.current = false;
-    setBulkRunning(true);
-    setBulkDone(0);
-    setBulkTotal(eligibleForBulk.length);
-
-    for (let i = 0; i < eligibleForBulk.length; i++) {
-      if (bulkAbort.current) {
-        console.log('[handleBulkSend] aborted at index:', i);
-        break;
-      }
-
-      const { checkout } = eligibleForBulk[i];
-      console.log('[handleBulkSend] sending for id:', checkout._id, `(${i + 1}/${eligibleForBulk.length})`);
-
-      const result = await dispatch(dispatchRecoveryEmail(checkout._id));
-      console.log('[handleBulkSend] result.type:', result.type, '| id:', checkout._id);
-
-      if (dispatchRecoveryEmail.fulfilled.match(result)) {
-        markJustSent(checkout._id);
-      } else {
-        console.warn('[handleBulkSend] ❌ failed for:', checkout._id, '| payload:', result.payload);
-      }
-
-      setBulkDone(i + 1);
-      if (i < eligibleForBulk.length - 1) {
-        await new Promise(res => setTimeout(res, BULK_DELAY_MS));
-      }
-    }
-
-    console.log('[handleBulkSend] complete');
-    setBulkRunning(false);
-  }, [dispatch, eligibleForBulk, markJustSent]);
-
-  const showActionCol       = activeTab !== 'recovered';
-  const showReAbandonedCols = activeTab === 'reabandoned';
-
-  console.log('[REM] Render — hasFetched:', hasFetched, '| activeTab:', activeTab, '| activeEntries:', activeEntries.length);
-
-  // ── Render ─────────────────────────────────────────────────────────────
   return (
     <>
       <Navbar />
-      <div className="rem-page">
-        <div className="rem-body">
+      <div className="re-page">
+        <div className="re-body">
 
-          <Link to="/admin/dashboard" className="rem-back">
-            <ArrowBack style={{ fontSize: 15 }} /> Dashboard
+          {/* ── Back ─────────────────────────────────────────────── */}
+          <Link to="/admin/dashboard" className="re-back">
+            <ArrowBack style={{ fontSize: 16 }} /> Dashboard
           </Link>
 
-          {/* Header */}
-          <div className="rem-hd">
-            <div className="rem-hd-left">
-              <span className="rem-hd-icon"><MarkEmailRead style={{ fontSize: 26 }} /></span>
+          {/* ── Header ───────────────────────────────────────────── */}
+          <div className="re-hd">
+            <div className="re-hd-left">
+              <span className="re-hd-icon">
+                <Email style={{ fontSize: 26 }} />
+              </span>
               <div>
-                <h1 className="rem-hd-title">Recovery Email Manager</h1>
-                <p className="rem-hd-sub">Send cart recovery emails · Track cooldowns · Monitor failed recoveries · Conversions</p>
+                <div className="re-hd-eyebrow">Cart Recovery</div>
+                <h1 className="re-hd-title">Recovery Emails</h1>
+                <p className="re-hd-sub">
+                  Send targeted recovery emails to abandoned checkouts
+                </p>
               </div>
             </div>
-            <div className="rem-hd-right">
+            <div className="re-hd-right">
               <button
-                className={`rem-icon-btn ${refreshing ? 'rem-icon-btn--spin' : ''}`}
-                onClick={handleRefresh}
-                disabled={refreshing}
+                className={`re-btn re-btn--icon ${isLoading ? 're-btn--spinning' : ''}`}
+                onClick={load}
+                disabled={isLoading || anySending}
                 title="Refresh"
               >
                 <Refresh style={{ fontSize: 18 }} />
               </button>
-              {activeTab === 'queue' && !bulkRunning && (
-                <button
-                  className="rem-bulk-btn"
-                  onClick={() => eligibleForBulk.length && setBulkConfirm(true)}
-                  disabled={refreshing || !eligibleForBulk.length}
-                  title="Send recovery email to all eligible carts"
-                >
-                  <Email style={{ fontSize: 15 }} />
-                  Bulk Send ({eligibleForBulk.length})
-                </button>
-              )}
-              {bulkRunning && (
-                <button className="rem-bulk-abort-btn" onClick={() => { bulkAbort.current = true; }}>
-                  <Block style={{ fontSize: 14 }} />
-                  Stop ({bulkDone}/{bulkTotal})
-                </button>
-              )}
             </div>
           </div>
 
-          {/* Bulk confirm */}
-          {bulkConfirm && (
-            <div className="rem-confirm-banner">
-              <span>
-                Send recovery emails to <strong>{eligibleForBulk.length}</strong> cart{eligibleForBulk.length !== 1 ? 's' : ''}? This cannot be undone.
-              </span>
-              <div className="rem-confirm-actions">
-                <button className="rem-confirm-btn rem-confirm-btn--cancel" onClick={() => setBulkConfirm(false)}>Cancel</button>
-                <button className="rem-confirm-btn rem-confirm-btn--go"     onClick={handleBulkSend}>Send All</button>
-              </div>
+          {/* ── Error Banner ─────────────────────────────────────── */}
+          {listError && !isFirstLoad && (
+            <div className="re-error-banner">
+              <ErrorOutline style={{ fontSize: 16 }} />
+              {listError}
             </div>
           )}
 
-          {fetchError && (
-            <div className="rem-error">
-              <ErrorOutline style={{ fontSize: 16 }} />{fetchError}
+          {bulkError && (
+            <div className="re-error-banner">
+              <ErrorOutline style={{ fontSize: 16 }} />
+              Bulk send failed: {bulkError}
             </div>
           )}
 
-          {/* KPI strip */}
-          <div className="rem-kpi-strip">
-            {[
-              { icon: Inbox,         cls: 'coral',  val: fmt.number(queue.length),        lbl: 'In Queue'          },
-              { icon: MarkEmailRead, cls: 'blue',   val: fmt.number(sent.length),         lbl: 'Emails Sent'       },
-              { icon: Loop,          cls: 'purple', val: fmt.number(reAbandoned.length),  lbl: 'Failed Recoveries', color: '#7C3AED' },
-              { icon: CheckCircle,   cls: 'green',  val: fmt.number(recovered.length),    lbl: 'Recovered'         },
-              { icon: AttachMoney,   cls: 'amber',  val: fmt.compact(totalValue),         lbl: 'Queue Value'       },
-              { icon: AttachMoney,   cls: 'red',    val: fmt.compact(reAbandonedRevenue), lbl: 'Failed Rev. Lost',  color: '#DC2626' },
-            ].map(({ icon: Icon, cls, val, lbl, color }) => (
-              <div key={lbl} className="rem-kpi">
-                <span className={`rem-kpi-icon rem-kpi-icon--${cls}`}><Icon style={{ fontSize: 18 }} /></span>
-                <div>
-                  <div className="rem-kpi-val" style={color ? { color } : {}}>{val}</div>
-                  <div className="rem-kpi-lbl">{lbl}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Bulk progress */}
-          {bulkRunning && (
-            <div className="rem-bulk-progress">
-              <Spinner size={15} />
-              <span>Sending {bulkDone} of {bulkTotal}…</span>
-              <div className="rem-bulk-bar-track">
-                <div className="rem-bulk-bar-fill" style={{ width: `${bulkTotal > 0 ? (bulkDone / bulkTotal) * 100 : 0}%` }} />
-              </div>
-              <span className="rem-bulk-pct">{bulkTotal > 0 ? Math.round((bulkDone / bulkTotal) * 100) : 0}%</span>
-            </div>
-          )}
-
-          {/* Toolbar */}
-          <div className="rem-toolbar">
-            <div className="rem-tabs">
-              {TABS.map((tab) => {
-                const TabIcon = tab.icon;
-                const count =
-                  tab.key === 'queue'       ? queue.length       :
-                  tab.key === 'sent'        ? sent.length        :
-                  tab.key === 'reabandoned' ? reAbandoned.length :
-                  recovered.length;
-                return (
-                  <button
-                    key={tab.key}
-                    className={`rem-tab ${activeTab === tab.key ? 'rem-tab--active' : ''} ${tab.key === 'reabandoned' && reAbandoned.length > 0 ? 'rem-tab--alert' : ''}`}
-                    onClick={() => setActiveTab(tab.key)}
-                  >
-                    <TabIcon style={{ fontSize: 14 }} />{tab.label}
-                    <span className={`rem-tab-count ${tab.key === 'reabandoned' && reAbandoned.length > 0 ? 'rem-tab-count--alert' : ''}`}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-            <div className="rem-search-wrap">
-              <Search style={{ fontSize: 15, color: '#9CA3AF', flexShrink: 0 }} />
-              <input
-                className="rem-search"
-                type="text"
-                placeholder="Search by name or email…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-              />
-            </div>
-          </div>
-
-          {/* Failed Recovery banner */}
-          {activeTab === 'reabandoned' && reAbandoned.length > 0 && (
-            <div className="rem-context-banner">
-              <Loop style={{ fontSize: 16, color: '#7C3AED' }} />
-              <span>
-                These customers <strong>clicked your recovery link</strong> but abandoned again.
-                The <em>Post-Recovery Step</em> column shows where they left on their second attempt.
-              </span>
-            </div>
-          )}
-
-          {/* Table */}
-          <div className="rem-card">
-            {!hasFetched ? (
-              <div className="rem-loading"><Spinner size={28} /><span>Loading checkouts…</span></div>
-            ) : activeEntries.length === 0 ? (
-              <Empty
-                icon={
-                  activeTab === 'queue'       ? Inbox         :
-                  activeTab === 'sent'        ? MarkEmailRead :
-                  activeTab === 'reabandoned' ? Loop          : CheckCircle
-                }
-                label={
-                  activeTab === 'queue'       ? 'No carts in queue'                  :
-                  activeTab === 'sent'        ? 'No emails sent yet'                 :
-                  activeTab === 'reabandoned' ? 'No failed recoveries — great news!' : 'No recovered carts yet'
-                }
-                sub={search ? 'Try a different search term' : undefined}
-              />
+          {/* ── KPI Cards ────────────────────────────────────────── */}
+          <div className="re-kpi-grid">
+            {isFirstLoad ? (
+              Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
             ) : (
-              <div className="rem-tbl-wrap">
-                <table className="rem-tbl">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Customer</th>
-                      <th>Email</th>
-                      <th>Cart Value</th>
-                      <th>Items</th>
-                      <th>Priority</th>
-                      <th>First Abandoned Step</th>
-                      {showReAbandonedCols && <th>Post-Recovery Step</th>}
-                      {showReAbandonedCols && <th>Cart Changes</th>}
-                      <th>Abandoned</th>
-                      <th>Status</th>
-                      {showActionCol && <th>Action</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {activeEntries.slice(0, 100).map(({ checkout: c, status }, i) => {
-                      const id          = String(c._id);
-                      const u           = c.user || {};
-                      const priority    = getPriority(c.priority ?? c.priorityScore ?? 0);
-                      const firstStep   = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
-                      const isOrganic   = c.abandonment?.organicRecovery === true;
-                      const failedCount = c.abandonment?.failedRecoveries || 0;
-                      const justSent    = Boolean(justSentIds[id]);
+              <>
+                <div className="re-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
+                  <div className="re-kpi-top">
+                    <span className="re-kpi-icon"><MoneyOff style={{ fontSize: 20 }} /></span>
+                  </div>
+                  <div className="re-kpi-label">Total Abandoned</div>
+                  <div className="re-kpi-value">{fmt.number(pagination.totalCheckouts)}</div>
+                  <div className="re-kpi-footer">
+                    <span className="re-kpi-sub">{fmt.compact(listSummary.totalValue)} at risk</span>
+                  </div>
+                </div>
 
-                      return (
-                        <tr key={id || i} className={status.type === 'ready' ? 'rem-tr--ready' : ''}>
-                          <td className="rem-td-rank">{i + 1}</td>
-                          <td className="rem-td-name">
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              {u.firstName ? `${u.firstName} ${u.lastName || ''}`.trim() : 'Guest'}
-                              {isOrganic && (
-                                <span className="rem-flag rem-flag--organic" title="Converted without recovery link">
-                                  <PersonSearch style={{ fontSize: 10 }} /> Organic
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="rem-td-email">{u.email || '—'}</td>
-                          <td className="rem-td-money">{fmt.compact(c.pricing?.totalPrice || 0)}</td>
-                          <td className="rem-td-num">{fmt.number(c.items?.length || 0)}</td>
-                          <td>
-                            <span className={`rem-priority rem-priority--${priority.cls}`}>{priority.label}</span>
-                          </td>
-                          <td className="rem-td-step">{resolveStep(firstStep) || '—'}</td>
+                <div className="re-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
+                  <div className="re-kpi-top">
+                    <span className="re-kpi-icon"><Email style={{ fontSize: 20 }} /></span>
+                  </div>
+                  <div className="re-kpi-label">Unsent (eligible)</div>
+                  <div className="re-kpi-value">{fmt.number(stats.unsentCount)}</div>
+                  <div className="re-kpi-footer">
+                    <span className="re-kpi-sub">Ready to contact</span>
+                  </div>
+                </div>
 
-                          {showReAbandonedCols && (
-                            <td className="rem-td-step rem-td-step--post">
-                              {c.abandonment?.postRecoveryAbandonedAtStep
-                                ? <span style={{ color: '#7C3AED', fontWeight: 700 }}>{resolveStep(c.abandonment.postRecoveryAbandonedAtStep)}</span>
-                                : '—'}
-                              {failedCount > 1 && (
-                                <span className="rem-fail-count" title={`${failedCount} failed recovery attempts`}>×{failedCount}</span>
-                              )}
-                            </td>
-                          )}
-                          {showReAbandonedCols && (
-                            <td><CartDiffBadge diff={c.abandonment?.recoveryCartDiff} /></td>
-                          )}
+                <div className="re-kpi" style={{ '--kpi-color': '#1D4ED8', '--kpi-bg': 'rgba(29,78,216,0.08)' }}>
+                  <div className="re-kpi-top">
+                    <span className="re-kpi-icon"><MarkEmailRead style={{ fontSize: 20 }} /></span>
+                  </div>
+                  <div className="re-kpi-label">Emails Sent</div>
+                  <div className="re-kpi-value">{fmt.number(stats.sentCount)}</div>
+                  <div className="re-kpi-footer">
+                    <span className="re-kpi-sub">In this view</span>
+                  </div>
+                </div>
 
-                          <td className="rem-td-date">{fmt.date(c.abandonment?.abandonedAt || c.updatedAt)}</td>
+                <div className="re-kpi" style={{ '--kpi-color': '#059669', '--kpi-bg': 'rgba(5,150,105,0.08)' }}>
+                  <div className="re-kpi-top">
+                    <span className="re-kpi-icon"><CheckCircle style={{ fontSize: 20 }} /></span>
+                  </div>
+                  <div className="re-kpi-label">Converted</div>
+                  <div className="re-kpi-value">{fmt.number(stats.convertedCount)}</div>
+                  <div className="re-kpi-footer">
+                    <span className="re-kpi-sub">After email contact</span>
+                  </div>
+                </div>
 
-                          <td>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span className={`rem-status rem-status--${status.type}`}>{status.label}</span>
-                              {justSent && (
-                                <span
-                                  className="rem-status rem-status--just-sent"
-                                  title={`Sent at ${fmt.date(emailResults[id]?.sentAt)}`}
-                                >
-                                  <CheckCircle style={{ fontSize: 11 }} /> Sent ✓
-                                </span>
-                              )}
-                            </div>
-                          </td>
-
-                          {showActionCol && (
-                            <td>
-                              <SendButton
-                                checkoutId={id}
-                                status={status}
-                                loading={!!emailLoading[id]}
-                                sendError={emailErrors[id]}
-                                justSent={justSent}
-                                onSend={handleSend}
-                                now={now}
-                              />
-                            </td>
-                          )}
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                <div className="re-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
+                  <div className="re-kpi-top">
+                    <span className="re-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
+                  </div>
+                  <div className="re-kpi-label">Re-abandoned</div>
+                  <div className="re-kpi-value">{fmt.number(stats.reAbandonedCount)}</div>
+                  <div className="re-kpi-footer">
+                    <span className="re-kpi-sub">Failed recoveries</span>
+                  </div>
+                </div>
+              </>
             )}
           </div>
 
-          {activeEntries.length > 100 && (
-            <p className="rem-truncation-note">
-              Showing 100 of {activeEntries.length} — use search to narrow results
-            </p>
+          {/* ── Second row KPIs ──────────────────────────────────── */}
+          {!isFirstLoad && (
+            <div className="re-meta-row">
+              <div className="re-meta-card">
+                <AttachMoney style={{ fontSize: 16, color: '#6b7280' }} />
+                <span className="re-meta-label">Avg cart value</span>
+                <span className="re-meta-val">{fmt.compact(listSummary.avgValue)}</span>
+              </div>
+              <div className="re-meta-card">
+                <Bolt style={{ fontSize: 16, color: '#6b7280' }} />
+                <span className="re-meta-label">High priority</span>
+                <span className="re-meta-val">{fmt.number(listSummary.highPriorityCheckouts)}</span>
+              </div>
+              <div className="re-meta-card">
+                <PersonSearch style={{ fontSize: 16, color: '#6b7280' }} />
+                <span className="re-meta-label">Re-abandoned (list)</span>
+                <span className="re-meta-val">{fmt.number(listSummary.reAbandonedCount)}</span>
+              </div>
+              <div className="re-meta-card">
+                <Warning style={{ fontSize: 16, color: '#6b7280' }} />
+                <span className="re-meta-label">Total value</span>
+                <span className="re-meta-val">{fmt.compact(listSummary.totalValue)}</span>
+              </div>
+            </div>
+          )}
+
+          {/* ── Filters + Bulk bar ────────────────────────────────── */}
+          <div className="re-toolbar">
+            <div className="re-toolbar-left">
+              <button
+                className={`re-btn re-btn--ghost re-btn--sm ${showFilters ? 're-btn--active' : ''}`}
+                onClick={() => setShowFilters(p => !p)}
+              >
+                <FilterList style={{ fontSize: 15 }} />
+                Filters
+                {(filters.emailSent !== undefined || filters.reAbandoned !== undefined) && (
+                  <span className="re-filter-dot" />
+                )}
+              </button>
+
+              {selectedIds.length > 0 && (
+                <span className="re-selection-pill">
+                  {selectedIds.length} selected
+                  <button
+                    className="re-selection-clear"
+                    onClick={() => dispatch(clearSelection())}
+                    title="Clear selection"
+                  >
+                    <Close style={{ fontSize: 13 }} />
+                  </button>
+                </span>
+              )}
+            </div>
+
+            <div className="re-toolbar-right">
+              {selectedIds.length > 0 && (
+                <>
+                  {selectedIds.length > BULK_CAP && (
+                    <span className="re-cap-warn">Max {BULK_CAP} per bulk send</span>
+                  )}
+                  <button
+                    className="re-btn re-btn--danger re-btn--sm"
+                    onClick={handleBulkSend}
+                    disabled={
+                      anySending ||
+                      eligibleCount === 0 ||
+                      selectedIds.length > BULK_CAP
+                    }
+                    title={`Send to ${eligibleCount} eligible selected checkouts`}
+                  >
+                    {bulkStatus === 'sending'
+                      ? <><span className="re-inline-spinner" />Sending bulk…</>
+                      : <><Send style={{ fontSize: 13 }} />Bulk send ({eligibleCount})</>
+                    }
+                  </button>
+                </>
+              )}
+
+              <span className="re-total-label">
+                {fmt.number(pagination.totalCheckouts)} checkouts
+              </span>
+            </div>
+          </div>
+
+          {/* ── Filter panel ─────────────────────────────────────── */}
+          {showFilters && (
+            <div className="re-filter-panel">
+              <div className="re-filter-row">
+                <label className="re-filter-label">Email status</label>
+                <div className="re-filter-pills">
+                  {[
+                    { value: undefined, label: 'All' },
+                    { value: 'false',   label: 'Not sent' },
+                    { value: 'true',    label: 'Sent' },
+                  ].map(opt => (
+                    <button
+                      key={String(opt.value)}
+                      className={`re-pill ${filters.emailSent === opt.value ? 're-pill--active' : ''}`}
+                      onClick={() => handleFilterChange('emailSent', opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="re-filter-row">
+                <label className="re-filter-label">Re-abandoned</label>
+                <div className="re-filter-pills">
+                  {[
+                    { value: undefined, label: 'All' },
+                    { value: 'true',    label: 'Yes' },
+                    { value: 'false',   label: 'No' },
+                  ].map(opt => (
+                    <button
+                      key={String(opt.value)}
+                      className={`re-pill ${filters.reAbandoned === opt.value ? 're-pill--active' : ''}`}
+                      onClick={() => handleFilterChange('reAbandoned', opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="re-filter-row">
+                <label className="re-filter-label">Time window</label>
+                <div className="re-filter-pills">
+                  {[
+                    { value: 24,  label: '24h' },
+                    { value: 72,  label: '3 days' },
+                    { value: 168, label: '7 days' },
+                    { value: 720, label: '30 days' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`re-pill ${filters.hours === opt.value ? 're-pill--active' : ''}`}
+                      onClick={() => handleFilterChange('hours', opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="re-filter-row">
+                <label className="re-filter-label">Sort by</label>
+                <div className="re-filter-pills">
+                  {[
+                    { value: 'priority', label: 'Priority' },
+                    { value: 'value',    label: 'Cart value' },
+                    { value: 'date',     label: 'Date' },
+                  ].map(opt => (
+                    <button
+                      key={opt.value}
+                      className={`re-pill ${filters.sortBy === opt.value ? 're-pill--active' : ''}`}
+                      onClick={() => handleFilterChange('sortBy', opt.value)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                className="re-btn re-btn--ghost re-btn--xs"
+                onClick={() => dispatch(resetFilters())}
+              >
+                Reset filters
+              </button>
+            </div>
+          )}
+
+          {/* ── Table ────────────────────────────────────────────── */}
+          <div className="re-card">
+            <div className="re-card-hd">
+              <div className="re-card-hd-left">
+                <Email style={{ fontSize: 18, color: '#ff3c3c' }} />
+                <div>
+                  <h3 className="re-card-title">Abandoned Checkouts</h3>
+                  <p className="re-card-sub">
+                    High priority first — act on unsent rows for maximum recovery
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {isFirstLoad ? (
+              <Spinner h={320} />
+            ) : checkouts.length === 0 ? (
+              <Empty label="No abandoned checkouts match your filters." h={280} />
+            ) : (
+              <>
+                <div className="re-tbl-wrap">
+                  <table className="re-tbl">
+                    <thead>
+                      <tr>
+                        <th style={{ width: 40 }}>
+                          <input
+                            type="checkbox"
+                            className="re-checkbox"
+                            checked={allSelected}
+                            onChange={handleSelectAll}
+                            title="Select all eligible"
+                          />
+                        </th>
+                        <th>#</th>
+                        <th>Customer</th>
+                        <th>Cart Value</th>
+                        <th>Items</th>
+                        <th>Abandoned Step</th>
+                        <th>Priority</th>
+                        <th>Email Status</th>
+                        <th>Abandoned</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {checkouts.map((c, i) => {
+                        const user          = c.user || {};
+                        const priorityScore = c.priority ?? 0;
+                        const priority      = getPriority(priorityScore);
+                        const ab            = c.abandonment || {};
+                        const isSelected    = selectedIds.includes(c._id);
+                        const isReAbandoned = ab.reAbandoned === true;
+                        const emailCount    = ab.recoveryEmailCount ?? 0;
+                        const sentAt        = ab.recoveryEmailSentAt ?? null;
+                        const isConverted   = c.conversion?.isConverted;
+                        const isRecovered   = ab.recovered;
+                        const firstStep     = ab.firstAbandonedAtStep || ab.abandonedAtStep;
+                        const rowNum        = (filters.page - 1) * filters.limit + i + 1;
+
+                        return (
+                          <tr
+                            key={c._id}
+                            className={`${isSelected ? 're-tbl-row--selected' : ''} ${isConverted ? 're-tbl-row--converted' : ''}`}
+                          >
+                            <td>
+                              <input
+                                type="checkbox"
+                                className="re-checkbox"
+                                checked={isSelected}
+                                disabled={isConverted || isRecovered}
+                                onChange={() => dispatch(toggleSelectId(c._id))}
+                              />
+                            </td>
+                            <td className="re-td-rank">{rowNum}</td>
+                            <td>
+                              <div className="re-customer">
+                                <span className="re-customer-name">
+                                  {user.firstName
+                                    ? `${user.firstName} ${user.lastName || ''}`.trim()
+                                    : 'Guest'}
+                                </span>
+                                <span className="re-customer-email">
+                                  {user.email || c.email || '—'}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="re-td-money">
+                              {fmt.compact(c.pricing?.totalPrice || 0)}
+                            </td>
+                            <td>{c.items?.length ?? 0}</td>
+                            <td>
+                              <span className="re-step-label">
+                                {resolveStep(firstStep)}
+                              </span>
+                            </td>
+                            <td>
+                              <span className={`re-priority ${priority.cls}`}>
+                                {priority.label}
+                              </span>
+                              <span className="re-score">
+                                {priorityScore}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="re-email-status">
+                                {isConverted ? (
+                                  <span className="re-status-pill re-status-pill--converted">
+                                    Converted
+                                  </span>
+                                ) : isRecovered ? (
+                                  <span className="re-status-pill re-status-pill--recovered">
+                                    Recovered
+                                  </span>
+                                ) : emailCount > 0 ? (
+                                  <div className="re-email-meta">
+                                    <span className="re-status-pill re-status-pill--sent">
+                                      Sent ({emailCount}/{MAX_ATTEMPTS})
+                                    </span>
+                                    {sentAt && (
+                                      <span className="re-email-date">
+                                        {fmt.date(sentAt)}
+                                      </span>
+                                    )}
+                                    {isReAbandoned && (
+                                      <span className="re-flag re-flag--reabandoned">
+                                        Re-abn
+                                      </span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="re-status-pill re-status-pill--unsent">
+                                    Not sent
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="re-td-date">
+                              {fmt.hours(
+                                ab.abandonedAt
+                                  ? (Date.now() - new Date(ab.abandonedAt).getTime()) / 3_600_000
+                                  : null
+                              )}
+                            </td>
+                            <td>
+                              <SendButton checkoutId={c._id} now={now} />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* ── Pagination ──────────────────────────────────── */}
+                {pagination.totalPages > 1 && (
+                  <div className="re-pagination">
+                    <button
+                      className="re-btn re-btn--ghost re-btn--sm"
+                      onClick={() => handlePageChange(filters.page - 1)}
+                      disabled={!pagination.hasPrevPage || isLoading}
+                    >
+                      Previous
+                    </button>
+                    <span className="re-page-info">
+                      Page {pagination.currentPage} of {pagination.totalPages}
+                    </span>
+                    <button
+                      className="re-btn re-btn--ghost re-btn--sm"
+                      onClick={() => handlePageChange(filters.page + 1)}
+                      disabled={!pagination.hasNextPage || isLoading}
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* ── Bulk select bar ──────────────────────────────────── */}
+          {checkouts.length > 0 && !isFirstLoad && (
+            <div className="re-select-bar">
+              <button
+                className="re-btn re-btn--ghost re-btn--sm"
+                onClick={handleSelectAll}
+                disabled={anySending}
+              >
+                <SelectAll style={{ fontSize: 15 }} />
+                {allSelected ? 'Deselect all' : `Select all (${eligibleForSelectAll.length})`}
+              </button>
+              {selectedIds.length > 0 && (
+                <span className="re-select-hint">
+                  {eligibleCount} of {selectedIds.length} selected are eligible to send
+                </span>
+              )}
+            </div>
           )}
 
         </div>
       </div>
+
+      {/* ── Modals ─────────────────────────────────────────────── */}
+      {showConfirm && (
+        <BulkConfirmModal
+          count={eligibleCount}
+          estimatedSeconds={estimatedSeconds}
+          onConfirm={handleConfirmBulk}
+          onCancel={() => setShowConfirm(false)}
+          sending={bulkStatus === 'sending'}
+        />
+      )}
+
+      {showResults && bulkResults && (
+        <BulkResultsModal
+          results={bulkResults}
+          message={bulkMessage}
+          onClose={handleCloseResults}
+        />
+      )}
     </>
   );
 }
