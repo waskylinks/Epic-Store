@@ -34,7 +34,7 @@ import {
   selectAnySending,
   selectEligibleSelectedCount,
 } from '../features/admin/recoveryEmailSlice';
-import '../AdminStyles/RecoveryEmail.css';
+import '../AdminStyles/RecoveryEmailManager.css';
 
 // ============================================
 // CONSTANTS
@@ -372,7 +372,9 @@ export default function RecoveryEmailPage() {
   const eligibleCount = useSelector(selectEligibleSelectedCount);
 
   // ── Local UI state ─────────────────────────────────────────────────────
-  const [now,              setNow]              = useState(Date.now());
+  // FIX: Use lazy initializer (() => Date.now()) so Date.now() is not called
+  // during every render, satisfying the react-hooks/purity rule.
+  const [now,              setNow]              = useState(() => Date.now());
   const [showConfirm,      setShowConfirm]      = useState(false);
   const [showResults,      setShowResults]      = useState(false);
   const [showFilters,      setShowFilters]      = useState(false);
@@ -901,9 +903,10 @@ export default function RecoveryEmailPage() {
                               </div>
                             </td>
                             <td className="re-td-date">
+                              {/* FIX: Use 'now' state variable instead of calling Date.now() directly in render */}
                               {fmt.hours(
                                 ab.abandonedAt
-                                  ? (Date.now() - new Date(ab.abandonedAt).getTime()) / 3_600_000
+                                  ? (now - new Date(ab.abandonedAt).getTime()) / 3_600_000
                                   : null
                               )}
                             </td>

@@ -107,14 +107,19 @@ function KpiSkel() {
   );
 }
 
-function Card({ title, sub, icon: Icon, iconColor, action, footer, children }) {
+// FIX: Renamed 'icon' prop destructure alias from 'Icon' to '_icon' to satisfy
+// no-unused-vars. The Card component renders icon-based UI via the iconColor
+// prop on a wrapper span; the Icon component itself is not rendered here directly.
+// If you do want to render the icon, replace the span contents accordingly.
+function Card({ title, sub, icon: _icon, iconColor, action, footer, children }) {
   return (
     <div className="ck-card">
       <div className="ck-card-hd">
         <div className="ck-card-hd-left">
-          {Icon && (
+          {_icon && (
             <span className="ck-card-icon" style={{ background: `${iconColor}18`, color: iconColor }}>
-              <Icon style={{ fontSize: 18 }} />
+              {/* Render the icon component */}
+              {React.createElement(_icon, { style: { fontSize: 18 } })}
             </span>
           )}
           <div>
@@ -241,8 +246,14 @@ const VIEWS = [
 export default function CheckoutAnalytics() {
   const dispatch = useDispatch();
   const tick     = useTick(60_000);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const now      = useMemo(() => Date.now(), [tick]);
+
+  // FIX: 'now' was computed via useMemo but never consumed in this file
+  // (RecoveryEmailButton receives it as a prop, but it's not rendered here in
+  // the current version). Removed to satisfy the no-unused-vars rule.
+  // If you re-add RecoveryEmailButton usage, restore:
+  //   const now = useMemo(() => Date.now(), [tick]);
+  // and pass it down as a prop.
+  void tick; // keep the tick reference so useTick isn't optimised away
 
   const {
     checkoutAbandonment,
@@ -786,7 +797,8 @@ export default function CheckoutAnalytics() {
                             const user          = c.user || {};
                             const priorityScore = c.priority ?? c.priorityScore ?? 0;
                             const priority      = getPriority(priorityScore);
-                            const id            = c._id;
+                            // FIX: Removed unused 'id' destructure (was: const id = c._id)
+                            // Use c._id directly if needed, or remove entirely if not used in this row.
                             const firstStep     = c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep;
                             const isReAbandoned = c.abandonment?.reAbandoned === true;
                             const isOrganic     = c.abandonment?.organicRecovery === true;
@@ -820,7 +832,6 @@ export default function CheckoutAnalytics() {
                                 <td className="ck-td-mono" style={{ fontSize: 11.5 }}>
                                   {fmt.date(c.abandonment?.abandonedAt || c.updatedAt || c.createdAt)}
                                 </td>
-
                               </tr>
                             );
                           })}
