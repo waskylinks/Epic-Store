@@ -4,8 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   ArrowBack, Refresh, ArrowUpward, ArrowDownward, Remove,
   ShoppingCartCheckout, Warning, CheckCircle, Email,
-  TrendingDown, AttachMoney, TableChart, Bolt, MoneyOff,
-  MarkEmailRead, ErrorOutline, TrendingUp, Loop, PersonSearch,
+  TrendingDown, AttachMoney, TableChart, Bolt, MoneyOff, ErrorOutline, TrendingUp, Loop, PersonSearch,
 } from '@mui/icons-material';
 import {
   BarChart, Bar, PieChart, Pie, Cell,
@@ -250,9 +249,7 @@ export default function CheckoutAnalytics() {
     recoveryOpportunities: recoveryOpportunitiesRaw,
     abandonedCheckouts:    abandonedCheckoutsRaw,
     reAbandonmentAnalytics,
-    emailSendLoading,
-    emailSendResults,
-    emailSendError,
+
     error,
   } = useSelector((s) => s.operations);
 
