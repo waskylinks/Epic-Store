@@ -1,17 +1,3 @@
-/**
- * routes/cronHealthRoutes.js
- *
- * REST endpoints for cron job health monitoring.
- * Mounted at: /api/v1/admin/cron
- *
- * All routes require admin authentication — apply your existing
- * isAuthenticatedUser + authorizeRoles('admin') middleware here.
- *
- * Endpoints:
- *   GET  /api/v1/admin/cron/health         — all job health records
- *   POST /api/v1/admin/cron/trigger/:jobName — manually trigger a job run
- */
-
 import express        from 'express';
 import CronJobStatus  from '../models/CronJobStatus.js';
 import { runCleanup } from '../jobs/discount-cleanup.js';

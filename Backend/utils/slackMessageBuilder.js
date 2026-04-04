@@ -1,22 +1,3 @@
-/**
- * utils/slackMessageBuilder.js
- *
- * Builds Slack Block Kit message payloads for cron alert events.
- * Keeps all Slack-specific formatting logic out of cronAlert.js.
- *
- * Severity → color mapping:
- *   critical  → #EF4444 (red)
- *   warning   → #F59E0B (amber)
- *   partial   → #F59E0B (amber)
- *   info / ok → #10B981 (green)
- *
- * Special templates:
- *   - Audit cleanup partial deletion  → amber + mismatch detail
- *   - Abandonment sweep threshold     → amber + error count
- *   - Recovery cron full failure      → red   + distinct title
- *   - Generic job failure             → red   + stack-friendly error field
- */
-
 // ─────────────────────────────────────────────────────────────────────────────
 // COLOR MAP
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,33 +22,47 @@ const SEVERITY_COLOR = {
  */
 export function buildSlackPayload(opts) {
   const {
-    jobName,
+    jobName    = 'Unknown Job',
     runId,
-    status,
+    status     = 'ok',
     message,
     error,
     durationMs,
-    counts = {},
+    counts     = {},
     severity,
-    config,
+    config     = {},
     timestamp,
   } = opts;
 
-  const color      = SEVERITY_COLOR[severity] ?? SEVERITY_COLOR.info;
-  const emoji      = severityEmoji(severity, status);
-  const title      = buildTitle(jobName, status, severity);
-  const fields     = buildFields({ runId, durationMs, counts, status, error, message });
-  const footerText = `${config?.botName ?? 'CronBot'} • ${formatTimestamp(timestamp)}`;
+  // FIX #5 — Normalize status/severity once at the top so all downstream
+  // logic (color, emoji, title, fields) uses consistent, non-contradictory values.
+  const normalizedStatus   = status ?? 'ok';
+  const normalizedSeverity =
+    severity ??
+    (normalizedStatus === 'failed'
+      ? 'critical'
+      : normalizedStatus === 'partial'
+      ? 'warning'
+      : 'info');
+
+  const color      = SEVERITY_COLOR[normalizedSeverity] ?? SEVERITY_COLOR.info;
+  const emoji      = severityEmoji(normalizedSeverity, normalizedStatus);
+  const title      = buildTitle(jobName, normalizedStatus, normalizedSeverity);
+  const fields     = buildFields({ runId, durationMs, counts, status: normalizedStatus });
+  const footerText = `${config.botName ?? 'CronBot'} • ${formatTimestamp(timestamp)}`;
+
+  // FIX #7 — Enrich fallback with message so Slack notification previews
+  // (which strip Block Kit blocks) still carry useful context.
+  const fallbackMsg = message ? ` — ${String(message)}` : '';
 
   return {
-    username:    config?.botName    ?? 'Cron Monitor',
-    icon_emoji:  config?.botEmoji   ?? ':robot_face:',
-    channel:     config?.channel    ?? '#cron-alerts',
+    username:   config.botName  ?? 'Cron Monitor',
+    icon_emoji: config.botEmoji ?? ':robot_face:',
     attachments: [
       {
         color,
-        fallback: `${emoji} ${title}`,
-        blocks:   [
+        fallback: `${emoji} ${title}${fallbackMsg}`,
+        blocks: [
           {
             type: 'section',
             text: {
@@ -75,7 +70,7 @@ export function buildSlackPayload(opts) {
               text: `${emoji} *${title}*`,
             },
           },
-          ...buildContextBlocks({ jobName, status, message, error }),
+          ...buildContextBlocks({ message, error }),
           fields.length > 0 ? { type: 'section', fields } : null,
           {
             type: 'context',
@@ -96,26 +91,31 @@ function buildTitle(jobName, status, severity) {
     return `${jobName} — Job Failed`;
   }
   if (status === 'partial' || severity === 'warning') {
-    if (jobName === 'AuditCleanup') return `${jobName} — Partial Deletion Detected`;
+    if (jobName === 'AuditCleanup')     return `${jobName} — Partial Deletion Detected`;
     if (jobName === 'AbandonmentSweep') return `${jobName} — Error Threshold Exceeded`;
     return `${jobName} — Warning`;
   }
   return `${jobName} — Run Complete`;
 }
 
-function buildContextBlocks({ jobName, status, message, error }) {
+function buildContextBlocks({ message, error }) {
   const blocks = [];
 
   if (message) {
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: message },
+      text: { type: 'mrkdwn', text: String(message) },
     });
   }
 
-  if (error) {
-    // Truncate long error messages — Slack has a 3000 char block limit
-    const truncated = error.length > 600 ? error.slice(0, 597) + '…' : error;
+  const normalizedError = normalizeError(error);
+
+  if (normalizedError) {
+    const truncated =
+      normalizedError.length > 600
+        ? normalizedError.slice(0, 597) + '…'
+        : normalizedError;
+
     blocks.push({
       type: 'section',
       text: { type: 'mrkdwn', text: `*Error:*\n\`\`\`${truncated}\`\`\`` },
@@ -125,7 +125,7 @@ function buildContextBlocks({ jobName, status, message, error }) {
   return blocks;
 }
 
-function buildFields({ runId, durationMs, counts, status, error, message }) {
+function buildFields({ runId, durationMs, counts, status }) {
   const fields = [];
 
   if (runId) {
@@ -136,12 +136,16 @@ function buildFields({ runId, durationMs, counts, status, error, message }) {
     fields.push({ type: 'mrkdwn', text: `*Duration*\n${formatDuration(durationMs)}` });
   }
 
-  // Counts — e.g. { sent: 5, failed: 2, evaluated: 10 }
-  Object.entries(counts).forEach(([key, val]) => {
-    if (val !== undefined && val !== null) {
-      fields.push({ type: 'mrkdwn', text: `*${capitalize(key)}*\n${val}` });
-    }
-  });
+  Object.entries(counts)
+    .slice(0, 8)
+    .forEach(([key, val]) => {
+      if (val !== undefined && val !== null) {
+        fields.push({
+          type: 'mrkdwn',
+          text: `*${capitalize(key)}*\n${val}`,
+        });
+      }
+    });
 
   fields.push({ type: 'mrkdwn', text: `*Status*\n${formatStatus(status)}` });
 
@@ -151,6 +155,23 @@ function buildFields({ runId, durationMs, counts, status, error, message }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * normalizeError
+ *
+ * @param {*} error
+ * @returns {string|null}
+ */
+function normalizeError(error) {
+  if (!error) return null;
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.stack || error.message;
+  try {
+    return JSON.stringify(error, null, 2);
+  } catch {
+    return String(error);
+  }
+}
 
 function severityEmoji(severity, status) {
   if (severity === 'critical' || status === 'failed') return ':rotating_light:';
@@ -166,26 +187,24 @@ function formatStatus(status) {
     warning:  '⚠️ Warning',
     critical: '🚨 Critical',
   };
-  return map[status] ?? status;
+  return map[status] ?? String(status);
 }
 
 function formatDuration(ms) {
-  if (ms < 1000) return `${ms}ms`;
+  if (ms < 1000)  return `${ms}ms`;
   if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60000).toFixed(1)}m`;
 }
 
+/**
+ * @param {string} iso - ISO 8601 timestamp string
+ * @returns {string}
+ */
 function formatTimestamp(iso) {
   if (!iso) return 'Unknown time';
-  return new Date(iso).toLocaleString('en-US', {
-    month:  'short',
-    day:    'numeric',
-    hour:   '2-digit',
-    minute: '2-digit',
-    hour12: true,
-  });
+  return new Date(iso).toISOString().replace('T', ' ').replace('Z', ' UTC');
 }
 
 function capitalize(str) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
+  return String(str).charAt(0).toUpperCase() + String(str).slice(1);
 }
