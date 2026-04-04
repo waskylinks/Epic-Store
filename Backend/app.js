@@ -190,7 +190,7 @@ app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1', cartRoutes);
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/discounts', discountRoutes);
-app.use("/api/v1/checkout/recovery-email", recoveryEmailRoutes);
+app.use("/api/v1/recovery", recoveryEmailRoutes);
 app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1', seoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
