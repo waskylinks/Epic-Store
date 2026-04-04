@@ -1,38 +1,29 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
-  ArrowBack, Refresh, Email, Send, CheckCircle,
-  Warning, AttachMoney, Loop, ErrorOutline,
-  SelectAll, Close, FilterList, MoneyOff,
-  MarkEmailRead, Bolt, PersonSearch,
+  Email, ArrowBack, Refresh, Send, CheckCircle,
+  Warning, AccessTime, MoneyOff, Loop, PersonSearch,
 } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
+import Footer from '../components/footer';
+import PageTitle from '../components/PageTitle';
 import {
-  fetchRecoveryEmailList,
-  sendSingleEmail,
-  sendBulkEmails,
-  setFilters,
-  resetFilters,
-  toggleSelectId,
-  selectAllIds,
-  clearSelection,
-  resetBulkState,
-  resetSendState,
-  selectRecoveryCheckouts,
-  selectRecoveryListStatus,
-  selectRecoveryListError,
-  selectRecoveryPagination,
-  selectRecoveryListSummary,
-  selectRecoveryFilters,
-  selectSelectedIds,
-  selectBulkStatus,
-  selectBulkResults,
-  selectBulkError,
-  selectBulkMessage,
-  selectSendState,
-  selectAnySending,
-  selectEligibleSelectedCount,
+  fetchSendList,
+  fetchRecoveryStatus,
+  sendRecoveryEmail,
+  clearSendError,
+  clearSuccess,
+  selectSendList,
+  selectSendListLoading,
+  selectSendListError,
+  selectPagination,
+  selectSendListSummary,
+  selectStatusFor,
+  selectSendLoadingFor,
+  selectSendErrorFor,
+  selectSuccess,
+  selectMessage,
 } from '../features/admin/recoveryEmailSlice';
 import '../AdminStyles/RecoveryEmailManager.css';
 
@@ -40,310 +31,420 @@ import '../AdminStyles/RecoveryEmailManager.css';
 // CONSTANTS
 // ============================================
 
-const MAX_ATTEMPTS   = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS,  10) || 3;
-const COOLDOWN_MS    = (parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS, 10) || 24) * 3_600_000;
-const BULK_CAP       = 100;
+const MAX_ATTEMPTS   = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS)   || 3;
+const COOLDOWN_HOURS = parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24;
+
+const OUTCOME_CHIPS = [
+  { key: 'all',          label: 'All' },
+  { key: 'none',         label: 'Not contacted' },
+  { key: 'sent',         label: 'Awaiting click' },
+  { key: 'clicked',      label: 'Clicked' },
+  { key: 're_abandoned', label: 'Re-abandoned' },
+  { key: 'exhausted',    label: 'Max reached' },
+];
+
+const SORT_OPTIONS = [
+  { value: 'priority',    label: 'Priority score' },
+  { value: 'value',       label: 'Cart value' },
+  { value: 'abandonedAt', label: 'Abandoned date' },
+  { value: 'lastSentAt',  label: 'Last email sent' },
+];
+
+const OUTCOME_LABEL = {
+  none:         'Not contacted',
+  pending:      'Pending',
+  sent:         'Sent',
+  clicked:      'Clicked',
+  converted:    'Converted',
+  organic:      'Organic',
+  re_abandoned: 'Re-abandoned',
+  exhausted:    'Max reached',
+  expired:      'Expired',
+  failed:       'Failed',
+};
 
 // ============================================
-// FORMATTERS
+// HELPERS
 // ============================================
 
 const fmt = {
-  currency: (v) =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency', currency: 'USD', maximumFractionDigits: 0,
-    }).format(v || 0),
-  compact: (v) => {
-    const n = v || 0;
-    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}k`;
-    return fmt.currency(n);
-  },
-  number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  pct:    (v) => `${(v || 0).toFixed(1)}%`,
-  date: (d) =>
-    d
-      ? new Date(d).toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        })
-      : '—',
-  hours: (h) =>
-    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m ago` : `${h.toFixed(0)}h ago`,
+  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
+  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
+  date:     (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
+  hours:    (h) => h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(0)}h`,
 };
 
-const STEP_LABELS = {
-  shipping_info:      'Shipping',
-  order_confirmation: 'Order Confirm',
-  payment_selection:  'Pmt Selection',
-  payment_gateway:    'Pmt Gateway',
-  payment_failed:     'Pmt Failed',
+const getFullName = (user) =>
+  user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Guest' : 'Guest';
+
+const getPriority = (score) => {
+  if (score >= 70) return { label: 'High',   cls: 'high' };
+  if (score >= 40) return { label: 'Medium', cls: 'med' };
+  return                  { label: 'Low',    cls: 'low' };
 };
 
-const resolveStep = (s = '') =>
-  STEP_LABELS[s] || s.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-
-function getPriority(score) {
-  if (score >= 70) return { label: 'High',   cls: 're-priority--high' };
-  if (score >= 40) return { label: 'Medium', cls: 're-priority--med' };
-  return               { label: 'Low',    cls: 're-priority--low' };
-}
+const outcomeClass = (outcome) => {
+  const map = { none: 'none', pending: 'pending', sent: 'sent', clicked: 'clicked', converted: 'converted', organic: 'converted', re_abandoned: 're_abandoned', exhausted: 'exhausted', expired: 'expired', failed: 'failed' };
+  return map[outcome] || 'none';
+};
 
 // ============================================
-// SMALL COMPONENTS
+// SUB-COMPONENTS
 // ============================================
-
-function Spinner({ h = 200 }) {
-  return (
-    <div className="re-loading" style={{ minHeight: h }}>
-      <div className="re-spinner" /><span>Loading…</span>
-    </div>
-  );
-}
-
-function Empty({ label = 'No data available', h = 200 }) {
-  return (
-    <div className="re-empty" style={{ minHeight: h }}>
-      <Email style={{ fontSize: 40, color: '#9ca3af' }} />
-      <span>{label}</span>
-    </div>
-  );
-}
 
 function KpiSkel() {
   return (
-    <div className="re-kpi re-kpi--skel">
-      <div className="re-skel" style={{ width: 40, height: 40, borderRadius: 10, marginBottom: 14 }} />
-      <div className="re-skel" style={{ width: '55%', height: 10, marginBottom: 8 }} />
-      <div className="re-skel" style={{ width: '75%', height: 26 }} />
+    <div className="res-kpi-skel">
+      <div className="res-skel" style={{ width: '60%', height: 11, marginBottom: 10 }} />
+      <div className="res-skel" style={{ width: '45%', height: 26 }} />
     </div>
   );
 }
 
-// Per-row send button — reads from Redux send state
-function SendButton({ checkoutId, now }) {
-  const dispatch   = useDispatch();
-  const anySending = useSelector(selectAnySending);
-  const sendState  = useSelector(selectSendState(checkoutId));
-  const checkout   = useSelector(state =>
-    state.recoveryEmail.checkouts.find(c => c._id === checkoutId)
-  );
-
-  if (!checkout) return null;
-
-  const ab         = checkout.abandonment || {};
-  const converted  = checkout.conversion?.isConverted;
-  const count      = sendState.emailCount ?? ab.recoveryEmailCount  ?? 0;
-  const sentAt     = sendState.sentAt     ?? ab.recoveryEmailSentAt ?? null;
-
-  const cooldownUntil = sentAt
-    ? new Date(new Date(sentAt).getTime() + COOLDOWN_MS)
-    : null;
-
-  const inCooldown = !!(cooldownUntil && cooldownUntil.getTime() > now);
-  const maxReached = count >= MAX_ATTEMPTS;
-  const isSending  = sendState.status === 'sending';
-
-  if (converted) {
-    return <span className="re-status-pill re-status-pill--converted">Converted</span>;
-  }
-  if (maxReached) {
-    return (
-      <span className="re-status-pill re-status-pill--maxed">
-        Max ({MAX_ATTEMPTS}/{MAX_ATTEMPTS})
-      </span>
-    );
-  }
-  if (inCooldown) {
-    const hLeft = Math.ceil((cooldownUntil.getTime() - now) / 3_600_000);
-    return (
-      <span
-        className="re-status-pill re-status-pill--cooldown"
-        title={`Next send: ${cooldownUntil.toLocaleString()}`}
-      >
-        {hLeft}h cooldown
-      </span>
-    );
-  }
-  if (sendState.status === 'skipped') {
-    return (
-      <div className="re-send-cell">
-        <span className="re-status-pill re-status-pill--skipped" title={sendState.reason}>
-          Skipped
-        </span>
-        <button
-          className="re-btn re-btn--ghost re-btn--xs"
-          onClick={() => dispatch(resetSendState(checkoutId))}
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-  if (sendState.status === 'failed') {
-    return (
-      <div className="re-send-cell">
-        <span
-          className="re-status-pill re-status-pill--failed"
-          title={sendState.error}
-        >
-          Failed
-        </span>
-        <button
-          className="re-btn re-btn--ghost re-btn--xs"
-          onClick={() => dispatch(resetSendState(checkoutId))}
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  const label = isSending
-    ? 'Sending…'
-    : count > 0
-    ? `Resend (${count}/${MAX_ATTEMPTS})`
-    : 'Send Email';
-
+function CartItemSkeleton() {
   return (
-    <button
-      className="re-btn re-btn--send"
-      onClick={() => dispatch(sendSingleEmail(checkoutId))}
-      disabled={isSending || anySending}
-      title={count > 0 ? `Send attempt ${count + 1} of ${MAX_ATTEMPTS}` : 'Send first recovery email'}
-    >
-      {isSending
-        ? <span className="re-inline-spinner" />
-        : <Send style={{ fontSize: 12 }} />
-      }
-      {label}
-    </button>
-  );
-}
-
-// Bulk results modal
-function BulkResultsModal({ results, message, onClose }) {
-  if (!results) return null;
-  const { sent = [], skipped = [], failed = [], summary = {} } = results;
-
-  return (
-    <div className="re-modal-overlay" onClick={onClose}>
-      <div className="re-modal" onClick={e => e.stopPropagation()}>
-        <div className="re-modal-hd">
-          <h3 className="re-modal-title">Bulk Send Results</h3>
-          <button className="re-modal-close" onClick={onClose}>
-            <Close style={{ fontSize: 18 }} />
-          </button>
+    <div className="res-cart-item">
+      <div className="res-cart-item-top">
+        <div style={{ flex: 1 }}>
+          <div className="res-skel" style={{ width: '65%', height: 13, marginBottom: 6 }} />
+          <div className="res-skel" style={{ width: '80%', height: 11 }} />
         </div>
-
-        <div className="re-modal-summary">
-          <div className="re-modal-stat re-modal-stat--sent">
-            <div className="re-modal-stat-val">{summary.sent ?? sent.length}</div>
-            <div className="re-modal-stat-label">Sent</div>
-          </div>
-          <div className="re-modal-stat re-modal-stat--skipped">
-            <div className="re-modal-stat-val">{summary.skipped ?? skipped.length}</div>
-            <div className="re-modal-stat-label">Skipped</div>
-          </div>
-          <div className="re-modal-stat re-modal-stat--failed">
-            <div className="re-modal-stat-val">{summary.failed ?? failed.length}</div>
-            <div className="re-modal-stat-label">Failed</div>
-          </div>
-        </div>
-
-        {message && (
-          <p className="re-modal-message">{message}</p>
-        )}
-
-        {failed.length > 0 && (
-          <div className="re-modal-section">
-            <p className="re-modal-section-title">Failed sends</p>
-            <div className="re-modal-list">
-              {failed.map((f, i) => (
-                <div key={i} className="re-modal-list-item re-modal-list-item--failed">
-                  <span className="re-modal-list-id">{f.id}</span>
-                  <span className="re-modal-list-reason">{f.error}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {skipped.length > 0 && (
-          <div className="re-modal-section">
-            <p className="re-modal-section-title">Skipped (expected gates)</p>
-            <div className="re-modal-list">
-              {skipped.slice(0, 10).map((s, i) => (
-                <div key={i} className="re-modal-list-item re-modal-list-item--skipped">
-                  <span className="re-modal-list-id">{s.id}</span>
-                  <span className="re-modal-list-reason">{s.reason}</span>
-                </div>
-              ))}
-              {skipped.length > 10 && (
-                <p className="re-modal-more">+{skipped.length - 10} more skipped</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        <button className="re-btn re-btn--primary re-modal-done" onClick={onClose}>
-          Done
-        </button>
+        <div className="res-skel" style={{ width: 52, height: 16 }} />
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+        <div className="res-skel" style={{ width: 60, height: 18, borderRadius: 999 }} />
+        <div className="res-skel" style={{ width: 44, height: 18, borderRadius: 999 }} />
       </div>
     </div>
   );
 }
 
-// Confirm bulk send modal
-function BulkConfirmModal({ count, estimatedSeconds, onConfirm, onCancel, sending }) {
+// ── Send action block ─────────────────────────────────────────
+
+function SendActionBlock({ checkoutId, outcome }) {
+  const dispatch  = useDispatch();
+  const status    = useSelector(selectStatusFor(checkoutId));
+  const loading   = useSelector(selectSendLoadingFor(checkoutId));
+  const sendErr   = useSelector(selectSendErrorFor(checkoutId));
+
+  const [showConfirm, setShowConfirm] = useState(false);
+
+  const confirmedAttempts = status?.confirmedAttempts || 0;
+  const lastSentAt        = status?.lastSentAt        || null;
+  const nextAvailableAt   = status?.nextAvailableAt   || (lastSentAt ? new Date(new Date(lastSentAt).getTime() + COOLDOWN_HOURS * 3600000) : null);
+  const isConverted       = outcome === 'converted' || outcome === 'organic';
+  const isExhausted       = confirmedAttempts >= MAX_ATTEMPTS || outcome === 'exhausted';
+  const now               = Date.now();
+  const inCooldown        = !!(nextAvailableAt && new Date(nextAvailableAt).getTime() > now);
+  const hoursLeft         = inCooldown ? Math.ceil((new Date(nextAvailableAt).getTime() - now) / 3600000) : 0;
+
+  const canSend = !isConverted && !isExhausted && !inCooldown && !loading;
+
+  const handleSend = () => {
+    dispatch(sendRecoveryEmail(checkoutId));
+    setShowConfirm(false);
+  };
+
+  if (isConverted) {
+    return (
+      <div className="res-send-block">
+        <div className="res-send-block-label">Recovery action</div>
+        <div className="res-converted-block">
+          <CheckCircle style={{ fontSize: 18, marginRight: 8, verticalAlign: 'middle' }} />
+          Customer converted — no action needed
+        </div>
+      </div>
+    );
+  }
+
+  if (isExhausted) {
+    return (
+      <div className="res-send-block">
+        <div className="res-send-block-label">Recovery action</div>
+        <div className="res-exhausted-block">
+          Maximum attempts reached ({MAX_ATTEMPTS}/{MAX_ATTEMPTS}) — this cart cannot receive more emails
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="re-modal-overlay" onClick={onCancel}>
-      <div className="re-modal re-modal--sm" onClick={e => e.stopPropagation()}>
-        <div className="re-modal-hd">
-          <h3 className="re-modal-title">Confirm bulk send</h3>
-          <button className="re-modal-close" onClick={onCancel} disabled={sending}>
-            <Close style={{ fontSize: 18 }} />
-          </button>
-        </div>
+    <>
+      <div className="res-send-block">
+        <div className="res-send-block-label">Recovery action</div>
 
-        <div className="re-confirm-body">
-          <div className="re-confirm-icon">
-            <Email style={{ fontSize: 28, color: '#ff3c3c' }} />
+        {inCooldown ? (
+          <div className="res-cooldown-bar">
+            <div className="res-cooldown-label">
+              <AccessTime style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }} />
+              Cooldown active — {hoursLeft}h remaining
+            </div>
+            <div className="res-cooldown-sub">
+              Next send available: {fmt.date(nextAvailableAt)}
+            </div>
           </div>
-          <p className="re-confirm-text">
-            You are about to send recovery emails to
-            <strong> {fmt.number(count)} customer{count !== 1 ? 's' : ''}</strong>.
-            This cannot be undone.
-          </p>
-          <p className="re-confirm-sub">
-            Estimated time: ~{estimatedSeconds < 60
-              ? `${estimatedSeconds}s`
-              : `${Math.ceil(estimatedSeconds / 60)}min`}
-          </p>
-          <p className="re-confirm-warn">
-            Checkouts already converted, in cooldown, or at max attempts will be skipped automatically.
-          </p>
-        </div>
-
-        <div className="re-confirm-actions">
+        ) : (
           <button
-            className="re-btn re-btn--ghost"
-            onClick={onCancel}
-            disabled={sending}
+            className="res-send-btn"
+            disabled={!canSend}
+            onClick={() => setShowConfirm(true)}
           >
-            Cancel
-          </button>
-          <button
-            className="re-btn re-btn--danger"
-            onClick={onConfirm}
-            disabled={sending}
-          >
-            {sending
-              ? <><span className="re-inline-spinner re-inline-spinner--dark" />Sending…</>
-              : <><Send style={{ fontSize: 14 }} />Send {fmt.number(count)} emails</>
+            {loading
+              ? <><span className="res-send-spinner" /> Sending…</>
+              : <><Send style={{ fontSize: 16 }} /> Send Recovery Email {confirmedAttempts > 0 ? `(${confirmedAttempts + 1}/${MAX_ATTEMPTS})` : ''}</>
             }
           </button>
+        )}
+
+        {sendErr && (
+          <div className="res-send-status res-send-status--error">
+            ✕ {sendErr.message}
+          </div>
+        )}
+
+        {confirmedAttempts > 0 && !inCooldown && (
+          <div className="res-send-status res-send-status--warn">
+            {confirmedAttempts} email{confirmedAttempts > 1 ? 's' : ''} already sent · last {fmt.date(lastSentAt)}
+          </div>
+        )}
+      </div>
+
+      {showConfirm && (
+        <div className="res-modal-overlay" onClick={() => setShowConfirm(false)}>
+          <div className="res-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="res-modal-icon">
+              <Email style={{ fontSize: 36 }} />
+            </div>
+            <div className="res-modal-title">Send Recovery Email?</div>
+            <div className="res-modal-sub">
+              This will send attempt {confirmedAttempts + 1} of {MAX_ATTEMPTS} to this customer.
+            </div>
+            <div className="res-modal-info">
+              <div className="res-modal-info-row">
+                <span>Attempt</span>
+                <strong>{confirmedAttempts + 1} / {MAX_ATTEMPTS}</strong>
+              </div>
+              {lastSentAt && (
+                <div className="res-modal-info-row">
+                  <span>Last sent</span>
+                  <strong>{fmt.date(lastSentAt)}</strong>
+                </div>
+              )}
+              <div className="res-modal-info-row">
+                <span>Next available</span>
+                <strong>{COOLDOWN_HOURS}h after this send</strong>
+              </div>
+            </div>
+            <div className="res-modal-actions">
+              <button className="res-modal-cancel" onClick={() => setShowConfirm(false)}>Cancel</button>
+              <button className="res-modal-confirm" onClick={handleSend} disabled={loading}>
+                {loading ? 'Sending…' : 'Confirm Send'}
+              </button>
+            </div>
+          </div>
         </div>
+      )}
+    </>
+  );
+}
+
+// ── Cart detail right panel ───────────────────────────────────
+
+function CartDetail({ item }) {
+  const dispatch  = useDispatch();
+  const checkout  = item.checkout;
+  const recovery  = item.recovery;
+  const status    = useSelector(selectStatusFor(checkout._id));
+
+  useEffect(() => {
+    dispatch(fetchRecoveryStatus(checkout._id));
+  }, [checkout._id, dispatch]);
+
+  const user       = checkout.user || {};
+  const pricing    = checkout.pricing || {};
+  const shipping   = checkout.shippingInfo || {};
+  const abn        = checkout.abandonment || {};
+  const items      = checkout.items || [];
+
+  const liveOutcome = status?.outcome || recovery?.outcome || 'none';
+
+  return (
+    <div className="res-right">
+      <div className="res-detail-hd">
+        <div>
+          <div className="res-detail-hd-name">{getFullName(user)}</div>
+          <div className="res-detail-hd-email">{user.email || checkout.email || '—'}</div>
+        </div>
+        <span className={`res-badge res-badge--${outcomeClass(liveOutcome)}`}>
+          {OUTCOME_LABEL[liveOutcome] || liveOutcome}
+        </span>
+      </div>
+
+      <div className="res-detail-body">
+
+        {/* ── Customer info ── */}
+        <div>
+          <div className="res-section-label">Customer info</div>
+          <div className="res-info-grid">
+            <div className="res-info-row">
+              <span className="res-info-key">Phone</span>
+              <span className="res-info-val">{shipping.phoneNo || '—'}</span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">Country</span>
+              <span className="res-info-val">{shipping.country || '—'}</span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">City</span>
+              <span className="res-info-val">{shipping.city || '—'}</span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">State</span>
+              <span className="res-info-val">{shipping.state || '—'}</span>
+            </div>
+            <div className="res-info-row" style={{ gridColumn: '1 / -1' }}>
+              <span className="res-info-key">Address</span>
+              <span className="res-info-val">{shipping.address || '—'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Abandonment info ── */}
+        <div>
+          <div className="res-section-label">Abandonment details</div>
+          <div className="res-info-grid">
+            <div className="res-info-row">
+              <span className="res-info-key">First abandoned step</span>
+              <span className="res-info-val" style={{ color: '#dc2626' }}>
+                {abn.firstAbandonedAtStep?.replace(/_/g, ' ') || '—'}
+              </span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">Abandoned</span>
+              <span className="res-info-val">{fmt.date(abn.firstAbandonedAt || abn.abandonedAt)}</span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">Hours since</span>
+              <span className="res-info-val">{fmt.hours(checkout.hoursSinceAbandoned)}</span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">Re-abandoned</span>
+              <span className="res-info-val">{abn.reAbandoned ? `Yes (${abn.failedRecoveries || 1}x)` : 'No'}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Cart items ── */}
+        <div>
+          <div className="res-section-label">Cart items ({items.length})</div>
+          <table className="res-items-table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th style={{ textAlign: 'center' }}>Qty</th>
+                <th>Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, i) => {
+                const isUnavailable = item.product?.status && item.product.status !== 'published';
+                return (
+                  <tr key={i}>
+                    <td>
+                      <div className="res-item-name">{item.name || item.product?.name || 'Unknown'}</div>
+                      {isUnavailable && <div className="res-item-unavailable">⚠ Product unavailable</div>}
+                    </td>
+                    <td style={{ textAlign: 'center', color: '#6B7280', fontWeight: 600 }}>{item.quantity}</td>
+                    <td style={{ fontWeight: 700, color: '#111827' }}>{fmt.currency((item.price || 0) * item.quantity)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── Pricing ── */}
+        <div>
+          <div className="res-section-label">Pricing</div>
+          <div className="res-pricing-row">
+            <span>Subtotal</span>
+            <span>{fmt.currency(pricing.itemPrice)}</span>
+          </div>
+          {(pricing.discountAmount > 0) && (
+            <div className="res-pricing-row">
+              <span>Discount {pricing.discountCode ? `(${pricing.discountCode})` : ''}</span>
+              <span className="res-pricing-discount">−{fmt.currency(pricing.discountAmount)}</span>
+            </div>
+          )}
+          <div className="res-pricing-row">
+            <span>Tax</span>
+            <span>{fmt.currency(pricing.taxPrice)}</span>
+          </div>
+          <div className="res-pricing-row">
+            <span>Shipping</span>
+            <span style={{ color: pricing.shippingPrice === 0 ? '#16a34a' : undefined }}>
+              {pricing.shippingPrice === 0 ? 'Free' : fmt.currency(pricing.shippingPrice)}
+            </span>
+          </div>
+          <div className="res-pricing-row res-pricing-row--total">
+            <span>Total</span>
+            <span className="res-pricing-total-val">{fmt.currency(pricing.totalPrice)}</span>
+          </div>
+        </div>
+
+        {/* ── Email attempt history ── */}
+        {status?.attempts?.length > 0 && (
+          <div>
+            <div className="res-section-label">Email history</div>
+            <div className="res-timeline">
+              {status.attempts.map((attempt, i) => (
+                <div
+                  key={i}
+                  className={`res-attempt ${attempt.linkClickedAt ? 'res-attempt--clicked' : ''} ${attempt.status === 'failed' ? 'res-attempt--failed' : ''}`}
+                >
+                  <div className="res-attempt-hd">
+                    <span className="res-attempt-num">Attempt #{attempt.attemptNumber}</span>
+                    <span className="res-attempt-date">{fmt.date(attempt.sentAt || attempt.initiatedAt)}</span>
+                  </div>
+                  <div className="res-attempt-rows">
+                    <div className="res-attempt-row">
+                      <span className="res-attempt-key">Status</span>
+                      <span>{attempt.status}</span>
+                    </div>
+                    {attempt.linkClickedAt && (
+                      <div className="res-attempt-row">
+                        <span className="res-attempt-key">Clicked</span>
+                        <span>{fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}x</span>
+                      </div>
+                    )}
+                    {attempt.checkoutStepAtClick && (
+                      <div className="res-attempt-row">
+                        <span className="res-attempt-key">Step at click</span>
+                        <span>{attempt.checkoutStepAtClick.replace(/_/g, ' ')}</span>
+                      </div>
+                    )}
+                    {attempt.tokenExpiredUnclicked && (
+                      <div className="res-attempt-row">
+                        <span className="res-attempt-key">Token</span>
+                        <span style={{ color: '#6B7280' }}>Expired without click</span>
+                      </div>
+                    )}
+                    {attempt.failReason && (
+                      <div className="res-attempt-row">
+                        <span className="res-attempt-key">Error</span>
+                        <span style={{ color: '#dc2626' }}>{attempt.failReason}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Send action ── */}
+        <SendActionBlock checkoutId={checkout._id} outcome={liveOutcome} />
+
       </div>
     </div>
   );
@@ -353,659 +454,260 @@ function BulkConfirmModal({ count, estimatedSeconds, onConfirm, onCancel, sendin
 // MAIN PAGE
 // ============================================
 
-export default function RecoveryEmailPage() {
+export default function RecoveryEmailSendPage() {
   const dispatch = useDispatch();
 
-  // ── Redux state ────────────────────────────────────────────────────────
-  const checkouts     = useSelector(selectRecoveryCheckouts);
-  const listStatus    = useSelector(selectRecoveryListStatus);
-  const listError     = useSelector(selectRecoveryListError);
-  const pagination    = useSelector(selectRecoveryPagination);
-  const listSummary   = useSelector(selectRecoveryListSummary);
-  const filters       = useSelector(selectRecoveryFilters);
-  const selectedIds   = useSelector(selectSelectedIds);
-  const bulkStatus    = useSelector(selectBulkStatus);
-  const bulkResults   = useSelector(selectBulkResults);
-  const bulkError     = useSelector(selectBulkError);
-  const bulkMessage   = useSelector(selectBulkMessage);
-  const anySending    = useSelector(selectAnySending);
-  const eligibleCount = useSelector(selectEligibleSelectedCount);
+  const sendList    = useSelector(selectSendList);
+  const loading     = useSelector(selectSendListLoading);
+  const listError   = useSelector(selectSendListError);
+  const pagination  = useSelector(selectPagination);
+  const summary     = useSelector(selectSendListSummary);
+  const success     = useSelector(selectSuccess);
+  const message     = useSelector(selectMessage);
 
-  // ── Local UI state ─────────────────────────────────────────────────────
-  const [now,           setNow]           = useState(() => Date.now());
-  // FIX: replaced showConfirm + showResults useState with a single
-  // 'modal' state so we never call setState inside a useEffect.
-  // The confirm modal is controlled by explicit user actions only.
-  // The results modal visibility is derived directly from bulkStatus,
-  // eliminating the need for the effect that triggered the ESLint error.
-  const [showConfirm,   setShowConfirm]   = useState(false);
-  const [resultsDismissed, setResultsDismissed] = useState(false);
-  const [showFilters,   setShowFilters]   = useState(false);
-  const abortRef = useRef(null);
+  const [selectedItem,  setSelectedItem]  = useState(null);
+  const [toast,         setToast]         = useState(null);
+  const [isFirstLoad,   setIsFirstLoad]   = useState(true);
+  const [refreshing,    setRefreshing]    = useState(false);
 
-  // Derive results modal visibility from Redux state — no setState in effects.
-  // Show as soon as bulk completes; hide when user dismisses or starts a new send.
-  const bulkSettled = bulkStatus === 'succeeded' || bulkStatus === 'failed';
-  const showResults = bulkSettled && !resultsDismissed && !!bulkResults;
+  const [filters, setFilters] = useState({
+    page:    1,
+    limit:   20,
+    outcome: 'all',
+    sortBy:  'priority',
+    search:  '',
+    hours:   720,
+  });
 
-  // Close the confirm modal via a ref-tracked previous status so we only
-  // call setShowConfirm(false) in response to a *user* action (handleConfirmBulk),
-  // never from an effect. The confirm modal hides itself naturally once bulkStatus
-  // transitions away from idle: we render it only when showConfirm is true AND
-  // bulkStatus is NOT settled (so it auto-disappears without a setState call).
-  const confirmVisible = showConfirm && !bulkSettled;
+  const [searchInput, setSearchInput] = useState('');
+  const loadingRef = useRef(false);
 
-  // Reset dismissed flag whenever a new bulk operation starts, so the results
-  // modal can appear again after the next send. This useEffect only sets state
-  // in response to an *external* system transition (Redux → 'sending'), which
-  // is the accepted pattern per the ESLint rule's own documentation.
-  const prevBulkStatusRef = useRef(bulkStatus);
-  useEffect(() => {
-    if (prevBulkStatusRef.current !== 'sending' && bulkStatus === 'sending') {
-      setResultsDismissed(false);
-    }
-    prevBulkStatusRef.current = bulkStatus;
-  }, [bulkStatus]);
-
-  // Tick every minute so cooldown labels update
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
+  const showToast = useCallback((msg, type = 'success') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // ── Fetch ──────────────────────────────────────────────────────────────
-
   const load = useCallback(() => {
-    if (abortRef.current) abortRef.current.abort();
-    const controller  = new AbortController();
-    abortRef.current  = controller;
-
-    const params = { ...filters };
-    Object.keys(params).forEach(k => params[k] === undefined && delete params[k]);
-
-    dispatch(fetchRecoveryEmailList(params));
+    if (loadingRef.current) return;
+    loadingRef.current = true;
+    dispatch(fetchSendList(filters)).finally(() => {
+      loadingRef.current = false;
+      setIsFirstLoad(false);
+      setRefreshing(false);
+    });
   }, [dispatch, filters]);
 
+  useEffect(() => { load(); }, [load]);
+
+  // Debounce search
   useEffect(() => {
-    load();
-    return () => abortRef.current?.abort();
-  }, [load]);
+    const t = setTimeout(() => {
+      setFilters(f => ({ ...f, search: searchInput, page: 1 }));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
-  // ── Derived stats ──────────────────────────────────────────────────────
-
-  const stats = useMemo(() => {
-    const sentCount      = checkouts.filter(c => c.abandonment?.recoveryEmailSent).length;
-    const unsentCount    = checkouts.filter(
-      c => !c.abandonment?.recoveryEmailSent &&
-           !c.conversion?.isConverted &&
-           !c.abandonment?.recovered
-    ).length;
-    const convertedCount   = checkouts.filter(c => c.conversion?.isConverted).length;
-    const reAbandonedCount = checkouts.filter(c => c.abandonment?.reAbandoned).length;
-
-    return { sentCount, unsentCount, convertedCount, reAbandonedCount };
-  }, [checkouts]);
-
-  // ── Handlers ───────────────────────────────────────────────────────────
-
-  const handleFilterChange = useCallback((key, value) => {
-    dispatch(setFilters({ [key]: value }));
-  }, [dispatch]);
-
-  const handleSelectAll = useCallback(() => {
-    if (selectedIds.length === checkouts.filter(
-      c => !c.conversion?.isConverted && !c.abandonment?.recovered
-    ).length) {
-      dispatch(clearSelection());
-    } else {
-      dispatch(selectAllIds());
+  // Toast on send success
+  useEffect(() => {
+    if (success && message) {
+      showToast(message);
+      dispatch(clearSuccess());
     }
-  }, [dispatch, selectedIds.length, checkouts]);
+  }, [success, message, dispatch, showToast]);
 
-  const handleBulkSend = useCallback(() => {
-    if (selectedIds.length === 0 || selectedIds.length > BULK_CAP) return;
-    setShowConfirm(true);
-  }, [selectedIds]);
-
-  const handleConfirmBulk = useCallback(() => {
-    dispatch(sendBulkEmails(selectedIds));
-    // Do not call setShowConfirm(false) here — confirmVisible already
-    // hides the modal once bulkStatus transitions to 'sending'/'succeeded'/'failed'.
-  }, [dispatch, selectedIds]);
-
-  const handleCloseResults = useCallback(() => {
-    setResultsDismissed(true);
-    setShowConfirm(false);
-    dispatch(resetBulkState());
+  const handleRefresh = () => {
+    setRefreshing(true);
+    setIsFirstLoad(false);
     load();
-  }, [dispatch, load]);
+  };
 
-  const handlePageChange = useCallback((page) => {
-    dispatch(setFilters({ page }));
-  }, [dispatch]);
+  const setPage = (page) => setFilters(f => ({ ...f, page }));
 
-  const isLoading   = listStatus === 'loading';
-  const isFirstLoad = listStatus === 'idle' || (isLoading && checkouts.length === 0);
-  const estimatedSeconds = Math.ceil(selectedIds.length * 0.3) + 2;
-
-  const eligibleForSelectAll = checkouts.filter(
-    c => !c.conversion?.isConverted && !c.abandonment?.recovered
-  );
-  const allSelected = eligibleForSelectAll.length > 0 &&
-    selectedIds.length === eligibleForSelectAll.length;
-
-  // ============================================
-  // RENDER
-  // ============================================
+  const kpis = [
+    { label: 'Total matching', value: fmt.number(summary.totalMatchingCarts), color: 'coral' },
+    { label: 'Not contacted',  value: fmt.number(summary.neverContacted),     color: 'amber' },
+    { label: 'Awaiting click', value: fmt.number(summary.awaitingResponse),   color: 'blue' },
+    { label: 'Clicked',        value: fmt.number(summary.clickedNotConverted), color: 'green' },
+    { label: 'Re-abandoned',   value: fmt.number(summary.reAbandoned),        color: 'purple' },
+  ];
 
   return (
     <>
+      <PageTitle title="Send Recovery Emails — Admin" />
       <Navbar />
-      <div className="re-page">
-        <div className="re-body">
 
-          {/* ── Back ─────────────────────────────────────────────── */}
-          <Link to="/admin/dashboard" className="re-back">
-            <ArrowBack style={{ fontSize: 16 }} /> Dashboard
+      <div className="res-page">
+        <div className="res-body">
+
+          {/* Toast */}
+          {toast && (
+            <div className={`res-toast res-toast--${toast.type}`}>
+              <span>{toast.type === 'success' ? '✓' : '✕'}</span>
+              {toast.msg}
+            </div>
+          )}
+
+          {/* Back */}
+          <Link to="/admin/dashboard" className="res-back">
+            <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
-          {/* ── Header ───────────────────────────────────────────── */}
-          <div className="re-hd">
-            <div className="re-hd-left">
-              <span className="re-hd-icon">
-                <Email style={{ fontSize: 26 }} />
-              </span>
+          {/* Header */}
+          <div className="res-hd">
+            <div className="res-hd-left">
+              <div className="res-hd-icon">
+                <Email style={{ fontSize: 24 }} />
+              </div>
               <div>
-                <div className="re-hd-eyebrow">Cart Recovery</div>
-                <h1 className="re-hd-title">Recovery Emails</h1>
-                <p className="re-hd-sub">
-                  Send targeted recovery emails to abandoned checkouts
-                </p>
+                <div className="res-hd-eyebrow">Recovery Emails</div>
+                <h1 className="res-hd-title">Send Recovery Emails</h1>
+                <p className="res-hd-sub">Select an abandoned cart and send a targeted recovery email</p>
               </div>
             </div>
-            <div className="re-hd-right">
-              <button
-                className={`re-btn re-btn--icon ${isLoading ? 're-btn--spinning' : ''}`}
-                onClick={load}
-                disabled={isLoading || anySending}
-                title="Refresh"
-              >
-                <Refresh style={{ fontSize: 18 }} />
-              </button>
+            <button
+              className={`res-icon-btn ${refreshing ? 'res-icon-btn--spin' : ''}`}
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title="Refresh"
+            >
+              <Refresh style={{ fontSize: 18 }} />
+            </button>
+          </div>
+
+          {/* KPI strip */}
+          <div className="res-kpi-strip">
+            {isFirstLoad
+              ? Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
+              : kpis.map((k) => (
+                <div key={k.label} className={`res-kpi res-kpi--${k.color}`}>
+                  <div className="res-kpi-label">{k.label}</div>
+                  <div className="res-kpi-value">{k.value}</div>
+                </div>
+              ))
+            }
+          </div>
+
+          {/* Error */}
+          {listError && !loading && (
+            <div className="res-error-bar">
+              <Warning style={{ fontSize: 16 }} /> {listError}
+            </div>
+          )}
+
+          {/* Filter bar */}
+          <div className="res-filters">
+            <input
+              className="res-search"
+              type="text"
+              placeholder="Search by email…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+            <select
+              className="res-select"
+              value={filters.sortBy}
+              onChange={(e) => setFilters(f => ({ ...f, sortBy: e.target.value, page: 1 }))}
+            >
+              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+            <div className="res-outcome-chips">
+              {OUTCOME_CHIPS.map(chip => (
+                <button
+                  key={chip.key}
+                  className={`res-chip ${filters.outcome === chip.key ? 'res-chip--active' : ''}`}
+                  onClick={() => setFilters(f => ({ ...f, outcome: chip.key, page: 1 }))}
+                >
+                  {chip.label}
+                </button>
+              ))}
             </div>
           </div>
 
-          {/* ── Error Banner ─────────────────────────────────────── */}
-          {listError && !isFirstLoad && (
-            <div className="re-error-banner">
-              <ErrorOutline style={{ fontSize: 16 }} />
-              {listError}
-            </div>
-          )}
+          {/* Two-panel layout */}
+          <div className="res-panels">
 
-          {bulkError && (
-            <div className="re-error-banner">
-              <ErrorOutline style={{ fontSize: 16 }} />
-              Bulk send failed: {bulkError}
-            </div>
-          )}
+            {/* Left — cart list */}
+            <div className="res-left">
+              <div className="res-left-hd">
+                <span className="res-left-title">Abandoned carts</span>
+                <span className="res-left-count">{fmt.number(pagination.total)}</span>
+              </div>
 
-          {/* ── KPI Cards ────────────────────────────────────────── */}
-          <div className="re-kpi-grid">
-            {isFirstLoad ? (
-              Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
+              <div className="res-cart-list">
+                {isFirstLoad || (loading && sendList.length === 0)
+                  ? Array.from({ length: 8 }).map((_, i) => <CartItemSkeleton key={i} />)
+                  : sendList.length === 0
+                    ? (
+                      <div className="res-empty">
+                        <MoneyOff style={{ fontSize: 38, color: '#D1D5DB' }} />
+                        No abandoned carts match your filters
+                      </div>
+                    )
+                    : sendList.map((item) => {
+                      const checkout  = item.checkout;
+                      const recovery  = item.recovery;
+                      const user      = checkout.user || {};
+                      const priority  = getPriority(checkout.priority || 0);
+                      const outcome   = recovery?.outcome || 'none';
+                      const isSelected = selectedItem?.checkout._id === checkout._id;
+
+                      return (
+                        <div
+                          key={checkout._id}
+                          className={`res-cart-item ${isSelected ? 'res-cart-item--selected' : ''}`}
+                          onClick={() => setSelectedItem(item)}
+                        >
+                          <div className="res-cart-item-top">
+                            <div>
+                              <div className="res-cart-name">{getFullName(user)}</div>
+                              <div className="res-cart-email">{user.email || checkout.email}</div>
+                            </div>
+                            <div className="res-cart-value">{fmt.currency(checkout.pricing?.totalPrice)}</div>
+                          </div>
+                          <div className="res-cart-meta">
+                            <span className={`res-priority res-priority--${priority.cls}`}>{priority.label}</span>
+                            <span className={`res-badge res-badge--${outcomeClass(outcome)}`}>{OUTCOME_LABEL[outcome] || outcome}</span>
+                            {recovery?.confirmedAttempts > 0 && (
+                              <span className="res-cart-hours">{recovery.confirmedAttempts}/{MAX_ATTEMPTS} sent</span>
+                            )}
+                            <span className="res-cart-hours">{fmt.hours(checkout.hoursSinceAbandoned)} ago</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                }
+              </div>
+
+              {/* Pagination */}
+              {pagination.totalPages > 1 && (
+                <div className="res-pagination">
+                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(1)}>«</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(filters.page - 1)}>‹</button>
+                  <span className="res-pg-info">{filters.page} / {pagination.totalPages}</span>
+                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(filters.page + 1)}>›</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(pagination.totalPages)}>»</button>
+                </div>
+              )}
+            </div>
+
+            {/* Right — detail */}
+            {selectedItem ? (
+              <CartDetail item={selectedItem} />
             ) : (
-              <>
-                <div className="re-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
-                  <div className="re-kpi-top">
-                    <span className="re-kpi-icon"><MoneyOff style={{ fontSize: 20 }} /></span>
-                  </div>
-                  <div className="re-kpi-label">Total Abandoned</div>
-                  <div className="re-kpi-value">{fmt.number(pagination.totalCheckouts)}</div>
-                  <div className="re-kpi-footer">
-                    <span className="re-kpi-sub">{fmt.compact(listSummary.totalValue)} at risk</span>
-                  </div>
+              <div className="res-right">
+                <div className="res-empty-panel">
+                  <Email style={{ fontSize: 44, color: '#D1D5DB' }} />
+                  <p>Select a cart from the list to view details and send a recovery email.</p>
                 </div>
-
-                <div className="re-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
-                  <div className="re-kpi-top">
-                    <span className="re-kpi-icon"><Email style={{ fontSize: 20 }} /></span>
-                  </div>
-                  <div className="re-kpi-label">Unsent (eligible)</div>
-                  <div className="re-kpi-value">{fmt.number(stats.unsentCount)}</div>
-                  <div className="re-kpi-footer">
-                    <span className="re-kpi-sub">Ready to contact</span>
-                  </div>
-                </div>
-
-                <div className="re-kpi" style={{ '--kpi-color': '#1D4ED8', '--kpi-bg': 'rgba(29,78,216,0.08)' }}>
-                  <div className="re-kpi-top">
-                    <span className="re-kpi-icon"><MarkEmailRead style={{ fontSize: 20 }} /></span>
-                  </div>
-                  <div className="re-kpi-label">Emails Sent</div>
-                  <div className="re-kpi-value">{fmt.number(stats.sentCount)}</div>
-                  <div className="re-kpi-footer">
-                    <span className="re-kpi-sub">In this view</span>
-                  </div>
-                </div>
-
-                <div className="re-kpi" style={{ '--kpi-color': '#059669', '--kpi-bg': 'rgba(5,150,105,0.08)' }}>
-                  <div className="re-kpi-top">
-                    <span className="re-kpi-icon"><CheckCircle style={{ fontSize: 20 }} /></span>
-                  </div>
-                  <div className="re-kpi-label">Converted</div>
-                  <div className="re-kpi-value">{fmt.number(stats.convertedCount)}</div>
-                  <div className="re-kpi-footer">
-                    <span className="re-kpi-sub">After email contact</span>
-                  </div>
-                </div>
-
-                <div className="re-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
-                  <div className="re-kpi-top">
-                    <span className="re-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
-                  </div>
-                  <div className="re-kpi-label">Re-abandoned</div>
-                  <div className="re-kpi-value">{fmt.number(stats.reAbandonedCount)}</div>
-                  <div className="re-kpi-footer">
-                    <span className="re-kpi-sub">Failed recoveries</span>
-                  </div>
-                </div>
-              </>
+              </div>
             )}
+
           </div>
-
-          {/* ── Second row KPIs ──────────────────────────────────── */}
-          {!isFirstLoad && (
-            <div className="re-meta-row">
-              <div className="re-meta-card">
-                <AttachMoney style={{ fontSize: 16, color: '#6b7280' }} />
-                <span className="re-meta-label">Avg cart value</span>
-                <span className="re-meta-val">{fmt.compact(listSummary.avgValue)}</span>
-              </div>
-              <div className="re-meta-card">
-                <Bolt style={{ fontSize: 16, color: '#6b7280' }} />
-                <span className="re-meta-label">High priority</span>
-                <span className="re-meta-val">{fmt.number(listSummary.highPriorityCheckouts)}</span>
-              </div>
-              <div className="re-meta-card">
-                <PersonSearch style={{ fontSize: 16, color: '#6b7280' }} />
-                <span className="re-meta-label">Re-abandoned (list)</span>
-                <span className="re-meta-val">{fmt.number(listSummary.reAbandonedCount)}</span>
-              </div>
-              <div className="re-meta-card">
-                <Warning style={{ fontSize: 16, color: '#6b7280' }} />
-                <span className="re-meta-label">Total value</span>
-                <span className="re-meta-val">{fmt.compact(listSummary.totalValue)}</span>
-              </div>
-            </div>
-          )}
-
-          {/* ── Filters + Bulk bar ────────────────────────────────── */}
-          <div className="re-toolbar">
-            <div className="re-toolbar-left">
-              <button
-                className={`re-btn re-btn--ghost re-btn--sm ${showFilters ? 're-btn--active' : ''}`}
-                onClick={() => setShowFilters(p => !p)}
-              >
-                <FilterList style={{ fontSize: 15 }} />
-                Filters
-                {(filters.emailSent !== undefined || filters.reAbandoned !== undefined) && (
-                  <span className="re-filter-dot" />
-                )}
-              </button>
-
-              {selectedIds.length > 0 && (
-                <span className="re-selection-pill">
-                  {selectedIds.length} selected
-                  <button
-                    className="re-selection-clear"
-                    onClick={() => dispatch(clearSelection())}
-                    title="Clear selection"
-                  >
-                    <Close style={{ fontSize: 13 }} />
-                  </button>
-                </span>
-              )}
-            </div>
-
-            <div className="re-toolbar-right">
-              {selectedIds.length > 0 && (
-                <>
-                  {selectedIds.length > BULK_CAP && (
-                    <span className="re-cap-warn">Max {BULK_CAP} per bulk send</span>
-                  )}
-                  <button
-                    className="re-btn re-btn--danger re-btn--sm"
-                    onClick={handleBulkSend}
-                    disabled={
-                      anySending ||
-                      eligibleCount === 0 ||
-                      selectedIds.length > BULK_CAP
-                    }
-                    title={`Send to ${eligibleCount} eligible selected checkouts`}
-                  >
-                    {bulkStatus === 'sending'
-                      ? <><span className="re-inline-spinner" />Sending bulk…</>
-                      : <><Send style={{ fontSize: 13 }} />Bulk send ({eligibleCount})</>
-                    }
-                  </button>
-                </>
-              )}
-
-              <span className="re-total-label">
-                {fmt.number(pagination.totalCheckouts)} checkouts
-              </span>
-            </div>
-          </div>
-
-          {/* ── Filter panel ─────────────────────────────────────── */}
-          {showFilters && (
-            <div className="re-filter-panel">
-              <div className="re-filter-row">
-                <label className="re-filter-label">Email status</label>
-                <div className="re-filter-pills">
-                  {[
-                    { value: undefined, label: 'All' },
-                    { value: 'false',   label: 'Not sent' },
-                    { value: 'true',    label: 'Sent' },
-                  ].map(opt => (
-                    <button
-                      key={String(opt.value)}
-                      className={`re-pill ${filters.emailSent === opt.value ? 're-pill--active' : ''}`}
-                      onClick={() => handleFilterChange('emailSent', opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="re-filter-row">
-                <label className="re-filter-label">Re-abandoned</label>
-                <div className="re-filter-pills">
-                  {[
-                    { value: undefined, label: 'All' },
-                    { value: 'true',    label: 'Yes' },
-                    { value: 'false',   label: 'No' },
-                  ].map(opt => (
-                    <button
-                      key={String(opt.value)}
-                      className={`re-pill ${filters.reAbandoned === opt.value ? 're-pill--active' : ''}`}
-                      onClick={() => handleFilterChange('reAbandoned', opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="re-filter-row">
-                <label className="re-filter-label">Time window</label>
-                <div className="re-filter-pills">
-                  {[
-                    { value: 24,  label: '24h' },
-                    { value: 72,  label: '3 days' },
-                    { value: 168, label: '7 days' },
-                    { value: 720, label: '30 days' },
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`re-pill ${filters.hours === opt.value ? 're-pill--active' : ''}`}
-                      onClick={() => handleFilterChange('hours', opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="re-filter-row">
-                <label className="re-filter-label">Sort by</label>
-                <div className="re-filter-pills">
-                  {[
-                    { value: 'priority', label: 'Priority' },
-                    { value: 'value',    label: 'Cart value' },
-                    { value: 'date',     label: 'Date' },
-                  ].map(opt => (
-                    <button
-                      key={opt.value}
-                      className={`re-pill ${filters.sortBy === opt.value ? 're-pill--active' : ''}`}
-                      onClick={() => handleFilterChange('sortBy', opt.value)}
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                className="re-btn re-btn--ghost re-btn--xs"
-                onClick={() => dispatch(resetFilters())}
-              >
-                Reset filters
-              </button>
-            </div>
-          )}
-
-          {/* ── Table ────────────────────────────────────────────── */}
-          <div className="re-card">
-            <div className="re-card-hd">
-              <div className="re-card-hd-left">
-                <Email style={{ fontSize: 18, color: '#ff3c3c' }} />
-                <div>
-                  <h3 className="re-card-title">Abandoned Checkouts</h3>
-                  <p className="re-card-sub">
-                    High priority first — act on unsent rows for maximum recovery
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {isFirstLoad ? (
-              <Spinner h={320} />
-            ) : checkouts.length === 0 ? (
-              <Empty label="No abandoned checkouts match your filters." h={280} />
-            ) : (
-              <>
-                <div className="re-tbl-wrap">
-                  <table className="re-tbl">
-                    <thead>
-                      <tr>
-                        <th style={{ width: 40 }}>
-                          <input
-                            type="checkbox"
-                            className="re-checkbox"
-                            checked={allSelected}
-                            onChange={handleSelectAll}
-                            title="Select all eligible"
-                          />
-                        </th>
-                        <th>#</th>
-                        <th>Customer</th>
-                        <th>Cart Value</th>
-                        <th>Items</th>
-                        <th>Abandoned Step</th>
-                        <th>Priority</th>
-                        <th>Email Status</th>
-                        <th>Abandoned</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {checkouts.map((c, i) => {
-                        const user          = c.user || {};
-                        const priorityScore = c.priority ?? 0;
-                        const priority      = getPriority(priorityScore);
-                        const ab            = c.abandonment || {};
-                        const isSelected    = selectedIds.includes(c._id);
-                        const isReAbandoned = ab.reAbandoned === true;
-                        const emailCount    = ab.recoveryEmailCount ?? 0;
-                        const sentAt        = ab.recoveryEmailSentAt ?? null;
-                        const isConverted   = c.conversion?.isConverted;
-                        const isRecovered   = ab.recovered;
-                        const firstStep     = ab.firstAbandonedAtStep || ab.abandonedAtStep;
-                        const rowNum        = (filters.page - 1) * filters.limit + i + 1;
-
-                        return (
-                          <tr
-                            key={c._id}
-                            className={`${isSelected ? 're-tbl-row--selected' : ''} ${isConverted ? 're-tbl-row--converted' : ''}`}
-                          >
-                            <td>
-                              <input
-                                type="checkbox"
-                                className="re-checkbox"
-                                checked={isSelected}
-                                disabled={isConverted || isRecovered}
-                                onChange={() => dispatch(toggleSelectId(c._id))}
-                              />
-                            </td>
-                            <td className="re-td-rank">{rowNum}</td>
-                            <td>
-                              <div className="re-customer">
-                                <span className="re-customer-name">
-                                  {user.firstName
-                                    ? `${user.firstName} ${user.lastName || ''}`.trim()
-                                    : 'Guest'}
-                                </span>
-                                <span className="re-customer-email">
-                                  {user.email || c.email || '—'}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="re-td-money">
-                              {fmt.compact(c.pricing?.totalPrice || 0)}
-                            </td>
-                            <td>{c.items?.length ?? 0}</td>
-                            <td>
-                              <span className="re-step-label">
-                                {resolveStep(firstStep)}
-                              </span>
-                            </td>
-                            <td>
-                              <span className={`re-priority ${priority.cls}`}>
-                                {priority.label}
-                              </span>
-                              <span className="re-score">
-                                {priorityScore}
-                              </span>
-                            </td>
-                            <td>
-                              <div className="re-email-status">
-                                {isConverted ? (
-                                  <span className="re-status-pill re-status-pill--converted">
-                                    Converted
-                                  </span>
-                                ) : isRecovered ? (
-                                  <span className="re-status-pill re-status-pill--recovered">
-                                    Recovered
-                                  </span>
-                                ) : emailCount > 0 ? (
-                                  <div className="re-email-meta">
-                                    <span className="re-status-pill re-status-pill--sent">
-                                      Sent ({emailCount}/{MAX_ATTEMPTS})
-                                    </span>
-                                    {sentAt && (
-                                      <span className="re-email-date">
-                                        {fmt.date(sentAt)}
-                                      </span>
-                                    )}
-                                    {isReAbandoned && (
-                                      <span className="re-flag re-flag--reabandoned">
-                                        Re-abn
-                                      </span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="re-status-pill re-status-pill--unsent">
-                                    Not sent
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="re-td-date">
-                              {fmt.hours(
-                                ab.abandonedAt
-                                  ? (now - new Date(ab.abandonedAt).getTime()) / 3_600_000
-                                  : null
-                              )}
-                            </td>
-                            <td>
-                              <SendButton checkoutId={c._id} now={now} />
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* ── Pagination ──────────────────────────────────── */}
-                {pagination.totalPages > 1 && (
-                  <div className="re-pagination">
-                    <button
-                      className="re-btn re-btn--ghost re-btn--sm"
-                      onClick={() => handlePageChange(filters.page - 1)}
-                      disabled={!pagination.hasPrevPage || isLoading}
-                    >
-                      Previous
-                    </button>
-                    <span className="re-page-info">
-                      Page {pagination.currentPage} of {pagination.totalPages}
-                    </span>
-                    <button
-                      className="re-btn re-btn--ghost re-btn--sm"
-                      onClick={() => handlePageChange(filters.page + 1)}
-                      disabled={!pagination.hasNextPage || isLoading}
-                    >
-                      Next
-                    </button>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* ── Bulk select bar ──────────────────────────────────── */}
-          {checkouts.length > 0 && !isFirstLoad && (
-            <div className="re-select-bar">
-              <button
-                className="re-btn re-btn--ghost re-btn--sm"
-                onClick={handleSelectAll}
-                disabled={anySending}
-              >
-                <SelectAll style={{ fontSize: 15 }} />
-                {allSelected ? 'Deselect all' : `Select all (${eligibleForSelectAll.length})`}
-              </button>
-              {selectedIds.length > 0 && (
-                <span className="re-select-hint">
-                  {eligibleCount} of {selectedIds.length} selected are eligible to send
-                </span>
-              )}
-            </div>
-          )}
 
         </div>
       </div>
 
-      {/* ── Modals ─────────────────────────────────────────────── */}
-      {confirmVisible && (
-        <BulkConfirmModal
-          count={eligibleCount}
-          estimatedSeconds={estimatedSeconds}
-          onConfirm={handleConfirmBulk}
-          onCancel={() => setShowConfirm(false)}
-          sending={bulkStatus === 'sending'}
-        />
-      )}
-
-      {showResults && (
-        <BulkResultsModal
-          results={bulkResults}
-          message={bulkMessage}
-          onClose={handleCloseResults}
-        />
-      )}
+      <Footer />
     </>
   );
 }

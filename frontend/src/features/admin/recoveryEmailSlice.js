@@ -1,88 +1,88 @@
-import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import axios from 'axios';
 
-// ============================================
-// CONSTANTS
-// ============================================
+const API = '/api/v1';
 
-const BASE = '/api/v1/checkout/recovery-email';
-const LIST = '/api/v1/analytics/checkout/abandoned-list';
+const isAbortError = (e) =>
+  e?.code === 'ERR_CANCELED' || e?.name === 'AbortError' || e?.name === 'CanceledError';
 
 // ============================================
-// ASYNC THUNKS
+// THUNKS
 // ============================================
 
-/**
- * Fetch the abandoned checkouts list for the recovery email page.
- * Named fetchRecoveryEmailList (not fetchAbandonedCheckouts) to avoid
- * conflict with the identically-named thunk in operationsSlice.js.
- */
-export const fetchRecoveryEmailList = createAsyncThunk(
-  'recoveryEmail/fetchRecoveryEmailList',
-  async (params = {}, { rejectWithValue, signal }) => {
-    try {
-      const { data } = await axios.get(LIST, { params, signal });
-      return data;
-    } catch (err) {
-      if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError') {
-        return rejectWithValue({ aborted: true });
-      }
-      return rejectWithValue(
-        err.response?.data?.message || err.message || 'Failed to fetch abandoned checkouts'
-      );
-    }
-  }
-);
-
-// In recoveryEmailSlice.js
-
-export const sendSingleEmail = createAsyncThunk(
-  'recoveryEmail/sendSingleEmail',
+export const sendRecoveryEmail = createAsyncThunk(
+  'recovery/sendEmail',
   async (checkoutId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.post(
-        `/api/v1/checkout/recovery-email/${checkoutId}/send`
-      );
+      const { data } = await axios.post(`${API}/recovery/send`, { checkoutId }, { withCredentials: true });
       return { checkoutId, ...data };
     } catch (err) {
-      const responseData = err.response?.data;
-
-      if (err.response?.status === 400 && responseData?.skipped) {
-        return rejectWithValue({
-          checkoutId,          // ← always include checkoutId
-          skipped: true,
-          reason: responseData.reason || 'Send not allowed at this time',
-        });
-      }
-
-      // Always return checkoutId so the rejected reducer can find the row
       return rejectWithValue({
-        checkoutId,            // ← always include checkoutId
-        skipped: false,
-        error:
-          responseData?.error ||
-          responseData?.message ||
-          err.message ||
-          'Failed to send recovery email',
+        checkoutId,
+        message:         err.response?.data?.message || 'Failed to send recovery email',
+        nextAvailableAt: err.response?.data?.nextAvailableAt || null,
+        status:          err.response?.status || 500,
       });
     }
   }
 );
 
-/**
- * Send bulk recovery emails.
- * Always resolves — the API returns 200 even with partial failures.
- */
-export const sendBulkEmails = createAsyncThunk(
-  'recoveryEmail/sendBulkEmails',
-  async (checkoutIds, { rejectWithValue }) => {
+export const fetchRecoveryStatus = createAsyncThunk(
+  'recovery/fetchStatus',
+  async (checkoutId, { rejectWithValue, signal }) => {
     try {
-      const { data } = await axios.post(`${BASE}/bulk-send`, { checkoutIds });
-      return { ...data, requestedIds: checkoutIds };
+      const { data } = await axios.get(`${API}/recovery/status/${checkoutId}`, { withCredentials: true, signal });
+      return { checkoutId, status: data.status };
     } catch (err) {
-      return rejectWithValue(
-        err.response?.data?.message || err.message || 'Bulk send request failed'
-      );
+      if (isAbortError(err)) return rejectWithValue({ aborted: true });
+      return rejectWithValue({ checkoutId, message: err.response?.data?.message || 'Failed to fetch status' });
+    }
+  }
+);
+
+export const fetchSendList = createAsyncThunk(
+  'recovery/fetchSendList',
+  async (params = {}, { rejectWithValue, signal }) => {
+    try {
+      const query = new URLSearchParams({
+        page:    params.page    || 1,
+        limit:   params.limit   || 20,
+        sortBy:  params.sortBy  || 'priority',
+        minValue: params.minValue || 0,
+        hours:   params.hours   || 720,
+        ...(params.outcome && params.outcome !== 'all' && { outcome: params.outcome }),
+        ...(params.search  && { search: params.search }),
+      });
+      const { data } = await axios.get(`${API}/recovery/send-list?${query}`, { withCredentials: true, signal });
+      return data;
+    } catch (err) {
+      if (isAbortError(err)) return rejectWithValue({ aborted: true });
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch abandoned carts');
+    }
+  }
+);
+
+export const fetchRecoveryAnalytics = createAsyncThunk(
+  'recovery/fetchAnalytics',
+  async (timeframe = 'month', { rejectWithValue, signal }) => {
+    try {
+      const { data } = await axios.get(`${API}/recovery/analytics?timeframe=${timeframe}`, { withCredentials: true, signal });
+      return { ...data, _timeframe: timeframe };
+    } catch (err) {
+      if (isAbortError(err)) return rejectWithValue({ aborted: true });
+      return rejectWithValue(err.response?.data?.message || 'Failed to fetch analytics');
+    }
+  }
+);
+
+export const resolveRecoveryOutcome = createAsyncThunk(
+  'recovery/resolveOutcome',
+  async ({ checkoutId, outcome }, { rejectWithValue }) => {
+    try {
+      const { data } = await axios.post(`${API}/recovery/resolve/${checkoutId}`, { outcome }, { withCredentials: true });
+      return { checkoutId, outcome, ...data };
+    } catch (err) {
+      return rejectWithValue({ checkoutId, message: err.response?.data?.message || 'Failed to resolve outcome' });
     }
   }
 );
@@ -92,314 +92,186 @@ export const sendBulkEmails = createAsyncThunk(
 // ============================================
 
 const initialState = {
-  // ── Abandoned checkouts list ───────────────────────────────────────────
-  checkouts:  [],
-  pagination: {
-    currentPage:    1,
-    totalPages:     1,
-    totalCheckouts: 0,
-    hasNextPage:    false,
-    hasPrevPage:    false,
-  },
-  listSummary: {
-    totalValue:            0,
-    avgValue:              0,
-    highPriorityCheckouts: 0,
-    reAbandonedCount:      0,
-  },
+  // Send list (left panel)
+  sendList:       [],
+  pagination:     { currentPage: 1, totalPages: 1, total: 0, hasNextPage: false, hasPrevPage: false },
+  sendListSummary: { totalMatchingCarts: 0, neverContacted: 0, awaitingResponse: 0, clickedNotConverted: 0, reAbandoned: 0 },
+  sendListLoading: false,
+  sendListError:   null,
 
-  listStatus: 'idle',   // 'idle' | 'loading' | 'succeeded' | 'failed'
-  listError:  null,
+  // Per-checkout email status (keyed by checkoutId)
+  statusByCheckout: {},
+  statusLoading:    {},
 
-  // ── Active filters / pagination params ────────────────────────────────
-  filters: {
-    hours:       720,        // 30 days default — wider net for email recovery
-    minValue:    0,
-    limit:       50,
-    page:        1,
-    sortBy:      'priority',
-    emailSent:   undefined,  // undefined = all, 'true' = sent, 'false' = unsent
-    recovered:   undefined,
-    reAbandoned: undefined,
-  },
+  // Send action (per-checkout loading/error/result)
+  sendLoading: {},
+  sendError:   {},
+  sendResult:  {},
 
-  // ── Per-checkout send state ────────────────────────────────────────────
-  // Keyed by checkoutId string.
-  // { status: 'idle'|'sending'|'sent'|'skipped'|'failed',
-  //   emailCount, sentAt, attempt, messageId, reason, error }
-  sendStates: {},
+  // Analytics
+  analytics:        null,
+  analyticsLoading: false,
+  analyticsError:   null,
+  analyticsTimeframe: 'month',
 
-  // ── Bulk send ─────────────────────────────────────────────────────────
-  bulkStatus:  'idle',  // 'idle' | 'sending' | 'succeeded' | 'failed'
-  bulkResults: null,    // { sent[], skipped[], failed[], summary }
-  bulkError:   null,
-  bulkMessage: null,
+  // Resolve outcome (per-checkout)
+  resolveLoading: {},
 
-  // ── Row selection for bulk send ────────────────────────────────────────
-  selectedIds: [],
+  // Global
+  error:   null,
+  success: false,
+  message: null,
 };
 
 // ============================================
 // SLICE
 // ============================================
 
-const recoveryEmailSlice = createSlice({
-  name: 'recoveryEmail',
+const recoverySlice = createSlice({
+  name: 'recovery',
   initialState,
-
   reducers: {
-    // ── Filters ──────────────────────────────────────────────────────────
-
-    setFilters(state, action) {
-      const incoming   = action.payload;
-      const pageOnly   = Object.keys(incoming).length === 1 && 'page' in incoming;
-      state.filters    = {
-        ...state.filters,
-        ...incoming,
-        page: pageOnly ? incoming.page : 1,
-      };
-    },
-
-    resetFilters(state) {
-      state.filters     = initialState.filters;
-      state.selectedIds = [];
-    },
-
-    // ── Row selection ─────────────────────────────────────────────────────
-
-    toggleSelectId(state, action) {
-      const id  = action.payload;
-      const idx = state.selectedIds.indexOf(id);
-      if (idx === -1) {
-        state.selectedIds.push(id);
-      } else {
-        state.selectedIds.splice(idx, 1);
-      }
-    },
-
-    selectAllIds(state) {
-      state.selectedIds = state.checkouts
-        .filter(c => !c.conversion?.isConverted && !c.abandonment?.recovered)
-        .map(c => c._id);
-    },
-
-    clearSelection(state) {
-      state.selectedIds = [];
-    },
-
-    // ── Bulk send UI ──────────────────────────────────────────────────────
-
-    resetBulkState(state) {
-      state.bulkStatus  = 'idle';
-      state.bulkResults = null;
-      state.bulkError   = null;
-      state.bulkMessage = null;
-    },
-
-    // ── Per-row retry support ─────────────────────────────────────────────
-
-    resetSendState(state, action) {
+    clearSendError: (state, action) => {
       const id = action.payload;
-      if (state.sendStates[id]) {
-        state.sendStates[id] = { status: 'idle' };
-      }
+      if (id) delete state.sendError[id];
+      else     state.sendError = {};
     },
-
-    clearAllSendStates(state) {
-      state.sendStates = {};
+    clearSuccess: (state) => {
+      state.success = false;
+      state.message = null;
+    },
+    setAnalyticsTimeframe: (state, action) => {
+      state.analyticsTimeframe = action.payload;
     },
   },
 
   extraReducers: (builder) => {
-
-    // ── fetchRecoveryEmailList ────────────────────────────────────────────
-
+    // ── Send list ─────────────────────────────────────────────
     builder
-      .addCase(fetchRecoveryEmailList.pending, (state) => {
-        state.listStatus = 'loading';
-        state.listError  = null;
+      .addCase(fetchSendList.pending, (state) => {
+        state.sendListLoading = true;
+        state.sendListError   = null;
       })
-      .addCase(fetchRecoveryEmailList.fulfilled, (state, action) => {
-        state.listStatus  = 'succeeded';
-        state.checkouts   = action.payload.abandonedCheckouts || [];
-        state.pagination  = action.payload.pagination         || initialState.pagination;
-        state.listSummary = action.payload.summary            || initialState.listSummary;
+      .addCase(fetchSendList.fulfilled, (state, action) => {
+        state.sendListLoading   = false;
+        state.sendList          = action.payload.items || [];
+        state.pagination        = action.payload.pagination || initialState.pagination;
+        state.sendListSummary   = action.payload.summary    || initialState.sendListSummary;
       })
-      .addCase(fetchRecoveryEmailList.rejected, (state, action) => {
+      .addCase(fetchSendList.rejected, (state, action) => {
         if (action.payload?.aborted) return;
-        state.listStatus = 'failed';
-        state.listError  = action.payload || 'Unknown error';
+        state.sendListLoading = false;
+        state.sendListError   = action.payload;
       });
 
-    // ── sendSingleEmail ───────────────────────────────────────────────────
-
+    // ── Per-checkout status ───────────────────────────────────
     builder
-      .addCase(sendSingleEmail.pending, (state, action) => {
+      .addCase(fetchRecoveryStatus.pending, (state, action) => {
         const id = action.meta.arg;
-        state.sendStates[id] = { status: 'sending' };
+        state.statusLoading[id] = true;
       })
-      .addCase(sendSingleEmail.fulfilled, (state, action) => {
-        const { checkoutId, emailCount, sentAt, attempt, messageId } = action.payload;
-
-        state.sendStates[checkoutId] = {
-          status: 'sent',
-          emailCount,
-          sentAt,
-          attempt,
-          messageId,
-        };
-
-        // Patch the list item so the row is immediately accurate — no refetch needed
-        const checkout = state.checkouts.find(c => c._id === checkoutId);
-        if (checkout) {
-          if (!checkout.abandonment) checkout.abandonment = {};
-          checkout.abandonment.recoveryEmailSent   = true;
-          checkout.abandonment.recoveryEmailCount  = emailCount;
-          checkout.abandonment.recoveryEmailSentAt = sentAt;
-        }
+      .addCase(fetchRecoveryStatus.fulfilled, (state, action) => {
+        const { checkoutId, status } = action.payload;
+        state.statusLoading[checkoutId]    = false;
+        state.statusByCheckout[checkoutId] = status;
       })
-      .addCase(sendSingleEmail.rejected, (state, action) => {
-        const checkoutId = action.payload?.checkoutId ?? action.meta.arg;
-
-        if (!checkoutId) return;
-
-        const payload = action.payload;
-
-        if (!payload) {
-          state.sendStates[checkoutId] = {
-            status: 'failed',
-            error: action.error?.message || 'Request failed',
-          };
-          return;
-        }
-
-        state.sendStates[checkoutId] = payload.skipped
-          ? { status: 'skipped', reason: payload.reason }
-          : { status: 'failed', error: payload.error || 'Unknown error' };
+      .addCase(fetchRecoveryStatus.rejected, (state, action) => {
+        if (action.payload?.aborted) return;
+        const id = action.payload?.checkoutId || action.meta.arg;
+        state.statusLoading[id] = false;
       });
 
-    // ── sendBulkEmails ────────────────────────────────────────────────────
-
+    // ── Send email ────────────────────────────────────────────
     builder
-      .addCase(sendBulkEmails.pending, (state) => {
-        state.bulkStatus  = 'sending';
-        state.bulkError   = null;
-        state.bulkResults = null;
-        state.bulkMessage = null;
+      .addCase(sendRecoveryEmail.pending, (state, action) => {
+        const id = action.meta.arg;
+        state.sendLoading[id] = true;
+        state.sendError[id]   = null;
+      })
+      .addCase(sendRecoveryEmail.fulfilled, (state, action) => {
+        const { checkoutId, attemptNumber, sentAt, nextAvailableAt, cartSnapshot } = action.payload;
+        state.sendLoading[checkoutId] = false;
+        state.sendResult[checkoutId]  = { attemptNumber, sentAt, nextAvailableAt, cartSnapshot };
+        state.success = true;
+        state.message = `Recovery email sent (attempt ${attemptNumber})`;
 
-        for (const id of state.selectedIds) {
-          state.sendStates[id] = { status: 'sending' };
+        // Optimistically update statusByCheckout
+        if (state.statusByCheckout[checkoutId]) {
+          state.statusByCheckout[checkoutId].confirmedAttempts = attemptNumber;
+          state.statusByCheckout[checkoutId].lastSentAt        = sentAt;
+          state.statusByCheckout[checkoutId].nextAvailableAt   = nextAvailableAt;
+          state.statusByCheckout[checkoutId].outcome            = 'sent';
         }
       })
-      .addCase(sendBulkEmails.fulfilled, (state, action) => {
-        const { results, summary, message, requestedIds } = action.payload;
+      .addCase(sendRecoveryEmail.rejected, (state, action) => {
+        const { checkoutId, message, nextAvailableAt } = action.payload;
+        state.sendLoading[checkoutId] = false;
+        state.sendError[checkoutId]   = { message, nextAvailableAt };
+      });
 
-        state.bulkStatus  = 'succeeded';
-        state.bulkResults = { ...results, summary };
-        state.bulkMessage = message;
-        state.selectedIds = [];
-
-        for (const item of (results?.sent || [])) {
-          state.sendStates[item.id] = {
-            status:     'sent',
-            emailCount: item.emailCount,
-            sentAt:     item.sentAt,
-            attempt:    item.attempt,
-            messageId:  item.messageId,
-          };
-          const checkout = state.checkouts.find(c => c._id === item.id);
-          if (checkout) {
-            if (!checkout.abandonment) checkout.abandonment = {};
-            checkout.abandonment.recoveryEmailSent   = true;
-            checkout.abandonment.recoveryEmailCount  = item.emailCount;
-            checkout.abandonment.recoveryEmailSentAt = item.sentAt;
-          }
-        }
-
-        for (const item of (results?.skipped || [])) {
-          state.sendStates[item.id] = { status: 'skipped', reason: item.reason };
-        }
-
-        for (const item of (results?.failed || [])) {
-          state.sendStates[item.id] = { status: 'failed', error: item.error };
-        }
-
-        // Guard: any requested ID missing from all result buckets
-        const accounted = new Set([
-          ...(results?.sent    || []).map(i => i.id),
-          ...(results?.skipped || []).map(i => i.id),
-          ...(results?.failed  || []).map(i => i.id),
-        ]);
-        for (const id of (requestedIds || [])) {
-          if (!accounted.has(id)) {
-            state.sendStates[id] = { status: 'failed', error: 'No result returned from server' };
-          }
-        }
+    // ── Analytics ─────────────────────────────────────────────
+    builder
+      .addCase(fetchRecoveryAnalytics.pending, (state) => {
+        state.analyticsLoading = true;
+        state.analyticsError   = null;
       })
-      .addCase(sendBulkEmails.rejected, (state, action) => {
-        state.bulkStatus = 'failed';
-        state.bulkError  = action.payload || 'Bulk send request failed';
+      .addCase(fetchRecoveryAnalytics.fulfilled, (state, action) => {
+        const { _timeframe, ...data } = action.payload;
+        state.analyticsLoading  = false;
+        state.analytics         = data;
+        state.analyticsTimeframe = _timeframe;
+      })
+      .addCase(fetchRecoveryAnalytics.rejected, (state, action) => {
+        if (action.payload?.aborted) return;
+        state.analyticsLoading = false;
+        state.analyticsError   = action.payload;
+      });
 
-        // Clear stuck 'sending' rows back to idle so admin can retry
-        for (const id of state.selectedIds) {
-          if (state.sendStates[id]?.status === 'sending') {
-            state.sendStates[id] = { status: 'idle' };
-          }
+    // ── Resolve outcome ───────────────────────────────────────
+    builder
+      .addCase(resolveRecoveryOutcome.pending, (state, action) => {
+        const { checkoutId } = action.meta.arg;
+        state.resolveLoading[checkoutId] = true;
+      })
+      .addCase(resolveRecoveryOutcome.fulfilled, (state, action) => {
+        const { checkoutId, outcome } = action.payload;
+        state.resolveLoading[checkoutId] = false;
+        if (state.statusByCheckout[checkoutId]) {
+          state.statusByCheckout[checkoutId].outcome = outcome;
+        }
+        state.success = true;
+        state.message = `Outcome set to '${outcome}'`;
+      })
+      .addCase(resolveRecoveryOutcome.rejected, (state, action) => {
+        if (!action.payload?.aborted) {
+          const { checkoutId } = action.payload || {};
+          if (checkoutId) state.resolveLoading[checkoutId] = false;
         }
       });
   },
 });
 
-// ============================================
-// ACTIONS
-// ============================================
+export const { clearSendError, clearSuccess, setAnalyticsTimeframe } = recoverySlice.actions;
 
-export const {
-  setFilters,
-  resetFilters,
-  toggleSelectId,
-  selectAllIds,
-  clearSelection,
-  resetBulkState,
-  resetSendState,
-  clearAllSendStates,
-} = recoveryEmailSlice.actions;
+// ── Selectors ─────────────────────────────────────────────────
+export const selectSendList          = (s) => s.recovery.sendList;
+export const selectSendListLoading   = (s) => s.recovery.sendListLoading;
+export const selectSendListError     = (s) => s.recovery.sendListError;
+export const selectPagination        = (s) => s.recovery.pagination;
+export const selectSendListSummary   = (s) => s.recovery.sendListSummary;
 
-// ============================================
-// SELECTORS
-// ============================================
+export const selectStatusFor         = (id) => (s) => s.recovery.statusByCheckout[id] || null;
+export const selectSendLoadingFor    = (id) => (s) => s.recovery.sendLoading[id]       || false;
+export const selectSendErrorFor      = (id) => (s) => s.recovery.sendError[id]         || null;
+export const selectSendResultFor     = (id) => (s) => s.recovery.sendResult[id]        || null;
+export const selectResolveLoadingFor = (id) => (s) => s.recovery.resolveLoading[id]    || false;
 
-export const selectRecoveryCheckouts   = (state) => state.recoveryEmail.checkouts;
-export const selectRecoveryListStatus  = (state) => state.recoveryEmail.listStatus;
-export const selectRecoveryListError   = (state) => state.recoveryEmail.listError;
-export const selectRecoveryPagination  = (state) => state.recoveryEmail.pagination;
-export const selectRecoveryListSummary = (state) => state.recoveryEmail.listSummary;
-export const selectRecoveryFilters     = (state) => state.recoveryEmail.filters;
-export const selectSelectedIds         = (state) => state.recoveryEmail.selectedIds;
-export const selectBulkStatus          = (state) => state.recoveryEmail.bulkStatus;
-export const selectBulkResults         = (state) => state.recoveryEmail.bulkResults;
-export const selectBulkError           = (state) => state.recoveryEmail.bulkError;
-export const selectBulkMessage         = (state) => state.recoveryEmail.bulkMessage;
+export const selectAnalytics         = (s) => s.recovery.analytics;
+export const selectAnalyticsLoading  = (s) => s.recovery.analyticsLoading;
+export const selectAnalyticsError    = (s) => s.recovery.analyticsError;
+export const selectAnalyticsTimeframe = (s) => s.recovery.analyticsTimeframe;
 
-export const selectSendState = (checkoutId) => (state) =>
-  state.recoveryEmail.sendStates[checkoutId] || { status: 'idle' };
+export const selectSuccess           = (s) => s.recovery.success;
+export const selectMessage           = (s) => s.recovery.message;
 
-export const selectAnySending = (state) => {
-  const singleSending = Object.values(state.recoveryEmail.sendStates)
-    .some(s => s.status === 'sending');
-  return singleSending || state.recoveryEmail.bulkStatus === 'sending';
-};
-
-export const selectEligibleSelectedCount = (state) => {
-  const { selectedIds, sendStates, checkouts } = state.recoveryEmail;
-  return selectedIds.filter(id => {
-    if (sendStates[id]?.status === 'sending') return false;
-    const checkout = checkouts.find(c => c._id === id);
-    if (!checkout) return false;
-    if (checkout.conversion?.isConverted)   return false;
-    if (checkout.abandonment?.recovered)    return false;
-    return true;
-  }).length;
-};
-
-export default recoveryEmailSlice.reducer;
+export default recoverySlice.reducer;
