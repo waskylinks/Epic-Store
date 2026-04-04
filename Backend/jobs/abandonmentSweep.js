@@ -1,71 +1,85 @@
-import cron from 'node-cron';
+import cron              from 'node-cron';
 import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
-
-const CRON_SCHEDULE_PRODUCTION  = '0,30 * * * *';  // every 30 min
-const CRON_SCHEDULE_DEVELOPMENT = '*/5 * * * *';   // every 5 min
-
-const SWEEP_ERROR_ALERT_THRESHOLD =
-  parseInt(process.env.SWEEP_ERROR_ALERT_THRESHOLD) || 5;
-
-let isSweepRunning = false;
-
-const runSweep = async () => {
-  if (isSweepRunning) {
-    console.warn(
-      '[AbandonmentSweep] Previous sweep still running — skipping this interval.'
-    );
-    return;
-  }
-
-  isSweepRunning = true;
-  const startedAt = new Date();
-
-  try {
-    const { marked, errors, reAbandoned } = await markStaleCheckouts();
-
-    const durationMs = Date.now() - startedAt.getTime();
-
-    console.log(
-      `[AbandonmentSweep] Completed at ${new Date().toISOString()} ` +
-      `| marked: ${marked} | reAbandoned: ${reAbandoned} | errors: ${errors} | duration: ${durationMs}ms`
-    );
-
-    if (errors > SWEEP_ERROR_ALERT_THRESHOLD) {
-      console.error(
-        `[AbandonmentSweep] ERROR THRESHOLD EXCEEDED — ${errors} checkout(s) failed to mark abandoned ` +
-        `in the sweep at ${new Date().toISOString()}. Investigate immediately.`
-      );
-    }
-  } catch (err) {
+import { runCronJob }    from '../utils/runCronJob.js';
+import { sendCronAlert } from '../utils/cronAlert.js';
+import { cronConfig }    from '../config/cronConfig.js';
+ 
+let cronJob = null;
+ 
+// ─────────────────────────────────────────────────────────────────────────────
+// CORE LOGIC
+// ─────────────────────────────────────────────────────────────────────────────
+ 
+async function runSweep() {
+  const { marked, errors, reAbandoned } = await markStaleCheckouts();
+ 
+  const durationMs = undefined; // runCronJob tracks this
+ 
+  console.log(
+    `[AbandonmentSweep] marked: ${marked} | reAbandoned: ${reAbandoned} | errors: ${errors}`
+  );
+ 
+  const threshold = cronConfig.abandonmentSweep.errorAlertThreshold;
+ 
+  if (errors > threshold) {
     console.error(
-      `[AbandonmentSweep] Sweep failed at ${new Date().toISOString()}:`,
-      err.message
+      `[AbandonmentSweep] ERROR THRESHOLD EXCEEDED — ${errors} checkout(s) failed to mark abandoned. ` +
+      `Threshold: ${threshold}. Investigate immediately.`
     );
-  } finally {
-    isSweepRunning = false;
+ 
+    // Fire Slack alert for threshold breach (separate from run-level failure)
+    await sendCronAlert({
+      jobName:  'AbandonmentSweep',
+      runId:    `sweep_threshold_${Date.now()}`,
+      status:   'warning',
+      severity: 'warning',
+      message:  `Error threshold exceeded: ${errors} checkout(s) failed to mark abandoned (threshold: ${threshold})`,
+      counts:   { marked, reAbandoned, errors },
+    });
   }
-};
-
-export const startAbandonmentSweep = () => {
+ 
+  return { marked, reAbandoned, errors };
+}
+ 
+// ─────────────────────────────────────────────────────────────────────────────
+// START / STOP
+// ─────────────────────────────────────────────────────────────────────────────
+ 
+export function startAbandonmentSweep() {
   const isProd        = process.env.NODE_ENV === 'production';
-  const schedule      = isProd ? CRON_SCHEDULE_PRODUCTION : CRON_SCHEDULE_DEVELOPMENT;
+  const schedule      = isProd
+    ? cronConfig.abandonmentSweep.scheduleProduction
+    : cronConfig.abandonmentSweep.scheduleDevelopment;
   const intervalLabel = isProd ? '30 minutes' : '5 minutes';
-
+ 
   console.log(
     `[AbandonmentSweep] Starting — environment: ${process.env.NODE_ENV || 'development'}, ` +
     `interval: ${intervalLabel}, ` +
-    `errorAlertThreshold: ${SWEEP_ERROR_ALERT_THRESHOLD}`
+    `errorAlertThreshold: ${cronConfig.abandonmentSweep.errorAlertThreshold}`
   );
-
-  // Schedule the recurring job
-  cron.schedule(schedule, runSweep, {
-    scheduled: true,
-    timezone:  'UTC'
+ 
+  const wrappedFn = runCronJob({
+    jobName:     'AbandonmentSweep',
+    jobFn:       runSweep,
+    alertOnFail: true,
   });
-
-  // Run once immediately on boot so stale checkouts don't survive a restart
-  console.log('[AbandonmentSweep] Running initial sweep on boot...');
-  runSweep();
-};
-
+ 
+  cronJob = cron.schedule(schedule, wrappedFn, {
+    scheduled: true,
+    timezone:  cronConfig.global.timezone,
+  });
+ 
+  // Run once immediately on boot
+  console.log('[AbandonmentSweep] Running initial sweep on boot…');
+  wrappedFn();
+}
+ 
+export function stopAbandonmentSweep() {
+  if (cronJob) {
+    cronJob.stop();
+    cronJob = null;
+    console.log('[AbandonmentSweep] Stopped');
+  }
+}
+ 
 export default startAbandonmentSweep;
