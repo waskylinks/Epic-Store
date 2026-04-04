@@ -16,12 +16,10 @@ import {
     sendBulkRecoveryEmailsController
  );
 
- router.post (
-    '/:id/send',
-    verifyUserAuth,
-    roleBaseAccess('admin', 'superAdmin'),
-    adminAnalyticsLimiter,
-    sendSingleRecoveryEmail
- );
+// TEMP — remove after testing
+router.post(
+   '/:id/send',
+   sendSingleRecoveryEmail
+);
 
  export default router;

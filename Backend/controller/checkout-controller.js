@@ -267,8 +267,23 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Unauthorized", 403));
   }
 
+  // ── Idempotency guard ─────────────────────────────────────────────────────
+  // If already abandoned (e.g. duplicate request, double-click, page unload
+  // firing twice), return success silently — abandonment is a one-way
+  // operation and calling it again should be a no-op, not an error.
+  if (checkout.status === 'abandoned') {
+    return res.status(200).json({
+      success: true,
+      message: "Checkout already abandoned"
+    });
+  }
+
+  // Only pending checkouts can be abandoned. Completed or other terminal
+  // states should surface a clear error rather than a silent swallow.
   if (checkout.status !== 'pending') {
-    return next(new HandleError("Checkout is not pending", 400));
+    return next(new HandleError(
+      `Cannot abandon a checkout with status: ${checkout.status}`, 400
+    ));
   }
 
   checkout.markAsAbandoned();
