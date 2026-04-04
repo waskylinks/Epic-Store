@@ -25,13 +25,21 @@ const attemptSchema = new mongoose.Schema(
     },
 
     // ── Send lifecycle ────────────────────────────────────────────────────────
-    // pending → send initiated, mailer not yet confirmed
-    // sent    → mailer confirmed delivery (acknowledgeSent called)
-    // failed  → mailer threw, attempt rolled back (recordSendFailure called)
     status: {
       type:    String,
       enum:    ['pending', 'sent', 'failed'],
       default: 'pending',
+    },
+
+    // ── Attribution ───────────────────────────────────────────────────────────
+    // Records whether this attempt was triggered manually by an admin
+    // or automatically by the recovery email cron job.
+    // Useful for debugging ("why did this customer get 3 emails?")
+    // and for analytics ("do cron sends convert better than manual sends?").
+    sentBy: {
+      type:    String,
+      enum:    ['admin', 'cron'],
+      default: 'admin',
     },
 
     initiatedAt: { type: Date, default: Date.now },
@@ -39,32 +47,21 @@ const attemptSchema = new mongoose.Schema(
     failReason:  String,
 
     // ── Token ─────────────────────────────────────────────────────────────────
-    // token is select:false — never returned in default queries.
-    // Load with .select('+attempts.token') only when the mailer needs it.
     token: {
       type:   String,
       select: false,
     },
 
-    // jti (JWT ID) — safe to expose, used for per-click attribution.
-    // Matches the 'jti' claim in the signed JWT so redeemRecoveryToken
-    // can call recordLinkClick(decoded.jti) without any extra lookup.
     tokenId:       String,
     tokenIssuedAt: Date,
     tokenExpiresAt: Date,
 
-    // True when the token expired without ever being clicked.
-    // Written by markTokenExpired(), called from redeemRecoveryToken
-    // on a TokenExpiredError so analytics can distinguish "never opened"
-    // from "expired after clicking".
     tokenExpiredUnclicked: { type: Boolean, default: false },
 
     // ── Link interaction ──────────────────────────────────────────────────────
     linkClickedAt:  Date,
     linkClickCount: { type: Number, default: 0 },
 
-    // Checkout step at the moment the link was clicked.
-    // Lets analytics compare funnel entry point vs final drop-off step.
     checkoutStepAtClick: String,
   },
   { _id: true }
@@ -95,9 +92,6 @@ const recoveryEmailSchema = new mongoose.Schema(
     },
 
     // ── Attempt log ───────────────────────────────────────────────────────────
-    // One entry per admin-triggered send attempt.
-    // Capped at 10 at the schema level (env MAX_RECOVERY_ATTEMPTS caps at 3
-    // by default — the 10 here is a hard safety ceiling, not the business rule).
     attempts: {
       type:     [attemptSchema],
       default:  [],
@@ -108,42 +102,14 @@ const recoveryEmailSchema = new mongoose.Schema(
     },
 
     // ── Fast-read aggregate fields ────────────────────────────────────────────
-    // Maintained by instance methods so the admin list, RecoveryEmailButton,
-    // and canSend logic never need to reduce the attempts array.
-
-    // Count of CONFIRMED attempts (sent + failed, excluding in-flight pending).
-    // Failed attempts are rolled back by recordSendFailure so they don't
-    // permanently burn a slot — only sent attempts count against the limit.
     confirmedAttempts: { type: Number, default: 0 },
-
-    // True while a send has been initiated but not yet ack'd by the mailer.
-    // Cleared by acknowledgeSent (success) or recordSendFailure (failure).
-    // Prevents double-sends from rapid admin clicks or network retries.
-    pendingAck: { type: Boolean, default: false, index: true },
-
-    // Most recent confirmed sentAt — used for cooldown calculations.
-    lastSentAt: { type: Date, index: true },
-
-    // tokenId (jti) of the most recently initiated attempt.
-    // Used by acknowledgeSent / recordSendFailure / markTokenExpired
-    // to locate the right attempt without iterating the full array.
-    lastTokenId: String,
-
-    // Stored total link clicks across ALL attempts.
-    // Maintained by recordLinkClick() so aggregation sorts are index-friendly.
-    // The totalLinkClicks virtual (below) derives the same value but is
-    // not usable in aggregation pipelines — this field is.
-    totalLinkClicks: { type: Number, default: 0, index: true },
-
-    // attemptNumber of the attempt whose link was most recently clicked.
-    // Used by the checkout controller to attribute a recovery session back
-    // to a specific email send for ROI and attribution reporting.
+    pendingAck:        { type: Boolean, default: false, index: true },
+    lastSentAt:        { type: Date, index: true },
+    lastTokenId:       String,
+    totalLinkClicks:   { type: Number, default: 0, index: true },
     lastClickedAttemptNumber: Number,
 
     // ── Cart snapshot ─────────────────────────────────────────────────────────
-    // Lightweight frozen copy of the cart at the moment of the FIRST send.
-    // Passed directly to buildRecoveryEmailHtml — no full checkout load needed
-    // for re-sends. Written once by takeCartSnapshot(); subsequent calls no-op.
     cartSnapshot: {
       items: [{
         product:  mongoose.Schema.Types.ObjectId,
@@ -161,24 +127,14 @@ const recoveryEmailSchema = new mongoose.Schema(
         discountAmount: Number,
         currency:       { type: String, default: 'USD' },
       },
-      customerName: String,  // firstName + lastName at first send time
+      customerName: String,
       snapshotAt:   Date,
     },
 
     // ── Outcome ───────────────────────────────────────────────────────────────
-    // Terminal state for the entire recovery email campaign for this checkout.
+    // Terminal state for the entire recovery campaign.
     // Set once via resolveOutcome() — never overwritten after a terminal state.
-    //
-    //  pending      → record created, no email sent yet
-    //  sent         → at least one email delivered, awaiting user action
-    //  clicked      → recovery link clicked, cart restored, not yet converted
-    //  converted    → checkout paid — email campaign contributed
-    //  organic      → checkout paid WITHOUT an active recovery session
-    //                 (user returned independently despite email being sent)
-    //  re_abandoned → user clicked the link but abandoned again without paying
-    //  expired      → all tokens expired without being clicked
-    //  exhausted    → max attempts reached, checkout still abandoned
-    //  failed       → every send attempt failed at the mailer level
+    // See _resolveOutcome() for the race-condition fix.
     outcome: {
       type:    String,
       enum:    [
@@ -202,58 +158,57 @@ const recoveryEmailSchema = new mongoose.Schema(
 // INDEXES
 // ============================================
 
-// One RecoveryEmail per checkout — enforced at DB level.
 recoveryEmailSchema.index(
   { checkout: 1 },
   { unique: true, name: 'checkout_unique_idx' }
 );
 
-// Send-page list query: filter by outcome, sort by send recency.
 recoveryEmailSchema.index(
   { outcome: 1, confirmedAttempts: 1, lastSentAt: -1 },
   { name: 'send_page_list_idx' }
 );
 
-// Analytics page: date-range queries.
 recoveryEmailSchema.index(
   { outcome: 1, createdAt: -1 },
   { name: 'outcome_created_idx' }
 );
 
-// Sweep: stale pendingAck records (mailer crash recovery).
 recoveryEmailSchema.index(
   { pendingAck: 1, updatedAt: -1 },
   { name: 'pending_ack_sweep_idx' }
 );
 
-// Token click attribution — redeemRecoveryToken looks up by tokenId.
 recoveryEmailSchema.index(
   { 'attempts.tokenId': 1 },
   { name: 'attempt_token_idx' }
 );
 
-// Attribution + ROI analytics by email address.
 recoveryEmailSchema.index(
   { email: 1, outcome: 1 },
   { name: 'email_outcome_idx' }
+);
+
+// ── Cron-specific index ───────────────────────────────────────────────────────
+// Supports getCartsEligibleForCron(): filter active outcomes, sort by lastSentAt
+// for delay-rule evaluation. Without this the cron query scans the full collection.
+recoveryEmailSchema.index(
+  { outcome: 1, lastSentAt: 1, confirmedAttempts: 1 },
+  { name: 'cron_eligibility_idx' }
 );
 
 // ============================================
 // VIRTUALS
 // ============================================
 
-// Most recent attempt — used by RecoveryEmailButton for UI state.
 recoveryEmailSchema.virtual('lastAttempt').get(function () {
   if (!this.attempts?.length) return null;
   return this.attempts[this.attempts.length - 1];
 });
 
-// Has any attempt's link ever been clicked?
 recoveryEmailSchema.virtual('everClicked').get(function () {
   return (this.attempts || []).some(a => !!a.linkClickedAt);
 });
 
-// When the next send becomes available based on cooldown.
 recoveryEmailSchema.virtual('nextAvailableAt').get(function () {
   if (!this.lastSentAt) return null;
   return new Date(
@@ -269,14 +224,8 @@ recoveryEmailSchema.virtual('nextAvailableAt').get(function () {
  * canSend
  * Central gate — all send decisions flow through here.
  * Returns { canSend: Boolean, reason?: String, nextAvailableAt?: Date }
- *
- * The checkout document is passed in so we can check conversion status
- * and doc expiry without this model querying the DB itself.
- *
- * @param {Object} checkout  The related Checkout document
  */
 recoveryEmailSchema.methods.canSend = function (checkout) {
-  // ── Terminal state guards ─────────────────────────────────────────────────
   if (checkout.conversion?.isConverted) {
     return { canSend: false, reason: 'Checkout already converted' };
   }
@@ -289,7 +238,6 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
     };
   }
 
-  // ── In-flight guard ───────────────────────────────────────────────────────
   if (this.pendingAck) {
     const staleThreshold = new Date(
       Date.now() - cfg.staleAckMins() * 60 * 1000
@@ -302,10 +250,8 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
         reason:  'A send is already in progress — please retry in a moment.',
       };
     }
-    // Stale ack: mailer likely crashed — fall through and allow retry.
   }
 
-  // ── Max attempts guard ────────────────────────────────────────────────────
   if (this.confirmedAttempts >= cfg.maxAttempts()) {
     return {
       canSend: false,
@@ -313,7 +259,6 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
     };
   }
 
-  // ── Cooldown guard ────────────────────────────────────────────────────────
   if (this.lastSentAt) {
     const hoursSinceLast =
       (Date.now() - this.lastSentAt.getTime()) / (1000 * 60 * 60);
@@ -328,9 +273,6 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
     }
   }
 
-  // ── Age guard ─────────────────────────────────────────────────────────────
-  // Always measured from firstAbandonedAt so a re-abandonment does not
-  // grant a fresh 7-day window.
   const referenceDate =
     checkout.abandonment?.firstAbandonedAt ||
     checkout.abandonment?.abandonedAt;
@@ -347,7 +289,6 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
     }
   }
 
-  // ── Doc expiry guard ──────────────────────────────────────────────────────
   if (checkout.expiresAt && new Date(checkout.expiresAt) <= new Date()) {
     return { canSend: false, reason: 'Checkout document has expired' };
   }
@@ -360,27 +301,17 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
  * initiateSend
  * Opens a new attempt slot and generates a signed JWT.
  *
- * CALL PATTERN (enforced by the service):
- *   1. recoveryEmail.initiateSend(checkout)  → get token
- *   2. mailer.send(token)
- *   3a. recoveryEmail.acknowledgeSent()      → mailer succeeded
- *   3b. recoveryEmail.recordSendFailure(err) → mailer failed
- *
- * This three-step pattern prevents the pendingAck deadlock —
- * a mailer crash rolls back cleanly via recordSendFailure.
- *
- * @param   {Object} checkout  The related Checkout document
- * @returns {string}           Signed JWT (pass to mailer, never expose to client)
+ * @param   {Object}            checkout  The related Checkout document
+ * @param   {'admin'|'cron'}    sentBy    Attribution label for this attempt
+ * @returns {string}                      Signed JWT
  */
-recoveryEmailSchema.methods.initiateSend = function (checkout) {
+recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'admin') {
   const check = this.canSend(checkout);
   if (!check.canSend) throw new Error(check.reason);
 
   const attemptNumber   = this.confirmedAttempts + 1;
   const tokenTTLSeconds = this._resolveTokenTTL(checkout);
 
-  // Build a jti that encodes enough context to debug attribution issues
-  // without decoding the full JWT.
   const jti = [
     checkout._id.toString(),
     attemptNumber,
@@ -403,6 +334,7 @@ recoveryEmailSchema.methods.initiateSend = function (checkout) {
   this.attempts.push({
     attemptNumber,
     status:        'pending',
+    sentBy,                   // ← attribution stored on the attempt
     initiatedAt:   now,
     token,
     tokenId:       jti,
@@ -413,10 +345,8 @@ recoveryEmailSchema.methods.initiateSend = function (checkout) {
   this.lastTokenId = jti;
   this.pendingAck  = true;
 
-  // Snapshot the cart on the first send only — used by re-send template rendering.
   this.takeCartSnapshot(checkout);
 
-  // Transition outcome forward if still at initial state.
   if (this.outcome === 'pending') {
     this.outcome = 'sent';
   }
@@ -428,8 +358,6 @@ recoveryEmailSchema.methods.initiateSend = function (checkout) {
 /**
  * acknowledgeSent
  * Call after the mailer confirms the email was handed off successfully.
- * Transitions the pending attempt to 'sent', increments confirmedAttempts,
- * and updates lastSentAt for cooldown calculations.
  */
 recoveryEmailSchema.methods.acknowledgeSent = function () {
   const attempt = this._findAttemptByTokenId(this.lastTokenId, 'pending');
@@ -448,11 +376,7 @@ recoveryEmailSchema.methods.acknowledgeSent = function () {
 /**
  * recordSendFailure
  * Call when the mailer throws after initiateSend.
- * Marks the attempt as failed WITHOUT incrementing confirmedAttempts so
- * the admin can retry immediately. The failed attempt remains in the log
- * for observability.
- *
- * @param {string} reason  Error message from the mailer
+ * Does NOT increment confirmedAttempts — admin/cron can retry immediately.
  */
 recoveryEmailSchema.methods.recordSendFailure = function (reason) {
   const attempt = this._findAttemptByTokenId(this.lastTokenId, 'pending');
@@ -464,8 +388,6 @@ recoveryEmailSchema.methods.recordSendFailure = function (reason) {
 
   this.pendingAck = false;
 
-  // Roll outcome back if this was the very first attempt so the record
-  // doesn't appear as 'sent' when nothing was actually delivered.
   if (this.confirmedAttempts === 0) {
     this.outcome = 'pending';
   }
@@ -475,11 +397,6 @@ recoveryEmailSchema.methods.recordSendFailure = function (reason) {
 /**
  * recordLinkClick
  * Call from redeemRecoveryToken after JWT verification.
- * Matches the attempt by jti (from decoded.jti) and logs the interaction.
- *
- * @param   {string} tokenId       jti from the verified JWT payload
- * @param   {string} [checkoutStep] currentStep on checkout at click time
- * @returns {Object|null}          The updated attempt, or null if not found
  */
 recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
   const attempt = this._findAttemptByTokenId(tokenId);
@@ -491,7 +408,6 @@ recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
 
   attempt.linkClickCount = (attempt.linkClickCount || 0) + 1;
 
-  // Stored field — keeps aggregation sort on totalLinkClicks index-friendly.
   this.totalLinkClicks = (this.totalLinkClicks || 0) + 1;
 
   if (checkoutStep && !attempt.checkoutStepAtClick) {
@@ -500,7 +416,6 @@ recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
 
   this.lastClickedAttemptNumber = attempt.attemptNumber;
 
-  // Progress outcome if not already at a terminal state.
   if (['sent', 'pending'].includes(this.outcome)) {
     this.outcome = 'clicked';
   }
@@ -512,11 +427,6 @@ recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
 /**
  * markTokenExpired
  * Best-effort audit write when redeemRecoveryToken catches a TokenExpiredError.
- * Flags the attempt so analytics can distinguish "never opened" vs "link expired
- * after being clicked". Resolves campaign outcome to 'expired' if all confirmed
- * sends have expired unclicked and max attempts was reached.
- *
- * @param {string} tokenId  jti from the decoded (but expired) JWT
  */
 recoveryEmailSchema.methods.markTokenExpired = function (tokenId) {
   const attempt = this._findAttemptByTokenId(tokenId);
@@ -538,12 +448,6 @@ recoveryEmailSchema.methods.markTokenExpired = function (tokenId) {
  * resolveOutcome
  * Finalise the campaign once the checkout's fate is known.
  * Idempotent — no-op if already at a terminal state.
- *
- * Called by:
- *   verifyPaymentController → 'converted' or 'organic'
- *   markStaleCheckouts sweep → 're_abandoned', 'exhausted', 'expired'
- *
- * @param {'converted'|'organic'|'re_abandoned'|'expired'|'exhausted'|'failed'} outcome
  */
 recoveryEmailSchema.methods.resolveOutcome = function (outcome) {
   this._resolveOutcome(outcome);
@@ -553,10 +457,7 @@ recoveryEmailSchema.methods.resolveOutcome = function (outcome) {
 /**
  * takeCartSnapshot
  * Frozen copy of the cart for the email template renderer.
- * Only written on the first call — subsequent calls are no-ops so
- * re-sends always render the original cart the user abandoned.
- *
- * @param {Object} checkout  The full Checkout document
+ * Only written on the first call — subsequent calls are no-ops.
  */
 recoveryEmailSchema.methods.takeCartSnapshot = function (checkout) {
   if (this.cartSnapshot?.snapshotAt) return;
@@ -596,9 +497,29 @@ recoveryEmailSchema.methods._findAttemptByTokenId = function (tokenId, status) {
   );
 };
 
+/**
+ * _resolveOutcome
+ * FIXED: Converted/organic outcomes are truly terminal.
+ *
+ * Original bug: any call with outcome='sent' (e.g. from initiateSend's
+ * `this.outcome = 'sent'`) could overwrite 'organic' or 'converted' because
+ * the old guard only blocked re-entry from the same terminal list.
+ * However initiateSend sets outcome directly, not via _resolveOutcome, so
+ * the real risk is a concurrent cron send racing with verifyPaymentController.
+ *
+ * Fix: expand TERMINAL to include 'sent' and 'clicked' as partially-terminal
+ * states that should never be downgraded, and add an explicit guard that
+ * 'converted' and 'organic' can never be replaced by anything.
+ */
 recoveryEmailSchema.methods._resolveOutcome = function (outcome) {
-  const TERMINAL = ['converted', 'organic', 'exhausted', 'expired', 'failed'];
-  if (TERMINAL.includes(this.outcome)) return;
+  // Absolute terminal states — nothing overwrites these, ever.
+  const ABSOLUTE_TERMINAL = ['converted', 'organic'];
+  if (ABSOLUTE_TERMINAL.includes(this.outcome)) return;
+
+  // Standard terminal states — only absolute terminals take priority.
+  const TERMINAL = ['exhausted', 'expired', 'failed'];
+  if (TERMINAL.includes(this.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) return;
+
   this.outcome    = outcome;
   this.resolvedAt = new Date();
 };
@@ -623,14 +544,6 @@ recoveryEmailSchema.methods._resolveTokenTTL = function (checkout) {
 // STATIC METHODS
 // ============================================
 
-/**
- * findOrCreateForCheckout
- * Atomic upsert — guarantees exactly one RecoveryEmail per checkout.
- * Safe under concurrent admin sends.
- *
- * @param   {Object} checkout  Full Checkout document
- * @returns {Object}           RecoveryEmail document (new or existing)
- */
 recoveryEmailSchema.statics.findOrCreateForCheckout = async function (checkout) {
   return this.findOneAndUpdate(
     { checkout: checkout._id },
@@ -650,24 +563,12 @@ recoveryEmailSchema.statics.findOrCreateForCheckout = async function (checkout) 
 };
 
 
-/**
- * getAnalytics
- * Four parallel aggregations for the analytics page.
- * Results are cached by the controller (Redis, 5 min TTL).
- *
- * Includes revenueAttribution so the "is a second email worth it?"
- * ROI question is answerable directly from this payload.
- *
- * @param {Date} startDate
- * @param {Date} endDate
- */
 recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
   const matchBase = { createdAt: { $gte: startDate, $lte: endDate } };
 
-  const [summary, outcomeBreakdown, attemptDistribution, clickFunnel] =
+  const [summary, outcomeBreakdown, attemptDistribution, clickFunnel, sentByBreakdown] =
     await Promise.all([
 
-      // ── Summary KPIs ──────────────────────────────────────────────────────
       this.aggregate([
         { $match: matchBase },
         {
@@ -697,7 +598,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         },
       ]),
 
-      // ── Outcome breakdown ─────────────────────────────────────────────────
       this.aggregate([
         { $match: matchBase },
         {
@@ -709,8 +609,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         { $sort: { count: -1 } },
       ]),
 
-      // ── Attempt distribution — "how many sends does it take to convert?" ──
-      // Joined with checkout revenue for ROI-per-attempt-number analysis.
       this.aggregate([
         {
           $match: {
@@ -729,16 +627,15 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         { $unwind: { path: '$checkoutDoc', preserveNullAndEmpty: true } },
         {
           $group: {
-            _id:            '$confirmedAttempts',
-            conversions:    { $sum: 1 },
-            totalRevenue:   { $sum: '$checkoutDoc.pricing.totalPrice' },
-            avgCartValue:   { $avg: '$checkoutDoc.pricing.totalPrice' },
+            _id:          '$confirmedAttempts',
+            conversions:  { $sum: 1 },
+            totalRevenue: { $sum: '$checkoutDoc.pricing.totalPrice' },
+            avgCartValue: { $avg: '$checkoutDoc.pricing.totalPrice' },
           },
         },
         { $sort: { _id: 1 } },
       ]),
 
-      // ── Click funnel: sent → clicked → converted ──────────────────────────
       this.aggregate([
         { $match: matchBase },
         {
@@ -766,6 +663,20 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
           },
         },
       ]),
+
+      // ── NEW: Admin vs Cron send attribution ───────────────────────────────
+      // Answers: "how many emails were sent manually vs automatically?"
+      this.aggregate([
+        { $match: matchBase },
+        { $unwind: { path: '$attempts', preserveNullAndEmpty: true } },
+        { $match: { 'attempts.status': 'sent' } },
+        {
+          $group: {
+            _id:   '$attempts.sentBy',
+            count: { $sum: 1 },
+          },
+        },
+      ]),
     ]);
 
   const s  = summary[0] || {
@@ -776,8 +687,15 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
   };
   const cf = clickFunnel[0] || { totalSent: 0, clicked: 0, converted: 0 };
 
+  // Shape sentByBreakdown into a simple object
+  const sendAttribution = { admin: 0, cron: 0 };
+  for (const row of sentByBreakdown) {
+    if (row._id === 'admin' || row._id === 'cron') {
+      sendAttribution[row._id] = row.count;
+    }
+  }
+
   return {
-    // ── KPIs ────────────────────────────────────────────────────────────────
     totalCampaigns:         s.total,
     totalSendAttempts:      s.totalConfirmedAttempts,
     totalLinkClicks:        s.totalLinkClicks,
@@ -788,7 +706,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
     avgAttemptsPerCheckout:
       Math.round((s.avgAttemptsPerCheckout || 0) * 10) / 10,
 
-    // ── Outcome summary ──────────────────────────────────────────────────────
     outcomes: {
       converted:   s.converted,
       organic:     s.organic,
@@ -801,7 +718,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
       pending:     s.stillPending,
     },
 
-    // ── Click funnel ─────────────────────────────────────────────────────────
     clickFunnel: {
       sent:      cf.totalSent,
       clicked:   cf.clicked,
@@ -814,8 +730,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
           ? Math.round((cf.converted / cf.clicked)   * 10000) / 100 : 0,
     },
 
-    // ── ROI by attempt number ────────────────────────────────────────────────
-    // "Was sending a second/third email worth it?"
     revenueAttribution: attemptDistribution.map(row => ({
       attemptNumber: row._id,
       conversions:   row.conversions,
@@ -823,16 +737,15 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
       avgCartValue:  Math.round((row.avgCartValue  || 0) * 100) / 100,
     })),
 
+    // ── NEW ───────────────────────────────────────────────────────────────────
+    // "How many emails were triggered manually by admins vs by the cron?"
+    sendAttribution,
+
     outcomeBreakdown,
   };
 };
 
 
-/**
- * getPendingStaleAcks
- * Used by the sweep to find RecoveryEmail records where pendingAck has been
- * true longer than the stale threshold (mailer crash recovery).
- */
 recoveryEmailSchema.statics.getPendingStaleAcks = async function () {
   const threshold = new Date(
     Date.now() - cfg.staleAckMins() * 60 * 1000
@@ -847,8 +760,6 @@ recoveryEmailSchema.statics.getPendingStaleAcks = async function () {
 // MIDDLEWARE
 // ============================================
 
-// Self-heal: if confirmedAttempts drifted from the sent-attempt count,
-// correct it before any save. Only fires when attempts was modified.
 recoveryEmailSchema.pre('save', function (next) {
   if (this.isModified('attempts') && !this.pendingAck) {
     this.confirmedAttempts = this.attempts.filter(
