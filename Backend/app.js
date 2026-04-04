@@ -38,6 +38,7 @@ import discountAnalyticsRoutes from './routes/discount-analytics-routes.js';
 import recoveryEmailRoutes from './routes/recovery-email-routes.js'
 import seoRoutes from './routes/seo-routes.js';
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
+import cronHealthRouter from './routes/cronHealthRoutes.js';
 
 
 import './config/passport.js';
@@ -174,6 +175,7 @@ app.use(additionalSecurityHeaders);
 app.use(trackAttribution);
 
 /* ================= ROUTES ================= */
+app.use('/api/v1/admin/cron', cronHealthRouter);
 app.use('/api/v1', userRoutes);
 app.use('/api/v1', productRoutes);
 app.use('/api/v1/oauth', oauthRoutes);
