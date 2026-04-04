@@ -8,7 +8,11 @@ import { initializeRedis, shutdownRedis, default as redis } from './utils/redis.
 import { configureCloudinary } from './utils/cloudinaryUpload.js';
 import { startDiscountCleanupJob } from './jobs/discount-cleanup.js';
 import { startAuditCleanupJob }    from './jobs/audit-log-cleanup.js';
-import { startAbandonmentSweep } from './jobs/abandonmentSweep.js';
+import { startAbandonmentSweep }   from './jobs/abandonmentSweep.js';
+import {
+  startRecoveryEmailCron,
+  stopRecoveryEmailCron,
+} from './jobs/recoveryEmailCron.js';
 
 /* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
@@ -70,21 +74,23 @@ const startServer = async () => {
         // 4️⃣ Connect to MongoDB
         await connectDB();
 
-        //cheout jobs
+        // 5️⃣ Start abandonment sweep (existing job — must be before recovery cron
+        //    so stale pendingAck records are cleared before the cron evaluates them)
         startAbandonmentSweep();
 
-        // 5️⃣ Setup graceful shutdown hooks
+        // 6️⃣ Setup graceful shutdown hooks (DB-level)
         setupGracefulShutdown();
 
-        // 6️⃣ Register scheduled jobs
-        // Both jobs require an active DB connection — registered AFTER connectDB().
-        // Offsets prevent concurrent DB pressure:
-        //   discount-cleanup.js → 2 AM daily  (CLEANUP_CRON)
-        //   audit-log-cleanup.js → 3 AM daily  (AUDIT_CLEANUP_CRON)
+        // 7️⃣ Register all scheduled jobs (require active DB connection)
+        //    Offsets prevent concurrent DB pressure at startup:
+        //      discount-cleanup  → 2 AM daily
+        //      audit-log-cleanup → 3 AM daily
+        //      recovery-email    → every 30 min (configurable via RECOVERY_CRON_SCHEDULE)
         startDiscountCleanupJob();
         startAuditCleanupJob();
+        startRecoveryEmailCron();
 
-        // 7️⃣ Start Express server
+        // 8️⃣ Start Express server
         const PORT = process.env.PORT || 8000;
         server = app.listen(PORT, () => {
             console.log('\n' + '='.repeat(50));
@@ -96,7 +102,6 @@ const startServer = async () => {
             console.log(`🔗 URL: http://localhost:${PORT}`);
             console.log('='.repeat(50) + '\n');
 
-            // Log database status
             const dbStatus = getDBStatus();
             if (dbStatus.isConnected) {
                 console.log('📊 Database Status:');
@@ -128,11 +133,11 @@ const startServer = async () => {
             if (server) {
                 server.close(async () => {
                     console.log('✅ Server closed gracefully');
+                    stopRecoveryEmailCron();
                     await shutdownRedis();
                     process.exit(1);
                 });
 
-                // Force shutdown after 10 seconds
                 setTimeout(() => {
                     console.error('⚠️ Forcing shutdown after timeout');
                     process.exit(1);
@@ -144,6 +149,9 @@ const startServer = async () => {
         process.on('SIGTERM', async () => {
             console.log('📡 SIGTERM received. Starting graceful shutdown...');
             if (server) {
+                // Stop cron first — prevents a new run from starting mid-shutdown
+                stopRecoveryEmailCron();
+
                 server.close(async () => {
                     console.log('✅ Server closed gracefully');
                     await shutdownRedis();
