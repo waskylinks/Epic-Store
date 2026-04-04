@@ -96,6 +96,7 @@ const NAV_GROUPS = [
       { path: '/admin/refund-analytics',   icon: CurrencyExchange,     label: 'Refund Analytics',    color: '#14B8A6' },
       { path: '/admin/return-analytics', icon: ReplayCircleFilled, label: 'Return Analytics', color: '#EF4444' },
       { path: '/admin/discount-analytics', icon: Insights,             label: 'Discount ROI',        color: '#e563f1' },
+      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead, label: 'Recovery Email Analytics', color: '#fb7185' },
     ],
   },
   {
