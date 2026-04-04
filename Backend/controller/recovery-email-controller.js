@@ -1,225 +1,261 @@
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
-import Checkout from '../models/checkout-model.js';
-import { sendRecoveryEmail, sendBulkRecoveryEmails } from '../Services/recoveryEmailService.js';
+import {
+  sendRecoveryEmail,
+  redeemToken,
+  getRecoveryEmailStatus,
+  resolveRecoveryOutcome,
+  getAbandonedCartsForSending,
+} from '../Services/recoveryEmailService.js';
+import RecoveryEmail from '../models/recovery-email-model.js';
+import { getCache, setCache, deleteCachePattern } from '../utils/redis.js';
+import { getDateRanges } from '../utils/dateRanges.js';
+import { validateTimeframe } from '../utils/validateTimeframe.js';
 
 // ============================================
-// SEND SINGLE RECOVERY EMAIL
-// @route  POST /api/v1/admin/checkout/:id/send-recovery
-// @access Admin | SuperAdmin
+// SEND RECOVERY EMAIL
+// @route  POST /api/v1/recovery/send
+// @access Private — admin only
 // ============================================
 
-export const sendSingleRecoveryEmail = handleAsyncError(async (req, res, next) => {
-  const { id } = req.params;
+export const sendRecoveryEmailHandler = handleAsyncError(async (req, res, next) => {
+  const { checkoutId } = req.body;
 
-  // ── 1. Load the checkout with all fields the service and template need ────
-  const checkout = await Checkout.findById(id)
-    .populate('user',          'firstName lastName email')
-    .populate('items.product', 'name images pricing status');
-
-  if (!checkout) {
-    return next(new HandleError('Checkout not found', 404));
+  if (!checkoutId) {
+    return next(new HandleError('checkoutId is required', 400));
   }
-
-  // ── 2. Early guard — controller-level checks before touching the service ──
-
-  // Deleted user — populate returns null for the ref doc
-  if (!checkout.user || typeof checkout.user !== 'object') {
-    return next(
-      new HandleError(
-        'The account associated with this checkout no longer exists', 400
-      )
-    );
-  }
-
-  if (checkout.conversion?.isConverted) {
-    return next(new HandleError('This checkout has already been converted to an order', 400));
-  }
-
-  if (checkout.abandonment?.recovered) {
-    return next(new HandleError('This checkout has already been recovered', 400));
-  }
-
-  // ── 3. Delegate to service — service owns the full send sequence ──────────
-  // We do NOT call canSendRecoveryEmail() here deliberately — the service
-  // is the authoritative check. Calling it twice in the controller would
-  // create a confusing double-message if the reasons differ (e.g. the
-  // cooldown elapsed between the two checks).
-  //
-  // The service throws with err.code === 'SKIPPED' for expected non-error
-  // conditions (cooldown, max attempts, etc.) and plain errors for failures.
 
   let result;
-
   try {
-    result = await sendRecoveryEmail(checkout);
+    result = await sendRecoveryEmail(checkoutId, req.user._id);
   } catch (err) {
-    // SKIPPED = expected business-logic gate (cooldown, max attempts, etc.)
-    // Surface as 400 with the exact reason so the admin UI can display it
-    // inline on the row without treating it as a system failure.
-    if (err.code === 'SKIPPED') {
-      return res.status(400).json({
-        success: false,
-        skipped: true,
-        reason:  err.message,
+    // CANNOT_SEND = business rule block (cooldown, max attempts, etc.)
+    // Surface as 422 so the frontend can distinguish from a 500.
+    if (err.code === 'CANNOT_SEND') {
+      return res.status(422).json({
+        success:         false,
+        message:         err.message,
+        nextAvailableAt: err.nextAvailableAt || null,
       });
     }
+    return next(new HandleError(err.message, 500));
+  }
 
-    // Unexpected failure (provider down, DB error, FRONTEND_URL missing, etc.)
-    // Log for ops visibility, return structured 500 so the frontend can
-    // show a retry option on the row rather than a generic crash.
-    console.error(
-      `[recoveryEmailController] Single send failed for checkout ${id}:`,
-      err.message
-    );
+  res.status(200).json({
+    success:         true,
+    message:         `Recovery email sent (attempt ${result.attemptNumber})`,
+    attemptNumber:   result.attemptNumber,
+    sentAt:          result.sentAt,
+    nextAvailableAt: result.nextAvailableAt,
+    cartSnapshot:    result.cartSnapshot,
+  });
+});
 
-    return res.status(500).json({
-      success: false,
-      error:   err.message,
+// ============================================
+// REDEEM RECOVERY TOKEN
+// @route  GET /api/v1/checkout/recover?token=
+// @access Public — token is the credential
+//
+// NOTE: This handler is intentionally registered on the checkout router
+// (/api/v1/checkout/recover) to preserve existing frontend links.
+// The service does all the heavy lifting.
+// ============================================
+
+export const redeemRecoveryTokenHandler = handleAsyncError(async (req, res, next) => {
+  const { token } = req.query;
+
+  let result;
+  try {
+    result = await redeemToken(token);
+  } catch (err) {
+    return next(new HandleError(err.message, err.status || 400));
+  }
+
+  // Already converted — return 200 with a flag so the frontend
+  // can redirect to the order confirmation page.
+  if (result.alreadyConverted) {
+    return res.status(200).json({
+      success:          true,
+      alreadyConverted: true,
+      message:          result.message,
+      orderId:          result.orderId,
     });
   }
 
-  // ── 4. Success response ───────────────────────────────────────────────────
-  return res.status(200).json({
-    success:    true,
-    message:    `Recovery email #${result.attempt} sent successfully`,
-    emailCount: result.emailCount,    // updated count — for row display
-    sentAt:     result.sentAt,        // timestamp — for row display
-    recipient:  result.recipient,
-    attempt:    result.attempt,
-    messageId:  result.messageId,     // provider message ID — for debugging
-    accepted:   result.accepted,      // provider-confirmed addresses
+  res.status(200).json({
+    success:          true,
+    alreadyConverted: false,
+    message:          result.message,
+    ...(result.discountWarning && { discountWarning: result.discountWarning }),
+    checkout:         result.checkout,
   });
 });
 
 // ============================================
-// SEND BULK RECOVERY EMAILS
-// @route  POST /api/v1/admin/checkout/bulk-send-recovery
-// @access Admin | SuperAdmin
-//
-// NOTE: This route MUST be registered BEFORE /:id/send-recovery
-// in the router file, otherwise Express matches 'bulk-send-recovery'
-// as an :id param. Same pattern as GET /recover before GET /:id
-// in the checkout router.
+// GET RECOVERY EMAIL STATUS
+// @route  GET /api/v1/recovery/status/:checkoutId
+// @access Private — admin only
 // ============================================
 
-export const sendBulkRecoveryEmailsController = handleAsyncError(async (req, res, next) => {
-  const { checkoutIds } = req.body;
+export const getRecoveryStatusHandler = handleAsyncError(async (req, res, next) => {
+  const { checkoutId } = req.params;
 
-  // ── 1. Input validation ───────────────────────────────────────────────────
-  if (!checkoutIds || !Array.isArray(checkoutIds)) {
-    return next(new HandleError('checkoutIds must be an array', 400));
+  if (!checkoutId) {
+    return next(new HandleError('checkoutId param is required', 400));
   }
 
-  if (checkoutIds.length === 0) {
-    return next(new HandleError('checkoutIds array is empty', 400));
-  }
+  const status = await getRecoveryEmailStatus(checkoutId);
 
-  // Hard cap enforced here AND inside the service.
-  // Two layers: the controller returns early with a clear message before
-  // the service even starts processing, keeping the error fast and cheap.
-  if (checkoutIds.length > 100) {
-    return next(
-      new HandleError(
-        `Cannot process more than 100 checkouts per request. Received ${checkoutIds.length}.`,
-        400
-      )
-    );
-  }
-
-  // Basic ID format check — catches obviously malformed IDs before hitting
-  // MongoDB. Not an exhaustive ObjectId validation; Mongoose will reject
-  // truly invalid IDs at query time and those land in the failed[] array.
-  const invalidIds = checkoutIds.filter(
-    id => typeof id !== 'string' || id.trim().length === 0
-  );
-
-  if (invalidIds.length > 0) {
-    return next(
-      new HandleError(
-        `${invalidIds.length} invalid ID(s) in checkoutIds — must be non-empty strings`,
-        400
-      )
-    );
-  }
-
-  // ── 2. Admin identity for audit logging ───────────────────────────────────
-  const triggeredBy = req.user?._id?.toString() || 'unknown';
-
-  console.log(
-    `[recoveryEmailController] Bulk send initiated`,
-    `| Admin: ${triggeredBy}`,
-    `| IDs: ${checkoutIds.length}`,
-    `| Time: ${new Date().toISOString()}`
-  );
-
-  // ── 3. Delegate to service ────────────────────────────────────────────────
-  // sendBulkRecoveryEmails never throws — it always resolves with a
-  // results object. Failures per-checkout are captured inside failed[].
-  // The only reason this would throw is a programming error (wrong arg type),
-  // which is caught by handleAsyncError and sent to the global error handler.
-  const results = await sendBulkRecoveryEmails(checkoutIds);
-
-  // ── 4. Logging ────────────────────────────────────────────────────────────
-  console.log(
-    `[recoveryEmailController] Bulk send completed`,
-    `| Admin: ${triggeredBy}`,
-    `| Sent: ${results.summary.sent}`,
-    `| Skipped: ${results.summary.skipped}`,
-    `| Failed: ${results.summary.failed}`,
-    `| Time: ${new Date().toISOString()}`
-  );
-
-  if (results.summary.failed > 0) {
-    console.error(
-      `[recoveryEmailController] ${results.summary.failed} failure(s) in bulk send:`,
-      results.failed.map(f => `${f.id}: ${f.error}`).join(' | ')
-    );
-  }
-
-  // ── 5. Response ───────────────────────────────────────────────────────────
-  // Always 200 — the bulk operation itself succeeded even if individual
-  // sends failed. The frontend reads results.summary to determine how to
-  // display the outcome. A 500 from this endpoint means the endpoint
-  // itself crashed, not that individual sends failed.
-  return res.status(200).json({
+  // Return an empty scaffold when no email has been sent yet —
+  // the frontend uses this to render the "Not contacted" state.
+  res.status(200).json({
     success: true,
-    message: buildSummaryMessage(results.summary),
-    results: {
-      sent:    results.sent,
-      skipped: results.skipped,
-      failed:  results.failed,
+    status:  status || {
+      outcome:           'none',
+      confirmedAttempts: 0,
+      lastSentAt:        null,
+      nextAvailableAt:   null,
+      everClicked:       false,
+      totalLinkClicks:   0,
+      attempts:          [],
     },
-    summary: results.summary,
   });
 });
 
 // ============================================
-// INTERNAL HELPERS
+// GET ABANDONED CARTS FOR SEND PAGE
+// @route  GET /api/v1/recovery/send-list
+// @access Private — admin only
 // ============================================
 
-/**
- * Build a human-readable summary message for the bulk send response.
- * Shown directly in the admin UI after the operation completes.
- */
-const buildSummaryMessage = ({ sent, skipped, failed }) => {
-  const parts = [];
+export const getSendListHandler = handleAsyncError(async (req, res, next) => {
+  const {
+    page     = 1,
+    limit    = 20,
+    outcome,
+    sortBy   = 'priority',
+    minValue = 0,
+    search,
+    hours    = 720,
+  } = req.query;
 
-  if (sent > 0)    parts.push(`${sent} email${sent     === 1 ? '' : 's'} sent`);
-  if (skipped > 0) parts.push(`${skipped} skipped`);
-  if (failed > 0)  parts.push(`${failed} failed`);
+  // Validate sortBy
+  const VALID_SORTS = ['priority', 'value', 'abandonedAt', 'lastSentAt'];
+  if (!VALID_SORTS.includes(sortBy)) {
+    return next(new HandleError(`Invalid sortBy. Must be one of: ${VALID_SORTS.join(', ')}`, 400));
+  }
 
-  if (parts.length === 0) return 'No emails processed';
+  // Cache key encodes all filter params
+  const cacheKey = `recovery_send_list_${page}_${limit}_${outcome || 'all'}_${sortBy}_${minValue}_${search || ''}_${hours}`;
+  const cached   = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
 
-  const base = parts.join(', ');
+  const result = await getAbandonedCartsForSending({
+    page:     parseInt(page),
+    limit:    parseInt(limit),
+    outcome:  outcome || undefined,
+    sortBy,
+    minValue: parseFloat(minValue),
+    search:   search?.trim() || undefined,
+    hours:    parseInt(hours),
+  });
 
-  if (failed > 0)  return `${base} — check failed entries and retry`;
-  if (skipped > 0 && sent === 0) return `${base} — all eligible checkouts already processed`;
+  await setCache(cacheKey, result, 120); // 2 min TTL — send page needs fresh data
 
-  return base;
-};
+  res.status(200).json({ success: true, ...result });
+});
 
-export default {
-  sendSingleRecoveryEmail,
-  sendBulkRecoveryEmailsController,
-};
+// ============================================
+// GET RECOVERY ANALYTICS
+// @route  GET /api/v1/recovery/analytics
+// @access Private — admin only
+// ============================================
+
+export const getRecoveryAnalyticsHandler = handleAsyncError(async (req, res, next) => {
+  const { timeframe = 'month', startDate, endDate } = req.query;
+
+  let start, end;
+
+  if (startDate && endDate) {
+    // Custom date range takes priority over timeframe
+    start = new Date(startDate);
+    end   = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return next(new HandleError('Invalid startDate or endDate', 400));
+    }
+    if (start > end) {
+      return next(new HandleError('startDate must be before endDate', 400));
+    }
+  } else {
+    // Use validateTimeframe to surface a clean error for invalid values
+    validateTimeframe(timeframe, next);
+
+    const ranges = getDateRanges(timeframe);
+    start = ranges.currentPeriodStart;
+    end   = new Date();
+  }
+
+  const cacheKey = startDate && endDate
+    ? `recovery_analytics_custom_${startDate}_${endDate}`
+    : `recovery_analytics_${timeframe}`;
+
+  const cached = await getCache(cacheKey);
+  if (cached) return res.status(200).json({ success: true, ...cached });
+
+  const analytics = await RecoveryEmail.getAnalytics(start, end);
+
+  await setCache(cacheKey, analytics, 300); // 5 min TTL
+
+  res.status(200).json({ success: true, ...analytics });
+});
+
+// ============================================
+// RESOLVE RECOVERY OUTCOME (admin override)
+// @route  POST /api/v1/recovery/resolve/:checkoutId
+// @access Private — admin only
+// ============================================
+
+export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => {
+  const { checkoutId } = req.params;
+  const { outcome }    = req.body;
+
+  const VALID_OUTCOMES = ['converted', 'organic', 're_abandoned', 'expired', 'exhausted', 'failed'];
+
+  if (!outcome || !VALID_OUTCOMES.includes(outcome)) {
+    return next(
+      new HandleError(`Invalid outcome. Must be one of: ${VALID_OUTCOMES.join(', ')}`, 400)
+    );
+  }
+
+  // Guard: do not allow overwriting terminal states via admin override.
+  const record = await RecoveryEmail.findOne({ checkout: checkoutId });
+
+  if (!record) {
+    return next(new HandleError('No recovery email record found for this checkout', 404));
+  }
+
+  const TERMINAL = ['converted', 'organic', 'exhausted', 'expired', 'failed'];
+  if (TERMINAL.includes(record.outcome)) {
+    return res.status(422).json({
+      success: false,
+      message: `Cannot override a terminal outcome (current: ${record.outcome})`,
+    });
+  }
+
+  await resolveRecoveryOutcome(checkoutId, outcome);
+
+  // Bust analytics cache since outcome distribution changed.
+  await Promise.all([
+    deleteCachePattern('recovery_analytics_*'),
+    deleteCachePattern('recovery_send_list_*'),
+  ]).catch(() => {});
+
+  res.status(200).json({
+    success:     true,
+    message:     `Recovery outcome set to '${outcome}'`,
+    checkoutId,
+    outcome,
+    resolvedAt:  new Date(),
+  });
+});
