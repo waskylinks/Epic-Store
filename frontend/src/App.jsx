@@ -57,6 +57,9 @@ import UserDiscounts from './pages/UserDiscounts';
 import DiscountAnalytics from './Admin/DiscountAnalytics';
 import ReturnAnalytics from './Admin/ReturnAnalytics';
 import RecoveryEmailAnalytics from './Admin/RecoveryEmailAnalytics';
+import CronHealth from './Admin/CronHealth';
+
+
 
 function App() {
   const { initializing, isAuthenticated } = useSelector(state => state.user);
@@ -160,7 +163,7 @@ function App() {
         <Route path='/admin/discounts/new' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
         <Route path='/admin/discount-analytics' element={<ProtectedRoute element={<DiscountAnalytics />} adminOnly={true} />} />
         <Route path='/admin/recovery-email-analytics' element={<ProtectedRoute element={<RecoveryEmailAnalytics />} adminOnly={true} />} />
-      
+       <Route path='/admin/cron-health' element={<ProtectedRoute element={<CronHealth />} adminOnly={true} />} />
       </Routes>
     </Router>
   );
