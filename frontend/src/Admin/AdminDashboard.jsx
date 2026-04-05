@@ -28,6 +28,7 @@ import {
   ErrorOutline,
   PersonAdd,
   Insights,
+  Schedule,
 } from '@mui/icons-material';
 import {
   BarChart as ReChart, Bar,
@@ -73,6 +74,9 @@ import {
 import {
   fetchDiscountAnalyticsOverview,
 } from '../features/analytics/discountAnalyticsSlice';
+import {
+  fetchCronHealth,
+} from '../features/admin/cronHealthSlice';
 
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
@@ -94,9 +98,9 @@ const NAV_GROUPS = [
       { path: '/admin/attribution',        icon: CampaignOutlined,     label: 'Attribution',         color: '#F59E0B' },
       { path: '/admin/checkout',           icon: ShoppingCartCheckout, label: 'Checkout',            color: '#10B981' },
       { path: '/admin/refund-analytics',   icon: CurrencyExchange,     label: 'Refund Analytics',    color: '#14B8A6' },
-      { path: '/admin/return-analytics', icon: ReplayCircleFilled, label: 'Return Analytics', color: '#EF4444' },
+      { path: '/admin/return-analytics',   icon: ReplayCircleFilled,   label: 'Return Analytics',    color: '#EF4444' },
       { path: '/admin/discount-analytics', icon: Insights,             label: 'Discount ROI',        color: '#e563f1' },
-      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead, label: 'Recovery Email Analytics', color: '#fb7185' },
+      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,  label: 'Recovery Email Analytics', color: '#fb7185' },
     ],
   },
   {
@@ -120,6 +124,7 @@ const NAV_GROUPS = [
       { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',         color: '#EF4444' },
       { path: '/admin/reviews',         icon: StarOutline,        label: 'Reviews',         color: '#F59E0B' },
       { path: '/admin/recovery-emails', icon: MarkEmailRead,      label: 'Recovery Emails', color: '#FF6B6B' },
+      { path: '/admin/cron-health',     icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
     ],
   },
 ];
@@ -322,22 +327,24 @@ export default function AdminDashboard() {
   const { channelPerformance, devicePerformance } = useSelector((s) => s.attribution);
 
   const {
-  checkoutAbandonment, categoryPerformance, lowStockAlerts,
-  fulfillmentAnalytics, fraudAnalytics, slaBreaches,
-} = useSelector((s) => s.operations);
+    checkoutAbandonment, categoryPerformance, lowStockAlerts,
+    fulfillmentAnalytics, fraudAnalytics, slaBreaches,
+  } = useSelector((s) => s.operations);
 
-const {
-  returnOverview,
-  refundOverview,
-} = useSelector((s) => s.returnAnalytics);
+  const {
+    returnOverview,
+    refundOverview,
+  } = useSelector((s) => s.returnAnalytics);
 
   const {
     overview:        discountOverview,
     overviewLoading: discountOverviewLoading,
   } = useSelector((s) => s.discountAnalytics);
 
+  const { jobs: cronJobs, jobsLoading: cronJobsLoading } = useSelector((s) => s.cronHealth);
+
   const error = useSelector(
-    (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error  || s.returnAnalytics.error || null
+    (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error || s.returnAnalytics.error || null
   );
 
   // ── Local state ──────────────────────────────────────────
@@ -357,8 +364,6 @@ const {
   const autoRefreshTimerRef = useRef(null);
 
   // ── Static data (one-time) ───────────────────────────────
-  // fetchOrderStatusBreakdown removed from here — it now lives in
-  // loadTimeframeData so it re-fetches on every timeframe switch.
   const loadStaticData = useCallback(() => {
     if (basicStatsFetched) return;
     Promise.allSettled([
@@ -381,8 +386,6 @@ const {
     if (activeAbortController) activeAbortController.abort();
     activeAbortController = new AbortController();
 
-    // Set both timeframe guards before dispatching so stale fulfilled
-    // responses from previous timeframe switches are rejected.
     dispatch(setActiveTimeframe(currentTimeframe));
     dispatch(setActiveOrderStatusTimeframe(currentTimeframe));
     dispatch(setReturnAnalyticsTimeframe(currentTimeframe));
@@ -395,8 +398,6 @@ const {
       fetchDashboardKPIs(currentTimeframe),
       fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' }),
       fetchTopPerformers(currentTimeframe),
-      // Order status breakdown now receives the active timeframe so the
-      // card shows period-scoped counts + per-status trend chips.
       fetchOrderStatusBreakdown(currentTimeframe),
       fetchChannelPerformance(currentTimeframe),
       fetchDevicePerformance(currentTimeframe),
@@ -408,6 +409,7 @@ const {
       fetchReturnOverview(currentTimeframe),
       fetchRefundOverview(currentTimeframe),
       fetchDiscountAnalyticsOverview(),
+      fetchCronHealth(),
     ].map(thunk => dispatch(thunk).unwrap().catch(() => {})))
       .finally(() => {
         isLoadingRef.current  = false;
@@ -626,11 +628,6 @@ const {
                 </Link>
               </div>
               <div className="adm-charts-row">
-                {/*
-                  Order status card now shows period-scoped counts.
-                  When ordersByStatusTrends is populated (timeframe fetch),
-                  each row also renders a TrendChip comparing vs the previous period.
-                */}
                 <SectionCard title="Order Status Breakdown" icon={ShoppingCart} iconColor="#F97316" link="/admin/orders">
                   {firstLoad ? <LoadingState label="Loading orders..." /> : (
                     <div className="adm-metric-list">
@@ -838,6 +835,63 @@ const {
                     </>
                   )}
                 </SectionCard>
+              </div>
+            </div>
+
+            {/* ── Scheduled Jobs (Cron Health Mini-Strip) ───── */}
+            <div className="adm-section">
+              <div className="adm-section-hd">
+                <h2 className="adm-section-title">
+                  <span className="adm-section-icon-wrap" style={{ background: '#6366F115', color: '#6366F1' }}>
+                    <Schedule style={{ fontSize: 16 }} />
+                  </span>
+                  Scheduled Jobs
+                </h2>
+                <Link to="/admin/cron-health" className="adm-section-link">
+                  Full Health View <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
+              </div>
+              <div className="adm-cron-mini-strip">
+                {cronJobsLoading && cronJobs.length === 0
+                  ? Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="adm-cron-mini-card adm-cron-mini-card--skeleton">
+                        <div className="adm-skeleton" style={{ width: 8, height: 8, borderRadius: '50%' }} />
+                        <div className="adm-skeleton" style={{ flex: 1, height: 12 }} />
+                      </div>
+                    ))
+                  : cronJobs.length === 0
+                    ? (
+                      <div className="adm-cron-mini-empty">
+                        <Schedule style={{ fontSize: 20, color: '#9CA3AF' }} />
+                        <span>No cron jobs registered</span>
+                      </div>
+                    )
+                    : cronJobs.map((job) => (
+                        <Link
+                          key={job.jobName}
+                          to="/admin/cron-health"
+                          className="adm-cron-mini-card"
+                          title={`${job.jobName} — ${job.scheduleLabel ?? ''}`}
+                        >
+                          <span className={`adm-cron-mini-dot adm-cron-mini-dot--${job.status ?? 'unknown'}`} />
+                          <span className="adm-cron-mini-name">{job.jobName.replace(/([A-Z])/g, ' $1').trim()}</span>
+                          <span className="adm-cron-mini-time">
+                            {job.lastRunAt
+                              ? (() => {
+                                  const diff    = Date.now() - new Date(job.lastRunAt).getTime();
+                                  const minutes = Math.floor(diff / 60000);
+                                  const hours   = Math.floor(diff / 3600000);
+                                  if (minutes < 1)  return 'Just now';
+                                  if (minutes < 60) return `${minutes}m`;
+                                  if (hours < 24)   return `${hours}h`;
+                                  return `${Math.floor(hours / 24)}d`;
+                                })()
+                              : 'Never'
+                            }
+                          </span>
+                        </Link>
+                      ))
+                }
               </div>
             </div>
 

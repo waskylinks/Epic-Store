@@ -133,10 +133,6 @@ const EmptyState = ({ icon, title, desc }) => (
   </div>
 );
 
-
-
-
-
 // ─────────────────────────────────────────────
 // PRODUCT CATEGORY CHIPS
 // ─────────────────────────────────────────────
@@ -238,98 +234,127 @@ const AuditEntry = ({ entry, compact = false }) => {
 // CLEANUP CONFIRM MODAL
 // ─────────────────────────────────────────────
 
-const CleanupModal = ({ running, result, onConfirm, onClose }) => (
-  <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && !running && onClose()}>
-    <div className="addisc-modal addisc-cleanup-modal">
-      <div className="addisc-modal-header">
-        <h2 className="addisc-modal-title">Run Manual Cleanup</h2>
-        <button type="button" className="addisc-modal-close" onClick={onClose} disabled={running} aria-label="Close">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
+const CleanupModal = ({ running, result, onConfirm, onClose }) => {
+  const cronJobs    = useSelector((s) => s.cronHealth?.jobs ?? []);
+  const cleanupCron = cronJobs.find((j) => j.jobName === 'DiscountCleanup');
 
-      <div className="addisc-modal-form">
-        <div className="addisc-cleanup-body">
-          {result ? (
-            <div className="addisc-cleanup-result">
-              <div className="addisc-cleanup-result-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              </div>
-              <p className="addisc-cleanup-result-title">Cleanup complete</p>
-              <p className="addisc-cleanup-result-desc">
-                <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} expired &nbsp;·&nbsp;
-                <strong>{result.deleted}</strong> code{result.deleted !== 1 ? 's' : ''} permanently deleted
-              </p>
+  const cronLastRun = cleanupCron?.lastRunAt
+    ? new Date(cleanupCron.lastRunAt).toLocaleString('en-US', {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+      })
+    : null;
+
+  return (
+    <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && !running && onClose()}>
+      <div className="addisc-modal addisc-cleanup-modal">
+        <div className="addisc-modal-header">
+          <h2 className="addisc-modal-title">Run Manual Cleanup</h2>
+          <button type="button" className="addisc-modal-close" onClick={onClose} disabled={running} aria-label="Close">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="addisc-modal-form">
+          {cleanupCron && (
+            <div className="addisc-cleanup-cron-status">
+              <span className={`addisc-cleanup-cron-dot addisc-cleanup-cron-dot--${cleanupCron.status ?? 'unknown'}`} />
+              {cleanupCron.status === 'failed' ? (
+                <span>
+                  Last automated run <strong>failed</strong>.{' '}
+                  <Link to="/admin/cron-health" style={{ color: '#0369A1', fontWeight: 600, textDecoration: 'underline', textUnderlineOffset: 2 }}>
+                    Check Cron Health →
+                  </Link>
+                </span>
+              ) : cronLastRun ? (
+                <span>Last automated run: <strong>{cronLastRun}</strong></span>
+              ) : (
+                <span>Automated cleanup: <strong>not yet run</strong></span>
+              )}
             </div>
-          ) : (
-            <>
-              <div className="addisc-cleanup-icon">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <polyline points="1 4 1 10 7 10" />
-                  <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
-                </svg>
+          )}
+
+          <div className="addisc-cleanup-body">
+            {result ? (
+              <div className="addisc-cleanup-result">
+                <div className="addisc-cleanup-result-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
+                <p className="addisc-cleanup-result-title">Cleanup complete</p>
+                <p className="addisc-cleanup-result-desc">
+                  <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} expired &nbsp;·&nbsp;
+                  <strong>{result.deleted}</strong> code{result.deleted !== 1 ? 's' : ''} permanently deleted
+                </p>
               </div>
-              <p className="addisc-cleanup-desc">
-                This will scan all discount codes and apply automated maintenance rules. This action cannot be undone.
-              </p>
-              <ul className="addisc-cleanup-checklist">
-                <li>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+            ) : (
+              <>
+                <div className="addisc-cleanup-icon">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
                   </svg>
-                  Expire codes whose validUntil date has passed
-                </li>
-                <li>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                </div>
+                <p className="addisc-cleanup-desc">
+                  This will scan all discount codes and apply automated maintenance rules. This action cannot be undone.
+                </p>
+                <ul className="addisc-cleanup-checklist">
+                  <li>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    Expire codes whose validUntil date has passed
+                  </li>
+                  <li>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    Delete expired codes outside the 30-day fraud-protection window
+                  </li>
+                  <li>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    Codes inside the fraud-protection window will not be deleted
+                  </li>
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="addisc-modal-footer addisc-cleanup-footer">
+          <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose} disabled={running}>
+            {result ? 'Close' : 'Cancel'}
+          </button>
+          {!result && (
+            <button type="button" className="addisc-btn addisc-btn--warning" onClick={onConfirm} disabled={running}>
+              {running ? <><Spinner size={14} /> Running…</> : (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                     stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    <polyline points="1 4 1 10 7 10" />
+                    <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
                   </svg>
-                  Delete expired codes outside the 30-day fraud-protection window
-                </li>
-                <li>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
-                    stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                    <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
-                  Codes inside the fraud-protection window will not be deleted
-                </li>
-              </ul>
-            </>
+                  Run cleanup
+                </>
+              )}
+            </button>
           )}
         </div>
       </div>
-
-      <div className="addisc-modal-footer addisc-cleanup-footer">
-        <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose} disabled={running}>
-          {result ? 'Close' : 'Cancel'}
-        </button>
-        {!result && (
-          <button type="button" className="addisc-btn addisc-btn--warning" onClick={onConfirm} disabled={running}>
-            {running ? <><Spinner size={14} /> Running…</> : (
-              <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                  <polyline points="1 4 1 10 7 10" />
-                  <path d="M3.51 15a9 9 0 1 0 .49-3.27" />
-                </svg>
-                Run cleanup
-              </>
-            )}
-          </button>
-        )}
-      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // ─────────────────────────────────────────────
 // DETAIL DRAWER
@@ -385,7 +410,6 @@ const DetailDrawer = ({
                   {d.type === 'percentage' ? `${d.value}%` : fmtCurrency(d.value)}
                 </span>
               </div>
-
               <div className="addisc-drawer-field">
                 <span className="addisc-drawer-label">Category</span>
                 <span className="addisc-drawer-value">
@@ -1179,20 +1203,35 @@ const VipModal = ({ loading, error, vipSuccess, lastCreatedVipDiscount, lastVipE
 
 const PurgeBanner = ({ purge, onDismiss }) => {
   if (!purge) return null;
+  const isPartial = purge.actualDeletedCount != null && purge.actualDeletedCount !== purge.recordCount;
   return (
-    <div className="addisc-purge-banner" role="status">
+    <div className={`addisc-purge-banner ${isPartial ? 'addisc-purge-banner--partial' : ''}`} role="status">
       <div className="addisc-purge-banner-icon">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+        {isPartial ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+            stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
       </div>
       <div className="addisc-purge-banner-body">
-        <span className="addisc-purge-banner-title">Audit purge completed</span>
+        <span className="addisc-purge-banner-title">
+          {isPartial ? 'Partial audit purge — check required' : 'Audit purge completed'}
+        </span>
         <span className="addisc-purge-banner-desc">
-          {purge.actualDeletedCount ?? purge.recordCount} records deleted on {fmtDate(purge.purgedAt)},
-          covering {fmtDate(purge.dateRangeFrom)} – {fmtDate(purge.dateRangeTo)}.
-          {purge.notes && ` Note: ${purge.notes}`}
+          {purge.actualDeletedCount ?? purge.recordCount} of {purge.recordCount} records deleted on{' '}
+          {new Date(purge.purgedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })},
+          covering{' '}
+          {new Date(purge.dateRangeFrom).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+          {' – '}
+          {new Date(purge.dateRangeTo).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.
+          {purge.notes && ` ${purge.notes}`}
         </span>
       </div>
       <button type="button" className="addisc-purge-banner-dismiss" onClick={onDismiss} aria-label="Dismiss">
@@ -1516,15 +1555,14 @@ const AdminDiscounts = () => {
 
           <div className="addisc-kpi-grid">
             {[
-              { label: 'Total codes',        value: stats?.total                  ?? 0,   color: '#6366F1' },
-              { label: 'Active',             value: stats?.active                 ?? 0,   color: '#ff3c3c' },
-              { label: 'Expired',            value: stats?.expired                ?? 0,   color: '#F59E0B' },
-              { label: 'Inactive',           value: stats?.inactive               ?? 0,   color: '#9CA3AF' },
-              { label: 'Total uses',         value: stats?.totalUses              ?? 0,   color: '#10B981' },
-              { label: 'Broadcast active',   value: broadcastCount,                        color: '#0369A1' },
-              { label: 'VIP',                value: stats?.vip                    ?? 0,   color: '#ed3ad5' },
-              { label: '🖤 Black Friday',    value: stats?.blackfriday            ?? 0,   color: '#1a1a1a' },
-             
+              { label: 'Total codes',        value: stats?.total        ?? 0, color: '#6366F1' },
+              { label: 'Active',             value: stats?.active       ?? 0, color: '#ff3c3c' },
+              { label: 'Expired',            value: stats?.expired      ?? 0, color: '#F59E0B' },
+              { label: 'Inactive',           value: stats?.inactive     ?? 0, color: '#9CA3AF' },
+              { label: 'Total uses',         value: stats?.totalUses    ?? 0, color: '#10B981' },
+              { label: 'Broadcast active',   value: broadcastCount,            color: '#0369A1' },
+              { label: 'VIP',                value: stats?.vip          ?? 0, color: '#ed3ad5' },
+              { label: '🖤 Black Friday',    value: stats?.blackfriday  ?? 0, color: '#1a1a1a' },
             ].map((kpi) => (
               <div key={kpi.label} className="addisc-kpi" style={{ '--addisc-kpi-color': kpi.color }}>
                 <span className="addisc-kpi-label">{kpi.label}</span>
@@ -1611,7 +1649,6 @@ const AdminDiscounts = () => {
                             <th>Audience</th>
                             <th>Product cats</th>
                             <th>Uses</th>
-                            
                             <th>Valid until</th>
                             <th>Status</th>
                             <th>Actions</th>
@@ -1654,7 +1691,6 @@ const AdminDiscounts = () => {
                                   {d.usageLimit?.currentUses ?? 0}
                                   {d.usageLimit?.totalUses ? ` / ${d.usageLimit.totalUses}` : ''}
                                 </td>
-                               
                                 <td>{fmtDate(d.validUntil)}</td>
                                 <td><StatusBadge status={d.status} validUntil={d.validUntil} /></td>
                                 <td onClick={(e) => e.stopPropagation()}>

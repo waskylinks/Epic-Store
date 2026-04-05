@@ -26,6 +26,9 @@ import attributionReducer from '../features/analytics/attributionSlice';
 import operationsReducer from '../features/analytics/operationsSlice';
 import returnAnalyticsReducer from '../features/analytics/returnAnalyticsSlice';
 import recoveryReducer from '../features/admin/recoveryEmailSlice';
+import cronHealthReducer from '../features/admin/cronHealthSlice';
+
+
 
 export const store = configureStore({
     reducer: {
@@ -56,6 +59,9 @@ export const store = configureStore({
         operations:        operationsReducer,
         recovery: recoveryReducer, 
         returnAnalytics:   returnAnalyticsReducer,
+        cronHealth: cronHealthReducer,
+
+
     },
 
     middleware: (getDefaultMiddleware) =>
