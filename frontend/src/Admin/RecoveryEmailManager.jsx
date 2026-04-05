@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
   Email, ArrowBack, Refresh, Send, CheckCircle,
-  Warning, AccessTime, MoneyOff, Loop, PersonSearch,
+  Warning, AccessTime, MoneyOff,
 } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
@@ -12,7 +12,6 @@ import {
   fetchSendList,
   fetchRecoveryStatus,
   sendRecoveryEmail,
-  clearSendError,
   clearSuccess,
   selectSendList,
   selectSendListLoading,
@@ -68,14 +67,31 @@ const OUTCOME_LABEL = {
 // ============================================
 
 const fmt = {
-  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
-  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  date:     (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—',
-  hours:    (h) => h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(0)}h`,
+  currency: (v) =>
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+    }).format(v || 0),
+  number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
+  date: (d) =>
+    d
+      ? new Date(d).toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : '—',
+  hours: (h) =>
+    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(0)}h`,
 };
 
 const getFullName = (user) =>
-  user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Guest' : 'Guest';
+  user
+    ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Guest'
+    : 'Guest';
 
 const getPriority = (score) => {
   if (score >= 70) return { label: 'High',   cls: 'high' };
@@ -84,7 +100,11 @@ const getPriority = (score) => {
 };
 
 const outcomeClass = (outcome) => {
-  const map = { none: 'none', pending: 'pending', sent: 'sent', clicked: 'clicked', converted: 'converted', organic: 'converted', re_abandoned: 're_abandoned', exhausted: 'exhausted', expired: 'expired', failed: 'failed' };
+  const map = {
+    none: 'none', pending: 'pending', sent: 'sent', clicked: 'clicked',
+    converted: 'converted', organic: 'converted', re_abandoned: 're_abandoned',
+    exhausted: 'exhausted', expired: 'expired', failed: 'failed',
+  };
   return map[outcome] || 'none';
 };
 
@@ -130,13 +150,18 @@ function SendActionBlock({ checkoutId, outcome }) {
   const [showConfirm, setShowConfirm] = useState(false);
 
   const confirmedAttempts = status?.confirmedAttempts || 0;
-  const lastSentAt        = status?.lastSentAt        || null;
-  const nextAvailableAt   = status?.nextAvailableAt   || (lastSentAt ? new Date(new Date(lastSentAt).getTime() + COOLDOWN_HOURS * 3600000) : null);
-  const isConverted       = outcome === 'converted' || outcome === 'organic';
-  const isExhausted       = confirmedAttempts >= MAX_ATTEMPTS || outcome === 'exhausted';
-  const now               = Date.now();
-  const inCooldown        = !!(nextAvailableAt && new Date(nextAvailableAt).getTime() > now);
-  const hoursLeft         = inCooldown ? Math.ceil((new Date(nextAvailableAt).getTime() - now) / 3600000) : 0;
+  const lastSentAt        = status?.lastSentAt || null;
+  const nextAvailableAt   = status?.nextAvailableAt ||
+    (lastSentAt
+      ? new Date(new Date(lastSentAt).getTime() + COOLDOWN_HOURS * 3600000)
+      : null);
+  const isConverted = outcome === 'converted' || outcome === 'organic';
+  const isExhausted = confirmedAttempts >= MAX_ATTEMPTS || outcome === 'exhausted';
+  const now         = Date.now();
+  const inCooldown  = !!(nextAvailableAt && new Date(nextAvailableAt).getTime() > now);
+  const hoursLeft   = inCooldown
+    ? Math.ceil((new Date(nextAvailableAt).getTime() - now) / 3600000)
+    : 0;
 
   const canSend = !isConverted && !isExhausted && !inCooldown && !loading;
 
@@ -189,10 +214,15 @@ function SendActionBlock({ checkoutId, outcome }) {
             disabled={!canSend}
             onClick={() => setShowConfirm(true)}
           >
-            {loading
-              ? <><span className="res-send-spinner" /> Sending…</>
-              : <><Send style={{ fontSize: 16 }} /> Send Recovery Email {confirmedAttempts > 0 ? `(${confirmedAttempts + 1}/${MAX_ATTEMPTS})` : ''}</>
-            }
+            {loading ? (
+              <><span className="res-send-spinner" /> Sending…</>
+            ) : (
+              <>
+                <Send style={{ fontSize: 16 }} />
+                {' '}Send Recovery Email{' '}
+                {confirmedAttempts > 0 ? `(${confirmedAttempts + 1}/${MAX_ATTEMPTS})` : ''}
+              </>
+            )}
           </button>
         )}
 
@@ -236,8 +266,14 @@ function SendActionBlock({ checkoutId, outcome }) {
               </div>
             </div>
             <div className="res-modal-actions">
-              <button className="res-modal-cancel" onClick={() => setShowConfirm(false)}>Cancel</button>
-              <button className="res-modal-confirm" onClick={handleSend} disabled={loading}>
+              <button className="res-modal-cancel" onClick={() => setShowConfirm(false)}>
+                Cancel
+              </button>
+              <button
+                className="res-modal-confirm"
+                onClick={handleSend}
+                disabled={loading}
+              >
                 {loading ? 'Sending…' : 'Confirm Send'}
               </button>
             </div>
@@ -251,20 +287,19 @@ function SendActionBlock({ checkoutId, outcome }) {
 // ── Cart detail right panel ───────────────────────────────────
 
 function CartDetail({ item }) {
-  const dispatch  = useDispatch();
-  const checkout  = item.checkout;
-  const recovery  = item.recovery;
-  const status    = useSelector(selectStatusFor(checkout._id));
+  const dispatch = useDispatch();
+  const checkout = item.checkout;
+  const recovery = item.recovery;
+  const status   = useSelector(selectStatusFor(checkout._id));
 
   useEffect(() => {
     dispatch(fetchRecoveryStatus(checkout._id));
   }, [checkout._id, dispatch]);
 
-  const user       = checkout.user || {};
-  const pricing    = checkout.pricing || {};
-  const shipping   = checkout.shippingInfo || {};
-  const abn        = checkout.abandonment || {};
-  const items      = checkout.items || [];
+  const user     = checkout.user || {};
+  const pricing  = checkout.pricing || {};
+  const abn      = checkout.abandonment || {};
+  const items    = checkout.items || [];
 
   const liveOutcome = status?.outcome || recovery?.outcome || 'none';
 
@@ -282,33 +317,6 @@ function CartDetail({ item }) {
 
       <div className="res-detail-body">
 
-        {/* ── Customer info ── */}
-        <div>
-          <div className="res-section-label">Customer info</div>
-          <div className="res-info-grid">
-            <div className="res-info-row">
-              <span className="res-info-key">Phone</span>
-              <span className="res-info-val">{shipping.phoneNo || '—'}</span>
-            </div>
-            <div className="res-info-row">
-              <span className="res-info-key">Country</span>
-              <span className="res-info-val">{shipping.country || '—'}</span>
-            </div>
-            <div className="res-info-row">
-              <span className="res-info-key">City</span>
-              <span className="res-info-val">{shipping.city || '—'}</span>
-            </div>
-            <div className="res-info-row">
-              <span className="res-info-key">State</span>
-              <span className="res-info-val">{shipping.state || '—'}</span>
-            </div>
-            <div className="res-info-row" style={{ gridColumn: '1 / -1' }}>
-              <span className="res-info-key">Address</span>
-              <span className="res-info-val">{shipping.address || '—'}</span>
-            </div>
-          </div>
-        </div>
-
         {/* ── Abandonment info ── */}
         <div>
           <div className="res-section-label">Abandonment details</div>
@@ -320,8 +328,10 @@ function CartDetail({ item }) {
               </span>
             </div>
             <div className="res-info-row">
-              <span className="res-info-key">Abandoned</span>
-              <span className="res-info-val">{fmt.date(abn.firstAbandonedAt || abn.abandonedAt)}</span>
+              <span className="res-info-key">Abandoned at</span>
+              <span className="res-info-val">
+                {fmt.date(abn.firstAbandonedAt || abn.abandonedAt)}
+              </span>
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Hours since</span>
@@ -329,7 +339,9 @@ function CartDetail({ item }) {
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Re-abandoned</span>
-              <span className="res-info-val">{abn.reAbandoned ? `Yes (${abn.failedRecoveries || 1}x)` : 'No'}</span>
+              <span className="res-info-val">
+                {abn.reAbandoned ? `Yes (${abn.failedRecoveries || 1}x)` : 'No'}
+              </span>
             </div>
           </div>
         </div>
@@ -342,20 +354,29 @@ function CartDetail({ item }) {
               <tr>
                 <th>Product</th>
                 <th style={{ textAlign: 'center' }}>Qty</th>
-                <th>Total</th>
+                <th style={{ textAlign: 'right' }}>Total</th>
               </tr>
             </thead>
             <tbody>
-              {items.map((item, i) => {
-                const isUnavailable = item.product?.status && item.product.status !== 'published';
+              {items.map((cartItem, i) => {
+                const isUnavailable =
+                  cartItem.product?.status && cartItem.product.status !== 'published';
                 return (
                   <tr key={i}>
                     <td>
-                      <div className="res-item-name">{item.name || item.product?.name || 'Unknown'}</div>
-                      {isUnavailable && <div className="res-item-unavailable">⚠ Product unavailable</div>}
+                      <div className="res-item-name">
+                        {cartItem.name || cartItem.product?.name || 'Unknown'}
+                      </div>
+                      {isUnavailable && (
+                        <div className="res-item-unavailable">⚠ Product unavailable</div>
+                      )}
                     </td>
-                    <td style={{ textAlign: 'center', color: '#6B7280', fontWeight: 600 }}>{item.quantity}</td>
-                    <td style={{ fontWeight: 700, color: '#111827' }}>{fmt.currency((item.price || 0) * item.quantity)}</td>
+                    <td style={{ textAlign: 'center', color: '#374151', fontWeight: 700 }}>
+                      {cartItem.quantity}
+                    </td>
+                    <td style={{ fontWeight: 700, color: '#111827', textAlign: 'right' }}>
+                      {fmt.currency((cartItem.price || 0) * cartItem.quantity)}
+                    </td>
                   </tr>
                 );
               })}
@@ -370,10 +391,14 @@ function CartDetail({ item }) {
             <span>Subtotal</span>
             <span>{fmt.currency(pricing.itemPrice)}</span>
           </div>
-          {(pricing.discountAmount > 0) && (
+          {pricing.discountAmount > 0 && (
             <div className="res-pricing-row">
-              <span>Discount {pricing.discountCode ? `(${pricing.discountCode})` : ''}</span>
-              <span className="res-pricing-discount">−{fmt.currency(pricing.discountAmount)}</span>
+              <span>
+                Discount{pricing.discountCode ? ` (${pricing.discountCode})` : ''}
+              </span>
+              <span className="res-pricing-discount">
+                −{fmt.currency(pricing.discountAmount)}
+              </span>
             </div>
           )}
           <div className="res-pricing-row">
@@ -400,11 +425,13 @@ function CartDetail({ item }) {
               {status.attempts.map((attempt, i) => (
                 <div
                   key={i}
-                  className={`res-attempt ${attempt.linkClickedAt ? 'res-attempt--clicked' : ''} ${attempt.status === 'failed' ? 'res-attempt--failed' : ''}`}
+                  className={`res-attempt${attempt.linkClickedAt ? ' res-attempt--clicked' : ''}${attempt.status === 'failed' ? ' res-attempt--failed' : ''}`}
                 >
                   <div className="res-attempt-hd">
                     <span className="res-attempt-num">Attempt #{attempt.attemptNumber}</span>
-                    <span className="res-attempt-date">{fmt.date(attempt.sentAt || attempt.initiatedAt)}</span>
+                    <span className="res-attempt-date">
+                      {fmt.date(attempt.sentAt || attempt.initiatedAt)}
+                    </span>
                   </div>
                   <div className="res-attempt-rows">
                     <div className="res-attempt-row">
@@ -414,7 +441,9 @@ function CartDetail({ item }) {
                     {attempt.linkClickedAt && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Clicked</span>
-                        <span>{fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}x</span>
+                        <span>
+                          {fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}x
+                        </span>
                       </div>
                     )}
                     {attempt.checkoutStepAtClick && (
@@ -426,7 +455,7 @@ function CartDetail({ item }) {
                     {attempt.tokenExpiredUnclicked && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Token</span>
-                        <span style={{ color: '#6B7280' }}>Expired without click</span>
+                        <span style={{ color: '#374151' }}>Expired without click</span>
                       </div>
                     )}
                     {attempt.failReason && (
@@ -457,18 +486,18 @@ function CartDetail({ item }) {
 export default function RecoveryEmailSendPage() {
   const dispatch = useDispatch();
 
-  const sendList    = useSelector(selectSendList);
-  const loading     = useSelector(selectSendListLoading);
-  const listError   = useSelector(selectSendListError);
-  const pagination  = useSelector(selectPagination);
-  const summary     = useSelector(selectSendListSummary);
-  const success     = useSelector(selectSuccess);
-  const message     = useSelector(selectMessage);
+  const sendList   = useSelector(selectSendList);
+  const loading    = useSelector(selectSendListLoading);
+  const listError  = useSelector(selectSendListError);
+  const pagination = useSelector(selectPagination);
+  const summary    = useSelector(selectSendListSummary);
+  const success    = useSelector(selectSuccess);
+  const message    = useSelector(selectMessage);
 
-  const [selectedItem,  setSelectedItem]  = useState(null);
-  const [toast,         setToast]         = useState(null);
-  const [isFirstLoad,   setIsFirstLoad]   = useState(true);
-  const [refreshing,    setRefreshing]    = useState(false);
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [toast,        setToast]        = useState(null);
+  const [isFirstLoad,  setIsFirstLoad]  = useState(true);
+  const [refreshing,   setRefreshing]   = useState(false);
 
   const [filters, setFilters] = useState({
     page:    1,
@@ -502,7 +531,7 @@ export default function RecoveryEmailSendPage() {
   // Debounce search
   useEffect(() => {
     const t = setTimeout(() => {
-      setFilters(f => ({ ...f, search: searchInput, page: 1 }));
+      setFilters((f) => ({ ...f, search: searchInput, page: 1 }));
     }, 400);
     return () => clearTimeout(t);
   }, [searchInput]);
@@ -521,14 +550,14 @@ export default function RecoveryEmailSendPage() {
     load();
   };
 
-  const setPage = (page) => setFilters(f => ({ ...f, page }));
+  const setPage = (page) => setFilters((f) => ({ ...f, page }));
 
   const kpis = [
-    { label: 'Total matching', value: fmt.number(summary.totalMatchingCarts), color: 'coral' },
-    { label: 'Not contacted',  value: fmt.number(summary.neverContacted),     color: 'amber' },
-    { label: 'Awaiting click', value: fmt.number(summary.awaitingResponse),   color: 'blue' },
-    { label: 'Clicked',        value: fmt.number(summary.clickedNotConverted), color: 'green' },
-    { label: 'Re-abandoned',   value: fmt.number(summary.reAbandoned),        color: 'purple' },
+    { label: 'Total matching', value: fmt.number(summary.totalMatchingCarts),    color: 'coral'  },
+    { label: 'Not contacted',  value: fmt.number(summary.neverContacted),         color: 'amber'  },
+    { label: 'Awaiting click', value: fmt.number(summary.awaitingResponse),       color: 'blue'   },
+    { label: 'Clicked',        value: fmt.number(summary.clickedNotConverted),    color: 'green'  },
+    { label: 'Re-abandoned',   value: fmt.number(summary.reAbandoned),           color: 'purple' },
   ];
 
   return (
@@ -561,11 +590,13 @@ export default function RecoveryEmailSendPage() {
               <div>
                 <div className="res-hd-eyebrow">Recovery Emails</div>
                 <h1 className="res-hd-title">Send Recovery Emails</h1>
-                <p className="res-hd-sub">Select an abandoned cart and send a targeted recovery email</p>
+                <p className="res-hd-sub">
+                  Select an abandoned cart and send a targeted recovery email
+                </p>
               </div>
             </div>
             <button
-              className={`res-icon-btn ${refreshing ? 'res-icon-btn--spin' : ''}`}
+              className={`res-icon-btn${refreshing ? ' res-icon-btn--spin' : ''}`}
               onClick={handleRefresh}
               disabled={refreshing}
               title="Refresh"
@@ -583,8 +614,7 @@ export default function RecoveryEmailSendPage() {
                   <div className="res-kpi-label">{k.label}</div>
                   <div className="res-kpi-value">{k.value}</div>
                 </div>
-              ))
-            }
+              ))}
           </div>
 
           {/* Error */}
@@ -606,16 +636,24 @@ export default function RecoveryEmailSendPage() {
             <select
               className="res-select"
               value={filters.sortBy}
-              onChange={(e) => setFilters(f => ({ ...f, sortBy: e.target.value, page: 1 }))}
+              onChange={(e) =>
+                setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }))
+              }
             >
-              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
             </select>
             <div className="res-outcome-chips">
-              {OUTCOME_CHIPS.map(chip => (
+              {OUTCOME_CHIPS.map((chip) => (
                 <button
                   key={chip.key}
-                  className={`res-chip ${filters.outcome === chip.key ? 'res-chip--active' : ''}`}
-                  onClick={() => setFilters(f => ({ ...f, outcome: chip.key, page: 1 }))}
+                  className={`res-chip${filters.outcome === chip.key ? ' res-chip--active' : ''}`}
+                  onClick={() =>
+                    setFilters((f) => ({ ...f, outcome: chip.key, page: 1 }))
+                  }
                 >
                   {chip.label}
                 </button>
@@ -639,53 +677,94 @@ export default function RecoveryEmailSendPage() {
                   : sendList.length === 0
                     ? (
                       <div className="res-empty">
-                        <MoneyOff style={{ fontSize: 38, color: '#D1D5DB' }} />
+                        <MoneyOff style={{ fontSize: 38, color: '#9CA3AF' }} />
                         No abandoned carts match your filters
                       </div>
                     )
-                    : sendList.map((item) => {
-                      const checkout  = item.checkout;
-                      const recovery  = item.recovery;
-                      const user      = checkout.user || {};
-                      const priority  = getPriority(checkout.priority || 0);
-                      const outcome   = recovery?.outcome || 'none';
-                      const isSelected = selectedItem?.checkout._id === checkout._id;
+                    : sendList.map((listItem) => {
+                      const ch        = listItem.checkout;
+                      const rec       = listItem.recovery;
+                      const user      = ch.user || {};
+                      const priority  = getPriority(ch.priority || 0);
+                      const outcome   = rec?.outcome || 'none';
+                      const isSelected = selectedItem?.checkout._id === ch._id;
 
                       return (
                         <div
-                          key={checkout._id}
-                          className={`res-cart-item ${isSelected ? 'res-cart-item--selected' : ''}`}
-                          onClick={() => setSelectedItem(item)}
+                          key={ch._id}
+                          className={`res-cart-item${isSelected ? ' res-cart-item--selected' : ''}`}
+                          onClick={() => setSelectedItem(listItem)}
                         >
                           <div className="res-cart-item-top">
-                            <div>
+                            <div className="res-cart-item-info">
                               <div className="res-cart-name">{getFullName(user)}</div>
-                              <div className="res-cart-email">{user.email || checkout.email}</div>
+                              <div className="res-cart-email">
+                                {user.email || ch.email}
+                              </div>
                             </div>
-                            <div className="res-cart-value">{fmt.currency(checkout.pricing?.totalPrice)}</div>
+                            <div className="res-cart-value">
+                              {fmt.currency(ch.pricing?.totalPrice)}
+                            </div>
                           </div>
                           <div className="res-cart-meta">
-                            <span className={`res-priority res-priority--${priority.cls}`}>{priority.label}</span>
-                            <span className={`res-badge res-badge--${outcomeClass(outcome)}`}>{OUTCOME_LABEL[outcome] || outcome}</span>
-                            {recovery?.confirmedAttempts > 0 && (
-                              <span className="res-cart-hours">{recovery.confirmedAttempts}/{MAX_ATTEMPTS} sent</span>
+                            <span className={`res-priority res-priority--${priority.cls}`}>
+                              {priority.label}
+                            </span>
+                            <span className={`res-badge res-badge--${outcomeClass(outcome)}`}>
+                              {OUTCOME_LABEL[outcome] || outcome}
+                            </span>
+                            {rec?.confirmedAttempts > 0 && (
+                              <span className="res-cart-hours">
+                                {rec.confirmedAttempts}/{MAX_ATTEMPTS} sent
+                              </span>
                             )}
-                            <span className="res-cart-hours">{fmt.hours(checkout.hoursSinceAbandoned)} ago</span>
+                            <span className="res-cart-hours">
+                              {fmt.hours(ch.hoursSinceAbandoned)} ago
+                            </span>
                           </div>
                         </div>
                       );
-                    })
-                }
+                    })}
               </div>
 
-              {/* Pagination */}
+              {/* Pagination — always visible when totalPages > 1 */}
               {pagination.totalPages > 1 && (
                 <div className="res-pagination">
-                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(1)}>«</button>
-                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(filters.page - 1)}>‹</button>
-                  <span className="res-pg-info">{filters.page} / {pagination.totalPages}</span>
-                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(filters.page + 1)}>›</button>
-                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(pagination.totalPages)}>»</button>
+                  <button
+                    className="res-pg-btn"
+                    disabled={!pagination.hasPrevPage}
+                    onClick={() => setPage(1)}
+                    aria-label="First page"
+                  >
+                    «
+                  </button>
+                  <button
+                    className="res-pg-btn"
+                    disabled={!pagination.hasPrevPage}
+                    onClick={() => setPage(filters.page - 1)}
+                    aria-label="Previous page"
+                  >
+                    ‹
+                  </button>
+                  <span className="res-pg-info">
+                    {filters.page} / {pagination.totalPages}
+                  </span>
+                  <button
+                    className="res-pg-btn"
+                    disabled={!pagination.hasNextPage}
+                    onClick={() => setPage(filters.page + 1)}
+                    aria-label="Next page"
+                  >
+                    ›
+                  </button>
+                  <button
+                    className="res-pg-btn"
+                    disabled={!pagination.hasNextPage}
+                    onClick={() => setPage(pagination.totalPages)}
+                    aria-label="Last page"
+                  >
+                    »
+                  </button>
                 </div>
               )}
             </div>
@@ -696,12 +775,11 @@ export default function RecoveryEmailSendPage() {
             ) : (
               <div className="res-right">
                 <div className="res-empty-panel">
-                  <Email style={{ fontSize: 44, color: '#D1D5DB' }} />
+                  <Email style={{ fontSize: 44, color: '#9CA3AF' }} />
                   <p>Select a cart from the list to view details and send a recovery email.</p>
                 </div>
               </div>
             )}
-
           </div>
 
         </div>
