@@ -92,6 +92,7 @@ const NAV_GROUPS = [
   {
     group: 'Analytics',
     items: [
+            { path: '/admin/cron-health',     icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
       { path: '/admin/analytics',          icon: BarChart,             label: 'Overview',           color: '#8B5CF6' },
       { path: '/admin/reports',            icon: Assessment,           label: 'Reports',             color: '#EC4899' },
       { path: '/admin/customers',          icon: PersonSearch,         label: 'Customers',           color: '#06B6D4' },
@@ -124,7 +125,6 @@ const NAV_GROUPS = [
       { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',         color: '#EF4444' },
       { path: '/admin/reviews',         icon: StarOutline,        label: 'Reviews',         color: '#F59E0B' },
       { path: '/admin/recovery-emails', icon: MarkEmailRead,      label: 'Recovery Emails', color: '#FF6B6B' },
-      { path: '/admin/cron-health',     icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
     ],
   },
 ];
@@ -614,6 +614,63 @@ export default function AdminDashboard() {
               </div>
             </div>
 
+                        {/* ── Scheduled Jobs (Cron Health Mini-Strip) ───── */}
+            <div className="adm-section">
+              <div className="adm-section-hd">
+                <h2 className="adm-section-title">
+                  <span className="adm-section-icon-wrap" style={{ background: '#6366F115', color: '#6366F1' }}>
+                    <Schedule style={{ fontSize: 16 }} />
+                  </span>
+                  Scheduled Jobs
+                </h2>
+                <Link to="/admin/cron-health" className="adm-section-link">
+                  Full Health View <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
+              </div>
+              <div className="adm-cron-mini-strip">
+                {cronJobsLoading && cronJobs.length === 0
+                  ? Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="adm-cron-mini-card adm-cron-mini-card--skeleton">
+                        <div className="adm-skeleton" style={{ width: 8, height: 8, borderRadius: '50%' }} />
+                        <div className="adm-skeleton" style={{ flex: 1, height: 12 }} />
+                      </div>
+                    ))
+                  : cronJobs.length === 0
+                    ? (
+                      <div className="adm-cron-mini-empty">
+                        <Schedule style={{ fontSize: 20, color: '#9CA3AF' }} />
+                        <span>No cron jobs registered</span>
+                      </div>
+                    )
+                    : cronJobs.map((job) => (
+                        <Link
+                          key={job.jobName}
+                          to="/admin/cron-health"
+                          className="adm-cron-mini-card"
+                          title={`${job.jobName} — ${job.scheduleLabel ?? ''}`}
+                        >
+                          <span className={`adm-cron-mini-dot adm-cron-mini-dot--${job.status ?? 'unknown'}`} />
+                          <span className="adm-cron-mini-name">{job.jobName.replace(/([A-Z])/g, ' $1').trim()}</span>
+                          <span className="adm-cron-mini-time">
+                            {job.lastRunAt
+                              ? (() => {
+                                  const diff    = Date.now() - new Date(job.lastRunAt).getTime();
+                                  const minutes = Math.floor(diff / 60000);
+                                  const hours   = Math.floor(diff / 3600000);
+                                  if (minutes < 1)  return 'Just now';
+                                  if (minutes < 60) return `${minutes}m`;
+                                  if (hours < 24)   return `${hours}h`;
+                                  return `${Math.floor(hours / 24)}d`;
+                                })()
+                              : 'Never'
+                            }
+                          </span>
+                        </Link>
+                      ))
+                }
+              </div>
+            </div>
+
             {/* ── Orders & Inventory ────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
@@ -838,62 +895,6 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-            {/* ── Scheduled Jobs (Cron Health Mini-Strip) ───── */}
-            <div className="adm-section">
-              <div className="adm-section-hd">
-                <h2 className="adm-section-title">
-                  <span className="adm-section-icon-wrap" style={{ background: '#6366F115', color: '#6366F1' }}>
-                    <Schedule style={{ fontSize: 16 }} />
-                  </span>
-                  Scheduled Jobs
-                </h2>
-                <Link to="/admin/cron-health" className="adm-section-link">
-                  Full Health View <KeyboardArrowRight style={{ fontSize: 16 }} />
-                </Link>
-              </div>
-              <div className="adm-cron-mini-strip">
-                {cronJobsLoading && cronJobs.length === 0
-                  ? Array.from({ length: 4 }).map((_, i) => (
-                      <div key={i} className="adm-cron-mini-card adm-cron-mini-card--skeleton">
-                        <div className="adm-skeleton" style={{ width: 8, height: 8, borderRadius: '50%' }} />
-                        <div className="adm-skeleton" style={{ flex: 1, height: 12 }} />
-                      </div>
-                    ))
-                  : cronJobs.length === 0
-                    ? (
-                      <div className="adm-cron-mini-empty">
-                        <Schedule style={{ fontSize: 20, color: '#9CA3AF' }} />
-                        <span>No cron jobs registered</span>
-                      </div>
-                    )
-                    : cronJobs.map((job) => (
-                        <Link
-                          key={job.jobName}
-                          to="/admin/cron-health"
-                          className="adm-cron-mini-card"
-                          title={`${job.jobName} — ${job.scheduleLabel ?? ''}`}
-                        >
-                          <span className={`adm-cron-mini-dot adm-cron-mini-dot--${job.status ?? 'unknown'}`} />
-                          <span className="adm-cron-mini-name">{job.jobName.replace(/([A-Z])/g, ' $1').trim()}</span>
-                          <span className="adm-cron-mini-time">
-                            {job.lastRunAt
-                              ? (() => {
-                                  const diff    = Date.now() - new Date(job.lastRunAt).getTime();
-                                  const minutes = Math.floor(diff / 60000);
-                                  const hours   = Math.floor(diff / 3600000);
-                                  if (minutes < 1)  return 'Just now';
-                                  if (minutes < 60) return `${minutes}m`;
-                                  if (hours < 24)   return `${hours}h`;
-                                  return `${Math.floor(hours / 24)}d`;
-                                })()
-                              : 'Never'
-                            }
-                          </span>
-                        </Link>
-                      ))
-                }
-              </div>
-            </div>
 
             {/* ── Customer Analytics ────────────────────────── */}
             <div className="adm-section">

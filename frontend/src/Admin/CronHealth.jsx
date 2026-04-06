@@ -23,7 +23,7 @@ import {
   clearTriggerResult,
 } from '../features/admin/cronHealthSlice';
 import Navbar from '../components/Navbar';
-import '../AdminStyles/AdminCronHealth.css';
+import '../AdminStyles/CronHealth.css';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
