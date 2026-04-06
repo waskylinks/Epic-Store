@@ -45,7 +45,7 @@ export const cronConfig = Object.freeze({
   // ── Recovery Email Cron ──────────────────────────────────────────────────
   recoveryEmail: {
     enabled:        env('RECOVERY_CRON_ENABLED',     'true') !== 'false',
-    schedule:       env('RECOVERY_CRON_SCHEDULE',    '*/30 * * * *'),
+    schedule:       env('RECOVERY_CRON_SCHEDULE',    '*/1 * * * *'),
     maxPerRun:      int('RECOVERY_CRON_MAX_PER_RUN', 200),
     dryRun:         boo('RECOVERY_CRON_DRY_RUN'),
     maxAgeDays:     int('RECOVERY_MAX_AGE_DAYS',     7),
