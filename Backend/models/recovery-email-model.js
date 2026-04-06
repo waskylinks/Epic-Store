@@ -624,7 +624,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
             as:           'checkoutDoc',
           },
         },
-        { $unwind: { path: '$checkoutDoc', preserveNullAndEmpty: true } },
+        { $unwind: { path: '$checkoutDoc', preserveNullAndEmptyArrays: true } },
         {
           $group: {
             _id:          '$confirmedAttempts',
@@ -668,7 +668,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
       // Answers: "how many emails were sent manually vs automatically?"
       this.aggregate([
         { $match: matchBase },
-        { $unwind: { path: '$attempts', preserveNullAndEmpty: true } },
+        { $unwind: { path: '$attempts', preserveNullAndEmptyArrays: true } },
         { $match: { 'attempts.status': 'sent' } },
         {
           $group: {
