@@ -322,7 +322,7 @@ recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'admin')
   const token = generateRecoveryToken(
     {
       checkoutId: checkout._id,
-      userId:     checkout.user,
+      userId:     checkout.user?._id?.toString() ?? checkout.user.toString(),
       email:      checkout.email,
     },
     { expiresIn: tokenTTLSeconds, jti }
