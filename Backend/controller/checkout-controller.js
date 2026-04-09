@@ -316,10 +316,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   try {
     decoded = verifyRecoveryToken(token);
   } catch (err) {
-    // On expiry, attempt to write lastRecoveryTokenExpiredAt to the document
-    // so the analytics layer knows the token expired unused rather than never
-    // having been clicked at all. This is a best-effort audit write — failure
-    // must never change the 410 response the user receives.
     if (err.code === 'EXPIRED') {
       try {
         const bare = decodeRecoveryToken(token);
@@ -346,9 +342,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   }
 
   // ── 3. Guard: deleted user account ────────────────────────────────────────
-  // populate() returns null for user if the account was deleted after
-  // the checkout was created. The cart cannot be safely restored without
-  // a valid user to own the session.
   if (!checkout.user || typeof checkout.user !== 'object') {
     return next(new HandleError(
       "The account associated with this cart no longer exists.", 410
@@ -370,8 +363,28 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // ── 6. Record recovery link click ─────────────────────────────────────────
+  // ── 6. Record recovery link click on Checkout document ───────────────────
   checkout.recordRecoveryLinkClick();
+
+  // ── 6b. Record click on RecoveryEmail document ────────────────────────────
+  // FIX: The checkout controller was never updating the RecoveryEmail document
+  // on link click. This caused totalLinkClicks to stay 0, outcome to stay
+  // 'sent' forever, and conversion attribution to break downstream.
+  const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
+  const recoveryEmailDoc = await RecoveryEmail.findOne({ checkout: checkout._id });
+  if (recoveryEmailDoc) {
+    const clickedAttempt = recoveryEmailDoc.recordLinkClick(
+      decoded.jti,
+      checkout.currentStep
+    );
+    if (!clickedAttempt) {
+      console.warn(
+        `[redeemRecoveryToken] jti ${decoded.jti} not found in RecoveryEmail attempts` +
+        ` for checkout ${checkout._id}. Click recorded on Checkout doc only.`
+      );
+    }
+    await recoveryEmailDoc.save();
+  }
 
   // ── 7. Mark analytics source as email recovery ───────────────────────────
   if (!checkout.analytics) checkout.analytics = {};
@@ -392,9 +405,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   );
 
   // ── 10. Recompute pricing if items were removed ───────────────────────────
-  // The stored pricing reflects the original cart including now-unavailable
-  // items. If any items were filtered out, recompute from available items only
-  // so the user sees an accurate total and doesn't proceed with inflated pricing.
   let resolvedPricing = checkout.pricing;
 
   if (unavailableItems.length > 0) {
@@ -402,11 +412,7 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
       (sum, item) => sum + (item.price * item.quantity), 0
     );
 
-    // Reapply discount proportionally if one was present.
-    // If the original gross price is available, compute the discount rate and
-    // apply it to the new item price. If not, drop the discount entirely since
-    // we cannot safely know what portion still applies.
-    const originalGross  = checkout.pricing?.grossItemPrice || checkout.pricing?.itemPrice || 0;
+    const originalGross    = checkout.pricing?.grossItemPrice || checkout.pricing?.itemPrice || 0;
     const originalDiscount = checkout.pricing?.discountAmount || 0;
 
     let freshDiscountAmount = 0;
@@ -442,15 +448,10 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
       }),
     };
 
-    // Persist the updated pricing so subsequent requests and the payment
-    // controller see the corrected values, not the stale original.
     checkout.pricing = resolvedPricing;
   }
 
   // ── 11. Re-validate discount code ─────────────────────────────────────────
-  // The discount applied at checkout time may have since expired. Check the
-  // DB for the current state of the code. If it is no longer valid, strip it
-  // from pricing and flag the response so the frontend can inform the user.
   let discountInvalidated = false;
 
   if (checkout.pricing?.discountCode || checkout.discount?.code) {
@@ -461,17 +462,16 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
         isActive: true,
       });
 
-      const isExpired  = discountDoc?.expiresAt && new Date(discountDoc.expiresAt) < new Date();
-      const isInactive = !discountDoc || discountDoc.isActive === false;
+      const isExpired   = discountDoc?.expiresAt && new Date(discountDoc.expiresAt) < new Date();
+      const isInactive  = !discountDoc || discountDoc.isActive === false;
       const isExhausted = discountDoc?.maxUses > 0 &&
         (discountDoc?.usedCount || 0) >= discountDoc.maxUses;
 
       if (isExpired || isInactive || isExhausted) {
         discountInvalidated = true;
 
-        // Strip the discount from pricing — recompute from the gross item price.
-        const gross    = checkout.pricing?.grossItemPrice || resolvedPricing.itemPrice || 0;
-        const freshTax = Math.round(gross * 0.18 * 100) / 100;
+        const gross         = checkout.pricing?.grossItemPrice || resolvedPricing.itemPrice || 0;
+        const freshTax      = Math.round(gross * 0.18 * 100) / 100;
         const freshShipping = gross >= 500 ? 0 : 50;
         const freshTotal    = Math.round((gross + freshTax + freshShipping) * 100) / 100;
 
@@ -489,9 +489,7 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
         resolvedPricing = checkout.pricing;
       }
     } catch {
-      // Non-fatal — if the discount lookup fails, leave pricing as-is.
-      // Better to let the payment layer re-validate than to silently
-      // strip a discount the user legitimately earned.
+      // Non-fatal — leave pricing as-is if discount lookup fails.
     }
   }
 

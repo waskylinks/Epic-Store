@@ -196,207 +196,13 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
   };
 };
 
-
-/**
- * redeemToken
- * Handles the full recovery link redemption flow.
- *
- * @param {string} token  Raw JWT from ?token= query param
- */
-export const redeemToken = async (token) => {
-  if (!token) throw Object.assign(new Error('Recovery token is required'), { status: 400 });
-
-  // ── 1. Verify JWT ─────────────────────────────────────────────────────────
-  let decoded;
-  try {
-    decoded = verifyRecoveryToken(token);
-  } catch (err) {
-    if (err.code === 'EXPIRED') {
-      try {
-        const bare = decodeRecoveryToken(token);
-        if (bare?.checkoutId && bare?.jti) {
-          const re = await RecoveryEmail.findOne({ checkout: bare.checkoutId });
-          if (re) {
-            re.markTokenExpired(bare.jti);
-            await re.save();
-          }
-        }
-      } catch {
-        // Non-fatal — audit write failed
-      }
-      throw Object.assign(new Error(err.message), { status: 410 });
-    }
-    throw Object.assign(new Error(err.message), { status: 400 });
-  }
-
-  // ── 2. Load checkout ──────────────────────────────────────────────────────
-  const checkout = await Checkout.findById(decoded.checkoutId)
-    .populate('user',          'firstName lastName email')
-    .populate('items.product', 'name images pricing inventory status');
-
-  if (!checkout) {
-    throw Object.assign(
-      new Error('Cart not found — it may have expired.'),
-      { status: 404 }
-    );
-  }
-
-  // ── 3. User still exists? ─────────────────────────────────────────────────
-  if (!checkout.user || typeof checkout.user !== 'object') {
-    throw Object.assign(
-      new Error('The account associated with this cart no longer exists.'),
-      { status: 410 }
-    );
-  }
-
-  // ── 4. Ownership check ────────────────────────────────────────────────────
-  if (checkout.user._id.toString() !== decoded.userId) {
-    throw Object.assign(new Error('Invalid recovery link.'), { status: 403 });
-  }
-
-  // ── 5. Already converted? ─────────────────────────────────────────────────
-  if (checkout.conversion?.isConverted) {
-    return {
-      alreadyConverted: true,
-      orderId:          checkout.conversion.orderId,
-      message:          'This order has already been completed. Thank you!',
-    };
-  }
-
-  // ── 6. Load RecoveryEmail and record the click ────────────────────────────
-  const recoveryEmail = await RecoveryEmail.findOne({ checkout: checkout._id });
-
-  if (recoveryEmail) {
-    const clickedAttempt = recoveryEmail.recordLinkClick(
-      decoded.jti,
-      checkout.currentStep
-    );
-
-    if (!clickedAttempt) {
-      console.warn(
-        `[RecoveryEmailService] tokenId ${decoded.jti} not found in RecoveryEmail ` +
-        `attempts for checkout ${checkout._id}. Proceeding with redemption.`
-      );
-    }
-
-    await recoveryEmail.save();
-  }
-
-  // ── 7. Restore checkout cart state ────────────────────────────────────────
-  checkout.restoreFromRecovery();
-
-  // ── 8. Filter unavailable items ───────────────────────────────────────────
-  const availableItems   = checkout.items.filter(
-    item => item.product?.status === 'published'
-  );
-  const unavailableItems = checkout.items.filter(
-    item => !item.product || item.product.status !== 'published'
-  );
-
-  // ── 9. Recompute pricing if items were removed ────────────────────────────
-  let resolvedPricing = checkout.pricing;
-
-  if (unavailableItems.length > 0 && availableItems.length > 0) {
-    const freshItemPrice = availableItems.reduce(
-      (sum, item) => sum + item.price * item.quantity, 0
-    );
-
-    const originalGross    = checkout.pricing?.grossItemPrice || checkout.pricing?.itemPrice || 0;
-    const originalDiscount = checkout.pricing?.discountAmount || 0;
-
-    let freshDiscount = 0;
-    if (originalDiscount > 0 && originalGross > 0) {
-      const rate    = originalDiscount / originalGross;
-      freshDiscount = Math.min(
-        Math.round(freshItemPrice * rate * 100) / 100,
-        freshItemPrice
-      );
-    }
-
-    const freshDiscounted = Math.max(0, freshItemPrice - freshDiscount);
-    const freshTax        = Math.round(freshDiscounted * 0.18 * 100) / 100;
-    const freshShipping   = freshDiscounted >= 500 ? 0 : 50;
-    const freshTotal      = Math.round((freshDiscounted + freshTax + freshShipping) * 100) / 100;
-
-    resolvedPricing = {
-      ...(checkout.pricing?.toObject ? checkout.pricing.toObject() : checkout.pricing),
-      itemPrice:     Math.round(freshDiscounted * 100) / 100,
-      taxPrice:      freshTax,
-      shippingPrice: freshShipping,
-      totalPrice:    freshTotal,
-      ...(freshDiscount > 0
-        ? { discountAmount: freshDiscount, grossItemPrice: Math.round(freshItemPrice * 100) / 100 }
-        : { discountAmount: 0, discountCode: undefined, grossItemPrice: undefined }
-      ),
-    };
-
-    checkout.pricing = resolvedPricing;
-  }
-
-  // ── 10. Re-validate discount code ─────────────────────────────────────────
-  let discountWarning = null;
-
-  const activeDiscountCode =
-    checkout.pricing?.discountCode || checkout.discount?.code;
-
-  if (activeDiscountCode) {
-    try {
-      const discountDoc = await Discount.findOne({
-        code:     activeDiscountCode.toUpperCase(),
-        isActive: true,
-      });
-
-      const isExpired   = discountDoc?.expiresAt && new Date(discountDoc.expiresAt) < new Date();
-      const isInactive  = !discountDoc || !discountDoc.isActive;
-      const isExhausted = discountDoc?.maxUses > 0 &&
-        (discountDoc?.usedCount || 0) >= discountDoc.maxUses;
-
-      if (isExpired || isInactive || isExhausted) {
-        discountWarning = 'Your discount code is no longer valid and has been removed from your cart.';
-
-        const gross         = resolvedPricing.grossItemPrice || resolvedPricing.itemPrice || 0;
-        const freshTax      = Math.round(gross * 0.18 * 100) / 100;
-        const freshShipping = gross >= 500 ? 0 : 50;
-        const freshTotal    = Math.round((gross + freshTax + freshShipping) * 100) / 100;
-
-        checkout.pricing = {
-          ...resolvedPricing,
-          itemPrice:      gross,
-          taxPrice:       freshTax,
-          shippingPrice:  freshShipping,
-          totalPrice:     freshTotal,
-          discountAmount: 0,
-          discountCode:   undefined,
-          grossItemPrice: undefined,
-        };
-
-        resolvedPricing = checkout.pricing;
-      }
-    } catch {
-      // Non-fatal — leave pricing as-is if discount lookup fails.
-    }
-  }
-
-  // ── 11. Save and return ───────────────────────────────────────────────────
-  await checkout.save();
-
-  invalidateRecoveryCaches();
-
-  return {
-    alreadyConverted: false,
-    message:          'Cart restored successfully. Complete your purchase!',
-    discountWarning,
-    checkout: {
-      id:               checkout._id,
-      items:            availableItems,
-      pricing:          resolvedPricing,
-      shippingInfo:     checkout.shippingInfo,
-      currentStep:      checkout.currentStep,
-      stepsCompleted:   checkout.stepsCompleted,
-      unavailableItems: unavailableItems.map(i => ({ name: i.name })),
-    },
-  };
-};
+// NOTE: redeemToken has been removed from this service.
+// The single redemption path is checkoutController.redeemRecoveryToken
+// (GET /api/v1/checkout/recover?token=) which now correctly updates
+// both the Checkout document and the RecoveryEmail document on link click.
+// Having two parallel implementations caused the checkout controller path
+// (the one actually wired to the email link) to never update RecoveryEmail,
+// leaving totalLinkClicks at 0 and outcome permanently at 'sent'.
 
 
 /**
@@ -445,7 +251,9 @@ export const getRecoveryEmailStatus = async (checkoutId) => {
 
 /**
  * resolveRecoveryOutcome
- * Called by verifyPaymentController and markStaleCheckouts.
+ * Called by verifyPaymentController after order creation to bridge the
+ * RecoveryEmail document outcome with the confirmed payment.
+ * Also called by markStaleCheckouts for re-abandonment marking.
  *
  * @param {string|ObjectId} checkoutId
  * @param {'converted'|'organic'|'re_abandoned'|'exhausted'|'expired'} outcome

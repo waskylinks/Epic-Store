@@ -843,6 +843,16 @@ checkoutSchema.methods.recordRecoveryLinkClick = function () {
  * @param {Object} previousPricing
  * @param {Object} newPricing
  */
+
+
+checkoutSchema.methods.restoreFromRecovery = function () {
+  if (this.status === 'abandoned') {
+    this.status         = 'pending';
+    this.lastActivityAt = new Date();
+  }
+};
+
+
 checkoutSchema.methods.recordRecoveryInteraction = function (
   previousItems,
   newItems,

@@ -645,8 +645,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       status:                   { $in: ['pending', 'abandoned'] }
     })
       .sort({ lastActivityAt: -1 })
-      .then(checkout => {
+      .then(async checkout => {
         if (!checkout) return;
+
         const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
         const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
         const sessionWasActive   = checkout.abandonment?.recoverySessionActive === true;
@@ -658,26 +659,30 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         if (linkWasEverClicked) {
           checkout.computeRecoveryCartDiff(order.orderItems);
         }
+
         checkout.markAsConverted(order._id, orderReference);
-        return checkout.save();
+        await checkout.save();
+
+        // FIX: resolve the RecoveryEmail outcome so email analytics records
+        // the conversion. Previously the Checkout doc was marked converted
+        // but the RecoveryEmail document outcome stayed 'sent' or 'clicked'
+        // permanently — causing 0 conversions on the email analytics page
+        // while checkout analytics correctly showed the recovery.
+        if (wasAbandoned && emailWasSent) {
+          const { resolveRecoveryOutcome } = await import(
+            '../Services/recoveryEmailService.js'
+          );
+          const outcomeToSet = checkout.abandonment?.organicRecovery
+            ? 'organic'
+            : 'converted';
+          await resolveRecoveryOutcome(checkout._id, outcomeToSet);
+        }
       })
       .catch(err =>
         console.error('[payment] Failed to mark checkout as converted:', err.message)
       );
 
-    // FIX #6/#13: discount usage is recorded HERE (after payment succeeds),
-    // not at /validate time. This ensures:
-    //   - Usage is only counted for completed purchases.
-    //   - The single analytics sync (syncDiscountAfterOrderCreated) fires once
-    //     with complete order data, eliminating the premature/duplicate sync
-    //     that previously fired at /validate time (fix #7/#13).
     if (session.discount) {
-      // FIX #12: prefer discountId for the lookup. Only fall back to code-based
-      // findOne if discountId is missing. If neither resolves, log a structured
-      // error (not just a console message) so it can be caught by alerting tools.
-      // Note: if the code was administratively changed or deactivated between
-      // payment init and verify, the code-based fallback may return null —
-      // this is logged but cannot be auto-recovered without a retry queue.
       const discountLookup = session.discount.discountId
         ? Discount.findById(session.discount.discountId)
         : Discount.findOne({ code: session.discount.code?.toUpperCase() });
@@ -685,9 +690,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       discountLookup
         .then(discount => {
           if (!discount) {
-            // FIX #12: structured error log for alerting (e.g. Datadog, Sentry).
-            // A console.error is insufficient for a financial discrepancy — the
-            // order succeeded but usage was not recorded.
             console.error(
               JSON.stringify({
                 level:     "ERROR",
@@ -707,19 +709,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
           return discount.recordUsage(userId, order._id, session.discount.discountAmount);
         })
         .then(() => {
-          // FIX #13: only one sync fires here — syncDiscountAfterOrderCreated —
-          // with complete order revenue data. The premature syncDiscountAfterRedemption
-          // that previously fired at /validate time has been removed, eliminating
-          // double-syncing and inflated redemption counts.
           syncDiscountAfterOrderCreated(order).catch(() => {});
         })
         .catch(err => {
-          // FIX #11: log structured error. There is currently no retry queue —
-          // if recordUsage() throws (e.g. Mongoose validation error, network
-          // blip, or lost balance race), the order is confirmed to the customer
-          // but usage is not recorded. This is the known gap. Until a retry
-          // queue or outbox pattern is implemented, this log must be monitored
-          // and reconciled manually against usageHistory vs currentUses.
           console.error(
             JSON.stringify({
               level:     "ERROR",
@@ -730,8 +722,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
               error:     err?.message ?? String(err),
               message:
                 "recordUsage() threw after order creation. Usage counts and remainingBalance " +
-                "were NOT decremented. Manual reconciliation required. " +
-                "TODO: implement retry queue / transactional outbox to prevent silent free redemptions.",
+                "were NOT decremented. Manual reconciliation required.",
             })
           );
         });
