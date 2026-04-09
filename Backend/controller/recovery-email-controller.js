@@ -2,7 +2,6 @@ import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import {
   sendRecoveryEmail,
-  redeemToken,
   getRecoveryEmailStatus,
   resolveRecoveryOutcome,
   getAbandonedCartsForSending,
