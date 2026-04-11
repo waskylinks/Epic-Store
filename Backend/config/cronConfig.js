@@ -23,7 +23,7 @@ export const cronConfig = Object.freeze({
   // ── Abandonment Sweep ────────────────────────────────────────────────────
   abandonmentSweep: {
     scheduleProduction:  env('ABANDONMENT_SWEEP_CRON_PRODUCTION',  '0,30 * * * *'),
-    scheduleDevelopment: env('ABANDONMENT_SWEEP_CRON_DEVELOPMENT', '*/5 * * * *'),
+    scheduleDevelopment: env('ABANDONMENT_SWEEP_CRON_DEVELOPMENT', '*/3 * * * *'),
     errorAlertThreshold: int('SWEEP_ERROR_ALERT_THRESHOLD', 5),
   },
 
@@ -45,12 +45,12 @@ export const cronConfig = Object.freeze({
   // ── Recovery Email Cron ──────────────────────────────────────────────────
   recoveryEmail: {
     enabled:        env('RECOVERY_CRON_ENABLED',     'true') !== 'false',
-    schedule:       env('RECOVERY_CRON_SCHEDULE',    '*/5 * * * *'),
+    schedule:       env('RECOVERY_CRON_SCHEDULE',    '*/3 * * * *'),
     maxPerRun:      int('RECOVERY_CRON_MAX_PER_RUN', 200),
     dryRun:         boo('RECOVERY_CRON_DRY_RUN'),
     maxAgeDays:     int('RECOVERY_MAX_AGE_DAYS',     7),
     maxAttempts:    int('MAX_RECOVERY_ATTEMPTS',     3),
-    cooldownHours:  int('RECOVERY_COOLDOWN_HOURS',   24),
+    cooldownHours:  int('RECOVERY_COOLDOWN_HOURS',   1),
     tokenTTL:       int('RECOVERY_TOKEN_TTL_SECONDS', 72 * 60 * 60),
     staleAckMins:   int('RECOVERY_STALE_ACK_MINS',   10),
     delayHours: {
