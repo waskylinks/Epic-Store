@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
-  Email, ArrowBack, Refresh, Send, CheckCircle,
-  Warning, AccessTime, MoneyOff,
+  Email, ArrowBack, Refresh, Warning, MoneyOff,
 } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
@@ -11,18 +10,12 @@ import PageTitle from '../components/PageTitle';
 import {
   fetchSendList,
   fetchRecoveryStatus,
-  sendRecoveryEmail,
-  clearSuccess,
   selectSendList,
   selectSendListLoading,
   selectSendListError,
   selectPagination,
   selectSendListSummary,
   selectStatusFor,
-  selectSendLoadingFor,
-  selectSendErrorFor,
-  selectSuccess,
-  selectMessage,
 } from '../features/admin/recoveryEmailSlice';
 import '../AdminStyles/RecoveryEmailManager.css';
 
@@ -31,7 +24,6 @@ import '../AdminStyles/RecoveryEmailManager.css';
 // ============================================
 
 const MAX_ATTEMPTS   = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS)   || 3;
-const COOLDOWN_HOURS = parseInt(import.meta.env.VITE_RECOVERY_COOLDOWN_HOURS) || 24;
 
 const OUTCOME_CHIPS = [
   { key: 'all',          label: 'All' },
@@ -69,19 +61,14 @@ const OUTCOME_LABEL = {
 const fmt = {
   currency: (v) =>
     new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      maximumFractionDigits: 0,
+      style: 'currency', currency: 'USD', maximumFractionDigits: 0,
     }).format(v || 0),
   number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
   date: (d) =>
     d
       ? new Date(d).toLocaleDateString('en-US', {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-          hour: '2-digit',
-          minute: '2-digit',
+          month: 'short', day: 'numeric', year: 'numeric',
+          hour: '2-digit', minute: '2-digit',
         })
       : '—',
   hours: (h) =>
@@ -139,148 +126,55 @@ function CartItemSkeleton() {
   );
 }
 
-// ── Send action block ─────────────────────────────────────────
+// ── Email status info block (read-only) ───────────────────────
 
-function SendActionBlock({ checkoutId, outcome }) {
-  const dispatch  = useDispatch();
-  const status    = useSelector(selectStatusFor(checkoutId));
-  const loading   = useSelector(selectSendLoadingFor(checkoutId));
-  const sendErr   = useSelector(selectSendErrorFor(checkoutId));
-
-  const [showConfirm, setShowConfirm] = useState(false);
+function EmailStatusBlock({ checkoutId }) {
+  const status = useSelector(selectStatusFor(checkoutId));
 
   const confirmedAttempts = status?.confirmedAttempts || 0;
-  const lastSentAt        = status?.lastSentAt || null;
-  const nextAvailableAt   = status?.nextAvailableAt ||
-    (lastSentAt
-      ? new Date(new Date(lastSentAt).getTime() + COOLDOWN_HOURS * 3600000)
-      : null);
-  const isConverted = outcome === 'converted' || outcome === 'organic';
-  const isExhausted = confirmedAttempts >= MAX_ATTEMPTS || outcome === 'exhausted';
-  const now         = Date.now();
-  const inCooldown  = !!(nextAvailableAt && new Date(nextAvailableAt).getTime() > now);
-  const hoursLeft   = inCooldown
-    ? Math.ceil((new Date(nextAvailableAt).getTime() - now) / 3600000)
-    : 0;
+  const lastSentAt        = status?.lastSentAt        || null;
+  const nextAvailableAt   = status?.nextAvailableAt   || null;
+  const outcome           = status?.outcome           || 'none';
 
-  const canSend = !isConverted && !isExhausted && !inCooldown && !loading;
-
-  const handleSend = () => {
-    dispatch(sendRecoveryEmail(checkoutId));
-    setShowConfirm(false);
-  };
-
-  if (isConverted) {
+  if (!status || confirmedAttempts === 0) {
     return (
       <div className="res-send-block">
-        <div className="res-send-block-label">Recovery action</div>
-        <div className="res-converted-block">
-          <CheckCircle style={{ fontSize: 18, marginRight: 8, verticalAlign: 'middle' }} />
-          Customer converted — no action needed
-        </div>
-      </div>
-    );
-  }
-
-  if (isExhausted) {
-    return (
-      <div className="res-send-block">
-        <div className="res-send-block-label">Recovery action</div>
-        <div className="res-exhausted-block">
-          Maximum attempts reached ({MAX_ATTEMPTS}/{MAX_ATTEMPTS}) — this cart cannot receive more emails
+        <div className="res-send-block-label">Email status</div>
+        <div className="res-send-status res-send-status--warn">
+          No recovery emails sent yet — cron will send automatically when eligible.
         </div>
       </div>
     );
   }
 
   return (
-    <>
-      <div className="res-send-block">
-        <div className="res-send-block-label">Recovery action</div>
-
-        {inCooldown ? (
-          <div className="res-cooldown-bar">
-            <div className="res-cooldown-label">
-              <AccessTime style={{ fontSize: 14, verticalAlign: 'middle', marginRight: 4 }} />
-              Cooldown active — {hoursLeft}h remaining
-            </div>
-            <div className="res-cooldown-sub">
-              Next send available: {fmt.date(nextAvailableAt)}
-            </div>
-          </div>
-        ) : (
-          <button
-            className="res-send-btn"
-            disabled={!canSend}
-            onClick={() => setShowConfirm(true)}
-          >
-            {loading ? (
-              <><span className="res-send-spinner" /> Sending…</>
-            ) : (
-              <>
-                <Send style={{ fontSize: 16 }} />
-                {' '}Send Recovery Email{' '}
-                {confirmedAttempts > 0 ? `(${confirmedAttempts + 1}/${MAX_ATTEMPTS})` : ''}
-              </>
-            )}
-          </button>
-        )}
-
-        {sendErr && (
-          <div className="res-send-status res-send-status--error">
-            ✕ {sendErr.message}
+    <div className="res-send-block">
+      <div className="res-send-block-label">Email status</div>
+      <div className="res-info-grid">
+        <div className="res-info-row">
+          <span className="res-info-key">Outcome</span>
+          <span className={`res-badge res-badge--${outcomeClass(outcome)}`}>
+            {OUTCOME_LABEL[outcome] || outcome}
+          </span>
+        </div>
+        <div className="res-info-row">
+          <span className="res-info-key">Attempts sent</span>
+          <span className="res-info-val">{confirmedAttempts} / {MAX_ATTEMPTS}</span>
+        </div>
+        {lastSentAt && (
+          <div className="res-info-row">
+            <span className="res-info-key">Last sent</span>
+            <span className="res-info-val">{fmt.date(lastSentAt)}</span>
           </div>
         )}
-
-        {confirmedAttempts > 0 && !inCooldown && (
-          <div className="res-send-status res-send-status--warn">
-            {confirmedAttempts} email{confirmedAttempts > 1 ? 's' : ''} already sent · last {fmt.date(lastSentAt)}
+        {nextAvailableAt && new Date(nextAvailableAt).getTime() > Date.now() && (
+          <div className="res-info-row">
+            <span className="res-info-key">Next available</span>
+            <span className="res-info-val">{fmt.date(nextAvailableAt)}</span>
           </div>
         )}
       </div>
-
-      {showConfirm && (
-        <div className="res-modal-overlay" onClick={() => setShowConfirm(false)}>
-          <div className="res-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="res-modal-icon">
-              <Email style={{ fontSize: 36 }} />
-            </div>
-            <div className="res-modal-title">Send Recovery Email?</div>
-            <div className="res-modal-sub">
-              This will send attempt {confirmedAttempts + 1} of {MAX_ATTEMPTS} to this customer.
-            </div>
-            <div className="res-modal-info">
-              <div className="res-modal-info-row">
-                <span>Attempt</span>
-                <strong>{confirmedAttempts + 1} / {MAX_ATTEMPTS}</strong>
-              </div>
-              {lastSentAt && (
-                <div className="res-modal-info-row">
-                  <span>Last sent</span>
-                  <strong>{fmt.date(lastSentAt)}</strong>
-                </div>
-              )}
-              <div className="res-modal-info-row">
-                <span>Next available</span>
-                <strong>{COOLDOWN_HOURS}h after this send</strong>
-              </div>
-            </div>
-            <div className="res-modal-actions">
-              <button className="res-modal-cancel" onClick={() => setShowConfirm(false)}>
-                Cancel
-              </button>
-              <button
-                className="res-modal-confirm"
-                onClick={handleSend}
-                disabled={loading}
-              >
-                {loading ? 'Sending…' : 'Confirm Send'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    </div>
   );
 }
 
@@ -296,10 +190,10 @@ function CartDetail({ item }) {
     dispatch(fetchRecoveryStatus(checkout._id));
   }, [checkout._id, dispatch]);
 
-  const user     = checkout.user || {};
-  const pricing  = checkout.pricing || {};
-  const abn      = checkout.abandonment || {};
-  const items    = checkout.items || [];
+  const user    = checkout.user    || {};
+  const pricing = checkout.pricing || {};
+  const abn     = checkout.abandonment || {};
+  const items   = checkout.items   || [];
 
   const liveOutcome = status?.outcome || recovery?.outcome || 'none';
 
@@ -317,7 +211,7 @@ function CartDetail({ item }) {
 
       <div className="res-detail-body">
 
-        {/* ── Abandonment info ── */}
+        {/* Abandonment info */}
         <div>
           <div className="res-section-label">Abandonment details</div>
           <div className="res-info-grid">
@@ -329,9 +223,7 @@ function CartDetail({ item }) {
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Abandoned at</span>
-              <span className="res-info-val">
-                {fmt.date(abn.firstAbandonedAt || abn.abandonedAt)}
-              </span>
+              <span className="res-info-val">{fmt.date(abn.firstAbandonedAt || abn.abandonedAt)}</span>
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Hours since</span>
@@ -346,7 +238,7 @@ function CartDetail({ item }) {
           </div>
         </div>
 
-        {/* ── Cart items ── */}
+        {/* Cart items */}
         <div>
           <div className="res-section-label">Cart items ({items.length})</div>
           <table className="res-items-table">
@@ -384,7 +276,7 @@ function CartDetail({ item }) {
           </table>
         </div>
 
-        {/* ── Pricing ── */}
+        {/* Pricing */}
         <div>
           <div className="res-section-label">Pricing</div>
           <div className="res-pricing-row">
@@ -393,12 +285,8 @@ function CartDetail({ item }) {
           </div>
           {pricing.discountAmount > 0 && (
             <div className="res-pricing-row">
-              <span>
-                Discount{pricing.discountCode ? ` (${pricing.discountCode})` : ''}
-              </span>
-              <span className="res-pricing-discount">
-                −{fmt.currency(pricing.discountAmount)}
-              </span>
+              <span>Discount{pricing.discountCode ? ` (${pricing.discountCode})` : ''}</span>
+              <span className="res-pricing-discount">−{fmt.currency(pricing.discountAmount)}</span>
             </div>
           )}
           <div className="res-pricing-row">
@@ -417,7 +305,7 @@ function CartDetail({ item }) {
           </div>
         </div>
 
-        {/* ── Email attempt history ── */}
+        {/* Email attempt history */}
         {status?.attempts?.length > 0 && (
           <div>
             <div className="res-section-label">Email history</div>
@@ -441,9 +329,7 @@ function CartDetail({ item }) {
                     {attempt.linkClickedAt && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Clicked</span>
-                        <span>
-                          {fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}x
-                        </span>
+                        <span>{fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}x</span>
                       </div>
                     )}
                     {attempt.checkoutStepAtClick && (
@@ -471,8 +357,8 @@ function CartDetail({ item }) {
           </div>
         )}
 
-        {/* ── Send action ── */}
-        <SendActionBlock checkoutId={checkout._id} outcome={liveOutcome} />
+        {/* Read-only email status — replaces SendActionBlock */}
+        <EmailStatusBlock checkoutId={checkout._id} />
 
       </div>
     </div>
@@ -491,11 +377,8 @@ export default function RecoveryEmailSendPage() {
   const listError  = useSelector(selectSendListError);
   const pagination = useSelector(selectPagination);
   const summary    = useSelector(selectSendListSummary);
-  const success    = useSelector(selectSuccess);
-  const message    = useSelector(selectMessage);
 
   const [selectedItem, setSelectedItem] = useState(null);
-  const [toast,        setToast]        = useState(null);
   const [isFirstLoad,  setIsFirstLoad]  = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
 
@@ -510,11 +393,6 @@ export default function RecoveryEmailSendPage() {
 
   const [searchInput, setSearchInput] = useState('');
   const loadingRef = useRef(false);
-
-  const showToast = useCallback((msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  }, []);
 
   const load = useCallback(() => {
     if (loadingRef.current) return;
@@ -536,14 +414,6 @@ export default function RecoveryEmailSendPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // Toast on send success
-  useEffect(() => {
-    if (success && message) {
-      showToast(message);
-      dispatch(clearSuccess());
-    }
-  }, [success, message, dispatch, showToast]);
-
   const handleRefresh = () => {
     setRefreshing(true);
     setIsFirstLoad(false);
@@ -553,45 +423,34 @@ export default function RecoveryEmailSendPage() {
   const setPage = (page) => setFilters((f) => ({ ...f, page }));
 
   const kpis = [
-    { label: 'Total matching', value: fmt.number(summary.totalMatchingCarts),    color: 'coral'  },
-    { label: 'Not contacted',  value: fmt.number(summary.neverContacted),         color: 'amber'  },
-    { label: 'Awaiting click', value: fmt.number(summary.awaitingResponse),       color: 'blue'   },
-    { label: 'Clicked',        value: fmt.number(summary.clickedNotConverted),    color: 'green'  },
-    { label: 'Re-abandoned',   value: fmt.number(summary.reAbandoned),           color: 'purple' },
+    { label: 'Total matching', value: fmt.number(summary.totalMatchingCarts),  color: 'coral'  },
+    { label: 'Not contacted',  value: fmt.number(summary.neverContacted),       color: 'amber'  },
+    { label: 'Awaiting click', value: fmt.number(summary.awaitingResponse),     color: 'blue'   },
+    { label: 'Clicked',        value: fmt.number(summary.clickedNotConverted),  color: 'green'  },
+    { label: 'Re-abandoned',   value: fmt.number(summary.reAbandoned),          color: 'purple' },
   ];
 
   return (
     <>
-      <PageTitle title="Send Recovery Emails — Admin" />
+      <PageTitle title="Recovery Email Monitor — Admin" />
       <Navbar />
 
       <div className="res-page">
         <div className="res-body">
 
-          {/* Toast */}
-          {toast && (
-            <div className={`res-toast res-toast--${toast.type}`}>
-              <span>{toast.type === 'success' ? '✓' : '✕'}</span>
-              {toast.msg}
-            </div>
-          )}
-
-          {/* Back */}
           <Link to="/admin/dashboard" className="res-back">
             <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
-          {/* Header */}
           <div className="res-hd">
             <div className="res-hd-left">
-              <div className="res-hd-icon">
-                <Email style={{ fontSize: 24 }} />
-              </div>
+              <div className="res-hd-icon"><Email style={{ fontSize: 24 }} /></div>
               <div>
                 <div className="res-hd-eyebrow">Recovery Emails</div>
-                <h1 className="res-hd-title">Send Recovery Emails</h1>
+                <h1 className="res-hd-title">Recovery Email Monitor</h1>
+                {/* FIX: updated subtitle — page is now read-only, cron sends only */}
                 <p className="res-hd-sub">
-                  Select an abandoned cart and send a targeted recovery email
+                  Monitor abandoned carts and their recovery email status — sent automatically by cron
                 </p>
               </div>
             </div>
@@ -617,7 +476,6 @@ export default function RecoveryEmailSendPage() {
               ))}
           </div>
 
-          {/* Error */}
           {listError && !loading && (
             <div className="res-error-bar">
               <Warning style={{ fontSize: 16 }} /> {listError}
@@ -636,14 +494,10 @@ export default function RecoveryEmailSendPage() {
             <select
               className="res-select"
               value={filters.sortBy}
-              onChange={(e) =>
-                setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }))
-              }
+              onChange={(e) => setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }))}
             >
               {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
+                <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
             <div className="res-outcome-chips">
@@ -651,9 +505,7 @@ export default function RecoveryEmailSendPage() {
                 <button
                   key={chip.key}
                   className={`res-chip${filters.outcome === chip.key ? ' res-chip--active' : ''}`}
-                  onClick={() =>
-                    setFilters((f) => ({ ...f, outcome: chip.key, page: 1 }))
-                  }
+                  onClick={() => setFilters((f) => ({ ...f, outcome: chip.key, page: 1 }))}
                 >
                   {chip.label}
                 </button>
@@ -698,9 +550,7 @@ export default function RecoveryEmailSendPage() {
                           <div className="res-cart-item-top">
                             <div className="res-cart-item-info">
                               <div className="res-cart-name">{getFullName(user)}</div>
-                              <div className="res-cart-email">
-                                {user.email || ch.email}
-                              </div>
+                              <div className="res-cart-email">{user.email || ch.email}</div>
                             </div>
                             <div className="res-cart-value">
                               {fmt.currency(ch.pricing?.totalPrice)}
@@ -727,56 +577,25 @@ export default function RecoveryEmailSendPage() {
                     })}
               </div>
 
-              {/* Pagination — always visible when totalPages > 1 */}
               {pagination.totalPages > 1 && (
                 <div className="res-pagination">
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasPrevPage}
-                    onClick={() => setPage(1)}
-                    aria-label="First page"
-                  >
-                    «
-                  </button>
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasPrevPage}
-                    onClick={() => setPage(filters.page - 1)}
-                    aria-label="Previous page"
-                  >
-                    ‹
-                  </button>
-                  <span className="res-pg-info">
-                    {filters.page} / {pagination.totalPages}
-                  </span>
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasNextPage}
-                    onClick={() => setPage(filters.page + 1)}
-                    aria-label="Next page"
-                  >
-                    ›
-                  </button>
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasNextPage}
-                    onClick={() => setPage(pagination.totalPages)}
-                    aria-label="Last page"
-                  >
-                    »
-                  </button>
+                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(1)} aria-label="First page">«</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(filters.page - 1)} aria-label="Previous page">‹</button>
+                  <span className="res-pg-info">{filters.page} / {pagination.totalPages}</span>
+                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(filters.page + 1)} aria-label="Next page">›</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(pagination.totalPages)} aria-label="Last page">»</button>
                 </div>
               )}
             </div>
 
-            {/* Right — detail */}
+            {/* Right — detail panel */}
             {selectedItem ? (
               <CartDetail item={selectedItem} />
             ) : (
               <div className="res-right">
                 <div className="res-empty-panel">
                   <Email style={{ fontSize: 44, color: '#9CA3AF' }} />
-                  <p>Select a cart from the list to view details and send a recovery email.</p>
+                  <p>Select a cart from the list to view abandonment details and email history.</p>
                 </div>
               </div>
             )}

@@ -2,8 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
 import {
-  Email, ArrowBack, Refresh, TrendingUp, TrendingDown,
-  CheckCircle, Loop, Warning, MoneyOff, AttachMoney,
+  Email, ArrowBack, Refresh, Warning,
 } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
@@ -34,18 +33,16 @@ const fmt = {
   },
 };
 
-// ── Outcome display config ────────────────────────────────────
-
 const OUTCOME_CONFIG = {
-  converted:    { label: 'Converted',    color: '#16a34a', dotColor: '#16a34a' },
-  organic:      { label: 'Organic',      color: '#059669', dotColor: '#059669' },
-  clicked:      { label: 'Clicked',      color: '#2563eb', dotColor: '#2563eb' },
-  sent:         { label: 'Sent',         color: '#3b82f6', dotColor: '#3b82f6' },
-  re_abandoned: { label: 'Re-abandoned', color: '#d97706', dotColor: '#d97706' },
-  pending:      { label: 'Pending',      color: '#9ca3af', dotColor: '#9ca3af' },
-  exhausted:    { label: 'Exhausted',    color: '#dc2626', dotColor: '#dc2626' },
-  expired:      { label: 'Expired',      color: '#6b7280', dotColor: '#6b7280' },
-  failed:       { label: 'Failed',       color: '#b91c1c', dotColor: '#b91c1c' },
+  converted:    { label: 'Converted',    dotColor: '#16a34a' },
+  organic:      { label: 'Organic',      dotColor: '#059669' },
+  clicked:      { label: 'Clicked',      dotColor: '#2563eb' },
+  sent:         { label: 'Sent',         dotColor: '#3b82f6' },
+  re_abandoned: { label: 'Re-abandoned', dotColor: '#d97706' },
+  pending:      { label: 'Pending',      dotColor: '#9ca3af' },
+  exhausted:    { label: 'Exhausted',    dotColor: '#dc2626' },
+  expired:      { label: 'Expired',      dotColor: '#6b7280' },
+  failed:       { label: 'Failed',       dotColor: '#b91c1c' },
 };
 
 const FUNNEL_COLORS = {
@@ -68,22 +65,6 @@ function KpiSkel() {
   );
 }
 
-function CardSkel({ h = 200 }) {
-  return (
-    <div className="rea-card">
-      <div className="rea-card-hd">
-        <div>
-          <div className="rea-skel" style={{ width: 160, height: 13, marginBottom: 6 }} />
-          <div className="rea-skel" style={{ width: 220, height: 11 }} />
-        </div>
-      </div>
-      <div className="rea-card-body">
-        <div className="rea-skel" style={{ width: '100%', height: h }} />
-      </div>
-    </div>
-  );
-}
-
 function SectionDivider({ label }) {
   return (
     <div className="rea-section">
@@ -92,8 +73,6 @@ function SectionDivider({ label }) {
     </div>
   );
 }
-
-// ── Click funnel ──────────────────────────────────────────────
 
 function ClickFunnel({ clickFunnel }) {
   if (!clickFunnel) return <div className="rea-empty">No funnel data available</div>;
@@ -119,16 +98,12 @@ function ClickFunnel({ clickFunnel }) {
           <div className="rea-funnel-track">
             <div className="rea-funnel-fill" style={{ width: `${step.fill}%`, background: step.color }} />
           </div>
-          {step.rate && (
-            <div className="rea-funnel-rate">{step.rate}</div>
-          )}
+          {step.rate && <div className="rea-funnel-rate">{step.rate}</div>}
         </div>
       ))}
     </div>
   );
 }
-
-// ── Outcome breakdown ─────────────────────────────────────────
 
 function OutcomeBreakdown({ outcomes, total }) {
   if (!outcomes || total === 0) return <div className="rea-empty">No outcome data</div>;
@@ -150,11 +125,7 @@ function OutcomeBreakdown({ outcomes, total }) {
             <span className="rea-outcome-label">{cfg.label}</span>
             <div
               className="rea-outcome-bar"
-              style={{
-                width: `${(count / maxCount) * 80}px`,
-                background: cfg.dotColor,
-                opacity: 0.35,
-              }}
+              style={{ width: `${(count / maxCount) * 80}px`, background: cfg.dotColor, opacity: 0.35 }}
             />
             <span className="rea-outcome-count">{fmt.number(count)}</span>
             <span className="rea-outcome-pct">{pct}%</span>
@@ -164,8 +135,6 @@ function OutcomeBreakdown({ outcomes, total }) {
     </div>
   );
 }
-
-// ── ROI attempt distribution table ────────────────────────────
 
 function AttemptROITable({ revenueAttribution }) {
   if (!revenueAttribution?.length) {
@@ -184,11 +153,7 @@ function AttemptROITable({ revenueAttribution }) {
       <table className="rea-tbl">
         <thead>
           <tr>
-            <th>Attempt #</th>
-            <th>Conversions</th>
-            <th>% of total</th>
-            <th>Revenue</th>
-            <th>Avg cart</th>
+            <th>Attempt #</th><th>Conversions</th><th>% of total</th><th>Revenue</th><th>Avg cart</th>
           </tr>
         </thead>
         <tbody>
@@ -223,11 +188,11 @@ function AttemptROITable({ revenueAttribution }) {
 // ============================================
 
 export default function RecoveryEmailAnalyticsPage() {
-  const dispatch    = useDispatch();
-  const analytics   = useSelector(selectAnalytics);
-  const loading     = useSelector(selectAnalyticsLoading);
-  const error       = useSelector(selectAnalyticsError);
-  const timeframe   = useSelector(selectAnalyticsTimeframe);
+  const dispatch  = useDispatch();
+  const analytics = useSelector(selectAnalytics);
+  const loading   = useSelector(selectAnalyticsLoading);
+  const error     = useSelector(selectAnalyticsError);
+  const timeframe = useSelector(selectAnalyticsTimeframe);
 
   const [isFirstLoad, setIsFirstLoad] = useState(true);
   const [refreshing,  setRefreshing]  = useState(false);
@@ -295,17 +260,13 @@ export default function RecoveryEmailAnalyticsPage() {
       <div className="rea-page">
         <div className="rea-body">
 
-          {/* Back */}
           <Link to="/admin/dashboard" className="rea-back">
             <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
-          {/* Header */}
           <div className="rea-hd">
             <div className="rea-hd-left">
-              <div className="rea-hd-icon">
-                <Email style={{ fontSize: 24 }} />
-              </div>
+              <div className="rea-hd-icon"><Email style={{ fontSize: 24 }} /></div>
               <div>
                 <div className="rea-hd-eyebrow">Recovery Emails</div>
                 <h1 className="rea-hd-title">Email Campaign Analytics</h1>
@@ -336,7 +297,6 @@ export default function RecoveryEmailAnalyticsPage() {
             </div>
           </div>
 
-          {/* Error */}
           {error && !loading && (
             <div className="rea-error">
               <Warning style={{ fontSize: 16 }} /> {error}
@@ -357,10 +317,9 @@ export default function RecoveryEmailAnalyticsPage() {
             }
           </div>
 
-          {/* ── Funnel & Outcomes ── */}
+          {/* Funnel & Outcomes */}
           <SectionDivider label="Send funnel &amp; Outcome breakdown" />
           <div className="rea-grid-2">
-
             <div className="rea-card">
               <div className="rea-card-hd">
                 <div>
@@ -390,132 +349,65 @@ export default function RecoveryEmailAnalyticsPage() {
                 }
               </div>
             </div>
-
           </div>
 
-          {/* ── Campaign summary metrics ── */}
+          {/* Campaign summary */}
           <SectionDivider label="Campaign summary" />
           <div className="rea-grid-3">
 
             <div className="rea-card">
-              <div className="rea-card-hd">
-                <div>
-                  <div className="rea-card-title">Send Performance</div>
-                  <div className="rea-card-sub">Volume and delivery stats</div>
-                </div>
-              </div>
+              <div className="rea-card-hd"><div><div className="rea-card-title">Send Performance</div><div className="rea-card-sub">Volume and delivery stats</div></div></div>
               <div className="rea-card-body">
-                {isFirstLoad
-                  ? <div className="rea-loading"><span className="rea-spinner" /></div>
-                  : (
-                    <>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Total campaigns</span>
-                        <span className="rea-metric-val">{fmt.number(analytics?.totalCampaigns)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Total sends</span>
-                        <span className="rea-metric-val">{fmt.number(analytics?.totalSendAttempts)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Avg sends / cart</span>
-                        <span className="rea-metric-val">{analytics?.avgAttemptsPerCheckout?.toFixed(1) || '—'}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Total link clicks</span>
-                        <span className="rea-metric-blue">{fmt.number(analytics?.totalLinkClicks)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Click rate</span>
-                        <span className="rea-metric-blue">{fmt.pct(analytics?.linkClickRate)}</span>
-                      </div>
-                    </>
-                  )
-                }
+                {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
+                  <>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Total campaigns</span><span className="rea-metric-val">{fmt.number(analytics?.totalCampaigns)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Total sends</span><span className="rea-metric-val">{fmt.number(analytics?.totalSendAttempts)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Avg sends / cart</span><span className="rea-metric-val">{analytics?.avgAttemptsPerCheckout?.toFixed(1) || '—'}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Total link clicks</span><span className="rea-metric-blue">{fmt.number(analytics?.totalLinkClicks)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Click rate</span><span className="rea-metric-blue">{fmt.pct(analytics?.linkClickRate)}</span></div>
+                  </>
+                )}
               </div>
             </div>
 
             <div className="rea-card">
-              <div className="rea-card-hd">
-                <div>
-                  <div className="rea-card-title">Conversion Results</div>
-                  <div className="rea-card-sub">Recovery success and attribution</div>
-                </div>
-              </div>
+              <div className="rea-card-hd"><div><div className="rea-card-title">Conversion Results</div><div className="rea-card-sub">Recovery success and attribution</div></div></div>
               <div className="rea-card-body">
-                {isFirstLoad
-                  ? <div className="rea-loading"><span className="rea-spinner" /></div>
-                  : (
-                    <>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Email-attributed</span>
-                        <span className="rea-metric-green">{fmt.number(outcomes.converted || 0)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Organic recovery</span>
-                        <span className="rea-metric-green">{fmt.number(outcomes.organic || 0)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Total recovered</span>
-                        <span className="rea-metric-green">{fmt.number((outcomes.converted || 0) + (outcomes.organic || 0))}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Conversion rate</span>
-                        <span className="rea-metric-green">{fmt.pct(analytics?.conversionRate)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Re-abandoned</span>
-                        <span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span>
-                      </div>
-                    </>
-                  )
-                }
+                {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
+                  <>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Email-attributed</span><span className="rea-metric-green">{fmt.number(outcomes.converted || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Organic recovery</span><span className="rea-metric-green">{fmt.number(outcomes.organic || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Total recovered</span><span className="rea-metric-green">{fmt.number((outcomes.converted || 0) + (outcomes.organic || 0))}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Conversion rate</span><span className="rea-metric-green">{fmt.pct(analytics?.conversionRate)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
+                  </>
+                )}
               </div>
             </div>
 
             <div className="rea-card">
-              <div className="rea-card-hd">
-                <div>
-                  <div className="rea-card-title">Campaign Status</div>
-                  <div className="rea-card-sub">Active and resolved states</div>
-                </div>
-              </div>
+              <div className="rea-card-hd"><div><div className="rea-card-title">Campaign Status</div><div className="rea-card-sub">Active and resolved states</div></div></div>
               <div className="rea-card-body">
-                {isFirstLoad
-                  ? <div className="rea-loading"><span className="rea-spinner" /></div>
-                  : (
-                    <>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Awaiting click</span>
-                        <span className="rea-metric-val">{fmt.number(outcomes.sent || 0)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Link clicked</span>
-                        <span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Pending (unsent)</span>
-                        <span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Exhausted</span>
-                        <span className="rea-metric-red">{fmt.number(outcomes.exhausted || 0)}</span>
-                      </div>
-                      <div className="rea-metric-row">
-                        <span className="rea-metric-key">Expired / Failed</span>
-                        <span style={{ color: '#6B7280', fontWeight: 700 }}>
-                          {fmt.number((outcomes.expired || 0) + (outcomes.failed || 0))}
-                        </span>
-                      </div>
-                    </>
-                  )
-                }
+                {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
+                  <>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Awaiting click</span><span className="rea-metric-val">{fmt.number(outcomes.sent || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Link clicked</span><span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Pending (unsent)</span><span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Exhausted</span><span className="rea-metric-red">{fmt.number(outcomes.exhausted || 0)}</span></div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Expired / Failed</span>
+                      <span style={{ color: '#6B7280', fontWeight: 700 }}>
+                        {fmt.number((outcomes.expired || 0) + (outcomes.failed || 0))}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
           </div>
 
-          {/* ── ROI by attempt number ── */}
+          {/* ROI by attempt */}
           <SectionDivider label="ROI by attempt number — is a second email worth it?" />
           <div className="rea-card">
             <div className="rea-card-hd">
