@@ -5,56 +5,16 @@ import {
   getCheckoutAbandonmentStats,
   getAbandonedCheckoutsList,
   getRecoveryOpportunities,
-  getReAbandonmentAnalytics, 
-  
+  getReAbandonmentAnalytics,
 } from '../controller/checkout-analytics-controller.js';
 
 const router = express.Router();
 
-/**
- * Get checkout abandonment statistics
- * @route GET /api/v1/analytics/checkout/abandonment
- * @access Admin
- */
-router.get(
-  '/abandonment',
-  verifyUserAuth,
-  roleBaseAccess('admin', "superAdmin"),
-  adminAnalyticsLimiter,
-  getCheckoutAbandonmentStats
-);
+const admin = [verifyUserAuth, roleBaseAccess('admin', 'superAdmin'), adminAnalyticsLimiter];
 
-/**
- * Get list of abandoned checkouts
- * @route GET /api/v1/analytics/checkout/abandoned-list
- * @access Admin
- */
-router.get(
-  '/abandoned-list',
-  verifyUserAuth,
-  roleBaseAccess('admin', "superAdmin"),
-  adminAnalyticsLimiter,
-  getAbandonedCheckoutsList
-);
-
-/**
- * Get recovery opportunities
- * @route GET /api/v1/analytics/checkout/recovery-opportunities
- * @access Admin
- */
-router.get(
-  '/recovery-opportunities',
-  verifyUserAuth,
-  roleBaseAccess('admin', "superAdmin"),
-  adminAnalyticsLimiter,
-  getRecoveryOpportunities
-);
-
-router.get("/re-abandonment",
-  verifyUserAuth,
-  roleBaseAccess('admin', "superAdmin"),
-  adminAnalyticsLimiter,         
-  getReAbandonmentAnalytics
-); 
+router.get('/abandonment',            ...admin, getCheckoutAbandonmentStats);
+router.get('/abandoned-list',         ...admin, getAbandonedCheckoutsList);
+router.get('/recovery-opportunities', ...admin, getRecoveryOpportunities);
+router.get('/re-abandonment',         ...admin, getReAbandonmentAnalytics);
 
 export default router;

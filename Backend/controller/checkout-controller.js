@@ -101,6 +101,40 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   const deviceInfo      = req.deviceInfo      || {};
 
   if (checkout) {
+    // ── BUG FIX: Record recovery interactions before overwriting items/pricing.
+    // When recoverySessionActive is true the user is modifying their cart
+    // during an active recovery session. We must diff the old vs new state
+    // and append to recoveryInteractions so that analytics (cart diffs,
+    // "with discount during recovery" count) are accurate.
+    // Previously items and pricing were silently overwritten with no diff,
+    // leaving recoveryInteractions empty and computeRecoveryCartDiff useless.
+    if (checkout.abandonment?.recoverySessionActive) {
+      const previousItems   = (checkout.items || []).map(i => ({
+        product:  i.product?.toString?.() ?? i.product,
+        name:     i.name,
+        price:    i.price,
+        quantity: i.quantity,
+      }));
+      const previousPricing = checkout.pricing?.toObject
+        ? checkout.pricing.toObject()
+        : { ...checkout.pricing };
+
+      // Build new items in the same shape for the diff helper
+      const newItemsForDiff = validItems.map(i => ({
+        product:  i.product?.toString?.() ?? i.product,
+        name:     i.name,
+        price:    i.price,
+        quantity: i.quantity,
+      }));
+
+      checkout.recordRecoveryInteraction(
+        previousItems,
+        newItemsForDiff,
+        previousPricing,
+        pricingPayload
+      );
+    }
+
     checkout.items   = validItems;
     checkout.pricing = pricingPayload;
 
@@ -267,10 +301,6 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Unauthorized", 403));
   }
 
-  // ── Idempotency guard ─────────────────────────────────────────────────────
-  // If already abandoned (e.g. duplicate request, double-click, page unload
-  // firing twice), return success silently — abandonment is a one-way
-  // operation and calling it again should be a no-op, not an error.
   if (checkout.status === 'abandoned') {
     return res.status(200).json({
       success: true,
@@ -278,8 +308,6 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // Only pending checkouts can be abandoned. Completed or other terminal
-  // states should surface a clear error rather than a silent swallow.
   if (checkout.status !== 'pending') {
     return next(new HandleError(
       `Cannot abandon a checkout with status: ${checkout.status}`, 400
@@ -325,7 +353,7 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
           });
         }
       } catch {
-        // Non-fatal — audit write failed, still return 410 below
+        // Non-fatal
       }
       return next(new HandleError(err.message, 410));
     }
@@ -367,9 +395,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   checkout.recordRecoveryLinkClick();
 
   // ── 6b. Record click on RecoveryEmail document ────────────────────────────
-  // FIX: The checkout controller was never updating the RecoveryEmail document
-  // on link click. This caused totalLinkClicks to stay 0, outcome to stay
-  // 'sent' forever, and conversion attribution to break downstream.
   const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
   const recoveryEmailDoc = await RecoveryEmail.findOne({ checkout: checkout._id });
   if (recoveryEmailDoc) {
@@ -489,7 +514,7 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
         resolvedPricing = checkout.pricing;
       }
     } catch {
-      // Non-fatal — leave pricing as-is if discount lookup fails.
+      // Non-fatal
     }
   }
 

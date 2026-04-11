@@ -147,8 +147,40 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
     return next(new HandleError('No recovery email record found for this checkout', 404));
   }
 
-  const TERMINAL = ['converted', 'organic', 'exhausted', 'expired', 'failed'];
-  if (TERMINAL.includes(record.outcome)) {
+  // ── BUG FIX: The previous guard only checked absolute terminals
+  // ['converted', 'organic', 'exhausted', 'expired', 'failed'].
+  // 're_abandoned' was missing, so the controller would call
+  // resolveRecoveryOutcome() with e.g. 'expired', pass through here, and
+  // then the model's _resolveOutcome would silently block it — returning
+  // a 200 to the admin with no indication that nothing changed.
+  //
+  // The guard now mirrors the model's three-tier priority exactly:
+  //   - Absolute terminals (converted, organic): nothing overwrites them
+  //   - Semi-terminal (re_abandoned): only absolute terminals can replace it
+  //   - Standard terminals (exhausted, expired, failed): not re-overridable
+  //     unless the incoming outcome is an absolute terminal
+  //
+  // Any attempt to set a lower-priority outcome on a higher-priority current
+  // outcome now gets a clear 422 with an actionable message.
+  const ABSOLUTE_TERMINAL = ['converted', 'organic'];
+  const SEMI_TERMINAL     = ['re_abandoned'];
+  const STANDARD_TERMINAL = ['exhausted', 'expired', 'failed'];
+
+  if (ABSOLUTE_TERMINAL.includes(record.outcome)) {
+    return res.status(422).json({
+      success: false,
+      message: `Cannot override an absolute terminal outcome (current: ${record.outcome})`,
+    });
+  }
+
+  if (SEMI_TERMINAL.includes(record.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) {
+    return res.status(422).json({
+      success: false,
+      message: `'${record.outcome}' can only be overridden by 'converted' or 'organic' (requested: '${outcome}')`,
+    });
+  }
+
+  if (STANDARD_TERMINAL.includes(record.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) {
     return res.status(422).json({
       success: false,
       message: `Cannot override a terminal outcome (current: ${record.outcome})`,
