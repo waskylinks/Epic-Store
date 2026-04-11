@@ -25,37 +25,105 @@ const getCartsEligibleForCron = async () => {
     { checkout: 1, confirmedAttempts: 1, lastSentAt: 1, pendingAck: 1, outcome: 1 }
   ).lean();
 
-  // Step 2: Find uncontacted abandoned checkouts
-  // BUG FIX: original query only checked firstAbandonedAt, but carts abandoned
-  // via the sweep (markAsAbandoned) may only have abandonedAt set when
-  // firstAbandonedAt was not recorded before the code was in place.
-  // Using $or ensures both field paths are considered.
   const existingCheckoutIds = activeRecords.map((r) => r.checkout);
+
+  // Step 2: Find uncontacted abandoned checkouts.
+  // delayHours[1] is the required wait before the first email.
+  // We use $or to handle both field paths (firstAbandonedAt preferred,
+  // abandonedAt as fallback for older documents).
+  const firstEmailDelayCutoff = new Date(
+    now - (delayHours[1] ?? 1) * 60 * 60 * 1000
+  );
 
   const uncontactedCheckouts = await Checkout.find(
     {
       'abandonment.isAbandoned': true,
       'conversion.isConverted':  false,
       status:                    'abandoned',
+      _id:                       { $nin: existingCheckoutIds },
       $or: [
+        // Preferred path: firstAbandonedAt exists and is within the valid window
         {
           'abandonment.firstAbandonedAt': {
-            $lte: new Date(now - delayHours[1] * 60 * 60 * 1000),
-            $gte: maxAgeCutoff,
+            $exists: true,
+            $lte:    firstEmailDelayCutoff,
+            $gte:    maxAgeCutoff,
           },
         },
+        // Fallback path: firstAbandonedAt missing, use abandonedAt
         {
           'abandonment.firstAbandonedAt': { $exists: false },
           'abandonment.abandonedAt': {
-            $lte: new Date(now - delayHours[1] * 60 * 60 * 1000),
-            $gte: maxAgeCutoff,
+            $exists: true,
+            $lte:    firstEmailDelayCutoff,
+            $gte:    maxAgeCutoff,
+          },
+        },
+        // Second fallback: firstAbandonedAt is null (explicitly set to null
+        // rather than missing — Mongoose can store null for unset Date fields)
+        {
+          'abandonment.firstAbandonedAt': null,
+          'abandonment.abandonedAt': {
+            $exists: true,
+            $lte:    firstEmailDelayCutoff,
+            $gte:    maxAgeCutoff,
           },
         },
       ],
-      _id: { $nin: existingCheckoutIds },
     },
-    { _id: 1, email: 1, 'abandonment.firstAbandonedAt': 1, 'abandonment.abandonedAt': 1 }
+    {
+      _id:                            1,
+      email:                          1,
+      'abandonment.firstAbandonedAt': 1,
+      'abandonment.abandonedAt':      1,
+    }
   ).lean();
+
+  // Diagnostic: log what the query found so you can verify in dev
+  if (process.env.NODE_ENV !== 'production') {
+    const totalAbandoned = await Checkout.countDocuments({
+      'abandonment.isAbandoned': true,
+      'conversion.isConverted':  false,
+      status:                    'abandoned',
+    });
+    const excludedByActiveRecord = await Checkout.countDocuments({
+      'abandonment.isAbandoned': true,
+      'conversion.isConverted':  false,
+      status:                    'abandoned',
+      _id:                       { $in: existingCheckoutIds },
+    });
+    const tooRecentCount = await Checkout.countDocuments({
+      'abandonment.isAbandoned': true,
+      'conversion.isConverted':  false,
+      status:                    'abandoned',
+      _id:                       { $nin: existingCheckoutIds },
+      $or: [
+        {
+          'abandonment.firstAbandonedAt': {
+            $exists: true,
+            $gt:     firstEmailDelayCutoff,
+          },
+        },
+        {
+          'abandonment.firstAbandonedAt': { $in: [null, undefined] },
+          'abandonment.abandonedAt':      { $exists: true, $gt: firstEmailDelayCutoff },
+        },
+        {
+          'abandonment.firstAbandonedAt': { $exists: false },
+          'abandonment.abandonedAt':      { $exists: false },
+        },
+      ],
+    });
+
+    console.log(
+      `[RecoveryEmailCron][DEBUG] totalAbandoned=${totalAbandoned}` +
+      ` | excludedByActiveRecord=${excludedByActiveRecord}` +
+      ` | tooRecent(within ${delayHours[1]}h)=${tooRecentCount}` +
+      ` | firstEmailDelayCutoff=${firstEmailDelayCutoff.toISOString()}` +
+      ` | maxAgeCutoff=${maxAgeCutoff.toISOString()}` +
+      ` | uncontactedEligible=${uncontactedCheckouts.length}`
+    );
+  }
 
   // Step 3: Load checkout docs for active-record carts
   const activeCheckoutIds = activeRecords.map((r) => r.checkout);
@@ -66,10 +134,13 @@ const getCartsEligibleForCron = async () => {
       'conversion.isConverted':  false,
       status:                    'abandoned',
       $or: [
-        { 'abandonment.firstAbandonedAt': { $gte: maxAgeCutoff } },
+        { 'abandonment.firstAbandonedAt': { $exists: true, $ne: null, $gte: maxAgeCutoff } },
         {
-          'abandonment.firstAbandonedAt': { $exists: false },
-          'abandonment.abandonedAt':      { $gte: maxAgeCutoff },
+          $or: [
+            { 'abandonment.firstAbandonedAt': { $exists: false } },
+            { 'abandonment.firstAbandonedAt': null },
+          ],
+          'abandonment.abandonedAt': { $exists: true, $gte: maxAgeCutoff },
         },
       ],
     },
@@ -87,7 +158,7 @@ const getCartsEligibleForCron = async () => {
     activeCheckouts.map((c) => [c._id.toString(), c])
   );
 
-  // Step 4: Apply delay rules and build eligible list
+  // Step 4: Apply delay rules to active-record carts
   const eligible = [];
 
   for (const record of activeRecords) {
@@ -99,10 +170,8 @@ const getCartsEligibleForCron = async () => {
 
     const nextAttemptNumber = record.confirmedAttempts + 1;
     const requiredDelay     = delayHours[nextAttemptNumber];
-    if (!requiredDelay) continue;
+    if (requiredDelay == null) continue;
 
-    // BUG FIX: for attempt 1, reference time must fall back to abandonedAt
-    // if firstAbandonedAt is missing (older carts created before field existed).
     let referenceTime;
     if (record.confirmedAttempts === 0) {
       const abandonedAt =
@@ -127,6 +196,7 @@ const getCartsEligibleForCron = async () => {
     });
   }
 
+  // Step 5: Add uncontacted checkouts (first email, attempt 1)
   for (const checkout of uncontactedCheckouts) {
     eligible.push({
       checkoutId:        checkout._id.toString(),
