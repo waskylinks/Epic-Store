@@ -37,9 +37,19 @@ const normaliseItems = (items = []) =>
  */
 export const invalidateRecoveryCaches = () =>
   Promise.all([
-    deleteCachePattern('recovery_analytics_*'),
+    deleteCache('recovery_analytics_day'),
+    deleteCache('recovery_analytics_week'),
+    deleteCache('recovery_analytics_month'),
+    deleteCache('recovery_analytics_quarter'),
+    deleteCache('recovery_analytics_year'),
+    deleteCache('recovery_analytics_custom'),
+    deleteCache('checkout_abandonment_day'),
+    deleteCache('checkout_abandonment_week'),
+    deleteCache('checkout_abandonment_month'),
+    deleteCache('checkout_abandonment_quarter'),
+    deleteCache('checkout_abandonment_year'),
+    deleteCachePattern('recovery_analytics_custom_*'),
     deleteCachePattern('recovery_send_list_*'),
-    deleteCachePattern('checkout_abandonment_*'),
     deleteCachePattern('abandoned_list:*'),
     deleteCachePattern('admin_stats*'),
   ]).catch(err =>

@@ -108,18 +108,6 @@ export const deleteCache = async key => {
 };
 
 /**
- * Delete all cache keys matching a glob pattern.
- * Uses SCAN (non-blocking) instead of KEYS (blocks the Redis event loop).
- *
- * BUG 1 (previous): cursor was initialised as string "0" and compared with !== "0".
- * node-redis v4 SCAN returns cursor as a NUMBER so the loop never terminated.
- * FIXED: cursor is a number, comparison is !== 0.
- *
- * BUG 2 (actual cause of the TypeError in logs): node-redis v4's RESP encoder
- * requires every command argument to be a string or Buffer. The cursor was being
- * passed as a raw number (0) directly to redis.scan(), which the encoder rejected
- * with: "arguments[1] must be of type string | Buffer, got number instead."
- * FIXED: cursor is explicitly cast to String before every redis.scan() call.
  *
  * @param {string} pattern - Glob pattern, e.g. 'sitemap*', 'product_*_seo'
  * @returns {Promise<number>} Number of keys deleted
