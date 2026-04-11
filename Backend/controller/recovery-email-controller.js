@@ -1,7 +1,6 @@
 import handleAsyncError from '../middleware/handleAsyncError.js';
 import HandleError from '../utils/handleError.js';
 import {
-  sendRecoveryEmail,
   getRecoveryEmailStatus,
   resolveRecoveryOutcome,
   getAbandonedCartsForSending,
@@ -10,85 +9,6 @@ import RecoveryEmail from '../models/recovery-email-model.js';
 import { getCache, setCache, deleteCachePattern } from '../utils/redis.js';
 import { getDateRanges } from '../utils/dateRanges.js';
 import { validateTimeframe } from '../utils/validateTimeframe.js';
-
-// ============================================
-// SEND RECOVERY EMAIL
-// @route  POST /api/v1/recovery/send
-// @access Private — admin only
-// ============================================
-
-export const sendRecoveryEmailHandler = handleAsyncError(async (req, res, next) => {
-  const { checkoutId } = req.body;
-
-  if (!checkoutId) {
-    return next(new HandleError('checkoutId is required', 400));
-  }
-
-  let result;
-  try {
-    result = await sendRecoveryEmail(checkoutId, req.user._id);
-  } catch (err) {
-    // CANNOT_SEND = business rule block (cooldown, max attempts, etc.)
-    // Surface as 422 so the frontend can distinguish from a 500.
-    if (err.code === 'CANNOT_SEND') {
-      return res.status(422).json({
-        success:         false,
-        message:         err.message,
-        nextAvailableAt: err.nextAvailableAt || null,
-      });
-    }
-    return next(new HandleError(err.message, 500));
-  }
-
-  res.status(200).json({
-    success:         true,
-    message:         `Recovery email sent (attempt ${result.attemptNumber})`,
-    attemptNumber:   result.attemptNumber,
-    sentAt:          result.sentAt,
-    nextAvailableAt: result.nextAvailableAt,
-    cartSnapshot:    result.cartSnapshot,
-  });
-});
-
-// ============================================
-// REDEEM RECOVERY TOKEN
-// @route  GET /api/v1/checkout/recover?token=
-// @access Public — token is the credential
-//
-// NOTE: This handler is intentionally registered on the checkout router
-// (/api/v1/checkout/recover) to preserve existing frontend links.
-// The service does all the heavy lifting.
-// ============================================
-
-export const redeemRecoveryTokenHandler = handleAsyncError(async (req, res, next) => {
-  const { token } = req.query;
-
-  let result;
-  try {
-    result = await redeemToken(token);
-  } catch (err) {
-    return next(new HandleError(err.message, err.status || 400));
-  }
-
-  // Already converted — return 200 with a flag so the frontend
-  // can redirect to the order confirmation page.
-  if (result.alreadyConverted) {
-    return res.status(200).json({
-      success:          true,
-      alreadyConverted: true,
-      message:          result.message,
-      orderId:          result.orderId,
-    });
-  }
-
-  res.status(200).json({
-    success:          true,
-    alreadyConverted: false,
-    message:          result.message,
-    ...(result.discountWarning && { discountWarning: result.discountWarning }),
-    checkout:         result.checkout,
-  });
-});
 
 // ============================================
 // GET RECOVERY EMAIL STATUS
@@ -105,11 +25,9 @@ export const getRecoveryStatusHandler = handleAsyncError(async (req, res, next) 
 
   const status = await getRecoveryEmailStatus(checkoutId);
 
-  // Return an empty scaffold when no email has been sent yet —
-  // the frontend uses this to render the "Not contacted" state.
   res.status(200).json({
     success: true,
-    status:  status || {
+    status: status || {
       outcome:           'none',
       confirmedAttempts: 0,
       lastSentAt:        null,
@@ -138,13 +56,11 @@ export const getSendListHandler = handleAsyncError(async (req, res, next) => {
     hours    = 720,
   } = req.query;
 
-  // Validate sortBy
   const VALID_SORTS = ['priority', 'value', 'abandonedAt', 'lastSentAt'];
   if (!VALID_SORTS.includes(sortBy)) {
     return next(new HandleError(`Invalid sortBy. Must be one of: ${VALID_SORTS.join(', ')}`, 400));
   }
 
-  // Cache key encodes all filter params
   const cacheKey = `recovery_send_list_${page}_${limit}_${outcome || 'all'}_${sortBy}_${minValue}_${search || ''}_${hours}`;
   const cached   = await getCache(cacheKey);
   if (cached) return res.status(200).json({ success: true, ...cached });
@@ -159,7 +75,7 @@ export const getSendListHandler = handleAsyncError(async (req, res, next) => {
     hours:    parseInt(hours),
   });
 
-  await setCache(cacheKey, result, 120); // 2 min TTL — send page needs fresh data
+  await setCache(cacheKey, result, 120);
 
   res.status(200).json({ success: true, ...result });
 });
@@ -176,7 +92,6 @@ export const getRecoveryAnalyticsHandler = handleAsyncError(async (req, res, nex
   let start, end;
 
   if (startDate && endDate) {
-    // Custom date range takes priority over timeframe
     start = new Date(startDate);
     end   = new Date(endDate);
 
@@ -187,7 +102,6 @@ export const getRecoveryAnalyticsHandler = handleAsyncError(async (req, res, nex
       return next(new HandleError('startDate must be before endDate', 400));
     }
   } else {
-    // Use validateTimeframe to surface a clean error for invalid values
     validateTimeframe(timeframe, next);
 
     const ranges = getDateRanges(timeframe);
@@ -204,7 +118,7 @@ export const getRecoveryAnalyticsHandler = handleAsyncError(async (req, res, nex
 
   const analytics = await RecoveryEmail.getAnalytics(start, end);
 
-  await setCache(cacheKey, analytics, 300); // 5 min TTL
+  await setCache(cacheKey, analytics, 300);
 
   res.status(200).json({ success: true, ...analytics });
 });
@@ -227,7 +141,6 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
     );
   }
 
-  // Guard: do not allow overwriting terminal states via admin override.
   const record = await RecoveryEmail.findOne({ checkout: checkoutId });
 
   if (!record) {
@@ -244,17 +157,16 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
 
   await resolveRecoveryOutcome(checkoutId, outcome);
 
-  // Bust analytics cache since outcome distribution changed.
   await Promise.all([
     deleteCachePattern('recovery_analytics_*'),
     deleteCachePattern('recovery_send_list_*'),
   ]).catch(() => {});
 
   res.status(200).json({
-    success:     true,
-    message:     `Recovery outcome set to '${outcome}'`,
+    success:    true,
+    message:    `Recovery outcome set to '${outcome}'`,
     checkoutId,
     outcome,
-    resolvedAt:  new Date(),
+    resolvedAt: new Date(),
   });
 });

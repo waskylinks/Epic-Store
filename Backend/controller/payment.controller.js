@@ -22,7 +22,7 @@ import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 // CONSTANTS
 // ============================================
 
-const SESSION_EXPIRY_MS = 30 * 60 * 1000; // 30 minutes
+const SESSION_EXPIRY_MS = 30 * 60 * 1000;
 
 const AMOUNT_TOLERANCE = {
   USD: 0.02,
@@ -50,7 +50,7 @@ const invalidatePaymentCaches = async () => {
       deleteCachePattern('payment_*')
     ]);
   } catch {
-    // intentionally swallowed — cache invalidation failure must never block a response
+    // intentionally swallowed
   }
 };
 
@@ -166,7 +166,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     discountSnapshot = null,
   } = req.body;
 
-  // ── 1. Basic field validation ────────────────────────────────────────────
   if (!gateway || !currency || !shippingInfo || !cartItems || cartItems.length === 0) {
     return next(new HandleError(
       "Missing required fields: gateway, currency, shippingInfo, cartItems", 400
@@ -199,11 +198,9 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     ));
   }
 
-  // ── 2. Load user ─────────────────────────────────────────────────────────
   const user = await User.findById(userId).select('email name country createdAt');
   if (!user) return next(new HandleError("User not found", 404));
 
-  // ── 3. Lightweight product validation ────────────────────────────────────
   const Product = (await import('../models/product-model.js')).default;
 
   const productIds = cartItems.map(item => {
@@ -277,16 +274,13 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     });
   }
 
-  // ── 4. Attribution / device ───────────────────────────────────────────────
   const attributionData = req.attributionData || {
     source: 'direct', medium: null, campaign: null, referrer: null, landingPage: null
   };
   const deviceInfo = req.deviceInfo || { device: 'desktop', browser: 'unknown' };
 
-  // ── 5. Generate reference ────────────────────────────────────────────────
   const reference = generateOrderReference();
 
-  // ── 6. Build discount info for session storage ───────────────────────────
   let discountInfo = null;
   if (discountSnapshot && discountSnapshot.code) {
     discountInfo = {
@@ -304,7 +298,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     };
   }
 
-  // ── 7. Persist Redis session ─────────────────────────────────────────────
   try {
     await createPaymentSession({
       reference,
@@ -335,7 +328,6 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     return next(new HandleError("Failed to create payment session. Please try again.", 500));
   }
 
-  // ── 8. Initialise gateway ─────────────────────────────────────────────────
   let gatewayResponse;
   try {
     gatewayResponse = await PaymentFactory.initializePayment(gateway, {
@@ -358,12 +350,10 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     ));
   }
 
-  // ── 9. Stripe alias ───────────────────────────────────────────────────────
   if (gateway === 'stripe' && gatewayResponse.payment_intent_id) {
     createSessionAlias(gatewayResponse.payment_intent_id, reference).catch(() => {});
   }
 
-  // ── 10. Build response ────────────────────────────────────────────────────
   const responseData = {
     reference,
     amount:   totalPrice,
@@ -419,7 +409,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // Load Redis session
   const session = await getPaymentSession(reference);
 
   if (!session) {
@@ -447,7 +436,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // Validate session integrity
   if (!session.orderItems || !session.shippingInfo || !session.totalPrice || !session.reference) {
     await deletePaymentSession(reference).catch(() => {});
     return next(new HandleError(
@@ -464,21 +452,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const orderReference = session.reference;
 
-  // Ownership check
   if (session.userId !== userId.toString()) {
     return next(new HandleError(
       "This payment session does not belong to your account", 403
     ));
   }
 
-  // Gateway match
   if (session.gateway !== gateway) {
     return next(new HandleError(
       `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
     ));
   }
 
-  // Idempotency check
   const existingOrder = await Order.findOne({
     $or: [
       { "paymentInfo.reference":             orderReference },
@@ -499,7 +484,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     });
   }
 
-  // Gateway verification
   let paymentService;
   try {
     paymentService = PaymentFactory.getService(gateway);
@@ -528,14 +512,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     raw:      gatewayResponse
   } = gatewayData;
 
-  // Currency check
   if (gatewayCurrency !== session.currency) {
     return next(new HandleError(
       `Currency mismatch: session expects ${session.currency} but gateway reported ${gatewayCurrency}`, 400
     ));
   }
 
-  // Amount tolerance check
   const tolerance  = AMOUNT_TOLERANCE[session.currency] ?? AMOUNT_TOLERANCE.DEFAULT;
   const amountDiff = Math.abs(session.totalPrice - gatewayAmount);
   if (amountDiff > tolerance) {
@@ -545,7 +527,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // Load user
   const user = await User.findById(userId).select('email name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
 
@@ -561,7 +542,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
-  // Build order data
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -610,7 +590,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     fulfillmentSLA,
   };
 
-  // Create order
   let order;
   try {
     order = await Order.create(orderData);
@@ -625,7 +604,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch {
-    // Non-fatal — order is valid without populated refs.
+    // Non-fatal
   }
 
   res.status(200).json({
@@ -635,10 +614,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     idempotent: false,
   });
 
-  // Post-payment async tasks
+  // ── Post-payment async tasks ──────────────────────────────────────────────
   setImmediate(() => {
 
-    // Abandoned checkout recovery
+    // Abandoned checkout recovery attribution
     Checkout.findOne({
       user:                     userId,
       'conversion.isConverted': false,
@@ -653,9 +632,20 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         const sessionWasActive   = checkout.abandonment?.recoverySessionActive === true;
         const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
 
-        if (wasAbandoned && emailWasSent && !sessionWasActive) {
+        // FIX: The original logic used `!sessionWasActive` alone to flag organic
+        // recovery. This is wrong for the re-abandoned path:
+        //   link clicked → re-abandoned (sweep clears recoverySessionActive)
+        //   → user converts without clicking again → sessionWasActive=false
+        //   → incorrectly flagged as organicRecovery
+        //
+        // organicRecovery should mean: email was sent, the user never clicked
+        // the recovery link at all, yet still converted.
+        // If they clicked at any point (linkWasEverClicked=true), attribution
+        // goes to the email campaign (outcome='converted'), not organic.
+        if (wasAbandoned && emailWasSent && !linkWasEverClicked) {
           checkout.abandonment.organicRecovery = true;
         }
+
         if (linkWasEverClicked) {
           checkout.computeRecoveryCartDiff(order.orderItems);
         }
@@ -663,15 +653,15 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         checkout.markAsConverted(order._id, orderReference);
         await checkout.save();
 
-        // FIX: resolve the RecoveryEmail outcome so email analytics records
-        // the conversion. Previously the Checkout doc was marked converted
-        // but the RecoveryEmail document outcome stayed 'sent' or 'clicked'
-        // permanently — causing 0 conversions on the email analytics page
-        // while checkout analytics correctly showed the recovery.
+        // Sync RecoveryEmail outcome.
+        // Note: markAsConverted does NOT set organicRecovery on the checkout
+        // doc itself — that is set above before calling markAsConverted.
+        // The outcome we pass here must match what was set above.
         if (wasAbandoned && emailWasSent) {
           const { resolveRecoveryOutcome } = await import(
             '../Services/recoveryEmailService.js'
           );
+          // organicRecovery flag is now on the checkout doc we just modified in memory
           const outcomeToSet = checkout.abandonment?.organicRecovery
             ? 'organic'
             : 'converted';
@@ -730,10 +720,8 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       syncBaselineAfterNonDiscountedOrder().catch(() => {});
     }
 
-    // Customer analytics
     syncCustomerAfterOrder(order._id).catch(() => {});
 
-    // Receipt
     createReceiptIfNotExists({
       orderId:        order._id,
       userId,
@@ -756,7 +744,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       }),
     }).catch(() => {});
 
-    // Session cleanup
     Promise.all([
       deletePaymentSession(reference),
       reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),

@@ -24,41 +24,35 @@ const attemptSchema = new mongoose.Schema(
       required: true,
     },
 
-    // ── Send lifecycle ────────────────────────────────────────────────────────
     status: {
       type:    String,
       enum:    ['pending', 'sent', 'failed'],
       default: 'pending',
     },
 
-    // ── Attribution ───────────────────────────────────────────────────────────
-    // Records whether this attempt was triggered manually by an admin
-    // or automatically by the recovery email cron job.
-    // Useful for debugging ("why did this customer get 3 emails?")
-    // and for analytics ("do cron sends convert better than manual sends?").
+    // Attribution: 'cron' is the only sender now that admin sends are removed.
+    // Kept as an enum field so historical 'admin' records remain readable.
     sentBy: {
       type:    String,
       enum:    ['admin', 'cron'],
-      default: 'admin',
+      default: 'cron',
     },
 
     initiatedAt: { type: Date, default: Date.now },
     sentAt:      Date,
     failReason:  String,
 
-    // ── Token ─────────────────────────────────────────────────────────────────
     token: {
       type:   String,
       select: false,
     },
 
-    tokenId:       String,
-    tokenIssuedAt: Date,
+    tokenId:        String,
+    tokenIssuedAt:  Date,
     tokenExpiresAt: Date,
 
     tokenExpiredUnclicked: { type: Boolean, default: false },
 
-    // ── Link interaction ──────────────────────────────────────────────────────
     linkClickedAt:  Date,
     linkClickCount: { type: Number, default: 0 },
 
@@ -73,7 +67,6 @@ const attemptSchema = new mongoose.Schema(
 
 const recoveryEmailSchema = new mongoose.Schema(
   {
-    // ── Core references ───────────────────────────────────────────────────────
     checkout: {
       type:     mongoose.Schema.Types.ObjectId,
       ref:      'Checkout',
@@ -91,7 +84,6 @@ const recoveryEmailSchema = new mongoose.Schema(
       index:    true,
     },
 
-    // ── Attempt log ───────────────────────────────────────────────────────────
     attempts: {
       type:     [attemptSchema],
       default:  [],
@@ -101,7 +93,6 @@ const recoveryEmailSchema = new mongoose.Schema(
       },
     },
 
-    // ── Fast-read aggregate fields ────────────────────────────────────────────
     confirmedAttempts: { type: Number, default: 0 },
     pendingAck:        { type: Boolean, default: false, index: true },
     lastSentAt:        { type: Date, index: true },
@@ -109,7 +100,6 @@ const recoveryEmailSchema = new mongoose.Schema(
     totalLinkClicks:   { type: Number, default: 0, index: true },
     lastClickedAttemptNumber: Number,
 
-    // ── Cart snapshot ─────────────────────────────────────────────────────────
     cartSnapshot: {
       items: [{
         product:  mongoose.Schema.Types.ObjectId,
@@ -131,10 +121,6 @@ const recoveryEmailSchema = new mongoose.Schema(
       snapshotAt:   Date,
     },
 
-    // ── Outcome ───────────────────────────────────────────────────────────────
-    // Terminal state for the entire recovery campaign.
-    // Set once via resolveOutcome() — never overwritten after a terminal state.
-    // See _resolveOutcome() for the race-condition fix.
     outcome: {
       type:    String,
       enum:    [
@@ -148,7 +134,7 @@ const recoveryEmailSchema = new mongoose.Schema(
     resolvedAt: Date,
   },
   {
-    timestamps:  true,
+    timestamps: true,
     toJSON:  { virtuals: true },
     toObject: { virtuals: true },
   }
@@ -188,9 +174,6 @@ recoveryEmailSchema.index(
   { name: 'email_outcome_idx' }
 );
 
-// ── Cron-specific index ───────────────────────────────────────────────────────
-// Supports getCartsEligibleForCron(): filter active outcomes, sort by lastSentAt
-// for delay-rule evaluation. Without this the cron query scans the full collection.
 recoveryEmailSchema.index(
   { outcome: 1, lastSentAt: 1, confirmedAttempts: 1 },
   { name: 'cron_eligibility_idx' }
@@ -222,8 +205,7 @@ recoveryEmailSchema.virtual('nextAvailableAt').get(function () {
 
 /**
  * canSend
- * Central gate — all send decisions flow through here.
- * Returns { canSend: Boolean, reason?: String, nextAvailableAt?: Date }
+ * Single gate for all send decisions. Called by cron only.
  */
 recoveryEmailSchema.methods.canSend = function (checkout) {
   if (checkout.conversion?.isConverted) {
@@ -300,12 +282,8 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
 /**
  * initiateSend
  * Opens a new attempt slot and generates a signed JWT.
- *
- * @param   {Object}            checkout  The related Checkout document
- * @param   {'admin'|'cron'}    sentBy    Attribution label for this attempt
- * @returns {string}                      Signed JWT
  */
-recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'admin') {
+recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'cron') {
   const check = this.canSend(checkout);
   if (!check.canSend) throw new Error(check.reason);
 
@@ -334,7 +312,7 @@ recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'admin')
   this.attempts.push({
     attemptNumber,
     status:        'pending',
-    sentBy,                   // ← attribution stored on the attempt
+    sentBy,
     initiatedAt:   now,
     token,
     tokenId:       jti,
@@ -357,7 +335,7 @@ recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'admin')
 
 /**
  * acknowledgeSent
- * Call after the mailer confirms the email was handed off successfully.
+ * Call after the mailer confirms delivery.
  */
 recoveryEmailSchema.methods.acknowledgeSent = function () {
   const attempt = this._findAttemptByTokenId(this.lastTokenId, 'pending');
@@ -376,7 +354,6 @@ recoveryEmailSchema.methods.acknowledgeSent = function () {
 /**
  * recordSendFailure
  * Call when the mailer throws after initiateSend.
- * Does NOT increment confirmedAttempts — admin/cron can retry immediately.
  */
 recoveryEmailSchema.methods.recordSendFailure = function (reason) {
   const attempt = this._findAttemptByTokenId(this.lastTokenId, 'pending');
@@ -446,8 +423,7 @@ recoveryEmailSchema.methods.markTokenExpired = function (tokenId) {
 
 /**
  * resolveOutcome
- * Finalise the campaign once the checkout's fate is known.
- * Idempotent — no-op if already at a terminal state.
+ * Public wrapper for _resolveOutcome.
  */
 recoveryEmailSchema.methods.resolveOutcome = function (outcome) {
   this._resolveOutcome(outcome);
@@ -499,24 +475,30 @@ recoveryEmailSchema.methods._findAttemptByTokenId = function (tokenId, status) {
 
 /**
  * _resolveOutcome
- * FIXED: Converted/organic outcomes are truly terminal.
  *
- * Original bug: any call with outcome='sent' (e.g. from initiateSend's
- * `this.outcome = 'sent'`) could overwrite 'organic' or 'converted' because
- * the old guard only blocked re-entry from the same terminal list.
- * However initiateSend sets outcome directly, not via _resolveOutcome, so
- * the real risk is a concurrent cron send racing with verifyPaymentController.
+ * Priority ladder (highest → lowest):
+ *   1. 'converted' / 'organic'  — absolute terminal, nothing overwrites
+ *   2. 're_abandoned'           — semi-terminal: only converted/organic can replace it
+ *   3. 'exhausted'/'expired'/'failed' — standard terminal
+ *   4. everything else          — freely overwritable
  *
- * Fix: expand TERMINAL to include 'sent' and 'clicked' as partially-terminal
- * states that should never be downgraded, and add an explicit guard that
- * 'converted' and 'organic' can never be replaced by anything.
+ * FIX: Previously 're_abandoned' was not in any terminal list, meaning a
+ * concurrent sweep could write 're_abandoned' AFTER verifyPaymentController
+ * had written 'converted', silently reverting a confirmed conversion in
+ * the analytics. Now 're_abandoned' is treated as semi-terminal so it
+ * cannot overwrite conversion outcomes, while converted/organic can still
+ * replace it (correct — a re-abandoned cart that later converts is valid).
  */
 recoveryEmailSchema.methods._resolveOutcome = function (outcome) {
-  // Absolute terminal states — nothing overwrites these, ever.
+  // Tier 1 — absolute terminal: nothing ever overwrites these.
   const ABSOLUTE_TERMINAL = ['converted', 'organic'];
   if (ABSOLUTE_TERMINAL.includes(this.outcome)) return;
 
-  // Standard terminal states — only absolute terminals take priority.
+  // Tier 2 — semi-terminal: only absolute terminals can replace re_abandoned.
+  const SEMI_TERMINAL = ['re_abandoned'];
+  if (SEMI_TERMINAL.includes(this.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) return;
+
+  // Tier 3 — standard terminal: only absolute/semi terminals can replace these.
   const TERMINAL = ['exhausted', 'expired', 'failed'];
   if (TERMINAL.includes(this.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) return;
 
@@ -664,8 +646,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         },
       ]),
 
-      // ── NEW: Admin vs Cron send attribution ───────────────────────────────
-      // Answers: "how many emails were sent manually vs automatically?"
       this.aggregate([
         { $match: matchBase },
         { $unwind: { path: '$attempts', preserveNullAndEmptyArrays: true } },
@@ -687,7 +667,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
   };
   const cf = clickFunnel[0] || { totalSent: 0, clicked: 0, converted: 0 };
 
-  // Shape sentByBreakdown into a simple object
   const sendAttribution = { admin: 0, cron: 0 };
   for (const row of sentByBreakdown) {
     if (row._id === 'admin' || row._id === 'cron') {
@@ -737,10 +716,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
       avgCartValue:  Math.round((row.avgCartValue  || 0) * 100) / 100,
     })),
 
-    // ── NEW ───────────────────────────────────────────────────────────────────
-    // "How many emails were triggered manually by admins vs by the cron?"
     sendAttribution,
-
     outcomeBreakdown,
   };
 };

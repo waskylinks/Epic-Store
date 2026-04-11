@@ -2,7 +2,6 @@ import Checkout from '../models/checkout-model.js';
 import RecoveryEmail from '../models/recovery-email-model.js';
 import { buildRecoveryEmailHtml } from './emailTemplates/recoveryEmail.js';
 import { sendEmail } from '../utils/sendEmail.js';
-import { verifyRecoveryToken, decodeRecoveryToken } from '../utils/recoveryToken.js';
 import Discount from '../models/discount-model.js';
 import { deleteCachePattern } from '../utils/redis.js';
 
@@ -13,15 +12,7 @@ import { deleteCachePattern } from '../utils/redis.js';
 /**
  * normaliseItems
  * Filters and shapes checkout items for the email template.
- * Products that are no longer published are excluded silently —
- * we never show unavailable items in a recovery email.
- *
- * Accepts items that are either:
- *   a) Populated Mongoose subdocs (product is a full document object)
- *   b) Plain objects from cartSnapshot (product is an ObjectId)
- *
- * @param   {Array} items  checkout.items with product populated
- * @returns {Array} normalisedItems ready for buildRecoveryEmailHtml
+ * Products that are no longer published are excluded silently.
  */
 const normaliseItems = (items = []) =>
   items
@@ -57,10 +48,6 @@ export const invalidateRecoveryCaches = () =>
 
 /**
  * buildRecoveryUrl
- * Constructs the full recovery link that goes into the email.
- *
- * @param {string} token  Signed JWT from RecoveryEmail.initiateSend()
- * @returns {string}
  */
 const buildRecoveryUrl = (token) => {
   const base = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -74,6 +61,7 @@ const buildRecoveryUrl = (token) => {
 /**
  * sendRecoveryEmail
  * Master orchestrator for a single recovery email send.
+ * Only called by the cron — admin sends have been removed.
  *
  * Three-step call pattern:
  *   1. initiateSend  → opens attempt slot, generates token
@@ -81,23 +69,20 @@ const buildRecoveryUrl = (token) => {
  *   3a. acknowledgeSent   → mailer succeeded
  *   3b. recordSendFailure → mailer failed, slot rolled back
  *
- * @param {string|ObjectId} checkoutId    The checkout to send for
- * @param {string}          triggeredBy   userId for admin sends, 'cron' for automated sends
- * @param {Object}          [options]
- * @param {'admin'|'cron'}  [options.sentBy='admin']  Attribution label stored on the attempt
+ * After a confirmed send the Checkout abandonment fields
+ * (recoveryEmailSent, recoveryEmailSentAt, recoveryEmailCount) are synced
+ * so that checkout-doc-level analytics and canSendRecoveryEmail() remain
+ * accurate even though the RecoveryEmail document is now the source of truth.
  *
- * @returns {{
- *   success:         boolean,
- *   attemptNumber:   number,
- *   sentAt:          Date,
- *   nextAvailableAt: Date|null,
- *   cartSnapshot:    Object
- * }}
+ * @param {string|ObjectId} checkoutId
+ * @param {string}          triggeredBy   'cron' (only caller now)
+ * @param {Object}          [options]
+ * @param {'cron'}          [options.sentBy='cron']
  */
 export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) => {
-  const sentBy = options.sentBy || 'admin';
+  const sentBy = options.sentBy || 'cron';
 
-  // ── 1. Load checkout with populated user and items ────────────────────────
+  // ── 1. Load checkout ──────────────────────────────────────────────────────
   const checkout = await Checkout.findById(checkoutId)
     .populate('user',          'firstName lastName email')
     .populate('items.product', 'name images pricing status');
@@ -114,7 +99,7 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
     throw new Error('User account no longer exists — cannot send recovery email');
   }
 
-  // ── 2. Find or create the RecoveryEmail record (atomic upsert) ───────────
+  // ── 2. Find or create RecoveryEmail record ────────────────────────────────
   const recoveryEmail = await RecoveryEmail.findOrCreateForCheckout(checkout);
 
   // ── 3. Gate check ─────────────────────────────────────────────────────────
@@ -172,9 +157,36 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
     throw new Error(`Email delivery failed: ${mailerErr.message}`);
   }
 
-  // ── 7. Confirm success ────────────────────────────────────────────────────
+  // ── 7. Confirm success on RecoveryEmail doc ───────────────────────────────
   recoveryEmail.acknowledgeSent();
   await recoveryEmail.save();
+
+  // ── 8. Sync Checkout abandonment fields ───────────────────────────────────
+  // The RecoveryEmail document is the source of truth, but the Checkout doc
+  // also tracks recoveryEmailSent/SentAt/Count for:
+  //   - canSendRecoveryEmail() guard (still used by markRecoveryEmailSent)
+  //   - Abandonment analytics aggregations that read the checkout doc directly
+  //   - The recovery_email_idx compound index
+  // Without this sync those fields stay at their initial values when cron is
+  // the only sender, silently breaking both analytics and the sweep guard.
+  try {
+    await Checkout.findByIdAndUpdate(checkoutId, {
+      $set: {
+        'abandonment.recoveryEmailSent':   true,
+        'abandonment.recoveryEmailSentAt': recoveryEmail.lastSentAt,
+        'abandonment.pendingEmailAck':     false,
+      },
+      $inc: {
+        'abandonment.recoveryEmailCount': 1,
+      },
+    });
+  } catch (syncErr) {
+    // Non-fatal — the RecoveryEmail doc is already confirmed. Log and continue.
+    console.error(
+      `[RecoveryEmailService] Checkout sync failed for ${checkoutId}:`,
+      syncErr.message
+    );
+  }
 
   console.log(
     `[RecoveryEmailService] Attempt ${attemptNumber} sent` +
@@ -182,9 +194,7 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
     ` | sentBy=${sentBy} | email=${checkout.email}`
   );
 
-  // Per-send cache flush (correct for manual/admin sends).
-  // The cron calls invalidateRecoveryCaches() once after its full loop
-  // in addition to these per-send flushes — that's intentional and cheap.
+  // Per-send cache flush
   invalidateRecoveryCaches();
 
   return {
@@ -196,21 +206,14 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
   };
 };
 
-// NOTE: redeemToken has been removed from this service.
+// NOTE: redeemToken has been intentionally removed from this service.
 // The single redemption path is checkoutController.redeemRecoveryToken
-// (GET /api/v1/checkout/recover?token=) which now correctly updates
-// both the Checkout document and the RecoveryEmail document on link click.
-// Having two parallel implementations caused the checkout controller path
-// (the one actually wired to the email link) to never update RecoveryEmail,
-// leaving totalLinkClicks at 0 and outcome permanently at 'sent'.
+// (GET /api/v1/checkout/recover?token=) which correctly updates both the
+// Checkout document and the RecoveryEmail document on link click.
 
 
 /**
  * getRecoveryEmailStatus
- * Returns the RecoveryEmail doc for a checkout, shaped for the frontend.
- *
- * @param   {string|ObjectId} checkoutId
- * @returns {Object|null}
  */
 export const getRecoveryEmailStatus = async (checkoutId) => {
   const record = await RecoveryEmail.findOne({ checkout: checkoutId })
@@ -251,12 +254,8 @@ export const getRecoveryEmailStatus = async (checkoutId) => {
 
 /**
  * resolveRecoveryOutcome
- * Called by verifyPaymentController after order creation to bridge the
- * RecoveryEmail document outcome with the confirmed payment.
- * Also called by markStaleCheckouts for re-abandonment marking.
- *
- * @param {string|ObjectId} checkoutId
- * @param {'converted'|'organic'|'re_abandoned'|'exhausted'|'expired'} outcome
+ * Called by verifyPaymentController after order creation, and by
+ * markStaleCheckouts for re-abandonment marking.
  */
 export const resolveRecoveryOutcome = async (checkoutId, outcome) => {
   const recoveryEmail = await RecoveryEmail.findOne({ checkout: checkoutId });
@@ -273,8 +272,6 @@ export const resolveRecoveryOutcome = async (checkoutId, outcome) => {
  * handleStaleAcks
  * Called by the abandonment sweep as a fourth pass.
  * Clears pendingAck records where the mailer crashed mid-send.
- *
- * @returns {{ cleared: number, errors: number }}
  */
 export const handleStaleAcks = async () => {
   const stale   = await RecoveryEmail.getPendingStaleAcks();
@@ -309,10 +306,7 @@ export const handleStaleAcks = async () => {
 
 /**
  * getAbandonedCartsForSending
- * Powers the send-page left panel — UI-facing query with full enrichment.
- * Not used by the cron (which uses its own lean query in recoveryEmailCron.js).
- *
- * @param {Object} opts
+ * Powers the admin send-page left panel — read-only view, no send logic.
  */
 export const getAbandonedCartsForSending = async ({
   page     = 1,
@@ -358,9 +352,9 @@ export const getAbandonedCartsForSending = async ({
     const existingIds = existing.map(r => r.checkout.toString());
     checkoutQuery._id = { $nin: existingIds };
   } else if (outcome && outcome !== 'all') {
-    const matching       = await RecoveryEmail.find({ outcome }, { checkout: 1 }).lean();
+    const matching         = await RecoveryEmail.find({ outcome }, { checkout: 1 }).lean();
     const checkoutIdFilter = matching.map(r => r.checkout);
-    checkoutQuery._id    = { $in: checkoutIdFilter };
+    checkoutQuery._id      = { $in: checkoutIdFilter };
   }
 
   const PRIORITY_FETCH_CAP = 500;
@@ -415,7 +409,7 @@ export const getAbandonedCartsForSending = async ({
         items:        checkout.items,
         pricing:      checkout.pricing,
         shippingInfo: checkout.shippingInfo,
-        abandonment:  {
+        abandonment: {
           isAbandoned:          checkout.abandonment?.isAbandoned,
           abandonedAt:          checkout.abandonment?.abandonedAt,
           firstAbandonedAt:     checkout.abandonment?.firstAbandonedAt,
@@ -424,8 +418,8 @@ export const getAbandonedCartsForSending = async ({
           reAbandoned:          checkout.abandonment?.reAbandoned,
           failedRecoveries:     checkout.abandonment?.failedRecoveries,
         },
-        currentStep:  checkout.currentStep,
-        priority:     calculatePriorityScore(checkout),
+        currentStep: checkout.currentStep,
+        priority:    calculatePriorityScore(checkout),
         hoursSinceAbandoned: checkout.abandonment?.abandonedAt
           ? Math.floor(
               (Date.now() - new Date(checkout.abandonment.abandonedAt).getTime()) /
