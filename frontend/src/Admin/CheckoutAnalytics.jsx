@@ -238,12 +238,11 @@ export default function CheckoutAnalytics() {
   const totalCheckouts     = completedCheckouts + abandonedCount;
   const conversionRate     = totalCheckouts > 0 ? (completedCheckouts / totalCheckouts) * 100 : 0;
 
-  const recoveryRate = useMemo(() => {
-    const recovered  = stats.recoveredOrders    || 0;
-    const abandoned_ = stats.abandonedCheckouts || 0;
-    if (abandoned_ === 0) return 0;
-    return Math.round((recovered / abandoned_) * 10000) / 100;
-  }, [stats.recoveredOrders, stats.abandonedCheckouts]);
+  // FIX: removed broken local recoveryRate useMemo that used abandonedCheckouts
+  // as denominator. Once a cart converts, abandonedCheckouts drops to 0 making
+  // the denominator 0 and the rate always 0%. The backend getAbandonmentRate
+  // already computes the correct rate using totalEverAbandoned as denominator
+  // and sends it as stats.recoveryRate — use that directly.
 
   const barChartData = useMemo(
     () => steps.map((s) => ({
@@ -257,7 +256,7 @@ export default function CheckoutAnalytics() {
 
   const reaData    = reAbandonmentAnalytics?.current || {};
   const reaSteps   = reaData.stepBreakdown || [];
-  const reaStepMax = reaSteps.length ? Math.max(1, ...reaSteps.map(s => s.count || 0)) : 1;
+  const reaStepMax = reaSteps.length ? Math.max(1, ...reaSteps.map((s) => s.count || 0)) : 1;
 
   return (
     <>
@@ -333,10 +332,13 @@ export default function CheckoutAnalytics() {
                   </div>
                 </div>
 
+                {/* FIX: was `recoveryRate` (local broken useMemo) — now uses
+                    stats.recoveryRate from backend which divides by
+                    totalEverAbandoned instead of abandonedCheckouts */}
                 <div className="ck-kpi" style={{ '--kpi-color': '#1D4ED8', '--kpi-bg': 'rgba(29,78,216,0.08)' }}>
                   <div className="ck-kpi-top"><span className="ck-kpi-icon"><Bolt style={{ fontSize: 20 }} /></span></div>
                   <div className="ck-kpi-label">Recovery Rate</div>
-                  <div className="ck-kpi-value">{fmt.pct(recoveryRate)}</div>
+                  <div className="ck-kpi-value">{fmt.pct(stats.recoveryRate)}</div>
                   <div className="ck-kpi-footer">
                     <span className="ck-kpi-sub">Organic: {fmt.number(stats.organicRecoveryCount || 0)}</span>
                   </div>
@@ -426,7 +428,8 @@ export default function CheckoutAnalytics() {
                 <Card title="Recovery Performance" sub="Recovered revenue, organic recoveries and rate" icon={Bolt} iconColor="#1D4ED8">
                   {first ? <Spinner h={280} /> : (
                     <div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Recovery Rate</span><span className="ck-metric-val ck-metric-val--green">{fmt.pct(recoveryRate)}</span></div>
+                      {/* FIX: was `recoveryRate` local variable — now stats.recoveryRate */}
+                      <div className="ck-metric-row"><span className="ck-metric-label">Recovery Rate</span><span className="ck-metric-val ck-metric-val--green">{fmt.pct(stats.recoveryRate)}</span></div>
                       <div className="ck-metric-row"><span className="ck-metric-label">Recovered Revenue</span><span className="ck-metric-val ck-metric-val--green">{fmt.compact(stats.recoveredValue)}</span></div>
                       <div className="ck-metric-row"><span className="ck-metric-label">Organic Recoveries</span><span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.organicRecoveryCount || 0)}</span></div>
                       <div className="ck-metric-row"><span className="ck-metric-label">Lost Revenue</span><span className="ck-metric-val ck-metric-val--red">{fmt.compact(stats.lostRevenue)}</span></div>
@@ -588,7 +591,8 @@ export default function CheckoutAnalytics() {
                       <div className="ck-kpi-label">Recovered Revenue</div>
                       <div className="ck-kpi-value">{fmt.currency(stats.recoveredValue)}</div>
                       <div className="ck-kpi-footer">
-                        <span className="ck-kpi-sub">Organic: {fmt.number(stats.organicRecoveryCount || 0)} · Rate: {fmt.pct(recoveryRate)}</span>
+                        {/* FIX: was `recoveryRate` local variable — now stats.recoveryRate */}
+                        <span className="ck-kpi-sub">Organic: {fmt.number(stats.organicRecoveryCount || 0)} · Rate: {fmt.pct(stats.recoveryRate)}</span>
                       </div>
                     </div>
                     <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
@@ -700,9 +704,6 @@ export default function CheckoutAnalytics() {
                       <table className="ck-tbl">
                         <thead>
                           <tr>
-                            {/* FIX: removed "Recovery Email" column header — the send button
-                                was removed along with admin send functionality. The column
-                                had no matching <td> causing a mismatched column count. */}
                             <th>#</th><th>Customer</th><th>Email</th><th>Cart Value</th>
                             <th>Items</th><th>First Step</th><th>Priority</th><th>Flags</th><th>Date</th>
                           </tr>
@@ -837,12 +838,12 @@ export default function CheckoutAnalytics() {
                         <tbody>
                           {(() => {
                             const stepKeys = [...new Set([
-                              ...steps.map(s => s.step),
-                              ...reaSteps.map(s => s.step),
+                              ...steps.map((s) => s.step),
+                              ...reaSteps.map((s) => s.step),
                             ])];
                             return stepKeys.map((key, i) => {
-                              const firstRow = steps.find(s => s.step === key);
-                              const reaRow   = reaSteps.find(s => s.step === key);
+                              const firstRow = steps.find((s) => s.step === key);
+                              const reaRow   = reaSteps.find((s) => s.step === key);
                               const delta    = (reaRow?.count || 0) - (firstRow?.count || 0);
                               return (
                                 <tr key={i}>
