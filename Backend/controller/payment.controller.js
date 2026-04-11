@@ -601,6 +601,32 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
+  // ── Resolve RecoveryEmail outcome immediately after order creation ─────────
+  // Query RecoveryEmail directly by user+outcome — zero dependency on checkout
+  // status fields that may have already been mutated by a prior run.
+  // This runs before res.json() so it cannot be skipped by setImmediate timing.
+  try {
+    const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
+    const recoveryEmailDoc = await RecoveryEmail.findOne({
+      user:    userId,
+      outcome: { $in: ['clicked', 'sent'] },
+    }).sort({ createdAt: -1 });
+
+    if (recoveryEmailDoc) {
+      const { resolveRecoveryOutcome } = await import('../Services/recoveryEmailService.js');
+      // totalLinkClicks > 0 means the user followed the email link → 'converted'
+      // totalLinkClicks === 0 means they came back on their own → 'organic'
+      const outcomeToSet = recoveryEmailDoc.totalLinkClicks > 0 ? 'converted' : 'organic';
+      await resolveRecoveryOutcome(recoveryEmailDoc.checkout, outcomeToSet);
+      console.log(
+        `[payment] RecoveryEmail ${recoveryEmailDoc._id} resolved to '${outcomeToSet}'`
+      );
+    }
+  } catch (err) {
+    // Non-fatal — order already saved, log and continue
+    console.error('[payment] RecoveryEmail outcome resolution failed:', err.message);
+  }
+
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch {
@@ -615,21 +641,23 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   });
 
   // ── Post-payment async tasks ──────────────────────────────────────────────
-    setImmediate(async () => {
-    // ── Abandoned checkout recovery attribution ──────────────────────────────
+  setImmediate(async () => {
+    // ── Abandoned checkout conversion attribution ──────────────────────────
+    // Marks the Checkout document as converted for analytics.
+    // RecoveryEmail outcome is already resolved above — no need to call
+    // resolveRecoveryOutcome again here.
     try {
       const checkout = await Checkout.findOne({
-        user:                     userId,
-        'conversion.isConverted': false,
-        status:                   { $in: ['pending', 'abandoned'] },
+        user:                      userId,
+        'abandonment.isAbandoned': true,
+        'conversion.isConverted':  false,
       }).sort({ lastActivityAt: -1 });
 
       if (checkout) {
-        const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
         const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
         const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
 
-        if (wasAbandoned && emailWasSent && !linkWasEverClicked) {
+        if (emailWasSent && !linkWasEverClicked) {
           checkout.abandonment.organicRecovery = true;
         }
 
@@ -640,27 +668,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         checkout.markAsConverted(order._id, orderReference);
         await checkout.save();
 
-        console.log(
-          `[payment] Checkout ${checkout._id} marked converted` +
-          ` | wasAbandoned=${wasAbandoned} | emailWasSent=${emailWasSent}` +
-          ` | linkClicked=${linkWasEverClicked}`
-        );
-
-        if (wasAbandoned && emailWasSent) {
-          const { resolveRecoveryOutcome, invalidateRecoveryCaches } = await import(
-            '../Services/recoveryEmailService.js'
-          );
-          const outcomeToSet = checkout.abandonment?.organicRecovery ? 'organic' : 'converted';
-          await resolveRecoveryOutcome(checkout._id, outcomeToSet);
-          await invalidateRecoveryCaches();
-
-          console.log(
-            `[payment] RecoveryEmail outcome resolved to '${outcomeToSet}'` +
-            ` for checkout ${checkout._id}`
-          );
-        }
-      } else {
-        console.warn('[payment] No unconverted checkout found for user:', userId);
+        console.log(`[payment] Checkout ${checkout._id} marked converted`);
       }
     } catch (err) {
       console.error('[payment] Checkout conversion attribution failed:', err.message, err.stack);
@@ -723,6 +731,11 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ]).catch(() => {});
 
     invalidatePaymentCaches().catch(() => {});
+
+    // Flush recovery caches now that checkout doc is saved
+    import('../Services/recoveryEmailService.js')
+      .then(({ invalidateRecoveryCaches }) => invalidateRecoveryCaches())
+      .catch(() => {});
   });
 
 });
