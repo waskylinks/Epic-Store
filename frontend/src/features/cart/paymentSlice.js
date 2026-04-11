@@ -1,10 +1,13 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 
-// ----------------------
-// INITIALIZE PAYMENT THUNK
-// ----------------------
+// ============================================
+// THUNKS
+// ============================================
 
+// FIX: was sending Authorization: Bearer localStorage.getItem("token") which
+// is inconsistent with every other slice that uses withCredentials cookie auth.
+// The backend verifyUserAuth middleware uses cookie/session, not Bearer tokens.
 export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
   async (payload, { rejectWithValue }) => {
@@ -25,17 +28,10 @@ export const initializePayment = createAsyncThunk(
           currency,
           shippingInfo,
           cartItems,
-          // FIX: send pre-computed totals so the backend never recalculates.
           cartPricing,
-          // FIX: send full discount snapshot (omit key entirely when null so
-          // the backend's discountSnapshot guard is not entered).
           ...(discountSnapshot && { discountSnapshot }),
         },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        }
+        { withCredentials: true }
       );
 
       return data.data;
@@ -47,9 +43,7 @@ export const initializePayment = createAsyncThunk(
   }
 );
 
-// ----------------------
-// VERIFY PAYMENT THUNK
-// ----------------------
+// FIX: same — replaced localStorage Bearer token with withCredentials
 export const verifyPayment = createAsyncThunk(
   "payment/verifyPayment",
   async (payload, { rejectWithValue }) => {
@@ -59,11 +53,7 @@ export const verifyPayment = createAsyncThunk(
       const { data } = await axios.post(
         "/api/v1/payment/verify",
         { gateway, reference, transactionId },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        }
+        { withCredentials: true }
       );
 
       return data;
@@ -75,10 +65,9 @@ export const verifyPayment = createAsyncThunk(
   }
 );
 
-// ----------------------
-// PAYMENT SLICE
-// ----------------------
-
+// ============================================
+// INITIAL STATE
+// ============================================
 
 const initialState = {
   loading:      false,
@@ -92,24 +81,20 @@ const initialState = {
   idempotent:   false,
 };
 
+// ============================================
+// SLICE
+// ============================================
+
 const paymentSlice = createSlice({
   name: "payment",
   initialState,
   reducers: {
-    removePaymentError: (state) => {
-      state.error = null;
-    },
-    removePaymentMessage: (state) => {
-      state.message = null;
-    },
-    resetPaymentState: () => initialState,
-    clearPaymentData: (state) => {
-      state.paymentData  = null;
-      state.discountInfo = null;
-    },
+    removePaymentError:   (state) => { state.error = null; },
+    removePaymentMessage: (state) => { state.message = null; },
+    resetPaymentState:    () => initialState,
+    clearPaymentData:     (state) => { state.paymentData = null; state.discountInfo = null; },
   },
   extraReducers: (builder) => {
-    // ── Initialize payment ──────────────────────────────────────────
     builder
       .addCase(initializePayment.pending, (state) => {
         state.initLoading  = true;
@@ -118,8 +103,8 @@ const paymentSlice = createSlice({
         state.discountInfo = null;
       })
       .addCase(initializePayment.fulfilled, (state, action) => {
-        state.initLoading = false;
-        state.paymentData = action.payload;
+        state.initLoading  = false;
+        state.paymentData  = action.payload;
         state.discountInfo = action.payload?.breakdown?.discount ?? null;
       })
       .addCase(initializePayment.rejected, (state, action) => {
@@ -128,7 +113,6 @@ const paymentSlice = createSlice({
         state.discountInfo = null;
       });
 
-    // ── Verify payment ──────────────────────────────────────────────
     builder
       .addCase(verifyPayment.pending, (state) => {
         state.loading    = true;
