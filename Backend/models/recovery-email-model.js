@@ -7,7 +7,7 @@ import { generateRecoveryToken } from '../utils/recoveryToken.js';
 
 const cfg = {
   maxAttempts:   () => parseInt(process.env.MAX_RECOVERY_ATTEMPTS)      || 3,
-  cooldownHours: () => parseInt(process.env.RECOVERY_COOLDOWN_HOURS)    || 24,
+  cooldownHours: () => parseInt(process.env.RECOVERY_COOLDOWN_HOURS)    || 0,
   maxAgeDays:    () => 7,
   tokenTTL:      () => parseInt(process.env.RECOVERY_TOKEN_TTL_SECONDS) || 72 * 60 * 60,
   staleAckMins:  () => parseInt(process.env.RECOVERY_STALE_ACK_MINS)    || 10,

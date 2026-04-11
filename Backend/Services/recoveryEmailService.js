@@ -3,7 +3,7 @@ import RecoveryEmail from '../models/recovery-email-model.js';
 import { buildRecoveryEmailHtml } from './emailTemplates/recoveryEmail.js';
 import { sendEmail } from '../utils/sendEmail.js';
 import Discount from '../models/discount-model.js';
-import { deleteCachePattern } from '../utils/redis.js';
+import { deleteCache, deleteCachePattern } from '../utils/redis.js';
 
 // ============================================
 // INTERNAL HELPERS

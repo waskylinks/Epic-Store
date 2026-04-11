@@ -615,114 +615,114 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   });
 
   // ── Post-payment async tasks ──────────────────────────────────────────────
-  setImmediate(async () => {
-  // ── Abandoned checkout recovery attribution ──────────────────────────────
-  try {
-    const checkout = await Checkout.findOne({
-      user:                     userId,
-      'conversion.isConverted': false,
-      status:                   { $in: ['pending', 'abandoned'] },
-    }).sort({ lastActivityAt: -1 });
+    setImmediate(async () => {
+    // ── Abandoned checkout recovery attribution ──────────────────────────────
+    try {
+      const checkout = await Checkout.findOne({
+        user:                     userId,
+        'conversion.isConverted': false,
+        status:                   { $in: ['pending', 'abandoned'] },
+      }).sort({ lastActivityAt: -1 });
 
-    if (checkout) {
-      const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
-      const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
-      const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
+      if (checkout) {
+        const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
+        const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
+        const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
 
-      if (wasAbandoned && emailWasSent && !linkWasEverClicked) {
-        checkout.abandonment.organicRecovery = true;
-      }
+        if (wasAbandoned && emailWasSent && !linkWasEverClicked) {
+          checkout.abandonment.organicRecovery = true;
+        }
 
-      if (linkWasEverClicked) {
-        checkout.computeRecoveryCartDiff(order.orderItems);
-      }
+        if (linkWasEverClicked) {
+          checkout.computeRecoveryCartDiff(order.orderItems);
+        }
 
-      checkout.markAsConverted(order._id, orderReference);
-      await checkout.save();
-
-      console.log(
-        `[payment] Checkout ${checkout._id} marked converted` +
-        ` | wasAbandoned=${wasAbandoned} | emailWasSent=${emailWasSent}` +
-        ` | linkClicked=${linkWasEverClicked}`
-      );
-
-      if (wasAbandoned && emailWasSent) {
-        const { resolveRecoveryOutcome, invalidateRecoveryCaches } = await import(
-          '../Services/recoveryEmailService.js'
-        );
-        const outcomeToSet = checkout.abandonment?.organicRecovery ? 'organic' : 'converted';
-        await resolveRecoveryOutcome(checkout._id, outcomeToSet);
-        await invalidateRecoveryCaches();
+        checkout.markAsConverted(order._id, orderReference);
+        await checkout.save();
 
         console.log(
-          `[payment] RecoveryEmail outcome resolved to '${outcomeToSet}'` +
-          ` for checkout ${checkout._id}`
+          `[payment] Checkout ${checkout._id} marked converted` +
+          ` | wasAbandoned=${wasAbandoned} | emailWasSent=${emailWasSent}` +
+          ` | linkClicked=${linkWasEverClicked}`
         );
-      }
-    } else {
-      console.warn('[payment] No unconverted checkout found for user:', userId);
-    }
-  } catch (err) {
-    console.error('[payment] Checkout conversion attribution failed:', err.message, err.stack);
-  }
 
-  // ── Discount sync ────────────────────────────────────────────────────────
-  try {
-    if (session.discount) {
-      const discountLookup = session.discount.discountId
-        ? Discount.findById(session.discount.discountId)
-        : Discount.findOne({ code: session.discount.code?.toUpperCase() });
+        if (wasAbandoned && emailWasSent) {
+          const { resolveRecoveryOutcome, invalidateRecoveryCaches } = await import(
+            '../Services/recoveryEmailService.js'
+          );
+          const outcomeToSet = checkout.abandonment?.organicRecovery ? 'organic' : 'converted';
+          await resolveRecoveryOutcome(checkout._id, outcomeToSet);
+          await invalidateRecoveryCaches();
 
-      const discount = await discountLookup;
-      if (!discount) {
-        console.error(JSON.stringify({
-          level: 'ERROR', event: 'discount_record_usage_skipped',
-          reason: 'discount_not_found', orderId: order._id,
-          discountId: session.discount.discountId ?? null,
-          code: session.discount.code ?? null,
-        }));
+          console.log(
+            `[payment] RecoveryEmail outcome resolved to '${outcomeToSet}'` +
+            ` for checkout ${checkout._id}`
+          );
+        }
       } else {
-        await discount.recordUsage(userId, order._id, session.discount.discountAmount);
-        syncDiscountAfterOrderCreated(order).catch(() => {});
+        console.warn('[payment] No unconverted checkout found for user:', userId);
       }
-    } else {
-      syncBaselineAfterNonDiscountedOrder().catch(() => {});
+    } catch (err) {
+      console.error('[payment] Checkout conversion attribution failed:', err.message, err.stack);
     }
-  } catch (err) {
-    console.error('[payment] Discount sync failed:', err.message);
-  }
 
-  // ── Remaining fire-and-forget tasks ─────────────────────────────────────
-  syncCustomerAfterOrder(order._id).catch(() => {});
+    // ── Discount sync ────────────────────────────────────────────────────────
+    try {
+      if (session.discount) {
+        const discountLookup = session.discount.discountId
+          ? Discount.findById(session.discount.discountId)
+          : Discount.findOne({ code: session.discount.code?.toUpperCase() });
 
-  createReceiptIfNotExists({
-    orderId:        order._id,
-    userId,
-    reference:      orderReference,
-    orderItems:     order.orderItems,
-    itemPrice:      order.itemPrice,
-    taxPrice:       order.taxPrice,
-    shippingPrice:  order.shippingPrice,
-    totalPrice:     order.totalPrice,
-    shippingInfo:   order.shippingInfo,
-    currency:       order.paymentInfo.currency,
-    paymentGateway: gateway,
-    ...(order.discounts?.codes?.[0] && {
-      discount: {
-        code:              order.discounts.codes[0].code,
-        discountAmount:    order.discounts.codes[0].amount,
-        type:              order.discounts.codes[0].type              ?? null,
-        originalItemPrice: order.discounts.codes[0].originalItemPrice ?? null,
+        const discount = await discountLookup;
+        if (!discount) {
+          console.error(JSON.stringify({
+            level: 'ERROR', event: 'discount_record_usage_skipped',
+            reason: 'discount_not_found', orderId: order._id,
+            discountId: session.discount.discountId ?? null,
+            code: session.discount.code ?? null,
+          }));
+        } else {
+          await discount.recordUsage(userId, order._id, session.discount.discountAmount);
+          syncDiscountAfterOrderCreated(order).catch(() => {});
+        }
+      } else {
+        syncBaselineAfterNonDiscountedOrder().catch(() => {});
       }
-    }),
-  }).catch(() => {});
+    } catch (err) {
+      console.error('[payment] Discount sync failed:', err.message);
+    }
 
-  Promise.all([
-    deletePaymentSession(reference),
-    reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
-  ]).catch(() => {});
+    // ── Remaining fire-and-forget tasks ─────────────────────────────────────
+    syncCustomerAfterOrder(order._id).catch(() => {});
 
-  invalidatePaymentCaches().catch(() => {});
-});
+    createReceiptIfNotExists({
+      orderId:        order._id,
+      userId,
+      reference:      orderReference,
+      orderItems:     order.orderItems,
+      itemPrice:      order.itemPrice,
+      taxPrice:       order.taxPrice,
+      shippingPrice:  order.shippingPrice,
+      totalPrice:     order.totalPrice,
+      shippingInfo:   order.shippingInfo,
+      currency:       order.paymentInfo.currency,
+      paymentGateway: gateway,
+      ...(order.discounts?.codes?.[0] && {
+        discount: {
+          code:              order.discounts.codes[0].code,
+          discountAmount:    order.discounts.codes[0].amount,
+          type:              order.discounts.codes[0].type              ?? null,
+          originalItemPrice: order.discounts.codes[0].originalItemPrice ?? null,
+        }
+      }),
+    }).catch(() => {});
+
+    Promise.all([
+      deletePaymentSession(reference),
+      reference !== orderReference ? deletePaymentSession(orderReference) : Promise.resolve(),
+    ]).catch(() => {});
+
+    invalidatePaymentCaches().catch(() => {});
+  });
 
 });
