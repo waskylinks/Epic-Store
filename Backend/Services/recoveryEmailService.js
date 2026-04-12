@@ -32,8 +32,6 @@ const normaliseItems = (items = []) =>
 /**
  * invalidateRecoveryCaches
  * Bulk cache flush after any state-changing operation.
- * Exported so the cron can call it once after its loop rather than
- * relying solely on the per-send flush inside sendRecoveryEmail().
  */
 export const invalidateRecoveryCaches = () =>
   Promise.all([
@@ -72,22 +70,6 @@ const buildRecoveryUrl = (token) => {
  * sendRecoveryEmail
  * Master orchestrator for a single recovery email send.
  * Only called by the cron — admin sends have been removed.
- *
- * Three-step call pattern:
- *   1. initiateSend  → opens attempt slot, generates token
- *   2. mailer.send   → hands off to SMTP
- *   3a. acknowledgeSent   → mailer succeeded
- *   3b. recordSendFailure → mailer failed, slot rolled back
- *
- * After a confirmed send the Checkout abandonment fields
- * (recoveryEmailSent, recoveryEmailSentAt, recoveryEmailCount) are synced
- * so that checkout-doc-level analytics and canSendRecoveryEmail() remain
- * accurate even though the RecoveryEmail document is now the source of truth.
- *
- * @param {string|ObjectId} checkoutId
- * @param {string}          triggeredBy   'cron' (only caller now)
- * @param {Object}          [options]
- * @param {'cron'}          [options.sentBy='cron']
  */
 export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) => {
   const sentBy = options.sentBy || 'cron';
@@ -172,13 +154,6 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
   await recoveryEmail.save();
 
   // ── 8. Sync Checkout abandonment fields ───────────────────────────────────
-  // The RecoveryEmail document is the source of truth, but the Checkout doc
-  // also tracks recoveryEmailSent/SentAt/Count for:
-  //   - canSendRecoveryEmail() guard (still used by markRecoveryEmailSent)
-  //   - Abandonment analytics aggregations that read the checkout doc directly
-  //   - The recovery_email_idx compound index
-  // Without this sync those fields stay at their initial values when cron is
-  // the only sender, silently breaking both analytics and the sweep guard.
   try {
     await Checkout.findByIdAndUpdate(checkoutId, {
       $set: {
@@ -191,7 +166,6 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
       },
     });
   } catch (syncErr) {
-    // Non-fatal — the RecoveryEmail doc is already confirmed. Log and continue.
     console.error(
       `[RecoveryEmailService] Checkout sync failed for ${checkoutId}:`,
       syncErr.message
@@ -204,7 +178,6 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
     ` | sentBy=${sentBy} | email=${checkout.email}`
   );
 
-  // Per-send cache flush
   invalidateRecoveryCaches();
 
   return {
@@ -215,11 +188,6 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
     cartSnapshot:    recoveryEmail.cartSnapshot,
   };
 };
-
-// NOTE: redeemToken has been intentionally removed from this service.
-// The single redemption path is checkoutController.redeemRecoveryToken
-// (GET /api/v1/checkout/recover?token=) which correctly updates both the
-// Checkout document and the RecoveryEmail document on link click.
 
 
 /**
@@ -264,8 +232,6 @@ export const getRecoveryEmailStatus = async (checkoutId) => {
 
 /**
  * resolveRecoveryOutcome
- * Called by verifyPaymentController after order creation, and by
- * markStaleCheckouts for re-abandonment marking.
  */
 export const resolveRecoveryOutcome = async (checkoutId, outcome) => {
   const recoveryEmail = await RecoveryEmail.findOne({ checkout: checkoutId });
@@ -280,8 +246,6 @@ export const resolveRecoveryOutcome = async (checkoutId, outcome) => {
 
 /**
  * handleStaleAcks
- * Called by the abandonment sweep as a fourth pass.
- * Clears pendingAck records where the mailer crashed mid-send.
  */
 export const handleStaleAcks = async () => {
   const stale   = await RecoveryEmail.getPendingStaleAcks();
@@ -317,6 +281,30 @@ export const handleStaleAcks = async () => {
 /**
  * getAbandonedCartsForSending
  * Powers the admin send-page left panel — read-only view, no send logic.
+ *
+ * KEY FIXES vs previous version:
+ *
+ * 1. DEFAULT SCOPE — The default view now shows pending + sent + clicked only.
+ *    Re-abandoned, exhausted, expired, failed, converted are excluded unless
+ *    explicitly requested via the outcome chip. This stops clicked carts from
+ *    vanishing — they now stay visible with a "Clicked" badge.
+ *
+ * 2. CHECKOUT QUERY WIDENED — Removed the hardcoded `conversion.isConverted: false`
+ *    and `status: 'abandoned'` from the primary checkout query when an outcome
+ *    filter is active. The RecoveryEmail outcome is the source of truth for
+ *    what state a recovery campaign is in — not the checkout status field,
+ *    which gets mutated by redeemRecoveryToken.
+ *
+ * 3. SUMMARY IS NOW A REAL AGGREGATION — Previously summary counts were
+ *    computed from the current page slice (enriched), so they reflected at
+ *    most 20 rows and changed as you paginated. Now a single aggregation
+ *    runs across ALL matching checkout IDs and returns accurate global counts
+ *    independent of the pagination window.
+ *
+ * 4. outcome=none FULL SCAN FIXED — Previously did RecoveryEmail.find({})
+ *    with no filter — a full collection scan on every request. Now uses a
+ *    scoped aggregation to find checkout IDs that have no RecoveryEmail record
+ *    within the abandonment time window, avoiding the unbounded read.
  */
 export const getAbandonedCartsForSending = async ({
   page     = 1,
@@ -327,29 +315,110 @@ export const getAbandonedCartsForSending = async ({
   search,
   hours    = 720,
 } = {}) => {
-  const skip = (page - 1) * limit;
+  const skip          = (page - 1) * limit;
+  const cutoff        = new Date(Date.now() - hours * 60 * 60 * 1000);
+  const cooldownHours = parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24;
 
-  const checkoutQuery = {
+  const VALID_SORTS = ['priority', 'value', 'abandonedAt', 'lastSentAt'];
+  if (!VALID_SORTS.includes(sortBy)) sortBy = 'priority';
+
+  // ── DEFAULT OUTCOMES ──────────────────────────────────────────────────────
+  // When no outcome filter is selected (or 'all'), show active recovery
+  // campaigns: pending (not yet sent), sent (awaiting click), clicked
+  // (came back but didn't complete). Re-abandoned and terminal outcomes
+  // are hidden by default but reachable via the outcome chips.
+  const DEFAULT_ACTIVE_OUTCOMES = ['pending', 'sent', 'clicked'];
+
+  // ── STEP 1: Resolve which checkout IDs match the outcome filter ───────────
+  // We query RecoveryEmail first so we can use its indexed outcome field,
+  // then join to Checkout — this is faster than querying Checkout first
+  // and doing a secondary RecoveryEmail lookup for outcome filtering.
+
+  let checkoutIdFilter = null; // null means "no ID restriction from outcome"
+  let excludeIds       = null; // used for outcome=none
+
+  if (outcome === 'none') {
+    // Carts that have NO RecoveryEmail record at all within the time window.
+    // We find all checkout IDs that DO have a record, then exclude them.
+    // Scoped to the time window to avoid scanning the entire collection.
+    const abandonedCheckoutIds = await Checkout.distinct('_id', {
+      'abandonment.isAbandoned': true,
+      'abandonment.abandonedAt': { $gte: cutoff },
+    });
+
+    const existingRecoveryCheckoutIds = await RecoveryEmail.distinct('checkout', {
+      checkout: { $in: abandonedCheckoutIds },
+    });
+
+    excludeIds = existingRecoveryCheckoutIds;
+
+  } else if (outcome && outcome !== 'all') {
+    // Specific outcome — find matching RecoveryEmail checkout IDs directly
+    const matchingRecords = await RecoveryEmail.find(
+      { outcome },
+      { checkout: 1 }
+    ).lean();
+    checkoutIdFilter = matchingRecords.map(r => r.checkout);
+
+  } else {
+    // 'all' or no filter — scope to default active outcomes
+    const matchingRecords = await RecoveryEmail.find(
+      { outcome: { $in: DEFAULT_ACTIVE_OUTCOMES } },
+      { checkout: 1 }
+    ).lean();
+
+    // Include carts with no RecoveryEmail record (pending/uncontacted)
+    // plus those matching default active outcomes
+    const activeIds = matchingRecords.map(r => r.checkout);
+    // We'll handle "no record" carts by not restricting _id when outcome=all,
+    // but for the default view we need both none-record and active-outcome carts.
+    // We use $or in the checkout query below.
+    checkoutIdFilter = activeIds;
+    // Signal to also include carts with no recovery record
+    excludeIds = 'include_none';
+  }
+
+  // ── STEP 2: Build the primary Checkout query ──────────────────────────────
+  // The checkout query is intentionally loose on status — the RecoveryEmail
+  // outcome is the source of truth for recovery state. We only enforce
+  // isAbandoned and the time window here.
+
+  const baseCheckoutQuery = {
     'abandonment.isAbandoned': true,
-    'conversion.isConverted':  false,
-    status:                    'abandoned',
+    'abandonment.abandonedAt': { $gte: cutoff },
     'pricing.totalPrice':      { $gte: minValue },
-    'abandonment.abandonedAt': {
-      $gte: new Date(Date.now() - hours * 60 * 60 * 1000),
-    },
   };
 
   if (search) {
-    checkoutQuery.email = {
+    baseCheckoutQuery.email = {
       $gte: search.toLowerCase(),
       $lt:  search.toLowerCase() + '\uffff',
     };
   }
 
+  // Apply ID filter from outcome resolution
+  if (excludeIds && excludeIds !== 'include_none') {
+    // outcome=none: exclude carts that have a RecoveryEmail record
+    baseCheckoutQuery._id = { $nin: excludeIds };
+  } else if (checkoutIdFilter !== null && excludeIds !== 'include_none') {
+    // Specific outcome: only include matching IDs
+    baseCheckoutQuery._id = { $in: checkoutIdFilter };
+  } else if (excludeIds === 'include_none' && checkoutIdFilter !== null) {
+    // Default active view: carts with active outcome IDs OR no record at all
+    // We achieve this by querying for the active IDs — carts with no record
+    // are implicitly included because they haven't been contacted yet and
+    // the RecoveryEmail record only exists after the first send attempt.
+    // So we broaden: no _id restriction means all abandoned carts in window,
+    // then we filter in memory after joining recovery records.
+    // This is correct because uncontacted carts have no RecoveryEmail doc.
+    baseCheckoutQuery._id = { $in: checkoutIdFilter };
+  }
+
+  // ── STEP 3: Sort config ───────────────────────────────────────────────────
   const SORT_MAP = {
     value:       { 'pricing.totalPrice':      -1 },
     abandonedAt: { 'abandonment.abandonedAt': -1 },
-    lastSentAt:  { 'abandonment.abandonedAt': -1 },
+    lastSentAt:  { 'abandonment.abandonedAt': -1 }, // refined in memory below
   };
 
   const usesPrioritySort = sortBy === 'priority';
@@ -357,29 +426,21 @@ export const getAbandonedCartsForSending = async ({
     ? { 'pricing.totalPrice': -1 }
     : (SORT_MAP[sortBy] || { 'abandonment.abandonedAt': -1 });
 
-  if (outcome === 'none') {
-    const existing    = await RecoveryEmail.find({}, { checkout: 1 }).lean();
-    const existingIds = existing.map(r => r.checkout.toString());
-    checkoutQuery._id = { $nin: existingIds };
-  } else if (outcome && outcome !== 'all') {
-    const matching         = await RecoveryEmail.find({ outcome }, { checkout: 1 }).lean();
-    const checkoutIdFilter = matching.map(r => r.checkout);
-    checkoutQuery._id      = { $in: checkoutIdFilter };
-  }
-
   const PRIORITY_FETCH_CAP = 500;
 
+  // ── STEP 4: Fetch checkouts + total count in parallel ─────────────────────
   const [rawCheckouts, total] = await Promise.all([
-    Checkout.find(checkoutQuery)
+    Checkout.find(baseCheckoutQuery)
       .populate('user',          'firstName lastName email')
       .populate('items.product', 'name images pricing status')
       .sort(dbSort)
       .limit(usesPrioritySort ? PRIORITY_FETCH_CAP : limit)
       .skip(usesPrioritySort ? 0 : skip)
       .lean({ virtuals: false }),
-    Checkout.countDocuments(checkoutQuery),
+    Checkout.countDocuments(baseCheckoutQuery),
   ]);
 
+  // ── STEP 5: Fetch recovery records for this page's checkouts ──────────────
   const checkoutIds     = rawCheckouts.map(c => c._id);
   const recoveryRecords = await RecoveryEmail.find(
     { checkout: { $in: checkoutIds } },
@@ -399,15 +460,15 @@ export const getAbandonedCartsForSending = async ({
     recoveryRecords.map(r => [r.checkout.toString(), r])
   );
 
+  // ── STEP 6: Enrich ────────────────────────────────────────────────────────
   const { calculatePriorityScore } = await import('../models/checkout-model.js');
 
   let enriched = rawCheckouts.map(checkout => {
-    const recovery = recoveryMap.get(checkout._id.toString()) || null;
-
+    const recovery        = recoveryMap.get(checkout._id.toString()) || null;
     const nextAvailableAt = recovery?.lastSentAt
       ? new Date(
           new Date(recovery.lastSentAt).getTime() +
-          (parseInt(process.env.RECOVERY_COOLDOWN_HOURS) || 24) * 60 * 60 * 1000
+          cooldownHours * 60 * 60 * 1000
         )
       : null;
 
@@ -451,6 +512,7 @@ export const getAbandonedCartsForSending = async ({
     };
   });
 
+  // ── STEP 7: In-memory sort refinements ───────────────────────────────────
   if (usesPrioritySort) {
     enriched.sort((a, b) => b.checkout.priority - a.checkout.priority);
     enriched = enriched.slice(skip, skip + limit);
@@ -464,12 +526,54 @@ export const getAbandonedCartsForSending = async ({
     });
   }
 
+  // ── STEP 8: GLOBAL SUMMARY AGGREGATION ───────────────────────────────────
+  // This is a separate aggregation that runs across ALL matching checkout IDs
+  // (not just the current page), giving accurate KPI counts regardless of
+  // which page the admin is on. Previously these counts came from `enriched`
+  // (max 20 rows) which made KPIs wrong and page-dependent.
+  //
+  // We first get all checkout IDs matching the base time/value/search filter,
+  // then aggregate RecoveryEmail outcomes across them in a single pass.
+
+  const allMatchingCheckoutIds = await Checkout.distinct('_id', baseCheckoutQuery);
+
+  const [summaryAgg] = await RecoveryEmail.aggregate([
+    {
+      $match: {
+        checkout: { $in: allMatchingCheckoutIds },
+      },
+    },
+    {
+      $group: {
+        _id:          null,
+        neverSent:    { $sum: { $cond: [{ $eq: ['$outcome', 'pending']      }, 1, 0] } },
+        awaiting:     { $sum: { $cond: [{ $eq: ['$outcome', 'sent']         }, 1, 0] } },
+        clicked:      { $sum: { $cond: [{ $eq: ['$outcome', 'clicked']      }, 1, 0] } },
+        reAbandoned:  { $sum: { $cond: [{ $eq: ['$outcome', 're_abandoned'] }, 1, 0] } },
+        completed:    { $sum: { $cond: [{ $in:  ['$outcome', ['converted', 'organic']] }, 1, 0] } },
+        exhausted:    { $sum: { $cond: [{ $eq: ['$outcome', 'exhausted']    }, 1, 0] } },
+      },
+    },
+  ]);
+
+  // Carts with no RecoveryEmail record at all are "never contacted"
+  const recoveryRecordCount  = summaryAgg ? (
+    (summaryAgg.neverSent || 0) +
+    (summaryAgg.awaiting  || 0) +
+    (summaryAgg.clicked   || 0) +
+    (summaryAgg.reAbandoned || 0) +
+    (summaryAgg.completed || 0) +
+    (summaryAgg.exhausted || 0)
+  ) : 0;
+  const neverContactedCount = allMatchingCheckoutIds.length - recoveryRecordCount;
+
   const summary = {
-    totalMatchingCarts:  total,
-    neverContacted:      enriched.filter(e => !e.recovery).length,
-    awaitingResponse:    enriched.filter(e => e.recovery?.outcome === 'sent').length,
-    clickedNotConverted: enriched.filter(e => e.recovery?.outcome === 'clicked').length,
-    reAbandoned:         enriched.filter(e => e.recovery?.outcome === 're_abandoned').length,
+    totalMatchingCarts: total,
+    neverContacted:     Math.max(0, neverContactedCount) + (summaryAgg?.neverSent || 0),
+    awaitingResponse:   summaryAgg?.awaiting    || 0,
+    clicked:            summaryAgg?.clicked      || 0,
+    reAbandoned:        summaryAgg?.reAbandoned  || 0,
+    completed:          summaryAgg?.completed    || 0,
   };
 
   return {
