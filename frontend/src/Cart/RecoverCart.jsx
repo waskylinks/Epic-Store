@@ -8,6 +8,7 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 
 import { redeemRecoveryToken, removeErrors, removeMessage } from '../features/checkout/checkoutSlice';
+import { addItemsToCart, clearEntireCart } from '../features/cart/cartSlice';
 
 import '../CartStyles/RecoverCart.css';
 
@@ -42,7 +43,7 @@ const IconArrow   = () => (
   </svg>
 );
 
-// ─── Phases: 'loading' | 'success' | 'expired' | 'invalid' | 'converted'
+// ─── Phases: 'loading' | 'expired' | 'invalid' | 'converted'
 
 export default function RecoverCart() {
   const [searchParams]  = useSearchParams();
@@ -50,11 +51,9 @@ export default function RecoverCart() {
   const dispatch         = useDispatch();
   const token            = searchParams.get('token');
 
-  const { recovery, error } = useSelector(s => s.checkout);
+  const { recovery } = useSelector(s => s.checkout);
 
-  const [phase, setPhase]               = useState('loading');
-  const [unavailableItems, setUnavail]  = useState([]);
-  const [restoredCart, setRestoredCart] = useState(null);
+  const [phase, setPhase] = useState('loading');
   const hasRun = useRef(false);
 
   // ── 1. Token redemption ───────────────────────────────────────────────────
@@ -69,26 +68,46 @@ export default function RecoverCart() {
 
     dispatch(redeemRecoveryToken(token))
       .unwrap()
-      .then(data => {
+      .then(async (data) => {
         if (data.alreadyConverted) {
           setPhase('converted');
           return;
         }
 
-        // Surface any unavailable items before redirecting
-        if (data.checkout.unavailableItems?.length > 0) {
-          setUnavail(data.checkout.unavailableItems);
+        const recovered = data.checkout;
+
+        // Warn about removed items before touching the cart
+        if (recovered.unavailableItems?.length > 0) {
           toast.warning(
-            `${data.checkout.unavailableItems.length} item(s) are no longer available and were removed from your cart.`,
+            `${recovered.unavailableItems.length} item(s) are no longer available and were removed from your cart.`,
             { position: 'top-center', autoClose: 5000 }
           );
         }
 
-        setRestoredCart(data.checkout);
-        setPhase('success');
+        // 1. Wipe whatever cart the user currently has
+        try {
+          await dispatch(clearEntireCart()).unwrap();
+        } catch {
+          toast.warning(
+            'Could not fully clear your previous cart — you may see duplicate items. Please review before checking out.',
+            { position: 'top-center', autoClose: 6000 }
+          );
+        }
+
+        // 2. Re-add all recovered items in parallel
+        await Promise.all(
+          (recovered.items || []).map(item =>
+            dispatch(addItemsToCart({
+              id:       item.product?._id || item.product,
+              quantity: item.quantity || 1,
+            })).unwrap().catch(() => {})  // non-fatal per item — user can adjust in cart
+          )
+        );
+
+        // 3. Go straight to cart — no modal
+        navigate('/cart');
       })
       .catch(err => {
-        // err comes from rejectWithValue: { message, status }
         const status = err?.status || recovery?.errorStatus;
         if (status === 410) {
           setPhase('expired');
@@ -106,12 +125,6 @@ export default function RecoverCart() {
       dispatch(removeMessage());
     };
   }, [dispatch]);
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  const fmt = (v, currency = 'USD') =>
-    new Intl.NumberFormat('en-US', { style: 'currency', currency, minimumFractionDigits: 2 }).format(v || 0);
-
-  const totalItems = restoredCart?.items?.reduce((s, i) => s + (i.quantity || 1), 0) || 0;
 
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
@@ -132,59 +145,6 @@ export default function RecoverCart() {
               </div>
               <h2 className="rcv-heading">Restoring your cart…</h2>
               <p className="rcv-sub">Just a moment while we retrieve your items.</p>
-            </div>
-          </div>
-        )}
-
-        {/* ── SUCCESS ──────────────────────────────────────────────────── */}
-        {phase === 'success' && restoredCart && (
-          <div className="rcv-center">
-            <div className="rcv-card rcv-card--success">
-
-              {/* tick animation */}
-              <div className="rcv-icon-ring rcv-icon-ring--success">
-                <IconCheck />
-              </div>
-
-              <h1 className="rcv-heading rcv-heading--lg">Your cart is back!</h1>
-              <p className="rcv-sub">
-                We've restored <strong>{totalItems} item{totalItems !== 1 ? 's' : ''}</strong> from your previous session.
-              </p>
-
-              {/* Unavailable items warning */}
-              {unavailableItems.length > 0 && (
-                <div className="rcv-warning-box">
-                  <strong>Heads up:</strong> The following items are no longer available and were removed:
-                  <ul className="rcv-warning-list">
-                    {unavailableItems.map((item, i) => (
-                      <li key={i}>{item.name}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Cart summary */}
-              <div className="rcv-summary">
-                <div className="rcv-summary-row">
-                  <span>Items</span>
-                  <span>{totalItems}</span>
-                </div>
-                {restoredCart.pricing?.totalPrice > 0 && (
-                  <div className="rcv-summary-row rcv-summary-row--total">
-                    <span>Cart Total</span>
-                    <span>{fmt(restoredCart.pricing.totalPrice, restoredCart.pricing.currency)}</span>
-                  </div>
-                )}
-              </div>
-
-              {/* CTA */}
-              <button
-                className="rcv-btn rcv-btn--primary"
-                onClick={() => navigate('/order/confirm')}
-              >
-                Continue to Checkout
-                <span className="rcv-btn-icon"><IconArrow /></span>
-              </button>
             </div>
           </div>
         )}

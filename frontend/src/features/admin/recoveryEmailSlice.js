@@ -100,7 +100,7 @@ const initialState = {
   // Send list (left panel — read-only, cron sends only)
   sendList:        [],
   pagination:      { currentPage: 1, totalPages: 1, total: 0, hasNextPage: false, hasPrevPage: false },
-  sendListSummary: { totalMatchingCarts: 0, neverContacted: 0, awaitingResponse: 0, clickedNotConverted: 0, reAbandoned: 0 },
+  sendListSummary: { totalMatchingCarts: 0, neverContacted: 0, awaitingResponse: 0, clicked: 0, reAbandoned: 0, completed: 0 },
   sendListLoading: false,
   sendListError:   null,
 
