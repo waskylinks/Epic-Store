@@ -602,25 +602,35 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   }
 
   // ── Resolve RecoveryEmail outcome immediately after order creation ─────────
-  // Query RecoveryEmail directly by user+outcome — zero dependency on checkout
-  // status fields that may have already been mutated by a prior run.
-  // This runs before res.json() so it cannot be skipped by setImmediate timing.
+  // FIX: Query by the specific abandoned checkout belonging to this user, then
+  // look up the RecoveryEmail by checkout._id — not by user alone. This prevents
+  // a recovery email from a previous unrelated cart being incorrectly attributed
+  // as organic/converted for the current purchase.
   try {
     const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
-    const recoveryEmailDoc = await RecoveryEmail.findOne({
-      user:    userId,
-      outcome: { $in: ['clicked', 'sent'] },
-    }).sort({ createdAt: -1 });
 
-    if (recoveryEmailDoc) {
-      const { resolveRecoveryOutcome } = await import('../Services/recoveryEmailService.js');
-      // totalLinkClicks > 0 means the user followed the email link → 'converted'
-      // totalLinkClicks === 0 means they came back on their own → 'organic'
-      const outcomeToSet = recoveryEmailDoc.totalLinkClicks > 0 ? 'converted' : 'organic';
-      await resolveRecoveryOutcome(recoveryEmailDoc.checkout, outcomeToSet);
-      console.log(
-        `[payment] RecoveryEmail ${recoveryEmailDoc._id} resolved to '${outcomeToSet}'`
-      );
+    const checkout = await Checkout.findOne({
+      user:                      userId,
+      'abandonment.isAbandoned': true,
+      'conversion.isConverted':  false,
+    }).sort({ lastActivityAt: -1 });
+
+    if (checkout) {
+      const recoveryEmailDoc = await RecoveryEmail.findOne({
+        checkout: checkout._id,
+        outcome:  { $in: ['clicked', 'sent'] },
+      });
+
+      if (recoveryEmailDoc) {
+        const { resolveRecoveryOutcome } = await import('../Services/recoveryEmailService.js');
+        // totalLinkClicks > 0 means the user followed the email link → 'converted'
+        // totalLinkClicks === 0 means they came back on their own → 'organic'
+        const outcomeToSet = recoveryEmailDoc.totalLinkClicks > 0 ? 'converted' : 'organic';
+        await resolveRecoveryOutcome(recoveryEmailDoc.checkout, outcomeToSet);
+        console.log(
+          `[payment] RecoveryEmail ${recoveryEmailDoc._id} resolved to '${outcomeToSet}'`
+        );
+      }
     }
   } catch (err) {
     // Non-fatal — order already saved, log and continue

@@ -629,7 +629,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
             clicked: {
               $sum: {
                 $cond: [
-                  { $in: ['$outcome', ['clicked', 'converted', 'organic', 're_abandoned']] },
+                  { $in: ['$outcome', ['clicked', 'converted', 're_abandoned']] },
                   1, 0,
                 ],
               },
