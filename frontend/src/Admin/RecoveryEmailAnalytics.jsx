@@ -391,7 +391,7 @@ export default function RecoveryEmailAnalyticsPage() {
                 {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
                   <>
                     <div className="rea-metric-row"><span className="rea-metric-key">Awaiting click</span><span className="rea-metric-val">{fmt.number(outcomes.sent || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Link clicked</span><span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Clicked (pending conversion)</span><span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Pending (unsent)</span><span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Exhausted</span><span className="rea-metric-red">{fmt.number(outcomes.exhausted || 0)}</span></div>
                     <div className="rea-metric-row">
