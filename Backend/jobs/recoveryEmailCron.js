@@ -1,7 +1,11 @@
 import cron              from 'node-cron';
 import Checkout          from '../models/checkout-model.js';
 import RecoveryEmail     from '../models/recovery-email-model.js';
-import { sendRecoveryEmail, invalidateRecoveryCaches } from '../Services/recoveryEmailService.js';
+import {
+  sendRecoveryEmail,
+  markExhaustedRecords,
+  invalidateRecoveryCaches,
+} from '../Services/recoveryEmailService.js';
 import { runCronJob }    from '../utils/runCronJob.js';
 import { cronConfig }    from '../config/cronConfig.js';
 
@@ -29,8 +33,6 @@ const getCartsEligibleForCron = async () => {
 
   // Step 2: Find uncontacted abandoned checkouts.
   // delayHours[1] is the required wait before the first email.
-  // We use $or to handle both field paths (firstAbandonedAt preferred,
-  // abandonedAt as fallback for older documents).
   const firstEmailDelayCutoff = new Date(
     now - (delayHours[1] ?? 1) * 60 * 60 * 1000
   );
@@ -42,7 +44,6 @@ const getCartsEligibleForCron = async () => {
       status:                    'abandoned',
       _id:                       { $nin: existingCheckoutIds },
       $or: [
-        // Preferred path: firstAbandonedAt exists and is within the valid window
         {
           'abandonment.firstAbandonedAt': {
             $exists: true,
@@ -50,7 +51,6 @@ const getCartsEligibleForCron = async () => {
             $gte:    maxAgeCutoff,
           },
         },
-        // Fallback path: firstAbandonedAt missing, use abandonedAt
         {
           'abandonment.firstAbandonedAt': { $exists: false },
           'abandonment.abandonedAt': {
@@ -59,8 +59,6 @@ const getCartsEligibleForCron = async () => {
             $gte:    maxAgeCutoff,
           },
         },
-        // Second fallback: firstAbandonedAt is null (explicitly set to null
-        // rather than missing — Mongoose can store null for unset Date fields)
         {
           'abandonment.firstAbandonedAt': null,
           'abandonment.abandonedAt': {
@@ -79,7 +77,7 @@ const getCartsEligibleForCron = async () => {
     }
   ).lean();
 
-  // Diagnostic: log what the query found so you can verify in dev
+  // Diagnostic logging in dev
   if (process.env.NODE_ENV !== 'production') {
     const totalAbandoned = await Checkout.countDocuments({
       'abandonment.isAbandoned': true,
@@ -219,75 +217,98 @@ async function runRecoveryEmailCron() {
   const maxRun = cronConfig.recoveryEmail.maxPerRun;
 
   const stats = {
-    evaluated: 0,
-    sent:      0,
-    skipped:   0,
-    failed:    0,
-    dryRun:    isDry,
+    evaluated:         0,
+    sent:              0,
+    skipped:           0,
+    failed:            0,
+    exhaustedResolved: 0,
+    exhaustedErrors:   0,
+    dryRun:            isDry,
   };
 
   if (isDry) {
     console.log('[RecoveryEmailCron] DRY RUN MODE — no emails will be sent');
   }
 
+  // ── SEND PASS ─────────────────────────────────────────────────────────────
   let eligible = await getCartsEligibleForCron();
   stats.evaluated = eligible.length;
 
   if (eligible.length === 0) {
-    console.log('[RecoveryEmailCron] No eligible carts found — run complete');
-    return stats;
-  }
-
-  if (eligible.length > maxRun) {
-    console.warn(
-      `[RecoveryEmailCron] ${eligible.length} eligible carts exceeds cap of ${maxRun} — processing first ${maxRun}`
-    );
-    eligible = eligible.slice(0, maxRun);
-  }
-
-  console.log(`[RecoveryEmailCron] Processing ${eligible.length} carts`);
-
-  for (const cart of eligible) {
-    if (isDry) {
-      console.log(
-        `[RecoveryEmailCron][DRY RUN] Would send attempt ${cart.nextAttemptNumber}` +
-        ` to ${cart.email} | checkout=${cart.checkoutId} | outcome=${cart.outcome}`
+    console.log('[RecoveryEmailCron] No eligible carts found');
+  } else {
+    if (eligible.length > maxRun) {
+      console.warn(
+        `[RecoveryEmailCron] ${eligible.length} eligible carts exceeds cap of ${maxRun}` +
+        ` — processing first ${maxRun}`
       );
-      stats.sent++;
-      continue;
+      eligible = eligible.slice(0, maxRun);
     }
 
-    try {
-      // sentBy: 'cron' is the only attribution now — admin sends have been removed
-      await sendRecoveryEmail(cart.checkoutId, 'cron', { sentBy: 'cron' });
-      console.log(
-        `[RecoveryEmailCron] ✓ Sent attempt ${cart.nextAttemptNumber}` +
-        ` | checkout=${cart.checkoutId} | email=${cart.email}`
-      );
-      stats.sent++;
-    } catch (err) {
-      if (err.code === 'CANNOT_SEND') {
+    console.log(`[RecoveryEmailCron] Processing ${eligible.length} carts`);
+
+    for (const cart of eligible) {
+      if (isDry) {
         console.log(
-          `[RecoveryEmailCron] ↷ Skipped | checkout=${cart.checkoutId} | reason=${err.message}`
+          `[RecoveryEmailCron][DRY RUN] Would send attempt ${cart.nextAttemptNumber}` +
+          ` to ${cart.email} | checkout=${cart.checkoutId} | outcome=${cart.outcome}`
         );
-        stats.skipped++;
-      } else {
-        console.error(
-          `[RecoveryEmailCron] ✗ Failed | checkout=${cart.checkoutId}` +
-          ` | email=${cart.email} | error=${err.message}`
+        stats.sent++;
+        continue;
+      }
+
+      try {
+        await sendRecoveryEmail(cart.checkoutId, 'cron', { sentBy: 'cron' });
+        console.log(
+          `[RecoveryEmailCron] ✓ Sent attempt ${cart.nextAttemptNumber}` +
+          ` | checkout=${cart.checkoutId} | email=${cart.email}`
         );
-        stats.failed++;
+        stats.sent++;
+      } catch (err) {
+        if (err.code === 'CANNOT_SEND') {
+          console.log(
+            `[RecoveryEmailCron] ↷ Skipped | checkout=${cart.checkoutId}` +
+            ` | reason=${err.message}`
+          );
+          stats.skipped++;
+        } else {
+          console.error(
+            `[RecoveryEmailCron] ✗ Failed | checkout=${cart.checkoutId}` +
+            ` | email=${cart.email} | error=${err.message}`
+          );
+          stats.failed++;
+        }
       }
     }
   }
 
-  // Single cache bust after the full loop
-  if (!isDry && stats.sent > 0) {
+  // ── EXHAUSTED RESOLUTION PASS ─────────────────────────────────────────────
+  // Runs every tick regardless of whether any emails were sent this pass.
+  // Finds records where all sends are done, the final token TTL has elapsed,
+  // and nobody ever clicked — writes 'exhausted' so analytics reflect reality.
+  if (!isDry) {
+    try {
+      const { resolved, errors } = await markExhaustedRecords();
+      stats.exhaustedResolved = resolved;
+      stats.exhaustedErrors   = errors;
+    } catch (err) {
+      console.error(
+        '[RecoveryEmailCron] markExhaustedRecords pass threw unexpectedly:',
+        err.message
+      );
+    }
+  }
+
+  // ── CACHE BUST ────────────────────────────────────────────────────────────
+  // Flush if anything changed — either sends or exhausted resolutions.
+  const anythingChanged = !isDry && (stats.sent > 0 || stats.exhaustedResolved > 0);
+  if (anythingChanged) {
     await invalidateRecoveryCaches().catch((err) =>
       console.error('[RecoveryEmailCron] Cache bust failed:', err.message)
     );
   }
 
+  // ── LOG SUMMARY ───────────────────────────────────────────────────────────
   const status = stats.failed > 0 && stats.sent === 0 ? '✗ FULL FAILURE' :
                  stats.failed > 0                      ? '⚠ PARTIAL'      :
                                                          '✓ OK';
@@ -298,6 +319,8 @@ async function runRecoveryEmailCron() {
     ` | sent=${stats.sent}` +
     ` | skipped=${stats.skipped}` +
     ` | failed=${stats.failed}` +
+    ` | exhaustedResolved=${stats.exhaustedResolved}` +
+    ` | exhaustedErrors=${stats.exhaustedErrors}` +
     (isDry ? ' | DRY RUN' : '')
   );
 
