@@ -329,6 +329,10 @@ recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'cron') 
     this.outcome = 'sent';
   }
 
+  if (this.outcome === 'expired') {
+    this.outcome = 'sent';
+  }
+
   return token;
 };
 
@@ -368,7 +372,16 @@ recoveryEmailSchema.methods.recordSendFailure = function (reason) {
   if (this.confirmedAttempts === 0) {
     this.outcome = 'pending';
   }
+
+  const allAttemptsFailed = this.attempts.length > 0 &&
+    this.attempts.every(a => a.status === 'failed');
+  const hitCap = this.attempts.length >= cfg.maxAttempts();
+
+  if (allAttemptsFailed && hitCap) {
+    this._resolveOutcome('failed');
+  }
 };
+
 
 
 /**
@@ -403,7 +416,6 @@ recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
 
 /**
  * markTokenExpired
- * Best-effort audit write when redeemRecoveryToken catches a TokenExpiredError.
  */
 recoveryEmailSchema.methods.markTokenExpired = function (tokenId) {
   const attempt = this._findAttemptByTokenId(tokenId);
@@ -411,13 +423,32 @@ recoveryEmailSchema.methods.markTokenExpired = function (tokenId) {
     attempt.tokenExpiredUnclicked = true;
   }
 
-  const allSentExpired = this.attempts
-    .filter(a => a.status === 'sent')
-    .every(a => a.tokenExpiredUnclicked);
+  const hasExpiredUnclicked = this.attempts.some(
+    a => a.tokenExpiredUnclicked && !a.linkClickedAt
+  );
 
-  if (allSentExpired && this.confirmedAttempts >= cfg.maxAttempts()) {
+  if (hasExpiredUnclicked) {
     this._resolveOutcome('expired');
   }
+};
+
+
+/**
+ * markReAbandoned
+ * Called by the abandonment detection system (checkout cron / webhook) when a
+ * cart that was already in an active recovery campaign is abandoned again.
+ *
+ * This is the ONLY correct trigger for 're_abandoned'. It must never be set
+ * by token expiry or cron sweeps — those are temporal signals, not behavioural.
+ *
+ * Correct lifecycle:
+ *   sent/clicked → user returns to checkout → leaves again → re_abandoned
+ *
+ * 're_abandoned' is semi-terminal: only 'converted' or 'organic' can overwrite
+ * it (a re-abandoned cart that later converts is a valid and desirable outcome).
+ */
+recoveryEmailSchema.methods.markReAbandoned = function () {
+  this._resolveOutcome('re_abandoned');
 };
 
 
@@ -477,17 +508,34 @@ recoveryEmailSchema.methods._findAttemptByTokenId = function (tokenId, status) {
  * _resolveOutcome
  *
  * Priority ladder (highest → lowest):
- *   1. 'converted' / 'organic'  — absolute terminal, nothing overwrites
- *   2. 're_abandoned'           — semi-terminal: only converted/organic can replace it
- *   3. 'exhausted'/'expired'/'failed' — standard terminal
- *   4. everything else          — freely overwritable
  *
- * FIX: Previously 're_abandoned' was not in any terminal list, meaning a
- * concurrent sweep could write 're_abandoned' AFTER verifyPaymentController
- * had written 'converted', silently reverting a confirmed conversion in
- * the analytics. Now 're_abandoned' is treated as semi-terminal so it
- * cannot overwrite conversion outcomes, while converted/organic can still
- * replace it (correct — a re-abandoned cart that later converts is valid).
+ *   Tier 1 — Absolute terminal (converted, organic):
+ *     Nothing ever overwrites a confirmed conversion.
+ *
+ *   Tier 2 — Semi-terminal (re_abandoned):
+ *     Behavioural signal — user returned and left again.
+ *     Only absolute terminals (converted/organic) can replace it.
+ *     A re-abandoned cart that later converts is valid and desirable.
+ *
+ *   Tier 3 — Hard terminal (exhausted, failed):
+ *     Exhausted = all sends done, user never clicked at all.
+ *     Failed    = unrecoverable mailer/system failure.
+ *     Only absolute terminals can replace these.
+ *
+ *   Tier 4 — Soft terminal (expired):
+ *     Temporal signal — user tried to click but token had elapsed, OR
+ *     all tokens elapsed while cart was in 'clicked' state.
+ *     NOT a hard terminal: the cron may send a follow-up email, which
+ *     should advance outcome back to 'sent' via initiateSend.
+ *     Can be overwritten by any higher-tier outcome or by 'sent'/'clicked'
+ *     when a new attempt begins.
+ *
+ *   Everything else — freely overwritable (pending, sent, clicked).
+ *
+ * FIX vs previous version:
+ *   - 'expired' moved OUT of HARD_TERMINAL so follow-up sends can recover it.
+ *   - 're_abandoned' correctly remains in SEMI_TERMINAL (was correct before).
+ *   - 'exhausted' and 'failed' remain as HARD_TERMINAL.
  */
 recoveryEmailSchema.methods._resolveOutcome = function (outcome) {
   // Tier 1 — absolute terminal: nothing ever overwrites these.
@@ -498,9 +546,15 @@ recoveryEmailSchema.methods._resolveOutcome = function (outcome) {
   const SEMI_TERMINAL = ['re_abandoned'];
   if (SEMI_TERMINAL.includes(this.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) return;
 
-  // Tier 3 — standard terminal: only absolute/semi terminals can replace these.
-  const TERMINAL = ['exhausted', 'expired', 'failed'];
-  if (TERMINAL.includes(this.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) return;
+  // Tier 3 — hard terminal: only absolute terminals can replace exhausted/failed.
+  // NOTE: 'expired' is intentionally absent here — it is a soft terminal (Tier 4)
+  // because a follow-up email send should be able to move outcome back to 'sent'.
+  const HARD_TERMINAL = ['exhausted', 'failed'];
+  if (HARD_TERMINAL.includes(this.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) return;
+
+  // Tier 4 — soft terminal (expired): can be overwritten by anything except
+  // lower-priority states. Since 'sent' and 'clicked' are always valid
+  // progressions after an expired state, no guard needed here — fall through.
 
   this.outcome    = outcome;
   this.resolvedAt = new Date();
@@ -567,7 +621,9 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
 
             converted:    { $sum: { $cond: [{ $eq: ['$outcome', 'converted']   }, 1, 0] } },
             organic:      { $sum: { $cond: [{ $eq: ['$outcome', 'organic']      }, 1, 0] } },
-            reAbandoned:  { $sum: { $cond: [{ $eq: ['$outcome', 're_abandoned'] }, 1, 0] } },
+            // FIX: field name was 'reAbandoned' (camelCase) but frontend reads
+            // 'outcomes.re_abandoned' (snake_case). Renamed to re_abandoned throughout.
+            re_abandoned: { $sum: { $cond: [{ $eq: ['$outcome', 're_abandoned'] }, 1, 0] } },
             exhausted:    { $sum: { $cond: [{ $eq: ['$outcome', 'exhausted']    }, 1, 0] } },
             expired:      { $sum: { $cond: [{ $eq: ['$outcome', 'expired']      }, 1, 0] } },
             failed:       { $sum: { $cond: [{ $eq: ['$outcome', 'failed']       }, 1, 0] } },
@@ -661,7 +717,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
 
   const s  = summary[0] || {
     total: 0, totalConfirmedAttempts: 0, totalLinkClicks: 0, everClicked: 0,
-    converted: 0, organic: 0, reAbandoned: 0, exhausted: 0, expired: 0,
+    converted: 0, organic: 0, re_abandoned: 0, exhausted: 0, expired: 0,
     failed: 0, clicked: 0, stillPending: 0, stillSent: 0,
     avgAttemptsPerCheckout: 0,
   };
@@ -686,15 +742,16 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
       Math.round((s.avgAttemptsPerCheckout || 0) * 10) / 10,
 
     outcomes: {
-      converted:   s.converted,
-      organic:     s.organic,
-      reAbandoned: s.reAbandoned,
-      exhausted:   s.exhausted,
-      expired:     s.expired,
-      failed:      s.failed,
-      clicked:     s.clicked,
-      sent:        s.stillSent,
-      pending:     s.stillPending,
+      converted:    s.converted,
+      organic:      s.organic,
+      // FIX: snake_case key to match frontend OUTCOME_CONFIG and all lookups
+      re_abandoned: s.re_abandoned,
+      exhausted:    s.exhausted,
+      expired:      s.expired,
+      failed:       s.failed,
+      clicked:      s.clicked,
+      sent:         s.stillSent,
+      pending:      s.stillPending,
     },
 
     clickFunnel: {

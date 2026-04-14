@@ -133,7 +133,13 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
   const { checkoutId } = req.params;
   const { outcome }    = req.body;
 
-  const VALID_OUTCOMES = ['converted', 'organic', 're_abandoned', 'expired', 'exhausted', 'failed'];
+  // FIX: 'expired' added to VALID_OUTCOMES — it is a legitimate resolvable
+  // state (token expired, user never converted) that admins may need to set
+  // manually when the automatic cron sweep hasn't run yet or needs overriding.
+  const VALID_OUTCOMES = [
+    'converted', 'organic', 're_abandoned',
+    'expired', 'exhausted', 'failed',
+  ];
 
   if (!outcome || !VALID_OUTCOMES.includes(outcome)) {
     return next(
@@ -147,24 +153,32 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
     return next(new HandleError('No recovery email record found for this checkout', 404));
   }
 
-  // ── BUG FIX: The previous guard only checked absolute terminals
-  // ['converted', 'organic', 'exhausted', 'expired', 'failed'].
-  // 're_abandoned' was missing, so the controller would call
-  // resolveRecoveryOutcome() with e.g. 'expired', pass through here, and
-  // then the model's _resolveOutcome would silently block it — returning
-  // a 200 to the admin with no indication that nothing changed.
+  // ── Priority ladder guard ─────────────────────────────────────────────────
+  // Mirrors _resolveOutcome's three-tier priority exactly so the controller
+  // gives an actionable 422 instead of silently doing nothing.
   //
-  // The guard now mirrors the model's three-tier priority exactly:
-  //   - Absolute terminals (converted, organic): nothing overwrites them
-  //   - Semi-terminal (re_abandoned): only absolute terminals can replace it
-  //   - Standard terminals (exhausted, expired, failed): not re-overridable
-  //     unless the incoming outcome is an absolute terminal
+  // Tier 1 — Absolute terminal (converted, organic):
+  //   Nothing overwrites a confirmed conversion.
   //
-  // Any attempt to set a lower-priority outcome on a higher-priority current
-  // outcome now gets a clear 422 with an actionable message.
+  // Tier 2 — Semi-terminal (re_abandoned):
+  //   Behavioural signal. Only absolute terminals can replace it.
+  //
+  // Tier 3 — Hard terminal (exhausted, failed):
+  //   Only absolute terminals can replace these.
+  //
+  // Tier 4 — Soft terminal (expired):
+  //   Can be overwritten by anything — no guard needed.
+  //   An admin can move 'expired' → 're_abandoned' or 'exhausted' etc.
+  //
+  // FIX vs previous version:
+  //   - 're_abandoned' was missing from any guard tier, so the controller
+  //     would silently pass through and the model's _resolveOutcome would
+  //     block it — returning a 200 with no indication nothing changed.
+  //   - 'expired' correctly has no guard (soft terminal).
+
   const ABSOLUTE_TERMINAL = ['converted', 'organic'];
   const SEMI_TERMINAL     = ['re_abandoned'];
-  const STANDARD_TERMINAL = ['exhausted', 'expired', 'failed'];
+  const HARD_TERMINAL     = ['exhausted', 'failed'];
 
   if (ABSOLUTE_TERMINAL.includes(record.outcome)) {
     return res.status(422).json({
@@ -180,12 +194,15 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
     });
   }
 
-  if (STANDARD_TERMINAL.includes(record.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) {
+  if (HARD_TERMINAL.includes(record.outcome) && !ABSOLUTE_TERMINAL.includes(outcome)) {
     return res.status(422).json({
       success: false,
-      message: `Cannot override a terminal outcome (current: ${record.outcome})`,
+      message: `Cannot override a hard terminal outcome (current: ${record.outcome}). Only 'converted' or 'organic' can replace it.`,
     });
   }
+
+  // 'expired' (soft terminal) falls through with no guard — admin can freely
+  // override it to any valid outcome.
 
   await resolveRecoveryOutcome(checkoutId, outcome);
 

@@ -193,28 +193,32 @@ export const sendRecoveryEmail = async (checkoutId, triggeredBy, options = {}) =
 /**
  * markExhaustedRecords
  *
- * Resolves RecoveryEmail records to 'exhausted' when:
- *   - outcome is still 'sent'  (unresolved)
- *   - confirmedAttempts >= maxAttempts  (all sends done)
- *   - lastSentAt is older than tokenTTL ago  (final token has expired — TTL proxy)
- *   - totalLinkClicks === 0  (user never engaged)
+ * Resolves RecoveryEmail records that have exhausted all send attempts and
+ * whose final token TTL has elapsed. Handles two outcome cases:
+ *
+ *   'sent'    → user never clicked at all              → 'exhausted'
+ *   'clicked' → user clicked but didn't convert,
+ *               all tokens now elapsed                 → 'expired'
+ *
+ * Why the distinction matters:
+ *   exhausted  = complete disengagement (user never responded)
+ *   expired    = temporal failure (user engaged but ran out of time)
+ *   re_abandoned = behavioural signal — user returned and left again;
+ *                  this is set ONLY by the abandonment detection system
+ *                  via markReAbandoned(), never by this cron sweep.
  *
  * TTL proxy rationale: token TTL is uniform across all attempts via
  * RECOVERY_TOKEN_TTL_SECONDS. Using lastSentAt + TTL as the expiry
  * proxy avoids subdocument queries and is fully covered by
  * cron_eligibility_idx (outcome, lastSentAt, confirmedAttempts).
  *
- * The small edge case where _resolveTokenTTL capped a token shorter
- * than the default TTL means we may wait slightly longer than needed
- * before writing exhausted — the outcome is still correct, just
- * marginally delayed. Acceptable for this use case.
- *
- * Note on outcome naming:
- *   'exhausted' = all attempts sent, user never clicked at all
- *   'expired'   = user clicked a link after its token TTL had passed
- *                 (written by markTokenExpired on the model)
- * These are intentionally distinct — exhausted is the no-engagement
- * terminal state; expired means the user tried but too late.
+ * FIX vs previous version:
+ *   - Query now includes outcome:'clicked' in addition to 'sent'.
+ *   - The terminal outcome written depends on totalLinkClicks:
+ *       clicks === 0  → 'exhausted'   (never engaged)
+ *       clicks  > 0   → 'expired'     (engaged but timed out)
+ *   - The in-loop guard no longer gates on totalLinkClicks === 0
+ *     because clicked records legitimately have clicks > 0.
  *
  * @returns {{ resolved: number, errors: number }}
  */
@@ -226,21 +230,22 @@ export const markExhaustedRecords = async () => {
   let resolved = 0;
   let errors   = 0;
 
-  // Index hit: cron_eligibility_idx covers outcome + confirmedAttempts + lastSentAt
+  // Index hit: cron_eligibility_idx covers outcome + confirmedAttempts + lastSentAt.
+  // FIX: include 'clicked' — a user who clicked but didn't convert and whose
+  // tokens have all elapsed should be resolved to 'expired', not left stuck.
   const candidates = await RecoveryEmail.find(
     {
-      outcome:           'sent',
+      outcome:           { $in: ['sent', 'clicked'] },
       confirmedAttempts: { $gte: maxAttempts },
       lastSentAt:        { $lte: expiryProxy },
-      totalLinkClicks:   0,
     },
-    { _id: 1, outcome: 1, resolvedAt: 1 }
+    { _id: 1, outcome: 1, totalLinkClicks: 1, resolvedAt: 1 }
   ).lean();
 
   if (candidates.length === 0) return { resolved: 0, errors: 0 };
 
   console.log(
-    `[markExhaustedRecords] Found ${candidates.length} candidate(s) to mark exhausted`
+    `[markExhaustedRecords] Found ${candidates.length} candidate(s) to resolve`
   );
 
   for (const candidate of candidates) {
@@ -251,33 +256,87 @@ export const markExhaustedRecords = async () => {
       if (!record) continue;
 
       // Guard: double-check state hasn't changed since the bulk query
-      // (e.g. user clicked between query and now)
-      if (record.outcome !== 'sent' || record.totalLinkClicks > 0) {
+      // (e.g. user converted or re-abandoned between query and now).
+      const RESOLVABLE = ['sent', 'clicked'];
+      if (!RESOLVABLE.includes(record.outcome)) {
         console.log(
           `[markExhaustedRecords] Skipping ${record._id} — state changed` +
-          ` (outcome=${record.outcome}, clicks=${record.totalLinkClicks})`
+          ` (outcome=${record.outcome})`
         );
         continue;
       }
 
-      record.resolveOutcome('exhausted');
+      // Determine terminal outcome based on engagement:
+      //   No clicks → exhausted (complete disengagement)
+      //   Has clicks → expired  (engaged but all tokens elapsed before conversion)
+      //
+      // NOTE: 're_abandoned' is intentionally NOT set here. It is a behavioural
+      // outcome that must only be written by the abandonment detection system
+      // when it observes the user actively abandoning the cart again. A timed-out
+      // 'clicked' record is 'expired', not 're_abandoned'.
+      const terminalOutcome = record.totalLinkClicks > 0 ? 'expired' : 'exhausted';
+
+      record.resolveOutcome(terminalOutcome);
       await record.save();
       resolved++;
 
       console.log(
-        `[markExhaustedRecords] ✓ Marked exhausted | recoveryEmail=${record._id}` +
-        ` | checkout=${record.checkout}`
+        `[markExhaustedRecords] ✓ Resolved | outcome=${terminalOutcome}` +
+        ` | recoveryEmail=${record._id}` +
+        ` | checkout=${record.checkout}` +
+        ` | clicks=${record.totalLinkClicks}`
       );
     } catch (err) {
       errors++;
       console.error(
-        `[markExhaustedRecords] ✗ Failed to mark ${candidate._id} as exhausted:`,
+        `[markExhaustedRecords] ✗ Failed to resolve ${candidate._id}:`,
         err.message
       );
     }
   }
 
   return { resolved, errors };
+};
+
+
+/**
+ * notifyReAbandoned
+ * Call this from your abandonment detection system (checkout cron / webhook)
+ * when a cart that already has an active recovery campaign is abandoned again.
+ *
+ * This is the ONLY correct trigger for the 're_abandoned' outcome. Never set
+ * it from a cron sweep, token expiry, or time-based logic — re_abandoned is
+ * a behavioural signal meaning the user physically returned and left again.
+ *
+ * Correct lifecycle:
+ *   recovery email sent → user clicks link → back on site → leaves again
+ *   → your abandonment system detects the new abandonment → calls this fn
+ *   → outcome becomes 're_abandoned'
+ *
+ * The priority ladder in _resolveOutcome allows 'converted' and 'organic'
+ * to overwrite 're_abandoned' if the user eventually completes checkout.
+ *
+ * @param {string} checkoutId
+ */
+export const notifyReAbandoned = async (checkoutId) => {
+  const record = await RecoveryEmail.findOne({ checkout: checkoutId });
+  if (!record) return;
+
+  // Only mark re_abandoned if the campaign was actively engaged (clicked).
+  // A cart in 'sent' state that goes abandoned again is not re_abandoned —
+  // the user never interacted with the recovery email.
+  const RE_ABANDONABLE = ['clicked', 'sent'];
+  if (!RE_ABANDONABLE.includes(record.outcome)) return;
+
+  record.markReAbandoned();
+  await record.save();
+
+  invalidateRecoveryCaches();
+
+  console.log(
+    `[RecoveryEmailService] Marked re_abandoned | checkout=${checkoutId}` +
+    ` | previousOutcome=${record.outcome}`
+  );
 };
 
 
