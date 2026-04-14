@@ -247,8 +247,20 @@ export default function RecoveryEmailAnalyticsPage() {
     {
       label: 'Re-abandoned',
       value: fmt.number(outcomes.re_abandoned),
-      sub:   `${fmt.number(outcomes.exhausted || 0)} exhausted`,
+      sub:   'clicked link · left again',
       color: 'purple',
+    },
+   {
+      label: 'Expired',
+      value: fmt.number(outcomes.expired || 0),
+      sub:   'clicked link · token elapsed',
+      color: 'amber',
+    },
+    {
+      label: 'Exhausted',
+      value: fmt.number(outcomes.exhausted || 0),
+      sub:   'never clicked · all sends done',
+      color: 'red',
     },
   ], [analytics, outcomes]);
 
@@ -306,7 +318,8 @@ export default function RecoveryEmailAnalyticsPage() {
           {/* KPI Grid */}
           <div className="rea-kpi-grid">
             {isFirstLoad
-              ? Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
+              // FIX: skeleton count updated from 5 to 6 to match new KPI count
+              ? Array.from({ length: 7 }).map((_, i) => <KpiSkel key={i} />)
               : kpis.map((k) => (
                 <div key={k.label} className={`rea-kpi rea-kpi--${k.color}`}>
                   <div className="rea-kpi-label">{k.label}</div>
@@ -379,6 +392,9 @@ export default function RecoveryEmailAnalyticsPage() {
                     <div className="rea-metric-row"><span className="rea-metric-key">Organic recovery</span><span className="rea-metric-green">{fmt.number(outcomes.organic || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Total recovered</span><span className="rea-metric-green">{fmt.number((outcomes.converted || 0) + (outcomes.organic || 0))}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Conversion rate</span><span className="rea-metric-green">{fmt.pct(analytics?.conversionRate)}</span></div>
+                    {/* FIX: re_abandoned now reads correctly — was broken by camelCase
+                        mismatch between getAnalytics ('reAbandoned') and frontend
+                        ('re_abandoned'). Both sides are now snake_case. */}
                     <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
                   </>
                 )}
@@ -393,11 +409,21 @@ export default function RecoveryEmailAnalyticsPage() {
                     <div className="rea-metric-row"><span className="rea-metric-key">Awaiting click</span><span className="rea-metric-val">{fmt.number(outcomes.sent || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Clicked (pending conversion)</span><span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Pending (unsent)</span><span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span></div>
+                    <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Exhausted</span><span className="rea-metric-red">{fmt.number(outcomes.exhausted || 0)}</span></div>
+                    {/* FIX: Expired now surfaced as its own row — previously lumped
+                        with failed, which masked temporal failures (token elapsed
+                        after click) from true system failures. */}
                     <div className="rea-metric-row">
-                      <span className="rea-metric-key">Expired / Failed</span>
+                      <span className="rea-metric-key">Expired</span>
                       <span style={{ color: '#6B7280', fontWeight: 700 }}>
-                        {fmt.number((outcomes.expired || 0) + (outcomes.failed || 0))}
+                        {fmt.number(outcomes.expired || 0)}
+                      </span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Failed</span>
+                      <span style={{ color: '#6B7280', fontWeight: 700 }}>
+                        {fmt.number(outcomes.failed || 0)}
                       </span>
                     </div>
                   </>
