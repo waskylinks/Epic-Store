@@ -347,14 +347,41 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     if (err.code === 'EXPIRED') {
       try {
         const bare = decodeRecoveryToken(token);
+
         if (bare?.checkoutId) {
           await Checkout.findByIdAndUpdate(bare.checkoutId, {
             $set: { 'abandonment.lastRecoveryTokenExpiredAt': new Date() }
           });
         }
-      } catch {
-        // Non-fatal
+
+        if (bare?.userId) {
+          const User = (await import('../models/userModel.js')).default;
+          const user = await User.findById(bare.userId);
+          if (user) {
+            const jwt    = (await import('jsonwebtoken')).default;
+            const cookie = require('../utils/jwtToken.js'); // adjust to your import style
+
+            const JWT_SECRET  = process.env.JWT_SECRET;
+            const JWT_EXPIRE  = process.env.JWT_EXPIRE  || '7d';
+            const COOKIE_EXPIRE = parseInt(process.env.COOKIE_EXPIRE) || 7;
+
+            const authToken = jwt.sign({ id: user._id }, JWT_SECRET, {
+              expiresIn: JWT_EXPIRE,
+            });
+
+            res.cookie('token', authToken, {
+              expires:  new Date(Date.now() + COOKIE_EXPIRE * 24 * 60 * 60 * 1000),
+              httpOnly: true,
+              secure:   process.env.NODE_ENV === 'production',
+              sameSite: 'strict',
+              path:     '/',
+            });
+          }
+        }
+      } catch (innerErr) {
+        console.error('[redeemRecoveryToken] Silent auth on expiry failed:', innerErr.message);
       }
+
       return next(new HandleError(err.message, 410));
     }
     return next(new HandleError(err.message, 400));
