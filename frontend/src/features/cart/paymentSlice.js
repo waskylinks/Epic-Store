@@ -4,10 +4,6 @@ import axios from "axios";
 // ============================================
 // THUNKS
 // ============================================
-
-// FIX: was sending Authorization: Bearer localStorage.getItem("token") which
-// is inconsistent with every other slice that uses withCredentials cookie auth.
-// The backend verifyUserAuth middleware uses cookie/session, not Bearer tokens.
 export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
   async (payload, { rejectWithValue }) => {

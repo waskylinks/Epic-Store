@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
+import { loadUser }  from "../products/userSlice";
 
 // ============================================
 // THUNKS
@@ -79,11 +80,9 @@ export const abandonCheckout = createAsyncThunk(
   }
 );
 
-// FIX: added withCredentials so session cookies are sent on subsequent
-// requests after token redemption (cart hydration, payment init, etc.)
 export const redeemRecoveryToken = createAsyncThunk(
   'checkout/redeemRecoveryToken',
-  async (token, { rejectWithValue }) => {
+  async (token, { dispatch, rejectWithValue }) => {
     try {
       const { data } = await axios.get(
         `/api/v1/checkout/recover?token=${token}`,
@@ -91,9 +90,19 @@ export const redeemRecoveryToken = createAsyncThunk(
       );
       return data;
     } catch (error) {
+      const status = error.response?.status || 400;
+
+      if (status === 410) {
+        try {
+          await dispatch(loadUser());
+        } catch (err) {
+            console.warn('[redeemRecoveryToken] Auth sync after expiry failed:', err?.message);
+          }
+      }
+
       return rejectWithValue({
         message: error.response?.data?.message || 'Recovery link is invalid',
-        status:  error.response?.status        || 400,
+        status,
       });
     }
   }
