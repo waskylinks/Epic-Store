@@ -250,17 +250,34 @@ export default function RecoveryEmailAnalyticsPage() {
       sub:   'clicked link · left again',
       color: 'purple',
     },
-   {
+    {
       label: 'Expired',
       value: fmt.number(outcomes.expired || 0),
-      sub:   'clicked link · token elapsed',
+      // FIX: sub-label now correctly describes expired outcome —
+      // 'expired' means the token elapsed before the user clicked,
+      // NOT "clicked link · token elapsed" (that was misleading and
+      // described clickedAfterExpiry, which is a separate signal).
+      sub:   'token elapsed · never clicked',
       color: 'amber',
     },
     {
       label: 'Exhausted',
       value: fmt.number(outcomes.exhausted || 0),
-      sub:   'never clicked · all sends done',
+      // FIX: exhausted no longer means "never clicked · all sends done"
+      // because a valid token click on an exhausted checkout now correctly
+      // advances outcome to 'clicked'. exhausted now only means the send
+      // cap was reached AND no valid token was ever clicked.
+      sub:   'send cap reached · no valid click',
       color: 'red',
+    },
+    {
+      // NEW KPI: surfaces the previously invisible signal of users who
+      // clicked a recovery link after the token had already expired.
+      // These are warm leads — they wanted to recover but came too late.
+      label: 'Late Clicks',
+      value: fmt.number(analytics?.expiredButClicked || 0),
+      sub:   'clicked · token already expired',
+      color: 'amber',
     },
   ], [analytics, outcomes]);
 
@@ -318,8 +335,7 @@ export default function RecoveryEmailAnalyticsPage() {
           {/* KPI Grid */}
           <div className="rea-kpi-grid">
             {isFirstLoad
-              // FIX: skeleton count updated from 5 to 6 to match new KPI count
-              ? Array.from({ length: 7 }).map((_, i) => <KpiSkel key={i} />)
+              ? Array.from({ length: 8 }).map((_, i) => <KpiSkel key={i} />)
               : kpis.map((k) => (
                 <div key={k.label} className={`rea-kpi rea-kpi--${k.color}`}>
                   <div className="rea-kpi-label">{k.label}</div>
@@ -378,6 +394,13 @@ export default function RecoveryEmailAnalyticsPage() {
                     <div className="rea-metric-row"><span className="rea-metric-key">Avg sends / cart</span><span className="rea-metric-val">{analytics?.avgAttemptsPerCheckout?.toFixed(1) || '—'}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Total link clicks</span><span className="rea-metric-blue">{fmt.number(analytics?.totalLinkClicks)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Click rate</span><span className="rea-metric-blue">{fmt.pct(analytics?.linkClickRate)}</span></div>
+                    {/* NEW: late clicks — users who clicked after token expiry */}
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Late clicks (expired token)</span>
+                      <span style={{ color: '#d97706', fontWeight: 700 }}>
+                        {fmt.number(analytics?.expiredButClicked || 0)}
+                      </span>
+                    </div>
                   </>
                 )}
               </div>
@@ -392,9 +415,6 @@ export default function RecoveryEmailAnalyticsPage() {
                     <div className="rea-metric-row"><span className="rea-metric-key">Organic recovery</span><span className="rea-metric-green">{fmt.number(outcomes.organic || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Total recovered</span><span className="rea-metric-green">{fmt.number((outcomes.converted || 0) + (outcomes.organic || 0))}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Conversion rate</span><span className="rea-metric-green">{fmt.pct(analytics?.conversionRate)}</span></div>
-                    {/* FIX: re_abandoned now reads correctly — was broken by camelCase
-                        mismatch between getAnalytics ('reAbandoned') and frontend
-                        ('re_abandoned'). Both sides are now snake_case. */}
                     <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
                   </>
                 )}
@@ -410,10 +430,12 @@ export default function RecoveryEmailAnalyticsPage() {
                     <div className="rea-metric-row"><span className="rea-metric-key">Clicked (pending conversion)</span><span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Pending (unsent)</span><span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span></div>
                     <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Exhausted</span><span className="rea-metric-red">{fmt.number(outcomes.exhausted || 0)}</span></div>
-                    {/* FIX: Expired now surfaced as its own row — previously lumped
-                        with failed, which masked temporal failures (token elapsed
-                        after click) from true system failures. */}
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Exhausted</span>
+                      <span style={{ color: '#6B7280', fontWeight: 700 }}>
+                        {fmt.number(outcomes.exhausted || 0)}
+                      </span>
+                    </div>
                     <div className="rea-metric-row">
                       <span className="rea-metric-key">Expired</span>
                       <span style={{ color: '#6B7280', fontWeight: 700 }}>
@@ -424,6 +446,13 @@ export default function RecoveryEmailAnalyticsPage() {
                       <span className="rea-metric-key">Failed</span>
                       <span style={{ color: '#6B7280', fontWeight: 700 }}>
                         {fmt.number(outcomes.failed || 0)}
+                      </span>
+                    </div>
+                    {/* NEW: late clicks surfaced in campaign status panel */}
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Late clicks (token expired)</span>
+                      <span style={{ color: '#d97706', fontWeight: 700 }}>
+                        {fmt.number(analytics?.expiredButClicked || 0)}
                       </span>
                     </div>
                   </>

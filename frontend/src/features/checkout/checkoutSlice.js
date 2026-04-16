@@ -1,6 +1,5 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import axios from "axios";
-import { loadUser }  from "../products/userSlice";
+import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
+import axios from 'axios';
 
 // ============================================
 // THUNKS
@@ -11,10 +10,7 @@ export const createCheckoutSession = createAsyncThunk(
   async ({ items, shippingInfo }, { getState, rejectWithValue }) => {
     try {
       const { discount } = getState().cart;
-      const hasDiscount =
-        discount.applied &&
-        discount.code &&
-        discount.discountAmount > 0;
+      const hasDiscount  = discount.applied && discount.code && discount.discountAmount > 0;
 
       const { data } = await axios.post("/api/v1/checkout/create", {
         items,
@@ -27,9 +23,7 @@ export const createCheckoutSession = createAsyncThunk(
 
       return data.checkout;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to create checkout session"
-      );
+      return rejectWithValue(error.response?.data?.message || "Failed to create checkout session");
     }
   }
 );
@@ -45,9 +39,7 @@ export const updateCheckoutStep = createAsyncThunk(
       );
       return { currentStep: data.currentStep, stepsCompleted: data.stepsCompleted, gateway };
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to update checkout step"
-      );
+      return rejectWithValue(error.response?.data?.message || "Failed to update checkout step");
     }
   }
 );
@@ -59,9 +51,7 @@ export const getActiveCheckout = createAsyncThunk(
       const { data } = await axios.get("/api/v1/checkout/active", { withCredentials: true });
       return data.checkout;
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to load checkout session"
-      );
+      return rejectWithValue(error.response?.data?.message || "Failed to load checkout session");
     }
   }
 );
@@ -73,16 +63,16 @@ export const abandonCheckout = createAsyncThunk(
       await axios.put(`/api/v1/checkout/${checkoutId}/abandon`, {}, { withCredentials: true });
       return { success: true };
     } catch (error) {
-      return rejectWithValue(
-        error.response?.data?.message || "Failed to abandon checkout"
-      );
+      return rejectWithValue(error.response?.data?.message || "Failed to abandon checkout");
     }
   }
 );
 
+// The thunk only fetches — loadUser is called by the component after unwrap()
+// so it always runs regardless of expired/valid/converted outcome.
 export const redeemRecoveryToken = createAsyncThunk(
   'checkout/redeemRecoveryToken',
-  async (token, { dispatch, rejectWithValue }) => {
+  async (token, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
         `/api/v1/checkout/recover?token=${token}`,
@@ -90,19 +80,9 @@ export const redeemRecoveryToken = createAsyncThunk(
       );
       return data;
     } catch (error) {
-      const status = error.response?.status || 400;
-
-      if (status === 410) {
-        try {
-          await dispatch(loadUser());
-        } catch (err) {
-            console.warn('[redeemRecoveryToken] Auth sync after expiry failed:', err?.message);
-          }
-      }
-
       return rejectWithValue({
         message: error.response?.data?.message || 'Recovery link is invalid',
-        status,
+        status:  error.response?.status        || 400,
       });
     }
   }
@@ -116,6 +96,7 @@ const initialRecoveryState = {
   loading:             false,
   error:               null,
   errorStatus:         null,
+  isExpired:           false,
   alreadyConverted:    false,
   orderId:             null,
   restoredCheckout:    null,
@@ -123,6 +104,7 @@ const initialRecoveryState = {
   hasUnavailableItems: false,
   discountWarning:     null,
   message:             null,
+  userHint:            null,
 };
 
 const initialState = {
@@ -155,8 +137,8 @@ const checkoutSlice = createSlice({
   name: "checkout",
   initialState,
   reducers: {
-    removeErrors:  (state) => { state.error = null; },
-    removeMessage: (state) => { state.message = null; state.success = false; },
+    removeErrors:       (state) => { state.error = null; },
+    removeMessage:      (state) => { state.message = null; state.success = false; },
     setSelectedGateway: (state, action) => { state.selectedGateway = action.payload; },
     setCurrentStep:     (state, action) => { state.currentStep = action.payload; },
 
@@ -176,7 +158,7 @@ const checkoutSlice = createSlice({
   },
 
   extraReducers: (builder) => {
-    // CREATE SESSION
+    // ── CREATE SESSION ──────────────────────────────────────────────────────
     builder
       .addCase(createCheckoutSession.pending, (state) => {
         state.loading = true;
@@ -198,7 +180,7 @@ const checkoutSlice = createSlice({
         state.error   = action.payload;
       });
 
-    // UPDATE STEP
+    // ── UPDATE STEP ─────────────────────────────────────────────────────────
     builder
       .addCase(updateCheckoutStep.pending, (state) => {
         state.actionLoading = true;
@@ -217,7 +199,7 @@ const checkoutSlice = createSlice({
         state.error         = action.payload;
       });
 
-    // GET ACTIVE
+    // ── GET ACTIVE ──────────────────────────────────────────────────────────
     builder
       .addCase(getActiveCheckout.pending, (state) => {
         state.loading = true;
@@ -245,7 +227,7 @@ const checkoutSlice = createSlice({
         state.hasActiveCheckout = false;
       });
 
-    // ABANDON
+    // ── ABANDON ─────────────────────────────────────────────────────────────
     builder
       .addCase(abandonCheckout.pending, (state) => {
         state.actionLoading = true;
@@ -268,45 +250,46 @@ const checkoutSlice = createSlice({
         state.error         = action.payload;
       });
 
-    // REDEEM RECOVERY TOKEN
+    // ── REDEEM RECOVERY TOKEN ───────────────────────────────────────────────
     builder
       .addCase(redeemRecoveryToken.pending, (state) => {
-        state.recovery.loading             = true;
-        state.recovery.error               = null;
-        state.recovery.errorStatus         = null;
-        state.recovery.alreadyConverted    = false;
-        state.recovery.restoredCheckout    = null;
-        state.recovery.unavailableItems    = [];
-        state.recovery.hasUnavailableItems = false;
-        state.recovery.discountWarning     = null;
+        state.recovery = { ...initialRecoveryState, loading: true };
       })
       .addCase(redeemRecoveryToken.fulfilled, (state, action) => {
-        state.recovery.loading  = false;
-        state.recovery.message  = action.payload.message;
+        const payload = action.payload;
+        state.recovery.loading = false;
+        state.recovery.message = payload.message;
 
-        if (action.payload.alreadyConverted) {
-          state.recovery.alreadyConverted = true;
-          state.recovery.orderId          = action.payload.orderId || null;
+        if (payload.expired) {
+          state.recovery.isExpired = true;
+          state.recovery.userHint  = payload.user || null;
           return;
         }
 
-        const c = action.payload.checkout;
+        if (payload.alreadyConverted) {
+          state.recovery.alreadyConverted = true;
+          state.recovery.orderId          = payload.orderId || null;
+          return;
+        }
+
+        const c = payload.checkout;
         state.recovery.restoredCheckout    = c;
+        state.recovery.userHint            = payload.user || null;
         state.recovery.unavailableItems    = c.unavailableItems    || [];
         state.recovery.hasUnavailableItems = (c.unavailableItems?.length || 0) > 0;
-        state.recovery.discountWarning     = action.payload.discountWarning || null;
+        state.recovery.discountWarning     = payload.discountWarning || null;
 
         state.session           = c;
         state.checkoutId        = c.id;
-        state.currentStep       = c.currentStep  || 'shipping_info';
-        state.pricing           = c.pricing       || initialState.pricing;
+        state.currentStep       = c.currentStep   || 'shipping_info';
+        state.pricing           = c.pricing        || initialState.pricing;
         state.hasActiveCheckout = true;
         state.stepsCompleted    = c.stepsCompleted || [];
       })
       .addCase(redeemRecoveryToken.rejected, (state, action) => {
         state.recovery.loading     = false;
-        state.recovery.error       = action.payload.message;
-        state.recovery.errorStatus = action.payload.status;
+        state.recovery.error       = action.payload?.message || 'Recovery link is invalid';
+        state.recovery.errorStatus = action.payload?.status  || 400;
       });
   },
 });
@@ -320,7 +303,7 @@ export const {
   resetCheckout,
 } = checkoutSlice.actions;
 
-// SELECTORS
+// ── SELECTORS ────────────────────────────────────────────────────────────────
 export const selectCheckoutSession     = (state) => state.checkout.session;
 export const selectCheckoutId          = (state) => state.checkout.checkoutId;
 export const selectCurrentStep         = (state) => state.checkout.currentStep;
@@ -331,6 +314,9 @@ export const selectHasActiveCheckout   = (state) => state.checkout.hasActiveChec
 export const selectRecovery            = (state) => state.checkout.recovery;
 export const selectHasUnavailableItems = (state) => state.checkout.recovery.hasUnavailableItems;
 export const selectDiscountWarning     = (state) => state.checkout.recovery.discountWarning;
+export const selectRecoveryUserHint    = (state) => state.checkout.recovery.userHint;
+export const selectRecoveryIsExpired   = (state) => state.checkout.recovery.isExpired;
+export const selectAuthenticatedUser   = selectRecoveryUserHint; // DEPRECATED
 
 export const selectIsStepCompleted = (step) => (state) =>
   state.checkout.stepsCompleted.some(s => s.step === step);

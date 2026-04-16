@@ -121,7 +121,7 @@ export const updateProfile = createAsyncThunk(
         const avatar = userData.get('avatar');
 
         if (name) {
-          const nameParts      = name.trim().split(' ');
+          const nameParts       = name.trim().split(' ');
           profileData.firstName = nameParts[0] || '';
           profileData.lastName  = nameParts.slice(1).join(' ') || nameParts[0] || '';
         }
@@ -245,6 +245,14 @@ const userSlice = createSlice({
     clearCodeVerifiedState: (state) => {
       state.codeVerified = false;
     },
+    // Hydrates Redux user state synchronously from an already-received API response.
+    // Used by RecoverCart to avoid a second HTTP round-trip after cart recovery,
+    // which would race against the browser committing the Set-Cookie header.
+    setUser: (state, action) => {
+      state.user            = action.payload || null;
+      state.isAuthenticated = Boolean(action.payload);
+      state.loading         = false;
+    },
   },
   extraReducers: (builder) => {
 
@@ -269,10 +277,10 @@ const userSlice = createSlice({
     builder
       .addCase(login.pending,   (state) => { state.loading = true; state.error = null; })
       .addCase(login.fulfilled, (state, action) => {
-        state.loading          = false;
-        state.success          = action.payload.success;
-        state.user             = action.payload.user || null;
-        state.isAuthenticated  = Boolean(action.payload.user);
+        state.loading           = false;
+        state.success           = action.payload.success;
+        state.user              = action.payload.user || null;
+        state.isAuthenticated   = Boolean(action.payload.user);
         state.needsVerification = false;
         state.verificationEmail = null;
       })
@@ -425,6 +433,7 @@ export const {
   removeSuccess,
   clearVerificationState,
   clearCodeVerifiedState,
+  setUser,
 } = userSlice.actions;
 
 export default userSlice.reducer;

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { useDispatch, useSelector } from 'react-redux';
+import { useDispatch } from 'react-redux';
 import { toast } from 'react-toastify';
 
 import PageTitle from '../components/PageTitle';
@@ -9,19 +9,14 @@ import Footer from '../components/footer';
 
 import { redeemRecoveryToken, removeErrors, removeMessage } from '../features/checkout/checkoutSlice';
 import { addItemsToCart, clearEntireCart } from '../features/cart/cartSlice';
+import { setUser } from '../features/products/userSlice';
 
 import '../CartStyles/RecoverCart.css';
 
-// ─── Icons (inline SVG — no extra dep) ───────────────────────────────────────
 const IconCart    = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
     <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
     <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-  </svg>
-);
-const IconCheck   = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-    <polyline points="20 6 9 17 4 12"/>
   </svg>
 );
 const IconExpired = () => (
@@ -43,20 +38,15 @@ const IconArrow   = () => (
   </svg>
 );
 
-// ─── Phases: 'loading' | 'expired' | 'invalid' | 'converted'
-
 export default function RecoverCart() {
-  const [searchParams]  = useSearchParams();
-  const navigate         = useNavigate();
-  const dispatch         = useDispatch();
-  const token            = searchParams.get('token');
-
-  const { recovery } = useSelector(s => s.checkout);
+  const [searchParams] = useSearchParams();
+  const navigate        = useNavigate();
+  const dispatch        = useDispatch();
+  const token           = searchParams.get('token');
 
   const [phase, setPhase] = useState('loading');
   const hasRun = useRef(false);
 
-  // ── 1. Token redemption ───────────────────────────────────────────────────
   useEffect(() => {
     if (hasRun.current) return;
     hasRun.current = true;
@@ -69,6 +59,27 @@ export default function RecoverCart() {
     dispatch(redeemRecoveryToken(token))
       .unwrap()
       .then(async (data) => {
+        // Hydrate Redux user state directly from the recovery response.
+        //
+        // WHY NOT loadUser() here:
+        // The backend sets an auth cookie on the recovery response via issueAuthCookie().
+        // Calling loadUser() immediately after would fire GET /api/v1/profile in the same
+        // microtask queue flush — before the browser has committed the Set-Cookie header
+        // to the cookie jar — causing a 401 ("Authentication is missing") on every path.
+        //
+        // The backend guarantees data.user is present on expired and successful paths.
+        // The alreadyConverted path also returns data.user (backend fix applied).
+        // The auth cookie is still set on the response, so all subsequent page navigations
+        // and server calls will be authenticated normally.
+        if (data.user) {
+          dispatch(setUser(data.user));
+        }
+
+        if (data.expired) {
+          setPhase('expired');
+          return;
+        }
+
         if (data.alreadyConverted) {
           setPhase('converted');
           return;
@@ -76,7 +87,6 @@ export default function RecoverCart() {
 
         const recovered = data.checkout;
 
-        // Warn about removed items before touching the cart
         if (recovered.unavailableItems?.length > 0) {
           toast.warning(
             `${recovered.unavailableItems.length} item(s) are no longer available and were removed from your cart.`,
@@ -84,7 +94,10 @@ export default function RecoverCart() {
           );
         }
 
-        // 1. Wipe whatever cart the user currently has
+        if (data.discountWarning) {
+          toast.warning(data.discountWarning, { position: 'top-center', autoClose: 6000 });
+        }
+
         try {
           await dispatch(clearEntireCart()).unwrap();
         } catch {
@@ -94,31 +107,23 @@ export default function RecoverCart() {
           );
         }
 
-        // 2. Re-add all recovered items in parallel
         await Promise.all(
           (recovered.items || []).map(item =>
             dispatch(addItemsToCart({
               id:       item.product?._id || item.product,
               quantity: item.quantity || 1,
-            })).unwrap().catch(() => {})  // non-fatal per item — user can adjust in cart
+            })).unwrap().catch(() => {})
           )
         );
 
-        // 3. Go straight to cart — no modal
         navigate('/cart');
       })
-      .catch(err => {
-        const status = err?.status || recovery?.errorStatus;
-        if (status === 410) {
-          setPhase('expired');
-        } else {
-          setPhase('invalid');
-        }
+      .catch(() => {
+        setPhase('invalid');
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── 2. Clean up slice messages on unmount ─────────────────────────────────
   useEffect(() => {
     return () => {
       dispatch(removeErrors());
@@ -126,9 +131,6 @@ export default function RecoverCart() {
     };
   }, [dispatch]);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // RENDER
-  // ─────────────────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle title="Recover Your Cart — Epic Store" />
@@ -136,7 +138,6 @@ export default function RecoverCart() {
 
       <div className="rcv-page">
 
-        {/* ── LOADING ──────────────────────────────────────────────────── */}
         {phase === 'loading' && (
           <div className="rcv-center">
             <div className="rcv-spinner-wrap">
@@ -149,7 +150,6 @@ export default function RecoverCart() {
           </div>
         )}
 
-        {/* ── ALREADY CONVERTED ────────────────────────────────────────── */}
         {phase === 'converted' && (
           <div className="rcv-center">
             <div className="rcv-card rcv-card--converted">
@@ -172,7 +172,6 @@ export default function RecoverCart() {
           </div>
         )}
 
-        {/* ── EXPIRED ──────────────────────────────────────────────────── */}
         {phase === 'expired' && (
           <div className="rcv-center">
             <div className="rcv-card rcv-card--error">
@@ -198,7 +197,6 @@ export default function RecoverCart() {
           </div>
         )}
 
-        {/* ── INVALID / GENERIC ERROR ───────────────────────────────────── */}
         {phase === 'invalid' && (
           <div className="rcv-center">
             <div className="rcv-card rcv-card--error">
