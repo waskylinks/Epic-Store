@@ -133,9 +133,6 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
   const { checkoutId } = req.params;
   const { outcome }    = req.body;
 
-  // FIX: 'expired' added to VALID_OUTCOMES — it is a legitimate resolvable
-  // state (token expired, user never converted) that admins may need to set
-  // manually when the automatic cron sweep hasn't run yet or needs overriding.
   const VALID_OUTCOMES = [
     'converted', 'organic', 're_abandoned',
     'expired', 'exhausted', 'failed',
@@ -154,7 +151,7 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
   }
 
   // ── Priority ladder guard ─────────────────────────────────────────────────
-  // Mirrors _resolveOutcome's three-tier priority exactly so the controller
+  // Mirrors _resolveOutcome's priority ladder exactly so this controller
   // gives an actionable 422 instead of silently doing nothing.
   //
   // Tier 1 — Absolute terminal (converted, organic):
@@ -163,22 +160,19 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
   // Tier 2 — Semi-terminal (re_abandoned):
   //   Behavioural signal. Only absolute terminals can replace it.
   //
-  // Tier 3 — Hard terminal (exhausted, failed):
-  //   Only absolute terminals can replace these.
+  // Tier 3 — Hard terminal (failed only):
+  //   Only absolute terminals can replace it.
+  //   NOTE: exhausted removed from HARD_TERMINAL to match model fix —
+  //   a valid token click must be able to advance exhausted → clicked,
+  //   and an admin must be able to override it to any valid outcome.
   //
-  // Tier 4 — Soft terminal (expired):
+  // Tier 4 — Soft terminals (exhausted, expired):
   //   Can be overwritten by anything — no guard needed.
-  //   An admin can move 'expired' → 're_abandoned' or 'exhausted' etc.
-  //
-  // FIX vs previous version:
-  //   - 're_abandoned' was missing from any guard tier, so the controller
-  //     would silently pass through and the model's _resolveOutcome would
-  //     block it — returning a 200 with no indication nothing changed.
-  //   - 'expired' correctly has no guard (soft terminal).
+  //   Admin can freely move these to any valid outcome.
 
   const ABSOLUTE_TERMINAL = ['converted', 'organic'];
   const SEMI_TERMINAL     = ['re_abandoned'];
-  const HARD_TERMINAL     = ['exhausted', 'failed'];
+  const HARD_TERMINAL     = ['failed']; // exhausted intentionally removed
 
   if (ABSOLUTE_TERMINAL.includes(record.outcome)) {
     return res.status(422).json({
@@ -201,8 +195,8 @@ export const resolveOutcomeHandler = handleAsyncError(async (req, res, next) => 
     });
   }
 
-  // 'expired' (soft terminal) falls through with no guard — admin can freely
-  // override it to any valid outcome.
+  // Soft terminals (exhausted, expired) and active states fall through —
+  // admin can freely override to any valid outcome.
 
   await resolveRecoveryOutcome(checkoutId, outcome);
 
