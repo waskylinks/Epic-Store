@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
-import {
-  Email, ArrowBack, Refresh, Warning,
-} from '@mui/icons-material';
+import { Email, ArrowBack, Refresh, Warning } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import PageTitle from '../components/PageTitle';
@@ -241,41 +239,36 @@ export default function RecoveryEmailAnalyticsPage() {
     {
       label: 'Avg Attempts',
       value: analytics?.avgAttemptsPerCheckout?.toFixed(1) || '—',
-      sub:   'attempts per checkout',
+      sub:   'per checkout',
       color: 'amber',
     },
     {
       label: 'Re-abandoned',
-      value: fmt.number(outcomes.re_abandoned),
+      value: fmt.number(outcomes.re_abandoned || 0),
       sub:   'clicked link · left again',
       color: 'purple',
     },
     {
-      label: 'Expired',
-      value: fmt.number(outcomes.expired || 0),
-      // FIX: sub-label now correctly describes expired outcome —
-      // 'expired' means the token elapsed before the user clicked,
-      // NOT "clicked link · token elapsed" (that was misleading and
-      // described clickedAfterExpiry, which is a separate signal).
-      sub:   'token elapsed · never clicked',
-      color: 'amber',
-    },
-    {
+      // exhausted = all emails sent — send-side signal only.
+      // Token expiry is irrelevant to this state.
       label: 'Exhausted',
       value: fmt.number(outcomes.exhausted || 0),
-      // FIX: exhausted no longer means "never clicked · all sends done"
-      // because a valid token click on an exhausted checkout now correctly
-      // advances outcome to 'clicked'. exhausted now only means the send
-      // cap was reached AND no valid token was ever clicked.
-      sub:   'send cap reached · no valid click',
+      sub:   'all emails sent · awaiting token expiry',
       color: 'red',
     },
     {
-      // NEW KPI: surfaces the previously invisible signal of users who
-      // clicked a recovery link after the token had already expired.
-      // These are warm leads — they wanted to recover but came too late.
+      // expired = all emails sent AND all tokens elapsed AND user never clicked.
+      // True terminal — "we tried everything, user never responded."
+      label: 'Expired',
+      value: fmt.number(outcomes.expired || 0),
+      sub:   'all tokens dead · never clicked',
+      color: 'amber',
+    },
+    {
+      // lateClicks = user clicked after JWT exp elapsed.
+      // Cart NOT restored. "Interested but too late" warm lead signal.
       label: 'Late Clicks',
-      value: fmt.number(analytics?.expiredButClicked || 0),
+      value: fmt.number(analytics?.lateClicks || 0),
       sub:   'clicked · token already expired',
       color: 'amber',
     },
@@ -385,20 +378,39 @@ export default function RecoveryEmailAnalyticsPage() {
           <div className="rea-grid-3">
 
             <div className="rea-card">
-              <div className="rea-card-hd"><div><div className="rea-card-title">Send Performance</div><div className="rea-card-sub">Volume and delivery stats</div></div></div>
+              <div className="rea-card-hd">
+                <div>
+                  <div className="rea-card-title">Send Performance</div>
+                  <div className="rea-card-sub">Volume and delivery stats</div>
+                </div>
+              </div>
               <div className="rea-card-body">
                 {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
                   <>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Total campaigns</span><span className="rea-metric-val">{fmt.number(analytics?.totalCampaigns)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Total sends</span><span className="rea-metric-val">{fmt.number(analytics?.totalSendAttempts)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Avg sends / cart</span><span className="rea-metric-val">{analytics?.avgAttemptsPerCheckout?.toFixed(1) || '—'}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Total link clicks</span><span className="rea-metric-blue">{fmt.number(analytics?.totalLinkClicks)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Click rate</span><span className="rea-metric-blue">{fmt.pct(analytics?.linkClickRate)}</span></div>
-                    {/* NEW: late clicks — users who clicked after token expiry */}
                     <div className="rea-metric-row">
-                      <span className="rea-metric-key">Late clicks (expired token)</span>
+                      <span className="rea-metric-key">Total campaigns</span>
+                      <span className="rea-metric-val">{fmt.number(analytics?.totalCampaigns)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Total sends</span>
+                      <span className="rea-metric-val">{fmt.number(analytics?.totalSendAttempts)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Avg sends / cart</span>
+                      <span className="rea-metric-val">{analytics?.avgAttemptsPerCheckout?.toFixed(1) || '—'}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Total link clicks</span>
+                      <span className="rea-metric-blue">{fmt.number(analytics?.totalLinkClicks)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Click rate</span>
+                      <span className="rea-metric-blue">{fmt.pct(analytics?.linkClickRate)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Late clicks (after expiry)</span>
                       <span style={{ color: '#d97706', fontWeight: 700 }}>
-                        {fmt.number(analytics?.expiredButClicked || 0)}
+                        {fmt.number(analytics?.lateClicks || 0)}
                       </span>
                     </div>
                   </>
@@ -407,52 +419,88 @@ export default function RecoveryEmailAnalyticsPage() {
             </div>
 
             <div className="rea-card">
-              <div className="rea-card-hd"><div><div className="rea-card-title">Conversion Results</div><div className="rea-card-sub">Recovery success and attribution</div></div></div>
+              <div className="rea-card-hd">
+                <div>
+                  <div className="rea-card-title">Conversion Results</div>
+                  <div className="rea-card-sub">Recovery success and attribution</div>
+                </div>
+              </div>
               <div className="rea-card-body">
                 {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
                   <>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Email-attributed</span><span className="rea-metric-green">{fmt.number(outcomes.converted || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Organic recovery</span><span className="rea-metric-green">{fmt.number(outcomes.organic || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Total recovered</span><span className="rea-metric-green">{fmt.number((outcomes.converted || 0) + (outcomes.organic || 0))}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Conversion rate</span><span className="rea-metric-green">{fmt.pct(analytics?.conversionRate)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Email-attributed</span>
+                      <span className="rea-metric-green">{fmt.number(outcomes.converted || 0)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Organic recovery</span>
+                      <span className="rea-metric-green">{fmt.number(outcomes.organic || 0)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Total recovered</span>
+                      <span className="rea-metric-green">{fmt.number((outcomes.converted || 0) + (outcomes.organic || 0))}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Conversion rate</span>
+                      <span className="rea-metric-green">{fmt.pct(analytics?.conversionRate)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Re-abandoned</span>
+                      <span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span>
+                    </div>
                   </>
                 )}
               </div>
             </div>
 
             <div className="rea-card">
-              <div className="rea-card-hd"><div><div className="rea-card-title">Campaign Status</div><div className="rea-card-sub">Active and resolved states</div></div></div>
+              <div className="rea-card-hd">
+                <div>
+                  <div className="rea-card-title">Campaign Status</div>
+                  <div className="rea-card-sub">Active and resolved states</div>
+                </div>
+              </div>
               <div className="rea-card-body">
                 {isFirstLoad ? <div className="rea-loading"><span className="rea-spinner" /></div> : (
                   <>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Awaiting click</span><span className="rea-metric-val">{fmt.number(outcomes.sent || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Clicked (pending conversion)</span><span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Pending (unsent)</span><span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span></div>
-                    <div className="rea-metric-row"><span className="rea-metric-key">Re-abandoned</span><span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span></div>
                     <div className="rea-metric-row">
-                      <span className="rea-metric-key">Exhausted</span>
-                      <span style={{ color: '#6B7280', fontWeight: 700 }}>
+                      <span className="rea-metric-key">Pending (unsent)</span>
+                      <span className="rea-metric-val">{fmt.number(outcomes.pending || 0)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Awaiting click</span>
+                      <span className="rea-metric-val">{fmt.number(outcomes.sent || 0)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Clicked (pending conversion)</span>
+                      <span className="rea-metric-blue">{fmt.number(outcomes.clicked || 0)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Re-abandoned</span>
+                      <span className="rea-metric-red">{fmt.number(outcomes.re_abandoned || 0)}</span>
+                    </div>
+                    <div className="rea-metric-row">
+                      <span className="rea-metric-key">Exhausted (all sent)</span>
+                      <span style={{ color: '#dc2626', fontWeight: 700 }}>
                         {fmt.number(outcomes.exhausted || 0)}
                       </span>
                     </div>
                     <div className="rea-metric-row">
-                      <span className="rea-metric-key">Expired</span>
+                      <span className="rea-metric-key">Expired (no response)</span>
                       <span style={{ color: '#6B7280', fontWeight: 700 }}>
                         {fmt.number(outcomes.expired || 0)}
                       </span>
                     </div>
                     <div className="rea-metric-row">
-                      <span className="rea-metric-key">Failed</span>
+                      <span className="rea-metric-key">Failed (system error)</span>
                       <span style={{ color: '#6B7280', fontWeight: 700 }}>
                         {fmt.number(outcomes.failed || 0)}
                       </span>
                     </div>
-                    {/* NEW: late clicks surfaced in campaign status panel */}
                     <div className="rea-metric-row">
-                      <span className="rea-metric-key">Late clicks (token expired)</span>
+                      <span className="rea-metric-key">Late clicks</span>
                       <span style={{ color: '#d97706', fontWeight: 700 }}>
-                        {fmt.number(analytics?.expiredButClicked || 0)}
+                        {fmt.number(analytics?.lateClicks || 0)}
                       </span>
                     </div>
                   </>
@@ -469,7 +517,7 @@ export default function RecoveryEmailAnalyticsPage() {
               <div>
                 <div className="rea-card-title">Revenue Attribution by Attempt</div>
                 <div className="rea-card-sub">
-                  Conversions and revenue generated by each send attempt — shows whether follow-up emails drive incremental value
+                  Conversions and revenue generated by each send attempt
                 </div>
               </div>
             </div>
