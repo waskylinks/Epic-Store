@@ -1,13 +1,13 @@
-import cron              from 'node-cron';
-import Checkout          from '../models/checkout-model.js';
-import RecoveryEmail     from '../models/recovery-email-model.js';
+import cron         from 'node-cron';
+import Checkout      from '../models/checkout-model.js';
+import RecoveryEmail from '../models/recovery-email-model.js';
 import {
   sendRecoveryEmail,
-  markExhaustedRecords,
+  markExpiredRecords,
   invalidateRecoveryCaches,
 } from '../Services/recoveryEmailService.js';
-import { runCronJob }    from '../utils/runCronJob.js';
-import { cronConfig }    from '../config/cronConfig.js';
+import { runCronJob } from '../utils/runCronJob.js';
+import { cronConfig } from '../config/cronConfig.js';
 
 let cronJob = null;
 
@@ -18,24 +18,21 @@ let cronJob = null;
 const getCartsEligibleForCron = async () => {
   const { maxAgeDays, delayHours, maxAttempts } = cronConfig.recoveryEmail;
 
-  const maxAgeCutoff = new Date(
-    Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
-  );
-  const now = Date.now();
+  const maxAgeCutoff = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+  const now          = Date.now();
 
-  // Step 1: Load all active RecoveryEmail records
+  // ── Step 1: Load active RecoveryEmail records ─────────────────────────────
+  // Active = campaign is still running and may receive another send.
+  // exhausted is NOT included — the cron never sends after exhaustion.
   const activeRecords = await RecoveryEmail.find(
     { outcome: { $in: ['pending', 'sent', 'clicked', 're_abandoned'] } },
     { checkout: 1, confirmedAttempts: 1, lastSentAt: 1, pendingAck: 1, outcome: 1 }
   ).lean();
 
-  const existingCheckoutIds = activeRecords.map((r) => r.checkout);
+  const existingCheckoutIds = activeRecords.map(r => r.checkout);
 
-  // Step 2: Find uncontacted abandoned checkouts.
-  // delayHours[1] is the required wait before the first email.
-  const firstEmailDelayCutoff = new Date(
-    now - (delayHours[1] ?? 1) * 60 * 60 * 1000
-  );
+  // ── Step 2: Find uncontacted abandoned checkouts ──────────────────────────
+  const firstEmailDelayCutoff = new Date(now - (delayHours[1] ?? 1) * 60 * 60 * 1000);
 
   const uncontactedCheckouts = await Checkout.find(
     {
@@ -77,7 +74,7 @@ const getCartsEligibleForCron = async () => {
     }
   ).lean();
 
-  // Diagnostic logging in dev
+  // Dev diagnostics
   if (process.env.NODE_ENV !== 'production') {
     const totalAbandoned = await Checkout.countDocuments({
       'abandonment.isAbandoned': true,
@@ -96,12 +93,7 @@ const getCartsEligibleForCron = async () => {
       status:                    'abandoned',
       _id:                       { $nin: existingCheckoutIds },
       $or: [
-        {
-          'abandonment.firstAbandonedAt': {
-            $exists: true,
-            $gt:     firstEmailDelayCutoff,
-          },
-        },
+        { 'abandonment.firstAbandonedAt': { $exists: true, $gt: firstEmailDelayCutoff } },
         {
           'abandonment.firstAbandonedAt': { $in: [null, undefined] },
           'abandonment.abandonedAt':      { $exists: true, $gt: firstEmailDelayCutoff },
@@ -112,7 +104,6 @@ const getCartsEligibleForCron = async () => {
         },
       ],
     });
-
     console.log(
       `[RecoveryEmailCron][DEBUG] totalAbandoned=${totalAbandoned}` +
       ` | excludedByActiveRecord=${excludedByActiveRecord}` +
@@ -123,8 +114,8 @@ const getCartsEligibleForCron = async () => {
     );
   }
 
-  // Step 3: Load checkout docs for active-record carts
-  const activeCheckoutIds = activeRecords.map((r) => r.checkout);
+  // ── Step 3: Load checkout docs for active-record carts ────────────────────
+  const activeCheckoutIds = activeRecords.map(r => r.checkout);
   const activeCheckouts   = await Checkout.find(
     {
       _id:                       { $in: activeCheckoutIds },
@@ -152,19 +143,17 @@ const getCartsEligibleForCron = async () => {
     }
   ).lean();
 
-  const checkoutMap = new Map(
-    activeCheckouts.map((c) => [c._id.toString(), c])
-  );
+  const checkoutMap = new Map(activeCheckouts.map(c => [c._id.toString(), c]));
 
-  // Step 4: Apply delay rules to active-record carts
+  // ── Step 4: Apply delay rules to active-record carts ─────────────────────
   const eligible = [];
 
   for (const record of activeRecords) {
     const checkout = checkoutMap.get(record.checkout.toString());
-    if (!checkout)                                                    continue;
-    if (checkout.expiresAt && new Date(checkout.expiresAt) <= new Date()) continue;
-    if (record.confirmedAttempts >= maxAttempts)                      continue;
-    if (record.pendingAck)                                            continue;
+    if (!checkout)                                                             continue;
+    if (checkout.expiresAt && new Date(checkout.expiresAt) <= new Date())     continue;
+    if (record.confirmedAttempts >= maxAttempts)                               continue;
+    if (record.pendingAck)                                                     continue;
 
     const nextAttemptNumber = record.confirmedAttempts + 1;
     const requiredDelay     = delayHours[nextAttemptNumber];
@@ -194,7 +183,7 @@ const getCartsEligibleForCron = async () => {
     });
   }
 
-  // Step 5: Add uncontacted checkouts (first email, attempt 1)
+  // ── Step 5: Add uncontacted checkouts (attempt 1) ─────────────────────────
   for (const checkout of uncontactedCheckouts) {
     eligible.push({
       checkoutId:        checkout._id.toString(),
@@ -217,13 +206,13 @@ async function runRecoveryEmailCron() {
   const maxRun = cronConfig.recoveryEmail.maxPerRun;
 
   const stats = {
-    evaluated:         0,
-    sent:              0,
-    skipped:           0,
-    failed:            0,
-    exhaustedResolved: 0,
-    exhaustedErrors:   0,
-    dryRun:            isDry,
+    evaluated:      0,
+    sent:           0,
+    skipped:        0,
+    failed:         0,
+    expiredMarked:  0,  // records transitioned exhausted → expired
+    expiredErrors:  0,
+    dryRun:         isDry,
   };
 
   if (isDry) {
@@ -231,6 +220,8 @@ async function runRecoveryEmailCron() {
   }
 
   // ── SEND PASS ─────────────────────────────────────────────────────────────
+  // acknowledgeSent() inside sendRecoveryEmail writes 'exhausted' immediately
+  // when the send cap is reached — no separate sweep needed for that.
   let eligible = await getCartsEligibleForCron();
   stats.evaluated = eligible.length;
 
@@ -282,36 +273,36 @@ async function runRecoveryEmailCron() {
     }
   }
 
-  // ── EXHAUSTED RESOLUTION PASS ─────────────────────────────────────────────
-  // Runs every tick regardless of whether any emails were sent this pass.
-  // Finds records where all sends are done, the final token TTL has elapsed,
-  // and nobody ever clicked — writes 'exhausted' so analytics reflect reality.
+  // ── EXPIRED RESOLUTION PASS ───────────────────────────────────────────────
+  // Runs every tick regardless of whether emails were sent.
+  // Finds exhausted records where all tokens have elapsed AND user never clicked.
+  // Transitions them to 'expired' — the true terminal "we tried, they never came" state.
   if (!isDry) {
     try {
-      const { resolved, errors } = await markExhaustedRecords();
-      stats.exhaustedResolved = resolved;
-      stats.exhaustedErrors   = errors;
+      const { resolved, errors } = await markExpiredRecords();
+      stats.expiredMarked = resolved;
+      stats.expiredErrors = errors;
     } catch (err) {
       console.error(
-        '[RecoveryEmailCron] markExhaustedRecords pass threw unexpectedly:',
+        '[RecoveryEmailCron] markExpiredRecords pass threw unexpectedly:',
         err.message
       );
     }
   }
 
   // ── CACHE BUST ────────────────────────────────────────────────────────────
-  // Flush if anything changed — either sends or exhausted resolutions.
-  const anythingChanged = !isDry && (stats.sent > 0 || stats.exhaustedResolved > 0);
+  const anythingChanged = !isDry && (stats.sent > 0 || stats.expiredMarked > 0);
   if (anythingChanged) {
-    await invalidateRecoveryCaches().catch((err) =>
+    await invalidateRecoveryCaches().catch(err =>
       console.error('[RecoveryEmailCron] Cache bust failed:', err.message)
     );
   }
 
   // ── LOG SUMMARY ───────────────────────────────────────────────────────────
-  const status = stats.failed > 0 && stats.sent === 0 ? '✗ FULL FAILURE' :
-                 stats.failed > 0                      ? '⚠ PARTIAL'      :
-                                                         '✓ OK';
+  const status =
+    stats.failed > 0 && stats.sent === 0 ? '✗ FULL FAILURE' :
+    stats.failed > 0                      ? '⚠ PARTIAL'      :
+                                            '✓ OK';
 
   console.log(
     `[RecoveryEmailCron] ${status}` +
@@ -319,8 +310,8 @@ async function runRecoveryEmailCron() {
     ` | sent=${stats.sent}` +
     ` | skipped=${stats.skipped}` +
     ` | failed=${stats.failed}` +
-    ` | exhaustedResolved=${stats.exhaustedResolved}` +
-    ` | exhaustedErrors=${stats.exhaustedErrors}` +
+    ` | expiredMarked=${stats.expiredMarked}` +
+    ` | expiredErrors=${stats.expiredErrors}` +
     (isDry ? ' | DRY RUN' : '')
   );
 

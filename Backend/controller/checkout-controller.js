@@ -33,13 +33,13 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
 
   if (shippingInfo) {
     const requiredFields = ['address', 'city', 'state', 'country', 'phoneNo'];
-    const missingFields = requiredFields.filter(field => !shippingInfo[field]);
+    const missingFields  = requiredFields.filter(field => !shippingInfo[field]);
     if (missingFields.length > 0) {
       return next(new HandleError(`Missing required shipping fields: ${missingFields.join(', ')}`, 400));
     }
   }
 
-  let itemPrice = 0;
+  let itemPrice  = 0;
   const validItems = [];
 
   for (const item of items) {
@@ -176,7 +176,6 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   const { step, gateway } = req.body;
 
   const validSteps = ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway', 'payment_failed'];
-
   if (!validSteps.includes(step)) return next(new HandleError("Invalid checkout step", 400));
 
   const checkout = await Checkout.findById(id);
@@ -221,14 +220,14 @@ export const getActiveCheckout = handleAsyncError(async (req, res, next) => {
 // @access Private
 // ============================================
 export const abandonCheckout = handleAsyncError(async (req, res, next) => {
-  const { id }   = req.params;
-  const userId   = req.user._id;
+  const { id } = req.params;
+  const userId = req.user._id;
   const checkout = await Checkout.findById(id);
 
-  if (!checkout) return next(new HandleError("Checkout not found", 404));
-  if (checkout.user.toString() !== userId.toString()) return next(new HandleError("Unauthorized", 403));
-  if (checkout.status === 'abandoned') return res.status(200).json({ success: true, message: "Checkout already abandoned" });
-  if (checkout.status !== 'pending') return next(new HandleError(`Cannot abandon a checkout with status: ${checkout.status}`, 400));
+  if (!checkout)                                          return next(new HandleError("Checkout not found", 404));
+  if (checkout.user.toString() !== userId.toString())    return next(new HandleError("Unauthorized", 403));
+  if (checkout.status === 'abandoned')                   return res.status(200).json({ success: true, message: "Checkout already abandoned" });
+  if (checkout.status !== 'pending')                     return next(new HandleError(`Cannot abandon a checkout with status: ${checkout.status}`, 400));
 
   checkout.markAsAbandoned();
   await checkout.save();
@@ -247,11 +246,11 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
 
   if (!token) return next(new HandleError("Recovery token is required", 400));
 
-  // ── Helper: issue auth cookie from a userId ───────────────────────────────
+  // ── Helper: issue auth cookie ─────────────────────────────────────────────
   const issueAuthCookie = async (userId) => {
     try {
-      const User = (await import('../models/userModel.js')).default;
-      const user = await User.findById(userId);
+      const User          = (await import('../models/userModel.js')).default;
+      const user          = await User.findById(userId);
       if (!user) return null;
 
       const jwt           = (await import('jsonwebtoken')).default;
@@ -276,10 +275,7 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     }
   };
 
-  // ── Step 1: Always decode first (no expiry check) to get userId ───────────
-  // The payload is intact even on expired tokens — expiry is just a claim.
-  // This guarantees the user is always logged in as long as the token is
-  // structurally valid.
+  // ── Step 1: Decode token (no expiry check) to get userId ─────────────────
   let bare;
   try {
     bare = decodeRecoveryToken(token);
@@ -291,10 +287,10 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Recovery link is invalid.", 400));
   }
 
-  // ── Step 2: Issue the auth cookie immediately — before any branching ──────
+  // ── Step 2: Issue auth cookie immediately — before any branching ──────────
   const user = await issueAuthCookie(bare.userId);
 
-  // ── Step 3: Verify expiry ─────────────────────────────────────────────────
+  // ── Step 3: Verify JWT signature and expiry ───────────────────────────────
   let decoded;
   let isExpired      = false;
   let expiredMessage = null;
@@ -310,32 +306,31 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     }
   }
 
-  // ── Step 4: Expired path ──────────────────────────────────────────────────
-  // ONLY truly expired tokens (JWT exp claim elapsed) return here.
-  // exhausted outcome does NOT gate this path — if the JWT is still valid,
-  // the full recovery flow runs regardless of how many emails were sent.
+  // ── Step 4: EXPIRED PATH ──────────────────────────────────────────────────
+  // The JWT exp claim has elapsed. Cart is NOT restored.
+  // Record the late click as a data signal ("interested but too late").
+  // The outcome stays exhausted — it does not advance to 'clicked'
+  // because the user did not actually recover their cart.
   if (isExpired) {
-    // Record the expired token click and update lastRecoveryTokenExpiredAt
-    // on the checkout so the cron sweep has an accurate expiry timestamp.
     if (bare.checkoutId) {
       try {
-        const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
+        const RecoveryEmail    = (await import('../models/recovery-email-model.js')).default;
         const recoveryEmailDoc = await RecoveryEmail.findOne({ checkout: bare.checkoutId });
 
         if (recoveryEmailDoc) {
-          // bare.jti is the tokenId — fall back to lastTokenId if not present
-          // (some older tokens may not have jti surfaced in the bare payload).
+          // bare.jti is the tokenId from the JWT payload.
+          // Fall back to lastTokenId if jti is not present.
           const tokenId = bare.jti || recoveryEmailDoc.lastTokenId;
           recoveryEmailDoc.recordExpiredLinkClick(tokenId);
           await recoveryEmailDoc.save();
         }
 
-        // Also stamp the checkout so the cron has a reliable expiry signal
+        // Stamp the checkout so the cron sweep has an accurate expiry timestamp
         await Checkout.findByIdAndUpdate(bare.checkoutId, {
           $set: { 'abandonment.lastRecoveryTokenExpiredAt': new Date() }
         }).catch(() => {});
       } catch (e) {
-        console.error('[redeemRecoveryToken] failed to record expired click:', e.message);
+        console.error('[redeemRecoveryToken] failed to record late click:', e.message);
       }
     }
 
@@ -356,11 +351,12 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // ── Step 5: Load the checkout (valid token path) ──────────────────────────
-  // At this point the JWT signature and expiry are both valid.
-  // We proceed with full recovery regardless of the RecoveryEmail outcome
-  // field — exhausted only means no more sends, not that the user cannot
-  // recover their cart via a token that is still cryptographically valid.
+  // ── Step 5: VALID TOKEN PATH ──────────────────────────────────────────────
+  // JWT signature and expiry are both valid.
+  // Full recovery flow runs regardless of RecoveryEmail outcome.
+  // exhausted only means "no more emails will be sent" — the tokens
+  // it generated are still valid until their JWT exp elapses.
+  // A valid click ALWAYS gets cart restored and outcome → 'clicked'.
   const checkout = await Checkout.findById(decoded.checkoutId)
     .populate('user',          'firstName lastName email role avatar')
     .populate('items.product', 'name images pricing inventory status');
@@ -379,7 +375,7 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid recovery link.", 403));
   }
 
-  // ── Step 6: alreadyConverted ──────────────────────────────────────────────
+  // ── Step 6: Already converted ─────────────────────────────────────────────
   if (checkout.conversion.isConverted) {
     return res.status(200).json({
       success:          true,
@@ -397,26 +393,27 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // ── Step 7: Record recovery link click on the checkout doc ────────────────
+  // ── Step 7: Record click on checkout doc ──────────────────────────────────
   checkout.recordRecoveryLinkClick();
 
-  // ── Step 8: Record click on the RecoveryEmail doc ─────────────────────────
-  // This runs regardless of the current outcome value (including exhausted).
-  // recordLinkClick handles outcome promotion internally — it will advance
-  // exhausted → clicked because exhausted is no longer a hard terminal for
-  // click tracking (see recovery-email-model.js fix).
-  const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
+  // ── Step 8: Record click on RecoveryEmail doc ─────────────────────────────
+  // This runs for ALL valid token clicks including when outcome is 'exhausted'.
+  // recordLinkClick advances outcome exhausted → clicked via _resolveOutcome.
+  const RecoveryEmail    = (await import('../models/recovery-email-model.js')).default;
   const recoveryEmailDoc = await RecoveryEmail.findOne({ checkout: checkout._id });
 
   if (recoveryEmailDoc) {
     const clicked = recoveryEmailDoc.recordLinkClick(decoded.jti, checkout.currentStep);
     if (!clicked) {
-      console.warn(`[redeemRecoveryToken] jti ${decoded.jti} not found in RecoveryEmail for checkout ${checkout._id}`);
+      console.warn(
+        `[redeemRecoveryToken] jti ${decoded.jti} not found in RecoveryEmail` +
+        ` for checkout ${checkout._id}`
+      );
     }
     await recoveryEmailDoc.save();
   }
 
-  // ── Step 9: Restore abandoned checkout ───────────────────────────────────
+  // ── Step 9: Restore abandoned checkout ────────────────────────────────────
   if (!checkout.analytics) checkout.analytics = {};
   checkout.analytics.source = 'email';
 
@@ -425,18 +422,18 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     checkout.lastActivityAt = new Date();
   }
 
-  // ── Step 10: Filter unavailable items ────────────────────────────────────
+  // ── Step 10: Filter unavailable items ─────────────────────────────────────
   const availableItems   = checkout.items.filter(item => item.product?.status === 'published');
   const unavailableItems = checkout.items.filter(item => !item.product || item.product.status !== 'published');
 
-  // ── Step 11: Recompute pricing if items were removed ─────────────────────
+  // ── Step 11: Recompute pricing if items were removed ──────────────────────
   let resolvedPricing = checkout.pricing;
 
   if (unavailableItems.length > 0) {
-    const freshItemPrice       = availableItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const originalGross        = checkout.pricing?.grossItemPrice || checkout.pricing?.itemPrice || 0;
-    const originalDiscount     = checkout.pricing?.discountAmount || 0;
-    let freshDiscountAmount    = 0;
+    const freshItemPrice    = availableItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    const originalGross     = checkout.pricing?.grossItemPrice || checkout.pricing?.itemPrice || 0;
+    const originalDiscount  = checkout.pricing?.discountAmount || 0;
+    let freshDiscountAmount = 0;
 
     if (originalDiscount > 0 && originalGross > 0) {
       const discountRate  = originalDiscount / originalGross;
@@ -463,16 +460,16 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     checkout.pricing = resolvedPricing;
   }
 
-  // ── Step 12: Re-validate discount code ───────────────────────────────────
+  // ── Step 12: Re-validate discount code ────────────────────────────────────
   let discountInvalidated = false;
 
   if (checkout.pricing?.discountCode || checkout.discount?.code) {
     const discountCode = checkout.pricing?.discountCode || checkout.discount?.code;
     try {
-      const discountDoc        = await Discount.findOne({ code: discountCode.toUpperCase(), isActive: true });
-      const isExpiredDiscount  = discountDoc?.expiresAt && new Date(discountDoc.expiresAt) < new Date();
-      const isInactive         = !discountDoc || discountDoc.isActive === false;
-      const isExhausted        = discountDoc?.maxUses > 0 && (discountDoc?.usedCount || 0) >= discountDoc.maxUses;
+      const discountDoc       = await Discount.findOne({ code: discountCode.toUpperCase(), isActive: true });
+      const isExpiredDiscount = discountDoc?.expiresAt && new Date(discountDoc.expiresAt) < new Date();
+      const isInactive        = !discountDoc || discountDoc.isActive === false;
+      const isExhausted       = discountDoc?.maxUses > 0 && (discountDoc?.usedCount || 0) >= discountDoc.maxUses;
 
       if (isExpiredDiscount || isInactive || isExhausted) {
         discountInvalidated = true;
@@ -498,9 +495,11 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   }
 
   await checkout.save();
-  invalidateCheckoutCaches().catch(err => console.error('Failed to invalidate caches after recovery:', err));
+  invalidateCheckoutCaches().catch(err =>
+    console.error('Failed to invalidate caches after recovery:', err)
+  );
 
-  // ── Step 13: Return restored cart ────────────────────────────────────────
+  // ── Step 13: Return restored cart ─────────────────────────────────────────
   res.status(200).json({
     success:          true,
     message:          "Cart restored successfully. Complete your purchase!",
@@ -522,7 +521,9 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
       pricing:          resolvedPricing,
       shippingInfo:     checkout.shippingInfo,
       currentStep:      checkout.currentStep,
-      unavailableItems: unavailableItems.length > 0 ? unavailableItems.map(i => ({ name: i.name })) : []
+      unavailableItems: unavailableItems.length > 0
+        ? unavailableItems.map(i => ({ name: i.name }))
+        : []
     }
   });
 });
