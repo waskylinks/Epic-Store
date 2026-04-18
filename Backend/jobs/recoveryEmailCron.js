@@ -22,10 +22,14 @@ const getCartsEligibleForCron = async () => {
   const now          = Date.now();
 
   // ── Step 1: Load active RecoveryEmail records ─────────────────────────────
-  // Active = campaign is still running and may receive another send.
-  // exhausted is NOT included — the cron never sends after exhaustion.
+  // ACTIVE_OUTCOMES must exactly match canSend()'s ACTIVE_OUTCOMES.
+  // 're_abandoned' is intentionally excluded from both — once a user
+  // clicks a recovery link and re-abandons, the entire sequence is suppressed.
+  // There is no value in sending further emails after re-abandonment.
+  const ACTIVE_OUTCOMES = ['pending', 'sent', 'clicked'];
+
   const activeRecords = await RecoveryEmail.find(
-    { outcome: { $in: ['pending', 'sent', 'clicked', 're_abandoned'] } },
+    { outcome: { $in: ACTIVE_OUTCOMES } },
     { checkout: 1, confirmedAttempts: 1, lastSentAt: 1, pendingAck: 1, outcome: 1 }
   ).lean();
 
@@ -206,13 +210,13 @@ async function runRecoveryEmailCron() {
   const maxRun = cronConfig.recoveryEmail.maxPerRun;
 
   const stats = {
-    evaluated:      0,
-    sent:           0,
-    skipped:        0,
-    failed:         0,
-    expiredMarked:  0,  // records transitioned exhausted → expired
-    expiredErrors:  0,
-    dryRun:         isDry,
+    evaluated:     0,
+    sent:          0,
+    skipped:       0,
+    failed:        0,
+    expiredMarked: 0,
+    expiredErrors: 0,
+    dryRun:        isDry,
   };
 
   if (isDry) {
@@ -222,6 +226,7 @@ async function runRecoveryEmailCron() {
   // ── SEND PASS ─────────────────────────────────────────────────────────────
   // acknowledgeSent() inside sendRecoveryEmail writes 'exhausted' immediately
   // when the send cap is reached — no separate sweep needed for that.
+  // Re-abandoned carts are excluded from eligibility at the query level above.
   let eligible = await getCartsEligibleForCron();
   stats.evaluated = eligible.length;
 
@@ -274,9 +279,8 @@ async function runRecoveryEmailCron() {
   }
 
   // ── EXPIRED RESOLUTION PASS ───────────────────────────────────────────────
-  // Runs every tick regardless of whether emails were sent.
   // Finds exhausted records where all tokens have elapsed AND user never clicked.
-  // Transitions them to 'expired' — the true terminal "we tried, they never came" state.
+  // Transitions exhausted → expired (true terminal).
   if (!isDry) {
     try {
       const { resolved, errors } = await markExpiredRecords();

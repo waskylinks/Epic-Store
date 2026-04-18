@@ -128,9 +128,9 @@ const recoveryEmailSchema = new mongoose.Schema(
         'clicked',      // user clicked a valid token — cart restored
         'converted',    // user completed checkout after recovery
         'organic',      // user converted without using recovery link
-        're_abandoned', // user clicked, returned, then left again
-        'exhausted',    // all N emails have been sent — SEND-SIDE SIGNAL ONLY
-        'expired',      // all tokens elapsed, user never clicked any — TRUE TERMINAL
+        're_abandoned', // user clicked, returned, then left again — TERMINAL for sends
+        'exhausted',    // all N emails have been sent — send-side signal only
+        'expired',      // all tokens elapsed, user never clicked — true terminal
         'failed',       // unrecoverable mailer/system failure
       ],
       default: 'pending',
@@ -183,32 +183,48 @@ recoveryEmailSchema.virtual('nextAvailableAt').get(function () {
  * canSend
  * Gate for all cron send decisions.
  *
- * exhausted is intentionally NOT in ACTIVE_OUTCOMES — once all emails are
- * sent the cron stops. There is no "re-send after exhaustion" path.
+ * ACTIVE_OUTCOMES are the only states where the cron will attempt a new send.
  *
- * clicked IS in ACTIVE_OUTCOMES so that a user who clicked but didn't convert
- * can still receive a follow-up email if attempts remain.
+ * KEY CHANGE: 're_abandoned' is intentionally NOT in ACTIVE_OUTCOMES.
+ * Once a user clicks a recovery link and then abandons again, the sequence
+ * is suppressed entirely. There is no value in sending more emails to someone
+ * who has already demonstrated they came back and still chose to leave.
+ * Re-abandonment is a behavioural signal that the recovery campaign is over.
+ *
+ * 'clicked' IS in ACTIVE_OUTCOMES so that if the user clicks but doesn't
+ * convert, the cron can still send a follow-up email if attempts remain.
+ * Once they re-abandon after clicking, 're_abandoned' is set and the cron stops.
  */
 recoveryEmailSchema.methods.canSend = function (checkout) {
   if (checkout.conversion?.isConverted) {
     return { canSend: false, reason: 'Checkout already converted' };
   }
 
-  const ACTIVE_OUTCOMES = ['pending', 'sent', 'clicked', 're_abandoned'];
+  // re_abandoned is intentionally excluded — sequence suppressed after re-abandonment.
+  const ACTIVE_OUTCOMES = ['pending', 'sent', 'clicked'];
   if (!ACTIVE_OUTCOMES.includes(this.outcome)) {
-    return { canSend: false, reason: `Recovery campaign already resolved: ${this.outcome}` };
+    return {
+      canSend: false,
+      reason:  `Recovery campaign already resolved: ${this.outcome}`,
+    };
   }
 
   if (this.pendingAck) {
     const staleThreshold = new Date(Date.now() - cfg.staleAckMins() * 60 * 1000);
     const isStale        = this.updatedAt && this.updatedAt < staleThreshold;
     if (!isStale) {
-      return { canSend: false, reason: 'A send is already in progress — please retry in a moment.' };
+      return {
+        canSend: false,
+        reason:  'A send is already in progress — please retry in a moment.',
+      };
     }
   }
 
   if (this.confirmedAttempts >= cfg.maxAttempts()) {
-    return { canSend: false, reason: `Maximum recovery attempts (${cfg.maxAttempts()}) reached` };
+    return {
+      canSend: false,
+      reason:  `Maximum recovery attempts (${cfg.maxAttempts()}) reached`,
+    };
   }
 
   if (this.lastSentAt) {
@@ -228,9 +244,13 @@ recoveryEmailSchema.methods.canSend = function (checkout) {
     checkout.abandonment?.abandonedAt;
 
   if (referenceDate) {
-    const daysSince = (Date.now() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
+    const daysSince =
+      (Date.now() - new Date(referenceDate).getTime()) / (1000 * 60 * 60 * 24);
     if (daysSince > cfg.maxAgeDays()) {
-      return { canSend: false, reason: `Cart abandoned ${Math.floor(daysSince)} days ago (max ${cfg.maxAgeDays()} days)` };
+      return {
+        canSend: false,
+        reason:  `Cart abandoned ${Math.floor(daysSince)} days ago (max ${cfg.maxAgeDays()} days)`,
+      };
     }
   }
 
@@ -299,9 +319,8 @@ recoveryEmailSchema.methods.initiateSend = function (checkout, sentBy = 'cron') 
  * acknowledgeSent
  * Called after mailer confirms delivery.
  *
- * KEY: writes 'exhausted' immediately when confirmedAttempts reaches maxAttempts.
- * exhausted = all emails sent. This is a SEND-SIDE signal only.
- * It says nothing about token expiry or whether the user clicked.
+ * Writes 'exhausted' immediately when confirmedAttempts reaches maxAttempts.
+ * exhausted = all emails sent. Send-side signal only — nothing about token expiry.
  */
 recoveryEmailSchema.methods.acknowledgeSent = function () {
   const attempt = this._findAttemptByTokenId(this.lastTokenId, 'pending');
@@ -316,7 +335,7 @@ recoveryEmailSchema.methods.acknowledgeSent = function () {
   this.pendingAck         = false;
 
   // Write exhausted immediately upon hitting the send cap.
-  // Token expiry is irrelevant here — exhausted purely means "sending is done."
+  // Token expiry is irrelevant — exhausted purely means "sending is done."
   if (this.confirmedAttempts >= cfg.maxAttempts()) {
     this._resolveOutcome('exhausted');
   }
@@ -358,6 +377,9 @@ recoveryEmailSchema.methods.recordSendFailure = function (reason) {
  * exhausted only means the send campaign is done. The tokens it generated
  * are still valid until their JWT exp elapses. A user clicking a valid token
  * gets their cart restored and outcome advances to 'clicked'.
+ *
+ * If the user then abandons again, markReAbandoned() sets 're_abandoned'
+ * and canSend() blocks any further sends permanently.
  */
 recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
   const attempt = this._findAttemptByTokenId(tokenId);
@@ -377,7 +399,8 @@ recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
   this.lastClickedAttemptNumber = attempt.attemptNumber;
 
   // Advance to 'clicked' from any state including exhausted.
-  // _resolveOutcome's priority ladder protects converted, organic, re_abandoned, failed.
+  // _resolveOutcome's priority ladder protects converted, organic,
+  // re_abandoned (semi-terminal), and failed (hard terminal).
   this._resolveOutcome('clicked');
 
   return attempt;
@@ -387,10 +410,8 @@ recoveryEmailSchema.methods.recordLinkClick = function (tokenId, checkoutStep) {
  * recordExpiredLinkClick
  * Called from redeemRecoveryToken when JWT exp has ALREADY elapsed.
  *
- * Cart is NOT restored. This records the "interested but too late" signal.
- * Outcome does NOT advance — exhausted or expired stays as-is because
- * the user did not actually recover their cart.
- * Analytics surfaces this via attempt.clickedAfterExpiry and lateClicks metric.
+ * Cart is NOT restored. Records the "interested but too late" signal.
+ * Outcome does NOT advance — exhausted or expired stays as-is.
  */
 recoveryEmailSchema.methods.recordExpiredLinkClick = function (tokenId) {
   const resolvedId = tokenId || this.lastTokenId;
@@ -408,7 +429,6 @@ recoveryEmailSchema.methods.recordExpiredLinkClick = function (tokenId) {
   this.lastClickedAttemptNumber = attempt.attemptNumber;
 
   // Do NOT call _resolveOutcome — outcome stays exhausted or expired.
-  // Analytics queries attempt.clickedAfterExpiry === true for the late-click metric.
 
   return attempt;
 };
@@ -433,7 +453,16 @@ recoveryEmailSchema.methods.markTokenExpired = function (tokenId) {
  * markReAbandoned
  * Called ONLY by the abandonment detection system when a cart in an
  * active recovery campaign is abandoned again after the user returned.
- * Never called by token logic or cron sweeps.
+ *
+ * This is the ONLY correct trigger for 're_abandoned'.
+ *
+ * After this is set, canSend() will block all future sends because
+ * 're_abandoned' is not in ACTIVE_OUTCOMES. The sequence is permanently
+ * suppressed — there is no path back to sending once re-abandonment occurs.
+ *
+ * 're_abandoned' remains overridable by 'converted' and 'organic' in
+ * _resolveOutcome so that if the user eventually completes the purchase
+ * through some other means, the outcome correctly reflects conversion.
  */
 recoveryEmailSchema.methods.markReAbandoned = function () {
   this._resolveOutcome('re_abandoned');
@@ -497,18 +526,16 @@ recoveryEmailSchema.methods._findAttemptByTokenId = function (tokenId, status) {
  *     Nothing ever overwrites a confirmed conversion.
  *
  *   Tier 2 — Semi-terminal (re_abandoned):
- *     Behavioural signal. Only absolute terminals can replace it.
+ *     Behavioural signal — user returned and left again.
+ *     Only absolute terminals (converted/organic) can replace it.
+ *     canSend() blocks all future sends once this is set.
  *
  *   Tier 3 — Hard terminal (failed):
  *     Unrecoverable system failure. Only absolute terminals can replace it.
  *
  *   Tier 4 — Soft terminals (exhausted, expired):
- *     exhausted = send cap reached — can be overwritten by 'clicked'
- *                 when a valid token click arrives after all sends are done.
- *     expired   = all tokens elapsed, user never clicked — can technically
- *                 be overwritten by 'clicked' but in practice redeemRecoveryToken
- *                 rejects expired JWTs before recordLinkClick is called.
- *     Both can be overwritten by absolute terminals (converted/organic).
+ *     exhausted = send cap reached — overwritable by 'clicked' (valid token click)
+ *     expired   = all tokens dead, no clicks — overwritable by absolute terminals
  *
  *   Everything else (pending, sent, clicked) — freely overwritable.
  */
@@ -593,7 +620,6 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
             stillSent:    { $sum: { $cond: [{ $eq: ['$outcome', 'sent']         }, 1, 0] } },
 
             // lateClicks: campaigns where user clicked after JWT exp elapsed.
-            // "exhausted but interested" — warm lead signal.
             lateClicks: {
               $sum: {
                 $cond: [
