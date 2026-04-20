@@ -76,12 +76,12 @@ function ClickFunnel({ clickFunnel }) {
   if (!clickFunnel) return <div className="rea-empty">No funnel data available</div>;
 
   const { sent, clicked, converted, sentToClickRate, clickToConvertRate } = clickFunnel;
-  const max = Math.max(sent, 1);
+  const max = Math.max(sent, clicked, converted, 1); // fix: use true max across all steps
 
   const steps = [
-    { label: 'Emails Sent',  count: sent,      fill: (sent      / max) * 100, color: FUNNEL_COLORS.sent,      rate: null },
-    { label: 'Link Clicked', count: clicked,   fill: (clicked   / max) * 100, color: FUNNEL_COLORS.clicked,   rate: `${fmt.pct(sentToClickRate)} click rate` },
-    { label: 'Converted',    count: converted, fill: (converted / max) * 100, color: FUNNEL_COLORS.converted, rate: `${fmt.pct(clickToConvertRate)} conversion rate` },
+    { label: 'Emails Sent',  count: sent,      fill: Math.min((sent      / max) * 100, 100), color: FUNNEL_COLORS.sent,      rate: null },
+    { label: 'Link Clicked', count: clicked,   fill: Math.min((clicked   / max) * 100, 100), color: FUNNEL_COLORS.clicked,   rate: `${fmt.pct(sentToClickRate)} click rate` },
+    { label: 'Converted',    count: converted, fill: Math.min((converted / max) * 100, 100), color: FUNNEL_COLORS.converted, rate: `${fmt.pct(clickToConvertRate)} conversion rate` },
   ];
 
   return (
@@ -133,7 +133,6 @@ function OutcomeBreakdown({ outcomes, total }) {
     </div>
   );
 }
-
 function AttemptROITable({ revenueAttribution }) {
   if (!revenueAttribution?.length) {
     return (
@@ -151,29 +150,45 @@ function AttemptROITable({ revenueAttribution }) {
       <table className="rea-tbl">
         <thead>
           <tr>
-            <th>Attempt #</th><th>Conversions</th><th>% of total</th><th>Revenue</th><th>Avg cart</th>
+            <th>Attempt #</th>
+            <th>Conversions</th>
+            <th>% of Conv.</th>
+            <th>Revenue</th>
+            <th>Avg Cart</th>
+            <th style={{ minWidth: 160 }}>% of Total Revenue</th>
           </tr>
         </thead>
         <tbody>
-          {revenueAttribution.map((row) => (
-            <tr key={row.attemptNumber}>
-              <td className="rea-tbl-mono">#{row.attemptNumber}</td>
-              <td className="rea-tbl-bold">{fmt.number(row.conversions)}</td>
-              <td style={{ color: '#6B7280', fontWeight: 600 }}>
-                {totalConversions > 0 ? fmt.pct((row.conversions / totalConversions) * 100) : '—'}
-              </td>
-              <td className="rea-tbl-green">{fmt.compact(row.totalRevenue)}</td>
-              <td style={{ color: '#374151', fontWeight: 600 }}>{fmt.currency(row.avgCartValue)}</td>
-            </tr>
-          ))}
+          {revenueAttribution.map((row) => {
+            const convPct = totalConversions > 0 ? (row.conversions / totalConversions) * 100 : 0;
+            const revPct  = totalRevenue     > 0 ? (row.totalRevenue / totalRevenue)     * 100 : 0;
+            return (
+              <tr key={row.attemptNumber}>
+                <td className="rea-tbl-mono">#{row.attemptNumber}</td>
+                <td className="rea-tbl-bold">{fmt.number(row.conversions)}</td>
+                <td className="rea-tbl-muted">{fmt.pct(convPct)}</td>
+                <td className="rea-tbl-green rea-tbl-nowrap">{fmt.currency(row.totalRevenue)}</td>
+                <td className="rea-tbl-nowrap" style={{ color: '#374151', fontWeight: 600 }}>{fmt.currency(row.avgCartValue)}</td>
+                <td>
+                  <div className="rea-tbl-rev-row">
+                    <div className="rea-tbl-bar-track">
+                      <div className="rea-tbl-bar-fill" style={{ width: `${revPct}%` }} />
+                    </div>
+                    <span className="rea-tbl-rev-pct">{fmt.pct(revPct)}</span>
+                  </div>
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
         <tfoot>
-          <tr style={{ borderTop: '2px solid #D1D5DB' }}>
-            <td style={{ fontWeight: 800, color: '#111827', paddingTop: 12 }}>Total</td>
-            <td style={{ fontWeight: 800, color: '#111827', textAlign: 'right', paddingTop: 12 }}>{fmt.number(totalConversions)}</td>
-            <td style={{ textAlign: 'right', paddingTop: 12 }} />
-            <td style={{ fontWeight: 800, color: '#16a34a', textAlign: 'right', paddingTop: 12 }}>{fmt.compact(totalRevenue)}</td>
-            <td style={{ textAlign: 'right', paddingTop: 12 }} />
+          <tr className="rea-tbl-foot">
+            <td>Total</td>
+            <td>{fmt.number(totalConversions)}</td>
+            <td />
+            <td className="rea-tbl-green rea-tbl-nowrap">{fmt.currency(totalRevenue)}</td>
+            <td />
+            <td className="rea-tbl-muted">100%</td>
           </tr>
         </tfoot>
       </table>
