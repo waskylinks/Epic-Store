@@ -687,17 +687,40 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
           $group: {
             _id:       null,
             totalSent: { $sum: { $cond: [{ $gte: ['$confirmedAttempts', 1] }, 1, 0] } },
+
+            // clicked = user clicked a valid (non-expired) link
+            // i.e. any attempt has linkClickedAt set AND clickedAfterExpiry is false
             clicked: {
               $sum: {
                 $cond: [
-                  { $in: ['$outcome', ['clicked', 'converted', 're_abandoned']] },
+                  {
+                    $gt: [
+                      {
+                        $size: {
+                          $filter: {
+                            input: '$attempts',
+                            as:    'a',
+                            cond: {
+                              $and: [
+                                { $ifNull: ['$$a.linkClickedAt', false] },
+                                { $ne: ['$$a.clickedAfterExpiry', true] },
+                              ],
+                            },
+                          },
+                        },
+                      },
+                      0,
+                    ],
+                  },
                   1, 0,
                 ],
               },
             },
+
+            // converted = email-attributed only, NOT organic
             converted: {
               $sum: {
-                $cond: [{ $in: ['$outcome', ['converted', 'organic']] }, 1, 0],
+                $cond: [{ $eq: ['$outcome', 'converted'] }, 1, 0],
               },
             },
           },
@@ -711,7 +734,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         { $group: { _id: '$attempts.sentBy', count: { $sum: 1 } } },
       ]),
     ]);
-
+    
   const s  = summary[0] || {
     total: 0, totalConfirmedAttempts: 0, totalLinkClicks: 0, everClicked: 0,
     converted: 0, organic: 0, re_abandoned: 0, exhausted: 0, expired: 0,
