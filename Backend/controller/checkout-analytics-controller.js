@@ -1,6 +1,7 @@
 import handleAsyncError from "../middleware/handleAsyncError.js";
 import HandleError from "../utils/handleError.js";
 import Checkout, { calculatePriorityScore } from "../models/checkout-model.js";
+import RecoveryEmail from "../models/recovery-email-model.js";
 import { getDateRanges } from "../utils/dateRanges.js";
 import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getCache, setCache, deleteCachePattern } from "../utils/redis.js";
@@ -48,7 +49,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
         100
       : 0;
 
-  const [abandonedValue, abandonmentByStep, recoveryStats] = await Promise.all([
+  const [abandonedValue, abandonmentByStep, recoveryStats, expiredRecoveryStats] = await Promise.all([
     Checkout.aggregate([
       {
         $match: {
@@ -166,6 +167,35 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
           }
         }
       }
+    ]),
+
+    // FIX: Count expired recovery campaigns (all emails sent, all tokens elapsed,
+    // user never clicked). These represent fully failed recovery attempts and
+    // should be included in the "failed recoveries" KPI alongside re-abandonment.
+    // Scope to campaigns whose checkout was created within the current period.
+    RecoveryEmail.aggregate([
+      {
+        $match: {
+          outcome: 'expired',
+          createdAt: { $gte: currentPeriodStart }
+        }
+      },
+      {
+        $lookup: {
+          from:         'checkouts',
+          localField:   'checkout',
+          foreignField: '_id',
+          as:           'checkoutDoc',
+        }
+      },
+      { $unwind: { path: '$checkoutDoc', preserveNullAndEmptyArrays: false } },
+      {
+        $group: {
+          _id:                   null,
+          expiredRecoveryCount:  { $sum: 1 },
+          expiredRevenueLost:    { $sum: '$checkoutDoc.pricing.totalPrice' },
+        }
+      }
     ])
   ]);
 
@@ -179,6 +209,11 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     reAbandonedCount:      0,
     failedRecoveryRevenue: 0,
     organicRecoveryCount:  0
+  };
+
+  const expiredData = expiredRecoveryStats[0] || {
+    expiredRecoveryCount: 0,
+    expiredRevenueLost:   0,
   };
 
   const totalAbandonedCheckouts = currentStats.abandonedCheckouts || 1;
@@ -204,6 +239,13 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       })
     : [];
 
+  // FIX: totalFailedRecoveries = re-abandoned (clicked but left) + expired
+  // (never clicked, all tokens dead). Both represent failed recovery outcomes.
+  const totalFailedRecoveries    = recoveryData.reAbandonedCount + expiredData.expiredRecoveryCount;
+  const totalFailedRevenueLost   = Math.round(
+    (recoveryData.failedRecoveryRevenue + expiredData.expiredRevenueLost) * 100
+  ) / 100;
+
   const response = {
     abandonmentRate:    Math.round(currentStats.abandonmentRate * 10) / 10,
     completedCheckouts: currentStats.completedCheckouts || 0,
@@ -220,9 +262,20 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     avgAbandonedCheckoutValue: Math.round((abandonedValue[0]?.avgValue || 0) * 100) / 100,
     trend:              Math.round(trend * 100) / 100,
 
-    reAbandonedCount:       recoveryData.reAbandonedCount,
-    failedRecoveryRevenue:  Math.round(recoveryData.failedRecoveryRevenue * 100) / 100,
-    organicRecoveryCount:   recoveryData.organicRecoveryCount,
+    // Re-abandonment (clicked link, returned, then abandoned again)
+    reAbandonedCount:      recoveryData.reAbandonedCount,
+    failedRecoveryRevenue: Math.round(recoveryData.failedRecoveryRevenue * 100) / 100,
+
+    // Expired (all emails sent, all tokens elapsed, never clicked)
+    expiredRecoveryCount: expiredData.expiredRecoveryCount,
+    expiredRevenueLost:   Math.round(expiredData.expiredRevenueLost * 100) / 100,
+
+    // FIX: Aggregate failed recovery metric: re-abandoned + expired.
+    // This is what the "Failed Recoveries" KPI should display.
+    totalFailedRecoveries,
+    totalFailedRevenueLost,
+
+    organicRecoveryCount: recoveryData.organicRecoveryCount,
 
     previousPeriod: {
       abandonmentRate:    Math.round(previousStats.abandonmentRate * 10) / 10,
@@ -486,14 +539,6 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
   await setCache(cacheKey, response, 300);
   res.status(200).json({ success: true, ...response });
 });
-
-// ============================================
-// MARK RECOVERY EMAIL SENT (legacy)
-// ============================================
-
-
-
-
 
 export default {
   getCheckoutAbandonmentStats,
