@@ -658,7 +658,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         {
           $match: {
             ...matchBase,
-            outcome: { $in: ['converted', 'organic'] },
+            outcome: 'converted', // email-attributed only — organic excluded
           },
         },
         {
@@ -672,7 +672,7 @@ recoveryEmailSchema.statics.getAnalytics = async function (startDate, endDate) {
         { $unwind: { path: '$checkoutDoc', preserveNullAndEmptyArrays: true } },
         {
           $group: {
-            _id:          '$confirmedAttempts',
+            _id:          '$lastClickedAttemptNumber', // which attempt they actually clicked
             conversions:  { $sum: 1 },
             totalRevenue: { $sum: '$checkoutDoc.pricing.totalPrice' },
             avgCartValue: { $avg: '$checkoutDoc.pricing.totalPrice' },

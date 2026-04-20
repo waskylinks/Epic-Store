@@ -376,6 +376,7 @@ export const handleStaleAcks = async () => {
  * getAbandonedCartsForSending
  * Powers the admin send-page. Read-only view.
  */
+
 export const getAbandonedCartsForSending = async ({
   page     = 1,
   limit    = 20,
@@ -392,40 +393,42 @@ export const getAbandonedCartsForSending = async ({
   const VALID_SORTS = ['priority', 'value', 'abandonedAt', 'lastSentAt'];
   if (!VALID_SORTS.includes(sortBy)) sortBy = 'priority';
 
-  // Active outcomes shown under "All active" tab
-  const DEFAULT_ACTIVE_OUTCOMES = ['pending', 'sent', 'clicked', 'exhausted', 're_abandoned'];
+  // Terminal outcomes are historical — don't filter by abandonedAt cutoff
+  // Active outcomes use cutoff so we're not showing ancient uncontacted carts
+  const TERMINAL_OUTCOMES = ['converted', 'organic', 're_abandoned', 'expired', 'exhausted', 'failed'];
+  const isTerminalFilter  = outcome && TERMINAL_OUTCOMES.includes(outcome);
 
   let checkoutIdFilter = null;
   let excludeIds       = null;
 
   if (outcome === 'none') {
-    // "Not contacted" = carts with NO recovery record at all.
-    // outcome: 'pending' records are already-created records that haven't
-    // been sent yet — include them too since they haven't been contacted.
+    // Not contacted = no recovery record at all, OR outcome: pending with 0 sends
     const abandonedCheckoutIds = await Checkout.distinct('_id', {
       'abandonment.isAbandoned': true,
       'abandonment.abandonedAt': { $gte: cutoff },
     });
-
-    // Records that exist AND have been sent at least once (confirmedAttempts > 0)
-    // OR have a non-pending outcome — these are "contacted"
     const contactedIds = await RecoveryEmail.distinct('checkout', {
       checkout:          { $in: abandonedCheckoutIds },
       confirmedAttempts: { $gt: 0 },
     });
-
     excludeIds = contactedIds;
 
-  } else if (outcome === 'converted') {
-    // Include both email-attributed and organic recoveries
+  } else if (outcome === 'organic') {
     const matchingRecords = await RecoveryEmail.find(
-      { outcome: { $in: ['converted', 'organic'] } },
+      { outcome: 'organic' },
+      { checkout: 1 }
+    ).lean();
+    checkoutIdFilter = matchingRecords.map(r => r.checkout);
+
+  } else if (outcome === 'converted') {
+    // email-attributed only — organic has its own filter
+    const matchingRecords = await RecoveryEmail.find(
+      { outcome: 'converted' },
       { checkout: 1 }
     ).lean();
     checkoutIdFilter = matchingRecords.map(r => r.checkout);
 
   } else if (outcome && outcome !== 'all') {
-    // Direct outcome match — sent, clicked, re_abandoned, exhausted, expired
     const matchingRecords = await RecoveryEmail.find(
       { outcome },
       { checkout: 1 }
@@ -433,21 +436,22 @@ export const getAbandonedCartsForSending = async ({
     checkoutIdFilter = matchingRecords.map(r => r.checkout);
 
   } else {
-    // 'all' — show all active outcomes including none-yet-contacted
+    // 'all' — every outcome, no exclusions
     const matchingRecords = await RecoveryEmail.find(
-      { outcome: { $in: DEFAULT_ACTIVE_OUTCOMES } },
+      {},
       { checkout: 1 }
     ).lean();
     checkoutIdFilter = matchingRecords.map(r => r.checkout);
-    // Don't exclude anything — include carts with no record too
-    excludeIds = 'include_none';
+    excludeIds = 'include_none'; // also include carts with no record
   }
 
-  // ── Build checkout query ──────────────────────────────────────────────────
+  // Base checkout query — terminal outcomes skip the date cutoff
   const baseCheckoutQuery = {
     'abandonment.isAbandoned': true,
-    'abandonment.abandonedAt': { $gte: cutoff },
     'pricing.totalPrice':      { $gte: minValue },
+    ...(!isTerminalFilter && outcome !== 'all' && {
+      'abandonment.abandonedAt': { $gte: cutoff },
+    }),
   };
 
   if (search) {
@@ -458,16 +462,12 @@ export const getAbandonedCartsForSending = async ({
   }
 
   if (excludeIds && excludeIds !== 'include_none') {
-    // 'none' tab — exclude contacted carts
     baseCheckoutQuery._id = { $nin: excludeIds };
   } else if (checkoutIdFilter !== null && excludeIds !== 'include_none') {
-    // specific outcome tab — only matching checkout IDs
     baseCheckoutQuery._id = { $in: checkoutIdFilter };
   } else if (excludeIds === 'include_none' && checkoutIdFilter !== null) {
-    // 'all' tab — recovery records that are active
     baseCheckoutQuery._id = { $in: checkoutIdFilter };
   }
-  // if checkoutIdFilter is null and excludeIds is null → no _id filter (show all)
 
   const SORT_MAP = {
     value:       { 'pricing.totalPrice':      -1 },
@@ -516,9 +516,7 @@ export const getAbandonedCartsForSending = async ({
   let enriched = rawCheckouts.map(checkout => {
     const recovery        = recoveryMap.get(checkout._id.toString()) || null;
     const nextAvailableAt = recovery?.lastSentAt
-      ? new Date(
-          new Date(recovery.lastSentAt).getTime() + cooldownHours * 60 * 60 * 1000
-        )
+      ? new Date(new Date(recovery.lastSentAt).getTime() + cooldownHours * 60 * 60 * 1000)
       : null;
 
     return {
@@ -574,18 +572,8 @@ export const getAbandonedCartsForSending = async ({
     });
   }
 
-  // ── Summary aggregation — always global, not page-scoped ─────────────────
-  const allMatchingCheckoutIds = await Checkout.distinct('_id', {
-    'abandonment.isAbandoned': true,
-    'abandonment.abandonedAt': { $gte: cutoff },
-    'pricing.totalPrice':      { $gte: minValue },
-    ...(search && {
-      email: { $gte: search.toLowerCase(), $lt: search.toLowerCase() + '\uffff' },
-    }),
-  });
-
+  // ── Summary — always global, no cutoff so terminal outcomes are counted ───
   const [summaryAgg] = await RecoveryEmail.aggregate([
-    { $match: { checkout: { $in: allMatchingCheckoutIds } } },
     {
       $group: {
         _id:         null,
@@ -593,26 +581,36 @@ export const getAbandonedCartsForSending = async ({
         awaiting:    { $sum: { $cond: [{ $eq: ['$outcome', 'sent']         }, 1, 0] } },
         clicked:     { $sum: { $cond: [{ $eq: ['$outcome', 'clicked']      }, 1, 0] } },
         reAbandoned: { $sum: { $cond: [{ $eq: ['$outcome', 're_abandoned'] }, 1, 0] } },
-        completed:   { $sum: { $cond: [{ $in:  ['$outcome', ['converted', 'organic']] }, 1, 0] } },
-        exhausted:   { $sum: { $cond: [{ $eq: ['$outcome', 'exhausted']   }, 1, 0] } },
-        expired:     { $sum: { $cond: [{ $eq: ['$outcome', 'expired']     }, 1, 0] } },
-        contacted:   { $sum: { $cond: [{ $gt:  ['$confirmedAttempts', 0]  }, 1, 0] } },
+        converted:   { $sum: { $cond: [{ $eq: ['$outcome', 'converted']    }, 1, 0] } },
+        organic:     { $sum: { $cond: [{ $eq: ['$outcome', 'organic']      }, 1, 0] } },
+        exhausted:   { $sum: { $cond: [{ $eq: ['$outcome', 'exhausted']    }, 1, 0] } },
+        expired:     { $sum: { $cond: [{ $eq: ['$outcome', 'expired']      }, 1, 0] } },
+        failed:      { $sum: { $cond: [{ $eq: ['$outcome', 'failed']       }, 1, 0] } },
+        contacted:   { $sum: { $cond: [{ $gt:  ['$confirmedAttempts', 0]   }, 1, 0] } },
+        total:       { $sum: 1 },
       },
     },
   ]);
 
-  const totalWithRecords    = summaryAgg?.contacted || 0;
-  const neverContactedCount = Math.max(0, allMatchingCheckoutIds.length - totalWithRecords);
+  // neverContacted = total recovery records with 0 sends + abandoned carts with no record at all
+  const totalRecords        = summaryAgg?.total        || 0;
+  const totalContacted      = summaryAgg?.contacted    || 0;
+  const pendingUnsentCount  = summaryAgg?.neverSent    || 0;
+  // Carts with no record at all — we can't easily count these without a separate query
+  // but for the KPI strip, neverContacted = pending (record exists, 0 sends)
+  // The "not contacted" chip handles the actual filter correctly via excludeIds logic
 
   const summary = {
-    totalMatchingCarts: total,
-    neverContacted:     neverContactedCount + (summaryAgg?.neverSent || 0),
-    awaitingResponse:   summaryAgg?.awaiting     || 0,
-    clicked:            summaryAgg?.clicked      || 0,
-    reAbandoned:        summaryAgg?.reAbandoned  || 0,
-    completed:          summaryAgg?.completed    || 0,
-    exhausted:          summaryAgg?.exhausted    || 0,
-    expired:            summaryAgg?.expired      || 0,
+    totalCampaigns:   totalRecords,
+    neverContacted:   pendingUnsentCount,
+    awaitingResponse: summaryAgg?.awaiting    || 0,
+    clicked:          summaryAgg?.clicked     || 0,
+    reAbandoned:      summaryAgg?.reAbandoned || 0,
+    converted:        summaryAgg?.converted   || 0,
+    organic:          summaryAgg?.organic     || 0,
+    exhausted:        summaryAgg?.exhausted   || 0,
+    expired:          summaryAgg?.expired     || 0,
+    failed:           summaryAgg?.failed      || 0,
   };
 
   return {
