@@ -1,9 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
-import {
-  Email, ArrowBack, Refresh, Warning, MoneyOff,
-} from '@mui/icons-material';
+import { Email, ArrowBack, Refresh, Warning, MoneyOff } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import PageTitle from '../components/PageTitle';
@@ -25,16 +23,14 @@ import '../AdminStyles/RecoveryEmailManager.css';
 
 const MAX_ATTEMPTS = parseInt(import.meta.env.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 
-// Default view shows only active recovery campaigns.
-// Re-abandoned, exhausted, expired, failed, converted are hidden
-// by default but accessible via the outcome chips.
 const OUTCOME_CHIPS = [
-  { key: 'all',          label: 'All active' },
+  { key: 'all',          label: 'All' },
   { key: 'none',         label: 'Not contacted' },
   { key: 'sent',         label: 'Awaiting click' },
   { key: 'clicked',      label: 'Clicked' },
   { key: 're_abandoned', label: 'Re-abandoned' },
   { key: 'exhausted',    label: 'Max reached' },
+  { key: 'expired',      label: 'Expired' },
   { key: 'converted',    label: 'Completed' },
 ];
 
@@ -47,8 +43,8 @@ const SORT_OPTIONS = [
 
 const OUTCOME_LABEL = {
   none:         'Not contacted',
-  pending:      'Pending',
-  sent:         'Sent',
+  pending:      'Not contacted',
+  sent:         'Awaiting click',
   clicked:      'Clicked',
   converted:    'Completed',
   organic:      'Completed',
@@ -69,14 +65,12 @@ const fmt = {
     }).format(v || 0),
   number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
   date: (d) =>
-    d
-      ? new Date(d).toLocaleDateString('en-US', {
-          month: 'short', day: 'numeric', year: 'numeric',
-          hour: '2-digit', minute: '2-digit',
-        })
-      : '—',
+    d ? new Date(d).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: '2-digit', minute: '2-digit',
+    }) : '—',
   hours: (h) =>
-    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(0)}h`,
+    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${Math.floor(h)}h`,
 };
 
 const getFullName = (user) =>
@@ -90,21 +84,11 @@ const getPriority = (score) => {
   return                  { label: 'Low',    cls: 'low' };
 };
 
-const outcomeClass = (outcome) => {
-  const map = {
-    none:         'none',
-    pending:      'pending',
-    sent:         'sent',
-    clicked:      'clicked',
-    converted:    'converted',
-    organic:      'converted',
-    re_abandoned: 're_abandoned',
-    exhausted:    'exhausted',
-    expired:      'expired',
-    failed:       'failed',
-  };
-  return map[outcome] || 'none';
-};
+const outcomeClass = (outcome) => ({
+  none: 'none', pending: 'none', sent: 'sent', clicked: 'clicked',
+  converted: 'converted', organic: 'converted', re_abandoned: 're_abandoned',
+  exhausted: 'exhausted', expired: 'expired', failed: 'failed',
+}[outcome] || 'none');
 
 // ============================================
 // SUB-COMPONENTS
@@ -137,59 +121,7 @@ function CartItemSkeleton() {
   );
 }
 
-// ── Email status info block (read-only) ───────────────────────
-
-function EmailStatusBlock({ checkoutId }) {
-  const status = useSelector(selectStatusFor(checkoutId));
-
-  const confirmedAttempts = status?.confirmedAttempts || 0;
-  const lastSentAt        = status?.lastSentAt        || null;
-  const nextAvailableAt   = status?.nextAvailableAt   || null;
-  const outcome           = status?.outcome           || 'none';
-
-  if (!status || confirmedAttempts === 0) {
-    return (
-      <div className="res-send-block">
-        <div className="res-send-block-label">Email status</div>
-        <div className="res-send-status res-send-status--warn">
-          No recovery emails sent yet — cron will send automatically when eligible.
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="res-send-block">
-      <div className="res-send-block-label">Email status</div>
-      <div className="res-info-grid">
-        <div className="res-info-row">
-          <span className="res-info-key">Outcome</span>
-          <span className={`res-badge res-badge--${outcomeClass(outcome)}`}>
-            {OUTCOME_LABEL[outcome] || outcome}
-          </span>
-        </div>
-        <div className="res-info-row">
-          <span className="res-info-key">Attempts sent</span>
-          <span className="res-info-val">{confirmedAttempts} / {MAX_ATTEMPTS}</span>
-        </div>
-        {lastSentAt && (
-          <div className="res-info-row">
-            <span className="res-info-key">Last sent</span>
-            <span className="res-info-val">{fmt.date(lastSentAt)}</span>
-          </div>
-        )}
-        {nextAvailableAt && new Date(nextAvailableAt).getTime() > Date.now() && (
-          <div className="res-info-row">
-            <span className="res-info-key">Next available</span>
-            <span className="res-info-val">{fmt.date(nextAvailableAt)}</span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Cart detail right panel ───────────────────────────────────
+// ── Cart detail right panel — read only ──────────────────────
 
 function CartDetail({ item }) {
   const dispatch = useDispatch();
@@ -201,10 +133,10 @@ function CartDetail({ item }) {
     dispatch(fetchRecoveryStatus(checkout._id));
   }, [checkout._id, dispatch]);
 
-  const user    = checkout.user    || {};
-  const pricing = checkout.pricing || {};
+  const user    = checkout.user        || {};
+  const pricing = checkout.pricing     || {};
   const abn     = checkout.abandonment || {};
-  const items   = checkout.items   || [];
+  const items   = checkout.items       || [];
 
   const liveOutcome = status?.outcome || recovery?.outcome || 'none';
 
@@ -237,13 +169,13 @@ function CartDetail({ item }) {
               <span className="res-info-val">{fmt.date(abn.firstAbandonedAt || abn.abandonedAt)}</span>
             </div>
             <div className="res-info-row">
-              <span className="res-info-key">Hours since</span>
+              <span className="res-info-key">Hours since abandonment</span>
               <span className="res-info-val">{fmt.hours(checkout.hoursSinceAbandoned)}</span>
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Re-abandoned</span>
               <span className="res-info-val">
-                {abn.reAbandoned ? `Yes (${abn.failedRecoveries || 1}x)` : 'No'}
+                {abn.reAbandoned ? `Yes (${abn.failedRecoveries || 1}×)` : 'No'}
               </span>
             </div>
           </div>
@@ -319,12 +251,18 @@ function CartDetail({ item }) {
         {/* Email attempt history */}
         {status?.attempts?.length > 0 && (
           <div>
-            <div className="res-section-label">Email history</div>
+            <div className="res-section-label">
+              Email history ({status.attempts.length} attempt{status.attempts.length !== 1 ? 's' : ''})
+            </div>
             <div className="res-timeline">
               {status.attempts.map((attempt, i) => (
                 <div
                   key={i}
-                  className={`res-attempt${attempt.linkClickedAt ? ' res-attempt--clicked' : ''}${attempt.status === 'failed' ? ' res-attempt--failed' : ''}`}
+                  className={[
+                    'res-attempt',
+                    attempt.linkClickedAt   ? 'res-attempt--clicked' : '',
+                    attempt.status === 'failed' ? 'res-attempt--failed'  : '',
+                  ].filter(Boolean).join(' ')}
                 >
                   <div className="res-attempt-hd">
                     <span className="res-attempt-num">Attempt #{attempt.attemptNumber}</span>
@@ -340,7 +278,13 @@ function CartDetail({ item }) {
                     {attempt.linkClickedAt && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Clicked</span>
-                        <span>{fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}x</span>
+                        <span>{fmt.date(attempt.linkClickedAt)} · {attempt.linkClickCount}×</span>
+                      </div>
+                    )}
+                    {attempt.clickedAfterExpiry && (
+                      <div className="res-attempt-row">
+                        <span className="res-attempt-key">Note</span>
+                        <span style={{ color: '#d97706' }}>Clicked after token expired</span>
                       </div>
                     )}
                     {attempt.checkoutStepAtClick && (
@@ -349,10 +293,22 @@ function CartDetail({ item }) {
                         <span>{attempt.checkoutStepAtClick.replace(/_/g, ' ')}</span>
                       </div>
                     )}
+                    {attempt.tokenExpiresAt && (
+                      <div className="res-attempt-row">
+                        <span className="res-attempt-key">Token expires</span>
+                        <span style={{
+                          color: new Date(attempt.tokenExpiresAt) < new Date()
+                            ? '#6B7280' : '#374151'
+                        }}>
+                          {fmt.date(attempt.tokenExpiresAt)}
+                          {new Date(attempt.tokenExpiresAt) < new Date() ? ' · expired' : ''}
+                        </span>
+                      </div>
+                    )}
                     {attempt.tokenExpiredUnclicked && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Token</span>
-                        <span style={{ color: '#374151' }}>Expired without click</span>
+                        <span style={{ color: '#6B7280' }}>Expired without click</span>
                       </div>
                     )}
                     {attempt.failReason && (
@@ -368,8 +324,40 @@ function CartDetail({ item }) {
           </div>
         )}
 
-        {/* Read-only email status */}
-        <EmailStatusBlock checkoutId={checkout._id} />
+        {/* Recovery summary */}
+        <div className="res-send-block">
+          <div className="res-send-block-label">Recovery summary</div>
+          <div className="res-info-grid">
+            <div className="res-info-row">
+              <span className="res-info-key">Attempts sent</span>
+              <span className="res-info-val">
+                {recovery?.confirmedAttempts || 0} / {MAX_ATTEMPTS}
+              </span>
+            </div>
+            <div className="res-info-row">
+              <span className="res-info-key">Total link clicks</span>
+              <span className="res-info-val">{recovery?.totalLinkClicks || 0}</span>
+            </div>
+            {recovery?.lastSentAt && (
+              <div className="res-info-row">
+                <span className="res-info-key">Last sent</span>
+                <span className="res-info-val">{fmt.date(recovery.lastSentAt)}</span>
+              </div>
+            )}
+            {recovery?.lastClickedAttemptNumber && (
+              <div className="res-info-row">
+                <span className="res-info-key">Clicked on attempt</span>
+                <span className="res-info-val">#{recovery.lastClickedAttemptNumber}</span>
+              </div>
+            )}
+            <div className="res-info-row">
+              <span className="res-info-key">Outcome</span>
+              <span className={`res-badge res-badge--${outcomeClass(liveOutcome)}`}>
+                {OUTCOME_LABEL[liveOutcome] || liveOutcome}
+              </span>
+            </div>
+          </div>
+        </div>
 
       </div>
     </div>
@@ -380,7 +368,7 @@ function CartDetail({ item }) {
 // MAIN PAGE
 // ============================================
 
-export default function RecoveryEmailSendPage() {
+export default function RecoveryEmailMonitorPage() {
   const dispatch = useDispatch();
 
   const sendList   = useSelector(selectSendList);
@@ -399,7 +387,7 @@ export default function RecoveryEmailSendPage() {
     outcome: 'all',
     sortBy:  'priority',
     search:  '',
-    hours:   720,
+    hours:   8760,
   });
 
   const [searchInput, setSearchInput] = useState('');
@@ -425,53 +413,30 @@ export default function RecoveryEmailSendPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
+  // Clear selection when list changes
+  useEffect(() => {
+    setSelectedItem(null);
+  }, [filters.outcome, filters.page]);
+
   const handleRefresh = () => {
     setRefreshing(true);
-    setIsFirstLoad(false);
     load();
   };
 
-  const setPage = (page) => setFilters((f) => ({ ...f, page }));
+  const setPage = (p) => setFilters((f) => ({ ...f, page: p }));
 
-  // ── KPI strip ─────────────────────────────────────────────────────────────
-  // All counts come from the global summary aggregation in the service —
-  // they reflect the full dataset, not just the current page.
   const kpis = [
-    {
-      label: 'Total matching',
-      value: fmt.number(summary.totalMatchingCarts),
-      color: 'coral',
-    },
-    {
-      label: 'Not contacted',
-      value: fmt.number(summary.neverContacted),
-      color: 'amber',
-      tip:   'Abandoned carts with no recovery email sent yet',
-    },
-    {
-      label: 'Awaiting click',
-      value: fmt.number(summary.awaitingResponse),
-      color: 'blue',
-      tip:   'Email sent — user has not clicked the recovery link yet',
-    },
-    {
-      label: 'Clicked',
-      value: fmt.number(summary.clicked),
-      color: 'indigo',
-      tip:   'User clicked the recovery link but has not completed checkout',
-    },
-    {
-      label: 'Re-abandoned',
-      value: fmt.number(summary.reAbandoned),
-      color: 'purple',
-      tip:   'Recovered but abandoned again',
-    },
-    {
-      label: 'Completed',
-      value: fmt.number(summary.completed),
-      color: 'green',
-      tip:   'Checkout completed — order placed',
-    },
+    { label: 'Total',         value: fmt.number(summary.totalMatchingCarts), color: 'coral'  },
+    { label: 'Not contacted', value: fmt.number(summary.neverContacted),     color: 'amber',
+      tip: 'Abandoned carts not yet emailed' },
+    { label: 'Awaiting click',value: fmt.number(summary.awaitingResponse),   color: 'blue',
+      tip: 'Email sent, user has not clicked yet' },
+    { label: 'Clicked',       value: fmt.number(summary.clicked),            color: 'indigo',
+      tip: 'Clicked recovery link, not yet converted' },
+    { label: 'Re-abandoned',  value: fmt.number(summary.reAbandoned),        color: 'purple',
+      tip: 'Returned via link then left again' },
+    { label: 'Completed',     value: fmt.number(summary.completed),          color: 'green',
+      tip: 'Order placed after recovery' },
   ];
 
   return (
@@ -493,7 +458,7 @@ export default function RecoveryEmailSendPage() {
                 <div className="res-hd-eyebrow">Recovery Emails</div>
                 <h1 className="res-hd-title">Recovery Email Monitor</h1>
                 <p className="res-hd-sub">
-                  Monitor abandoned carts and their recovery email status — sent automatically by cron
+                  Read-only view of abandoned carts and their recovery email status
                 </p>
               </div>
             </div>
@@ -507,12 +472,16 @@ export default function RecoveryEmailSendPage() {
             </button>
           </div>
 
-          {/* KPI strip — 6 cards, counts are global (not page-scoped) */}
+          {/* KPI strip */}
           <div className="res-kpi-strip">
             {isFirstLoad
               ? Array.from({ length: 6 }).map((_, i) => <KpiSkel key={i} />)
               : kpis.map((k) => (
-                <div key={k.label} className={`res-kpi res-kpi--${k.color}`} title={k.tip || ''}>
+                <div
+                  key={k.label}
+                  className={`res-kpi res-kpi--${k.color}`}
+                  title={k.tip || ''}
+                >
                   <div className="res-kpi-label">{k.label}</div>
                   <div className="res-kpi-value">{k.value}</div>
                 </div>
@@ -525,7 +494,7 @@ export default function RecoveryEmailSendPage() {
             </div>
           )}
 
-          {/* Filter bar */}
+          {/* Filters */}
           <div className="res-filters">
             <input
               className="res-search"
@@ -573,15 +542,15 @@ export default function RecoveryEmailSendPage() {
                     ? (
                       <div className="res-empty">
                         <MoneyOff style={{ fontSize: 38, color: '#9CA3AF' }} />
-                        No abandoned carts match your filters
+                        <span>No carts match this filter</span>
                       </div>
                     )
                     : sendList.map((listItem) => {
-                      const ch        = listItem.checkout;
-                      const rec       = listItem.recovery;
-                      const user      = ch.user || {};
-                      const priority  = getPriority(ch.priority || 0);
-                      const outcome   = rec?.outcome || 'none';
+                      const ch         = listItem.checkout;
+                      const rec        = listItem.recovery;
+                      const user       = ch.user || {};
+                      const priority   = getPriority(ch.priority || 0);
+                      const outcome    = rec?.outcome || 'none';
                       const isSelected = selectedItem?.checkout._id === ch._id;
 
                       return (
@@ -620,6 +589,7 @@ export default function RecoveryEmailSendPage() {
                     })}
               </div>
 
+              {/* Pagination */}
               {pagination.totalPages > 1 && (
                 <div className="res-pagination">
                   <button
@@ -634,7 +604,9 @@ export default function RecoveryEmailSendPage() {
                     onClick={() => setPage(filters.page - 1)}
                     aria-label="Previous page"
                   >‹</button>
-                  <span className="res-pg-info">{filters.page} / {pagination.totalPages}</span>
+                  <span className="res-pg-info">
+                    {filters.page} / {pagination.totalPages}
+                  </span>
                   <button
                     className="res-pg-btn"
                     disabled={!pagination.hasNextPage}
@@ -658,7 +630,7 @@ export default function RecoveryEmailSendPage() {
               <div className="res-right">
                 <div className="res-empty-panel">
                   <Email style={{ fontSize: 44, color: '#9CA3AF' }} />
-                  <p>Select a cart from the list to view abandonment details and email history.</p>
+                  <p>Select a cart to view its abandonment details and email history.</p>
                 </div>
               </div>
             )}

@@ -36,15 +36,32 @@ export const fetchSendList = createAsyncThunk(
   'recovery/fetchSendList',
   async (params = {}, { rejectWithValue, signal }) => {
     try {
+      // Map frontend chip keys to backend outcome values.
+      // 'none' = never contacted (no record OR outcome: pending).
+      // 'converted' = both email-attributed and organic recoveries.
+      // All others map 1-to-1.
+      const OUTCOME_MAP = {
+        all:          null,
+        none:         'none',
+        sent:         'sent',
+        clicked:      'clicked',
+        re_abandoned: 're_abandoned',
+        exhausted:    'exhausted',
+        converted:    'converted',
+      };
+
+      const mappedOutcome = params.outcome ? OUTCOME_MAP[params.outcome] ?? null : null;
+
       const query = new URLSearchParams({
         page:     params.page     || 1,
         limit:    params.limit    || 20,
         sortBy:   params.sortBy   || 'priority',
         minValue: params.minValue || 0,
-        hours:    params.hours    || 720,
-        ...(params.outcome && params.outcome !== 'all' && { outcome: params.outcome }),
-        ...(params.search  && { search: params.search }),
+        hours:    params.hours    || 8760, // expand to 1 year so old clicked carts show
+        ...(mappedOutcome              && { outcome: mappedOutcome }),
+        ...(params.search              && { search:  params.search  }),
       });
+
       const { data } = await axios.get(
         `${API}/recovery/send-list?${query}`,
         { withCredentials: true, signal }

@@ -101,7 +101,7 @@ const NAV_GROUPS = [
       { path: '/admin/refund-analytics',   icon: CurrencyExchange,     label: 'Refund Analytics',    color: '#14B8A6' },
       { path: '/admin/return-analytics',   icon: ReplayCircleFilled,   label: 'Return Analytics',    color: '#EF4444' },
       { path: '/admin/discount-analytics', icon: Insights,             label: 'Discount ROI',        color: '#e563f1' },
-      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,  label: 'Recovery Email Analytics', color: '#fb7185' },
+      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,  label: 'Recovery Email', color: '#fb7185' },
     ],
   },
   {
@@ -124,7 +124,7 @@ const NAV_GROUPS = [
       { path: '/admin/refunds',         icon: CurrencyExchange,   label: 'Refunds',         color: '#14B8A6' },
       { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',         color: '#EF4444' },
       { path: '/admin/reviews',         icon: StarOutline,        label: 'Reviews',         color: '#F59E0B' },
-      { path: '/admin/recovery-emails', icon: MarkEmailRead,      label: 'Recovery Emails', color: '#FF6B6B' },
+      { path: '/admin/recovery-emails', icon: MarkEmailRead,      label: 'Recovery Email Monitor', color: '#FF6B6B' },
     ],
   },
 ];
