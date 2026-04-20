@@ -53,7 +53,7 @@ export const getSendListHandler = handleAsyncError(async (req, res, next) => {
     sortBy   = 'priority',
     minValue = 0,
     search,
-    hours    = 720,
+    hours    = 8760, // FIX: was 720 (30 days) — now 1 year so all records show
   } = req.query;
 
   const VALID_SORTS = ['priority', 'value', 'abandonedAt', 'lastSentAt'];
