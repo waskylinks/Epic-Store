@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
-import { Email, ArrowBack, Refresh, Warning, MoneyOff } from '@mui/icons-material';
+import { Email, ArrowBack, Refresh, Warning, MoneyOff, TrendingUp, Inbox } from '@mui/icons-material';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import PageTitle from '../components/PageTitle';
@@ -31,8 +31,8 @@ const OUTCOME_CHIPS = [
   { key: 're_abandoned', label: 'Re-abandoned' },
   { key: 'exhausted',    label: 'Max reached' },
   { key: 'expired',      label: 'Expired' },
-  { key: 'converted',    label: 'Converted' },   // email-attributed
-  { key: 'organic',      label: 'Organic' },     // converted without link
+  { key: 'converted',    label: 'Converted' },
+  { key: 'organic',      label: 'Organic' },
   { key: 'failed',       label: 'Failed' },
 ];
 
@@ -48,8 +48,8 @@ const OUTCOME_LABEL = {
   pending:      'Not contacted',
   sent:         'Awaiting click',
   clicked:      'Clicked',
-  converted:    'Converted',      // email-attributed
-  organic:      'Organic',        // converted without link — NOT "Completed"
+  converted:    'Converted',
+  organic:      'Organic',
   re_abandoned: 'Re-abandoned',
   exhausted:    'Max reached',
   expired:      'Expired',
@@ -72,13 +72,20 @@ const fmt = {
       hour: '2-digit', minute: '2-digit',
     }) : '—',
   hours: (h) =>
-    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${Math.floor(h)}h`,
+    h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : h < 24 ? `${Math.floor(h)}h` : `${Math.floor(h / 24)}d`,
 };
 
 const getFullName = (user) =>
   user
     ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Guest'
     : 'Guest';
+
+const getInitials = (user) => {
+  if (!user) return 'G';
+  const first = user.firstName?.[0] || '';
+  const last  = user.lastName?.[0]  || '';
+  return (first + last).toUpperCase() || (user.email?.[0] || 'G').toUpperCase();
+};
 
 const getPriority = (score) => {
   if (score >= 70) return { label: 'High',   cls: 'high' };
@@ -106,8 +113,9 @@ const outcomeClass = (outcome) => ({
 function KpiSkel() {
   return (
     <div className="res-kpi-skel">
-      <div className="res-skel" style={{ width: '60%', height: 11, marginBottom: 10 }} />
-      <div className="res-skel" style={{ width: '45%', height: 26 }} />
+      <div className="res-skel" style={{ width: '60%', height: 10, marginBottom: 10 }} />
+      <div className="res-skel" style={{ width: '45%', height: 28 }} />
+      <div className="res-skel" style={{ width: '70%', height: 9, marginTop: 10 }} />
     </div>
   );
 }
@@ -116,16 +124,33 @@ function CartItemSkeleton() {
   return (
     <div className="res-cart-item">
       <div className="res-cart-item-top">
+        <div className="res-cart-avatar res-skel" style={{ flexShrink: 0 }} />
         <div style={{ flex: 1 }}>
           <div className="res-skel" style={{ width: '65%', height: 13, marginBottom: 6 }} />
           <div className="res-skel" style={{ width: '80%', height: 11 }} />
         </div>
-        <div className="res-skel" style={{ width: 52, height: 16 }} />
+        <div className="res-skel" style={{ width: 56, height: 18 }} />
       </div>
-      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-        <div className="res-skel" style={{ width: 60, height: 18, borderRadius: 999 }} />
-        <div className="res-skel" style={{ width: 44, height: 18, borderRadius: 999 }} />
+      <div style={{ display: 'flex', gap: 6, marginTop: 10 }}>
+        <div className="res-skel" style={{ width: 60, height: 20, borderRadius: 999 }} />
+        <div className="res-skel" style={{ width: 80, height: 20, borderRadius: 999 }} />
+        <div className="res-skel" style={{ width: 44, height: 20, borderRadius: 999 }} />
       </div>
+    </div>
+  );
+}
+
+// ── Attempt progress indicator ───────────────────────────────
+
+function AttemptDots({ confirmed, max }) {
+  return (
+    <div className="res-attempt-dots" title={`${confirmed} of ${max} emails sent`}>
+      {Array.from({ length: max }).map((_, i) => (
+        <span
+          key={i}
+          className={`res-attempt-dot${i < confirmed ? ' res-attempt-dot--filled' : ''}`}
+        />
+      ))}
     </div>
   );
 }
@@ -148,13 +173,17 @@ function CartDetail({ item }) {
   const items   = checkout.items       || [];
 
   const liveOutcome = status?.outcome || recovery?.outcome || 'none';
+  const initials    = getInitials(user);
 
   return (
     <div className="res-right">
       <div className="res-detail-hd">
-        <div>
-          <div className="res-detail-hd-name">{getFullName(user)}</div>
-          <div className="res-detail-hd-email">{user.email || checkout.email || '—'}</div>
+        <div className="res-detail-hd-left">
+          <div className="res-detail-avatar">{initials}</div>
+          <div>
+            <div className="res-detail-hd-name">{getFullName(user)}</div>
+            <div className="res-detail-hd-email">{user.email || checkout.email || '—'}</div>
+          </div>
         </div>
         <span className={`res-badge res-badge--${outcomeClass(liveOutcome)}`}>
           {OUTCOME_LABEL[liveOutcome] || liveOutcome}
@@ -164,12 +193,12 @@ function CartDetail({ item }) {
       <div className="res-detail-body">
 
         {/* Abandonment info */}
-        <div>
+        <section>
           <div className="res-section-label">Abandonment details</div>
           <div className="res-info-grid">
             <div className="res-info-row">
               <span className="res-info-key">First abandoned step</span>
-              <span className="res-info-val" style={{ color: '#dc2626' }}>
+              <span className="res-info-val res-info-val--danger">
                 {abn.firstAbandonedAtStep?.replace(/_/g, ' ') || '—'}
               </span>
             </div>
@@ -179,7 +208,7 @@ function CartDetail({ item }) {
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Hours since abandonment</span>
-              <span className="res-info-val">{fmt.hours(checkout.hoursSinceAbandoned)}</span>
+              <span className="res-info-val">{fmt.hours(checkout.hoursSinceAbandoned)} ago</span>
             </div>
             <div className="res-info-row">
               <span className="res-info-key">Re-abandoned</span>
@@ -188,10 +217,10 @@ function CartDetail({ item }) {
               </span>
             </div>
           </div>
-        </div>
+        </section>
 
         {/* Cart items */}
-        <div>
+        <section>
           <div className="res-section-label">Cart items ({items.length})</div>
           <table className="res-items-table">
             <thead>
@@ -226,40 +255,42 @@ function CartDetail({ item }) {
               })}
             </tbody>
           </table>
-        </div>
+        </section>
 
         {/* Pricing */}
-        <div>
-          <div className="res-section-label">Pricing</div>
-          <div className="res-pricing-row">
-            <span>Subtotal</span>
-            <span>{fmt.currency(pricing.itemPrice)}</span>
-          </div>
-          {pricing.discountAmount > 0 && (
+        <section>
+          <div className="res-section-label">Pricing breakdown</div>
+          <div className="res-pricing-rows">
             <div className="res-pricing-row">
-              <span>Discount{pricing.discountCode ? ` (${pricing.discountCode})` : ''}</span>
-              <span className="res-pricing-discount">−{fmt.currency(pricing.discountAmount)}</span>
+              <span>Subtotal</span>
+              <span>{fmt.currency(pricing.itemPrice)}</span>
             </div>
-          )}
-          <div className="res-pricing-row">
-            <span>Tax</span>
-            <span>{fmt.currency(pricing.taxPrice)}</span>
+            {pricing.discountAmount > 0 && (
+              <div className="res-pricing-row">
+                <span>Discount{pricing.discountCode ? ` (${pricing.discountCode})` : ''}</span>
+                <span className="res-pricing-discount">−{fmt.currency(pricing.discountAmount)}</span>
+              </div>
+            )}
+            <div className="res-pricing-row">
+              <span>Tax</span>
+              <span>{fmt.currency(pricing.taxPrice)}</span>
+            </div>
+            <div className="res-pricing-row">
+              <span>Shipping</span>
+              <span style={{ color: pricing.shippingPrice === 0 ? '#16a34a' : undefined }}>
+                {pricing.shippingPrice === 0 ? 'Free' : fmt.currency(pricing.shippingPrice)}
+              </span>
+            </div>
+            <div className="res-pricing-row res-pricing-row--total">
+              <span>Total</span>
+              <span className="res-pricing-total-val">{fmt.currency(pricing.totalPrice)}</span>
+            </div>
           </div>
-          <div className="res-pricing-row">
-            <span>Shipping</span>
-            <span style={{ color: pricing.shippingPrice === 0 ? '#16a34a' : undefined }}>
-              {pricing.shippingPrice === 0 ? 'Free' : fmt.currency(pricing.shippingPrice)}
-            </span>
-          </div>
-          <div className="res-pricing-row res-pricing-row--total">
-            <span>Total</span>
-            <span className="res-pricing-total-val">{fmt.currency(pricing.totalPrice)}</span>
-          </div>
-        </div>
+        </section>
 
         {/* Email attempt history */}
         {status?.attempts?.length > 0 && (
-          <div>
+          <section>
             <div className="res-section-label">
               Email history ({status.attempts.length} attempt{status.attempts.length !== 1 ? 's' : ''})
             </div>
@@ -274,16 +305,16 @@ function CartDetail({ item }) {
                   ].filter(Boolean).join(' ')}
                 >
                   <div className="res-attempt-hd">
-                    <span className="res-attempt-num">Attempt #{attempt.attemptNumber}</span>
+                    <div className="res-attempt-hd-left">
+                      <span className="res-attempt-num">Attempt #{attempt.attemptNumber}</span>
+                      <span className={`res-attempt-status-dot res-attempt-status-dot--${attempt.status}`} />
+                      <span className="res-attempt-status-label">{attempt.status}</span>
+                    </div>
                     <span className="res-attempt-date">
                       {fmt.date(attempt.sentAt || attempt.initiatedAt)}
                     </span>
                   </div>
                   <div className="res-attempt-rows">
-                    <div className="res-attempt-row">
-                      <span className="res-attempt-key">Status</span>
-                      <span>{attempt.status}</span>
-                    </div>
                     {attempt.linkClickedAt && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Clicked</span>
@@ -293,7 +324,7 @@ function CartDetail({ item }) {
                     {attempt.clickedAfterExpiry && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Note</span>
-                        <span style={{ color: '#d97706' }}>Clicked after token expired — cart not restored</span>
+                        <span className="res-attempt-warn">Clicked after token expired — cart not restored</span>
                       </div>
                     )}
                     {attempt.checkoutStepAtClick && (
@@ -305,9 +336,7 @@ function CartDetail({ item }) {
                     {attempt.tokenExpiresAt && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Token expires</span>
-                        <span style={{
-                          color: new Date(attempt.tokenExpiresAt) < new Date() ? '#6B7280' : '#374151',
-                        }}>
+                        <span className={new Date(attempt.tokenExpiresAt) < new Date() ? 'res-attempt-muted' : ''}>
                           {fmt.date(attempt.tokenExpiresAt)}
                           {new Date(attempt.tokenExpiresAt) < new Date() ? ' · expired' : ''}
                         </span>
@@ -316,56 +345,59 @@ function CartDetail({ item }) {
                     {attempt.tokenExpiredUnclicked && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Token</span>
-                        <span style={{ color: '#6B7280' }}>Expired without click</span>
+                        <span className="res-attempt-muted">Expired without click</span>
                       </div>
                     )}
                     {attempt.failReason && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Error</span>
-                        <span style={{ color: '#dc2626' }}>{attempt.failReason}</span>
+                        <span className="res-attempt-err">{attempt.failReason}</span>
                       </div>
                     )}
                   </div>
                 </div>
               ))}
             </div>
-          </div>
+          </section>
         )}
 
         {/* Recovery summary */}
-        <div className="res-send-block">
-          <div className="res-send-block-label">Recovery summary</div>
-          <div className="res-info-grid">
-            <div className="res-info-row">
-              <span className="res-info-key">Attempts sent</span>
-              <span className="res-info-val">
+        <section>
+          <div className="res-send-block">
+            <div className="res-send-block-label">Recovery summary</div>
+            <div className="res-recovery-progress">
+              <span className="res-recovery-progress-label">Email attempts</span>
+              <AttemptDots confirmed={recovery?.confirmedAttempts || 0} max={MAX_ATTEMPTS} />
+              <span className="res-recovery-progress-count">
                 {recovery?.confirmedAttempts || 0} / {MAX_ATTEMPTS}
               </span>
             </div>
-            <div className="res-info-row">
-              <span className="res-info-key">Total link clicks</span>
-              <span className="res-info-val">{recovery?.totalLinkClicks || 0}</span>
-            </div>
-            {recovery?.lastSentAt && (
+            <div className="res-info-grid" style={{ marginTop: 14 }}>
               <div className="res-info-row">
-                <span className="res-info-key">Last sent</span>
-                <span className="res-info-val">{fmt.date(recovery.lastSentAt)}</span>
+                <span className="res-info-key">Total link clicks</span>
+                <span className="res-info-val">{recovery?.totalLinkClicks || 0}</span>
               </div>
-            )}
-            {recovery?.lastClickedAttemptNumber && (
+              {recovery?.lastSentAt && (
+                <div className="res-info-row">
+                  <span className="res-info-key">Last sent</span>
+                  <span className="res-info-val">{fmt.date(recovery.lastSentAt)}</span>
+                </div>
+              )}
+              {recovery?.lastClickedAttemptNumber && (
+                <div className="res-info-row">
+                  <span className="res-info-key">Clicked on attempt</span>
+                  <span className="res-info-val">#{recovery.lastClickedAttemptNumber}</span>
+                </div>
+              )}
               <div className="res-info-row">
-                <span className="res-info-key">Clicked on attempt</span>
-                <span className="res-info-val">#{recovery.lastClickedAttemptNumber}</span>
+                <span className="res-info-key">Outcome</span>
+                <span className={`res-badge res-badge--${outcomeClass(liveOutcome)}`}>
+                  {OUTCOME_LABEL[liveOutcome] || liveOutcome}
+                </span>
               </div>
-            )}
-            <div className="res-info-row">
-              <span className="res-info-key">Outcome</span>
-              <span className={`res-badge res-badge--${outcomeClass(liveOutcome)}`}>
-                {OUTCOME_LABEL[liveOutcome] || liveOutcome}
-              </span>
             </div>
           </div>
-        </div>
+        </section>
 
       </div>
     </div>
@@ -420,66 +452,85 @@ export default function RecoveryEmailMonitorPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  useEffect(() => {
+  // FIX: Derive selectedItem reset from filter state instead of calling setState
+  // inside an effect — avoids the cascading-render ESLint warning.
+  const prevOutcomeRef = useRef(filters.outcome);
+  const prevPageRef    = useRef(filters.page);
+
+  const handleOutcomeChange = (outcome) => {
     setSelectedItem(null);
-  }, [filters.outcome, filters.page]);
+    setFilters((f) => ({ ...f, outcome, page: 1 }));
+    prevOutcomeRef.current = outcome;
+  };
+
+  const setPage = (p) => {
+    setSelectedItem(null);
+    setFilters((f) => ({ ...f, page: p }));
+    prevPageRef.current = p;
+  };
 
   const handleRefresh = () => {
     setRefreshing(true);
     load();
   };
 
-  const setPage = (p) => setFilters((f) => ({ ...f, page: p }));
-
-  // KPIs — totalCampaigns is the true total of all recovery records
+  // KPIs
   const kpis = [
     {
       label: 'Total campaigns',
       value: fmt.number(summary.totalCampaigns),
       color: 'coral',
       tip:   'All recovery email campaigns ever created',
+      icon:  <Email style={{ fontSize: 16 }} />,
     },
     {
       label: 'Not contacted',
       value: fmt.number(summary.neverContacted),
       color: 'amber',
       tip:   'Records created but no email sent yet',
+      icon:  <Inbox style={{ fontSize: 16 }} />,
     },
     {
       label: 'Awaiting click',
       value: fmt.number(summary.awaitingResponse),
       color: 'blue',
       tip:   'Email sent — user has not clicked yet',
+      icon:  <Email style={{ fontSize: 16 }} />,
     },
     {
       label: 'Clicked',
       value: fmt.number(summary.clicked),
       color: 'indigo',
       tip:   'Clicked recovery link, not yet converted',
+      icon:  <TrendingUp style={{ fontSize: 16 }} />,
     },
     {
       label: 'Converted',
       value: fmt.number(summary.converted),
       color: 'green',
       tip:   'Completed checkout after clicking recovery email',
+      icon:  <TrendingUp style={{ fontSize: 16 }} />,
     },
     {
       label: 'Organic',
       value: fmt.number(summary.organic),
       color: 'teal',
       tip:   'Converted without clicking the recovery link',
+      icon:  <TrendingUp style={{ fontSize: 16 }} />,
     },
     {
       label: 'Re-abandoned',
       value: fmt.number(summary.reAbandoned),
       color: 'purple',
       tip:   'Returned via link then left again',
+      icon:  <Warning style={{ fontSize: 16 }} />,
     },
     {
       label: 'Expired',
       value: fmt.number(summary.expired),
       color: 'gray',
-      tip:   'All tokens elapsed, user never clicked — true terminal',
+      tip:   'All tokens elapsed, user never clicked',
+      icon:  <MoneyOff style={{ fontSize: 16 }} />,
     },
   ];
 
@@ -491,13 +542,15 @@ export default function RecoveryEmailMonitorPage() {
       <div className="res-page">
         <div className="res-body">
 
-          <Link to="/admin/dashboard" className="res-back">
-            <ArrowBack style={{ fontSize: 15 }} /> Dashboard
-          </Link>
+          <div className="res-topbar">
+            <Link to="/admin/dashboard" className="res-back">
+              <ArrowBack style={{ fontSize: 14 }} /> Dashboard
+            </Link>
+          </div>
 
           <div className="res-hd">
             <div className="res-hd-left">
-              <div className="res-hd-icon"><Email style={{ fontSize: 24 }} /></div>
+              <div className="res-hd-icon"><Email style={{ fontSize: 22 }} /></div>
               <div>
                 <div className="res-hd-eyebrow">Recovery Emails</div>
                 <h1 className="res-hd-title">Recovery Email Monitor</h1>
@@ -510,9 +563,10 @@ export default function RecoveryEmailMonitorPage() {
               className={`res-icon-btn${refreshing ? ' res-icon-btn--spin' : ''}`}
               onClick={handleRefresh}
               disabled={refreshing}
-              title="Refresh"
+              title="Refresh data"
+              aria-label="Refresh"
             >
-              <Refresh style={{ fontSize: 18 }} />
+              <Refresh style={{ fontSize: 17 }} />
             </button>
           </div>
 
@@ -526,7 +580,10 @@ export default function RecoveryEmailMonitorPage() {
                   className={`res-kpi res-kpi--${k.color}`}
                   title={k.tip || ''}
                 >
-                  <div className="res-kpi-label">{k.label}</div>
+                  <div className="res-kpi-top">
+                    <span className="res-kpi-label">{k.label}</span>
+                    <span className="res-kpi-icon">{k.icon}</span>
+                  </div>
                   <div className="res-kpi-value">{k.value}</div>
                 </div>
               ))}
@@ -534,34 +591,39 @@ export default function RecoveryEmailMonitorPage() {
 
           {listError && !loading && (
             <div className="res-error-bar">
-              <Warning style={{ fontSize: 16 }} /> {listError}
+              <Warning style={{ fontSize: 15 }} /> {listError}
             </div>
           )}
 
           {/* Filters */}
           <div className="res-filters">
-            <input
-              className="res-search"
-              type="text"
-              placeholder="Search by email…"
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
-            <select
-              className="res-select"
-              value={filters.sortBy}
-              onChange={(e) => setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }))}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-            <div className="res-outcome-chips">
+            <div className="res-filters-top">
+              <input
+                className="res-search"
+                type="text"
+                placeholder="Search by email or name…"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                aria-label="Search campaigns"
+              />
+              <select
+                className="res-select"
+                value={filters.sortBy}
+                onChange={(e) => setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }))}
+                aria-label="Sort by"
+              >
+                {SORT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="res-outcome-chips" role="group" aria-label="Filter by outcome">
               {OUTCOME_CHIPS.map((chip) => (
                 <button
                   key={chip.key}
                   className={`res-chip${filters.outcome === chip.key ? ' res-chip--active' : ''}`}
-                  onClick={() => setFilters((f) => ({ ...f, outcome: chip.key, page: 1 }))}
+                  onClick={() => handleOutcomeChange(chip.key)}
+                  aria-pressed={filters.outcome === chip.key}
                 >
                   {chip.label}
                 </button>
@@ -577,13 +639,13 @@ export default function RecoveryEmailMonitorPage() {
                 <span className="res-left-count">{fmt.number(pagination.total)}</span>
               </div>
 
-              <div className="res-cart-list">
+              <div className="res-cart-list" role="list" aria-label="Campaign list">
                 {isFirstLoad || (loading && sendList.length === 0)
                   ? Array.from({ length: 8 }).map((_, i) => <CartItemSkeleton key={i} />)
                   : sendList.length === 0
                     ? (
-                      <div className="res-empty">
-                        <MoneyOff style={{ fontSize: 38, color: '#9CA3AF' }} />
+                      <div className="res-empty" role="status">
+                        <MoneyOff style={{ fontSize: 36, color: '#9CA3AF' }} />
                         <span>No campaigns match this filter</span>
                       </div>
                     )
@@ -594,14 +656,20 @@ export default function RecoveryEmailMonitorPage() {
                       const priority   = getPriority(ch.priority || 0);
                       const outcome    = rec?.outcome || 'none';
                       const isSelected = selectedItem?.checkout._id === ch._id;
+                      const initials   = getInitials(user);
 
                       return (
                         <div
                           key={ch._id}
                           className={`res-cart-item${isSelected ? ' res-cart-item--selected' : ''}`}
                           onClick={() => setSelectedItem(listItem)}
+                          role="listitem"
+                          tabIndex={0}
+                          onKeyDown={(e) => e.key === 'Enter' && setSelectedItem(listItem)}
+                          aria-selected={isSelected}
                         >
                           <div className="res-cart-item-top">
+                            <div className="res-cart-avatar" aria-hidden="true">{initials}</div>
                             <div className="res-cart-item-info">
                               <div className="res-cart-name">{getFullName(user)}</div>
                               <div className="res-cart-email">{user.email || ch.email}</div>
@@ -618,9 +686,7 @@ export default function RecoveryEmailMonitorPage() {
                               {OUTCOME_LABEL[outcome] || outcome}
                             </span>
                             {rec?.confirmedAttempts > 0 && (
-                              <span className="res-cart-hours">
-                                {rec.confirmedAttempts}/{MAX_ATTEMPTS} sent
-                              </span>
+                              <AttemptDots confirmed={rec.confirmedAttempts} max={MAX_ATTEMPTS} />
                             )}
                             <span className="res-cart-hours">
                               {fmt.hours(ch.hoursSinceAbandoned)} ago
@@ -632,7 +698,7 @@ export default function RecoveryEmailMonitorPage() {
               </div>
 
               {pagination.totalPages > 1 && (
-                <div className="res-pagination">
+                <div className="res-pagination" role="navigation" aria-label="Pagination">
                   <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(1)} aria-label="First page">«</button>
                   <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(filters.page - 1)} aria-label="Previous page">‹</button>
                   <span className="res-pg-info">{filters.page} / {pagination.totalPages}</span>
@@ -647,8 +713,13 @@ export default function RecoveryEmailMonitorPage() {
             ) : (
               <div className="res-right">
                 <div className="res-empty-panel">
-                  <Email style={{ fontSize: 44, color: '#9CA3AF' }} />
-                  <p>Select a campaign to view its details and email attempt history.</p>
+                  <div className="res-empty-panel-icon">
+                    <Email style={{ fontSize: 32, color: '#FF6B6B' }} />
+                  </div>
+                  <p className="res-empty-panel-title">No campaign selected</p>
+                  <p className="res-empty-panel-sub">
+                    Click any campaign on the left to view its details and email attempt history.
+                  </p>
                 </div>
               </div>
             )}
