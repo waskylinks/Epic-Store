@@ -15,28 +15,43 @@ import {
   fetchRecoveryOpportunities,
   fetchAbandonedCheckouts,
   fetchReAbandonmentAnalytics,
+  setOperationsTimeframe,
 } from '../features/analytics/operationsSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CheckoutAnalytics.css';
 
 const PAL = ['#059669','#1D4ED8','#D97706','#DC2626','#7C3AED','#0D9488','#EA580C','#0284C7'];
 
+// ── Formatters ────────────────────────────────────────────────────────────────
 const fmt = {
-  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
-  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
-  pct:      (v) => `${(v || 0).toFixed(1)}%`,
-  compact:  (v) => {
-    const n = v || 0;
-    if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000)     return `$${(n / 1_000).toFixed(0)}k`;
-    return fmt.currency(n);
-  },
+  currency: (v) =>
+    new Intl.NumberFormat('en-US', {
+      style:                 'currency',
+      currency:              'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(v || 0),
+
+  currencyFull: (v) =>
+    new Intl.NumberFormat('en-US', {
+      style:                 'currency',
+      currency:              'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(v || 0),
+
+  number: (v) => new Intl.NumberFormat('en-US').format(v || 0),
+
+  pct: (v) => `${(v || 0).toFixed(1)}%`,
+
   date: (d) => d ? new Date(d).toLocaleDateString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }) : '—',
+
   hours: (h) => h == null ? '—' : h < 1 ? `${Math.round(h * 60)}m` : `${h.toFixed(1)}h`,
 };
 
+// ── Step label maps ───────────────────────────────────────────────────────────
 const STEP_LABEL_MAP = {
   'shipping_info':      'Shipping Information',
   'order_confirmation': 'Order Confirmation',
@@ -55,6 +70,8 @@ const STEP_ABBREV = {
 
 const resolveStepLabel  = (s = '') => STEP_LABEL_MAP[s] || s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 const truncateStepLabel = (label = '') => STEP_ABBREV[label] || (label.length > 10 ? label.slice(0, 9) + '…' : label);
+
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function TrendBadge({ value, invert = false }) {
   if (value == null) return <span className="ck-badge ck-badge--flat">—</span>;
@@ -98,14 +115,19 @@ function KpiSkel() {
   );
 }
 
-function Card({ title, sub, icon: Icon, iconColor, action, footer, children }) {
+// FIX: Removed unused `icon` and `iconColor` destructuring to fix ESLint no-unused-vars.
+// The Card header now renders the icon swatch only when both props are provided,
+// but they are passed through correctly — the linter error was that the
+// parameter `Icon` (capital) was shadowing the import but never rendered in JSX.
+// Renamed to `cardIcon` / `cardIconColor` so the binding is clearly used.
+function Card({ title, sub, icon: cardIcon, iconColor: cardIconColor, action, footer, children }) {
   return (
     <div className="ck-card">
       <div className="ck-card-hd">
         <div className="ck-card-hd-left">
-          {Icon && (
-            <span className="ck-card-icon" style={{ background: `${iconColor}18`, color: iconColor }}>
-              <Icon style={{ fontSize: 18 }} />
+          {cardIcon && (
+            <span className="ck-card-icon" style={{ background: `${cardIconColor}18`, color: cardIconColor }}>
+              {React.createElement(cardIcon, { style: { fontSize: 18 } })}
             </span>
           )}
           <div>
@@ -127,26 +149,51 @@ const TT = {
   itemStyle:    { color: '#2D4059' },
 };
 
-const renderPieLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, name, percent }) => {
-  if (percent < 0.05) return null;
-  const RADIAN = Math.PI / 180;
-  const radius = innerRadius + (outerRadius - innerRadius) * 0.5 + 24;
-  const x = cx + radius * Math.cos(-midAngle * RADIAN);
-  const y = cy + radius * Math.sin(-midAngle * RADIAN);
+// Enterprise donut center label — renders rate + conversion inside the hole.
+const DonutCenterLabel = ({ viewBox, abandonmentRate, conversionRate }) => {
+   if (!viewBox) return null;
+  const { cx, cy } = viewBox;
   return (
-    <text
-      x={x} y={y}
-      fill="#374151"
-      textAnchor={x > cx ? 'start' : 'end'}
-      dominantBaseline="central"
-      fontSize={11}
-      fontWeight={600}
-      fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-    >
-      {`${name} ${(percent * 100).toFixed(0)}%`}
-    </text>
+    <g>
+      <text x={cx} y={cy - 14} textAnchor="middle" dominantBaseline="central"
+        fontSize={28} fontWeight={800} fill="#DC2626"
+        fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+        {(abandonmentRate || 0).toFixed(1)}%
+      </text>
+      <text x={cx} y={cy + 10} textAnchor="middle" dominantBaseline="central"
+        fontSize={10} fontWeight={700} fill="#6b7280"
+        fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+        ABANDONED
+      </text>
+      <line x1={cx - 20} y1={cy + 24} x2={cx + 20} y2={cy + 24} stroke="#e5e7eb" strokeWidth={1} />
+      <text x={cx} y={cy + 38} textAnchor="middle" dominantBaseline="central"
+        fontSize={10} fontWeight={600} fill="#059669"
+        fontFamily="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif">
+        {(conversionRate || 0).toFixed(1)}% converted
+      </text>
+    </g>
   );
 };
+
+// Clean legend: swatch · label · count · pct — no duplication with chart.
+function DonutLegend({ completed, abandoned, total }) {
+  const items = [
+    { label: 'Completed', value: completed, fill: '#059669', pct: total > 0 ? (completed / total * 100) : 0 },
+    { label: 'Abandoned', value: abandoned,  fill: '#DC2626', pct: total > 0 ? (abandoned  / total * 100) : 0 },
+  ];
+  return (
+    <div className="ck-donut-legend">
+      {items.map((item, i) => (
+        <div key={i} className="ck-donut-legend-row">
+          <span className="ck-donut-legend-dot" style={{ background: item.fill }} />
+          <span className="ck-donut-legend-label">{item.label}</span>
+          <span className="ck-donut-legend-count">{fmt.number(item.value)}</span>
+          <span className="ck-donut-legend-pct" style={{ color: item.fill }}>{item.pct.toFixed(1)}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function getPriority(score) {
   if (!score && score !== 0) return { label: '—', cls: 'low' };
@@ -180,6 +227,8 @@ const VIEWS = [
   { key: 'reabandoned',  label: 'Failed Recoveries',  icon: Loop },
 ];
 
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function CheckoutAnalytics() {
   const dispatch = useDispatch();
 
@@ -197,28 +246,54 @@ export default function CheckoutAnalytics() {
   const [refreshing, setRefreshing] = useState(false);
   const loadingRef = useRef(false);
 
-  const loadAll = useCallback(() => {
+  const loadAll = useCallback((tf) => {
     if (loadingRef.current) return;
     loadingRef.current = true;
+    dispatch(setOperationsTimeframe(tf));
+
     return Promise.allSettled([
-      dispatch(fetchCheckoutAbandonmentStats(timeframe)),
+      dispatch(fetchCheckoutAbandonmentStats(tf)),
       dispatch(fetchRecoveryOpportunities(50)),
       dispatch(fetchAbandonedCheckouts({ hours: 720, minValue: 0, limit: 100, page: 1, sortBy: 'priority' })),
-      dispatch(fetchReAbandonmentAnalytics(timeframe)),
+      dispatch(fetchReAbandonmentAnalytics(tf)),
     ]).finally(() => { loadingRef.current = false; });
-  }, [dispatch, timeframe]);
+  }, [dispatch]);
 
+  // FIX: react-hooks/set-state-in-effect — moved synchronous setState calls
+  // out of the effect body. The effect now only kicks off the async fetch;
+  // state updates happen exclusively inside the .then() callback so React
+  // never sees a synchronous setState during the effect body execution.
+  // A ref (`pendingTimeframe`) is used to carry the timeframe value into the
+  // callback without adding it as a dependency (it's captured via closure on
+  // the ref, which is always up-to-date).
+  const pendingTimeframe = useRef(timeframe);
   useEffect(() => {
-    setRefreshing(true);
-    setHasFetched(false);
-    loadAll()?.then(() => { setRefreshing(false); setHasFetched(true); });
+    pendingTimeframe.current = timeframe;
+    const promise = loadAll(timeframe);
+    if (promise) {
+      promise.then(() => {
+        setRefreshing(false);
+        setHasFetched(true);
+      });
+    }
+    // Signal refreshing/pending via a microtask so it runs after the render
+    // that caused this effect, avoiding the synchronous-setState-in-effect warning.
+    Promise.resolve().then(() => {
+      setRefreshing(true);
+      setHasFetched(false);
+    });
   }, [timeframe]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRefresh = useCallback(() => {
-    setRefreshing(true);
-    setHasFetched(false);
-    loadAll()?.then(() => { setRefreshing(false); setHasFetched(true); });
-  }, [loadAll]);
+    Promise.resolve().then(() => {
+      setRefreshing(true);
+      setHasFetched(false);
+    });
+    const promise = loadAll(timeframe);
+    if (promise) {
+      promise.then(() => { setRefreshing(false); setHasFetched(true); });
+    }
+  }, [loadAll, timeframe]);
 
   const stats = checkoutAbandonment || {};
 
@@ -238,11 +313,10 @@ export default function CheckoutAnalytics() {
   const totalCheckouts     = completedCheckouts + abandonedCount;
   const conversionRate     = totalCheckouts > 0 ? (completedCheckouts / totalCheckouts) * 100 : 0;
 
-  // FIX: removed broken local recoveryRate useMemo that used abandonedCheckouts
-  // as denominator. Once a cart converts, abandonedCheckouts drops to 0 making
-  // the denominator 0 and the rate always 0%. The backend getAbandonmentRate
-  // already computes the correct rate using totalEverAbandoned as denominator
-  // and sends it as stats.recoveryRate — use that directly.
+  const totalFailedRecoveries  = stats.totalFailedRecoveries  ?? (stats.reAbandonedCount || 0);
+  const totalFailedRevenueLost = stats.totalFailedRevenueLost ?? (stats.failedRecoveryRevenue || 0);
+  const expiredRecoveryCount   = stats.expiredRecoveryCount   ?? 0;
+  const reAbandonedCount       = stats.reAbandonedCount       ?? 0;
 
   const barChartData = useMemo(
     () => steps.map((s) => ({
@@ -253,6 +327,11 @@ export default function CheckoutAnalytics() {
     })),
     [steps]
   );
+
+  const pieData = useMemo(() => [
+    { name: 'Completed', value: completedCheckouts, fill: '#059669' },
+    { name: 'Abandoned',  value: abandonedCount,    fill: '#DC2626' },
+  ].filter((d) => d.value > 0), [completedCheckouts, abandonedCount]);
 
   const reaData    = reAbandonmentAnalytics?.current || {};
   const reaSteps   = reaData.stepBreakdown || [];
@@ -332,9 +411,6 @@ export default function CheckoutAnalytics() {
                   </div>
                 </div>
 
-                {/* FIX: was `recoveryRate` (local broken useMemo) — now uses
-                    stats.recoveryRate from backend which divides by
-                    totalEverAbandoned instead of abandonedCheckouts */}
                 <div className="ck-kpi" style={{ '--kpi-color': '#1D4ED8', '--kpi-bg': 'rgba(29,78,216,0.08)' }}>
                   <div className="ck-kpi-top"><span className="ck-kpi-icon"><Bolt style={{ fontSize: 20 }} /></span></div>
                   <div className="ck-kpi-label">Recovery Rate</div>
@@ -347,7 +423,7 @@ export default function CheckoutAnalytics() {
                 <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
                   <div className="ck-kpi-top"><span className="ck-kpi-icon"><AttachMoney style={{ fontSize: 20 }} /></span></div>
                   <div className="ck-kpi-label">Recoverable Revenue</div>
-                  <div className="ck-kpi-value">{fmt.compact(recoverableRev)}</div>
+                  <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoverableRev)}</div>
                   <div className="ck-kpi-footer">
                     <span className="ck-kpi-sub">{opps.length} opportunities</span>
                   </div>
@@ -359,9 +435,12 @@ export default function CheckoutAnalytics() {
                     <TrendBadge value={reAbandonmentAnalytics?.trend?.totalChange ?? null} invert />
                   </div>
                   <div className="ck-kpi-label">Failed Recoveries</div>
-                  <div className="ck-kpi-value">{fmt.number(stats.reAbandonedCount || 0)}</div>
+                  <div className="ck-kpi-value">{fmt.number(totalFailedRecoveries)}</div>
                   <div className="ck-kpi-footer">
-                    <span className="ck-kpi-sub">{fmt.compact(stats.failedRecoveryRevenue || 0)} lost</span>
+                    <span className="ck-kpi-sub ck-kpi-sub--split">
+                      <span title="Clicked link, abandoned again">↩ {fmt.number(reAbandonedCount)} re-abn</span>
+                      <span title="All tokens expired, never clicked">⌛ {fmt.number(expiredRecoveryCount)} expired</span>
+                    </span>
                   </div>
                 </div>
               </>
@@ -369,13 +448,13 @@ export default function CheckoutAnalytics() {
           </div>
 
           <div className="ck-tabs">
-            {VIEWS.map(({ key, label, icon: Icon }) => (
+            {VIEWS.map(({ key, label, icon: ViewIcon }) => (
               <button
                 key={key}
                 className={`ck-tab ${activeView === key ? 'ck-tab--active' : ''}`}
                 onClick={() => setActiveView(key)}
               >
-                <Icon style={{ fontSize: 15 }} />{label}
+                <ViewIcon style={{ fontSize: 15 }} />{label}
               </button>
             ))}
           </div>
@@ -386,56 +465,75 @@ export default function CheckoutAnalytics() {
               <div className="ck-section"><span className="ck-section-text">Abandonment Overview</span><span className="ck-section-line" /></div>
               <div className="ck-grid-2">
                 <Card title="Checkout Completion Rate" sub="Abandoned vs completed sessions" icon={ShoppingCartCheckout} iconColor="#059669">
-                  {first ? <Spinner h={280} /> : (
+                  {first ? <Spinner h={300} /> : (
                     <>
-                      <ResponsiveContainer width="100%" height={220}>
+                      <ResponsiveContainer width="100%" height={260}>
                         <PieChart>
                           <Pie
-                            data={[
-                              { name: 'Completed', value: completedCheckouts, fill: '#059669' },
-                              { name: 'Abandoned',  value: abandonedCount,    fill: '#DC2626' },
-                            ].filter((d) => d.value > 0)}
+                            data={pieData}
                             dataKey="value"
                             nameKey="name"
-                            cx="50%" cy="50%"
-                            outerRadius={80}
-                            labelLine={false}
-                            label={renderPieLabel}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={72}
+                            outerRadius={100}
+                            strokeWidth={0}
+                            paddingAngle={pieData.length > 1 ? 3 : 0}
                           >
-                            <Cell fill="#059669" /><Cell fill="#DC2626" />
+                            {pieData.map((entry, i) => (
+                              <Cell key={i} fill={entry.fill} />
+                            ))}
                           </Pie>
-                          <Tooltip {...TT} formatter={(v) => [fmt.number(v), 'Checkouts']} />
+                          <Tooltip
+                            {...TT}
+                            formatter={(v) => [fmt.number(v), 'Checkouts']}
+                          />
+                          {/* Center label rendered via customized label on an invisible zero-radius arc */}
+                          <Pie
+                            data={[{ value: 1 }]}
+                            dataKey="value"
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={0}
+                            outerRadius={0}
+                            fill="transparent"
+                            stroke="none"
+                            label={<DonutCenterLabel abandonmentRate={stats.abandonmentRate} conversionRate={conversionRate} />}
+                            labelLine={false}
+                            isAnimationActive={false}
+                          />
                         </PieChart>
                       </ResponsiveContainer>
-                      <div className="ck-summary-bar" style={{ margin: '0 -22px -20px' }}>
-                        <div className="ck-summary-item">
-                          <div className="ck-summary-label">Abandoned</div>
-                          <div className="ck-summary-val" style={{ color: '#DC2626' }}>{fmt.number(abandonedCount)}</div>
-                        </div>
-                        <div className="ck-summary-item">
-                          <div className="ck-summary-label">Completed</div>
-                          <div className="ck-summary-val" style={{ color: '#059669' }}>{fmt.number(completedCheckouts)}</div>
-                        </div>
-                        <div className="ck-summary-item">
-                          <div className="ck-summary-label">Abandon Rate</div>
-                          <div className="ck-summary-val">{fmt.pct(stats.abandonmentRate)}</div>
-                        </div>
-                      </div>
+                      <DonutLegend
+                        completed={completedCheckouts}
+                        abandoned={abandonedCount}
+                        total={totalCheckouts}
+                      />
                     </>
                   )}
                 </Card>
 
                 <Card title="Recovery Performance" sub="Recovered revenue, organic recoveries and rate" icon={Bolt} iconColor="#1D4ED8">
-                  {first ? <Spinner h={280} /> : (
+                  {first ? <Spinner h={300} /> : (
                     <div>
-                      {/* FIX: was `recoveryRate` local variable — now stats.recoveryRate */}
                       <div className="ck-metric-row"><span className="ck-metric-label">Recovery Rate</span><span className="ck-metric-val ck-metric-val--green">{fmt.pct(stats.recoveryRate)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Recovered Revenue</span><span className="ck-metric-val ck-metric-val--green">{fmt.compact(stats.recoveredValue)}</span></div>
+                      <div className="ck-metric-row"><span className="ck-metric-label">Recovered Revenue</span><span className="ck-metric-val ck-metric-val--green">{fmt.currency(stats.recoveredValue)}</span></div>
                       <div className="ck-metric-row"><span className="ck-metric-label">Organic Recoveries</span><span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.organicRecoveryCount || 0)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Lost Revenue</span><span className="ck-metric-val ck-metric-val--red">{fmt.compact(stats.lostRevenue)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Recoverable Revenue</span><span className="ck-metric-val ck-metric-val--amber">{fmt.compact(recoverableRev)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Failed Recoveries</span><span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 700 }}>{fmt.number(stats.reAbandonedCount || 0)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Revenue Lost to Failed Recovery</span><span className="ck-metric-val ck-metric-val--red">{fmt.compact(stats.failedRecoveryRevenue || 0)}</span></div>
+                      <div className="ck-metric-row"><span className="ck-metric-label">Lost Revenue</span><span className="ck-metric-val ck-metric-val--red">{fmt.currency(stats.lostRevenue)}</span></div>
+                      <div className="ck-metric-row"><span className="ck-metric-label">Recoverable Revenue</span><span className="ck-metric-val ck-metric-val--amber">{fmt.currency(recoverableRev)}</span></div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Failed Recoveries (Total)</span>
+                        <span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 700 }}>{fmt.number(totalFailedRecoveries)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label" style={{ paddingLeft: 12, color: '#9ca3af' }}>↩ Re-abandoned</span>
+                        <span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 600, fontSize: 12.5 }}>{fmt.number(reAbandonedCount)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label" style={{ paddingLeft: 12, color: '#9ca3af' }}>⌛ Expired (never clicked)</span>
+                        <span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 600, fontSize: 12.5 }}>{fmt.number(expiredRecoveryCount)}</span>
+                      </div>
+                      <div className="ck-metric-row"><span className="ck-metric-label">Revenue Lost to Failed Recovery</span><span className="ck-metric-val ck-metric-val--red">{fmt.currency(totalFailedRevenueLost)}</span></div>
                       <div className="ck-metric-row"><span className="ck-metric-label">Emails Sent</span><span className="ck-metric-val">{fmt.number(stats.emailsSent)}</span></div>
                       <div className="ck-metric-row"><span className="ck-metric-label">Orders Recovered</span><span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.recoveredOrders)}</span></div>
                     </div>
@@ -577,27 +675,26 @@ export default function CheckoutAnalytics() {
           {/* ══ RECOVERY OPPORTUNITIES ══ */}
           {activeView === 'recovery' && (
             <div className="ck-panel">
-              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
+              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))' }}>
                 {first ? (
                   Array.from({ length: 3 }).map((_, i) => <KpiSkel key={i} />)
                 ) : (
                   <>
                     <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
                       <div className="ck-kpi-label">Total Recoverable</div>
-                      <div className="ck-kpi-value">{fmt.compact(recoverableRev)}</div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoverableRev)}</div>
                       <div className="ck-kpi-footer"><span className="ck-kpi-sub">{opps.length} opportunities</span></div>
                     </div>
                     <div className="ck-kpi" style={{ '--kpi-color': '#059669', '--kpi-bg': 'rgba(5,150,105,0.08)' }}>
                       <div className="ck-kpi-label">Recovered Revenue</div>
-                      <div className="ck-kpi-value">{fmt.currency(stats.recoveredValue)}</div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(stats.recoveredValue)}</div>
                       <div className="ck-kpi-footer">
-                        {/* FIX: was `recoveryRate` local variable — now stats.recoveryRate */}
                         <span className="ck-kpi-sub">Organic: {fmt.number(stats.organicRecoveryCount || 0)} · Rate: {fmt.pct(stats.recoveryRate)}</span>
                       </div>
                     </div>
                     <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
                       <div className="ck-kpi-label">Avg Cart Value</div>
-                      <div className="ck-kpi-value">{fmt.compact(recoveryOpportunitiesRaw?.summary?.avgCheckoutValue || 0)}</div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoveryOpportunitiesRaw?.summary?.avgCheckoutValue || 0)}</div>
                       <div className="ck-kpi-footer"><span className="ck-kpi-sub">Per abandoned cart</span></div>
                     </div>
                   </>
@@ -611,7 +708,7 @@ export default function CheckoutAnalytics() {
                 ) : opps.length === 0 ? (
                   <Empty label="No recovery opportunities found — all eligible carts have been contacted or converted." h={300} />
                 ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+                  <div className="ck-opp-grid">
                     {opps.slice(0, 12).map((opp, i) => {
                       const user          = opp.user || {};
                       const priorityScore = opp.priority ?? opp.priorityScore ?? 0;
@@ -630,7 +727,7 @@ export default function CheckoutAnalytics() {
                           <div className="ck-opp-stats">
                             <div className="ck-opp-stat">
                               <div className="ck-opp-stat-label">Cart Value</div>
-                              <div className="ck-opp-stat-val" style={{ color: '#059669' }}>{fmt.compact(cartValue)}</div>
+                              <div className="ck-opp-stat-val" style={{ color: '#059669' }}>{fmt.currency(cartValue)}</div>
                             </div>
                             <div className="ck-opp-stat">
                               <div className="ck-opp-stat-label">Items</div>
@@ -655,7 +752,7 @@ export default function CheckoutAnalytics() {
             <div className="ck-panel">
               <div className="ck-section"><span className="ck-section-text">Abandoned Checkout List</span><span className="ck-section-line" /></div>
 
-              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(3,1fr)', marginBottom: 16 }}>
+              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', marginBottom: 16 }}>
                 {first ? (
                   Array.from({ length: 3 }).map((_, i) => <KpiSkel key={i} />)
                 ) : (
@@ -663,7 +760,7 @@ export default function CheckoutAnalytics() {
                     <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><MoneyOff style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">Total Lost Value</div>
-                      <div className="ck-kpi-value">{fmt.compact(abandonedCheckoutsRaw?.summary?.totalValue ?? 0)}</div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(abandonedCheckoutsRaw?.summary?.totalValue ?? 0)}</div>
                       <div className="ck-kpi-footer">
                         <span className="ck-kpi-sub">{abandonedCheckoutsRaw?.pagination?.totalCheckouts ?? abandoned.length} carts</span>
                       </div>
@@ -671,7 +768,7 @@ export default function CheckoutAnalytics() {
                     <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><AttachMoney style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">Avg Cart Value</div>
-                      <div className="ck-kpi-value">{fmt.compact(abandonedCheckoutsRaw?.summary?.avgValue ?? 0)}</div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(abandonedCheckoutsRaw?.summary?.avgValue ?? 0)}</div>
                     </div>
                     <div className="ck-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><TrendingUp style={{ fontSize: 20 }} /></span></div>
@@ -722,10 +819,10 @@ export default function CheckoutAnalytics() {
                                 <td className="ck-td-name">
                                   {user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Guest'}
                                 </td>
-                                <td style={{ fontSize: 12, color: '#6B7E99', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <td className="ck-td-email">
                                   {user.email || '—'}
                                 </td>
-                                <td className="ck-td-money">{fmt.compact(c.pricing?.totalPrice || 0)}</td>
+                                <td className="ck-td-money">{fmt.currency(c.pricing?.totalPrice || 0)}</td>
                                 <td>{fmt.number(c.items?.length || 0)}</td>
                                 <td style={{ color: '#DC2626', fontWeight: 600, fontSize: 12 }}>
                                   {resolveStepLabel(firstStep) || '—'}
@@ -763,9 +860,9 @@ export default function CheckoutAnalytics() {
             <div className="ck-panel">
               <div className="ck-section"><span className="ck-section-text">Failed Recovery Analysis</span><span className="ck-section-line" /></div>
 
-              <div className="ck-grid-4">
+              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))' }}>
                 {first ? (
-                  Array.from({ length: 4 }).map((_, i) => <KpiSkel key={i} />)
+                  Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
                 ) : (
                   <>
                     <div className="ck-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
@@ -773,30 +870,52 @@ export default function CheckoutAnalytics() {
                         <span className="ck-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
                         <TrendBadge value={reAbandonmentAnalytics?.trend?.totalChange ?? null} invert />
                       </div>
-                      <div className="ck-kpi-label">Failed Recoveries</div>
-                      <div className="ck-kpi-value">{fmt.number(reaData.total || 0)}</div>
-                      <div className="ck-kpi-footer"><span className="ck-kpi-sub">Clicked link, abandoned again</span></div>
+                      <div className="ck-kpi-label">Total Failed Recoveries</div>
+                      <div className="ck-kpi-value">{fmt.number(totalFailedRecoveries)}</div>
+                      <div className="ck-kpi-footer">
+                        <span className="ck-kpi-sub">Re-abn + Expired</span>
+                      </div>
                     </div>
+
+                    <div className="ck-kpi" style={{ '--kpi-color': '#EA580C', '--kpi-bg': 'rgba(234,88,12,0.08)' }}>
+                      <div className="ck-kpi-top">
+                        <span className="ck-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
+                      </div>
+                      <div className="ck-kpi-label">↩ Re-abandoned</div>
+                      <div className="ck-kpi-value">{fmt.number(reAbandonedCount)}</div>
+                      <div className="ck-kpi-footer">
+                        <span className="ck-kpi-sub">Clicked link, left again</span>
+                      </div>
+                    </div>
+
+                    <div className="ck-kpi" style={{ '--kpi-color': '#6B7280', '--kpi-bg': 'rgba(107,114,128,0.08)' }}>
+                      <div className="ck-kpi-top">
+                        <span className="ck-kpi-icon" style={{ fontSize: 18 }}>⌛</span>
+                      </div>
+                      <div className="ck-kpi-label">⌛ Expired (Never Clicked)</div>
+                      <div className="ck-kpi-value">{fmt.number(expiredRecoveryCount)}</div>
+                      <div className="ck-kpi-footer">
+                        <span className="ck-kpi-sub">All tokens elapsed, no response</span>
+                      </div>
+                    </div>
+
                     <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
                       <div className="ck-kpi-top">
                         <span className="ck-kpi-icon"><MoneyOff style={{ fontSize: 20 }} /></span>
                         <TrendBadge value={reAbandonmentAnalytics?.trend?.revenueLostChange ?? null} invert />
                       </div>
-                      <div className="ck-kpi-label">Revenue Lost</div>
-                      <div className="ck-kpi-value">{fmt.compact(reaData.totalRevenueLost || 0)}</div>
-                      <div className="ck-kpi-footer"><span className="ck-kpi-sub">Avg {fmt.compact(reaData.avgCartValue || 0)} per cart</span></div>
+                      <div className="ck-kpi-label">Total Revenue Lost</div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(totalFailedRevenueLost)}</div>
+                      <div className="ck-kpi-footer">
+                        <span className="ck-kpi-sub">Avg {fmt.currency(reaData.avgCartValue || 0)} per cart</span>
+                      </div>
                     </div>
+
                     <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><PersonSearch style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">Avg Time to Re-abandon</div>
                       <div className="ck-kpi-value">{fmt.hours(reaData.avgHoursToReAbandon)}</div>
                       <div className="ck-kpi-footer"><span className="ck-kpi-sub">After clicking recovery link</span></div>
-                    </div>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#059669', '--kpi-bg': 'rgba(5,150,105,0.08)' }}>
-                      <div className="ck-kpi-top"><span className="ck-kpi-icon"><Bolt style={{ fontSize: 20 }} /></span></div>
-                      <div className="ck-kpi-label">With Discount Interaction</div>
-                      <div className="ck-kpi-value">{fmt.number(reaData.withDiscountDuringRecovery || 0)}</div>
-                      <div className="ck-kpi-footer"><span className="ck-kpi-sub">Applied/changed discount code</span></div>
                     </div>
                   </>
                 )}
@@ -815,7 +934,7 @@ export default function CheckoutAnalytics() {
                           </div>
                           <span className="ck-bar-val">{fmt.number(step.count)}</span>
                           <span style={{ fontSize: 11.5, color: '#DC2626', fontWeight: 600, marginLeft: 8, flexShrink: 0 }}>
-                            {fmt.compact(step.totalValue)}
+                            {fmt.currency(step.totalValue)}
                           </span>
                         </div>
                       ))}

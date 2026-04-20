@@ -434,6 +434,10 @@ export const fetchRefundTimeline = createAsyncThunk(
 const operationsSlice = createSlice({
     name: "operations",
     initialState: {
+        // FIX: activeTimeframe drives the _timeframe guard in extraReducers.
+        // It MUST be updated synchronously before dispatching any timeframe-
+        // scoped thunk, otherwise fulfilled handlers see a stale value and
+        // silently discard fresh data.
         activeTimeframe: "month",
 
         // Checkout analytics — read-only data, never mutated by email actions
@@ -471,6 +475,9 @@ const operationsSlice = createSlice({
         error:   null,
     },
     reducers: {
+        // FIX: This MUST be dispatched synchronously before issuing any
+        // timeframe-scoped fetch so that fulfilled handlers pass the guard.
+        // The CheckoutAnalytics component now calls this before Promise.allSettled.
         setOperationsTimeframe: (state, action) => {
             state.activeTimeframe = action.payload;
         },
@@ -487,6 +494,9 @@ const operationsSlice = createSlice({
         // ── CHECKOUT ANALYTICS ────────────────────────────────────────────────
         builder
             .addCase(fetchCheckoutAbandonmentStats.fulfilled, (state, action) => {
+                // Guard: only apply if this response matches the currently-active
+                // timeframe. activeTimeframe must have been updated synchronously
+                // before the fetch was dispatched.
                 if (action.payload._timeframe === state.activeTimeframe) {
                     const { _timeframe, ...data } = action.payload;
                     state.checkoutAbandonment = data;
