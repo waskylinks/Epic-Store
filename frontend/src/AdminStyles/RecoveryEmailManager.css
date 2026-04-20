@@ -34,6 +34,7 @@
   --res-red-border:   #FECACA;
   --res-purple:       #6d28d9;
   --res-purple-bg:    #EDE9FE;
+  
 
   --res-radius:       12px;
   --res-radius-sm:    8px;
@@ -900,6 +901,20 @@
   text-align: center;
   font-size: 14px;
   font-weight: 600;
+}
+
+.res-kpi--teal::before  { background: #0d9488; }
+.res-kpi--gray::before  { background: #6B7280; }
+.res-badge--organic     { background: #CCFBF1; color: #0f766e; border: 1px solid #99F6E4; }
+
+
+.res-kpi-strip { grid-template-columns: repeat(4, 1fr); }
+
+@media (max-width: 1200px) {
+  .res-kpi-strip { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 768px) {
+  .res-kpi-strip { grid-template-columns: repeat(2, 1fr); }
 }
 
 /* ================================================================
