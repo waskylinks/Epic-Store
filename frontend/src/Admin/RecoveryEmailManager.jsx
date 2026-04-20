@@ -31,7 +31,9 @@ const OUTCOME_CHIPS = [
   { key: 're_abandoned', label: 'Re-abandoned' },
   { key: 'exhausted',    label: 'Max reached' },
   { key: 'expired',      label: 'Expired' },
-  { key: 'converted',    label: 'Completed' },
+  { key: 'converted',    label: 'Converted' },   // email-attributed
+  { key: 'organic',      label: 'Organic' },     // converted without link
+  { key: 'failed',       label: 'Failed' },
 ];
 
 const SORT_OPTIONS = [
@@ -46,8 +48,8 @@ const OUTCOME_LABEL = {
   pending:      'Not contacted',
   sent:         'Awaiting click',
   clicked:      'Clicked',
-  converted:    'Completed',
-  organic:      'Completed',
+  converted:    'Converted',      // email-attributed
+  organic:      'Organic',        // converted without link — NOT "Completed"
   re_abandoned: 'Re-abandoned',
   exhausted:    'Max reached',
   expired:      'Expired',
@@ -85,9 +87,16 @@ const getPriority = (score) => {
 };
 
 const outcomeClass = (outcome) => ({
-  none: 'none', pending: 'none', sent: 'sent', clicked: 'clicked',
-  converted: 'converted', organic: 'converted', re_abandoned: 're_abandoned',
-  exhausted: 'exhausted', expired: 'expired', failed: 'failed',
+  none:         'none',
+  pending:      'none',
+  sent:         'sent',
+  clicked:      'clicked',
+  converted:    'converted',
+  organic:      'organic',
+  re_abandoned: 're_abandoned',
+  exhausted:    'exhausted',
+  expired:      'expired',
+  failed:       'failed',
 }[outcome] || 'none');
 
 // ============================================
@@ -260,8 +269,8 @@ function CartDetail({ item }) {
                   key={i}
                   className={[
                     'res-attempt',
-                    attempt.linkClickedAt   ? 'res-attempt--clicked' : '',
-                    attempt.status === 'failed' ? 'res-attempt--failed'  : '',
+                    attempt.linkClickedAt && !attempt.clickedAfterExpiry ? 'res-attempt--clicked' : '',
+                    attempt.status === 'failed' ? 'res-attempt--failed' : '',
                   ].filter(Boolean).join(' ')}
                 >
                   <div className="res-attempt-hd">
@@ -284,7 +293,7 @@ function CartDetail({ item }) {
                     {attempt.clickedAfterExpiry && (
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Note</span>
-                        <span style={{ color: '#d97706' }}>Clicked after token expired</span>
+                        <span style={{ color: '#d97706' }}>Clicked after token expired — cart not restored</span>
                       </div>
                     )}
                     {attempt.checkoutStepAtClick && (
@@ -297,8 +306,7 @@ function CartDetail({ item }) {
                       <div className="res-attempt-row">
                         <span className="res-attempt-key">Token expires</span>
                         <span style={{
-                          color: new Date(attempt.tokenExpiresAt) < new Date()
-                            ? '#6B7280' : '#374151'
+                          color: new Date(attempt.tokenExpiresAt) < new Date() ? '#6B7280' : '#374151',
                         }}>
                           {fmt.date(attempt.tokenExpiresAt)}
                           {new Date(attempt.tokenExpiresAt) < new Date() ? ' · expired' : ''}
@@ -405,7 +413,6 @@ export default function RecoveryEmailMonitorPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Debounce search
   useEffect(() => {
     const t = setTimeout(() => {
       setFilters((f) => ({ ...f, search: searchInput, page: 1 }));
@@ -413,7 +420,6 @@ export default function RecoveryEmailMonitorPage() {
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // Clear selection when list changes
   useEffect(() => {
     setSelectedItem(null);
   }, [filters.outcome, filters.page]);
@@ -425,18 +431,56 @@ export default function RecoveryEmailMonitorPage() {
 
   const setPage = (p) => setFilters((f) => ({ ...f, page: p }));
 
+  // KPIs — totalCampaigns is the true total of all recovery records
   const kpis = [
-    { label: 'Total',         value: fmt.number(summary.totalMatchingCarts), color: 'coral'  },
-    { label: 'Not contacted', value: fmt.number(summary.neverContacted),     color: 'amber',
-      tip: 'Abandoned carts not yet emailed' },
-    { label: 'Awaiting click',value: fmt.number(summary.awaitingResponse),   color: 'blue',
-      tip: 'Email sent, user has not clicked yet' },
-    { label: 'Clicked',       value: fmt.number(summary.clicked),            color: 'indigo',
-      tip: 'Clicked recovery link, not yet converted' },
-    { label: 'Re-abandoned',  value: fmt.number(summary.reAbandoned),        color: 'purple',
-      tip: 'Returned via link then left again' },
-    { label: 'Completed',     value: fmt.number(summary.completed),          color: 'green',
-      tip: 'Order placed after recovery' },
+    {
+      label: 'Total campaigns',
+      value: fmt.number(summary.totalCampaigns),
+      color: 'coral',
+      tip:   'All recovery email campaigns ever created',
+    },
+    {
+      label: 'Not contacted',
+      value: fmt.number(summary.neverContacted),
+      color: 'amber',
+      tip:   'Records created but no email sent yet',
+    },
+    {
+      label: 'Awaiting click',
+      value: fmt.number(summary.awaitingResponse),
+      color: 'blue',
+      tip:   'Email sent — user has not clicked yet',
+    },
+    {
+      label: 'Clicked',
+      value: fmt.number(summary.clicked),
+      color: 'indigo',
+      tip:   'Clicked recovery link, not yet converted',
+    },
+    {
+      label: 'Converted',
+      value: fmt.number(summary.converted),
+      color: 'green',
+      tip:   'Completed checkout after clicking recovery email',
+    },
+    {
+      label: 'Organic',
+      value: fmt.number(summary.organic),
+      color: 'teal',
+      tip:   'Converted without clicking the recovery link',
+    },
+    {
+      label: 'Re-abandoned',
+      value: fmt.number(summary.reAbandoned),
+      color: 'purple',
+      tip:   'Returned via link then left again',
+    },
+    {
+      label: 'Expired',
+      value: fmt.number(summary.expired),
+      color: 'gray',
+      tip:   'All tokens elapsed, user never clicked — true terminal',
+    },
   ];
 
   return (
@@ -458,7 +502,7 @@ export default function RecoveryEmailMonitorPage() {
                 <div className="res-hd-eyebrow">Recovery Emails</div>
                 <h1 className="res-hd-title">Recovery Email Monitor</h1>
                 <p className="res-hd-sub">
-                  Read-only view of abandoned carts and their recovery email status
+                  Read-only view of all recovery campaigns and their current status
                 </p>
               </div>
             </div>
@@ -472,10 +516,10 @@ export default function RecoveryEmailMonitorPage() {
             </button>
           </div>
 
-          {/* KPI strip */}
+          {/* KPI strip — 8 cards */}
           <div className="res-kpi-strip">
             {isFirstLoad
-              ? Array.from({ length: 6 }).map((_, i) => <KpiSkel key={i} />)
+              ? Array.from({ length: 8 }).map((_, i) => <KpiSkel key={i} />)
               : kpis.map((k) => (
                 <div
                   key={k.label}
@@ -527,11 +571,9 @@ export default function RecoveryEmailMonitorPage() {
 
           {/* Two-panel layout */}
           <div className="res-panels">
-
-            {/* Left — cart list */}
             <div className="res-left">
               <div className="res-left-hd">
-                <span className="res-left-title">Abandoned carts</span>
+                <span className="res-left-title">Recovery campaigns</span>
                 <span className="res-left-count">{fmt.number(pagination.total)}</span>
               </div>
 
@@ -542,7 +584,7 @@ export default function RecoveryEmailMonitorPage() {
                     ? (
                       <div className="res-empty">
                         <MoneyOff style={{ fontSize: 38, color: '#9CA3AF' }} />
-                        <span>No carts match this filter</span>
+                        <span>No campaigns match this filter</span>
                       </div>
                     )
                     : sendList.map((listItem) => {
@@ -589,48 +631,24 @@ export default function RecoveryEmailMonitorPage() {
                     })}
               </div>
 
-              {/* Pagination */}
               {pagination.totalPages > 1 && (
                 <div className="res-pagination">
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasPrevPage}
-                    onClick={() => setPage(1)}
-                    aria-label="First page"
-                  >«</button>
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasPrevPage}
-                    onClick={() => setPage(filters.page - 1)}
-                    aria-label="Previous page"
-                  >‹</button>
-                  <span className="res-pg-info">
-                    {filters.page} / {pagination.totalPages}
-                  </span>
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasNextPage}
-                    onClick={() => setPage(filters.page + 1)}
-                    aria-label="Next page"
-                  >›</button>
-                  <button
-                    className="res-pg-btn"
-                    disabled={!pagination.hasNextPage}
-                    onClick={() => setPage(pagination.totalPages)}
-                    aria-label="Last page"
-                  >»</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(1)} aria-label="First page">«</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasPrevPage} onClick={() => setPage(filters.page - 1)} aria-label="Previous page">‹</button>
+                  <span className="res-pg-info">{filters.page} / {pagination.totalPages}</span>
+                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(filters.page + 1)} aria-label="Next page">›</button>
+                  <button className="res-pg-btn" disabled={!pagination.hasNextPage} onClick={() => setPage(pagination.totalPages)} aria-label="Last page">»</button>
                 </div>
               )}
             </div>
 
-            {/* Right — detail panel */}
             {selectedItem ? (
               <CartDetail item={selectedItem} />
             ) : (
               <div className="res-right">
                 <div className="res-empty-panel">
                   <Email style={{ fontSize: 44, color: '#9CA3AF' }} />
-                  <p>Select a cart to view its abandonment details and email history.</p>
+                  <p>Select a campaign to view its details and email attempt history.</p>
                 </div>
               </div>
             )}

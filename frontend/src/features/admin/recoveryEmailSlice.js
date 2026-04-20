@@ -36,10 +36,6 @@ export const fetchSendList = createAsyncThunk(
   'recovery/fetchSendList',
   async (params = {}, { rejectWithValue, signal }) => {
     try {
-      // Map frontend chip keys to backend outcome values.
-      // 'none' = never contacted (no record OR outcome: pending).
-      // 'converted' = both email-attributed and organic recoveries.
-      // All others map 1-to-1.
       const OUTCOME_MAP = {
         all:          null,
         none:         'none',
@@ -47,7 +43,10 @@ export const fetchSendList = createAsyncThunk(
         clicked:      'clicked',
         re_abandoned: 're_abandoned',
         exhausted:    'exhausted',
-        converted:    'converted',
+        expired:      'expired',
+        converted:    'converted',  // email-attributed only
+        organic:      'organic',    // organic only — separate from converted
+        failed:       'failed',
       };
 
       const mappedOutcome = params.outcome ? OUTCOME_MAP[params.outcome] ?? null : null;
@@ -57,9 +56,9 @@ export const fetchSendList = createAsyncThunk(
         limit:    params.limit    || 20,
         sortBy:   params.sortBy   || 'priority',
         minValue: params.minValue || 0,
-        hours:    params.hours    || 8760, // expand to 1 year so old clicked carts show
-        ...(mappedOutcome              && { outcome: mappedOutcome }),
-        ...(params.search              && { search:  params.search  }),
+        hours:    params.hours    || 8760,
+        ...(mappedOutcome && { outcome: mappedOutcome }),
+        ...(params.search && { search:  params.search  }),
       });
 
       const { data } = await axios.get(
@@ -116,8 +115,25 @@ export const resolveRecoveryOutcome = createAsyncThunk(
 const initialState = {
   // Send list (left panel — read-only, cron sends only)
   sendList:        [],
-  pagination:      { currentPage: 1, totalPages: 1, total: 0, hasNextPage: false, hasPrevPage: false },
-  sendListSummary: { totalMatchingCarts: 0, neverContacted: 0, awaitingResponse: 0, clicked: 0, reAbandoned: 0, completed: 0 },
+  pagination:      { 
+    currentPage: 1, 
+    totalPages: 1, 
+    total: 0, 
+    hasNextPage: false, 
+    hasPrevPage: false 
+  },
+  sendListSummary: {
+    totalCampaigns:   0,
+    neverContacted:   0,
+    awaitingResponse: 0,
+    clicked:          0,
+    reAbandoned:      0,
+    converted:        0,
+    organic:          0,
+    exhausted:        0,
+    expired:          0,
+    failed:           0,
+  },
   sendListLoading: false,
   sendListError:   null,
 
