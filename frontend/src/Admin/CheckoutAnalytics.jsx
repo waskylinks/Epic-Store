@@ -115,11 +115,6 @@ function KpiSkel() {
   );
 }
 
-// FIX: Removed unused `icon` and `iconColor` destructuring to fix ESLint no-unused-vars.
-// The Card header now renders the icon swatch only when both props are provided,
-// but they are passed through correctly — the linter error was that the
-// parameter `Icon` (capital) was shadowing the import but never rendered in JSX.
-// Renamed to `cardIcon` / `cardIconColor` so the binding is clearly used.
 function Card({ title, sub, icon: cardIcon, iconColor: cardIconColor, action, footer, children }) {
   return (
     <div className="ck-card">
@@ -202,10 +197,25 @@ function getPriority(score) {
   return                  { label: 'Low',    cls: 'low' };
 }
 
+// ── dropCls: severity classification for true per-step drop-off rates ────────
+//
+// With furthestStepReached, drop-off rates are now "of users who reached this
+// step, what fraction abandoned here?" — so a 70% rate at payment_gateway is
+// meaningful (most users who made it to payment still bailed). The old
+// thresholds (30% = critical, 15% = moderate) were calibrated for the
+// misleading "% of total abandonments" metric. True step drop-off rates are
+// almost always higher, so the thresholds are shifted up accordingly:
+//
+//   ≥ 50%  → critical (red)   — more than half of users who reached here bail
+//   ≥ 25%  → moderate (amber) — notable friction, worth investigating
+//   < 25%  → low (green)      — acceptable for this funnel position
+//
+// This also means payment_failed at near-100% is correctly classified as
+// critical rather than all steps lighting up red at the old 30% threshold.
 function dropCls(rate) {
   if (!rate)      return 'low';
-  if (rate >= 30) return 'high';
-  if (rate >= 15) return 'med';
+  if (rate >= 50) return 'high';
+  if (rate >= 25) return 'med';
   return 'low';
 }
 
@@ -259,13 +269,6 @@ export default function CheckoutAnalytics() {
     ]).finally(() => { loadingRef.current = false; });
   }, [dispatch]);
 
-  // FIX: react-hooks/set-state-in-effect — moved synchronous setState calls
-  // out of the effect body. The effect now only kicks off the async fetch;
-  // state updates happen exclusively inside the .then() callback so React
-  // never sees a synchronous setState during the effect body execution.
-  // A ref (`pendingTimeframe`) is used to carry the timeframe value into the
-  // callback without adding it as a dependency (it's captured via closure on
-  // the ref, which is always up-to-date).
   const pendingTimeframe = useRef(timeframe);
   useEffect(() => {
     pendingTimeframe.current = timeframe;
@@ -276,8 +279,6 @@ export default function CheckoutAnalytics() {
         setHasFetched(true);
       });
     }
-    // Signal refreshing/pending via a microtask so it runs after the render
-    // that caused this effect, avoiding the synchronous-setState-in-effect warning.
     Promise.resolve().then(() => {
       setRefreshing(true);
       setHasFetched(false);
@@ -299,6 +300,9 @@ export default function CheckoutAnalytics() {
 
   const steps = useMemo(() => stats.stepBreakdown || [], [stats.stepBreakdown]);
 
+  // stepsMax is still used by the horizontal bar chart for proportional widths.
+  // It uses abandon count (not reach count) so all bars remain visually
+  // comparable — the drop-off rate badge is the meaningful number, not bar width.
   const stepsMax = steps.length
     ? Math.max(1, ...steps.map((s) => s.count || 0))
     : 1;
@@ -488,7 +492,6 @@ export default function CheckoutAnalytics() {
                             {...TT}
                             formatter={(v) => [fmt.number(v), 'Checkouts']}
                           />
-                          {/* Center label rendered via customized label on an invisible zero-radius arc */}
                           <Pie
                             data={[{ value: 1 }]}
                             dataKey="value"
@@ -543,7 +546,12 @@ export default function CheckoutAnalytics() {
 
               <div className="ck-section"><span className="ck-section-text">Funnel Quick View</span><span className="ck-section-line" /></div>
               <div className="ck-row">
-                <Card title="Step Drop-Off Rates" sub="Where customers are abandoning in the checkout funnel (first abandonment step)" icon={TrendingDown} iconColor="#DC2626">
+                <Card
+                  title="Step Drop-Off Rates"
+                  sub="Of users who reached each step, what fraction abandoned there (first abandonment)"
+                  icon={TrendingDown}
+                  iconColor="#DC2626"
+                >
                   {first ? <Spinner h={200} /> : steps.length === 0 ? <Empty label="No step data available" h={200} /> : (
                     <div>
                       {steps.map((step, i) => (
@@ -570,7 +578,12 @@ export default function CheckoutAnalytics() {
             <div className="ck-panel">
               <div className="ck-section"><span className="ck-section-text">Checkout Funnel Analysis</span><span className="ck-section-line" /></div>
               <div className="ck-grid-2">
-                <Card title="Abandonment Funnel" sub="Count and drop-off rate per checkout step (first abandonment)" icon={ShoppingCartCheckout} iconColor="#059669">
+                <Card
+                  title="Abandonment Funnel"
+                  sub="Users who abandoned at each step vs how many reached that step"
+                  icon={ShoppingCartCheckout}
+                  iconColor="#059669"
+                >
                   {first ? <Spinner h={360} /> : steps.length === 0 ? <Empty h={360} /> : (
                     <div className="ck-funnel">
                       {steps.map((step, i) => {
@@ -583,7 +596,12 @@ export default function CheckoutAnalytics() {
                                 <span className="ck-step-name">{resolveStepLabel(step.step)}</span>
                               </div>
                               <div className="ck-step-meta">
-                                <span className="ck-step-count">{fmt.number(step.count)}</span>
+                                <span className="ck-step-count">{fmt.number(step.count)} abandoned</span>
+                                {step.reachCount != null && (
+                                  <span style={{ fontSize: 11, color: '#6B7E99', marginLeft: 6 }}>
+                                    of {fmt.number(step.reachCount)} reached
+                                  </span>
+                                )}
                                 <span className={`ck-step-drop ck-step-drop--${dropCls(step.dropOffRate)}`}>
                                   -{fmt.pct(step.dropOffRate)} drop
                                 </span>
@@ -599,7 +617,7 @@ export default function CheckoutAnalytics() {
                   )}
                 </Card>
 
-                <Card title="Step Volume Chart" sub="Customers reaching each checkout step" icon={TrendingDown} iconColor="#DC2626">
+                <Card title="Step Volume Chart" sub="Customers abandoning at each checkout step" icon={TrendingDown} iconColor="#DC2626">
                   {first ? <Spinner h={360} /> : barChartData.length === 0 ? <Empty h={360} /> : (
                     <ResponsiveContainer width="100%" height={360}>
                       <BarChart data={barChartData} margin={{ top: 4, right: 8, left: 0, bottom: 48 }}>
@@ -611,7 +629,7 @@ export default function CheckoutAnalytics() {
                           labelFormatter={(shortName, payload) => payload?.[0]?.payload?.resolvedLabel ?? shortName}
                           formatter={(v, n) => [
                             n === 'count' ? fmt.number(v) : fmt.pct(v),
-                            n === 'count' ? 'Customers' : 'Drop-Off Rate',
+                            n === 'count' ? 'Abandoned' : 'Drop-Off Rate',
                           ]}
                         />
                         <Bar dataKey="count" radius={[4, 4, 0, 0]}>
@@ -625,36 +643,46 @@ export default function CheckoutAnalytics() {
 
               <div className="ck-section"><span className="ck-section-text">Drop-Off Analysis</span><span className="ck-section-line" /></div>
               <div className="ck-row">
-                <Card title="Step Detail Table" sub="Step name, volume and drop-off rate" icon={TableChart} iconColor="#1D4ED8">
+                <Card
+                  title="Step Detail Table"
+                  sub="Abandoned count, users reached, and true drop-off rate per step"
+                  icon={TableChart}
+                  iconColor="#1D4ED8"
+                >
                   {first ? <Spinner h={200} /> : steps.length === 0 ? <Empty /> : (
                     <div className="ck-tbl-wrap">
                       <table className="ck-tbl">
                         <thead>
                           <tr>
-                            <th>#</th><th>Step Name</th><th>Customers Reached</th>
-                            <th>Drop-Off Rate</th><th>Lost Customers</th><th>Severity</th>
+                            <th>#</th>
+                            <th>Step Name</th>
+                            <th>Abandoned Here</th>
+                            <th>Reached Step</th>
+                            <th>Drop-Off Rate</th>
+                            <th>Severity</th>
                           </tr>
                         </thead>
                         <tbody>
                           {steps.map((step, i) => {
-                            const lost = Math.round(((step.dropOffRate || 0) / 100) * (step.count || 0));
-                            const cls  = dropCls(step.dropOffRate);
+                            const cls = dropCls(step.dropOffRate);
                             return (
                               <tr key={i}>
                                 <td className="ck-td-mono">{i + 1}</td>
                                 <td className="ck-td-name">{resolveStepLabel(step.step)}</td>
                                 <td>{fmt.number(step.count)}</td>
+                                <td style={{ color: '#6B7E99', fontSize: 12.5 }}>
+                                  {step.reachCount != null ? fmt.number(step.reachCount) : '—'}
+                                </td>
                                 <td>
                                   <span style={{
                                     fontWeight: 700,
-                                    color: step.dropOffRate >= 30 ? '#DC2626' : step.dropOffRate >= 15 ? '#D97706' : '#059669',
+                                    color: step.dropOffRate >= 50 ? '#DC2626' : step.dropOffRate >= 25 ? '#D97706' : '#059669',
                                     fontFamily: 'Source Code Pro, monospace',
                                     fontSize: 12.5,
                                   }}>
                                     {fmt.pct(step.dropOffRate)}
                                   </span>
                                 </td>
-                                <td className="ck-td-red">{fmt.number(lost)}</td>
                                 <td>
                                   <span className={`ck-priority ck-priority--${cls === 'high' ? 'high' : cls === 'med' ? 'med' : 'low'}`}>
                                     {cls === 'high' ? 'Critical' : cls === 'med' ? 'Moderate' : 'Low'}
@@ -942,7 +970,7 @@ export default function CheckoutAnalytics() {
                   )}
                 </Card>
 
-                <Card title="First vs Post-Recovery Drop-Off" sub="Comparing where users abandon on first attempt vs after clicking recovery link" icon={TrendingDown} iconColor="#DC2626">
+                <Card title="First vs Post-Recovery Drop-Off" sub="Where users abandon on first attempt vs after clicking recovery link" icon={TrendingDown} iconColor="#DC2626">
                   {first ? <Spinner h={280} /> : (steps.length === 0 && reaSteps.length === 0) ? <Empty h={280} /> : (
                     <div className="ck-tbl-wrap">
                       <table className="ck-tbl">

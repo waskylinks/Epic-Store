@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useSelector, useDispatch } from "react-redux";
 import { useNavigate } from "react-router-dom";
 
@@ -122,10 +122,20 @@ function Payment() {
   const stripeFormRef        = useRef(null);
 
   // ── Abandonment tracking ─────────────────────────────────────────────────
-  // setIntentionalProceed() is called in each gateway's success callback so
-  // the hook does not fire abandonCheckout when the component unmounts after
-  // a successful payment.
-  const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, "payment_gateway");
+  // The hook is registered at "payment_selection" — the step the user is on
+  // when they first land on this page (gateway and currency chosen, but
+  // "Initialize Payment" not yet clicked). If they bail before clicking
+  // anything, the abandonment is correctly recorded at payment_selection.
+  //
+  // Once the user clicks "Initialize Payment", handleInitializePayment calls
+  // updateCheckoutStep({ step: "payment_gateway" }) to advance the persisted
+  // step, AND calls setIntentionalProceed() to suppress the abandonment hook
+  // on the subsequent unmount that follows a successful payment navigation.
+  //
+  // If the payment fails (verifyPayment rejects), updateCheckoutStep with
+  // "payment_failed" is called instead, and the hook remains active so a
+  // subsequent navigation away is recorded correctly.
+  const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, "payment_selection");
 
   // ── Mount-only guards ────────────────────────────────────────────────────
   useEffect(() => {
@@ -315,96 +325,101 @@ function Payment() {
   }, [paymentData, selectedGateway, flutterwaveConfig, openPaystackPopup, triggerFlutterwavePayment]);
 
   // ── Initialize payment ───────────────────────────────────────────────────
- // ── Initialize payment ───────────────────────────────────────────────────
-const handleInitializePayment = async () => {
-  if (!checkoutSession && !checkoutId)                                                       { toast.error("No checkout session found"); return; }
-  if (cartItems.length === 0)                                                                { toast.error("Cart is empty"); return; }
-  if (selectedGateway === "stripe"      && !STRIPE_KEY)                                     { toast.error("Stripe is not configured"); return; }
-  if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)    { toast.error("Flutterwave is not configured"); return; }
-  if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)       { toast.error("Paystack is not configured"); return; }
+  const handleInitializePayment = async () => {
+    if (!checkoutSession && !checkoutId)                                                       { toast.error("No checkout session found"); return; }
+    if (cartItems.length === 0)                                                                { toast.error("Cart is empty"); return; }
+    if (selectedGateway === "stripe"      && !STRIPE_KEY)                                     { toast.error("Stripe is not configured"); return; }
+    if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)    { toast.error("Flutterwave is not configured"); return; }
+    if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)       { toast.error("Paystack is not configured"); return; }
 
-  if (checkoutId) {
-    try {
-      await dispatch(updateCheckoutStep({
-        checkoutId,
-        step:    "payment_gateway",
-        gateway: selectedGateway
-      })).unwrap();
-    } catch (err) {
-      console.warn("[Payment] Failed to record payment_gateway step:", err);
+    // Advance the persisted checkout step to payment_gateway now that the
+    // user has actively clicked "Initialize Payment". The hook was registered
+    // at payment_selection so any bail-out before this point is recorded
+    // correctly. After this point we consider the user to have committed to
+    // the payment flow — hence recording payment_gateway here.
+    if (checkoutId) {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step:    "payment_gateway",
+          gateway: selectedGateway
+        })).unwrap();
+      } catch (err) {
+        console.warn("[Payment] Failed to record payment_gateway step:", err);
+      }
     }
-  }
 
-  const pricingToSend = (cartPricing?.totalPrice > 0)
-    ? cartPricing
-    : checkoutPricing;
+    const pricingToSend = (cartPricing?.totalPrice > 0)
+      ? cartPricing
+      : checkoutPricing;
 
-  if (!pricingToSend || !pricingToSend.totalPrice) {
-    toast.error("Pricing information is missing. Please return to your cart.");
-    return;
-  }
+    if (!pricingToSend || !pricingToSend.totalPrice) {
+      toast.error("Pricing information is missing. Please return to your cart.");
+      return;
+    }
 
-  // FIX: checkout/create is called with only {items} so shippingInfo is never
-  // persisted on the checkout session. Fall back to selectedShippingAddress
-  // from Redux (set on the shipping page) which always has the correct data.
-  const shippingInfo = checkoutSession?.shippingInfo?.address
-    ? checkoutSession.shippingInfo
-    : selectedShippingAddress
+    // FIX: checkout/create is called with only {items} so shippingInfo is never
+    // persisted on the checkout session. Fall back to selectedShippingAddress
+    // from Redux (set on the shipping page) which always has the correct data.
+    const shippingInfo = checkoutSession?.shippingInfo?.address
+      ? checkoutSession.shippingInfo
+      : selectedShippingAddress
+        ? {
+            address:  selectedShippingAddress.address,
+            city:     selectedShippingAddress.city,
+            state:    selectedShippingAddress.state,
+            country:  selectedShippingAddress.country,
+            pinCode:  selectedShippingAddress.pinCode,
+            phoneNo:  selectedShippingAddress.phoneNo,
+          }
+        : null;
+
+    if (!shippingInfo?.address) {
+      toast.error("Shipping address is missing. Please go back and select an address.");
+      return;
+    }
+
+    const discountSnapshot = (discount.applied && discount.code)
       ? {
-          address:  selectedShippingAddress.address,
-          city:     selectedShippingAddress.city,
-          state:    selectedShippingAddress.state,
-          country:  selectedShippingAddress.country,
-          pinCode:  selectedShippingAddress.pinCode,
-          phoneNo:  selectedShippingAddress.phoneNo,
+          code:              discount.code,
+          discountId:        discount.discountId  || null,
+          type:              discount.type        || null,
+          value:             discount.value       || null,
+          discountAmount:    discount.discountAmount    || 0,
+          originalItemPrice: pricingToSend.itemPrice,
+          description:       discount.description || null,
+          eligibleProductCategories: Array.isArray(discount.eligibleProductCategories)
+            ? discount.eligibleProductCategories
+            : [],
         }
       : null;
 
-  if (!shippingInfo?.address) {
-    toast.error("Shipping address is missing. Please go back and select an address.");
-    return;
-  }
+    paystackTriggered.current    = false;
+    flutterwaveTriggered.current = false;
+    setFlutterwaveOpen(false);
 
-  const discountSnapshot = (discount.applied && discount.code)
-    ? {
-        code:              discount.code,
-        discountId:        discount.discountId  || null,
-        type:              discount.type        || null,
-        value:             discount.value       || null,
-        discountAmount:    discount.discountAmount    || 0,
-        originalItemPrice: pricingToSend.itemPrice,
-        description:       discount.description || null,
-        eligibleProductCategories: Array.isArray(discount.eligibleProductCategories)
-          ? discount.eligibleProductCategories
-          : [],
-      }
-    : null;
+    dispatch(
+      initializePayment({
+        gateway:      selectedGateway,
+        currency:     selectedCurrency,
+        shippingInfo,
+        cartItems:    cartItems.map((item) => ({
+          product:  item.product,
+          quantity: item.qty || item.quantity || 1
+        })),
+        cartPricing: pricingToSend,
+        ...(discountSnapshot && { discountSnapshot }),
+      })
+    )
+      .unwrap()
+      .then((data) => {
+        if (selectedGateway === "stripe" && !data.client_secret) {
+          toast.error("Failed to initialize Stripe payment");
+        }
+      })
+      .catch((err) => toast.error(err.message || "Failed to initialize payment"));
+  };
 
-  paystackTriggered.current    = false;
-  flutterwaveTriggered.current = false;
-  setFlutterwaveOpen(false);
-
-  dispatch(
-    initializePayment({
-      gateway:      selectedGateway,
-      currency:     selectedCurrency,
-      shippingInfo,
-      cartItems:    cartItems.map((item) => ({
-        product:  item.product,
-        quantity: item.qty || item.quantity || 1
-      })),
-      cartPricing: pricingToSend,
-      ...(discountSnapshot && { discountSnapshot }),
-    })
-  )
-    .unwrap()
-    .then((data) => {
-      if (selectedGateway === "stripe" && !data.client_secret) {
-        toast.error("Failed to initialize Stripe payment");
-      }
-    })
-    .catch((err) => toast.error(err.message || "Failed to initialize payment"));
-};
   // ── Stripe success callback ──────────────────────────────────────────────
   const handleStripeSuccess = (paymentIntentId) => {
     const successReference = paymentData.reference;
