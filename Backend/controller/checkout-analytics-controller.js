@@ -42,24 +42,33 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     Checkout.getAbandonmentRate(previousPeriodStart, previousPeriodEnd)
   ]);
 
-  const trend =
+  // FIX: Coerce -0 to 0 with || 0.
+  // When both periods have equal rates, floating-point arithmetic can produce
+  // negative zero (-0). JavaScript's -0 === 0 is true but JSON.stringify(-0)
+  // produces "0" while Number(-0).toFixed(1) produces "0.0" — however some
+  // engines/paths let -0 slip through, causing the TrendBadge to render "-0%".
+  // Math.round already handles most cases but || 0 is the safe final guard.
+  const rawTrend =
     previousStats.abandonmentRate > 0
       ? ((currentStats.abandonmentRate - previousStats.abandonmentRate) /
           previousStats.abandonmentRate) *
         100
       : 0;
 
+  const trend = Math.round((rawTrend || 0) * 100) / 100;
+
   const [
     abandonedValue,
-    // Aggregation 1: how many abandoned checkouts had their FIRST abandonment at each step.
-    // This is the numerator — "how many people bailed at this step."
     abandonmentByStep,
-    // Aggregation 2: how many abandoned checkouts ever REACHED each step.
-    // This is the denominator — computed from furthestStepReached so that
-    // backward navigation doesn't deflate reach counts.
     reachCountByStep,
     recoveryStats,
     expiredRecoveryStats,
+    // FIX: Count of all unconverted abandoned carts — used for recoverableCount
+    // so the KPI subtitle matches the recoverableRevenue figure exactly.
+    // Previously the frontend used opps.length (opportunities endpoint) which
+    // only counts carts where recoveryEmailSent = false, causing "0 opportunities"
+    // once all carts had been emailed.
+    recoverableCountResult,
   ] = await Promise.all([
     Checkout.aggregate([
       {
@@ -80,8 +89,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     ]),
 
     // Numerator: abandoned checkouts grouped by the step where they first abandoned.
-    // firstAbandonedAtStep is the canonical field; fall back to abandonedAtStep
-    // for records created before firstAbandonedAtStep was added.
     Checkout.aggregate([
       {
         $match: {
@@ -101,13 +108,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       { $sort: { count: -1 } }
     ]),
 
-    // Denominator: for every abandoned checkout, which step did the user
-    // get furthest to? This counts "how many checkouts ever reached step X"
-    // regardless of where they ultimately abandoned. Used to compute accurate
-    // per-step drop-off rates rather than the misleading % of total abandoned.
-    //
-    // Only abandoned (non-converted) checkouts are included so the denominator
-    // is consistent with the numerator scope.
+    // Denominator: furthest step ever reached per abandoned checkout.
     Checkout.aggregate([
       {
         $match: {
@@ -135,7 +136,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
           _id:            null,
           totalAbandoned: { $sum: 1 },
           emailsSent:     { $sum: "$abandonment.recoveryEmailCount" },
-
           recovered: {
             $sum: { $cond: ["$conversion.isConverted", 1, 0] }
           },
@@ -144,7 +144,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
               $cond: ["$conversion.isConverted", "$pricing.totalPrice", 0]
             }
           },
-
           highPriority: {
             $sum: {
               $cond: [
@@ -167,14 +166,13 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
               ]
             }
           },
-
           reAbandonedCount: {
             $sum: {
               $cond: [
                 {
                   $and: [
-                    { $eq: ["$abandonment.reAbandoned",      true]  },
-                    { $eq: ["$conversion.isConverted",       false] }
+                    { $eq: ["$abandonment.reAbandoned",  true]  },
+                    { $eq: ["$conversion.isConverted",   false] }
                   ]
                 },
                 1, 0
@@ -186,8 +184,8 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
               $cond: [
                 {
                   $and: [
-                    { $eq: ["$abandonment.reAbandoned",      true]  },
-                    { $eq: ["$conversion.isConverted",       false] }
+                    { $eq: ["$abandonment.reAbandoned",  true]  },
+                    { $eq: ["$conversion.isConverted",   false] }
                   ]
                 },
                 "$pricing.totalPrice",
@@ -195,7 +193,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
               ]
             }
           },
-
           organicRecoveryCount: {
             $sum: {
               $cond: [{ $eq: ["$abandonment.organicRecovery", true] }, 1, 0]
@@ -205,13 +202,11 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       }
     ]),
 
-    // Count expired recovery campaigns (all emails sent, all tokens elapsed,
-    // user never clicked). These represent fully failed recovery attempts and
-    // are included in the "failed recoveries" KPI alongside re-abandonment.
+    // Expired recovery campaigns: all emails sent, all tokens elapsed, never clicked.
     RecoveryEmail.aggregate([
       {
         $match: {
-          outcome: 'expired',
+          outcome:   'expired',
           createdAt: { $gte: currentPeriodStart }
         }
       },
@@ -226,12 +221,23 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       { $unwind: { path: '$checkoutDoc', preserveNullAndEmptyArrays: false } },
       {
         $group: {
-          _id:                   null,
-          expiredRecoveryCount:  { $sum: 1 },
-          expiredRevenueLost:    { $sum: '$checkoutDoc.pricing.totalPrice' },
+          _id:                  null,
+          expiredRecoveryCount: { $sum: 1 },
+          expiredRevenueLost:   { $sum: '$checkoutDoc.pricing.totalPrice' },
         }
       }
-    ])
+    ]),
+
+    // FIX: Count of all unconverted abandoned carts in the current period.
+    // This is the correct denominator for the "X carts" subtitle on the
+    // Recoverable Revenue KPI — it matches the recoverableValue scope exactly.
+    // Previously this came from the opportunities endpoint (recoveryEmailSent=false only),
+    // which returned 0 once all carts had been emailed.
+    Checkout.countDocuments({
+      "abandonment.isAbandoned": true,
+      "conversion.isConverted":  false,
+      createdAt: { $gte: currentPeriodStart }
+    }),
   ]);
 
   const recoveryData = recoveryStats[0] || {
@@ -259,26 +265,15 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     'payment_failed':     'Payment Failed',
   };
 
-  // Build a lookup map from the reach-count aggregation so we can join
-  // by step key in O(1) instead of scanning the array for every step.
-  // Fall back to null (not 0) so the front end can distinguish "no data
-  // yet" from "genuinely reached by zero checkouts" — only matters during
-  // the very first period before any checkouts exist.
   const reachMap = {};
   for (const row of reachCountByStep) {
     if (row._id) reachMap[row._id] = row.count;
   }
 
-  // Build the step breakdown with true drop-off rates.
-  // Drop-off rate = (abandoned at this step) / (ever reached this step).
-  // This is meaningful even for late-funnel steps like payment_gateway where
-  // high rates are expected — a 70% rate at payment_gateway means "of all
-  // users who reached payment, 70% bailed", not "70% of all abandonments
-  // happened here." That distinction is what makes the funnel actionable.
   const stepBreakdown = abandonmentByStep.length > 0
     ? abandonmentByStep.map(step => {
         const stepName    = step._id || 'unknown';
-        const reachCount  = reachMap[stepName] ?? step.count; // fallback: at minimum, those who abandoned there reached it
+        const reachCount  = reachMap[stepName] ?? step.count;
         const dropOffRate = reachCount > 0
           ? (step.count / reachCount) * 100
           : 0;
@@ -293,10 +288,8 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       })
     : [];
 
-  // totalFailedRecoveries = re-abandoned (clicked but left) + expired
-  // (never clicked, all tokens dead). Both represent failed recovery outcomes.
-  const totalFailedRecoveries    = recoveryData.reAbandonedCount + expiredData.expiredRecoveryCount;
-  const totalFailedRevenueLost   = Math.round(
+  const totalFailedRecoveries  = recoveryData.reAbandonedCount + expiredData.expiredRecoveryCount;
+  const totalFailedRevenueLost = Math.round(
     (recoveryData.failedRecoveryRevenue + expiredData.expiredRevenueLost) * 100
   ) / 100;
 
@@ -309,22 +302,24 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     recoveryRate:       Math.round(currentStats.recoveryRate * 10) / 10,
     stepBreakdown,
     recoverableRevenue: Math.round(recoveryData.recoverableValue    * 100) / 100,
+    // FIX: recoverableCount — total unconverted abandoned carts in this period.
+    // Used by the frontend KPI subtitle instead of opps.length.
+    recoverableCount:   recoverableCountResult || 0,
     highPriority:       recoveryData.highPriority,
     emailsSent:         recoveryData.emailsSent,
     recoveredOrders:    recoveryData.recovered,
     recoveredValue:     Math.round(recoveryData.recoveredValue      * 100) / 100,
     avgAbandonedCheckoutValue: Math.round((abandonedValue[0]?.avgValue || 0) * 100) / 100,
-    trend:              Math.round(trend * 100) / 100,
+    // FIX: trend coerced through || 0 — prevents -0 from reaching the frontend
+    // and rendering as "-0%" in the TrendBadge component.
+    trend,
 
-    // Re-abandonment (clicked link, returned, then abandoned again)
     reAbandonedCount:      recoveryData.reAbandonedCount,
     failedRecoveryRevenue: Math.round(recoveryData.failedRecoveryRevenue * 100) / 100,
 
-    // Expired (all emails sent, all tokens elapsed, never clicked)
     expiredRecoveryCount: expiredData.expiredRecoveryCount,
     expiredRevenueLost:   Math.round(expiredData.expiredRevenueLost * 100) / 100,
 
-    // Aggregate failed recovery metric: re-abandoned + expired.
     totalFailedRecoveries,
     totalFailedRevenueLost,
 
@@ -566,6 +561,22 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
     'payment_failed':     'Payment Failed',
   };
 
+  // FIX: Both trend values coerced through || 0 before Math.round.
+  // When current and previous totals are equal (or both zero), floating-point
+  // division produces -0. This passes JSON serialisation but arrives at the
+  // TrendBadge as a value that is === 0 yet renders as "-0%" because the
+  // badge checks value > 0 / value < 0 rather than Object.is(value, 0).
+  // || 0 collapses -0 → 0 before any further arithmetic.
+  const rawTotalChange =
+    previous.total > 0
+      ? ((current.total - previous.total) / previous.total) * 10000 / 100
+      : 0;
+
+  const rawRevenueLostChange =
+    previous.totalRevenueLost > 0
+      ? ((current.totalRevenueLost - previous.totalRevenueLost) / previous.totalRevenueLost) * 10000 / 100
+      : 0;
+
   const response = {
     current: {
       ...current,
@@ -580,12 +591,9 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
       avgCartValue:     previous.avgCartValue
     },
     trend: {
-      totalChange: previous.total > 0
-        ? Math.round(((current.total - previous.total) / previous.total) * 10000) / 100
-        : 0,
-      revenueLostChange: previous.totalRevenueLost > 0
-        ? Math.round(((current.totalRevenueLost - previous.totalRevenueLost) / previous.totalRevenueLost) * 10000) / 100
-        : 0
+      // FIX: || 0 collapses -0 to 0 before Math.round to prevent "-0%" in UI
+      totalChange:       Math.round((rawTotalChange       || 0) * 100) / 100,
+      revenueLostChange: Math.round((rawRevenueLostChange || 0) * 100) / 100,
     }
   };
 

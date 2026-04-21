@@ -398,6 +398,12 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
 // @access Private
 // ============================================
 
+// ============================================
+// VERIFY PAYMENT
+// @route POST /api/v1/payment/verify
+// @access Private
+// ============================================
+
 export const verifyPaymentController = handleAsyncError(async (req, res, next) => {
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
@@ -602,29 +608,28 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   }
 
   // ── Resolve RecoveryEmail outcome immediately after order creation ─────────
-  // FIX: Query by the specific abandoned checkout belonging to this user, then
-  // look up the RecoveryEmail by checkout._id — not by user alone. This prevents
-  // a recovery email from a previous unrelated cart being incorrectly attributed
-  // as organic/converted for the current purchase.
+  // Only runs when the user had a previously abandoned checkout with a recovery
+  // email in-flight. Clean (never-abandoned) checkouts have no RecoveryEmail
+  // document, so this block is a no-op for them.
   try {
     const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
 
-    const checkout = await Checkout.findOne({
+    const abandonedCheckout = await Checkout.findOne({
       user:                      userId,
       'abandonment.isAbandoned': true,
       'conversion.isConverted':  false,
     }).sort({ lastActivityAt: -1 });
 
-    if (checkout) {
+    if (abandonedCheckout) {
       const recoveryEmailDoc = await RecoveryEmail.findOne({
-        checkout: checkout._id,
+        checkout: abandonedCheckout._id,
         outcome:  { $in: ['clicked', 'sent'] },
       });
 
       if (recoveryEmailDoc) {
         const { resolveRecoveryOutcome } = await import('../Services/recoveryEmailService.js');
-        // totalLinkClicks > 0 means the user followed the email link → 'converted'
-        // totalLinkClicks === 0 means they came back on their own → 'organic'
+        // totalLinkClicks > 0 → user followed the email link → 'converted'
+        // totalLinkClicks === 0 → user came back on their own → 'organic'
         const outcomeToSet = recoveryEmailDoc.totalLinkClicks > 0 ? 'converted' : 'organic';
         await resolveRecoveryOutcome(recoveryEmailDoc.checkout, outcomeToSet);
         console.log(
@@ -652,39 +657,59 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   // ── Post-payment async tasks ──────────────────────────────────────────────
   setImmediate(async () => {
-    // ── Abandoned checkout conversion attribution ──────────────────────────
-    // Marks the Checkout document as converted for analytics.
-    // RecoveryEmail outcome is already resolved above — no need to call
-    // resolveRecoveryOutcome again here.
+
+    // ── Checkout conversion attribution ──────────────────────────────────────
+    // FIX: Query for ANY active checkout belonging to this user — not just
+    // abandoned ones. A clean checkout (never abandoned) still needs
+    // markAsConverted() called so it counts correctly in the analytics
+    // denominator. Without this, clean conversions were invisible: they
+    // were neither abandoned nor converted, leaking out of both buckets
+    // and silently deflating totalCheckouts and completedCheckouts counts.
     try {
       const checkout = await Checkout.findOne({
-        user:                      userId,
-        'abandonment.isAbandoned': true,
-        'conversion.isConverted':  false,
+        user:                     userId,
+        'conversion.isConverted': false,
+        status:                   { $in: ['pending', 'abandoned'] },
       }).sort({ lastActivityAt: -1 });
 
       if (checkout) {
+        const wasAbandoned       = checkout.abandonment?.isAbandoned === true;
         const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
         const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
 
-        if (emailWasSent && !linkWasEverClicked) {
+        // Only set organicRecovery on checkouts that were actually abandoned
+        // and had a recovery email sent but the link was never clicked.
+        if (wasAbandoned && emailWasSent && !linkWasEverClicked) {
           checkout.abandonment.organicRecovery = true;
         }
 
-        if (linkWasEverClicked) {
+        // Only compute cart diff for recovery sessions where the link was clicked.
+        if (wasAbandoned && linkWasEverClicked) {
           checkout.computeRecoveryCartDiff(order.orderItems);
         }
 
         checkout.markAsConverted(order._id, orderReference);
         await checkout.save();
 
-        console.log(`[payment] Checkout ${checkout._id} marked converted`);
+        console.log(
+          `[payment] Checkout ${checkout._id} marked converted` +
+          ` (wasAbandoned=${wasAbandoned})`
+        );
+      } else {
+        // No matching checkout document found. This can happen legitimately
+        // if the user completed payment without ever hitting the checkout
+        // creation endpoint (e.g. a direct API call or a very old session
+        // that already expired via TTL). Log but do not throw.
+        console.warn(
+          `[payment] No unconverted checkout found for user ${userId} ` +
+          `after order ${order._id} — skipping conversion attribution.`
+        );
       }
     } catch (err) {
       console.error('[payment] Checkout conversion attribution failed:', err.message, err.stack);
     }
 
-    // ── Discount sync ────────────────────────────────────────────────────────
+    // ── Discount sync ─────────────────────────────────────────────────────────
     try {
       if (session.discount) {
         const discountLookup = session.discount.discountId
@@ -710,7 +735,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       console.error('[payment] Discount sync failed:', err.message);
     }
 
-    // ── Remaining fire-and-forget tasks ─────────────────────────────────────
+    // ── Remaining fire-and-forget tasks ──────────────────────────────────────
     syncCustomerAfterOrder(order._id).catch(() => {});
 
     createReceiptIfNotExists({
