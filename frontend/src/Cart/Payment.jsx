@@ -122,20 +122,42 @@ function Payment() {
   const stripeFormRef        = useRef(null);
 
   // ── Abandonment tracking ─────────────────────────────────────────────────
-  // The hook is registered at "payment_selection" — the step the user is on
-  // when they first land on this page (gateway and currency chosen, but
-  // "Initialize Payment" not yet clicked). If they bail before clicking
-  // anything, the abandonment is correctly recorded at payment_selection.
-  //
-  // Once the user clicks "Initialize Payment", handleInitializePayment calls
-  // updateCheckoutStep({ step: "payment_gateway" }) to advance the persisted
-  // step, AND calls setIntentionalProceed() to suppress the abandonment hook
-  // on the subsequent unmount that follows a successful payment navigation.
-  //
-  // If the payment fails (verifyPayment rejects), updateCheckoutStep with
-  // "payment_failed" is called instead, and the hook remains active so a
-  // subsequent navigation away is recorded correctly.
+  // Hook registers at "payment_selection" — the step the user is on when
+  // they land here (gateway/currency chosen, Initialize not yet clicked).
+  // If they bail before clicking anything the abandonment is recorded at
+  // payment_selection — but ONLY if the server-side currentStep also reflects
+  // payment_selection. We guarantee that with the mount-time step update below.
   const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, "payment_selection");
+
+  // ── Record payment_selection on mount ────────────────────────────────────
+  // FIX: Previously there was no mount-time step update here. The server-side
+  // currentStep stayed at "order_confirmation" (set by OrderConfirm.jsx) until
+  // the user clicked "Initialize Payment", at which point it jumped straight to
+  // "payment_gateway". This meant a user who landed on the payment page and
+  // immediately bailed had their abandonment recorded at "order_confirmation"
+  // instead of "payment_selection" — because markAsAbandoned() reads
+  // this.currentStep from the DB, not from the React hook's currentStep arg.
+  //
+  // The hook's currentStep argument only controls the grace-period log message;
+  // the authoritative abandonment step comes from the DB document. So we must
+  // advance the DB step to "payment_selection" on mount to keep the two in sync.
+  //
+  // Non-fatal: a tracking failure must never block the payment flow.
+  useEffect(() => {
+    if (!checkoutId) return;
+    (async () => {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step: "payment_selection",
+        })).unwrap();
+      } catch (err) {
+        console.warn("[Payment] Failed to record payment_selection step:", err);
+      }
+    })();
+    // Run once on mount — checkoutId is stable for the lifetime of this page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutId]);
 
   // ── Mount-only guards ────────────────────────────────────────────────────
   useEffect(() => {
@@ -332,11 +354,11 @@ function Payment() {
     if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)    { toast.error("Flutterwave is not configured"); return; }
     if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)       { toast.error("Paystack is not configured"); return; }
 
-    // Advance the persisted checkout step to payment_gateway now that the
-    // user has actively clicked "Initialize Payment". The hook was registered
-    // at payment_selection so any bail-out before this point is recorded
-    // correctly. After this point we consider the user to have committed to
-    // the payment flow — hence recording payment_gateway here.
+    // Advance persisted step to payment_gateway now that the user has actively
+    // clicked "Initialize Payment". The DB is already at payment_selection
+    // (set on mount above), so any bail-out between mount and this click is
+    // correctly recorded at payment_selection. After this click the user has
+    // committed to the gateway flow — advance to payment_gateway.
     if (checkoutId) {
       try {
         await dispatch(updateCheckoutStep({
@@ -358,9 +380,6 @@ function Payment() {
       return;
     }
 
-    // FIX: checkout/create is called with only {items} so shippingInfo is never
-    // persisted on the checkout session. Fall back to selectedShippingAddress
-    // from Redux (set on the shipping page) which always has the correct data.
     const shippingInfo = checkoutSession?.shippingInfo?.address
       ? checkoutSession.shippingInfo
       : selectedShippingAddress

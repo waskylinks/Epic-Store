@@ -20,6 +20,10 @@ import {
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CheckoutAnalytics.css';
 
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const MIN_VOLUME_FOR_RATE = 5;
+
 const PAL = ['#059669','#1D4ED8','#D97706','#DC2626','#7C3AED','#0D9488','#EA580C','#0284C7'];
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -74,8 +78,12 @@ const truncateStepLabel = (label = '') => STEP_ABBREV[label] || (label.length > 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function TrendBadge({ value, invert = false }) {
-  if (value == null) return <span className="ck-badge ck-badge--flat">—</span>;
-  if (value === 0)   return <span className="ck-badge ck-badge--flat"><Remove style={{ fontSize: 10 }} />0%</span>;
+  if (value == null)          return <span className="ck-badge ck-badge--flat">—</span>;
+ 
+  if (Object.is(value, -0))   
+    return <span className="ck-badge ck-badge--flat"><Remove style={{ fontSize: 10 }} />0%</span>;
+  if (value === 0)             
+    return <span className="ck-badge ck-badge--flat"><Remove style={{ fontSize: 10 }} />0%</span>;
   const pos = invert ? value < 0 : value > 0;
   return (
     <span className={`ck-badge ${pos ? 'ck-badge--pos' : 'ck-badge--neg'}`}>
@@ -105,12 +113,12 @@ function Empty({ label = 'No data available', h = 180 }) {
 function KpiSkel() {
   return (
     <div className="ck-kpi-skel">
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 14 }}>
-        <div className="ck-skel" style={{ width: 42, height: 42, borderRadius: 11 }} />
-        <div className="ck-skel" style={{ width: 54, height: 22 }} />
+      <div className="ck-kpi-skel-top">
+        <div className="ck-skel ck-skel--icon" />
+        <div className="ck-skel ck-skel--badge" />
       </div>
-      <div className="ck-skel" style={{ width: '55%', height: 11, marginBottom: 8 }} />
-      <div className="ck-skel" style={{ width: '75%', height: 28 }} />
+      <div className="ck-skel ck-skel--label" />
+      <div className="ck-skel ck-skel--value" />
     </div>
   );
 }
@@ -144,9 +152,8 @@ const TT = {
   itemStyle:    { color: '#2D4059' },
 };
 
-// Enterprise donut center label — renders rate + conversion inside the hole.
 const DonutCenterLabel = ({ viewBox, abandonmentRate, conversionRate }) => {
-   if (!viewBox) return null;
+  if (!viewBox) return null;
   const { cx, cy } = viewBox;
   return (
     <g>
@@ -170,7 +177,6 @@ const DonutCenterLabel = ({ viewBox, abandonmentRate, conversionRate }) => {
   );
 };
 
-// Clean legend: swatch · label · count · pct — no duplication with chart.
 function DonutLegend({ completed, abandoned, total }) {
   const items = [
     { label: 'Completed', value: completed, fill: '#059669', pct: total > 0 ? (completed / total * 100) : 0 },
@@ -197,21 +203,6 @@ function getPriority(score) {
   return                  { label: 'Low',    cls: 'low' };
 }
 
-// ── dropCls: severity classification for true per-step drop-off rates ────────
-//
-// With furthestStepReached, drop-off rates are now "of users who reached this
-// step, what fraction abandoned here?" — so a 70% rate at payment_gateway is
-// meaningful (most users who made it to payment still bailed). The old
-// thresholds (30% = critical, 15% = moderate) were calibrated for the
-// misleading "% of total abandonments" metric. True step drop-off rates are
-// almost always higher, so the thresholds are shifted up accordingly:
-//
-//   ≥ 50%  → critical (red)   — more than half of users who reached here bail
-//   ≥ 25%  → moderate (amber) — notable friction, worth investigating
-//   < 25%  → low (green)      — acceptable for this funnel position
-//
-// This also means payment_failed at near-100% is correctly classified as
-// critical rather than all steps lighting up red at the old 30% threshold.
 function dropCls(rate) {
   if (!rate)      return 'low';
   if (rate >= 50) return 'high';
@@ -226,6 +217,64 @@ function TruncatedXAxisTick({ x, y, payload }) {
         {truncateStepLabel(payload?.value)}
       </text>
     </g>
+  );
+}
+
+function DropOffBadge({ count, dropOffRate }) {
+  if (count < MIN_VOLUME_FOR_RATE) {
+    return (
+      <span
+        className="ck-drop-lowvol"
+        title={`Only ${count} session${count === 1 ? '' : 's'} — need at least ${MIN_VOLUME_FOR_RATE} for a reliable rate`}
+      >
+        low vol.
+      </span>
+    );
+  }
+  return (
+    <span className={`ck-step-drop ck-step-drop--${dropCls(dropOffRate)}`}>
+      {fmt.pct(dropOffRate)} drop
+    </span>
+  );
+}
+
+// ── Drop-off rate cell — used in the detail table ────────────────────────────
+function DropOffRateCell({ count, dropOffRate }) {
+  if (count < MIN_VOLUME_FOR_RATE) {
+    return (
+      <span
+        className="ck-tbl-lowvol"
+        title={`Only ${count} session${count === 1 ? '' : 's'} — need ${MIN_VOLUME_FOR_RATE}+ for a reliable rate`}
+      >
+        low vol.
+      </span>
+    );
+  }
+  const cls = dropCls(dropOffRate);
+  return (
+    <span className={`ck-tbl-rate ck-tbl-rate--${cls}`}>
+      {fmt.pct(dropOffRate)}
+    </span>
+  );
+}
+
+// ── Severity cell — used in the detail table ─────────────────────────────────
+function SeverityCell({ count, dropOffRate }) {
+  if (count < MIN_VOLUME_FOR_RATE) {
+    return (
+      <span
+        className="ck-priority ck-priority--low ck-priority--muted"
+        title="Insufficient volume to classify severity"
+      >
+        Low vol.
+      </span>
+    );
+  }
+  const cls = dropCls(dropOffRate);
+  return (
+    <span className={`ck-priority ck-priority--${cls}`}>
+      {cls === 'high' ? 'Critical' : cls === 'med' ? 'Moderate' : 'Low'}
+    </span>
   );
 }
 
@@ -300,22 +349,20 @@ export default function CheckoutAnalytics() {
 
   const steps = useMemo(() => stats.stepBreakdown || [], [stats.stepBreakdown]);
 
-  // stepsMax is still used by the horizontal bar chart for proportional widths.
-  // It uses abandon count (not reach count) so all bars remain visually
-  // comparable — the drop-off rate badge is the meaningful number, not bar width.
   const stepsMax = steps.length
     ? Math.max(1, ...steps.map((s) => s.count || 0))
     : 1;
 
-  const opps           = recoveryOpportunitiesRaw?.opportunities || [];
-  const recoverableRev = recoveryOpportunitiesRaw?.summary?.totalPotentialRevenue || 0;
-  const abandoned      = abandonedCheckoutsRaw?.abandonedCheckouts || [];
-  const first          = !hasFetched;
+  const opps = recoveryOpportunitiesRaw?.opportunities || [];
+  const abandoned = abandonedCheckoutsRaw?.abandonedCheckouts || [];
+  const first = !hasFetched;
 
   const completedCheckouts = stats.completedCheckouts || 0;
   const abandonedCount     = stats.abandonedCheckouts || 0;
   const totalCheckouts     = completedCheckouts + abandonedCount;
   const conversionRate     = totalCheckouts > 0 ? (completedCheckouts / totalCheckouts) * 100 : 0;
+
+  const recoverableRevenue = stats.recoverableCount  || 0;
 
   const totalFailedRecoveries  = stats.totalFailedRecoveries  ?? (stats.reAbandonedCount || 0);
   const totalFailedRevenueLost = stats.totalFailedRevenueLost ?? (stats.failedRecoveryRevenue || 0);
@@ -394,7 +441,7 @@ export default function CheckoutAnalytics() {
               Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
             ) : (
               <>
-                <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
+                <div className="ck-kpi ck-kpi--red">
                   <div className="ck-kpi-top">
                     <span className="ck-kpi-icon"><Warning style={{ fontSize: 20 }} /></span>
                     <TrendBadge value={stats.trend ?? null} invert />
@@ -406,7 +453,7 @@ export default function CheckoutAnalytics() {
                   </div>
                 </div>
 
-                <div className="ck-kpi" style={{ '--kpi-color': '#059669', '--kpi-bg': 'rgba(5,150,105,0.08)' }}>
+                <div className="ck-kpi ck-kpi--green">
                   <div className="ck-kpi-top"><span className="ck-kpi-icon"><CheckCircle style={{ fontSize: 20 }} /></span></div>
                   <div className="ck-kpi-label">Completed Checkouts</div>
                   <div className="ck-kpi-value">{fmt.number(completedCheckouts)}</div>
@@ -415,7 +462,7 @@ export default function CheckoutAnalytics() {
                   </div>
                 </div>
 
-                <div className="ck-kpi" style={{ '--kpi-color': '#1D4ED8', '--kpi-bg': 'rgba(29,78,216,0.08)' }}>
+                <div className="ck-kpi ck-kpi--blue">
                   <div className="ck-kpi-top"><span className="ck-kpi-icon"><Bolt style={{ fontSize: 20 }} /></span></div>
                   <div className="ck-kpi-label">Recovery Rate</div>
                   <div className="ck-kpi-value">{fmt.pct(stats.recoveryRate)}</div>
@@ -424,16 +471,19 @@ export default function CheckoutAnalytics() {
                   </div>
                 </div>
 
-                <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
-                  <div className="ck-kpi-top"><span className="ck-kpi-icon"><AttachMoney style={{ fontSize: 20 }} /></span></div>
-                  <div className="ck-kpi-label">Recoverable Revenue</div>
-                  <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoverableRev)}</div>
-                  <div className="ck-kpi-footer">
-                    <span className="ck-kpi-sub">{opps.length} opportunities</span>
-                  </div>
+                
+              <div className="ck-kpi ck-kpi--amber">
+                <div className="ck-kpi-top">
+                  <span className="ck-kpi-icon"><AttachMoney style={{ fontSize: 20 }} /></span>
                 </div>
+                <div className="ck-kpi-label">Recoverable Revenue</div>
+                <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoverableRevenue)}</div>
+                <div className="ck-kpi-footer">
+                  <span className="ck-kpi-sub">{fmt.number(recoverableCount)} abandoned carts</span>
+                </div>
+              </div>
 
-                <div className="ck-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
+                <div className="ck-kpi ck-kpi--purple">
                   <div className="ck-kpi-top">
                     <span className="ck-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
                     <TrendBadge value={reAbandonmentAnalytics?.trend?.totalChange ?? null} invert />
@@ -516,29 +566,54 @@ export default function CheckoutAnalytics() {
                   )}
                 </Card>
 
-                <Card title="Recovery Performance" sub="Recovered revenue, organic recoveries and rate" icon={Bolt} iconColor="#1D4ED8">
+                {/* FIX: Recovery Performance card
+                    - Removed "Lost Revenue" row (was a duplicate of failed recovery logic)
+                    - Replaced with "Recoverable Revenue" from stats.recoverableRevenue
+                    - "Revenue Lost to Failed Recoveries" remains as its own distinct metric
+                    representing definitively failed recovery attempts only */}
+                <Card title="Recovery Performance" sub="Recoverable revenue, recovered revenue and failed recovery breakdown" icon={Bolt} iconColor="#1D4ED8">
                   {first ? <Spinner h={300} /> : (
                     <div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Recovery Rate</span><span className="ck-metric-val ck-metric-val--green">{fmt.pct(stats.recoveryRate)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Recovered Revenue</span><span className="ck-metric-val ck-metric-val--green">{fmt.currency(stats.recoveredValue)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Organic Recoveries</span><span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.organicRecoveryCount || 0)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Lost Revenue</span><span className="ck-metric-val ck-metric-val--red">{fmt.currency(stats.lostRevenue)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Recoverable Revenue</span><span className="ck-metric-val ck-metric-val--amber">{fmt.currency(recoverableRev)}</span></div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Recovery Rate</span>
+                        <span className="ck-metric-val ck-metric-val--green">{fmt.pct(stats.recoveryRate)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Recovered Revenue</span>
+                        <span className="ck-metric-val ck-metric-val--green">{fmt.currency(stats.recoveredValue)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Organic Recoveries</span>
+                        <span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.organicRecoveryCount || 0)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Recoverable Revenue</span>
+                        <span className="ck-metric-val ck-metric-val--amber">{fmt.currency(recoverableRevenue)}</span>
+                      </div>
                       <div className="ck-metric-row">
                         <span className="ck-metric-label">Failed Recoveries (Total)</span>
-                        <span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 700 }}>{fmt.number(totalFailedRecoveries)}</span>
+                        <span className="ck-metric-val ck-metric-val--purple">{fmt.number(totalFailedRecoveries)}</span>
                       </div>
                       <div className="ck-metric-row">
-                        <span className="ck-metric-label" style={{ paddingLeft: 12, color: '#9ca3af' }}>↩ Re-abandoned</span>
-                        <span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 600, fontSize: 12.5 }}>{fmt.number(reAbandonedCount)}</span>
+                        <span className="ck-metric-label ck-metric-label--indent ck-metric-label--muted">↩ Re-abandoned</span>
+                        <span className="ck-metric-val ck-metric-val--purple ck-metric-val--sm">{fmt.number(reAbandonedCount)}</span>
                       </div>
                       <div className="ck-metric-row">
-                        <span className="ck-metric-label" style={{ paddingLeft: 12, color: '#9ca3af' }}>⌛ Expired (never clicked)</span>
-                        <span className="ck-metric-val" style={{ color: '#7C3AED', fontWeight: 600, fontSize: 12.5 }}>{fmt.number(expiredRecoveryCount)}</span>
+                        <span className="ck-metric-label ck-metric-label--indent ck-metric-label--muted">⌛ Expired (never clicked)</span>
+                        <span className="ck-metric-val ck-metric-val--purple ck-metric-val--sm">{fmt.number(expiredRecoveryCount)}</span>
                       </div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Revenue Lost to Failed Recovery</span><span className="ck-metric-val ck-metric-val--red">{fmt.currency(totalFailedRevenueLost)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Emails Sent</span><span className="ck-metric-val">{fmt.number(stats.emailsSent)}</span></div>
-                      <div className="ck-metric-row"><span className="ck-metric-label">Orders Recovered</span><span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.recoveredOrders)}</span></div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Revenue Lost to Failed Recoveries</span>
+                        <span className="ck-metric-val ck-metric-val--red">{fmt.currency(totalFailedRevenueLost)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Emails Sent</span>
+                        <span className="ck-metric-val">{fmt.number(stats.emailsSent)}</span>
+                      </div>
+                      <div className="ck-metric-row">
+                        <span className="ck-metric-label">Orders Recovered</span>
+                        <span className="ck-metric-val ck-metric-val--green">{fmt.number(stats.recoveredOrders)}</span>
+                      </div>
                     </div>
                   )}
                 </Card>
@@ -548,7 +623,7 @@ export default function CheckoutAnalytics() {
               <div className="ck-row">
                 <Card
                   title="Step Drop-Off Rates"
-                  sub="Of users who reached each step, what fraction abandoned there (first abandonment)"
+                  sub={`Of users who reached each step, what fraction abandoned there (first abandonment) — rates shown for ${MIN_VOLUME_FOR_RATE}+ sessions only`}
                   icon={TrendingDown}
                   iconColor="#DC2626"
                 >
@@ -558,12 +633,16 @@ export default function CheckoutAnalytics() {
                         <div className="ck-bar-row" key={i}>
                           <span className="ck-bar-label">{resolveStepLabel(step.step)}</span>
                           <div className="ck-bar-track">
-                            <div className="ck-bar-fill" style={{ width: `${stepsMax > 0 ? (step.count / stepsMax) * 100 : 0}%`, background: PAL[i % PAL.length] }} />
+                            <div
+                              className="ck-bar-fill"
+                              style={{
+                                width: `${stepsMax > 0 ? (step.count / stepsMax) * 100 : 0}%`,
+                                background: PAL[i % PAL.length],
+                              }}
+                            />
                           </div>
                           <span className="ck-bar-val">{fmt.number(step.count)}</span>
-                          <span className={`ck-step-drop ck-step-drop--${dropCls(step.dropOffRate)}`} style={{ marginLeft: 8, flexShrink: 0 }}>
-                            -{fmt.pct(step.dropOffRate)}
-                          </span>
+                          <DropOffBadge count={step.count} dropOffRate={step.dropOffRate} />
                         </div>
                       ))}
                     </div>
@@ -591,20 +670,18 @@ export default function CheckoutAnalytics() {
                         return (
                           <div className="ck-step" key={i}>
                             <div className="ck-step-top">
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div className="ck-step-top-left">
                                 <span className="ck-step-number">{i + 1}</span>
                                 <span className="ck-step-name">{resolveStepLabel(step.step)}</span>
                               </div>
                               <div className="ck-step-meta">
                                 <span className="ck-step-count">{fmt.number(step.count)} abandoned</span>
                                 {step.reachCount != null && (
-                                  <span style={{ fontSize: 11, color: '#6B7E99', marginLeft: 6 }}>
+                                  <span className="ck-step-reach">
                                     of {fmt.number(step.reachCount)} reached
                                   </span>
                                 )}
-                                <span className={`ck-step-drop ck-step-drop--${dropCls(step.dropOffRate)}`}>
-                                  -{fmt.pct(step.dropOffRate)} drop
-                                </span>
+                                <DropOffBadge count={step.count} dropOffRate={step.dropOffRate} />
                               </div>
                             </div>
                             <div className="ck-step-track">
@@ -645,7 +722,7 @@ export default function CheckoutAnalytics() {
               <div className="ck-row">
                 <Card
                   title="Step Detail Table"
-                  sub="Abandoned count, users reached, and true drop-off rate per step"
+                  sub={`Abandoned count, users reached, and true drop-off rate per step — rates shown for ${MIN_VOLUME_FOR_RATE}+ sessions only`}
                   icon={TableChart}
                   iconColor="#1D4ED8"
                 >
@@ -663,34 +740,22 @@ export default function CheckoutAnalytics() {
                           </tr>
                         </thead>
                         <tbody>
-                          {steps.map((step, i) => {
-                            const cls = dropCls(step.dropOffRate);
-                            return (
-                              <tr key={i}>
-                                <td className="ck-td-mono">{i + 1}</td>
-                                <td className="ck-td-name">{resolveStepLabel(step.step)}</td>
-                                <td>{fmt.number(step.count)}</td>
-                                <td style={{ color: '#6B7E99', fontSize: 12.5 }}>
-                                  {step.reachCount != null ? fmt.number(step.reachCount) : '—'}
-                                </td>
-                                <td>
-                                  <span style={{
-                                    fontWeight: 700,
-                                    color: step.dropOffRate >= 50 ? '#DC2626' : step.dropOffRate >= 25 ? '#D97706' : '#059669',
-                                    fontFamily: 'Source Code Pro, monospace',
-                                    fontSize: 12.5,
-                                  }}>
-                                    {fmt.pct(step.dropOffRate)}
-                                  </span>
-                                </td>
-                                <td>
-                                  <span className={`ck-priority ck-priority--${cls === 'high' ? 'high' : cls === 'med' ? 'med' : 'low'}`}>
-                                    {cls === 'high' ? 'Critical' : cls === 'med' ? 'Moderate' : 'Low'}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
+                          {steps.map((step, i) => (
+                            <tr key={i}>
+                              <td className="ck-td-mono">{i + 1}</td>
+                              <td className="ck-td-name">{resolveStepLabel(step.step)}</td>
+                              <td>{fmt.number(step.count)}</td>
+                              <td className="ck-td-reach">
+                                {step.reachCount != null ? fmt.number(step.reachCount) : '—'}
+                              </td>
+                              <td>
+                                <DropOffRateCell count={step.count} dropOffRate={step.dropOffRate} />
+                              </td>
+                              <td>
+                                <SeverityCell count={step.count} dropOffRate={step.dropOffRate} />
+                              </td>
+                            </tr>
+                          ))}
                         </tbody>
                       </table>
                     </div>
@@ -703,24 +768,28 @@ export default function CheckoutAnalytics() {
           {/* ══ RECOVERY OPPORTUNITIES ══ */}
           {activeView === 'recovery' && (
             <div className="ck-panel">
-              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))' }}>
+              <div className="ck-grid-4 ck-grid-4--auto">
                 {first ? (
                   Array.from({ length: 3 }).map((_, i) => <KpiSkel key={i} />)
                 ) : (
                   <>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
+
+                    <div className="ck-kpi ck-kpi--amber">
                       <div className="ck-kpi-label">Total Recoverable</div>
-                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoverableRev)}</div>
-                      <div className="ck-kpi-footer"><span className="ck-kpi-sub">{opps.length} opportunities</span></div>
+                      <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoverableRevenue)}</div>
+                      <div className="ck-kpi-footer">
+                        <span className="ck-kpi-sub">{fmt.number(recoverableCount)} abandoned carts</span>
+                      </div>
                     </div>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#059669', '--kpi-bg': 'rgba(5,150,105,0.08)' }}>
+
+                    <div className="ck-kpi ck-kpi--green">
                       <div className="ck-kpi-label">Recovered Revenue</div>
                       <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(stats.recoveredValue)}</div>
                       <div className="ck-kpi-footer">
                         <span className="ck-kpi-sub">Organic: {fmt.number(stats.organicRecoveryCount || 0)} · Rate: {fmt.pct(stats.recoveryRate)}</span>
                       </div>
                     </div>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--red">
                       <div className="ck-kpi-label">Avg Cart Value</div>
                       <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(recoveryOpportunitiesRaw?.summary?.avgCheckoutValue || 0)}</div>
                       <div className="ck-kpi-footer"><span className="ck-kpi-sub">Per abandoned cart</span></div>
@@ -746,16 +815,16 @@ export default function CheckoutAnalytics() {
                       const lastStep      = resolveStepLabel(opp.abandonment?.abandonedAtStep) || '—';
                       return (
                         <div className="ck-opp-card" key={i}>
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
+                          <div className="ck-opp-card-top">
                             <span className={`ck-priority ck-priority--${priority.cls}`}>{priority.label} Priority</span>
-                            <span style={{ fontSize: 11, color: '#6B7E99', fontFamily: 'Source Code Pro, monospace' }}>Score: {priorityScore}</span>
+                            <span className="ck-opp-score">Score: {priorityScore}</span>
                           </div>
                           <div className="ck-opp-name">{user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Guest'}</div>
                           <div className="ck-opp-email">{user.email || '—'}</div>
                           <div className="ck-opp-stats">
                             <div className="ck-opp-stat">
                               <div className="ck-opp-stat-label">Cart Value</div>
-                              <div className="ck-opp-stat-val" style={{ color: '#059669' }}>{fmt.currency(cartValue)}</div>
+                              <div className="ck-opp-stat-val ck-opp-stat-val--green">{fmt.currency(cartValue)}</div>
                             </div>
                             <div className="ck-opp-stat">
                               <div className="ck-opp-stat-label">Items</div>
@@ -763,7 +832,7 @@ export default function CheckoutAnalytics() {
                             </div>
                             <div className="ck-opp-stat">
                               <div className="ck-opp-stat-label">Last Step</div>
-                              <div className="ck-opp-stat-val" style={{ fontSize: 12, color: '#DC2626' }}>{lastStep}</div>
+                              <div className="ck-opp-stat-val ck-opp-stat-val--red">{lastStep}</div>
                             </div>
                           </div>
                         </div>
@@ -780,12 +849,12 @@ export default function CheckoutAnalytics() {
             <div className="ck-panel">
               <div className="ck-section"><span className="ck-section-text">Abandoned Checkout List</span><span className="ck-section-line" /></div>
 
-              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))', marginBottom: 16 }}>
+              <div className="ck-grid-4 ck-grid-4--auto ck-grid-4--mb">
                 {first ? (
                   Array.from({ length: 3 }).map((_, i) => <KpiSkel key={i} />)
                 ) : (
                   <>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--red">
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><MoneyOff style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">Total Lost Value</div>
                       <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(abandonedCheckoutsRaw?.summary?.totalValue ?? 0)}</div>
@@ -793,12 +862,12 @@ export default function CheckoutAnalytics() {
                         <span className="ck-kpi-sub">{abandonedCheckoutsRaw?.pagination?.totalCheckouts ?? abandoned.length} carts</span>
                       </div>
                     </div>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--amber">
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><AttachMoney style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">Avg Cart Value</div>
                       <div className="ck-kpi-value ck-kpi-value--currency">{fmt.currency(abandonedCheckoutsRaw?.summary?.avgValue ?? 0)}</div>
                     </div>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--purple">
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><TrendingUp style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">High Priority</div>
                       <div className="ck-kpi-value">{fmt.number(abandonedCheckoutsRaw?.summary?.highPriorityCheckouts ?? 0)}</div>
@@ -815,7 +884,7 @@ export default function CheckoutAnalytics() {
                   icon={MoneyOff}
                   iconColor="#DC2626"
                   action={
-                    <span style={{ fontSize: 12, color: '#6B7E99', fontWeight: 600 }}>
+                    <span className="ck-card-count">
                       {abandonedCheckoutsRaw?.pagination?.totalCheckouts ?? abandoned.length} checkouts
                     </span>
                   }
@@ -847,19 +916,15 @@ export default function CheckoutAnalytics() {
                                 <td className="ck-td-name">
                                   {user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Guest'}
                                 </td>
-                                <td className="ck-td-email">
-                                  {user.email || '—'}
-                                </td>
+                                <td className="ck-td-email">{user.email || '—'}</td>
                                 <td className="ck-td-money">{fmt.currency(c.pricing?.totalPrice || 0)}</td>
                                 <td>{fmt.number(c.items?.length || 0)}</td>
-                                <td style={{ color: '#DC2626', fontWeight: 600, fontSize: 12 }}>
-                                  {resolveStepLabel(firstStep) || '—'}
-                                </td>
+                                <td className="ck-td-step">{resolveStepLabel(firstStep) || '—'}</td>
                                 <td>
                                   <span className={`ck-priority ck-priority--${priority.cls}`}>{priority.label}</span>
                                 </td>
                                 <td>
-                                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                                  <div className="ck-flag-group">
                                     {isReAbandoned && (
                                       <span className="ck-flag ck-flag--reabandoned" title="Clicked recovery link but abandoned again">Re-abn</span>
                                     )}
@@ -868,7 +933,7 @@ export default function CheckoutAnalytics() {
                                     )}
                                   </div>
                                 </td>
-                                <td className="ck-td-mono" style={{ fontSize: 11.5 }}>
+                                <td className="ck-td-date">
                                   {fmt.date(c.abandonment?.abandonedAt || c.updatedAt || c.createdAt)}
                                 </td>
                               </tr>
@@ -888,12 +953,12 @@ export default function CheckoutAnalytics() {
             <div className="ck-panel">
               <div className="ck-section"><span className="ck-section-text">Failed Recovery Analysis</span><span className="ck-section-line" /></div>
 
-              <div className="ck-grid-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))' }}>
+              <div className="ck-grid-4 ck-grid-4--auto">
                 {first ? (
                   Array.from({ length: 5 }).map((_, i) => <KpiSkel key={i} />)
                 ) : (
                   <>
-                    <div className="ck-kpi" style={{ '--kpi-color': '#7C3AED', '--kpi-bg': 'rgba(124,58,237,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--purple">
                       <div className="ck-kpi-top">
                         <span className="ck-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
                         <TrendBadge value={reAbandonmentAnalytics?.trend?.totalChange ?? null} invert />
@@ -905,7 +970,7 @@ export default function CheckoutAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ck-kpi" style={{ '--kpi-color': '#EA580C', '--kpi-bg': 'rgba(234,88,12,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--orange">
                       <div className="ck-kpi-top">
                         <span className="ck-kpi-icon"><Loop style={{ fontSize: 20 }} /></span>
                       </div>
@@ -916,9 +981,9 @@ export default function CheckoutAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ck-kpi" style={{ '--kpi-color': '#6B7280', '--kpi-bg': 'rgba(107,114,128,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--gray">
                       <div className="ck-kpi-top">
-                        <span className="ck-kpi-icon" style={{ fontSize: 18 }}>⌛</span>
+                        <span className="ck-kpi-icon ck-kpi-icon--emoji">⌛</span>
                       </div>
                       <div className="ck-kpi-label">⌛ Expired (Never Clicked)</div>
                       <div className="ck-kpi-value">{fmt.number(expiredRecoveryCount)}</div>
@@ -927,7 +992,7 @@ export default function CheckoutAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ck-kpi" style={{ '--kpi-color': '#DC2626', '--kpi-bg': 'rgba(220,38,38,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--red">
                       <div className="ck-kpi-top">
                         <span className="ck-kpi-icon"><MoneyOff style={{ fontSize: 20 }} /></span>
                         <TrendBadge value={reAbandonmentAnalytics?.trend?.revenueLostChange ?? null} invert />
@@ -939,7 +1004,7 @@ export default function CheckoutAnalytics() {
                       </div>
                     </div>
 
-                    <div className="ck-kpi" style={{ '--kpi-color': '#D97706', '--kpi-bg': 'rgba(217,119,6,0.08)' }}>
+                    <div className="ck-kpi ck-kpi--amber">
                       <div className="ck-kpi-top"><span className="ck-kpi-icon"><PersonSearch style={{ fontSize: 20 }} /></span></div>
                       <div className="ck-kpi-label">Avg Time to Re-abandon</div>
                       <div className="ck-kpi-value">{fmt.hours(reaData.avgHoursToReAbandon)}</div>
@@ -958,12 +1023,10 @@ export default function CheckoutAnalytics() {
                         <div className="ck-bar-row" key={i}>
                           <span className="ck-bar-label">{step.stepLabel || resolveStepLabel(step.step)}</span>
                           <div className="ck-bar-track">
-                            <div className="ck-bar-fill" style={{ width: `${reaStepMax > 0 ? (step.count / reaStepMax) * 100 : 0}%`, background: '#7C3AED' }} />
+                            <div className="ck-bar-fill ck-bar-fill--purple" style={{ width: `${reaStepMax > 0 ? (step.count / reaStepMax) * 100 : 0}%` }} />
                           </div>
                           <span className="ck-bar-val">{fmt.number(step.count)}</span>
-                          <span style={{ fontSize: 11.5, color: '#DC2626', fontWeight: 600, marginLeft: 8, flexShrink: 0 }}>
-                            {fmt.currency(step.totalValue)}
-                          </span>
+                          <span className="ck-bar-revenue">{fmt.currency(step.totalValue)}</span>
                         </div>
                       ))}
                     </div>
@@ -994,10 +1057,10 @@ export default function CheckoutAnalytics() {
                               const delta    = (reaRow?.count || 0) - (firstRow?.count || 0);
                               return (
                                 <tr key={i}>
-                                  <td className="ck-td-name" style={{ fontSize: 12 }}>{resolveStepLabel(key)}</td>
+                                  <td className="ck-td-name ck-td-name--sm">{resolveStepLabel(key)}</td>
                                   <td>{fmt.number(firstRow?.count || 0)}</td>
-                                  <td style={{ color: '#7C3AED', fontWeight: 700 }}>{fmt.number(reaRow?.count || 0)}</td>
-                                  <td style={{ color: delta > 0 ? '#DC2626' : delta < 0 ? '#059669' : '#6B7E99', fontWeight: 700, fontSize: 12 }}>
+                                  <td className="ck-td-purple">{fmt.number(reaRow?.count || 0)}</td>
+                                  <td className={`ck-td-delta ${delta > 0 ? 'ck-td-delta--up' : delta < 0 ? 'ck-td-delta--down' : 'ck-td-delta--flat'}`}>
                                     {delta > 0 ? '+' : ''}{fmt.number(delta)}
                                   </td>
                                 </tr>
