@@ -49,7 +49,18 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
         100
       : 0;
 
-  const [abandonedValue, abandonmentByStep, recoveryStats, expiredRecoveryStats] = await Promise.all([
+  const [
+    abandonedValue,
+    // Aggregation 1: how many abandoned checkouts had their FIRST abandonment at each step.
+    // This is the numerator — "how many people bailed at this step."
+    abandonmentByStep,
+    // Aggregation 2: how many abandoned checkouts ever REACHED each step.
+    // This is the denominator — computed from furthestStepReached so that
+    // backward navigation doesn't deflate reach counts.
+    reachCountByStep,
+    recoveryStats,
+    expiredRecoveryStats,
+  ] = await Promise.all([
     Checkout.aggregate([
       {
         $match: {
@@ -68,6 +79,9 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       }
     ]),
 
+    // Numerator: abandoned checkouts grouped by the step where they first abandoned.
+    // firstAbandonedAtStep is the canonical field; fall back to abandonedAtStep
+    // for records created before firstAbandonedAtStep was added.
     Checkout.aggregate([
       {
         $match: {
@@ -85,6 +99,28 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
         }
       },
       { $sort: { count: -1 } }
+    ]),
+
+    // Denominator: for every abandoned checkout, which step did the user
+    // get furthest to? This counts "how many checkouts ever reached step X"
+    // regardless of where they ultimately abandoned. Used to compute accurate
+    // per-step drop-off rates rather than the misleading % of total abandoned.
+    //
+    // Only abandoned (non-converted) checkouts are included so the denominator
+    // is consistent with the numerator scope.
+    Checkout.aggregate([
+      {
+        $match: {
+          "abandonment.isAbandoned": true,
+          createdAt: { $gte: currentPeriodStart }
+        }
+      },
+      {
+        $group: {
+          _id:   "$furthestStepReached",
+          count: { $sum: 1 }
+        }
+      }
     ]),
 
     Checkout.aggregate([
@@ -169,10 +205,9 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       }
     ]),
 
-    // FIX: Count expired recovery campaigns (all emails sent, all tokens elapsed,
+    // Count expired recovery campaigns (all emails sent, all tokens elapsed,
     // user never clicked). These represent fully failed recovery attempts and
-    // should be included in the "failed recoveries" KPI alongside re-abandonment.
-    // Scope to campaigns whose checkout was created within the current period.
+    // are included in the "failed recoveries" KPI alongside re-abandonment.
     RecoveryEmail.aggregate([
       {
         $match: {
@@ -216,8 +251,6 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     expiredRevenueLost:   0,
   };
 
-  const totalAbandonedCheckouts = currentStats.abandonedCheckouts || 1;
-
   const stepLabels = {
     'shipping_info':      'Shipping Information',
     'order_confirmation': 'Order Confirmation',
@@ -226,20 +259,41 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     'payment_failed':     'Payment Failed',
   };
 
+  // Build a lookup map from the reach-count aggregation so we can join
+  // by step key in O(1) instead of scanning the array for every step.
+  // Fall back to null (not 0) so the front end can distinguish "no data
+  // yet" from "genuinely reached by zero checkouts" — only matters during
+  // the very first period before any checkouts exist.
+  const reachMap = {};
+  for (const row of reachCountByStep) {
+    if (row._id) reachMap[row._id] = row.count;
+  }
+
+  // Build the step breakdown with true drop-off rates.
+  // Drop-off rate = (abandoned at this step) / (ever reached this step).
+  // This is meaningful even for late-funnel steps like payment_gateway where
+  // high rates are expected — a 70% rate at payment_gateway means "of all
+  // users who reached payment, 70% bailed", not "70% of all abandonments
+  // happened here." That distinction is what makes the funnel actionable.
   const stepBreakdown = abandonmentByStep.length > 0
     ? abandonmentByStep.map(step => {
         const stepName    = step._id || 'unknown';
-        const dropOffRate = (step.count / totalAbandonedCheckouts) * 100;
+        const reachCount  = reachMap[stepName] ?? step.count; // fallback: at minimum, those who abandoned there reached it
+        const dropOffRate = reachCount > 0
+          ? (step.count / reachCount) * 100
+          : 0;
+
         return {
           step:        stepLabels[stepName] || stepName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
           count:       step.count,
+          reachCount,
           dropOffRate: Math.round(dropOffRate * 10) / 10,
           value:       Math.round(step.totalValue * 100) / 100
         };
       })
     : [];
 
-  // FIX: totalFailedRecoveries = re-abandoned (clicked but left) + expired
+  // totalFailedRecoveries = re-abandoned (clicked but left) + expired
   // (never clicked, all tokens dead). Both represent failed recovery outcomes.
   const totalFailedRecoveries    = recoveryData.reAbandonedCount + expiredData.expiredRecoveryCount;
   const totalFailedRevenueLost   = Math.round(
@@ -270,8 +324,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     expiredRecoveryCount: expiredData.expiredRecoveryCount,
     expiredRevenueLost:   Math.round(expiredData.expiredRevenueLost * 100) / 100,
 
-    // FIX: Aggregate failed recovery metric: re-abandoned + expired.
-    // This is what the "Failed Recoveries" KPI should display.
+    // Aggregate failed recovery metric: re-abandoned + expired.
     totalFailedRecoveries,
     totalFailedRevenueLost,
 

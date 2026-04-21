@@ -42,6 +42,21 @@ export const calculatePriorityScore = (checkout) => {
 };
 
 // ============================================
+// STEP ORDER — used by updateStep to enforce the advance-only invariant
+// for furthestStepReached. The order reflects the intended linear checkout
+// flow. payment_failed sits at the end because it can only be reached after
+// payment_gateway has been attempted.
+// ============================================
+
+const STEP_ORDER = [
+  'shipping_info',
+  'order_confirmation',
+  'payment_selection',
+  'payment_gateway',
+  'payment_failed',
+];
+
+// ============================================
 // SCHEMA
 // ============================================
 
@@ -111,6 +126,19 @@ const checkoutSchema = new mongoose.Schema(
       type:    String,
       enum:    ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway', 'payment_failed'],
       default: 'shipping_info'
+    },
+
+    // ── Advance-only high-water mark ────────────────────────────────────────
+    // Records the furthest step the user ever reached in this checkout session.
+    // It is only ever written forward — navigating back never decreases it.
+    // This makes it possible to compute true per-step reach counts for the
+    // funnel analytics: the denominator for step N's drop-off rate is the
+    // number of checkouts where furthestStepReached >= step N.
+    furthestStepReached: {
+      type:    String,
+      enum:    ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway', 'payment_failed'],
+      default: 'shipping_info',
+      index:   true
     },
 
     stepsCompleted: [{
@@ -311,6 +339,14 @@ checkoutSchema.index(
     'abandonment.reAbandonedAt':               -1
   },
   { name: 're_abandonment_step_idx' }
+);
+
+// Supports the reach-count aggregation in getCheckoutAbandonmentStats.
+// Scoped to abandoned checkouts so the planner uses this index for the
+// funnel query rather than doing a full collection scan.
+checkoutSchema.index(
+  { furthestStepReached: 1, 'abandonment.isAbandoned': 1 },
+  { name: 'furthest_step_abandonment_idx' }
 );
 
 // ============================================
@@ -576,6 +612,20 @@ checkoutSchema.statics.getReAbandonmentAnalytics = async function (startDate, en
 
 checkoutSchema.methods.updateStep = function (step) {
   this.currentStep = step;
+
+  // ── Advance furthestStepReached only forward ────────────────────────────
+  // Compare the rank of the incoming step against the currently stored
+  // furthest step. If the incoming step is further along in the funnel
+  // (higher index), overwrite furthestStepReached. If the user navigates
+  // backward (e.g. from order_confirmation back to shipping_info) the
+  // high-water mark is preserved so reach counts remain accurate.
+  const incomingRank = STEP_ORDER.indexOf(step);
+  const currentFurthestRank = STEP_ORDER.indexOf(
+    this.furthestStepReached || 'shipping_info'
+  );
+  if (incomingRank > currentFurthestRank) {
+    this.furthestStepReached = step;
+  }
 
   const existing = this.stepsCompleted.find(s => s.step === step);
   if (existing) {
