@@ -9,11 +9,6 @@ import Order from "../models/order-model.js";
 import mongoose from "mongoose";
 import redis from "../utils/redis.js";
 
-// FIX #6/#7: syncDiscountAfterRedemption is NO LONGER imported here.
-// It must only fire after a confirmed payment in the payment controller,
-// not at /validate time. Calling it here caused usage to be recorded
-// before payment was confirmed, and generated spurious analytics syncs
-// on every UI-triggered validation call.
 
 // ============================================
 // HELPERS

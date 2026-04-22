@@ -453,44 +453,45 @@ discountSchema.statics.bulkExpireStale = async function () {
   return result.modifiedCount;
 };
 
-// FIX #5 — deleteOldExpired now returns the deleted IDs so the caller
-// (cleanup job) can cascade-delete orphaned DiscountAnalytics documents.
 discountSchema.statics.deleteOldExpired = async function (daysOld = 90, batchSize = 1000) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - daysOld);
-
+ 
   const now = new Date();
   const runCeiling = new mongoose.Types.ObjectId();
-
+ 
   let totalDeleted = 0;
   const allDeletedIds = [];
-
+ 
   while (true) {
     const batch = await this.find(
       {
         status:     { $in: ["expired", "exhausted"] },
         validUntil: { $lt: cutoff },
         _id:        { $lt: runCeiling },
+ 
+        'usageLimit.currentUses': { $eq: 0 },
+ 
         deletionEligibleAt: { $not: { $gt: now } },
       },
       { _id: 1 }
     )
       .limit(batchSize)
       .lean();
-
+ 
     if (batch.length === 0) break;
-
+ 
     const ids = batch.map((d) => d._id);
     const { deletedCount } = await this.deleteMany({ _id: { $in: ids } });
     totalDeleted += deletedCount;
     allDeletedIds.push(...ids);
-
+ 
     await new Promise((resolve) => setImmediate(resolve));
   }
-
-  // FIX #5: return deleted ids so callers can clean up DiscountAnalytics.
+ 
   return { totalDeleted, deletedIds: allDeletedIds };
 };
+
 
 export { PRODUCT_CATEGORIES };
 
