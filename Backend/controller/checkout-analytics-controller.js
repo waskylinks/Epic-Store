@@ -7,7 +7,6 @@ import { validateTimeframe } from "../utils/validateTimeframe.js";
 import { getCache, setCache, deleteCachePattern } from "../utils/redis.js";
 import { markStaleCheckouts } from '../utils/markStaleCheckouts.js';
 
-
 const invalidateCheckoutCaches = () =>
   Promise.all([
     deleteCachePattern('checkout_abandonment_*'),
@@ -16,6 +15,34 @@ const invalidateCheckoutCaches = () =>
     deleteCachePattern('admin_stats*'),
     deleteCachePattern('analytics_*'),
   ]);
+
+// Canonical funnel step order — used to sort stepBreakdown arrays so the
+// frontend always receives steps in the correct checkout sequence regardless
+// of MongoDB aggregation sort order.
+const FUNNEL_ORDER = [
+  'shipping_info',
+  'order_confirmation',
+  'payment_selection',
+  'payment_gateway',
+  'payment_failed',
+];
+
+const STEP_LABELS = {
+  'shipping_info':      'Shipping Information',
+  'order_confirmation': 'Order Confirmation',
+  'payment_selection':  'Payment Selection',
+  'payment_gateway':    'Payment Gateway',
+  'payment_failed':     'Payment Failed',
+};
+
+// sortStepBreakdown: sorts an array of { step, ... } objects by FUNNEL_ORDER.
+// stepKeyFn extracts the raw snake_case step key from each element.
+const sortStepBreakdown = (arr, stepKeyFn = (s) => s.step) =>
+  [...arr].sort((a, b) => {
+    const ai = FUNNEL_ORDER.indexOf(stepKeyFn(a));
+    const bi = FUNNEL_ORDER.indexOf(stepKeyFn(b));
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  });
 
 // ============================================
 // CHECKOUT ABANDONMENT STATS
@@ -42,20 +69,19 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     Checkout.getAbandonmentRate(previousPeriodStart, previousPeriodEnd)
   ]);
 
-  // FIX: Coerce -0 to 0 with || 0.
-  // When both periods have equal rates, floating-point arithmetic can produce
-  // negative zero (-0). JavaScript's -0 === 0 is true but JSON.stringify(-0)
-  // produces "0" while Number(-0).toFixed(1) produces "0.0" — however some
-  // engines/paths let -0 slip through, causing the TrendBadge to render "-0%".
-  // Math.round already handles most cases but || 0 is the safe final guard.
+  // Coerce -0 to 0 to prevent "-0%" rendering in TrendBadge.
   const rawTrend =
     previousStats.abandonmentRate > 0
       ? ((currentStats.abandonmentRate - previousStats.abandonmentRate) /
-          previousStats.abandonmentRate) *
-        100
+          previousStats.abandonmentRate) * 100
       : 0;
-
   const trend = Math.round((rawTrend || 0) * 100) / 100;
+
+  // Fetch terminal-outcome checkout IDs so recoverable figures exclude carts
+  // whose recovery campaign is already definitively over.
+  const terminalRecoveryCheckoutIds = await RecoveryEmail.distinct('checkout', {
+    outcome: { $in: ['expired', 're_abandoned', 'failed'] },
+  });
 
   const [
     abandonedValue,
@@ -63,13 +89,10 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     reachCountByStep,
     recoveryStats,
     expiredRecoveryStats,
-    // FIX: Count of all unconverted abandoned carts — used for recoverableCount
-    // so the KPI subtitle matches the recoverableRevenue figure exactly.
-    // Previously the frontend used opps.length (opportunities endpoint) which
-    // only counts carts where recoveryEmailSent = false, causing "0 opportunities"
-    // once all carts had been emailed.
     recoverableCountResult,
   ] = await Promise.all([
+
+    // Total / avg value of all unconverted abandoned carts this period.
     Checkout.aggregate([
       {
         $match: {
@@ -88,7 +111,11 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       }
     ]),
 
-    // Numerator: abandoned checkouts grouped by the step where they first abandoned.
+    // Numerator: group by the step where the user FIRST abandoned.
+    // FIX: uses firstAbandonedAtStep (the step recorded on the very first
+    // abandonment event) rather than abandonedAtStep (which can be overwritten
+    // on re-abandonment), so the funnel correctly reflects where users first
+    // dropped off rather than where they last dropped off.
     Checkout.aggregate([
       {
         $match: {
@@ -104,11 +131,13 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
           count:      { $sum: 1 },
           totalValue: { $sum: "$pricing.totalPrice" }
         }
-      },
-      { $sort: { count: -1 } }
+      }
+      // NOTE: intentionally no $sort here — we sort by FUNNEL_ORDER in JS below
+      // to guarantee the canonical step sequence rather than count-descending.
     ]),
 
-    // Denominator: furthest step ever reached per abandoned checkout.
+    // Denominator: furthest step ever reached per checkout (advance-only
+    // high-water mark) — used to compute the true per-step drop-off rate.
     Checkout.aggregate([
       {
         $match: {
@@ -124,6 +153,7 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       }
     ]),
 
+    // Recovery aggregation — email, revenue, and re-abandonment counters.
     Checkout.aggregate([
       {
         $match: {
@@ -157,10 +187,16 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
               ]
             }
           },
+          // recoverableValue: excludes carts whose recovery campaign is terminal.
           recoverableValue: {
             $sum: {
               $cond: [
-                { $eq: ["$conversion.isConverted", false] },
+                {
+                  $and: [
+                    { $eq: ["$conversion.isConverted", false] },
+                    { $not: { $in: ["$_id", terminalRecoveryCheckoutIds] } }
+                  ]
+                },
                 "$pricing.totalPrice",
                 0
               ]
@@ -228,15 +264,12 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
       }
     ]),
 
-    // FIX: Count of all unconverted abandoned carts in the current period.
-    // This is the correct denominator for the "X carts" subtitle on the
-    // Recoverable Revenue KPI — it matches the recoverableValue scope exactly.
-    // Previously this came from the opportunities endpoint (recoveryEmailSent=false only),
-    // which returned 0 once all carts had been emailed.
+    // recoverableCount: unconverted abandoned carts with a live recovery path.
     Checkout.countDocuments({
       "abandonment.isAbandoned": true,
       "conversion.isConverted":  false,
-      createdAt: { $gte: currentPeriodStart }
+      createdAt: { $gte: currentPeriodStart },
+      _id: { $nin: terminalRecoveryCheckoutIds },
     }),
   ]);
 
@@ -257,20 +290,18 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     expiredRevenueLost:   0,
   };
 
-  const stepLabels = {
-    'shipping_info':      'Shipping Information',
-    'order_confirmation': 'Order Confirmation',
-    'payment_selection':  'Payment Selection',
-    'payment_gateway':    'Payment Gateway',
-    'payment_failed':     'Payment Failed',
-  };
-
+  // Build reach map from furthestStepReached aggregation.
   const reachMap = {};
   for (const row of reachCountByStep) {
     if (row._id) reachMap[row._id] = row.count;
   }
 
-  const stepBreakdown = abandonmentByStep.length > 0
+  // Build stepBreakdown and sort by canonical funnel order.
+  // FIX: Previously sorted by count DESC (MongoDB default after $group),
+  // which placed high-count steps first. This caused shipping_info to
+  // appear later in the UI than payment_gateway when fewer users abandoned
+  // at the first step — the opposite of the correct funnel sequence.
+  const unsortedStepBreakdown = abandonmentByStep.length > 0
     ? abandonmentByStep.map(step => {
         const stepName    = step._id || 'unknown';
         const reachCount  = reachMap[stepName] ?? step.count;
@@ -279,7 +310,8 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
           : 0;
 
         return {
-          step:        stepLabels[stepName] || stepName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          step:        STEP_LABELS[stepName] || stepName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          _rawKey:     stepName, // kept for sorting, stripped before response
           count:       step.count,
           reachCount,
           dropOffRate: Math.round(dropOffRate * 10) / 10,
@@ -287,6 +319,10 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
         };
       })
     : [];
+
+  // Sort by FUNNEL_ORDER using the raw key, then strip the internal _rawKey.
+  const stepBreakdown = sortStepBreakdown(unsortedStepBreakdown, (s) => s._rawKey)
+    .map(({ _rawKey, ...rest }) => rest);
 
   const totalFailedRecoveries  = recoveryData.reAbandonedCount + expiredData.expiredRecoveryCount;
   const totalFailedRevenueLost = Math.round(
@@ -302,16 +338,17 @@ export const getCheckoutAbandonmentStats = handleAsyncError(async (req, res, nex
     recoveryRate:       Math.round(currentStats.recoveryRate * 10) / 10,
     stepBreakdown,
     recoverableRevenue: Math.round(recoveryData.recoverableValue    * 100) / 100,
-    // FIX: recoverableCount — total unconverted abandoned carts in this period.
-    // Used by the frontend KPI subtitle instead of opps.length.
     recoverableCount:   recoverableCountResult || 0,
     highPriority:       recoveryData.highPriority,
     emailsSent:         recoveryData.emailsSent,
     recoveredOrders:    recoveryData.recovered,
     recoveredValue:     Math.round(recoveryData.recoveredValue      * 100) / 100,
+    // FIX: avgAbandonedCheckoutValue — average across ALL abandoned carts in the
+    // period, not just the recovery-opportunities subset. Previously the Recovery
+    // tab read from recoveryOpportunities.summary.avgCheckoutValue which was the
+    // average of only carts where recoveryEmailSent=false, producing a biased
+    // figure that changed as more emails were sent.
     avgAbandonedCheckoutValue: Math.round((abandonedValue[0]?.avgValue || 0) * 100) / 100,
-    // FIX: trend coerced through || 0 — prevents -0 from reaching the frontend
-    // and rendering as "-0%" in the TrendBadge component.
     trend,
 
     reAbandonedCount:      recoveryData.reAbandonedCount,
@@ -448,6 +485,26 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
     totalCheckouts = count;
   }
 
+  // FIX: Join RecoveryEmail records to surface recoveryOutcome on each checkout.
+  // The Flags column in the frontend needs to show "Expired" for carts whose
+  // recovery campaign reached outcome='expired'. Without this join the flag
+  // could not be determined client-side because the checkout document itself
+  // only stores lastRecoveryTokenExpiredAt (not the campaign outcome).
+  const checkoutIds = checkouts.map(c => c._id);
+  const recoveryRecords = await RecoveryEmail.find(
+    { checkout: { $in: checkoutIds } },
+    { checkout: 1, outcome: 1 }
+  ).lean();
+
+  const recoveryOutcomeMap = new Map(
+    recoveryRecords.map(r => [r.checkout.toString(), r.outcome])
+  );
+
+  const checkoutsWithOutcome = checkouts.map(c => ({
+    ...c,
+    recoveryOutcome: recoveryOutcomeMap.get(c._id.toString()) || null,
+  }));
+
   const [summaryResult] = await Checkout.aggregate([
     { $match: query },
     {
@@ -481,7 +538,7 @@ export const getAbandonedCheckoutsList = handleAsyncError(async (req, res, next)
   const totalPages = Math.ceil(totalCheckouts / parseInt(limit));
 
   const response = {
-    abandonedCheckouts: checkouts,
+    abandonedCheckouts: checkoutsWithOutcome,
     pagination: {
       currentPage:    parseInt(page),
       totalPages,
@@ -521,6 +578,10 @@ export const getRecoveryOpportunities = handleAsyncError(async (req, res, next) 
       totalPotentialRevenue: opportunities.reduce(
         (sum, c) => sum + c.pricing.totalPrice, 0
       ),
+      // NOTE: avgCheckoutValue here is the average of uncontacted carts only
+      // (recoveryEmailSent=false). Do not use this for the global "avg abandoned
+      // cart value" KPI — use stats.avgAbandonedCheckoutValue from the
+      // abandonment stats endpoint instead.
       avgCheckoutValue:
         opportunities.length > 0
           ? opportunities.reduce((sum, c) => sum + c.pricing.totalPrice, 0) /
@@ -553,20 +614,7 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
     Checkout.getReAbandonmentAnalytics(previousPeriodStart, previousPeriodEnd)
   ]);
 
-  const stepLabels = {
-    'shipping_info':      'Shipping Information',
-    'order_confirmation': 'Order Confirmation',
-    'payment_selection':  'Payment Selection',
-    'payment_gateway':    'Payment Gateway',
-    'payment_failed':     'Payment Failed',
-  };
-
-  // FIX: Both trend values coerced through || 0 before Math.round.
-  // When current and previous totals are equal (or both zero), floating-point
-  // division produces -0. This passes JSON serialisation but arrives at the
-  // TrendBadge as a value that is === 0 yet renders as "-0%" because the
-  // badge checks value > 0 / value < 0 rather than Object.is(value, 0).
-  // || 0 collapses -0 → 0 before any further arithmetic.
+  // Coerce -0 to 0 before Math.round to prevent "-0%" in TrendBadge.
   const rawTotalChange =
     previous.total > 0
       ? ((current.total - previous.total) / previous.total) * 10000 / 100
@@ -577,13 +625,22 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
       ? ((current.totalRevenueLost - previous.totalRevenueLost) / previous.totalRevenueLost) * 10000 / 100
       : 0;
 
+  // FIX: Sort re-abandonment stepBreakdown by canonical funnel order so the
+  // "Post-Recovery Drop-Off" bar chart and comparison table render in the
+  // correct sequence rather than count-descending.
+  const sortedStepBreakdown = sortStepBreakdown(
+    current.stepBreakdown.map(s => ({
+      ...s,
+      stepLabel: STEP_LABELS[s.step] || s.step.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      _rawKey:   s.step,
+    })),
+    (s) => s._rawKey
+  ).map(({ _rawKey, ...rest }) => rest);
+
   const response = {
     current: {
       ...current,
-      stepBreakdown: current.stepBreakdown.map(s => ({
-        ...s,
-        stepLabel: stepLabels[s.step] || s.step.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-      }))
+      stepBreakdown: sortedStepBreakdown,
     },
     previous: {
       total:            previous.total,
@@ -591,7 +648,6 @@ export const getReAbandonmentAnalytics = handleAsyncError(async (req, res, next)
       avgCartValue:     previous.avgCartValue
     },
     trend: {
-      // FIX: || 0 collapses -0 to 0 before Math.round to prevent "-0%" in UI
       totalChange:       Math.round((rawTotalChange       || 0) * 100) / 100,
       revenueLostChange: Math.round((rawRevenueLostChange || 0) * 100) / 100,
     }
