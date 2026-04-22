@@ -237,13 +237,13 @@ const AuditEntry = ({ entry, compact = false }) => {
 const CleanupModal = ({ running, result, onConfirm, onClose }) => {
   const cronJobs    = useSelector((s) => s.cronHealth?.jobs ?? []);
   const cleanupCron = cronJobs.find((j) => j.jobName === 'DiscountCleanup');
-
+ 
   const cronLastRun = cleanupCron?.lastRunAt
     ? new Date(cleanupCron.lastRunAt).toLocaleString('en-US', {
         month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
       })
     : null;
-
+ 
   return (
     <div className="addisc-modal-overlay" onClick={(e) => e.target === e.currentTarget && !running && onClose()}>
       <div className="addisc-modal addisc-cleanup-modal">
@@ -257,7 +257,7 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => {
             </svg>
           </button>
         </div>
-
+ 
         <div className="addisc-modal-form">
           {cleanupCron && (
             <div className="addisc-cleanup-cron-status">
@@ -276,7 +276,7 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => {
               )}
             </div>
           )}
-
+ 
           <div className="addisc-cleanup-body">
             {result ? (
               <div className="addisc-cleanup-result">
@@ -287,9 +287,19 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => {
                   </svg>
                 </div>
                 <p className="addisc-cleanup-result-title">Cleanup complete</p>
+                {/* FIX: "unused expired codes" instead of just "codes" */}
                 <p className="addisc-cleanup-result-desc">
-                  <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} expired &nbsp;·&nbsp;
-                  <strong>{result.deleted}</strong> code{result.deleted !== 1 ? 's' : ''} permanently deleted
+                  <strong>{result.expired}</strong> code{result.expired !== 1 ? 's' : ''} marked as expired &nbsp;·&nbsp;
+                  <strong>{result.deleted}</strong> unused expired code{result.deleted !== 1 ? 's' : ''} permanently deleted
+                </p>
+                {/* FIX: explicit confirmation that used codes were not touched */}
+                <p className="addisc-cleanup-result-note" style={{
+                  fontSize: '12px',
+                  color: '#6B7280',
+                  marginTop: '8px',
+                  fontStyle: 'italic',
+                }}>
+                  Codes with any recorded usage were not deleted and are permanently retained.
                 </p>
               </div>
             ) : (
@@ -310,14 +320,25 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => {
                       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                       <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                     </svg>
-                    Expire codes whose validUntil date has passed
+                    Mark codes as expired when their validity date has passed
                   </li>
                   <li>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
                       stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                       <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
                     </svg>
-                    Delete expired codes outside the 30-day fraud-protection window
+                    {/* FIX: was "Delete expired codes outside the 30-day fraud-protection window"
+                        which implied used codes could be deleted after 30 days.
+                        Now clearly states only NEVER-USED codes are deleted, permanently. */}
+                    Permanently delete expired codes that were <strong>never redeemed</strong>, outside the fraud-protection window
+                  </li>
+                  <li>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+                      stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                    {/* FIX: added explicit statement that used codes are NEVER deleted */}
+                    Codes that were redeemed at least once are <strong>never deleted</strong>, regardless of age or expiry
                   </li>
                   <li>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
@@ -331,7 +352,7 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => {
             )}
           </div>
         </div>
-
+ 
         <div className="addisc-modal-footer addisc-cleanup-footer">
           <button type="button" className="addisc-btn addisc-btn--ghost" onClick={onClose} disabled={running}>
             {result ? 'Close' : 'Cancel'}
@@ -355,6 +376,7 @@ const CleanupModal = ({ running, result, onConfirm, onClose }) => {
     </div>
   );
 };
+ 
 
 // ─────────────────────────────────────────────
 // DETAIL DRAWER

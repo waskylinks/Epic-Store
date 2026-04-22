@@ -420,6 +420,8 @@ export default function RecoveryEmailMonitorPage() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [isFirstLoad,  setIsFirstLoad]  = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
+  // Tracks loading state for any filter/page/sort/search change (not soft refresh)
+  const [listLoading,  setListLoading]  = useState(true);
 
   const [filters, setFilters] = useState({
     page:    1,
@@ -439,36 +441,40 @@ export default function RecoveryEmailMonitorPage() {
     dispatch(fetchSendList(filters)).finally(() => {
       loadingRef.current = false;
       setIsFirstLoad(false);
+      setListLoading(false);
       setRefreshing(false);
     });
   }, [dispatch, filters]);
 
   useEffect(() => { load(); }, [load]);
 
+  // Search: set listLoading when the debounced filter actually fires
   useEffect(() => {
     const t = setTimeout(() => {
+      setListLoading(true);
       setFilters((f) => ({ ...f, search: searchInput, page: 1 }));
     }, 400);
     return () => clearTimeout(t);
   }, [searchInput]);
 
-  // FIX: Derive selectedItem reset from filter state instead of calling setState
-  // inside an effect — avoids the cascading-render ESLint warning.
   const prevOutcomeRef = useRef(filters.outcome);
   const prevPageRef    = useRef(filters.page);
 
   const handleOutcomeChange = (outcome) => {
     setSelectedItem(null);
+    setListLoading(true);
     setFilters((f) => ({ ...f, outcome, page: 1 }));
     prevOutcomeRef.current = outcome;
   };
 
   const setPage = (p) => {
     setSelectedItem(null);
+    setListLoading(true);
     setFilters((f) => ({ ...f, page: p }));
     prevPageRef.current = p;
   };
 
+  // Soft refresh — does NOT set listLoading; keeps items visible, shows spinner only
   const handleRefresh = () => {
     setRefreshing(true);
     load();
@@ -609,7 +615,10 @@ export default function RecoveryEmailMonitorPage() {
               <select
                 className="res-select"
                 value={filters.sortBy}
-                onChange={(e) => setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }))}
+                onChange={(e) => {
+                  setListLoading(true);
+                  setFilters((f) => ({ ...f, sortBy: e.target.value, page: 1 }));
+                }}
                 aria-label="Sort by"
               >
                 {SORT_OPTIONS.map((o) => (
@@ -640,7 +649,8 @@ export default function RecoveryEmailMonitorPage() {
               </div>
 
               <div className="res-cart-list" role="list" aria-label="Campaign list">
-                {isFirstLoad || (loading && sendList.length === 0)
+                {/* Show skeletons on first load OR any filter/sort/search/page change */}
+                {isFirstLoad || listLoading
                   ? Array.from({ length: 8 }).map((_, i) => <CartItemSkeleton key={i} />)
                   : sendList.length === 0
                     ? (
