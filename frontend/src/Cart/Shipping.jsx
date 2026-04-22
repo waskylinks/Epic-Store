@@ -1,4 +1,65 @@
-import React, { useEffect, useState, useCallback } from 'react';
+/**
+ * FIX 2: Shipping.jsx — mount-time step advancement
+ *
+ * ROOT CAUSE:
+ *   markAsAbandoned() records `this.currentStep` from the DATABASE document.
+ *   The DB step is only written when updateCheckoutStep() succeeds on the server.
+ *   Shipping.jsx only called updateCheckoutStep('shipping_info') on SUCCESSFUL SUBMIT.
+ *
+ *   So if the user:
+ *     1. Visited Payment page previously  →  DB step = 'payment_gateway'
+ *     2. Came back to Shipping page
+ *     3. Closed the tab without submitting
+ *
+ *   The abandonment hook dispatches abandonCheckout() → markAsAbandoned() reads
+ *   currentStep = 'payment_gateway' → wrong step recorded.
+ *
+ * FIX:
+ *   Add a useEffect that runs once on mount (when checkoutId is available) and
+ *   advances the DB step to 'shipping_info' immediately — the same pattern used
+ *   in Payment.jsx for 'payment_selection'. This guarantees the DB and the hook's
+ *   currentStep argument stay in sync at all times.
+ *
+ * INTEGRATION:
+ *   Add the useEffect block below into Shipping.jsx, right after the existing
+ *   useCheckoutAbandonment line. No other changes needed.
+ */
+
+// ─── PASTE THIS BLOCK into Shipping.jsx ──────────────────────────────────────
+// Place it directly after:
+//   const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, 'shipping_info');
+
+/*
+
+  // ── FIX: Record shipping_info step on mount so the DB currentStep matches
+  // the abandonment hook's step arg even when the user bails without submitting.
+  // Non-fatal: a tracking failure must never block the shipping form.
+  useEffect(() => {
+    if (!checkoutId) return;
+    (async () => {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step: 'shipping_info',
+        })).unwrap();
+      } catch (err) {
+        console.warn('[Shipping] Failed to record shipping_info step on mount:', err);
+      }
+    })();
+    // Run once on mount — checkoutId is stable for the lifetime of this page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutId]);
+
+*/
+
+// ─── ALSO ensure the import includes updateCheckoutStep if not already there ─
+// The existing Shipping.jsx already imports:
+//   import { updateCheckoutStep, selectCheckoutId } from '../features/checkout/checkoutSlice';
+// so no import change is needed.
+
+// ─── FULL UPDATED Shipping.jsx (complete file with fix applied) ──────────────
+
+import React, { useState, useEffect, useCallback } from 'react';
 import '../CartStyles/Shipping.css';
 import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
@@ -130,6 +191,29 @@ function Shipping() {
 
   const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, 'shipping_info');
 
+  // ── FIX 2: Advance DB currentStep to 'shipping_info' on mount ────────────
+  // Without this, if the user previously reached 'payment_gateway' and returns
+  // to the shipping page, the DB step stays at 'payment_gateway'. When the
+  // abandonment hook fires on unmount it dispatches abandonCheckout(), and
+  // markAsAbandoned() reads `this.currentStep` from the DB — recording
+  // payment_gateway instead of shipping_info.
+  // Non-fatal: a tracking failure must never block the shipping form UI.
+  useEffect(() => {
+    if (!checkoutId) return;
+    (async () => {
+      try {
+        await dispatch(updateCheckoutStep({
+          checkoutId,
+          step: 'shipping_info',
+        })).unwrap();
+      } catch (err) {
+        console.warn('[Shipping] Failed to record shipping_info step on mount:', err);
+      }
+    })();
+    // Run once on mount — checkoutId is stable for the lifetime of this page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checkoutId]);
+
   // ─── Form data ──────────────────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     address: '',
@@ -162,42 +246,7 @@ function Shipping() {
   const [setAsDefaultCheck, setSetAsDefaultCheck] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // ─── On mount: fetch saved addresses + all countries ─────────────────────────
-  useEffect(() => {
-    dispatch(getSavedAddresses());
-    dispatch(getDefaultAddress());
-    fetchCountries();
-  }, [dispatch]);
-
-  const fetchCountries = async () => {
-    setLoadingCountries(true);
-    try {
-      const res = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,flags');
-      const data = await res.json();
-      const sorted = data.sort((a, b) => a.name.common.localeCompare(b.name.common));
-      const options = sorted.map(c => ({
-        value: c.name.common,
-        label: c.name.common,
-        iso2: c.cca2,
-        flag: c.flags?.svg || c.flags?.png || '',
-      }));
-      setCountries(options);
-
-      // Pre-select Nigeria
-      const nigeria = options.find(o => o.iso2 === 'NG');
-      if (nigeria) {
-        setSelectedCountry(nigeria);
-        fetchStates(nigeria.iso2);
-      }
-    } catch (err) {
-      console.error('Failed to fetch countries:', err);
-      toast.error('Could not load countries. Please refresh.', { position: 'top-center' });
-    } finally {
-      setLoadingCountries(false);
-    }
-  };
-
-  // ─── useCallback so fetchStates can be safely used in effects ────────────────
+  // ─── fetchStates declared first so fetchCountries can reference it ───────────
   const fetchStates = useCallback(async (countryIso2) => {
     if (!countryIso2) return;
     setLoadingStates(true);
@@ -249,8 +298,41 @@ function Shipping() {
     }
   }, []);
 
-  // ─── Auto-fill when user selects a saved address ──────────────────────────────
-  // FIX: guard with countries.length > 0 so iso2 lookup doesn't silently fail
+  // ─── fetchCountries depends on fetchStates (declared above) ──────────────────
+  const fetchCountries = useCallback(async () => {
+    setLoadingCountries(true);
+    try {
+      const res = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,flags');
+      const data = await res.json();
+      const sorted = data.sort((a, b) => a.name.common.localeCompare(b.name.common));
+      const options = sorted.map(c => ({
+        value: c.name.common,
+        label: c.name.common,
+        iso2: c.cca2,
+        flag: c.flags?.svg || c.flags?.png || '',
+      }));
+      setCountries(options);
+
+      const nigeria = options.find(o => o.iso2 === 'NG');
+      if (nigeria) {
+        setSelectedCountry(nigeria);
+        fetchStates(nigeria.iso2);
+      }
+    } catch (err) {
+      console.error('Failed to fetch countries:', err);
+      toast.error('Could not load countries. Please refresh.', { position: 'top-center' });
+    } finally {
+      setLoadingCountries(false);
+    }
+  }, [fetchStates]);
+
+  // ─── On mount: fetch saved addresses + all countries ─────────────────────────
+  useEffect(() => {
+    dispatch(getSavedAddresses());
+    dispatch(getDefaultAddress());
+    fetchCountries();
+  }, [dispatch, fetchCountries]);
+
   useEffect(() => {
     if (!selectedAddress || countries.length === 0) return;
 
@@ -266,15 +348,17 @@ function Shipping() {
     const countryOpt = countries.find(c => c.value === selectedAddress.country);
     if (countryOpt) {
       setSelectedCountry(countryOpt);
-      // Reset state/city selects and re-fetch for this country
       setSelectedState(null);
       setSelectedCity(null);
       fetchStates(countryOpt.iso2);
     }
   }, [selectedAddress, countries, fetchStates]);
 
-  // ─── Sync state dropdown after states load (saved address re-hydration) ───────
-  // FIX: removed selectedState from deps to avoid stale closure loop
+  // FIX: selectedState and selectedCity are read inside these effects only to
+  // compare against the newly resolved option — they are not drivers of the
+  // effect. Including them as deps would cause infinite re-runs when the effect
+  // itself calls setSelectedState/setSelectedCity. The exhaustive-deps warning
+  // is intentionally suppressed here; the comparison is a guard, not a trigger.
   useEffect(() => {
     if (!formData.state || states.length === 0) return;
     const opt = states.find(s => s.value === formData.state);
@@ -282,19 +366,18 @@ function Shipping() {
       setSelectedState(opt);
       fetchCities(opt.countryIso, opt.iso2);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [states, formData.state, fetchCities]);
 
-  // ─── Sync city dropdown after cities load (saved address re-hydration) ────────
-  // FIX: removed selectedCity from deps to avoid stale closure loop
   useEffect(() => {
     if (!formData.city || cities.length === 0) return;
     const opt = cities.find(c => c.value === formData.city);
     if (opt && (!selectedCity || selectedCity.value !== opt.value)) {
       setSelectedCity(opt);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cities, formData.city]);
 
-  // ─── Toasts ──────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (error) {
       toast.error(error, { position: 'top-center', autoClose: 3000 });
@@ -316,13 +399,10 @@ function Shipping() {
     }
   }, [cartItems, navigate]);
 
-  // ─── Reset setAsDefaultCheck when saveToAccount is unchecked ─────────────────
-  // FIX: prevents stale true value if user unchecks saveToAccount
   useEffect(() => {
     if (!saveToAccount) setSetAsDefaultCheck(false);
   }, [saveToAccount]);
 
-  // ─── Change handlers ──────────────────────────────────────────────────────────
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -358,7 +438,6 @@ function Shipping() {
     setFormErrors(prev => ({ ...prev, city: '' }));
   };
 
-  // ─── Validate React Select fields (not covered by HTML5 required) ─────────────
   const validateForm = () => {
     const errors = {};
     if (!formData.country) errors.country = 'Country is required';
@@ -368,49 +447,49 @@ function Shipping() {
     return Object.keys(errors).length === 0;
   };
 
-  // ─── Submit ───────────────────────────────────────────────────────────────────
-const handleSubmit = async (e) => {
-  e.preventDefault();
-  if (!validateForm()) return;
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!validateForm()) return;
 
-  setIsSubmitting(true);
-  try {
-    const userName = user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'User';
+    setIsSubmitting(true);
+    try {
+      const userName = user?.name || `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'User';
 
-    if (saveToAccount) {
-      const saved = await dispatch(saveAddress({
-        name: userName,
-        ...formData,
-        isDefault: setAsDefaultCheck
-      })).unwrap();
-      dispatch(selectAddress(saved));
-    } else {
-      dispatch(selectAddress({
-        name: userName,
-        ...formData
-      }));
-    }
-
-    // Record step progression — non-fatal
-    if (checkoutId) {
-      try {
-        await dispatch(updateCheckoutStep({
-          checkoutId,
-          step: 'shipping_info'
+      if (saveToAccount) {
+        const saved = await dispatch(saveAddress({
+          name: userName,
+          ...formData,
+          isDefault: setAsDefaultCheck
         })).unwrap();
-      } catch (stepErr) {
-        console.warn('[Shipping] Step update failed (non-fatal):', stepErr);
+        dispatch(selectAddress(saved));
+      } else {
+        dispatch(selectAddress({
+          name: userName,
+          ...formData
+        }));
       }
-    }
 
-    setIntentionalProceed();
-    navigate('/order/confirm');
-  } catch (err) {
-    console.error('Shipping submission failed:', err);
-  } finally {
-    setIsSubmitting(false);
-  }
-};
+      // The DB step is already 'shipping_info' (set on mount above).
+      // This call just stamps the stepsCompleted array — still non-fatal.
+      if (checkoutId) {
+        try {
+          await dispatch(updateCheckoutStep({
+            checkoutId,
+            step: 'shipping_info'
+          })).unwrap();
+        } catch (stepErr) {
+          console.warn('[Shipping] Step update on submit failed (non-fatal):', stepErr);
+        }
+      }
+
+      setIntentionalProceed();
+      navigate('/order/confirm');
+    } catch (err) {
+      console.error('Shipping submission failed:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const handleSelectAddress = (addr) => {
     dispatch(selectAddress(addr));
@@ -419,18 +498,16 @@ const handleSubmit = async (e) => {
 
   const handleDeleteAddress = async (id) => {
     if (!window.confirm('Delete this address?')) return;
-    try { await dispatch(deleteAddress(id)).unwrap(); } catch (err) {}
+    try { await dispatch(deleteAddress(id)).unwrap(); } catch { /* errors surfaced via Redux error state */ }
   };
 
   const handleSetDefault = async (id) => {
-    try { await dispatch(setDefaultAddress(id)).unwrap(); } catch (err) {}
+    try { await dispatch(setDefaultAddress(id)).unwrap(); } catch { /* errors surfaced via Redux error state */ }
   };
 
-  // ─── Validation helpers (Redux server-side errors) ────────────────────────────
   const hasError = (kw) => validationErrors.length > 0 && validationErrors.some(e => e.includes(kw));
   const getErrors = (kw) => validationErrors.filter(e => e.includes(kw));
 
-  // ─── Render ───────────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle title='Shipping Information' />
@@ -445,7 +522,6 @@ const handleSubmit = async (e) => {
 
         <div className="es-content">
 
-          {/* ── Saved Addresses ── */}
           {addresses.length > 0 && (
             <div className="es-saved-section">
               <h2 className="es-saved-heading">
@@ -493,7 +569,6 @@ const handleSubmit = async (e) => {
             </div>
           )}
 
-          {/* ── Shipping Form ── */}
           <div className="es-form-section">
             <h2 className="es-form-heading">
               <FiPlus />
@@ -502,7 +577,6 @@ const handleSubmit = async (e) => {
 
             <form onSubmit={handleSubmit} className="es-form">
 
-              {/* Street Address */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label htmlFor="address" className="es-label">
@@ -522,7 +596,6 @@ const handleSubmit = async (e) => {
                 </div>
               </div>
 
-              {/* Country */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label className="es-label">
@@ -546,9 +619,7 @@ const handleSubmit = async (e) => {
                 </div>
               </div>
 
-              {/* State + City */}
               <div className="es-form-row">
-                {/* State */}
                 <div className="es-form-group">
                   <label className="es-label">
                     State <span className="es-required">*</span>
@@ -585,7 +656,6 @@ const handleSubmit = async (e) => {
                   {getErrors('State').map((err, i) => <span key={i} className="es-error">{err}</span>)}
                 </div>
 
-                {/* City */}
                 <div className="es-form-group">
                   <label className="es-label">
                     City <span className="es-required">*</span>
@@ -623,7 +693,6 @@ const handleSubmit = async (e) => {
                 </div>
               </div>
 
-              {/* Postal Code + Phone */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label htmlFor="pinCode" className="es-label">
@@ -663,7 +732,6 @@ const handleSubmit = async (e) => {
                 </div>
               </div>
 
-              {/* Save to account checkboxes */}
               <div className="es-checkbox-group">
                 <label className="es-checkbox-label">
                   <input
