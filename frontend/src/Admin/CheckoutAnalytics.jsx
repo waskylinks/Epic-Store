@@ -1,39 +1,25 @@
 /**
- * CheckoutAnalytics.fixed.jsx
+ * CheckoutAnalytics — Recovery tab fix
  *
- * THREE FIXES:
+ * CHANGES IN THIS FILE:
  *
- * 1. RECOVERY OPPORTUNITIES — "in progress" campaigns now show.
- *    The old code called getRecoveryOpportunities() which filters
- *    recoveryEmailSent=false. Once even one email is sent the cart
- *    disappeared. Fix: the Recovery tab now splits display into two buckets:
- *      - "Not Yet Contacted" → recoveryOpportunitiesRaw (unchanged)
- *      - "Campaign In Progress" → items from getAbandonedCartsForSending
- *        where recovery.outcome is 'sent' | 'clicked' (still active,
- *        not exhausted/expired/terminal)
- *    Both are fetched; the Redux slice already stores getSendList results
- *    in `abandonedCheckouts`. We derive in-progress carts from that slice
- *    so no new thunk is needed.
+ * 1. "Not Yet Contacted" section removed entirely from the Recovery tab.
+ *    That concern is handled by the Recovery Email Monitor / cron page.
  *
- * 2. RE-ABANDONMENT STEP WRONG (shipping shows as payment_gateway).
- *    Root cause: Shipping.jsx only calls updateCheckoutStep('shipping_info')
- *    on SUCCESSFUL SUBMIT. If the user bails mid-form the DB currentStep is
- *    still whatever it was from a prior visit (e.g. payment_gateway).
- *    markAsAbandoned() reads this.currentStep from the DB, so the wrong
- *    step gets recorded.
- *    Fix: add a mount-time useEffect in Shipping.jsx that advances the DB
- *    step to 'shipping_info' immediately (same pattern Payment.jsx uses for
- *    'payment_selection'). The export at the bottom of this file includes
- *    the corrected Shipping hook snippet as a named export comment block.
- *    The actual fix is in the Shipping component — see SHIPPING FIX section.
+ * 2. "Active Campaigns" now sourced from recoveryEmailSlice (fetchSendList)
+ *    rather than derived from the checkout operations slice.
+ *    Active = outcome is 'sent' | 'clicked' | 'exhausted'.
+ *      - sent      → email delivered, user hasn't clicked yet
+ *      - clicked   → user clicked but hasn't converted
+ *      - exhausted → all N emails sent, tokens still potentially live,
+ *                    awaiting click until the last token expires
+ *    This is the canonical set of "campaigns still in play."
  *
- * 3. ABANDONMENT FUNNEL STEP SORTING.
- *    The sortByFunnelOrder helper reverse-maps display labels → raw keys
- *    via STEP_LABEL_MAP. When the backend already returns mapped labels
- *    some entries don't round-trip cleanly and land at index 999.
- *    Fix: build a reverse map once (DISPLAY_TO_RAW) and use it in the memo.
- *    Also adds a robustness guard: if the reverse lookup fails, try matching
- *    the raw key directly in FUNNEL_ORDER as a fallback.
+ * 3. A dedicated useEffect fetches the send-list once when the Recovery tab
+ *    is first activated (or refreshed).  The fetch uses outcome=all so
+ *    client-side filtering can cover all three active outcomes without three
+ *    round-trips.  hours=8760 (1 yr) matches the existing getSendListHandler
+ *    default so no records are inadvertently excluded.
  */
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
@@ -55,6 +41,11 @@ import {
   fetchReAbandonmentAnalytics,
   setOperationsTimeframe,
 } from '../features/analytics/operationsSlice';
+import {
+  fetchSendList,
+  selectSendList,
+  selectSendListLoading,
+} from '../features/admin/recoveryEmailSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CheckoutAnalytics.css';
 
@@ -71,6 +62,11 @@ const FUNNEL_ORDER = [
   'payment_gateway',
   'payment_failed',
 ];
+
+// Outcomes that constitute an "active" recovery campaign — emails sent or
+// clicked but not yet resolved to a terminal state.
+// exhausted = all emails sent but tokens still valid → still "in play."
+const ACTIVE_RECOVERY_OUTCOMES = new Set(['sent', 'clicked', 'exhausted']);
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 const fmt = {
@@ -110,8 +106,6 @@ const STEP_LABEL_MAP = {
   'payment_failed':     'Payment Failed',
 };
 
-// FIX 3: Build a reverse map once so display-label → raw-key lookups are O(1)
-// and never silently fail. Used in sortByFunnelOrder.
 const DISPLAY_TO_RAW = Object.fromEntries(
   Object.entries(STEP_LABEL_MAP).map(([k, v]) => [v, k])
 );
@@ -132,28 +126,23 @@ const resolveStepLabel = (s = '') => {
 const truncateStepLabel = (label = '') =>
   STEP_ABBREV[label] || (label.length > 10 ? label.slice(0, 9) + '…' : label);
 
-/**
- * FIX 3 — sortByFunnelOrder
- *
- * Robust version: given an array and a function that returns the "step key"
- * for each element (which may be either a raw snake_case key OR a display
- * label), find the canonical FUNNEL_ORDER index by:
- *   1. Try DISPLAY_TO_RAW[key] to convert display label → raw key, then
- *      look up that raw key in FUNNEL_ORDER.
- *   2. If that fails, try the key directly in FUNNEL_ORDER (handles raw keys
- *      passed directly).
- *   3. Fall back to 999 (end of list) if neither matches.
- */
 const sortByFunnelOrder = (steps = [], getKey = (s) => s.step) =>
   [...steps].sort((a, b) => {
     const resolve = (item) => {
       const key    = getKey(item);
-      const rawKey = DISPLAY_TO_RAW[key] || key; // display label → raw key, or already raw
+      const rawKey = DISPLAY_TO_RAW[key] || key;
       const idx    = FUNNEL_ORDER.indexOf(rawKey);
       return idx === -1 ? 999 : idx;
     };
     return resolve(a) - resolve(b);
   });
+
+// ── Outcome label map for campaign status display ─────────────────────────────
+const OUTCOME_LABEL = {
+  sent:      'Awaiting click',
+  clicked:   'Clicked — not converted',
+  exhausted: 'All emails sent',
+};
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -378,14 +367,29 @@ function AbandonmentFlags({ isReAbandoned, isOrganic, isExpired }) {
   );
 }
 
-// FIX 1: Campaign status badge for in-progress recovery cards
-function CampaignStatusBadge({ outcome, confirmedAttempts }) {
-  const maxAttempts = 3; // mirrors MAX_RECOVERY_ATTEMPTS env default
+/**
+ * CampaignStatusBadge
+ * Shows the live recovery outcome in a human-readable chip.
+ * exhausted gets its own label since it's distinct from sent/clicked.
+ */
+function CampaignStatusBadge({ outcome, confirmedAttempts, maxAttempts }) {
   if (outcome === 'clicked') {
-    return <span className="ck-badge ck-badge--pos" title="User clicked recovery link">Clicked</span>;
+    return (
+      <span className="ck-badge ck-badge--pos" title="User clicked recovery link — not yet converted">
+        Clicked
+      </span>
+    );
   }
+  if (outcome === 'exhausted') {
+    return (
+      <span className="ck-badge ck-badge--neg" title={`All ${maxAttempts} emails sent — awaiting click before tokens expire`}>
+        {confirmedAttempts}/{maxAttempts} sent · awaiting click
+      </span>
+    );
+  }
+  // outcome === 'sent'
   return (
-    <span className="ck-badge ck-badge--flat" title={`${confirmedAttempts}/${maxAttempts} emails sent`}>
+    <span className="ck-badge ck-badge--flat" title={`${confirmedAttempts}/${maxAttempts} email(s) sent — user hasn't clicked yet`}>
       {confirmedAttempts}/{maxAttempts} sent
     </span>
   );
@@ -399,11 +403,6 @@ const VIEWS = [
   { key: 'reabandoned', label: 'Failed Recoveries', TabIcon: Loop                 },
 ];
 
-// Outcomes that mean a recovery campaign is still active (emails sent, not yet
-// terminal). Defined at module level so it is a stable reference and does not
-// need to appear in useMemo dependency arrays.
-const ACTIVE_OUTCOMES = new Set(['sent', 'clicked']);
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function CheckoutAnalytics() {
@@ -411,17 +410,25 @@ export default function CheckoutAnalytics() {
 
   const {
     checkoutAbandonment,
-    recoveryOpportunities: recoveryOpportunitiesRaw,
     abandonedCheckouts:    abandonedCheckoutsRaw,
     reAbandonmentAnalytics,
     error,
   } = useSelector((s) => s.operations);
 
+  // Source active campaigns from the recovery email slice — it has the
+  // canonical outcome state per campaign and the correct { checkout, recovery }
+  // shape without needing manual derivation from the operations slice.
+  const sendList        = useSelector(selectSendList);
+  const sendListLoading = useSelector(selectSendListLoading);
+
   const [activeView, setActiveView] = useState('abandonment');
   const [timeframe,  setTimeframe]  = useState('month');
   const [hasFetched, setHasFetched] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const loadingRef = useRef(false);
+  // Tracks whether we've loaded send-list data for the recovery tab
+  const [sendListFetched, setSendListFetched] = useState(false);
+  const loadingRef     = useRef(false);
+  const sendListRef    = useRef(false);
 
   const loadAll = useCallback((tf) => {
     if (loadingRef.current) return;
@@ -430,19 +437,32 @@ export default function CheckoutAnalytics() {
 
     return Promise.allSettled([
       dispatch(fetchCheckoutAbandonmentStats(tf)),
-      dispatch(fetchRecoveryOpportunities(50)),
-      // FIX 1: fetch the full send-list with 'all' outcome so we can derive
-      // in-progress campaigns on the client. hours=8760 (1yr) matches the
-      // existing getSendListHandler default so all records are returned.
       dispatch(fetchAbandonedCheckouts({
-        hours:   8760,
+        hours:    8760,
         minValue: 0,
-        limit:   200,
-        page:    1,
-        sortBy:  'priority',
+        limit:    200,
+        page:     1,
+        sortBy:   'priority',
       })),
       dispatch(fetchReAbandonmentAnalytics(tf)),
     ]).finally(() => { loadingRef.current = false; });
+  }, [dispatch]);
+
+  // Load send-list from the recovery email slice.
+  // Called when the recovery tab is first opened, or on manual refresh.
+  const loadSendList = useCallback(() => {
+    if (sendListRef.current) return;
+    sendListRef.current = true;
+    dispatch(fetchSendList({
+      page:    1,
+      limit:   200,
+      outcome: 'all',
+      sortBy:  'priority',
+      hours:   8760,
+    })).finally(() => {
+      sendListRef.current = false;
+      setSendListFetched(true);
+    });
   }, [dispatch]);
 
   const pendingTimeframe = useRef(timeframe);
@@ -461,6 +481,13 @@ export default function CheckoutAnalytics() {
     });
   }, [timeframe]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Fetch send-list when recovery tab is first activated
+  useEffect(() => {
+    if (activeView === 'recovery' && !sendListFetched) {
+      loadSendList();
+    }
+  }, [activeView, sendListFetched, loadSendList]);
+
   const handleRefresh = useCallback(() => {
     Promise.resolve().then(() => {
       setRefreshing(true);
@@ -470,29 +497,27 @@ export default function CheckoutAnalytics() {
     if (promise) {
       promise.then(() => { setRefreshing(false); setHasFetched(true); });
     }
-  }, [loadAll, timeframe]);
+    // Also refresh send-list if on the recovery tab
+    if (activeView === 'recovery') {
+      setSendListFetched(false);
+      loadSendList();
+    }
+  }, [loadAll, loadSendList, timeframe, activeView]);
 
   const stats = checkoutAbandonment || {};
 
-  // FIX 3 — robust funnel step sorting using DISPLAY_TO_RAW reverse map.
-  // The getKey function uses DISPLAY_TO_RAW first (handles display labels
-  // already mapped by the backend), then falls back to the raw key directly.
   const steps = useMemo(
     () => sortByFunnelOrder(
       stats.stepBreakdown || [],
-      (s) => DISPLAY_TO_RAW[s.step] || s.step  // handles both display labels and raw keys
+      (s) => DISPLAY_TO_RAW[s.step] || s.step
     ),
     [stats.stepBreakdown]
   );
 
   const stepsMax = steps.length ? Math.max(1, ...steps.map((s) => s.count || 0)) : 1;
 
-  const opps  = recoveryOpportunitiesRaw?.opportunities || [];
   const first = !hasFetched;
 
-  // Memoized so the reference is stable across renders — prevents the
-  // inProgressCampaigns useMemo from re-running on every render due to
-  // the `|| []` fallback producing a new array reference each time.
   const abandoned = useMemo(
     () => abandonedCheckoutsRaw?.abandonedCheckouts || [],
     [abandonedCheckoutsRaw]
@@ -512,19 +537,28 @@ export default function CheckoutAnalytics() {
   const reAbandonedCount       = stats.reAbandonedCount       ?? 0;
   const avgAbandonedCartValue  = stats.avgAbandonedCheckoutValue || 0;
 
-  // FIX 1: Derive "in-progress" recovery campaigns from the abandonedCheckouts
-  // slice. These are carts that have had at least one email sent (confirmedAttempts > 0)
-  // and whose outcome is still active ('sent' or 'clicked') — not terminal.
-  // ACTIVE_OUTCOMES is defined at module level (below VIEWS) to keep it stable.
-  const inProgressCampaigns = useMemo(
-    () =>
-      abandoned.filter((c) => {
-        const outcome    = c.recovery?.outcome;
-        const attempts   = c.recovery?.confirmedAttempts || 0;
-        return attempts > 0 && ACTIVE_OUTCOMES.has(outcome);
-      }),
-    [abandoned]
+  /**
+   * Active campaigns — sourced from the recovery email send-list.
+   * ACTIVE_RECOVERY_OUTCOMES covers:
+   *   sent      → at least one email sent, user hasn't clicked
+   *   clicked   → user clicked a valid token, hasn't converted yet
+   *   exhausted → all emails sent, tokens still live, awaiting click
+   *
+   * Each item in sendList has shape { checkout: {...}, recovery: {...} }
+   * which is the correct shape for the campaign cards below.
+   */
+  const activeCampaigns = useMemo(
+    () => sendList.filter((item) => {
+      const outcome  = item.recovery?.outcome;
+      const attempts = item.recovery?.confirmedAttempts || 0;
+      // Must have at least one confirmed send AND be in an active outcome
+      return attempts > 0 && ACTIVE_RECOVERY_OUTCOMES.has(outcome);
+    }),
+    [sendList]
   );
+
+  // MAX_ATTEMPTS from env (Vite) or fallback to 3
+  const MAX_ATTEMPTS = parseInt(import.meta.env?.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 
   const barChartData = useMemo(
     () => steps.map((s) => ({
@@ -545,7 +579,6 @@ export default function CheckoutAnalytics() {
   const reaSteps   = useMemo(
     () => sortByFunnelOrder(
       reaData.stepBreakdown || [],
-      // FIX 3: use same robust resolver for re-abandonment steps
       (s) => {
         const label = s.stepLabel || s.step;
         return DISPLAY_TO_RAW[label] || label;
@@ -907,9 +940,10 @@ export default function CheckoutAnalytics() {
             </div>
           )}
 
-          {/* ══ RECOVERY OPPORTUNITIES ══ */}
+          {/* ══ RECOVERY — ACTIVE CAMPAIGNS ONLY ══ */}
           {activeView === 'recovery' && (
             <div className="ck-panel">
+              {/* ── KPI strip ── */}
               <div className="ck-grid-4 ck-grid-4--auto">
                 {first ? (
                   Array.from({ length: 3 }).map((_, i) => <KpiSkel key={i} />)
@@ -938,97 +972,73 @@ export default function CheckoutAnalytics() {
                 )}
               </div>
 
-              {/* ── FIX 1: Not Yet Contacted ────────────────────────────── */}
-              <div className="ck-section"><span className="ck-section-text">Not Yet Contacted</span><span className="ck-section-line" /></div>
-              <div className="ck-row">
-                {first ? (
-                  <Spinner h={300} />
-                ) : opps.length === 0 ? (
-                  <Empty label="No uncontacted carts — all eligible carts have been emailed or converted." h={200} />
-                ) : (
-                  <div className="ck-opp-grid">
-                    {opps.slice(0, 12).map((opp, i) => {
-                      const user          = opp.user || {};
-                      const priorityScore = opp.priority ?? opp.priorityScore ?? 0;
-                      const priority      = getPriority(priorityScore);
-                      const cartValue     = opp.pricing?.totalPrice || 0;
-                      const itemCount     = opp.items?.length || 0;
-                      const lastStep      = resolveStepLabel(opp.abandonment?.abandonedAtStep) || '—';
-                      return (
-                        <div className="ck-opp-card" key={i}>
-                          <div className="ck-opp-card-top">
-                            <span className={`ck-priority ck-priority--${priority.cls}`}>{priority.label} Priority</span>
-                            <span className="ck-opp-score">Score: {priorityScore}</span>
-                          </div>
-                          <div className="ck-opp-name">{user.firstName ? `${user.firstName} ${user.lastName || ''}`.trim() : 'Guest'}</div>
-                          <div className="ck-opp-email">{user.email || '—'}</div>
-                          <div className="ck-opp-stats">
-                            <div className="ck-opp-stat">
-                              <div className="ck-opp-stat-label">Cart Value</div>
-                              <div className="ck-opp-stat-val ck-opp-stat-val--green">{fmt.currency(cartValue)}</div>
-                            </div>
-                            <div className="ck-opp-stat">
-                              <div className="ck-opp-stat-label">Items</div>
-                              <div className="ck-opp-stat-val">{fmt.number(itemCount)}</div>
-                            </div>
-                            <div className="ck-opp-stat">
-                              <div className="ck-opp-stat-label">Last Step</div>
-                              <div className="ck-opp-stat-val ck-opp-stat-val--red">{lastStep}</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* ── FIX 1: Campaign In Progress ─────────────────────────── */}
+              {/* ── Active campaigns ── */}
               <div className="ck-section">
                 <span className="ck-section-text">
-                  Campaign In Progress
-                  {inProgressCampaigns.length > 0 && (
-                    <span className="ck-section-count">{inProgressCampaigns.length}</span>
+                  Active Recovery Campaigns
+                  {activeCampaigns.length > 0 && (
+                    <span className="ck-section-count">{activeCampaigns.length}</span>
                   )}
                 </span>
                 <span className="ck-section-line" />
               </div>
+
+              {/* Explanation of what "active" means */}
+              <p className="ck-section-desc">
+                Campaigns where at least one email has been sent and the recovery window is still open —
+                includes carts awaiting a first click, carts where the user clicked but hasn't converted,
+                and carts where all emails have been sent but tokens haven't expired yet.
+              </p>
+
               <div className="ck-row">
-                {first ? (
-                  <Spinner h={240} />
-                ) : inProgressCampaigns.length === 0 ? (
-                  <Empty label="No active campaigns — emails are still being scheduled or all campaigns have resolved." h={180} />
+                {/* Show skeletons while the send-list is loading for the first time */}
+                {!sendListFetched || sendListLoading ? (
+                  <Spinner h={280} />
+                ) : activeCampaigns.length === 0 ? (
+                  <Empty
+                    label="No active campaigns — all recovery emails have either been converted, expired, or reached a terminal state."
+                    h={200}
+                  />
                 ) : (
                   <div className="ck-opp-grid">
-                    {inProgressCampaigns.slice(0, 12).map((item, i) => {
-                      const c             = item.checkout || item; // handle both shapes
-                      const recovery      = item.recovery || {};
-                      const user          = c.user || {};
-                      const priorityScore = c.priority ?? 0;
-                      const priority      = getPriority(priorityScore);
-                      const cartValue     = c.pricing?.totalPrice || 0;
-                      const itemCount     = c.items?.length || 0;
-                      const lastStep      = resolveStepLabel(
+                    {activeCampaigns.slice(0, 18).map((item, i) => {
+                      // sendList items have shape { checkout, recovery }
+                      const c          = item.checkout;
+                      const recovery   = item.recovery || {};
+                      const user       = c.user || {};
+                      const priority   = getPriority(c.priority ?? 0);
+                      const cartValue  = c.pricing?.totalPrice || 0;
+                      const itemCount  = c.items?.length || 0;
+                      const lastStep   = resolveStepLabel(
                         c.abandonment?.firstAbandonedAtStep || c.abandonment?.abandonedAtStep
                       ) || '—';
-                      const lastSentAt    = recovery.lastSentAt;
-                      const nextAt        = recovery.nextAvailableAt;
+                      const lastSentAt = recovery.lastSentAt;
+                      const nextAt     = recovery.nextAvailableAt;
+                      const outcome    = recovery.outcome;
 
                       return (
-                        <div className="ck-opp-card ck-opp-card--inprogress" key={i}>
+                        <div
+                          className={`ck-opp-card ck-opp-card--inprogress${outcome === 'exhausted' ? ' ck-opp-card--exhausted' : ''}`}
+                          key={i}
+                        >
                           <div className="ck-opp-card-top">
-                            <span className={`ck-priority ck-priority--${priority.cls}`}>{priority.label} Priority</span>
+                            <span className={`ck-priority ck-priority--${priority.cls}`}>
+                              {priority.label} Priority
+                            </span>
                             <CampaignStatusBadge
-                              outcome={recovery.outcome}
+                              outcome={outcome}
                               confirmedAttempts={recovery.confirmedAttempts || 0}
+                              maxAttempts={MAX_ATTEMPTS}
                             />
                           </div>
+
                           <div className="ck-opp-name">
                             {user.firstName
                               ? `${user.firstName} ${user.lastName || ''}`.trim()
                               : (c.email || 'Guest')}
                           </div>
                           <div className="ck-opp-email">{user.email || c.email || '—'}</div>
+
                           <div className="ck-opp-stats">
                             <div className="ck-opp-stat">
                               <div className="ck-opp-stat-label">Cart Value</div>
@@ -1042,13 +1052,25 @@ export default function CheckoutAnalytics() {
                               <div className="ck-opp-stat-label">Abandoned At</div>
                               <div className="ck-opp-stat-val ck-opp-stat-val--red">{lastStep}</div>
                             </div>
+                            <div className="ck-opp-stat">
+                              <div className="ck-opp-stat-label">Link Clicks</div>
+                              <div className="ck-opp-stat-val">{recovery.totalLinkClicks || 0}</div>
+                            </div>
                           </div>
+
                           {lastSentAt && (
                             <div className="ck-opp-meta">
                               Last email: {fmt.date(lastSentAt)}
-                              {nextAt && (
-                                <span className="ck-opp-next"> · Next: {fmt.date(nextAt)}</span>
+                              {nextAt && new Date(nextAt) > new Date() && (
+                                <span className="ck-opp-next"> · Next avail: {fmt.date(nextAt)}</span>
                               )}
+                            </div>
+                          )}
+
+                          {/* Show token expiry hint for exhausted campaigns */}
+                          {outcome === 'exhausted' && (
+                            <div className="ck-opp-exhaust-note">
+                              All emails sent — will expire if user doesn't click
                             </div>
                           )}
                         </div>
@@ -1245,7 +1267,6 @@ export default function CheckoutAnalytics() {
                         </thead>
                         <tbody>
                           {(() => {
-                            // FIX 3: collect all raw keys from both arrays, dedupe, sort by FUNNEL_ORDER
                             const allRawKeys = [...new Set([
                               ...steps.map((s) => DISPLAY_TO_RAW[s.step] || s.step),
                               ...reaSteps.map((s) => {

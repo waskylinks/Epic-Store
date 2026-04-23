@@ -79,7 +79,7 @@ function ClickFunnel({ clickFunnel }) {
   const max = Math.max(sent, clicked, converted, 1); // fix: use true max across all steps
 
   const steps = [
-    { label: 'Emails Sent',  count: sent,      fill: Math.min((sent      / max) * 100, 100), color: FUNNEL_COLORS.sent,      rate: null },
+    { label: 'Emails Sent (Campaigns)',  count: sent,      fill: Math.min((sent      / max) * 100, 100), color: FUNNEL_COLORS.sent,      rate: null },
     { label: 'Link Clicked', count: clicked,   fill: Math.min((clicked   / max) * 100, 100), color: FUNNEL_COLORS.clicked,   rate: `${fmt.pct(sentToClickRate)} click rate` },
     { label: 'Converted',    count: converted, fill: Math.min((converted / max) * 100, 100), color: FUNNEL_COLORS.converted, rate: `${fmt.pct(clickToConvertRate)} conversion rate` },
   ];
