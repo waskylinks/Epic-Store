@@ -787,11 +787,11 @@ export default function CheckoutAnalytics() {
                         <span className="ck-metric-val ck-metric-val--purple">{fmt.number(totalFailedRecoveries)}</span>
                       </div>
                       <div className="ck-metric-row">
-                        <span className="ck-metric-label ck-metric-label--indent ck-metric-label--muted">↩ Re-abandoned</span>
+                        <span className="ck-metric-label">↩ Re-abandoned</span>
                         <span className="ck-metric-val ck-metric-val--purple ck-metric-val--sm">{fmt.number(reAbandonedCount)}</span>
                       </div>
                       <div className="ck-metric-row">
-                        <span className="ck-metric-label ck-metric-label--indent ck-metric-label--muted">⌛ Expired (never clicked)</span>
+                        <span className="ck-metric-label">⌛ Expired (never clicked)</span>
                         <span className="ck-metric-val ck-metric-val--purple ck-metric-val--sm">{fmt.number(expiredRecoveryCount)}</span>
                       </div>
                       <div className="ck-metric-row">
