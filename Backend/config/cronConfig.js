@@ -50,7 +50,7 @@ export const cronConfig = Object.freeze({
     dryRun:         boo('RECOVERY_CRON_DRY_RUN'),
     maxAgeDays:     int('RECOVERY_MAX_AGE_DAYS',     7),
     maxAttempts:    int('MAX_RECOVERY_ATTEMPTS',     3),
-    cooldownHours:  int('RECOVERY_COOLDOWN_HOURS',   1),
+    cooldownHours:  flt('RECOVERY_COOLDOWN_HOURS',   1),
     tokenTTL:       int('RECOVERY_TOKEN_TTL_SECONDS', 72 * 60 * 60),
     staleAckMins:   int('RECOVERY_STALE_ACK_MINS',   10),
     delayHours: {
