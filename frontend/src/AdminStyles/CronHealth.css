@@ -917,3 +917,387 @@
   .crn-body    { padding: 0; max-width: 100%; }
   .crn-detail-grid { grid-template-columns: 1fr; }
 }
+
+
+/*
+ * CronHealth.css — ADDITIONS ONLY
+ *
+ * Append these rules to the bottom of your existing CronHealth.css file.
+ * All new selectors use the existing crn- prefix and follow the same design
+ * token system (CSS variables on .crn-page) already established in the file.
+ *
+ * New sections added:
+ *   1. Partial status badge (crn-badge--partial)
+ *   2. Trigger source badge (crn-trigger-badge)
+ *   3. Detail card header actions row (crn-detail-hd-actions)
+ *   4. History toggle button (crn-history-toggle-btn)
+ *   5. History section container (crn-history-section)
+ *   6. History table and sub-components
+ *   7. Responsive overrides for new elements
+ */
+
+/* ================================================================
+   1. PARTIAL STATUS BADGE
+   Needed because CronJobLog.status includes 'partial' which
+   CronJobStatus does not. The badge must render correctly wherever
+   StatusBadge is used.
+   ================================================================ */
+
+.crn-badge--partial {
+  background:  #FEF3C7;
+  color:       #92400E;
+  border:      1px solid #FDE68A;
+}
+
+/* ================================================================
+   2. TRIGGER SOURCE BADGE
+   Shown in the history table's Source column.
+   Two variants: cron (neutral) and manual (blue accent).
+   ================================================================ */
+
+.crn-trigger-badge {
+  display:        inline-flex;
+  align-items:    center;
+  padding:        2px 8px;
+  border-radius:  var(--crn-radius-pill);
+  font-size:      10.5px;
+  font-weight:    700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  white-space:    nowrap;
+  line-height:    1.5;
+}
+
+.crn-trigger-badge--cron {
+  background: var(--crn-border-soft);
+  color:      var(--crn-text-muted);
+  border:     1px solid var(--crn-border);
+}
+
+.crn-trigger-badge--manual {
+  background: #EFF6FF;
+  color:      #1D4ED8;
+  border:     1px solid #BFDBFE;
+}
+
+/* ================================================================
+   3. DETAIL CARD HEADER ACTIONS ROW
+   Wraps the "Run Now" and "History" buttons so they stack neatly
+   without fighting the existing crn-trigger-btn alignment.
+   ================================================================ */
+
+.crn-detail-hd-actions {
+  display:     flex;
+  align-items: center;
+  gap:         8px;
+  flex-shrink: 0;
+  flex-wrap:   wrap;
+}
+
+/* ================================================================
+   4. HISTORY TOGGLE BUTTON
+   Sits alongside crn-trigger-btn in the header. Uses the same base
+   style but with a lighter treatment to signal it is secondary.
+   ================================================================ */
+
+.crn-history-toggle-btn {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            5px;
+  padding:        7px 12px;
+  background:     var(--crn-surface-soft);
+  border:         1px solid var(--crn-border);
+  border-radius:  var(--crn-radius-sm);
+  font-family:    var(--crn-font);
+  font-size:      12px;
+  font-weight:    600;
+  color:          var(--crn-text-muted);
+  cursor:         pointer;
+  transition:     var(--crn-transition);
+  white-space:    nowrap;
+  flex-shrink:    0;
+}
+
+.crn-history-toggle-btn:hover {
+  background:   #F3F4F6;
+  border-color: var(--crn-border-md);
+  color:        var(--crn-text);
+}
+
+/* ================================================================
+   5. HISTORY SECTION CONTAINER
+   Appended at the bottom of crn-detail-card, below crn-detail-body.
+   A top border separates it from the body content above.
+   ================================================================ */
+
+.crn-history-section {
+  border-top:  1px solid var(--crn-border);
+  background:  #FAFBFC;
+}
+
+.crn-history-section-hd {
+  display:        flex;
+  align-items:    center;
+  gap:            7px;
+  padding:        12px 20px 10px;
+  font-size:      11px;
+  font-weight:    800;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color:          var(--crn-text-muted);
+  border-bottom:  1px solid var(--crn-border);
+}
+
+/* ── Loading state inside history panel ─────────────────────── */
+.crn-history-loading {
+  display:         flex;
+  align-items:     center;
+  gap:             10px;
+  padding:         20px;
+  font-size:       13px;
+  color:           var(--crn-text-muted);
+  font-weight:     500;
+}
+
+/* ── Error state inside history panel ──────────────────────── */
+.crn-history-error {
+  display:       flex;
+  align-items:   center;
+  gap:           8px;
+  padding:       16px 20px;
+  font-size:     12.5px;
+  color:         #991B1B;
+  background:    #FEF2F2;
+  border-bottom: 1px solid #FECACA;
+}
+
+/* ── Empty state inside history panel ──────────────────────── */
+.crn-history-empty {
+  padding:     20px;
+  font-size:   13px;
+  color:       var(--crn-text-xmuted);
+  font-style:  italic;
+  font-weight: 500;
+  text-align:  center;
+}
+
+/* ================================================================
+   6. HISTORY TABLE AND SUB-COMPONENTS
+   ================================================================ */
+
+.crn-history-panel {
+  padding: 0 0 4px;
+}
+
+.crn-history-tbl-wrap {
+  overflow-x:               auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width:          thin;
+  scrollbar-color:          var(--crn-border) transparent;
+}
+
+.crn-history-tbl-wrap::-webkit-scrollbar       { height: 4px; }
+.crn-history-tbl-wrap::-webkit-scrollbar-thumb { background: var(--crn-border); border-radius: 4px; }
+
+.crn-history-tbl {
+  width:           100%;
+  border-collapse: collapse;
+  font-size:       12.5px;
+  min-width:       560px;
+}
+
+.crn-history-tbl thead tr {
+  border-bottom: 1px solid var(--crn-border);
+  background:    #F8F9FB;
+}
+
+.crn-history-tbl th {
+  padding:        8px 16px;
+  text-align:     left;
+  font-size:      10px;
+  font-weight:    800;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color:          var(--crn-text-muted);
+  white-space:    nowrap;
+}
+
+.crn-history-tbl td {
+  padding:        9px 16px;
+  color:          var(--crn-text-sec);
+  vertical-align: middle;
+  border-bottom:  1px solid var(--crn-border-soft);
+  white-space:    nowrap;
+}
+
+.crn-history-tbl tbody tr:last-child td { border-bottom: none; }
+.crn-history-tbl tbody tr:hover td      { background: #F8F9FB; }
+
+/* Column-specific styles */
+.crn-history-td-date {
+  color:       var(--crn-text);
+  font-weight: 500;
+  font-size:   12px;
+}
+
+.crn-history-td-mono {
+  font-family: var(--crn-font-mono);
+  font-size:   12px;
+  color:       var(--crn-text-muted);
+}
+
+.crn-history-td-muted {
+  color:       var(--crn-text-xmuted);
+  font-style:  italic;
+  font-size:   12px;
+}
+
+/* Error cell — truncated with full text in title tooltip */
+.crn-history-error-cell {
+  font-family:  var(--crn-font-mono);
+  font-size:    11px;
+  color:        #991B1B;
+  background:   #FEF2F2;
+  border:       1px solid #FECACA;
+  border-radius: 4px;
+  padding:      2px 6px;
+  display:      inline-block;
+  max-width:    240px;
+  overflow:     hidden;
+  text-overflow: ellipsis;
+  cursor:       default;
+}
+
+/* Count chips inside the Counts column */
+.crn-history-counts {
+  display:   flex;
+  flex-wrap: wrap;
+  gap:       4px;
+}
+
+.crn-history-count-chip {
+  display:       inline-flex;
+  align-items:   center;
+  gap:           4px;
+  background:    var(--crn-border-soft);
+  border:        1px solid var(--crn-border);
+  border-radius: 5px;
+  padding:       2px 7px;
+  font-size:     11.5px;
+  white-space:   nowrap;
+}
+
+.crn-history-count-key {
+  font-weight: 600;
+  color:       var(--crn-text-muted);
+}
+
+.crn-history-count-val {
+  font-weight: 800;
+  color:       var(--crn-text);
+  font-family: var(--crn-font-mono);
+}
+
+/* ── Load more button ───────────────────────────────────────── */
+.crn-history-load-more {
+  display:         flex;
+  justify-content: center;
+  padding:         12px 20px;
+  border-top:      1px solid var(--crn-border-soft);
+}
+
+.crn-history-load-btn {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            6px;
+  padding:        7px 18px;
+  background:     var(--crn-surface);
+  border:         1px solid var(--crn-border);
+  border-radius:  var(--crn-radius-sm);
+  font-family:    var(--crn-font);
+  font-size:      12.5px;
+  font-weight:    600;
+  color:          var(--crn-text-sec);
+  cursor:         pointer;
+  transition:     var(--crn-transition);
+}
+
+.crn-history-load-btn:hover:not(:disabled) {
+  background:   #F3F4F6;
+  border-color: var(--crn-border-md);
+  color:        var(--crn-text);
+}
+
+.crn-history-load-btn:disabled {
+  opacity:       0.55;
+  cursor:        not-allowed;
+}
+
+/* ================================================================
+   7. RESPONSIVE OVERRIDES FOR NEW ELEMENTS
+   ================================================================ */
+
+/* ── 1024px ────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .crn-history-error-cell { max-width: 160px; }
+}
+
+/* ── 768px ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Stack trigger + history buttons vertically in card header */
+  .crn-detail-hd-actions {
+    flex-direction: column;
+    align-items:    stretch;
+    width:          100%;
+  }
+
+  .crn-trigger-btn,
+  .crn-history-toggle-btn {
+    width:           100%;
+    justify-content: center;
+  }
+
+  /* Collapse history table — hide less critical columns */
+  .crn-history-tbl th:nth-child(6),
+  .crn-history-tbl td:nth-child(6) { display: none; } /* Error column */
+}
+
+/* ── 600px ─────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .crn-history-section-hd { padding: 10px 14px 8px; }
+
+  .crn-history-tbl th,
+  .crn-history-tbl td { padding: 8px 12px; }
+
+  /* Hide Source column on small screens — status badge is enough */
+  .crn-history-tbl th:nth-child(4),
+  .crn-history-tbl td:nth-child(4) { display: none; }
+
+  .crn-history-counts { flex-direction: column; }
+
+  .crn-history-count-chip { font-size: 11px; }
+}
+
+/* ── 480px ─────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  .crn-history-tbl { min-width: 320px; }
+
+  /* Keep only Date, Status, Counts on very small screens */
+  .crn-history-tbl th:nth-child(2),
+  .crn-history-tbl td:nth-child(2) { display: none; } /* Duration */
+
+  .crn-history-load-btn { width: 100%; justify-content: center; }
+
+  .crn-trigger-badge { font-size: 10px; padding: 2px 6px; }
+}
+
+/* ── Print ─────────────────────────────────────────────────── */
+@media print {
+  .crn-history-toggle-btn,
+  .crn-history-load-btn { display: none !important; }
+
+  .crn-history-section { background: white; }
+
+  .crn-history-tbl th,
+  .crn-history-tbl td { padding: 6px 10px; font-size: 11px; }
+}

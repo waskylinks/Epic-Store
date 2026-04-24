@@ -27,6 +27,7 @@ import operationsReducer from '../features/analytics/operationsSlice';
 import returnAnalyticsReducer from '../features/analytics/returnAnalyticsSlice';
 import recoveryReducer from '../features/admin/recoveryEmailSlice';
 import cronHealthReducer from '../features/admin/cronHealthSlice';
+import cronLogReducer from '../features/admin/cronLogSlice';    
 
 
 
@@ -60,6 +61,7 @@ export const store = configureStore({
         recovery: recoveryReducer, 
         returnAnalytics:   returnAnalyticsReducer,
         cronHealth: cronHealthReducer,
+        cronLog: cronLogReducer,
 
 
     },
