@@ -8,9 +8,6 @@ import { configureCloudinary } from './utils/cloudinaryUpload.js';
 import { startAllCronJobs, stopAllCronJobs } from './jobs/cronRegistry.js';
 import { validateCronEnv } from './config/cronConfig.js';
  
-// ── Route imports ─────────────────────────────────────────────────────────────
-// Add the new cron health router
-import cronHealthRouter from './routes/cronHealthRoutes.js';
  
 /* ================= ENV VALIDATION ================= */
 const validateEnvVariables = () => {
@@ -86,7 +83,7 @@ const startServer = async () => {
     //    Note: mount cronHealthRouter in app.js or here before server.listen()
     //    Example: app.use('/api/v1/admin/cron', cronHealthRouter);
     //    If you mount routes in app.js, import and use it there instead.
-    app.use('/api/v1/admin/cron', cronHealthRouter);
+
  
     // 7️⃣ Register all scheduled jobs
     //    startAllCronJobs() is async — it seeds CronJobStatus documents

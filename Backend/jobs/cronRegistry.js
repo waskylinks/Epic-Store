@@ -10,6 +10,13 @@
  *   - Emits a consolidated registration log on startup
  *   - Exports startAllCronJobs() and stopAllCronJobs() for server.js
  *
+ * EDIT SUMMARY (vs previous version):
+ *   - Added CheckoutRetention import and JOB_REGISTRY entry.
+ *     Positioned after AuditCleanup in the registry so all daily maintenance
+ *     jobs are grouped before the monthly retention job. Ordering is not
+ *     functionally significant here (retention runs monthly on the 1st at 4 AM,
+ *     well after all daily jobs complete), but grouping aids readability.
+ *
  * Integration in server.js:
  *   REMOVE:
  *     import { startDiscountCleanupJob }  from './jobs/discount-cleanup.js';
@@ -31,13 +38,14 @@
  *     stopAllCronJobs();
  */
 
-import { startAbandonmentSweep, stopAbandonmentSweep } from './abandonmentSweep.js';
-import { startDiscountCleanupJob }                     from './discount-cleanup.js';
-import { startAuditCleanupJob }                        from './audit-log-cleanup.js';
+import { startAbandonmentSweep, stopAbandonmentSweep }       from './abandonmentSweep.js';
+import { startDiscountCleanupJob }                            from './discount-cleanup.js';
+import { startAuditCleanupJob }                               from './audit-log-cleanup.js';
+import { startRecoveryEmailCron, stopRecoveryEmailCron }      from './recoveryEmailCron.js';
 import {
-  startRecoveryEmailCron,
-  stopRecoveryEmailCron,
-} from './recoveryEmailCron.js';
+  startCheckoutRetentionJob,
+  stopCheckoutRetentionJob,
+}                                                             from './checkoutRetentionJob.js';
 import { cronConfig }    from '../config/cronConfig.js';
 import CronJobStatus     from '../models/CronJobStatus.js';
 
@@ -72,6 +80,18 @@ const JOB_REGISTRY = [
     schedule:      cronConfig.auditCleanup.cronExpression,
     startFn:       startAuditCleanupJob,
     stopFn:        null,
+  },
+  {
+    // Monthly three-pass data lifecycle job.
+    // Runs at 4 AM on the 1st of every month — after all daily jobs, before
+    // business hours in any timezone when UTC is the server clock.
+    // Safe to trigger manually via POST /api/v1/admin/cron/trigger/CheckoutRetention.
+    jobName:       'CheckoutRetention',
+    scheduleLabel: 'Monthly — 4 AM on the 1st',
+    schedule:      cronConfig.checkoutRetention.cronExpression,
+    startFn:       startCheckoutRetentionJob,
+    stopFn:        stopCheckoutRetentionJob,
+    note:          'Warm prune (90d) → cold archive (365d) → hard delete (7yr, production only)',
   },
   {
     jobName:       'RecoveryEmailCron',

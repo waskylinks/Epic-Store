@@ -273,4 +273,18 @@ cronJobLogSchema.statics.getHealthSummary = async function () {
   return summary;
 };
 
+// Invalidate the banner cache whenever a new run log is written.
+// This ensures the checkout analytics banner reflects the latest run
+// without waiting for the 60s Redis TTL to expire naturally.
+
+cronJobLogSchema.post('save', async function () {
+  try {
+    const { deleteCache } = await import('../utils/redis.js');
+    await deleteCache('cron_banner');
+  } catch (err) {
+    // Never throw from a post-save hook — log and continue
+    console.error('[CronJobLog] Banner cache invalidation failed:', err.message);
+  }
+});
+
 export default mongoose.model('CronJobLog', cronJobLogSchema);
