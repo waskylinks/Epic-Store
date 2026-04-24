@@ -1,5 +1,6 @@
 import express from 'express';
 import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
+import { adminAnalyticsLimiter, adminLimiter } from '../middleware/rateLimiter.js';
 import {
   getRecoveryStatusHandler,
   getSendListHandler,
@@ -11,16 +12,9 @@ const router = express.Router();
 
 router.use(verifyUserAuth);
 
-// GET /api/v1/recovery/status/:checkoutId
-router.get('/status/:checkoutId', roleBaseAccess('admin', 'superAdmin'), getRecoveryStatusHandler);
-
-// GET /api/v1/recovery/send-list
-router.get('/send-list', roleBaseAccess('admin', 'superAdmin'), getSendListHandler);
-
-// GET /api/v1/recovery/analytics
-router.get('/analytics', roleBaseAccess('admin', 'superAdmin'), getRecoveryAnalyticsHandler);
-
-// POST /api/v1/recovery/resolve/:checkoutId
-router.post('/resolve/:checkoutId', roleBaseAccess('admin', 'superAdmin'), resolveOutcomeHandler);
+router.get('/status/:checkoutId',   roleBaseAccess('admin', 'superAdmin'), adminAnalyticsLimiter, getRecoveryStatusHandler);
+router.get('/send-list',            roleBaseAccess('admin', 'superAdmin'), adminAnalyticsLimiter, getSendListHandler);
+router.get('/analytics',            roleBaseAccess('admin', 'superAdmin'), adminAnalyticsLimiter, getRecoveryAnalyticsHandler);
+router.post('/resolve/:checkoutId', roleBaseAccess('admin', 'superAdmin'), adminLimiter,          resolveOutcomeHandler);
 
 export default router;
