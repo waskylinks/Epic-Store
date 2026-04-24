@@ -259,8 +259,6 @@ const cronLogSlice = createSlice({
         state.banner.loading     = false;
         state.banner.jobs        = action.payload.jobs ?? [];
         state.banner.lastFetched = Date.now();
-        // Reset dismissed when fresh data arrives — admin should see new runs
-        state.banner.dismissed   = false;
       })
       .addCase(fetchCronBanner.rejected, (state, action) => {
         state.banner.loading = false;

@@ -1,27 +1,3 @@
-/**
- * CheckoutAnalytics — Recovery tab fix
- *
- * CHANGES IN THIS FILE:
- *
- * 1. "Not Yet Contacted" section removed entirely from the Recovery tab.
- *    That concern is handled by the Recovery Email Monitor / cron page.
- *
- * 2. "Active Campaigns" now sourced from recoveryEmailSlice (fetchSendList)
- *    rather than derived from the checkout operations slice.
- *    Active = outcome is 'sent' | 'clicked' | 'exhausted'.
- *      - sent      → email delivered, user hasn't clicked yet
- *      - clicked   → user clicked but hasn't converted
- *      - exhausted → all N emails sent, tokens still potentially live,
- *                    awaiting click until the last token expires
- *    This is the canonical set of "campaigns still in play."
- *
- * 3. A dedicated useEffect fetches the send-list once when the Recovery tab
- *    is first activated (or refreshed).  The fetch uses outcome=all so
- *    client-side filtering can cover all three active outcomes without three
- *    round-trips.  hours=8760 (1 yr) matches the existing getSendListHandler
- *    default so no records are inadvertently excluded.
- */
-
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
@@ -46,6 +22,15 @@ import {
   selectSendList,
   selectSendListLoading,
 } from '../features/admin/recoveryEmailSlice';
+// CHANGE 1 — cronLogSlice imports
+import {
+  fetchCronBanner,
+  dismissBanner,
+  resetBannerDismiss,
+  selectBannerJobByName,
+  selectBannerDismissed,
+  selectBannerLoading,
+} from '../features/admin/cronLogSlice';
 import Navbar from '../components/Navbar';
 import '../AdminStyles/CheckoutAnalytics.css';
 
@@ -63,9 +48,6 @@ const FUNNEL_ORDER = [
   'payment_failed',
 ];
 
-// Outcomes that constitute an "active" recovery campaign — emails sent or
-// clicked but not yet resolved to a terminal state.
-// exhausted = all emails sent but tokens still valid → still "in play."
 const ACTIVE_RECOVERY_OUTCOMES = new Set(['sent', 'clicked', 'exhausted']);
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -367,11 +349,6 @@ function AbandonmentFlags({ isReAbandoned, isOrganic, isExpired }) {
   );
 }
 
-/**
- * CampaignStatusBadge
- * Shows the live recovery outcome in a human-readable chip.
- * exhausted gets its own label since it's distinct from sent/clicked.
- */
 function CampaignStatusBadge({ outcome, confirmedAttempts, maxAttempts }) {
   if (outcome === 'clicked') {
     return (
@@ -387,11 +364,89 @@ function CampaignStatusBadge({ outcome, confirmedAttempts, maxAttempts }) {
       </span>
     );
   }
-  // outcome === 'sent'
   return (
     <span className="ck-badge ck-badge--flat" title={`${confirmedAttempts}/${maxAttempts} email(s) sent — user hasn't clicked yet`}>
       {confirmedAttempts}/{maxAttempts} sent
     </span>
+  );
+}
+
+// ── Retention Banner ──────────────────────────────────────────────────────────
+
+function fmtRelative(dateStr) {
+  if (!dateStr) return '—';
+  const diff    = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  const hours   = Math.floor(diff / 3600000);
+  const days    = Math.floor(diff / 86400000);
+  if (minutes < 1)   return 'just now';
+  if (minutes < 60)  return `${minutes} min${minutes === 1 ? '' : 's'} ago`;
+  if (hours < 24)    return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  return `${days} day${days === 1 ? '' : 's'} ago`;
+}
+
+// CHANGE 6 — RetentionBanner sub-component
+function RetentionBanner({ job, onDismiss }) {
+  if (!job) return null;
+
+  const isFailed  = job.status === 'failed';
+  const isPartial = job.status === 'partial';
+  const isOk      = job.status === 'ok';
+
+  const counts = job.counts ?? {};
+  const countEntries = Object.entries(counts).filter(
+    ([, v]) => typeof v === 'number' && v > 0
+  );
+
+  return (
+    <div
+      className={`ck-retention-banner${isFailed ? ' ck-retention-banner--error' : isPartial ? ' ck-retention-banner--warn' : ''}`}
+      role="status"
+      aria-live="polite"
+    >
+      <div className="ck-retention-banner-left">
+        <span className="ck-retention-banner-icon">
+          {isFailed  ? '⚠' : isPartial ? '⚠' : '✓'}
+        </span>
+        <div className="ck-retention-banner-body">
+          <span className="ck-retention-banner-title">
+            {isFailed
+              ? 'Checkout Retention job failed'
+              : isPartial
+              ? 'Checkout Retention completed with warnings'
+              : 'Checkout Retention ran successfully'}
+          </span>
+          <span className="ck-retention-banner-meta">
+            {fmtRelative(job.startedAt)}
+            {job.triggeredBy === 'manual' && (
+              <span className="ck-retention-banner-source">· triggered manually</span>
+            )}
+            {countEntries.length > 0 && (
+              <span className="ck-retention-banner-counts">
+                {countEntries.map(([k, v]) => (
+                  <span key={k} className="ck-retention-banner-count-chip">
+                    {k}: <strong>{v}</strong>
+                  </span>
+                ))}
+              </span>
+            )}
+            {(isFailed || isPartial) && job.error && (
+              <span className="ck-retention-banner-error" title={job.error}>
+                {job.error.length > 80 ? `${job.error.slice(0, 77)}…` : job.error}
+              </span>
+            )}
+          </span>
+        </div>
+      </div>
+      <button
+        type="button"
+        className="ck-retention-banner-dismiss"
+        onClick={onDismiss}
+        aria-label="Dismiss retention notice"
+      >
+        ✕
+      </button>
+    </div>
   );
 }
 
@@ -415,17 +470,20 @@ export default function CheckoutAnalytics() {
     error,
   } = useSelector((s) => s.operations);
 
-  // Source active campaigns from the recovery email slice — it has the
-  // canonical outcome state per campaign and the correct { checkout, recovery }
-  // shape without needing manual derivation from the operations slice.
   const sendList        = useSelector(selectSendList);
   const sendListLoading = useSelector(selectSendListLoading);
+
+  // CHANGE 2 — Banner selectors
+  const retentionBannerJob = useSelector(selectBannerJobByName('CheckoutRetention'));
+  const bannerDismissed    = useSelector(selectBannerDismissed);
+  const bannerLoading      = useSelector(selectBannerLoading);
+
+  const showRetentionBanner = !!retentionBannerJob && !bannerDismissed;
 
   const [activeView, setActiveView] = useState('abandonment');
   const [timeframe,  setTimeframe]  = useState('month');
   const [hasFetched, setHasFetched] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  // Tracks whether we've loaded send-list data for the recovery tab
   const [sendListFetched, setSendListFetched] = useState(false);
   const loadingRef     = useRef(false);
   const sendListRef    = useRef(false);
@@ -448,8 +506,6 @@ export default function CheckoutAnalytics() {
     ]).finally(() => { loadingRef.current = false; });
   }, [dispatch]);
 
-  // Load send-list from the recovery email slice.
-  // Called when the recovery tab is first opened, or on manual refresh.
   const loadSendList = useCallback(() => {
     if (sendListRef.current) return;
     sendListRef.current = true;
@@ -481,13 +537,18 @@ export default function CheckoutAnalytics() {
     });
   }, [timeframe]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch send-list when recovery tab is first activated
   useEffect(() => {
     if (activeView === 'recovery' && !sendListFetched) {
       loadSendList();
     }
   }, [activeView, sendListFetched, loadSendList]);
 
+  // CHANGE 3 — fetch banner on mount
+  useEffect(() => {
+    dispatch(fetchCronBanner());
+  }, [dispatch]);
+
+  // CHANGE 4 — handleRefresh also resets + re-fetches banner
   const handleRefresh = useCallback(() => {
     Promise.resolve().then(() => {
       setRefreshing(true);
@@ -497,12 +558,14 @@ export default function CheckoutAnalytics() {
     if (promise) {
       promise.then(() => { setRefreshing(false); setHasFetched(true); });
     }
-    // Also refresh send-list if on the recovery tab
     if (activeView === 'recovery') {
       setSendListFetched(false);
       loadSendList();
     }
-  }, [loadAll, loadSendList, timeframe, activeView]);
+    // Force-refresh banner so admin sees latest retention run immediately
+    dispatch(resetBannerDismiss());
+    dispatch(fetchCronBanner(true));
+  }, [loadAll, loadSendList, timeframe, activeView, dispatch]);
 
   const stats = checkoutAbandonment || {};
 
@@ -537,27 +600,15 @@ export default function CheckoutAnalytics() {
   const reAbandonedCount       = stats.reAbandonedCount       ?? 0;
   const avgAbandonedCartValue  = stats.avgAbandonedCheckoutValue || 0;
 
-  /**
-   * Active campaigns — sourced from the recovery email send-list.
-   * ACTIVE_RECOVERY_OUTCOMES covers:
-   *   sent      → at least one email sent, user hasn't clicked
-   *   clicked   → user clicked a valid token, hasn't converted yet
-   *   exhausted → all emails sent, tokens still live, awaiting click
-   *
-   * Each item in sendList has shape { checkout: {...}, recovery: {...} }
-   * which is the correct shape for the campaign cards below.
-   */
   const activeCampaigns = useMemo(
     () => sendList.filter((item) => {
       const outcome  = item.recovery?.outcome;
       const attempts = item.recovery?.confirmedAttempts || 0;
-      // Must have at least one confirmed send AND be in an active outcome
       return attempts > 0 && ACTIVE_RECOVERY_OUTCOMES.has(outcome);
     }),
     [sendList]
   );
 
-  // MAX_ATTEMPTS from env (Vite) or fallback to 3
   const MAX_ATTEMPTS = parseInt(import.meta.env?.VITE_MAX_RECOVERY_ATTEMPTS) || 3;
 
   const barChartData = useMemo(
@@ -632,6 +683,14 @@ export default function CheckoutAnalytics() {
               </button>
             </div>
           </div>
+
+          {/* CHANGE 5 — Retention banner, inserted after .ck-hd, before .ck-grid-4 */}
+          {showRetentionBanner && (
+            <RetentionBanner
+              job={retentionBannerJob}
+              onDismiss={() => dispatch(dismissBanner())}
+            />
+          )}
 
           {error && (
             <div className="ck-error"><ErrorOutline style={{ fontSize: 17 }} />{error}</div>
@@ -983,7 +1042,6 @@ export default function CheckoutAnalytics() {
                 <span className="ck-section-line" />
               </div>
 
-              {/* Explanation of what "active" means */}
               <p className="ck-section-desc">
                 Campaigns where at least one email has been sent and the recovery window is still open —
                 includes carts awaiting a first click, carts where the user clicked but hasn't converted,
@@ -991,7 +1049,6 @@ export default function CheckoutAnalytics() {
               </p>
 
               <div className="ck-row">
-                {/* Show skeletons while the send-list is loading for the first time */}
                 {!sendListFetched || sendListLoading ? (
                   <Spinner h={280} />
                 ) : activeCampaigns.length === 0 ? (
@@ -1002,7 +1059,6 @@ export default function CheckoutAnalytics() {
                 ) : (
                   <div className="ck-opp-grid">
                     {activeCampaigns.slice(0, 18).map((item, i) => {
-                      // sendList items have shape { checkout, recovery }
                       const c          = item.checkout;
                       const recovery   = item.recovery || {};
                       const user       = c.user || {};
@@ -1067,7 +1123,6 @@ export default function CheckoutAnalytics() {
                             </div>
                           )}
 
-                          {/* Show token expiry hint for exhausted campaigns */}
                           {outcome === 'exhausted' && (
                             <div className="ck-opp-exhaust-note">
                               All emails sent — will expire if user doesn't click

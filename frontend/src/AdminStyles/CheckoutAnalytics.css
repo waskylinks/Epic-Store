@@ -1323,3 +1323,221 @@
   color: #9ca3af;
   font-weight: 500;
 }
+
+/* ── Retention Banner ───────────────────────────────────────────
+   Inserted between .ck-hd and .ck-grid-4 (the KPI strip).
+   Default (ok) state: green accent.
+   --warn modifier: amber accent.
+   --error modifier: red accent.
+   ─────────────────────────────────────────────────────────────── */
+
+.ck-retention-banner {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 16px;
+  margin-bottom: 20px;
+  border-radius: 10px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-left: 4px solid #059669;
+  animation: ck-fade 0.2s ease;
+}
+
+.ck-retention-banner--warn {
+  background: #fffbeb;
+  border-color: #fde68a;
+  border-left-color: #D97706;
+}
+
+.ck-retention-banner--error {
+  background: #fff1f2;
+  border-color: #fecdd3;
+  border-left-color: #DC2626;
+}
+
+/* ── Left group: icon + body ── */
+
+.ck-retention-banner-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.ck-retention-banner-icon {
+  font-size: 16px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: #059669;
+}
+
+.ck-retention-banner--warn  .ck-retention-banner-icon { color: #D97706; }
+.ck-retention-banner--error .ck-retention-banner-icon { color: #DC2626; }
+
+.ck-retention-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.ck-retention-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #065f46;
+  line-height: 1.4;
+}
+
+.ck-retention-banner--warn  .ck-retention-banner-title { color: #78350f; }
+.ck-retention-banner--error .ck-retention-banner-title { color: #7f1d1d; }
+
+.ck-retention-banner-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+  color: #047857;
+  font-weight: 500;
+}
+
+.ck-retention-banner--warn  .ck-retention-banner-meta { color: #92400e; }
+.ck-retention-banner--error .ck-retention-banner-meta { color: #991b1b; }
+
+/* ── Meta sub-elements ── */
+
+.ck-retention-banner-source {
+  color: inherit;
+  opacity: 0.75;
+}
+
+.ck-retention-banner-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ck-retention-banner-count-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(5, 150, 105, 0.10);
+  color: #065f46;
+  white-space: nowrap;
+}
+
+.ck-retention-banner--warn  .ck-retention-banner-count-chip {
+  background: rgba(217, 119, 6, 0.10);
+  color: #78350f;
+}
+
+.ck-retention-banner--error .ck-retention-banner-count-chip {
+  background: rgba(220, 38, 38, 0.10);
+  color: #7f1d1d;
+}
+
+.ck-retention-banner-count-chip strong {
+  font-weight: 800;
+}
+
+.ck-retention-banner-error {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #b91c1c;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  cursor: default;
+}
+
+/* ── Dismiss button ── */
+
+.ck-retention-banner-dismiss {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #059669;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  align-self: flex-start;
+  margin-top: -1px;
+}
+
+.ck-retention-banner--warn  .ck-retention-banner-dismiss { color: #D97706; }
+.ck-retention-banner--error .ck-retention-banner-dismiss { color: #DC2626; }
+
+.ck-retention-banner-dismiss:hover {
+  background: rgba(5, 150, 105, 0.12);
+}
+
+.ck-retention-banner--warn .ck-retention-banner-dismiss:hover {
+  background: rgba(217, 119, 6, 0.12);
+}
+
+.ck-retention-banner--error .ck-retention-banner-dismiss:hover {
+  background: rgba(220, 38, 38, 0.12);
+}
+
+/* ── Responsive ── */
+
+@media (max-width: 768px) {
+  .ck-retention-banner {
+    padding: 11px 13px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+  }
+
+  .ck-retention-banner-title { font-size: 12.5px; }
+  .ck-retention-banner-meta  { font-size: 11.5px; }
+}
+
+@media (max-width: 480px) {
+  .ck-retention-banner {
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border-radius: 8px;
+  }
+
+  .ck-retention-banner-left { width: 100%; }
+
+  .ck-retention-banner-dismiss {
+    align-self: flex-end;
+    margin-top: 0;
+  }
+
+  .ck-retention-banner-meta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .ck-retention-banner-error {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+}
+
+@media print {
+  .ck-retention-banner { display: none !important; }
+}
