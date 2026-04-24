@@ -12,7 +12,14 @@
  *   - Start / end / duration logging in a consistent format
  *   - Failure detection and automatic cronAlert dispatch
  *   - Job health persistence to MongoDB (CronJobStatus model)
+ *   - Run history append to MongoDB (CronJobLog model)
  *   - Returns a wrapped async function to pass directly to cron.schedule()
+ *
+ * EDIT SUMMARY (vs previous version):
+ *   - Added CronJobLog import
+ *   - Added optional `triggeredBy` parameter ('cron' | 'manual'), default 'cron'
+ *   - Added persistRunLog() call in the finally block alongside persistJobHealth()
+ *   - persistRunLog() is fully guarded — never throws, never affects job outcome
  *
  * Usage:
  *   cron.schedule(SCHEDULE, runCronJob({
@@ -20,10 +27,19 @@
  *     alertOnFail: true,
  *     jobFn:       async () => { ... },
  *   }));
+ *
+ *   // Manual trigger (from router):
+ *   await runCronJob({
+ *     jobName:     'DiscountCleanup',
+ *     jobFn:       runCleanup,
+ *     alertOnFail: true,
+ *     triggeredBy: 'manual',
+ *   })();
  */
 
-import { sendCronAlert }     from './cronAlert.js';
-import CronJobStatus         from '../models/CronJobStatus.js';
+import { sendCronAlert }  from './cronAlert.js';
+import CronJobStatus      from '../models/CronJobStatus.js';
+import CronJobLog         from '../models/CronJobLog.js';
 
 // Module-scoped running-state map — one boolean per jobName
 const runningJobs = new Map();
@@ -32,11 +48,13 @@ const runningJobs = new Map();
  * runCronJob
  *
  * @param {Object}   opts
- * @param {string}   opts.jobName        - Unique job identifier (matches Slack config keys)
- * @param {Function} opts.jobFn          - Async function containing job logic
- * @param {boolean}  [opts.alertOnFail]  - Send alert on failure (default: true)
+ * @param {string}   opts.jobName          - Unique job identifier (matches Slack config keys)
+ * @param {Function} opts.jobFn            - Async function containing job logic
+ * @param {boolean}  [opts.alertOnFail]    - Send alert on failure (default: true)
  * @param {boolean}  [opts.alertOnSuccess] - Send alert on success (default: false)
- * @param {boolean}  [opts.persistHealth] - Write to CronJobStatus collection (default: true)
+ * @param {boolean}  [opts.persistHealth]  - Write to CronJobStatus collection (default: true)
+ * @param {boolean}  [opts.persistLog]     - Write to CronJobLog collection (default: true)
+ * @param {'cron'|'manual'} [opts.triggeredBy] - Source of this run (default: 'cron')
  * @returns {Function} Wrapped async function suitable for cron.schedule()
  */
 export function runCronJob({
@@ -45,6 +63,8 @@ export function runCronJob({
   alertOnFail    = true,
   alertOnSuccess = false,
   persistHealth  = true,
+  persistLog     = true,
+  triggeredBy    = 'cron',
 }) {
   return async function wrappedJob() {
     // ── Overlap guard ──────────────────────────────────────────────────────
@@ -60,7 +80,7 @@ export function runCronJob({
     let   result    = null;
     let   jobError  = null;
 
-    console.log(`\n[${jobName}] ▶ Run started | id=${runId} | ${startedAt.toISOString()}`);
+    console.log(`\n[${jobName}] ▶ Run started | id=${runId} | ${startedAt.toISOString()} | triggeredBy=${triggeredBy}`);
 
     try {
       result = await jobFn();
@@ -70,10 +90,10 @@ export function runCronJob({
       runningJobs.set(jobName, false);
     }
 
-    const finishedAt  = new Date();
-    const durationMs  = finishedAt.getTime() - startedAt.getTime();
-    const succeeded   = jobError === null;
-    const status      = succeeded ? 'ok' : 'failed';
+    const finishedAt = new Date();
+    const durationMs = finishedAt.getTime() - startedAt.getTime();
+    const succeeded  = jobError === null;
+    const status     = succeeded ? 'ok' : 'failed';
 
     // ── Logging ────────────────────────────────────────────────────────────
     if (succeeded) {
@@ -91,7 +111,7 @@ export function runCronJob({
       console.error(jobError.stack);
     }
 
-    // ── Health persistence ─────────────────────────────────────────────────
+    // ── Health persistence (CronJobStatus) ────────────────────────────────
     if (persistHealth) {
       await persistJobHealth({
         jobName,
@@ -100,8 +120,26 @@ export function runCronJob({
         startedAt,
         finishedAt,
         durationMs,
-        lastError:  jobError?.message ?? null,
+        lastError: jobError?.message ?? null,
         result,
+      });
+    }
+
+    // ── Run log persistence (CronJobLog) ──────────────────────────────────
+    // Written after CronJobStatus so both writes are visible together.
+    // A failure here is logged but never re-thrown — it must not affect
+    // the job's own outcome or the alert flow below.
+    if (persistLog) {
+      await persistRunLog({
+        jobName,
+        runId,
+        status,
+        startedAt,
+        finishedAt,
+        durationMs,
+        error:       jobError?.message ?? null,
+        counts:      result ? summariseResult(result) : {},
+        triggeredBy,
       });
     }
 
@@ -132,7 +170,7 @@ export function runCronJob({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HEALTH PERSISTENCE
+// HEALTH PERSISTENCE — CronJobStatus (existing, unchanged)
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function persistJobHealth({
@@ -159,6 +197,51 @@ async function persistJobHealth({
   } catch (err) {
     // Never throw from health persistence — it must not affect the job itself
     console.error(`[${jobName}] Failed to persist health status:`, err.message);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RUN LOG PERSISTENCE — CronJobLog (new)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * persistRunLog
+ *
+ * Appends a single run record to CronJobLog.
+ * This is the only place in the application that creates CronJobLog documents
+ * from scheduled or manually-triggered job runs.
+ *
+ * Security: all values are derived from internal job execution — no
+ * user-supplied data of any kind enters this function.
+ *
+ * @param {Object} opts
+ */
+async function persistRunLog({
+  jobName,
+  runId,
+  status,
+  startedAt,
+  finishedAt,
+  durationMs,
+  error,
+  counts,
+  triggeredBy,
+}) {
+  try {
+    await CronJobLog.create({
+      jobName,
+      runId,
+      status,
+      startedAt,
+      finishedAt,
+      durationMs,
+      error:       error ?? null,
+      counts:      counts ?? {},
+      triggeredBy: triggeredBy ?? 'cron',
+    });
+  } catch (err) {
+    // Never throw — log persistence must not affect job outcome or alert flow
+    console.error(`[${jobName}] Failed to persist run log:`, err.message);
   }
 }
 

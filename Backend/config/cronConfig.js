@@ -8,6 +8,9 @@
  * all into one frozen config object that is imported by job files and the
  * cron registry.
  *
+ * EDIT SUMMARY (vs previous version):
+ *   - Added checkoutRetention block for the new three-pass retention job
+ *
  * Import pattern in job files:
  *   import { cronConfig } from '../config/cronConfig.js';
  *   const schedule = cronConfig.auditCleanup.cronExpression;
@@ -58,6 +61,31 @@ export const cronConfig = Object.freeze({
       2: flt('RECOVERY_ATTEMPT2_DELAY_HOURS', 24),
       3: flt('RECOVERY_ATTEMPT3_DELAY_HOURS', 72),
     },
+  },
+
+  // ── Checkout Retention ───────────────────────────────────────────────────
+  //
+  // Three-pass lifecycle management for the Checkout collection:
+  //   Pass 1 — Warm prune:  strip expensive sub-arrays from 90–365 day docs
+  //   Pass 2 — Cold archive: move 365+ day docs to checkouts_archive
+  //   Pass 3 — Hard delete:  purge archive docs older than hardDeleteYears
+  //                          (production only)
+  //
+  // Default schedule: 4 AM on the 1st of every month.
+  // This runs AFTER the abandonment sweep (which fires every 30 min) so all
+  // stale checkouts are already marked abandoned before archiving begins.
+  //
+  // batchSize        — rows per $unset batch in the warm prune pass
+  // archiveBatchSize — rows per insertMany+deleteMany cycle in the archive pass
+  //                    Kept smaller than batchSize because each cycle issues
+  //                    two MongoDB operations (insert + delete).
+  checkoutRetention: {
+    cronExpression:  env('CHECKOUT_RETENTION_CRON',          '0 4 1 * *'),
+    warmTierDays:    int('CHECKOUT_WARM_TIER_DAYS',           90),
+    coldTierDays:    int('CHECKOUT_COLD_TIER_DAYS',           365),
+    hardDeleteYears: int('CHECKOUT_HARD_DELETE_YEARS',        7),
+    batchSize:       int('CHECKOUT_RETENTION_BATCH_SIZE',     500),
+    archiveBatchSize:int('CHECKOUT_ARCHIVE_BATCH_SIZE',       200),
   },
 
   // ── Global ───────────────────────────────────────────────────────────────
