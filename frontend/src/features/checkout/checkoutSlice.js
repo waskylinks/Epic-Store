@@ -12,12 +12,15 @@ export const createCheckoutSession = createAsyncThunk(
       const { discount } = getState().cart;
       const hasDiscount  = discount.applied && discount.code && discount.discountAmount > 0;
 
+      // discountAmount is intentionally NOT sent — the server derives the
+      // discount amount from the stored Discount document. Sending a client-
+      // supplied amount would be silently ignored server-side, but omitting it
+      // removes the misleading field from the request entirely.
       const { data } = await axios.post("/api/v1/checkout/create", {
         items,
         shippingInfo,
         ...(hasDiscount && {
-          discountCode:   discount.code,
-          discountAmount: discount.discountAmount,
+          discountCode: discount.code,
         }),
       }, { withCredentials: true });
 
