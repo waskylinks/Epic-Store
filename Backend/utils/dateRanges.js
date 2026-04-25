@@ -11,15 +11,17 @@ export const getDateRanges = (timeframe) => {
       previousPeriodEnd = new Date(currentPeriodStart);
       previousPeriodEnd.setMilliseconds(-1);
       break;
-    case "week":
+    case "week": {
+      const dayOfWeek = now.getDay(); // 0 = Sunday
       currentPeriodStart = new Date(now);
-      currentPeriodStart.setDate(currentPeriodStart.getDate() - 7);
+      currentPeriodStart.setDate(now.getDate() - dayOfWeek);
       currentPeriodStart.setHours(0, 0, 0, 0);
       previousPeriodStart = new Date(currentPeriodStart);
       previousPeriodStart.setDate(previousPeriodStart.getDate() - 7);
       previousPeriodEnd = new Date(currentPeriodStart);
       previousPeriodEnd.setMilliseconds(-1);
       break;
+    }
     case "year":
       currentPeriodStart = new Date(now);
       currentPeriodStart.setFullYear(currentPeriodStart.getFullYear() - 1);
@@ -44,8 +46,6 @@ export const getDateRanges = (timeframe) => {
   return { currentPeriodStart, previousPeriodStart, previousPeriodEnd };
 };
 
-// FIX: Was duplicated inline in dashboardController and reportsController.
-// Single canonical implementation now imported by both.
 export const getDateGroupFormat = (groupBy, dateField = "$createdAt") => {
   switch (groupBy) {
     case "hour":
@@ -62,7 +62,7 @@ export const getDateGroupFormat = (groupBy, dateField = "$createdAt") => {
 export const getDateRangeLabel = (timeframe) => {
   const labels = {
     day: "Today vs Yesterday",
-    week: "Last 7 days vs Previous 7 days",
+    week: "This week vs Last week",
     month: "Last 30 days vs Previous 30 days",
     year: "Last 365 days vs Previous 365 days"
   };
