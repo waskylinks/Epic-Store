@@ -54,7 +54,7 @@
 
 import cron          from 'node-cron';
 import Checkout      from '../models/checkout-model.js';
-import CheckoutArchive from '../models/CheckoutArchive.js';
+import CheckoutArchive from '../models/checkoutArchive.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import { runCronJob }  from '../utils/runCronJob.js';
 import { cronConfig }  from '../config/cronConfig.js';

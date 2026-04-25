@@ -31,7 +31,7 @@ import { runCronJob }      from '../utils/runCronJob.js';
 import {
   getCronJobHistory,
   getCronBanner,
-}                          from '../controllers/cronLog-controller.js';
+}                          from '../controller/cronLog-controller.js';
 import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
 
 const router = express.Router();
