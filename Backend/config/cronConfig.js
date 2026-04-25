@@ -10,6 +10,8 @@
  *
  * EDIT SUMMARY (vs previous version):
  *   - Added checkoutRetention block for the new three-pass retention job
+ *   - Added recoveryEmailRetention block for the new two-pass recovery email
+ *     lifecycle job (orphan resolution + snapshot prune + hard delete)
  *
  * Import pattern in job files:
  *   import { cronConfig } from '../config/cronConfig.js';
@@ -86,6 +88,58 @@ export const cronConfig = Object.freeze({
     hardDeleteYears: int('CHECKOUT_HARD_DELETE_YEARS',        7),
     batchSize:       int('CHECKOUT_RETENTION_BATCH_SIZE',     500),
     archiveBatchSize:int('CHECKOUT_ARCHIVE_BATCH_SIZE',       200),
+  },
+
+  // ── Recovery Email Retention ─────────────────────────────────────────────
+  //
+  // Two-pass lifecycle management for the RecoveryEmail collection:
+  //
+  //   Pass 1 — Orphan Resolution & Snapshot Prune (monthly):
+  //     Sub-pass A — Orphan resolution:
+  //       Finds RecoveryEmail records in a resolvable outcome (pending, sent,
+  //       clicked, exhausted) whose linked checkout no longer exists in either
+  //       the hot `checkouts` collection or `checkouts_archive`. Transitions
+  //       those records to 'expired'. Also transitions active records whose
+  //       createdAt has exceeded maxAgeDays from the recoveryEmail config —
+  //       these are carts that aged out before exhausting their send sequence.
+  //     Sub-pass B — Snapshot prune:
+  //       Nulls out cartSnapshot on terminal records older than
+  //       cartSnapshotPruneDays. cartSnapshot contains customer name,
+  //       item details and pricing — stripping it reduces PII surface area
+  //       while keeping outcome and attempt metadata for analytics.
+  //
+  //   Pass 2 — Hard delete (production only):
+  //     Deletes RecoveryEmail documents where resolvedAt exceeds
+  //     hardDeleteYears AND outcome is a non-financial terminal
+  //     (expired, re_abandoned, failed). Converted and organic records
+  //     are excluded and logged for manual review.
+  //
+  // Default schedule: 5 AM on the 1st of every month.
+  // Deliberately scheduled ONE HOUR AFTER checkoutRetention (4 AM same day)
+  // so the checkout retention job's inline resolveLinkedRecoveryEmails() call
+  // has already cleaned up the majority of orphaned active records before this
+  // job's orphan pass runs. The one-hour buffer also prevents both jobs from
+  // competing for MongoDB write throughput simultaneously.
+  //
+  // orphanResolutionDays — grace period after a checkout disappears before
+  //   treating the linked RecoveryEmail as an orphan. Default 30 days gives
+  //   the checkout retention job one full monthly cycle to complete.
+  //
+  // cartSnapshotPruneDays — days after resolvedAt before cartSnapshot is
+  //   nulled out. Default 90 mirrors the checkout warm-tier window, after
+  //   which the campaign data is definitively historical.
+  //
+  // hardDeleteYears — compliance floor. Default 7 matches checkout retention.
+  //
+  // batchSize — rows per query batch. Kept at 200 (smaller than checkout
+  //   retention's 500) because Pass 1A may issue individual document saves
+  //   for orphan resolution to respect the _resolveOutcome priority ladder.
+  recoveryEmailRetention: {
+    cronExpression:       env('RECOVERY_RETENTION_CRON',              '0 5 1 * *'),
+    orphanResolutionDays: int('RECOVERY_ORPHAN_RESOLUTION_DAYS',      30),
+    cartSnapshotPruneDays:int('RECOVERY_CART_SNAPSHOT_PRUNE_DAYS',    90),
+    hardDeleteYears:      int('RECOVERY_RETENTION_HARD_DELETE_YEARS', 7),
+    batchSize:            int('RECOVERY_RETENTION_BATCH_SIZE',        200),
   },
 
   // ── Global ───────────────────────────────────────────────────────────────

@@ -14,6 +14,12 @@
  *     CheckoutRetention runs monthly so success noise would be low-value;
  *     fail-only is the correct default. Admins can set 'all' if they want
  *     a monthly confirmation that the job ran cleanly.
+ *
+ *   - Added RecoveryEmailRetention to jobPreferences driven by
+ *     SLACK_PREF_RECOVERY_EMAIL_RETENTION env var, defaulting to 'fail-only'.
+ *     Same rationale as CheckoutRetention — monthly schedule means success
+ *     alerts are low-value noise. Admins who want monthly confirmation can
+ *     set SLACK_PREF_RECOVERY_EMAIL_RETENTION=all in their environment.
  */
 
 export function getSlackConfig() {
@@ -24,11 +30,12 @@ export function getSlackConfig() {
     botEmoji: process.env.SLACK_BOT_EMOJI ?? ':robot_face:',
 
     jobPreferences: {
-      AbandonmentSweep:  process.env.SLACK_PREF_ABANDONMENT_SWEEP  ?? 'fail-only',
-      DiscountCleanup:   process.env.SLACK_PREF_DISCOUNT_CLEANUP   ?? 'fail-only',
-      AuditCleanup:      process.env.SLACK_PREF_AUDIT_CLEANUP      ?? 'fail-only',
-      RecoveryEmailCron: process.env.SLACK_PREF_RECOVERY_EMAIL     ?? 'fail-only',
-      CheckoutRetention: process.env.SLACK_PREF_CHECKOUT_RETENTION ?? 'fail-only',
+      AbandonmentSweep:        process.env.SLACK_PREF_ABANDONMENT_SWEEP          ?? 'fail-only',
+      DiscountCleanup:         process.env.SLACK_PREF_DISCOUNT_CLEANUP           ?? 'fail-only',
+      AuditCleanup:            process.env.SLACK_PREF_AUDIT_CLEANUP              ?? 'fail-only',
+      RecoveryEmailCron:       process.env.SLACK_PREF_RECOVERY_EMAIL             ?? 'fail-only',
+      CheckoutRetention:       process.env.SLACK_PREF_CHECKOUT_RETENTION         ?? 'fail-only',
+      RecoveryEmailRetention:  process.env.SLACK_PREF_RECOVERY_EMAIL_RETENTION   ?? 'fail-only',
     },
   });
 }
