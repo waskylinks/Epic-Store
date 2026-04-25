@@ -20,11 +20,10 @@ const addressSchema = new mongoose.Schema({
     trim: true,
     validate: {
       validator: function(v) {
-        // Nigerian phone number validation
-        const cleanPhone = v.replace(/[\s\-\(\)]/g, '');
-        return /^(\+234|234|0)[7-9][0-1]\d{8}$/.test(cleanPhone);
+        // E.164: + followed by 7–15 digits
+        return /^\+[1-9]\d{6,14}$/.test(v.replace(/[\s\-\(\)]/g, ''));
       },
-      message: 'Invalid phone number format'
+      message: 'Phone number must be in international format (e.g. +2348012345678)'
     }
   },
   address: {
@@ -39,71 +38,45 @@ const addressSchema = new mongoose.Schema({
     required: [true, 'City is required'],
     trim: true,
     minlength: [2, 'City must be at least 2 characters'],
-    maxlength: [50, 'City cannot exceed 50 characters']
+    maxlength: [100, 'City cannot exceed 100 characters']
   },
   state: {
     type: String,
     required: [true, 'State is required'],
     trim: true,
     minlength: [2, 'State must be at least 2 characters'],
-    maxlength: [50, 'State cannot exceed 50 characters']
+    maxlength: [100, 'State cannot exceed 100 characters']
   },
   country: {
     type: String,
     required: [true, 'Country is required'],
     trim: true,
-    default: 'Nigeria',
-    maxlength: [50, 'Country cannot exceed 50 characters']
+    maxlength: [100, 'Country cannot exceed 100 characters']
   },
   pinCode: {
     type: String,
     required: [true, 'Postal code is required'],
     trim: true,
-    validate: {
-      validator: function(v) {
-        // Nigerian postal code (6 digits)
-        return /^\d{6}$/.test(v);
-      },
-      message: 'Invalid postal code format (must be 6 digits)'
-    }
+    maxlength: [20, 'Postal code cannot exceed 20 characters']
   },
   isDefault: {
     type: Boolean,
     default: false,
     index: true
-  },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
   }
 }, {
   timestamps: true
 });
 
-// Compound index for user queries
 addressSchema.index({ user: 1, isDefault: -1 });
 
-// Ensure only one default address per user
 addressSchema.pre('save', async function(next) {
   if (this.isDefault && this.isModified('isDefault')) {
     await this.constructor.updateMany(
-      { 
-        user: this.user, 
-        _id: { $ne: this._id } 
-      },
+      { user: this.user, _id: { $ne: this._id } },
       { isDefault: false }
     );
   }
-  next();
-});
-
-// Update the updatedAt timestamp
-addressSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
   next();
 });
 
