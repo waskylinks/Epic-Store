@@ -22,6 +22,17 @@
  *   - limit is capped server-side inside the model static regardless of what
  *     the client sends.
  *   - No user-supplied data is written to the database in either endpoint.
+ *
+ * EDIT SUMMARY (vs previous version):
+ *   - Added 'RecoveryEmailRetention' to VALID_JOB_NAMES allowlist so the
+ *     history endpoint accepts log requests for the new job without returning
+ *     a 400. The AdminCronHealth RunHistoryPanel calls this endpoint when the
+ *     history toggle is opened on the RecoveryEmailRetention detail card.
+ *   - Added 'RecoveryEmailRetention' to BANNER_JOB_NAMES so the banner
+ *     endpoint returns its most recent run alongside CheckoutRetention. This
+ *     surfaces the job on the RecoveryEmailAnalyticsPage and
+ *     RecoveryEmailMonitorPage banners, informing admins when the last
+ *     snapshot prune or orphan resolution ran.
  */
 
 import CronJobLog      from '../models/CronJobLog.js';
@@ -42,11 +53,18 @@ const VALID_JOB_NAMES = new Set([
   'AuditCleanup',
   'RecoveryEmailCron',
   'CheckoutRetention',
+  'RecoveryEmailRetention',  // ADDED — two-pass recovery email lifecycle job
 ]);
 
-// Jobs that contribute to the checkout analytics banner.
-// Only jobs whose runs are meaningful context for checkout data are included.
-const BANNER_JOB_NAMES = ['CheckoutRetention'];
+// Jobs that contribute to the analytics banners.
+// CheckoutRetention appears on the checkout analytics banner.
+// RecoveryEmailRetention appears on both recovery email page banners.
+// Both are included here so a single banner endpoint serves all consumers.
+// The frontend selects the relevant entry by jobName using selectBannerJobByName.
+const BANNER_JOB_NAMES = [
+  'CheckoutRetention',
+  'RecoveryEmailRetention',  // ADDED — surfaces on recovery email analytics pages
+];
 
 // How far back the banner looks for a recent run (72 hours)
 const BANNER_WINDOW_HOURS = 72;
@@ -146,7 +164,7 @@ export const getCronJobHistory = handleAsyncError(async (req, res, next) => {
  * getCronBanner
  *
  * Returns recent run data for banner-relevant jobs.
- * Called on every checkout analytics page load — must be fast.
+ * Called on every checkout analytics and recovery email page load — must be fast.
  *
  * Response:
  *   {
@@ -164,8 +182,14 @@ export const getCronJobHistory = handleAsyncError(async (req, res, next) => {
  *   }
  *
  * jobs is an empty array if none of the banner jobs have run recently.
- * The frontend is responsible for deciding whether to show a banner based
- * on the presence and status of entries.
+ * The frontend selects the relevant job by name using selectBannerJobByName
+ * and is responsible for deciding whether to show a banner based on presence
+ * and status of the entry for its specific job.
+ *
+ * With RecoveryEmailRetention now in BANNER_JOB_NAMES, the jobs array can
+ * contain up to two entries — one per banner-relevant job. The selectBannerJobByName
+ * selector in cronLogSlice.js already handles arbitrary job names, so no
+ * frontend slice changes are needed.
  */
 export const getCronBanner = handleAsyncError(async (req, res, next) => {
   // ── Cache check ───────────────────────────────────────────────────────────
@@ -195,7 +219,7 @@ export const getCronBanner = handleAsyncError(async (req, res, next) => {
  * invalidateBannerCache
  *
  * Exported for use by the CronJobLog model's post-save hook and the
- * retention job's cache flush. Ensures the banner reflects fresh data
+ * retention jobs' cache flush. Ensures the banner reflects fresh data
  * immediately after a retention run completes.
  */
 export async function invalidateBannerCache() {

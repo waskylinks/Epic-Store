@@ -17,6 +17,14 @@
  *     functionally significant here (retention runs monthly on the 1st at 4 AM,
  *     well after all daily jobs complete), but grouping aids readability.
  *
+ *   - Added RecoveryEmailRetention import and JOB_REGISTRY entry.
+ *     Positioned after CheckoutRetention — it runs at 5 AM on the 1st,
+ *     one hour after CheckoutRetention (4 AM), so the checkout job's inline
+ *     resolveLinkedRecoveryEmails() call has already cleaned up the majority
+ *     of orphaned active RecoveryEmail records before this job's orphan pass
+ *     runs. The one-hour buffer also prevents both jobs competing for MongoDB
+ *     write throughput simultaneously.
+ *
  * Integration in server.js:
  *   REMOVE:
  *     import { startDiscountCleanupJob }  from './jobs/discount-cleanup.js';
@@ -46,6 +54,10 @@ import {
   startCheckoutRetentionJob,
   stopCheckoutRetentionJob,
 }                                                             from './checkoutRetentionJob.js';
+import {
+  startRecoveryEmailRetentionJob,
+  stopRecoveryEmailRetentionJob,
+}                                                             from './recoveryEmailRetentionJob.js';
 import { cronConfig }    from '../config/cronConfig.js';
 import CronJobStatus     from '../models/CronJobStatus.js';
 
@@ -94,6 +106,19 @@ const JOB_REGISTRY = [
     note:          'Warm prune (90d) → cold archive (365d) → hard delete (7yr, production only)',
   },
   {
+    // Monthly two-pass data lifecycle job for the RecoveryEmail collection.
+    // Runs at 5 AM on the 1st — one hour after CheckoutRetention so that
+    // job's inline resolveLinkedRecoveryEmails() has already resolved the
+    // majority of orphaned active records before this job's orphan pass runs.
+    // Safe to trigger manually via POST /api/v1/admin/cron/trigger/RecoveryEmailRetention.
+    jobName:       'RecoveryEmailRetention',
+    scheduleLabel: 'Monthly — 5 AM on the 1st',
+    schedule:      cronConfig.recoveryEmailRetention.cronExpression,
+    startFn:       startRecoveryEmailRetentionJob,
+    stopFn:        stopRecoveryEmailRetentionJob,
+    note:          'Orphan resolution + snapshot prune (Pass 1) → hard delete (7yr, production only, Pass 2)',
+  },
+  {
     jobName:       'RecoveryEmailCron',
     scheduleLabel: `Every 30 minutes (configurable via RECOVERY_CRON_SCHEDULE)`,
     schedule:      cronConfig.recoveryEmail.schedule,
@@ -118,7 +143,7 @@ export async function startAllCronJobs() {
       job.startFn();
 
       console.log(
-        `   ✓ ${job.jobName.padEnd(22)} — ${job.scheduleLabel}` +
+        `   ✓ ${job.jobName.padEnd(26)} — ${job.scheduleLabel}` +
         (job.note ? `\n     ↳ ${job.note}` : '')
       );
     } catch (err) {

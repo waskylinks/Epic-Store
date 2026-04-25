@@ -25,6 +25,17 @@
  *    skips via the unique index. The hot collection is only deleted after the
  *    archive insert count is confirmed.
  *
+ *    COORDINATION — resolveLinkedRecoveryEmails():
+ *    After each successful batch delete from the hot collection, the IDs of
+ *    deleted checkouts are passed to resolveLinkedRecoveryEmails(). This helper
+ *    transitions any RecoveryEmail records linked to those checkouts that are
+ *    still in an active/resolvable outcome (pending, sent, clicked, exhausted)
+ *    directly to 'expired'. This prevents RecoveryEmail records from being
+ *    permanently stuck in an active state after their checkout is archived.
+ *    The recoveryEmailRetentionJob orphan pass is a monthly safety net for
+ *    anything that slips through, but this inline call handles the common case
+ *    immediately at archive time.
+ *
  *  Pass 3 — HARD DELETE (7+ years in archive)
  *    Removes documents from checkouts_archive that exceed the compliance
  *    retention floor. Runs ONLY in production to prevent accidental data loss
@@ -41,6 +52,8 @@
  *     manual review.
  *   - Cache invalidation is called directly at the end — not via Mongoose
  *     hooks — because deleteMany does not trigger pre/post save hooks.
+ *   - resolveLinkedRecoveryEmails errors are caught and counted but never
+ *     abort the archive batch — checkout archiving is the primary concern.
  *
  * Returns:
  *   {
@@ -54,7 +67,7 @@
 
 import cron          from 'node-cron';
 import Checkout      from '../models/checkout-model.js';
-import CheckoutArchive from '../models/checkoutArchive.js';
+import CheckoutArchive from '../models/CheckoutArchive.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import { runCronJob }  from '../utils/runCronJob.js';
 import { cronConfig }  from '../config/cronConfig.js';
@@ -101,6 +114,14 @@ const ARCHIVE_PROJECTION = {
   createdAt:                        1,
   updatedAt:                        1,
 };
+
+// Outcomes that can be safely transitioned to 'expired' when their checkout
+// is archived. Mirrors RESOLVABLE_OUTCOMES in recoveryEmailRetentionJob.
+// Defined here independently to avoid cross-job imports.
+// converted and organic are intentionally excluded — absolute terminals.
+// re_abandoned and failed are already terminal — no transition needed.
+// expired is already the target — no transition needed.
+const RECOVERY_RESOLVABLE_OUTCOMES = ['pending', 'sent', 'clicked', 'exhausted'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPERS
@@ -159,6 +180,77 @@ async function invalidateCaches() {
     ]);
   } catch (err) {
     console.error('[CheckoutRetention] Cache invalidation failed:', err.message);
+  }
+}
+
+/**
+ * resolveLinkedRecoveryEmails
+ *
+ * Transitions RecoveryEmail records linked to a set of just-archived
+ * checkout IDs from any resolvable outcome to 'expired'.
+ *
+ * Called inline after each successful cold-archive batch delete so that
+ * RecoveryEmail records do not get permanently stuck in an active state
+ * after their checkout has been removed from the hot collection.
+ *
+ * Design decisions:
+ *   - Uses direct $set updateMany rather than loading individual documents
+ *     and calling _resolveOutcome(). This is intentional: loading each
+ *     RecoveryEmail document, calling the method, and saving would be
+ *     N separate save() calls per batch — too expensive for a job already
+ *     doing heavy I/O. The outcome filter in the query ($in RESOLVABLE_OUTCOMES)
+ *     acts as the priority ladder at the database level — converted, organic,
+ *     re_abandoned, failed, and expired records are excluded by the filter,
+ *     exactly mirroring _resolveOutcome's guards without needing to load docs.
+ *   - Errors are caught and counted but never rethrown — checkout archiving
+ *     is the primary responsibility of this job. A recovery email resolution
+ *     failure is non-fatal and will be caught by the monthly
+ *     recoveryEmailRetentionJob orphan pass.
+ *   - Does not import from recoveryEmailService to avoid circular dependency:
+ *     checkout-model → recoveryEmailService → checkout-model.
+ *   - Does not import RecoveryEmail model at module level to keep the
+ *     import footprint of this file clean. Dynamic import is used instead.
+ *
+ * @param {ObjectId[]} checkoutIds  — IDs of checkouts just deleted from hot collection
+ * @param {Object}     results      — job results object (errors counter mutated in place)
+ */
+async function resolveLinkedRecoveryEmails(checkoutIds, results) {
+  if (!checkoutIds || checkoutIds.length === 0) return;
+
+  try {
+    const { default: RecoveryEmail } = await import('../models/recovery-email-model.js');
+
+    const { modifiedCount } = await RecoveryEmail.updateMany(
+      {
+        checkout: { $in: checkoutIds },
+        // Priority ladder enforced at query level — mirrors _resolveOutcome guards.
+        // Excludes: converted, organic (absolute terminal),
+        //           re_abandoned, failed (terminal — no transition needed),
+        //           expired (already target state).
+        outcome:  { $in: RECOVERY_RESOLVABLE_OUTCOMES },
+      },
+      {
+        $set: {
+          outcome:    'expired',
+          resolvedAt: new Date(),
+        },
+      }
+    );
+
+    if (modifiedCount > 0) {
+      console.log(
+        `[CheckoutRetention] resolveLinkedRecoveryEmails:` +
+        ` ${modifiedCount} RecoveryEmail record(s) transitioned to expired` +
+        ` for ${checkoutIds.length} archived checkout(s)`
+      );
+    }
+  } catch (err) {
+    results.errors++;
+    console.error(
+      '[CheckoutRetention] resolveLinkedRecoveryEmails failed:',
+      err.message
+    );
+    // Non-fatal — recoveryEmailRetentionJob orphan pass will catch these monthly
   }
 }
 
@@ -295,9 +387,12 @@ async function runColdArchive(results, { coldTierDays, archiveBatchSize, runId }
 
     // Only delete documents that were confirmed inserted (or already archived)
     if (insertResult.inserted > 0 || (insertResult.duplicates ?? 0) > 0) {
+      let deletedIds = [];
       try {
         const { deletedCount } = await Checkout.deleteMany({ _id: { $in: ids } });
         results.archived += deletedCount;
+        // Track which IDs were actually deleted for the recovery email coordination
+        deletedIds = ids;
       } catch (err) {
         results.errors++;
         console.error(
@@ -305,6 +400,14 @@ async function runColdArchive(results, { coldTierDays, archiveBatchSize, runId }
           err.message
         );
         // Documents remain in hot collection — safe, will retry next run
+        // Skip recovery email resolution for this batch since delete failed
+      }
+
+      // ── COORDINATION: resolve linked RecoveryEmail records ─────────────
+      // Only called when the hot-collection delete succeeded (deletedIds populated).
+      // Errors inside this helper are caught and counted but never abort the batch.
+      if (deletedIds.length > 0) {
+        await resolveLinkedRecoveryEmails(deletedIds, results);
       }
     }
 
@@ -361,6 +464,7 @@ async function runColdArchive(results, { coldTierDays, archiveBatchSize, runId }
     results.skipped += insertResult.duplicates ?? 0;
 
     if (insertResult.inserted > 0 || (insertResult.duplicates ?? 0) > 0) {
+      let deletedIds = [];
       try {
         // Extra guard: re-verify isConverted on each ID before deleting
         const { deletedCount } = await Checkout.deleteMany({
@@ -368,12 +472,23 @@ async function runColdArchive(results, { coldTierDays, archiveBatchSize, runId }
           'conversion.isConverted': true,
         });
         results.archived += deletedCount;
+        deletedIds = ids;
       } catch (err) {
         results.errors++;
         console.error(
           `[CheckoutRetention] Converted delete failed batch ${convertedBatches}:`,
           err.message
         );
+      }
+
+      // ── COORDINATION: resolve linked RecoveryEmail records ─────────────
+      // Converted checkouts will have RecoveryEmail records in 'converted'
+      // or 'organic' outcome — resolveLinkedRecoveryEmails excludes those via
+      // the RECOVERY_RESOLVABLE_OUTCOMES filter, so this call is a safe no-op
+      // for most converted checkout batches. It catches edge cases where the
+      // RecoveryEmail outcome wasn't properly synced at conversion time.
+      if (deletedIds.length > 0) {
+        await resolveLinkedRecoveryEmails(deletedIds, results);
       }
     }
 
