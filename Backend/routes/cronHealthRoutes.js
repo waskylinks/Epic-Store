@@ -33,84 +33,18 @@ import {
   getCronBanner,
 }                          from '../controller/cronLog-controller.js';
 import { verifyUserAuth, roleBaseAccess } from '../middleware/user-auth.js';
+import { runRecoveryEmailRetention } from '../jobs/recoveryEmailRetentionJob.js';
 
 const router = express.Router();
 
 // Apply admin auth to every route in this router
 router.use(verifyUserAuth, roleBaseAccess('admin', 'superAdmin'));
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/v1/admin/cron/health
-//
-// Returns health status for all registered cron jobs from CronJobStatus.
-// Response: { success, jobs: CronJobStatus[] }
-// ─────────────────────────────────────────────────────────────────────────────
-
-router.get('/health', async (req, res) => {
-  try {
-    const jobs = await CronJobStatus.getAll();
-    res.json({ success: true, jobs });
-  } catch (err) {
-    console.error('[CronHealth] GET /health error:', err.message);
-    res.status(500).json({ success: false, message: 'Failed to fetch cron health data' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/v1/admin/cron/logs/:jobName
-//
-// Cursor-paginated run history for a specific job from CronJobLog.
-// jobName is validated against an allowlist inside the controller.
-//
-// Query params: limit (1–100), cursor (opaque base64 string)
-// Response: { success, jobName, logs[], hasNextPage, nextCursor }
-// ─────────────────────────────────────────────────────────────────────────────
-
-router.get('/logs/:jobName', getCronJobHistory);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/v1/admin/cron/banner
-//
-// Recent run data for checkout-analytics-relevant jobs.
-// Cached in Redis at 60s TTL — safe to call on every analytics page mount.
-//
-// Response: { success, jobs: [{ jobName, status, startedAt, counts, error, triggeredBy }] }
-// ─────────────────────────────────────────────────────────────────────────────
-
-router.get('/banner', getCronBanner);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/v1/admin/cron/trigger/:jobName
-//
-// Manually triggers a single job run for jobs that support it.
-//
-// Supported jobs:
-//   DiscountCleanup    — safe: age-gated, no timing-sensitive state
-//   AuditCleanup       — safe: age-gated, no timing-sensitive state
-//   CheckoutRetention  — safe: age-gated (90d/365d/7yr cutoffs), no timing-
-//                        sensitive state. The overlap guard in runCronJob
-//                        prevents concurrent runs if the scheduled cron
-//                        happens to fire simultaneously.
-//
-// Excluded jobs (auto-only):
-//   AbandonmentSweep   — has stale-ack and pendingAck side effects that
-//                        depend on the scheduled sweep cycle
-//   RecoveryEmailCron  — has per-attempt delay rules and cooldown windows
-//                        that are invalidated by out-of-schedule triggers
-//
-// The trigger runs the job through runCronJob() so:
-//   - Overlap protection applies (won't double-run if cron fires simultaneously)
-//   - CronJobStatus is updated
-//   - CronJobLog is written with triggeredBy: 'manual'
-//   - Slack alerts fire on failure
-//
-// Response: { success, jobName, result: { ...jobReturnValue } }
-// ─────────────────────────────────────────────────────────────────────────────
-
 const MANUAL_TRIGGER_JOBS = {
-  DiscountCleanup:   runCleanup,
-  AuditCleanup:      runAuditCleanup,
-  CheckoutRetention: runCheckoutRetention,
+  DiscountCleanup:        runCleanup,
+  AuditCleanup:           runAuditCleanup,
+  CheckoutRetention:      runCheckoutRetention,
+  RecoveryEmailRetention: runRecoveryEmailRetention,
 };
 
 router.post('/trigger/:jobName', async (req, res) => {
