@@ -40,8 +40,11 @@ import '../AdminStyles/CronHealth.css';
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
 const AUTO_REFRESH_MS  = 60_000;
-const TRIGGERABLE_JOBS = new Set(['DiscountCleanup', 'AuditCleanup', 'CheckoutRetention']);
 
+// ── CHANGE 1: Added 'RecoveryEmailRetention' to TRIGGERABLE_JOBS ──────────────
+const TRIGGERABLE_JOBS = new Set(['DiscountCleanup', 'AuditCleanup', 'CheckoutRetention', 'RecoveryEmailRetention']);
+
+// ── CHANGE 2: Added RecoveryEmailRetention entry to JOB_META ─────────────────
 const JOB_META = {
   AbandonmentSweep: {
     label:       'Abandonment Sweep',
@@ -66,6 +69,12 @@ const JOB_META = {
     description: 'Monthly three-pass lifecycle: warm prune (90d), cold archive (365d → checkouts_archive), hard delete (7yr, production only).',
     icon:        Schedule,
     color:       '#0284C7',
+  },
+  RecoveryEmailRetention: {
+    label:       'Recovery Email Retention',
+    description: 'Monthly two-pass lifecycle: orphan resolution + snapshot prune (Pass 1), hard delete (7yr, production only, Pass 2). Runs 1 hour after Checkout Retention.',
+    icon:        MarkEmailRead,
+    color:       '#0D9488',
   },
   RecoveryEmailCron: {
     label:       'Recovery Email Cron',
@@ -222,7 +231,6 @@ function RunHistoryPanel({ jobName }) {
 
   const { logs, error } = history;
 
-  // Load first page when panel opens
   useEffect(() => {
     dispatch(fetchCronJobHistory({ jobName, limit: 15 }));
     return () => { dispatch(clearJobHistory(jobName)); };

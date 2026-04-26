@@ -13,6 +13,18 @@ import {
   selectAnalyticsError,
   selectAnalyticsTimeframe,
 } from '../features/admin/recoveryEmailSlice';
+
+// ── CHANGE 1a: Import banner selectors from cronLogSlice ──────────────────────
+import {
+  fetchCronBanner,
+  dismissBanner,
+  resetBannerDismiss,
+  selectBannerJobByName,
+  selectBannerDismissed,
+} from '../features/admin/cronLogSlice';
+
+import RetentionBanner from '../components/RetentionBanner';
+
 import '../AdminStyles/RecoveryEmailAnalytics.css';
 
 // ============================================
@@ -76,7 +88,7 @@ function ClickFunnel({ clickFunnel }) {
   if (!clickFunnel) return <div className="rea-empty">No funnel data available</div>;
 
   const { sent, clicked, converted, sentToClickRate, clickToConvertRate } = clickFunnel;
-  const max = Math.max(sent, clicked, converted, 1); // fix: use true max across all steps
+  const max = Math.max(sent, clicked, converted, 1);
 
   const steps = [
     { label: 'Emails Sent (Campaigns)',  count: sent,      fill: Math.min((sent      / max) * 100, 100), color: FUNNEL_COLORS.sent,      rate: null },
@@ -133,6 +145,7 @@ function OutcomeBreakdown({ outcomes, total }) {
     </div>
   );
 }
+
 function AttemptROITable({ revenueAttribution }) {
   if (!revenueAttribution?.length) {
     return (
@@ -207,6 +220,11 @@ export default function RecoveryEmailAnalyticsPage() {
   const error     = useSelector(selectAnalyticsError);
   const timeframe = useSelector(selectAnalyticsTimeframe);
 
+  // ── CHANGE 2: Banner selectors ────────────────────────────────────────────
+  const retentionJob    = useSelector(selectBannerJobByName('RecoveryEmailRetention'));
+  const bannerDismissed = useSelector(selectBannerDismissed);
+  const showBanner      = !!retentionJob && !bannerDismissed;
+
   const [isFirstLoad, setIsFirstLoad] = useState(true);
   const [refreshing,  setRefreshing]  = useState(false);
   const loadingRef = useRef(false);
@@ -222,11 +240,24 @@ export default function RecoveryEmailAnalyticsPage() {
     });
   }, [dispatch, timeframe]);
 
+  // ── CHANGE 3a: Existing mount effect (unchanged) ──────────────────────────
   useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── CHANGE 3b: Banner fetch on mount ─────────────────────────────────────
+  useEffect(() => {
+    dispatch(fetchCronBanner());
+  }, [dispatch]);
+
+  // ── CHANGE 4: Timeframe handler with banner reset ─────────────────────────
   const handleTimeframe = (tf) => {
     dispatch(setAnalyticsTimeframe(tf));
     load(tf);
+  };
+
+  const handleRefresh = () => {
+    load();
+    dispatch(resetBannerDismiss());
+    dispatch(fetchCronBanner(true));
   };
 
   const outcomes = analytics?.outcomes || {};
@@ -264,24 +295,18 @@ export default function RecoveryEmailAnalyticsPage() {
       color: 'purple',
     },
     {
-      // exhausted = all emails sent — send-side signal only.
-      // Token expiry is irrelevant to this state.
       label: 'Exhausted',
       value: fmt.number(outcomes.exhausted || 0),
       sub:   'all emails sent · awaiting token expiry',
       color: 'red',
     },
     {
-      // expired = all emails sent AND all tokens elapsed AND user never clicked.
-      // True terminal — "we tried everything, user never responded."
       label: 'Expired',
       value: fmt.number(outcomes.expired || 0),
       sub:   'all tokens dead · never clicked',
       color: 'amber',
     },
     {
-      // lateClicks = user clicked after JWT exp elapsed.
-      // Cart NOT restored. "Interested but too late" warm lead signal.
       label: 'Late Clicks',
       value: fmt.number(analytics?.lateClicks || 0),
       sub:   'clicked · token already expired',
@@ -301,6 +326,7 @@ export default function RecoveryEmailAnalyticsPage() {
             <ArrowBack style={{ fontSize: 15 }} /> Dashboard
           </Link>
 
+          {/* Page header */}
           <div className="rea-hd">
             <div className="rea-hd-left">
               <div className="rea-hd-icon"><Email style={{ fontSize: 24 }} /></div>
@@ -323,9 +349,10 @@ export default function RecoveryEmailAnalyticsPage() {
                   </button>
                 ))}
               </div>
+              {/* ── CHANGE 4: Refresh button now also resets + refetches banner ── */}
               <button
                 className={`rea-icon-btn ${refreshing ? 'rea-icon-btn--spin' : ''}`}
-                onClick={() => load()}
+                onClick={handleRefresh}
                 disabled={refreshing}
                 title="Refresh"
               >
@@ -333,6 +360,15 @@ export default function RecoveryEmailAnalyticsPage() {
               </button>
             </div>
           </div>
+
+          {/* ── CHANGE 5: Retention banner — shown after header, before error ── */}
+          {showBanner && (
+            <RetentionBanner
+              job={retentionJob}
+              label="Recovery Email Retention"
+              onDismiss={() => dispatch(dismissBanner())}
+            />
+          )}
 
           {error && !loading && (
             <div className="rea-error">

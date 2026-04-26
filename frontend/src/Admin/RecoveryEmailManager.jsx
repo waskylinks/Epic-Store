@@ -15,6 +15,19 @@ import {
   selectSendListSummary,
   selectStatusFor,
 } from '../features/admin/recoveryEmailSlice';
+
+// ── CHANGE 1a: Import banner selectors from cronLogSlice ──────────────────────
+import {
+  fetchCronBanner,
+  dismissBanner,
+  resetBannerDismiss,
+  selectBannerJobByName,
+  selectBannerDismissed,
+} from '../features/admin/cronLogSlice';
+
+// ── CHANGE 1b: Import shared RetentionBanner component ───────────────────────
+import RetentionBanner from '../components/RetentionBanner';
+
 import '../AdminStyles/RecoveryEmailManager.css';
 
 // ============================================
@@ -140,8 +153,6 @@ function CartItemSkeleton() {
   );
 }
 
-// ── Attempt progress indicator ───────────────────────────────
-
 function AttemptDots({ confirmed, max }) {
   return (
     <div className="res-attempt-dots" title={`${confirmed} of ${max} emails sent`}>
@@ -154,8 +165,6 @@ function AttemptDots({ confirmed, max }) {
     </div>
   );
 }
-
-// ── Cart detail right panel — read only ──────────────────────
 
 function CartDetail({ item }) {
   const dispatch = useDispatch();
@@ -192,7 +201,6 @@ function CartDetail({ item }) {
 
       <div className="res-detail-body">
 
-        {/* Abandonment info */}
         <section>
           <div className="res-section-label">Abandonment details</div>
           <div className="res-info-grid">
@@ -219,7 +227,6 @@ function CartDetail({ item }) {
           </div>
         </section>
 
-        {/* Cart items */}
         <section>
           <div className="res-section-label">Cart items ({items.length})</div>
           <table className="res-items-table">
@@ -257,7 +264,6 @@ function CartDetail({ item }) {
           </table>
         </section>
 
-        {/* Pricing */}
         <section>
           <div className="res-section-label">Pricing breakdown</div>
           <div className="res-pricing-rows">
@@ -288,7 +294,6 @@ function CartDetail({ item }) {
           </div>
         </section>
 
-        {/* Email attempt history */}
         {status?.attempts?.length > 0 && (
           <section>
             <div className="res-section-label">
@@ -361,7 +366,6 @@ function CartDetail({ item }) {
           </section>
         )}
 
-        {/* Recovery summary */}
         <section>
           <div className="res-send-block">
             <div className="res-send-block-label">Recovery summary</div>
@@ -417,10 +421,14 @@ export default function RecoveryEmailMonitorPage() {
   const pagination = useSelector(selectPagination);
   const summary    = useSelector(selectSendListSummary);
 
+  // ── CHANGE 2: Banner selectors ────────────────────────────────────────────
+  const retentionJob    = useSelector(selectBannerJobByName('RecoveryEmailRetention'));
+  const bannerDismissed = useSelector(selectBannerDismissed);
+  const showBanner      = !!retentionJob && !bannerDismissed;
+
   const [selectedItem, setSelectedItem] = useState(null);
   const [isFirstLoad,  setIsFirstLoad]  = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
-  // Tracks loading state for any filter/page/sort/search change (not soft refresh)
   const [listLoading,  setListLoading]  = useState(true);
 
   const [filters, setFilters] = useState({
@@ -446,9 +454,14 @@ export default function RecoveryEmailMonitorPage() {
     });
   }, [dispatch, filters]);
 
+  // ── CHANGE 3a: Existing mount effect (unchanged) ──────────────────────────
   useEffect(() => { load(); }, [load]);
 
-  // Search: set listLoading when the debounced filter actually fires
+  // ── CHANGE 3b: Banner fetch on mount ─────────────────────────────────────
+  useEffect(() => {
+    dispatch(fetchCronBanner());
+  }, [dispatch]);
+
   useEffect(() => {
     const t = setTimeout(() => {
       setListLoading(true);
@@ -474,13 +487,14 @@ export default function RecoveryEmailMonitorPage() {
     prevPageRef.current = p;
   };
 
-  // Soft refresh — does NOT set listLoading; keeps items visible, shows spinner only
+  // ── CHANGE 4: handleRefresh now also resets + refetches banner ────────────
   const handleRefresh = () => {
     setRefreshing(true);
     load();
+    dispatch(resetBannerDismiss());
+    dispatch(fetchCronBanner(true));
   };
 
-  // KPIs
   const kpis = [
     {
       label: 'Total campaigns',
@@ -554,6 +568,7 @@ export default function RecoveryEmailMonitorPage() {
             </Link>
           </div>
 
+          {/* Page header */}
           <div className="res-hd">
             <div className="res-hd-left">
               <div className="res-hd-icon"><Email style={{ fontSize: 22 }} /></div>
@@ -594,6 +609,15 @@ export default function RecoveryEmailMonitorPage() {
                 </div>
               ))}
           </div>
+
+          {/* ── CHANGE 5: Retention banner — shown after KPIs, before error bar ── */}
+          {showBanner && (
+            <RetentionBanner
+              job={retentionJob}
+              label="Recovery Email Retention"
+              onDismiss={() => dispatch(dismissBanner())}
+            />
+          )}
 
           {listError && !loading && (
             <div className="res-error-bar">
@@ -649,7 +673,6 @@ export default function RecoveryEmailMonitorPage() {
               </div>
 
               <div className="res-cart-list" role="list" aria-label="Campaign list">
-                {/* Show skeletons on first load OR any filter/sort/search/page change */}
                 {isFirstLoad || listLoading
                   ? Array.from({ length: 8 }).map((_, i) => <CartItemSkeleton key={i} />)
                   : sendList.length === 0

@@ -1,0 +1,277 @@
+/* ================================================================
+   RetentionBanner.css
+   Standalone stylesheet for components/RetentionBanner.jsx.
+
+   Import this file in RetentionBanner.jsx:
+     import './RetentionBanner.css';
+
+   Why a standalone file?
+   RetentionBanner is a shared component used on three pages. Each
+   page already mirrors the .ck-retention-banner* classes in its own
+   stylesheet (CheckoutAnalytics.css, RecoveryEmailAnalytics.css,
+   RecoveryEmailManager.css). This file is the canonical, page-agnostic
+   definition using its own CSS custom properties so the component
+   renders correctly if ever used outside those three contexts.
+
+   Design system alignment:
+   Tokens mirror the --rea- / --res- palette exactly:
+     success → green  (#15803d / #DCFCE7 / #BBF7D0)
+     error   → red    (#b91c1c / #FEE2E2 / #FECACA)
+     warning → amber  (#b45309 / #FEF3C7 / #FDE68A)
+   Typography, radius, shadow, and transition match Plus Jakarta Sans
+   pages at 13px base.
+   ================================================================ */
+
+/* ── Component-scoped tokens ─────────────────────────────────── */
+.ck-retention-banner {
+  /* Colors — success (default) */
+  --ck-bg:          #DCFCE7;
+  --ck-border:      #BBF7D0;
+  --ck-icon-color:  #15803d;
+  --ck-title-color: #111827;
+  --ck-meta-color:  #4B5563;
+  --ck-chip-bg:     rgba(0, 0, 0, 0.06);
+  --ck-chip-color:  #111827;
+  --ck-dismiss-color: #6B7280;
+
+  /* Typography */
+  --ck-font:        'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --ck-font-size:   13px;
+
+  /* Shape */
+  --ck-radius:      8px;
+  --ck-shadow:      0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+  --ck-transition:  all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Root layout ─────────────────────────────────────────────── */
+.ck-retention-banner {
+  display:         flex;
+  align-items:     flex-start;
+  justify-content: space-between;
+  gap:             12px;
+  padding:         13px 18px;
+  margin-bottom:   18px;
+  background:      var(--ck-bg);
+  border:          1px solid var(--ck-border);
+  border-radius:   var(--ck-radius);
+  font-family:     var(--ck-font);
+  font-size:       var(--ck-font-size);
+  box-shadow:      var(--ck-shadow);
+  transition:      var(--ck-transition);
+  /* Prevent banner from collapsing when content is narrow */
+  min-width:       0;
+}
+
+/* ── Error variant ───────────────────────────────────────────── */
+.ck-retention-banner--error {
+  --ck-bg:         #FEE2E2;
+  --ck-border:     #FECACA;
+  --ck-icon-color: #b91c1c;
+}
+
+/* ── Warning variant ─────────────────────────────────────────── */
+.ck-retention-banner--warn {
+  --ck-bg:         #FEF3C7;
+  --ck-border:     #FDE68A;
+  --ck-icon-color: #b45309;
+}
+
+/* ── Left column: icon + text body ──────────────────────────── */
+.ck-retention-banner-left {
+  display:     flex;
+  align-items: flex-start;
+  gap:         10px;
+  flex:        1;
+  min-width:   0;
+}
+
+/* Status glyph (✓ or ⚠) */
+.ck-retention-banner-icon {
+  font-size:   15px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top:  1px;
+  color:       var(--ck-icon-color);
+  /* Prevent text selection on the glyph */
+  user-select: none;
+}
+
+/* ── Text body ───────────────────────────────────────────────── */
+.ck-retention-banner-body {
+  display:        flex;
+  flex-direction: column;
+  gap:            4px;
+  min-width:      0;
+}
+
+/* Bold headline: "Recovery Email Retention ran successfully" */
+.ck-retention-banner-title {
+  font-size:   13px;
+  font-weight: 700;
+  color:       var(--ck-title-color);
+  line-height: 1.3;
+  /* Allow long job names to wrap gracefully */
+  word-break:  break-word;
+}
+
+/* Secondary row: relative time · manual badge · chips · error */
+.ck-retention-banner-meta {
+  display:     flex;
+  align-items: center;
+  gap:         8px;
+  flex-wrap:   wrap;
+  font-size:   12px;
+  font-weight: 500;
+  color:       var(--ck-meta-color);
+  line-height: 1.5;
+}
+
+/* "· triggered manually" label */
+.ck-retention-banner-source {
+  color: var(--ck-meta-color);
+}
+
+/* ── Count chips strip ───────────────────────────────────────── */
+.ck-retention-banner-counts {
+  display:     flex;
+  align-items: center;
+  gap:         6px;
+  flex-wrap:   wrap;
+}
+
+/*
+ * Individual chip: "deleted: 142"
+ * Pill-shaped, subtle dark overlay on the banner background.
+ */
+.ck-retention-banner-count-chip {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            3px;
+  background:     var(--ck-chip-bg);
+  border-radius:  999px;
+  padding:        2px 8px;
+  font-size:      11.5px;
+  font-weight:    600;
+  color:          var(--ck-chip-color);
+  white-space:    nowrap;
+  /* Allow chips to reflow on tiny screens */
+  flex-shrink:    0;
+}
+
+/* ── Inline error message (error/warn variants only) ─────────── */
+.ck-retention-banner-error {
+  font-size:   11.5px;
+  font-weight: 500;
+  color:       var(--ck-icon-color);
+  word-break:  break-word;
+  /* Cap width so it doesn't run past the dismiss button */
+  max-width:   100%;
+}
+
+/* ── Dismiss button ──────────────────────────────────────────── */
+.ck-retention-banner-dismiss {
+  /* Reset */
+  background:  none;
+  border:      none;
+  padding:     2px 4px;
+  margin:      0;
+  line-height: 1;
+
+  font-size:     14px;
+  color:         var(--ck-dismiss-color);
+  cursor:        pointer;
+  flex-shrink:   0;
+  align-self:    flex-start;
+  border-radius: 4px;
+  transition:    var(--ck-transition);
+  /* Prevent glyph selection */
+  user-select:   none;
+}
+
+.ck-retention-banner-dismiss:hover {
+  color:      var(--ck-title-color);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* Keyboard focus ring — matches the coral accent used on all three pages */
+.ck-retention-banner-dismiss:focus-visible {
+  outline:        2px solid #FF6B6B;
+  outline-offset: 2px;
+}
+
+/* ================================================================
+   RESPONSIVE
+   ================================================================ */
+
+/*
+ * ≤ 600px: stack the banner vertically so the dismiss button
+ * doesn't crowd the text on narrow phones.
+ */
+@media (max-width: 600px) {
+  .ck-retention-banner {
+    flex-direction: column;
+    gap:            10px;
+    padding:        12px 14px;
+  }
+
+  /* Move dismiss to the bottom-right so it stays out of the way */
+  .ck-retention-banner-dismiss {
+    align-self: flex-end;
+  }
+
+  .ck-retention-banner-meta {
+    gap: 6px;
+  }
+
+  .ck-retention-banner-count-chip {
+    font-size: 11px;
+    padding:   2px 7px;
+  }
+}
+
+/*
+ * ≤ 480px: tighten further for very small viewports.
+ */
+@media (max-width: 480px) {
+  .ck-retention-banner {
+    padding:       11px 12px;
+    margin-bottom: 14px;
+  }
+
+  .ck-retention-banner-title {
+    font-size: 12.5px;
+  }
+
+  .ck-retention-banner-meta {
+    font-size: 11.5px;
+    gap:       5px;
+  }
+
+  .ck-retention-banner-counts {
+    gap: 4px;
+  }
+
+  .ck-retention-banner-count-chip {
+    font-size: 10.5px;
+    padding:   2px 6px;
+  }
+
+  .ck-retention-banner-error {
+    font-size: 11px;
+  }
+}
+
+/* ── Print ───────────────────────────────────────────────────── */
+@media print {
+  /* Flatten the banner to plain text for print; hide the dismiss button */
+  .ck-retention-banner {
+    box-shadow:  none;
+    border:      1px solid #ccc;
+    background:  #f9f9f9 !important;
+  }
+
+  .ck-retention-banner-dismiss {
+    display: none !important;
+  }
+}

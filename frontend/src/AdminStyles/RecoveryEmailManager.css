@@ -911,3 +911,177 @@
   .res-detail-hd-left { gap: 10px; }
   .res-detail-avatar { width: 38px; height: 38px; font-size: 12px; }
 }
+
+/* ================================================================
+   RecoveryEmailManager.css — ADDITIONS ONLY
+   Append these rules to the bottom of RecoveryEmailManager.css.
+   All selectors use the ck-retention-banner* namespace (shared with
+   RetentionBanner.jsx) and reference --res-* CSS variables that are
+   already declared on :root in the existing stylesheet.
+   ================================================================ */
+
+/* ── Retention banner ────────────────────────────────────────── */
+.ck-retention-banner {
+  display:         flex;
+  align-items:     flex-start;
+  justify-content: space-between;
+  gap:             12px;
+  padding:         13px 18px;
+  margin-bottom:   18px;
+  background:      var(--res-green-bg);
+  border:          1px solid var(--res-green-border);
+  border-radius:   var(--res-radius-sm);
+  font-family:     var(--res-font);
+  font-size:       13px;
+  box-shadow:      var(--res-shadow-sm);
+  transition:      var(--res-transition);
+}
+
+.ck-retention-banner--error {
+  background:   var(--res-red-bg);
+  border-color: var(--res-red-border);
+}
+
+.ck-retention-banner--warn {
+  background:   var(--res-amber-bg);
+  border-color: var(--res-amber-border);
+}
+
+/* ── Left section: icon + body ───────────────────────────────── */
+.ck-retention-banner-left {
+  display:     flex;
+  align-items: flex-start;
+  gap:         10px;
+  flex:        1;
+  min-width:   0;
+}
+
+.ck-retention-banner-icon {
+  font-size:   15px;
+  flex-shrink: 0;
+  margin-top:  1px;
+  color:       var(--res-green);
+  line-height: 1;
+}
+
+.ck-retention-banner--error .ck-retention-banner-icon { color: var(--res-red); }
+.ck-retention-banner--warn  .ck-retention-banner-icon { color: var(--res-amber); }
+
+/* ── Text body ───────────────────────────────────────────────── */
+.ck-retention-banner-body {
+  display:        flex;
+  flex-direction: column;
+  gap:            4px;
+  min-width:      0;
+}
+
+.ck-retention-banner-title {
+  font-weight: 700;
+  color:       var(--res-text);
+  font-size:   13px;
+  line-height: 1.3;
+}
+
+.ck-retention-banner-meta {
+  display:     flex;
+  align-items: center;
+  gap:         8px;
+  flex-wrap:   wrap;
+  font-size:   12px;
+  color:       var(--res-text-muted);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.ck-retention-banner-source {
+  color: var(--res-text-muted);
+}
+
+/* ── Count chips ─────────────────────────────────────────────── */
+.ck-retention-banner-counts {
+  display:     flex;
+  align-items: center;
+  gap:         6px;
+  flex-wrap:   wrap;
+}
+
+.ck-retention-banner-count-chip {
+  display:        inline-flex;
+  align-items:    center;
+  gap:            3px;
+  background:     rgba(0, 0, 0, 0.06);
+  border-radius:  999px;
+  padding:        2px 8px;
+  font-size:      11.5px;
+  font-weight:    600;
+  color:          var(--res-text);
+  white-space:    nowrap;
+}
+
+/* ── Inline error text ───────────────────────────────────────── */
+.ck-retention-banner-error {
+  color:       var(--res-red);
+  font-size:   11.5px;
+  font-weight: 500;
+  word-break:  break-word;
+}
+
+/* ── Dismiss button ──────────────────────────────────────────── */
+.ck-retention-banner-dismiss {
+  background:    none;
+  border:        none;
+  font-size:     14px;
+  color:         var(--res-text-muted);
+  cursor:        pointer;
+  padding:       2px 4px;
+  line-height:   1;
+  flex-shrink:   0;
+  border-radius: 4px;
+  transition:    var(--res-transition);
+  align-self:    flex-start;
+}
+
+.ck-retention-banner-dismiss:hover {
+  color:      var(--res-text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.ck-retention-banner-dismiss:focus-visible {
+  outline:        2px solid var(--res-coral);
+  outline-offset: 2px;
+}
+
+/* ── Responsive ──────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .ck-retention-banner {
+    flex-direction: column;
+    gap:            10px;
+    padding:        12px 14px;
+  }
+
+  .ck-retention-banner-dismiss {
+    align-self: flex-end;
+  }
+
+  .ck-retention-banner-meta {
+    gap: 6px;
+  }
+
+  .ck-retention-banner-count-chip {
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ck-retention-banner {
+    padding: 11px 12px;
+  }
+
+  .ck-retention-banner-title {
+    font-size: 12.5px;
+  }
+
+  .ck-retention-banner-meta {
+    font-size: 11.5px;
+  }
+}
