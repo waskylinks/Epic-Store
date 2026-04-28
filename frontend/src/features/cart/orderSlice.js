@@ -9,66 +9,104 @@ const API_BASE = "/api/v1";
 // ============================================
 
 /**
- * Get UTM parameters from URL
+ * FIX #8: getUTMParams() previously read window.location.search at order-
+ * creation time, by which point the user is on /process/payment and all
+ * UTM parameters have been lost from the URL. The values were therefore
+ * always null, making the frontend attribution data unreliable.
+ *
+ * Resolution (option chosen: capture once on app load, store in sessionStorage):
+ *  - captureUTMsOnLoad() must be called once when the app first mounts
+ *    (e.g. in App.jsx useEffect or the root layout component).
+ *  - getUTMParams() now reads from sessionStorage, so the values survive
+ *    page transitions within the same tab.
+ *  - The authoritative source for server-side attribution remains the
+ *    captureUTMParameters middleware cookie (already correct per issue list).
+ *    The frontend data here is supplementary / for optimistic UI only.
  */
-const getUTMParams = () => {
+
+/**
+ * Call this ONCE on initial app load (e.g. App.jsx top-level useEffect).
+ * Reads UTMs from the landing-page URL and persists them for the session.
+ */
+export const captureUTMsOnLoad = () => {
+  // Only capture if not already stored (preserve the very first landing page values)
+  if (sessionStorage.getItem("utm_captured")) return;
+
   const params = new URLSearchParams(window.location.search);
-  return {
-    utm_source: params.get('utm_source'),
-    utm_medium: params.get('utm_medium'),
-    utm_campaign: params.get('utm_campaign'),
-    utm_term: params.get('utm_term'),
-    utm_content: params.get('utm_content')
-  };
+  const utmKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+
+  utmKeys.forEach((key) => {
+    const val = params.get(key);
+    if (val) sessionStorage.setItem(key, val);
+  });
+
+  sessionStorage.setItem("landingPage", window.location.pathname + window.location.search);
+  sessionStorage.setItem("utm_captured", "1");
 };
 
 /**
- * Detect device and browser
+ * FIX #8: Read UTMs from sessionStorage (populated on landing) rather than
+ * from the current URL (which no longer contains them at checkout time).
+ */
+const getUTMParams = () => ({
+  utm_source:   sessionStorage.getItem("utm_source"),
+  utm_medium:   sessionStorage.getItem("utm_medium"),
+  utm_campaign: sessionStorage.getItem("utm_campaign"),
+  utm_term:     sessionStorage.getItem("utm_term"),
+  utm_content:  sessionStorage.getItem("utm_content"),
+});
+
+/**
+ * Detect device and browser (server-side middleware is authoritative;
+ * this is kept as a lightweight client-side supplement).
  */
 const getDeviceInfo = () => {
   const ua = navigator.userAgent;
   const isMobile = /mobile/i.test(ua);
   const isTablet = /tablet|ipad/i.test(ua);
-  
-  let browser = 'unknown';
-  if (/chrome/i.test(ua)) browser = 'Chrome';
-  else if (/safari/i.test(ua)) browser = 'Safari';
-  else if (/firefox/i.test(ua)) browser = 'Firefox';
-  else if (/edge/i.test(ua)) browser = 'Edge';
-  
+
+  let browser = "unknown";
+  if (/chrome/i.test(ua)) browser = "Chrome";
+  else if (/safari/i.test(ua)) browser = "Safari";
+  else if (/firefox/i.test(ua)) browser = "Firefox";
+  else if (/edge/i.test(ua)) browser = "Edge";
+
   return {
-    device: isMobile ? 'mobile' : isTablet ? 'tablet' : 'desktop',
-    browser
+    device: isMobile ? "mobile" : isTablet ? "tablet" : "desktop",
+    browser,
   };
 };
 
 /**
  * Check if this is user's first purchase
- * This should be called from the component/page after fetching order history
  */
 const checkIsFirstPurchase = (existingOrders) => {
   return !existingOrders || existingOrders.length === 0;
 };
 
 /**
- * Get analytics data for order
+ * Get analytics data for order.
+ * FIX #8: UTMs now come from sessionStorage (captured at landing), not from
+ * the current URL which would be empty at checkout time.
  */
 const getAnalyticsData = (isFirstPurchase = false) => {
-  const utmParams = getUTMParams();
+  const utmParams = getUTMParams(); // FIX #8
   const deviceInfo = getDeviceInfo();
-  
-  const sessionId = sessionStorage.getItem('sessionId') || 
+
+  const sessionId =
+    sessionStorage.getItem("sessionId") ||
     `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
-  const landingPage = sessionStorage.getItem('landingPage') || window.location.pathname;
-  
-  if (!sessionStorage.getItem('sessionId')) {
-    sessionStorage.setItem('sessionId', sessionId);
-    sessionStorage.setItem('landingPage', window.location.pathname);
+
+  // FIX #8: landingPage also comes from sessionStorage (set at first load)
+  const landingPage =
+    sessionStorage.getItem("landingPage") || window.location.pathname;
+
+  if (!sessionStorage.getItem("sessionId")) {
+    sessionStorage.setItem("sessionId", sessionId);
   }
-  
+
   return {
-    source: utmParams.utm_source || 'direct',
+    source: utmParams.utm_source || "direct",
     medium: utmParams.utm_medium,
     campaign: utmParams.utm_campaign,
     term: utmParams.utm_term,
@@ -79,7 +117,7 @@ const getAnalyticsData = (isFirstPurchase = false) => {
     landingPage,
     sessionId,
     isFirstPurchase,
-    capturedAt: new Date().toISOString()
+    capturedAt: new Date().toISOString(),
   };
 };
 
@@ -89,10 +127,10 @@ const getAnalyticsData = (isFirstPurchase = false) => {
 
 const createFormDataWithFiles = (data, files = []) => {
   const formData = new FormData();
-  
-  Object.keys(data).forEach(key => {
+
+  Object.keys(data).forEach((key) => {
     if (data[key] !== undefined && data[key] !== null) {
-      if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
+      if (typeof data[key] === "object" && !Array.isArray(data[key])) {
         formData.append(key, JSON.stringify(data[key]));
       } else if (Array.isArray(data[key])) {
         formData.append(key, JSON.stringify(data[key]));
@@ -101,11 +139,11 @@ const createFormDataWithFiles = (data, files = []) => {
       }
     }
   });
-  
+
   files.forEach((file) => {
     formData.append(`images`, file);
   });
-  
+
   return formData;
 };
 
@@ -149,9 +187,10 @@ export const getOrderByReference = createAsyncThunk(
   "order/getOrderByReference",
   async (reference, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${API_BASE}/orders/reference/${reference}`, {
-        withCredentials: true,
-      });
+      const { data } = await axios.get(
+        `${API_BASE}/orders/reference/${reference}`,
+        { withCredentials: true }
+      );
       return data.order;
     } catch (error) {
       return rejectWithValue(
@@ -163,7 +202,8 @@ export const getOrderByReference = createAsyncThunk(
 
 /**
  * Create new order WITH COMPLETE ANALYTICS
- * Captures: UTM params, device/browser, referrer, landing page, session ID, first purchase flag
+ * FIX #8: analytics.source now correctly reflects the landing-page UTMs
+ * stored in sessionStorage, not the (empty) checkout-page URL params.
  */
 export const createOrder = createAsyncThunk(
   "order/createOrder",
@@ -172,13 +212,13 @@ export const createOrder = createAsyncThunk(
       const existingOrders = getState().order.orders || [];
       const isFirstPurchase = checkIsFirstPurchase(existingOrders);
       const analytics = getAnalyticsData(isFirstPurchase);
-      
+
       const { data } = await axios.post(
-        `${API_BASE}/order/new`, 
-        { ...orderData, analytics }, 
+        `${API_BASE}/order/new`,
+        { ...orderData, analytics },
         { withCredentials: true }
       );
-      
+
       return data.order;
     } catch (error) {
       return rejectWithValue(
@@ -196,10 +236,15 @@ export const getOrderTimeline = createAsyncThunk(
   "order/getOrderTimeline",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${API_BASE}/orders/${orderId}/timeline`, {
-        withCredentials: true,
-      });
-      return { orderId, timeline: data.timeline, currentStatus: data.currentStatus };
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/timeline`,
+        { withCredentials: true }
+      );
+      return {
+        orderId,
+        timeline: data.timeline,
+        currentStatus: data.currentStatus,
+      };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch order timeline"
@@ -214,7 +259,10 @@ export const getOrderTimeline = createAsyncThunk(
 
 export const addOrderNote = createAsyncThunk(
   "order/addOrderNote",
-  async ({ orderId, content, type = "customer", attachments = [] }, { rejectWithValue }) => {
+  async (
+    { orderId, content, type = "customer", attachments = [] },
+    { rejectWithValue }
+  ) => {
     try {
       const formData = createFormDataWithFiles({ content, type }, attachments);
 
@@ -223,7 +271,7 @@ export const addOrderNote = createAsyncThunk(
         formData,
         {
           withCredentials: true,
-          headers: { 'Content-Type': 'multipart/form-data' },
+          headers: { "Content-Type": "multipart/form-data" },
         }
       );
       return { orderId, note: data.note };
@@ -239,9 +287,10 @@ export const getOrderNotes = createAsyncThunk(
   "order/getOrderNotes",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${API_BASE}/orders/${orderId}/notes`, {
-        withCredentials: true,
-      });
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/notes`,
+        { withCredentials: true }
+      );
       return { orderId, notes: data.notes };
     } catch (error) {
       return rejectWithValue(
@@ -277,9 +326,10 @@ export const getTrackingInfo = createAsyncThunk(
   "order/getTrackingInfo",
   async (orderId, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get(`${API_BASE}/orders/${orderId}/tracking`, {
-        withCredentials: true,
-      });
+      const { data } = await axios.get(
+        `${API_BASE}/orders/${orderId}/tracking`,
+        { withCredentials: true }
+      );
       return { orderId, tracking: data.tracking };
     } catch (error) {
       return rejectWithValue(
@@ -358,29 +408,31 @@ export const downloadInvoice = createAsyncThunk(
         `${API_BASE}/orders/${orderId}/invoice`,
         {
           withCredentials: true,
-          responseType: 'blob',
+          responseType: "blob",
         }
       );
 
-      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const blob = new Blob([response.data], { type: "application/pdf" });
       const url = window.URL.createObjectURL(blob);
-      
-      const link = document.createElement('a');
+
+      const link = document.createElement("a");
       link.href = url;
       link.download = `Invoice-${orderId}.pdf`;
       document.body.appendChild(link);
       link.click();
-      
+
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
 
-      return { success: true, message: 'Invoice downloaded successfully' };
+      return { success: true, message: "Invoice downloaded successfully" };
     } catch (error) {
       if (error.response?.data instanceof Blob) {
         const text = await error.response.data.text();
         try {
           const jsonError = JSON.parse(text);
-          return rejectWithValue(jsonError.message || "Failed to download invoice");
+          return rejectWithValue(
+            jsonError.message || "Failed to download invoice"
+          );
         } catch {
           return rejectWithValue(text || "Failed to download invoice");
         }
@@ -427,7 +479,7 @@ const orderSlice = createSlice({
     tracking: null,
     orderMessages: [],
     customerAnalytics: null,
-    
+
     loading: false,
     actionLoading: false,
     error: null,
@@ -569,7 +621,9 @@ const orderSlice = createSlice({
       })
       .addCase(editOrderNote.fulfilled, (state, action) => {
         state.actionLoading = false;
-        const index = state.notes.findIndex(note => note._id === action.payload.noteId);
+        const index = state.notes.findIndex(
+          (note) => note._id === action.payload.noteId
+        );
         if (index !== -1) {
           state.notes[index] = action.payload.note;
         }
@@ -626,13 +680,12 @@ const orderSlice = createSlice({
         state.error = action.payload;
       });
 
-    builder
-      .addCase(markOrderMessagesRead.fulfilled, (state) => {
-        state.orderMessages = state.orderMessages.map(msg => ({
-          ...msg,
-          isRead: true
-        }));
-      });
+    builder.addCase(markOrderMessagesRead.fulfilled, (state) => {
+      state.orderMessages = state.orderMessages.map((msg) => ({
+        ...msg,
+        isRead: true,
+      }));
+    });
 
     builder
       .addCase(downloadInvoice.pending, (state) => {
@@ -665,11 +718,7 @@ const orderSlice = createSlice({
   },
 });
 
-export const { 
-  removeErrors, 
-  clearMessage, 
-  clearOrder, 
-  setActionLoading,
-} = orderSlice.actions;
+export const { removeErrors, clearMessage, clearOrder, setActionLoading } =
+  orderSlice.actions;
 
 export default orderSlice.reducer;

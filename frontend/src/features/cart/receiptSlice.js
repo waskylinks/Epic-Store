@@ -4,14 +4,14 @@ import { toast } from "react-toastify";
 
 /* --- Fetch a single receipt by reference --- */
 export const fetchReceiptByReference = createAsyncThunk(
-  "order/fetchReceiptByReference",
+  "receipt/fetchReceiptByReference", // FIX #6: was "order/..." — corrected namespace
   async (reference, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(`/api/v1/receipts/${reference}`, {
         withCredentials: true,
       });
 
-      return data.receipt; // <-- IMPORTANT
+      return data.receipt;
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to fetch receipt."
@@ -22,7 +22,7 @@ export const fetchReceiptByReference = createAsyncThunk(
 
 /* --- Download receipt PDF --- */
 export const downloadReceiptPdf = createAsyncThunk(
-  "order/downloadReceiptPdf",
+  "receipt/downloadReceiptPdf", // FIX #6: was "order/..." — corrected namespace
   async ({ reference }, { rejectWithValue }) => {
     if (!reference) {
       return rejectWithValue("Receipt not found for this order");
@@ -55,23 +55,34 @@ export const downloadReceiptPdf = createAsyncThunk(
       return true;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message ||
-          "Receipt not found for this order"
+        error.response?.data?.message || "Receipt not found for this order"
       );
     }
   }
 );
 
-
-/* --- Slice --- */
-const orderSlice = createSlice({
-  name: "order",
+/**
+ * FIX #6: Slice renamed from "order" to "receipt".
+ *
+ * The previous slice used `name: "order"` with its own initialState that
+ * conflicted with the real orderSlice (also named "order") registered under
+ * a different store key. This caused:
+ *   - Redux DevTools showing two "order" slices
+ *   - Potential state key collisions depending on combineReducers order
+ *   - Confusing action type prefixes (order/ vs receipt/)
+ *
+ * Register this reducer in the store under the "receipt" key:
+ *   receipt: receiptReducer
+ * and update any selectors to read from state.receipt.*
+ */
+const receiptSlice = createSlice({
+  name: "receipt", // FIX #6: was "order"
   initialState: {
-    orders: [],
-    loading: false,          // for fetching receipt
-    error: null,             // receipt fetch error
-    downloadLoading: false,  // optional, for download spinner
-    selectedReceipt: null,   // single receipt object
+    receipts: [],
+    selectedReceipt: null,
+    loading: false,
+    downloadLoading: false,
+    error: null,
   },
   reducers: {
     clearSelectedReceipt: (state) => {
@@ -105,10 +116,12 @@ const orderSlice = createSlice({
       })
       .addCase(downloadReceiptPdf.rejected, (state, action) => {
         state.downloadLoading = false;
-        toast.error(action.payload || "PDF download failed.", { position: "top-center" });
+        toast.error(action.payload || "PDF download failed.", {
+          position: "top-center",
+        });
       });
   },
 });
 
-export const { clearSelectedReceipt } = orderSlice.actions;
-export default orderSlice.reducer;
+export const { clearSelectedReceipt } = receiptSlice.actions;
+export default receiptSlice.reducer;

@@ -58,6 +58,9 @@ import DiscountAnalytics from './Admin/DiscountAnalytics';
 import ReturnAnalytics from './Admin/ReturnAnalytics';
 import RecoveryEmailAnalytics from './Admin/RecoveryEmailAnalytics';
 import CronHealth from './Admin/CronHealth';
+// FIX #8: import captureUTMsOnLoad so landing-page UTMs are persisted to
+// sessionStorage before the user navigates away from the entry URL.
+import { captureUTMsOnLoad } from './features/order/orderSlice';
 
 
 
@@ -67,13 +70,19 @@ function App() {
 
   // Initialize session tracking for analytics
   useEffect(() => {
-    // Generate session ID if not exists
+    // FIX #8: Capture UTM parameters from the landing-page URL into
+    // sessionStorage immediately on app mount, before any navigation occurs.
+    // getAnalyticsData() in orderSlice reads from sessionStorage, so values
+    // are available at order-creation time even though the user will be on
+    // /process/payment (no UTMs in URL) by then.
+    captureUTMsOnLoad();
+
+    // Session ID — generated once per browser tab and reused for the
+    // lifetime of the session so all events can be correlated.
     if (!sessionStorage.getItem('sessionId')) {
       const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       sessionStorage.setItem('sessionId', sessionId);
       sessionStorage.setItem('landingPage', window.location.pathname);
-      
-      // Store session start time for analytics
       sessionStorage.setItem('sessionStartTime', new Date().toISOString());
     }
   }, []);
@@ -84,10 +93,10 @@ function App() {
   }, [dispatch]);
 
   useEffect(() => {
-  if (!initializing && isAuthenticated) {
-    dispatch(syncServerCart());
-  }
-}, [initializing, isAuthenticated, dispatch]);
+    if (!initializing && isAuthenticated) {
+      dispatch(syncServerCart());
+    }
+  }, [initializing, isAuthenticated, dispatch]);
 
   // Prevent routes from rendering until loadUser() finishes
   if (initializing) {
@@ -102,8 +111,8 @@ function App() {
         <Route path='/' element={<Home />} />
         <Route path='/product/:id' element={<ProductDetails />} />
         <Route path='/products' element={<Products />} />
-        <Route path='/products/search/:keyword' element={<Products />} />  {/* static 'search' segment first */}
-        <Route path='/products/:slug' element={<ProductDetails />} />      {/* dynamic slug last */}
+        <Route path='/products/search/:keyword' element={<Products />} />
+        <Route path='/products/:slug' element={<ProductDetails />} />
         <Route path='/register' element={<Register />} />
         <Route path='/login' element={<Login />} />
         <Route path='/verify-email' element={<VerifyEmail />} />
@@ -115,16 +124,15 @@ function App() {
         <Route path="/wishlist" element={<Wishlist />} />
         <Route path="/new-arrivals" element={<NewArrivals />} />
         <Route path="/checkout/recover" element={<RecoverCart />} />
-      
-        
+
         {/* Password Reset Routes */}
         <Route path='/password/forgot' element={<ForgotPassword />} />
         <Route path='/password/verify-code' element={<VerifyResetCode />} />
         <Route path='/password/new' element={<ResetPassword />} />
-        
+
         {/* Cart Route */}
         <Route path='/cart' element={<Cart />} />
-        
+
         {/* Protected User Routes */}
         <Route path='/profile' element={<ProtectedRoute element={<Profile />} />} />
         <Route path='/profile/update' element={<ProtectedRoute element={<UpdateProfile />} />} />
@@ -139,7 +147,6 @@ function App() {
         <Route path="/order/:id/return" element={<ProtectedRoute element={<ReturnRequest />} />} />
         <Route path='/my-refunds-returns' element={<ProtectedRoute element={<MyRefundsReturns />} />} />
         <Route path="/my-discounts" element={<ProtectedRoute element={<UserDiscounts />} />} />
-
 
         {/* Admin Routes */}
         <Route path='/admin/dashboard' element={<ProtectedRoute element={<AdminDashboard />} adminOnly={true} />} />
@@ -163,7 +170,7 @@ function App() {
         <Route path='/admin/discounts/new' element={<ProtectedRoute element={<AdminDiscounts />} adminOnly={true} />} />
         <Route path='/admin/discount-analytics' element={<ProtectedRoute element={<DiscountAnalytics />} adminOnly={true} />} />
         <Route path='/admin/recovery-email-analytics' element={<ProtectedRoute element={<RecoveryEmailAnalytics />} adminOnly={true} />} />
-       <Route path='/admin/cron-health' element={<ProtectedRoute element={<CronHealth />} adminOnly={true} />} />
+        <Route path='/admin/cron-health' element={<ProtectedRoute element={<CronHealth />} adminOnly={true} />} />
       </Routes>
     </Router>
   );
