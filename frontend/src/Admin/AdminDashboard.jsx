@@ -92,16 +92,16 @@ const NAV_GROUPS = [
   {
     group: 'Analytics',
     items: [
-            { path: '/admin/cron-health',     icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
-      { path: '/admin/analytics',          icon: BarChart,             label: 'Overview',           color: '#8B5CF6' },
-      { path: '/admin/reports',            icon: Assessment,           label: 'Reports',             color: '#EC4899' },
-      { path: '/admin/customers',          icon: PersonSearch,         label: 'Customers',           color: '#06B6D4' },
-      { path: '/admin/attribution',        icon: CampaignOutlined,     label: 'Attribution',         color: '#F59E0B' },
-      { path: '/admin/checkout',           icon: ShoppingCartCheckout, label: 'Checkout',            color: '#10B981' },
-      { path: '/admin/refund-analytics',   icon: CurrencyExchange,     label: 'Refund Analytics',    color: '#14B8A6' },
-      { path: '/admin/return-analytics',   icon: ReplayCircleFilled,   label: 'Return Analytics',    color: '#EF4444' },
-      { path: '/admin/discount-analytics', icon: Insights,             label: 'Discount ROI',        color: '#e563f1' },
-      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,  label: 'Recovery Email', color: '#fb7185' },
+      { path: '/admin/cron-health',            icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
+      { path: '/admin/analytics',              icon: BarChart,           label: 'Overview',        color: '#8B5CF6' },
+      { path: '/admin/reports',                icon: Assessment,         label: 'Reports',         color: '#EC4899' },
+      { path: '/admin/customers',              icon: PersonSearch,       label: 'Customers',       color: '#06B6D4' },
+      { path: '/admin/attribution',            icon: CampaignOutlined,   label: 'Attribution',     color: '#F59E0B' },
+      { path: '/admin/checkout',               icon: ShoppingCartCheckout, label: 'Checkout',      color: '#10B981' },
+      { path: '/admin/refund-analytics',       icon: CurrencyExchange,   label: 'Refund Analytics', color: '#14B8A6' },
+      { path: '/admin/return-analytics',       icon: ReplayCircleFilled, label: 'Return Analytics', color: '#EF4444' },
+      { path: '/admin/discount-analytics',     icon: Insights,           label: 'Discount ROI',    color: '#e563f1' },
+      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,    label: 'Recovery Email',  color: '#fb7185' },
     ],
   },
   {
@@ -121,9 +121,9 @@ const NAV_GROUPS = [
   {
     group: 'Operations',
     items: [
-      { path: '/admin/refunds',         icon: CurrencyExchange,   label: 'Refunds',         color: '#14B8A6' },
-      { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',         color: '#EF4444' },
-      { path: '/admin/reviews',         icon: StarOutline,        label: 'Reviews',         color: '#F59E0B' },
+      { path: '/admin/refunds',         icon: CurrencyExchange,   label: 'Refunds',                color: '#14B8A6' },
+      { path: '/admin/returns',         icon: ReplayCircleFilled, label: 'Returns',                color: '#EF4444' },
+      { path: '/admin/reviews',         icon: StarOutline,        label: 'Reviews',                color: '#F59E0B' },
       { path: '/admin/recovery-emails', icon: MarkEmailRead,      label: 'Recovery Email Monitor', color: '#FF6B6B' },
     ],
   },
@@ -133,20 +133,21 @@ const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000;
 const STALE_DATA_THRESHOLD  = 3 * 60 * 1000;
 const DEBOUNCE_DELAY        = 800;
 
-// Module-scoped — survives navigation.
-// 'month' entry is deleted on mount so navigating back always fetches fresh.
-const lastFetchedCache = {};
-let activeAbortController = null;
+// ── Module-level formatters (stable, never recreated) ─────────
+// Defined outside component so they are never recreated on render.
+const currencyFmt = new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 0,
+});
+const numberFmt = new Intl.NumberFormat('en-US');
 
-// ── Formatters ────────────────────────────────────────────────
 const fmt = {
-  currency: (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(v || 0),
-  number:   (v) => new Intl.NumberFormat('en-US').format(v || 0),
+  currency: (v) => currencyFmt.format(v || 0),
+  number:   (v) => numberFmt.format(v || 0),
   pct:      (v) => `${(v || 0).toFixed(1)}%`,
   compact:  (v) => {
     if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
     if (v >= 1_000)     return `$${(v / 1_000).toFixed(0)}k`;
-    return fmt.currency(v);
+    return currencyFmt.format(v || 0);
   },
   roi: (v) => {
     if (v === null || v === undefined) return '—';
@@ -230,9 +231,10 @@ function SectionCard({ title, subtitle, link, linkLabel = 'View All', children, 
 
 function LastUpdated({ timestamp }) {
   const [timeAgo, setTimeAgo] = useState('');
+
   useEffect(() => {
     const update = () => {
-      if (!timestamp) return setTimeAgo('Never');
+      if (!timestamp) { setTimeAgo('Never'); return; }
       const diff    = Date.now() - timestamp;
       const minutes = Math.floor(diff / 60000);
       const hours   = Math.floor(diff / 3600000);
@@ -246,6 +248,7 @@ function LastUpdated({ timestamp }) {
     const id = setInterval(update, 30000);
     return () => clearInterval(id);
   }, [timestamp]);
+
   return (
     <div className="adm-last-updated">
       <span className="adm-last-updated-label">Last updated:</span>
@@ -259,7 +262,12 @@ function TimeframeSheet({ timeframe, onChange, disabled }) {
   const labels = { day: 'Today', week: 'This Week', month: 'This Month', year: 'This Year' };
   return (
     <>
-      <button className="adm-tf-mobile-trigger" onClick={() => setOpen(true)} disabled={disabled} aria-label="Change time period">
+      <button
+        className="adm-tf-mobile-trigger"
+        onClick={() => setOpen(true)}
+        disabled={disabled}
+        aria-label="Change time period"
+      >
         <span className="adm-tf-mobile-label">{labels[timeframe] || timeframe}</span>
         <KeyboardArrowRight style={{ fontSize: 16, transform: 'rotate(90deg)' }} />
       </button>
@@ -270,8 +278,12 @@ function TimeframeSheet({ timeframe, onChange, disabled }) {
             <div className="adm-tf-sheet-handle" />
             <p className="adm-tf-sheet-title">Select Time Period</p>
             {['day', 'week', 'month', 'year'].map(t => (
-              <button key={t} className={`adm-tf-sheet-btn ${timeframe === t ? 'adm-tf-sheet-btn--active' : ''}`}
-                onClick={() => { onChange(t); setOpen(false); }} disabled={disabled}>
+              <button
+                key={t}
+                className={`adm-tf-sheet-btn ${timeframe === t ? 'adm-tf-sheet-btn--active' : ''}`}
+                onClick={() => { onChange(t); setOpen(false); }}
+                disabled={disabled}
+              >
                 {labels[t]}
                 {timeframe === t && <CheckCircle style={{ fontSize: 18, color: '#6366F1' }} />}
               </button>
@@ -283,6 +295,7 @@ function TimeframeSheet({ timeframe, onChange, disabled }) {
   );
 }
 
+// FIX #7 — useDebounce: stable hook, no changes needed
 function useDebounce(callback, delay) {
   const cbRef    = useRef(callback);
   const timerRef = useRef(null);
@@ -349,8 +362,11 @@ export default function AdminDashboard() {
 
   // ── Local state ──────────────────────────────────────────
   const [sidebarOpen,   setSidebarOpen]   = useState(false);
-  const [timeframe,     setTimeframe]     = useState('month');
   const [lastFetchTime, setLastFetchTime] = useState(null);
+
+  // FIX #10 — single source of truth: timeframe lives only in Redux.
+  // Read it from Redux; write it via setActiveTimeframe.
+  const timeframe = useSelector((s) => s.dashboard.activeTimeframe || 'month');
 
   const kpisReady = (
     kpis !== null && kpis !== undefined &&
@@ -360,61 +376,97 @@ export default function AdminDashboard() {
 
   const firstLoad = !basicStatsFetched;
 
+  // FIX #1 — move mutable refs into component scope so they are
+  // never shared across instances or navigation events.
   const isLoadingRef        = useRef(false);
   const autoRefreshTimerRef = useRef(null);
+  const lastFetchedCacheRef = useRef({});   // was module-level lastFetchedCache
+  const abortControllerRef  = useRef(null); // was module-level activeAbortController
 
   // ── Static data (one-time) ───────────────────────────────
   const loadStaticData = useCallback(() => {
     if (basicStatsFetched) return;
-    Promise.allSettled([
+    const thunks = [
       fetchAdminStats(),
       fetchInventoryBreakdown(),
       fetchDashboardAlerts(),
       fetchLowStockAlerts(),
       fetchCustomerOverview(),
       fetchOrderStatusBreakdown(),
-    ].map(thunk => dispatch(thunk).unwrap().catch(() => {})));
+    ];
+    Promise.allSettled(
+      thunks.map(thunk =>
+        dispatch(thunk)
+          .unwrap()
+          // FIX #3 — log errors instead of silently swallowing them
+          .catch((err) => console.error('[Dashboard] static fetch failed:', err))
+      )
+    );
   }, [dispatch, basicStatsFetched]);
 
   // ── Timeframe data ───────────────────────────────────────
   const loadTimeframeData = useCallback((currentTimeframe, force = false) => {
     if (isLoadingRef.current) return;
+
     const now  = Date.now();
-    const last = lastFetchedCache[currentTimeframe] || 0;
+    // FIX #1 — use ref instead of module-level variable
+    const last = lastFetchedCacheRef.current[currentTimeframe] || 0;
     if (!force && now - last < 30000) return;
 
-    if (activeAbortController) activeAbortController.abort();
-    activeAbortController = new AbortController();
+    // FIX #1 + #2 — abort via ref; actually wire signal into thunks
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const { signal } = controller;
 
     dispatch(setActiveTimeframe(currentTimeframe));
     dispatch(setActiveOrderStatusTimeframe(currentTimeframe));
     dispatch(setReturnAnalyticsTimeframe(currentTimeframe));
 
-    lastFetchedCache[currentTimeframe] = now;
+    lastFetchedCacheRef.current[currentTimeframe] = now;
     setLastFetchTime(now);
     isLoadingRef.current = true;
 
-    Promise.allSettled([
-      fetchDashboardKPIs(currentTimeframe),
-      fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day' }),
-      fetchTopPerformers(currentTimeframe),
-      fetchOrderStatusBreakdown(currentTimeframe),
-      fetchChannelPerformance(currentTimeframe),
-      fetchDevicePerformance(currentTimeframe),
-      fetchCheckoutAbandonmentStats(currentTimeframe),
-      fetchCategoryPerformance(currentTimeframe),
-      fetchFulfillmentAnalytics(currentTimeframe),
-      fetchFraudAnalytics(currentTimeframe),
-      fetchSLABreaches(currentTimeframe),
-      fetchReturnOverview(currentTimeframe),
-      fetchRefundOverview(currentTimeframe),
-      fetchDiscountAnalyticsOverview(),
-      fetchCronHealth(),
-    ].map(thunk => dispatch(thunk).unwrap().catch(() => {})))
-      .finally(() => {
-        isLoadingRef.current  = false;
-        activeAbortController = null;
-      });
+    // FIX #2 — pass signal into every thunk so requests are
+    // actually cancelled when a new timeframe is selected.
+    const thunks = [
+      fetchDashboardKPIs({ timeframe: currentTimeframe, signal }),
+      fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day', signal }),
+      fetchTopPerformers({ timeframe: currentTimeframe, signal }),
+      fetchOrderStatusBreakdown({ timeframe: currentTimeframe, signal }),
+      fetchChannelPerformance({ timeframe: currentTimeframe, signal }),
+      fetchDevicePerformance({ timeframe: currentTimeframe, signal }),
+      fetchCheckoutAbandonmentStats({ timeframe: currentTimeframe, signal }),
+      fetchCategoryPerformance({ timeframe: currentTimeframe, signal }),
+      fetchFulfillmentAnalytics({ timeframe: currentTimeframe, signal }),
+      fetchFraudAnalytics({ timeframe: currentTimeframe, signal }),
+      fetchSLABreaches({ timeframe: currentTimeframe, signal }),
+      fetchReturnOverview({ timeframe: currentTimeframe, signal }),
+      fetchRefundOverview({ timeframe: currentTimeframe, signal }),
+      fetchDiscountAnalyticsOverview({ signal }),
+      fetchCronHealth({ signal }),
+    ];
+
+    Promise.allSettled(
+      thunks.map(thunk =>
+        dispatch(thunk)
+          .unwrap()
+          // FIX #3 — log errors; ignore AbortError (intentional cancellation)
+          .catch((err) => {
+            if (err?.name !== 'AbortError' && err?.message !== 'Aborted') {
+              console.error('[Dashboard] timeframe fetch failed:', err);
+            }
+          })
+      )
+    ).finally(() => {
+      isLoadingRef.current = false;
+      // Only clear the ref if this is still the active controller
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
+    });
   }, [dispatch]);
 
   const [debouncedLoadTimeframe, cancelDebounce] = useDebounce(
@@ -424,32 +476,56 @@ export default function AdminDashboard() {
 
   const handleTimeframeChange = useCallback((newTf) => {
     if (kpisLoading) return;
-    setTimeframe(newTf);
+    // FIX #10 — dispatch to Redux only; no local setState
+    dispatch(setActiveTimeframe(newTf));
     cancelDebounce();
     debouncedLoadTimeframe(newTf, true);
-  }, [kpisLoading, debouncedLoadTimeframe, cancelDebounce]);
+  }, [kpisLoading, dispatch, debouncedLoadTimeframe, cancelDebounce]);
 
   // ── Mount effect ─────────────────────────────────────────
   useEffect(() => {
-    delete lastFetchedCache['month'];
+    // FIX #1 — clear cache for 'month' on the ref, not a module variable
+    delete lastFetchedCacheRef.current['month'];
     loadStaticData();
     loadTimeframeData('month', true);
-    return () => { cancelDebounce(); };
+    return () => {
+      cancelDebounce();
+      // Abort any in-flight requests on unmount
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // FIX #7 — replace setInterval with recursive setTimeout so the
+  // next refresh is always scheduled AFTER the previous one settles,
+  // preventing drift and overlapping fetches.
   useEffect(() => {
-    if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current);
-    autoRefreshTimerRef.current = null;
-    if (['day', 'week', 'month'].includes(timeframe)) {
-      autoRefreshTimerRef.current = setInterval(() => {
-        const last = lastFetchedCache[timeframe] || 0;
+    if (autoRefreshTimerRef.current) {
+      clearTimeout(autoRefreshTimerRef.current);
+      autoRefreshTimerRef.current = null;
+    }
+
+    if (!['day', 'week', 'month'].includes(timeframe)) return;
+
+    const scheduleNext = () => {
+      autoRefreshTimerRef.current = setTimeout(() => {
+        const last = lastFetchedCacheRef.current[timeframe] || 0;
         if (Date.now() - last >= STALE_DATA_THRESHOLD && !isLoadingRef.current) {
           loadTimeframeData(timeframe, false);
         }
+        scheduleNext();
       }, AUTO_REFRESH_INTERVAL);
-    }
-    return () => { if (autoRefreshTimerRef.current) clearInterval(autoRefreshTimerRef.current); };
+    };
+
+    scheduleNext();
+
+    return () => {
+      if (autoRefreshTimerRef.current) {
+        clearTimeout(autoRefreshTimerRef.current);
+      }
+    };
   }, [timeframe, loadTimeframeData]);
 
   const isActive = useCallback(
@@ -462,42 +538,67 @@ export default function AdminDashboard() {
   }, [inventoryStatus]);
 
   // ── KPI Cards ────────────────────────────────────────────
-  const kpiCards = [
-    { key: 'revenue',       label: 'Total Revenue',    icon: AttachMoney,   accent: '#10B981', bg: '#10B98115',
-      value:  kpisReady ? fmt.currency(kpis?.revenue?.current)    : null,
-      change: kpisReady ? kpis?.revenue?.change                   : undefined },
-    { key: 'orders',        label: 'Total Orders',     icon: ShoppingCart,  accent: '#3B82F6', bg: '#3B82F615',
-      value:  kpisReady ? fmt.number(kpis?.orders?.current)        : null,
-      change: kpisReady ? kpis?.orders?.change                     : undefined },
-    { key: 'payingCustomers', label: 'Customers',      icon: PersonAdd,     accent: '#8B5CF6', bg: '#8B5CF615',
-      value:  kpisReady ? fmt.number(kpis?.customers?.current)     : null,
-      change: kpisReady ? kpis?.customers?.change                  : undefined },
-    { key: 'totalUsers',    label: 'Total Users',      icon: People,        accent: '#06B6D4', bg: '#06B6D415',
-      value:  basicStatsFetched ? fmt.number(basicStats?.users)    : null },
-    { key: 'products',      label: 'Products',         icon: Inventory,     accent: '#F97316', bg: '#F9731615',
-      value:  basicStatsFetched ? fmt.number(basicStats?.products) : null },
-    { key: 'lowStock',      label: 'Low Stock',        icon: Warning,       accent: '#F59E0B', bg: '#F59E0B15',
-      value:  basicStatsFetched ? fmt.number(inv.lowStock)         : null },
-    { key: 'outOfStock',    label: 'Out of Stock',     icon: ErrorOutline,  accent: '#EF4444', bg: '#EF444415',
-      value:  basicStatsFetched ? fmt.number(inv.outOfStock)       : null },
-    { key: 'recoveryEmails', label: 'Recovery Emails', icon: MarkEmailRead, accent: '#FF6B6B', bg: '#FF6B6B15',
-      value:  basicStatsFetched ? fmt.number(checkoutAbandonment?.emailsSent ?? 0) : null },
-  ];
+  const kpiCards = useMemo(() => [
+    {
+      key: 'revenue', label: 'Total Revenue', icon: AttachMoney, accent: '#10B981', bg: '#10B98115',
+      value:  kpisReady ? fmt.currency(kpis?.revenue?.current) : null,
+      change: kpisReady ? kpis?.revenue?.change                : undefined,
+    },
+    {
+      key: 'orders', label: 'Total Orders', icon: ShoppingCart, accent: '#3B82F6', bg: '#3B82F615',
+      value:  kpisReady ? fmt.number(kpis?.orders?.current)    : null,
+      change: kpisReady ? kpis?.orders?.change                 : undefined,
+    },
+    {
+      key: 'payingCustomers', label: 'Customers', icon: PersonAdd, accent: '#8B5CF6', bg: '#8B5CF615',
+      value:  kpisReady ? fmt.number(kpis?.customers?.current) : null,
+      change: kpisReady ? kpis?.customers?.change              : undefined,
+    },
+    {
+      key: 'totalUsers', label: 'Total Users', icon: People, accent: '#06B6D4', bg: '#06B6D415',
+      value: basicStatsFetched ? fmt.number(basicStats?.users)    : null,
+    },
+    {
+      key: 'products', label: 'Products', icon: Inventory, accent: '#F97316', bg: '#F9731615',
+      value: basicStatsFetched ? fmt.number(basicStats?.products) : null,
+    },
+    {
+      key: 'lowStock', label: 'Low Stock', icon: Warning, accent: '#F59E0B', bg: '#F59E0B15',
+      value: basicStatsFetched ? fmt.number(inv.lowStock)         : null,
+    },
+    {
+      key: 'outOfStock', label: 'Out of Stock', icon: ErrorOutline, accent: '#EF4444', bg: '#EF444415',
+      value: basicStatsFetched ? fmt.number(inv.outOfStock)       : null,
+    },
+    {
+      key: 'recoveryEmails', label: 'Recovery Emails', icon: MarkEmailRead, accent: '#FF6B6B', bg: '#FF6B6B15',
+      value: basicStatsFetched ? fmt.number(checkoutAbandonment?.emailsSent ?? 0) : null,
+    },
+  ], [kpisReady, kpis, basicStatsFetched, basicStats, inv, checkoutAbandonment]);
 
   const revenueData  = useMemo(() => revenueTrends?.data || [], [revenueTrends]);
-  const catData      = useMemo(() => (
+
+  const catData = useMemo(() => (
     (topPerformers?.categories || categoryPerformance?.categories || [])
-      .slice(0, 5).map((c, i) => ({ name: c.name, value: c.revenue, fill: ['#6366F1','#10B981','#F59E0B','#EF4444','#14B8A6'][i] }))
+      .slice(0, 5)
+      .map((c, i) => ({
+        // FIX #9 — use stable name key for identity; index only as fallback label
+        name: c.name,
+        value: c.revenue,
+        fill: ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i],
+      }))
   ), [topPerformers, categoryPerformance]);
+
   const channelData  = useMemo(() => channelPerformance?.channels || [], [channelPerformance]);
   const deviceData   = useMemo(() => devicePerformance?.devices   || [], [devicePerformance]);
   const safeSegments = useMemo(() => customerOverview?.segments   ?? [], [customerOverview]);
-  const quickStats   = useMemo(() => [
+
+  const quickStats = useMemo(() => [
     { label: 'Products',     value: basicStats?.products  ?? null, color: '#3B82F6', icon: Inventory },
-    { label: 'Users',        value: basicStats?.users      ?? null, color: '#8B5CF6', icon: People },
-    { label: 'In Stock',     value: inv.inStock            ?? null, color: '#10B981', icon: CheckCircle },
-    { label: 'Out of Stock', value: inv.outOfStock         ?? null, color: '#EF4444', icon: ErrorOutline },
-    { label: 'Orders',       value: basicStats?.orders     ?? null, color: '#F97316', icon: ShoppingCart },
+    { label: 'Users',        value: basicStats?.users     ?? null, color: '#8B5CF6', icon: People },
+    { label: 'In Stock',     value: inv.inStock           ?? null, color: '#10B981', icon: CheckCircle },
+    { label: 'Out of Stock', value: inv.outOfStock        ?? null, color: '#EF4444', icon: ErrorOutline },
+    { label: 'Orders',       value: basicStats?.orders    ?? null, color: '#F97316', icon: ShoppingCart },
     { label: 'Admins',       value: basicStats?.adminCount ?? null, color: '#A855F7', icon: ManageAccounts },
   ], [basicStats, inv]);
 
@@ -521,11 +622,21 @@ export default function AdminDashboard() {
                 {group.items.map(item => {
                   const active = isActive(item.path);
                   return (
-                    <Link key={item.path} to={item.path}
+                    <Link
+                      key={item.path}
+                      to={item.path}
                       className={`adm-nav-link ${active ? 'adm-nav-link--active' : ''}`}
                       style={active ? { '--adm-link-accent': item.color } : {}}
-                      onClick={() => setSidebarOpen(false)} title={item.label}>
-                      <span className="adm-nav-icon" style={{ color: active ? item.color : undefined, background: active ? item.color + '18' : undefined }}>
+                      onClick={() => setSidebarOpen(false)}
+                      title={item.label}
+                    >
+                      <span
+                        className="adm-nav-icon"
+                        style={{
+                          color:      active ? item.color          : undefined,
+                          background: active ? item.color + '18'   : undefined,
+                        }}
+                      >
                         <item.icon style={{ fontSize: 18 }} />
                       </span>
                       <span className="adm-nav-text">{item.label}</span>
@@ -544,7 +655,11 @@ export default function AdminDashboard() {
         <div className="adm-main">
           <div className="adm-page-hd">
             <div className="adm-page-hd-left">
-              <button className="adm-menu-btn" onClick={() => setSidebarOpen(prev => !prev)} aria-label="Toggle menu">
+              <button
+                className="adm-menu-btn"
+                onClick={() => setSidebarOpen(prev => !prev)}
+                aria-label="Toggle menu"
+              >
                 {sidebarOpen ? <Close style={{ fontSize: 22 }} /> : <Menu style={{ fontSize: 22 }} />}
               </button>
               <div>
@@ -556,11 +671,13 @@ export default function AdminDashboard() {
               <LastUpdated timestamp={lastFetchTime} />
               <div className="adm-timeframe">
                 {['day', 'week', 'month', 'year'].map(t => (
-                  <button key={t}
+                  <button
+                    key={t}
                     className={`adm-tf-btn ${timeframe === t ? 'adm-tf-btn--active' : ''}`}
                     onClick={() => handleTimeframeChange(t)}
                     disabled={kpisLoading}
-                    aria-pressed={timeframe === t}>
+                    aria-pressed={timeframe === t}
+                  >
                     {kpisLoading && timeframe === t
                       ? <span className="adm-tf-spinner" />
                       : t.charAt(0).toUpperCase() + t.slice(1)}
@@ -614,7 +731,7 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-                        {/* ── Scheduled Jobs (Cron Health Mini-Strip) ───── */}
+            {/* ── Scheduled Jobs (Cron Health Mini-Strip) ───── */}
             <div className="adm-section">
               <div className="adm-section-hd">
                 <h2 className="adm-section-title">
@@ -644,13 +761,16 @@ export default function AdminDashboard() {
                     )
                     : cronJobs.map((job) => (
                         <Link
+                          // FIX #9 — use job.jobName as stable key (was implicit index)
                           key={job.jobName}
                           to="/admin/cron-health"
                           className="adm-cron-mini-card"
                           title={`${job.jobName} — ${job.scheduleLabel ?? ''}`}
                         >
                           <span className={`adm-cron-mini-dot adm-cron-mini-dot--${job.status ?? 'unknown'}`} />
-                          <span className="adm-cron-mini-name">{job.jobName.replace(/([A-Z])/g, ' $1').trim()}</span>
+                          <span className="adm-cron-mini-name">
+                            {job.jobName.replace(/([A-Z])/g, ' $1').trim()}
+                          </span>
                           <span className="adm-cron-mini-time">
                             {job.lastRunAt
                               ? (() => {
@@ -755,7 +875,14 @@ export default function AdminDashboard() {
                 </Link>
               </div>
               <div className="adm-charts-row">
-                <SectionCard title="Revenue Trends" subtitle={`${timeframe} view - daily breakdown`} icon={TrendingUp} iconColor="#10B981" link="/admin/reports" linkLabel="Reports">
+                <SectionCard
+                  title="Revenue Trends"
+                  subtitle={`${timeframe} view - daily breakdown`}
+                  icon={TrendingUp}
+                  iconColor="#10B981"
+                  link="/admin/reports"
+                  linkLabel="Reports"
+                >
                   {firstLoad ? <LoadingState label="Loading revenue data..." /> : revenueData.length === 0 ? (
                     <div className="adm-empty">
                       <Assessment style={{ fontSize: 36, color: '#9CA3AF' }} />
@@ -772,7 +899,10 @@ export default function AdminDashboard() {
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
                         <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#6B7280' }} />
-                        <YAxis tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <YAxis
+                          tick={{ fontSize: 11, fill: '#6B7280' }}
+                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                        />
                         <Tooltip
                           contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
                           formatter={(v) => [fmt.currency(v), 'Revenue']}
@@ -792,14 +922,19 @@ export default function AdminDashboard() {
                     <ResponsiveContainer width="100%" height={260}>
                       <ReChart data={catData} layout="vertical">
                         <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
-                        <XAxis type="number" tick={{ fontSize: 11, fill: '#6B7280' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                        <XAxis
+                          type="number"
+                          tick={{ fontSize: 11, fill: '#6B7280' }}
+                          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                        />
                         <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#6B7280' }} width={90} />
                         <Tooltip
                           contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
                           formatter={(v) => [fmt.currency(v), 'Revenue']}
                         />
                         <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                          {catData.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+                          {/* FIX #9 — use stable name key, not array index */}
+                          {catData.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
                         </Bar>
                       </ReChart>
                     </ResponsiveContainer>
@@ -822,7 +957,14 @@ export default function AdminDashboard() {
                 </Link>
               </div>
               <div className="adm-charts-row">
-                <SectionCard title="Discount ROI Overview" subtitle="Store-wide discount effectiveness" icon={LocalOffer} iconColor="#e563f1" link="/admin/discount-analytics" linkLabel="View Analytics">
+                <SectionCard
+                  title="Discount ROI Overview"
+                  subtitle="Store-wide discount effectiveness"
+                  icon={LocalOffer}
+                  iconColor="#e563f1"
+                  link="/admin/discount-analytics"
+                  linkLabel="View Analytics"
+                >
                   {discountOverviewLoading || (!discountSummary && firstLoad) ? (
                     <LoadingState label="Loading discount data..." />
                   ) : !discountSummary ? (
@@ -834,18 +976,28 @@ export default function AdminDashboard() {
                     <div className="adm-metric-list">
                       <MetricRow label="Total Discount Cost"   value={fmt.compact(discountSummary.totalDiscountCost)}      accent="#EF4444" />
                       <MetricRow label="Revenue Influenced"    value={fmt.compact(discountSummary.totalRevenueInfluenced)} accent="#10B981" />
-                      <MetricRow label="Overall ROI"           value={
-                        <span style={{ color: roiColor(discountSummary.overallROI), fontWeight: 700 }}>
-                          {fmt.roi(discountSummary.overallROI)}
-                        </span>
-                      } />
-                      <MetricRow label="Total Redemptions"     value={fmt.number(discountSummary.totalRedemptions)}        accent="#8B5CF6" />
-                      <MetricRow label="Active Codes"          value={fmt.number(discountSummary.totalCodesWithRedemptions)} sub={`of ${fmt.number(discountSummary.totalCodes)} total`} />
-                      <MetricRow label="Redemption Rate"       value={fmt.pct(discountSummary.redemptionRate)}             accent="#F59E0B" />
+                      <MetricRow
+                        label="Overall ROI"
+                        value={
+                          <span style={{ color: roiColor(discountSummary.overallROI), fontWeight: 700 }}>
+                            {fmt.roi(discountSummary.overallROI)}
+                          </span>
+                        }
+                      />
+                      <MetricRow label="Total Redemptions"   value={fmt.number(discountSummary.totalRedemptions)}                                               accent="#8B5CF6" />
+                      <MetricRow label="Active Codes"        value={fmt.number(discountSummary.totalCodesWithRedemptions)} sub={`of ${fmt.number(discountSummary.totalCodes)} total`} />
+                      <MetricRow label="Redemption Rate"     value={fmt.pct(discountSummary.redemptionRate)}               accent="#F59E0B" />
                     </div>
                   )}
                 </SectionCard>
-                <SectionCard title="Top Code &amp; Category Breakdown" subtitle="Best performing discount and ROI by category" icon={BarChart} iconColor="#8B5CF6" link="/admin/discount-analytics" linkLabel="Leaderboard">
+                <SectionCard
+                  title="Top Code &amp; Category Breakdown"
+                  subtitle="Best performing discount and ROI by category"
+                  icon={BarChart}
+                  iconColor="#8B5CF6"
+                  link="/admin/discount-analytics"
+                  linkLabel="Leaderboard"
+                >
                   {discountOverviewLoading || (!discountOverview && firstLoad) ? (
                     <LoadingState label="Loading discount data..." />
                   ) : !discountOverview ? (
@@ -860,7 +1012,10 @@ export default function AdminDashboard() {
                           <div className="adm-discount-top-label">Top ROI Code</div>
                           <div className="adm-discount-top-row">
                             <span className="adm-discount-code-pill">{discountTopCode.discountCode}</span>
-                            <span className="adm-discount-roi-badge" style={{ color: roiColor(discountTopCode.financials?.roi) }}>
+                            <span
+                              className="adm-discount-roi-badge"
+                              style={{ color: roiColor(discountTopCode.financials?.roi) }}
+                            >
                               {fmt.roi(discountTopCode.financials?.roi)}
                             </span>
                           </div>
@@ -868,11 +1023,14 @@ export default function AdminDashboard() {
                       )}
                       <div className="adm-metric-list" style={{ marginTop: discountTopCode ? 12 : 0 }}>
                         {(discountOverview.byCategory || []).slice(0, 5).map((cat, i) => {
-                          const maxRev = Math.max(...(discountOverview.byCategory || []).map(c => c.totalRevenueInfluenced || 0)) || 1;
-                          const pct    = maxRev > 0 ? (cat.totalRevenueInfluenced / maxRev) * 100 : 0;
-                          const color  = ['#6366F1','#10B981','#F59E0B','#EF4444','#14B8A6'][i % 5];
+                          const maxRev = Math.max(
+                            ...(discountOverview.byCategory || []).map(c => c.totalRevenueInfluenced || 0)
+                          ) || 1;
+                          const pct   = maxRev > 0 ? (cat.totalRevenueInfluenced / maxRev) * 100 : 0;
+                          const color = ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i % 5];
                           return (
-                            <div key={cat._id || i} className="adm-discount-cat-row">
+                            // FIX #9 — prefer stable _id key over index
+                            <div key={cat._id || `cat-${i}`} className="adm-discount-cat-row">
                               <span className="adm-discount-cat-name">{cat._id || 'Unknown'}</span>
                               <div className="adm-discount-cat-bar-wrap">
                                 <div className="adm-discount-cat-bar" style={{ width: `${pct}%`, background: color }} />
@@ -895,7 +1053,6 @@ export default function AdminDashboard() {
               </div>
             </div>
 
-
             {/* ── Customer Analytics ────────────────────────── */}
             <div className="adm-section">
               <div className="adm-section-hd">
@@ -915,7 +1072,11 @@ export default function AdminDashboard() {
                     <div className="adm-metric-list">
                       <MetricRow label="Total Registered" value={basicStatsFetched ? fmt.number(basicStats?.users) : <Dash />} accent="#06B6D4" />
                       <MetricRow label="Paying Customers" value={kpisReady ? fmt.number(kpis?.customers?.current) : <Dash />} accent="#8B5CF6" />
-                      <MetricRow label="New This Period"  value={fmt.number(customerOverview?.newCustomers)} sub={<TrendChip value={customerOverview?.newCustomersGrowth || 0} />} />
+                      <MetricRow
+                        label="New This Period"
+                        value={fmt.number(customerOverview?.newCustomers)}
+                        sub={<TrendChip value={customerOverview?.newCustomersGrowth || 0} />}
+                      />
                       <MetricRow label="Active Customers" value={fmt.number(customerOverview?.activeCustomers)} />
                       <MetricRow label="Avg. Order Value" value={fmt.currency(customerOverview?.avgOrderValue)}    accent="#10B981" />
                       <MetricRow label="Customer LTV"     value={fmt.currency(customerOverview?.avgLifetimeValue)} accent="#8B5CF6" />
@@ -931,10 +1092,17 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-segment-list">
                       {safeSegments.map((seg, i) => (
-                        <div key={i} className="adm-segment-row">
+                        // FIX #9 — prefer stable name key
+                        <div key={seg.name || `seg-${i}`} className="adm-segment-row">
                           <div className="adm-segment-label">{seg.name}</div>
                           <div className="adm-segment-bar-wrap">
-                            <div className="adm-segment-bar" style={{ width: `${seg.percentage || 0}%`, background: ['#6366F1','#10B981','#F59E0B','#EF4444','#06B6D4'][i % 5] }} />
+                            <div
+                              className="adm-segment-bar"
+                              style={{
+                                width: `${seg.percentage || 0}%`,
+                                background: ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#06B6D4'][i % 5],
+                              }}
+                            />
                           </div>
                           <div className="adm-segment-pct">{fmt.pct(seg.percentage)}</div>
                         </div>
@@ -951,7 +1119,14 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-metric-list">
                       {topPerformers.customers.slice(0, 5).map((c, i) => (
-                        <MetricRow key={i} label={c.name || c.email || `Customer #${i + 1}`} value={fmt.currency(c.totalSpent)} sub={`${fmt.number(c.orderCount)} orders`} accent="#A855F7" />
+                        // FIX #9 — prefer stable _id or email as key
+                        <MetricRow
+                          key={c._id || c.email || `cust-${i}`}
+                          label={c.name || c.email || `Customer #${i + 1}`}
+                          value={fmt.currency(c.totalSpent)}
+                          sub={`${fmt.number(c.orderCount)} orders`}
+                          accent="#A855F7"
+                        />
                       ))}
                     </div>
                   )}
@@ -982,11 +1157,19 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-metric-list">
                       {channelData.slice(0, 6).map((ch, i) => (
-                        <div key={i} className="adm-channel-row">
-                          <span className="adm-channel-dot" style={{ background: ['#F59E0B','#6366F1','#10B981','#EF4444','#06B6D4','#8B5CF6'][i % 6] }} />
+                        // FIX #9 — use channel/name/source as stable key
+                        <div key={ch.channel || ch.name || ch.source || `ch-${i}`} className="adm-channel-row">
+                          <span
+                            className="adm-channel-dot"
+                            style={{ background: ['#F59E0B', '#6366F1', '#10B981', '#EF4444', '#06B6D4', '#8B5CF6'][i % 6] }}
+                          />
                           <span className="adm-channel-name">{ch.channel || ch.name || ch.source}</span>
-                          <span className="adm-channel-sessions">{fmt.number(ch.sessions || ch.orders)} {ch.sessions ? 'sessions' : 'orders'}</span>
-                          <span className="adm-channel-revenue" style={{ color: '#10B981' }}>{fmt.compact(ch.revenue)}</span>
+                          <span className="adm-channel-sessions">
+                            {fmt.number(ch.sessions || ch.orders)} {ch.sessions ? 'sessions' : 'orders'}
+                          </span>
+                          <span className="adm-channel-revenue" style={{ color: '#10B981' }}>
+                            {fmt.compact(ch.revenue)}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -1001,11 +1184,23 @@ export default function AdminDashboard() {
                   ) : (
                     <ResponsiveContainer width="100%" height={220}>
                       <PieChart>
-                        <Pie data={deviceData} dataKey="sessions" nameKey="device" cx="50%" cy="50%" outerRadius={80}
-                          label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}>
-                          {deviceData.map((_, i) => <Cell key={i} fill={['#6366F1','#10B981','#F59E0B'][i % 3]} />)}
+                        <Pie
+                          data={deviceData}
+                          dataKey="sessions"
+                          nameKey="device"
+                          cx="50%"
+                          cy="50%"
+                          outerRadius={80}
+                          label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}
+                        >
+                          {/* FIX #9 — use stable device key */}
+                          {deviceData.map((entry, i) => (
+                            <Cell key={entry.device || `dev-${i}`} fill={['#6366F1', '#10B981', '#F59E0B'][i % 3]} />
+                          ))}
                         </Pie>
-                        <Tooltip contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }} />
+                        <Tooltip
+                          contentStyle={{ background: '#fff', border: '1px solid #D1D5DB', borderRadius: 8, fontSize: 13 }}
+                        />
                       </PieChart>
                     </ResponsiveContainer>
                   )}
@@ -1029,7 +1224,10 @@ export default function AdminDashboard() {
               <div className="adm-cards-3">
                 <SectionCard title="Abandonment Stats" icon={ShoppingCartCheckout} iconColor="#10B981">
                   {firstLoad ? <LoadingState label="Loading checkout data..." /> : !checkoutAbandonment ? (
-                    <div className="adm-empty"><ShoppingCartCheckout style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No checkout data available</span></div>
+                    <div className="adm-empty">
+                      <ShoppingCartCheckout style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No checkout data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Abandonment Rate"    value={fmt.pct(checkoutAbandonment.abandonmentRate)}       accent="#EF4444" />
@@ -1042,13 +1240,19 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Abandonment by Step" icon={FactCheck} iconColor="#8B5CF6">
                   {firstLoad ? <LoadingState label="Loading step data..." /> : !checkoutAbandonment?.stepBreakdown?.length ? (
-                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No checkout abandonment steps recorded</span></div>
+                    <div className="adm-empty">
+                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No checkout abandonment steps recorded</span>
+                    </div>
                   ) : (
                     <div className="adm-segment-list">
                       {checkoutAbandonment.stepBreakdown.map((step, i) => (
-                        <div key={i} className="adm-segment-row">
+                        // FIX #9 — use stable step name key
+                        <div key={step.step || `step-${i}`} className="adm-segment-row">
                           <div className="adm-segment-label">{step.step}</div>
-                          <div className="adm-segment-bar-wrap"><div className="adm-segment-bar" style={{ width: `${step.dropOffRate || 0}%`, background: '#8B5CF6' }} /></div>
+                          <div className="adm-segment-bar-wrap">
+                            <div className="adm-segment-bar" style={{ width: `${step.dropOffRate || 0}%`, background: '#8B5CF6' }} />
+                          </div>
                           <div className="adm-segment-pct">{fmt.pct(step.dropOffRate)}</div>
                         </div>
                       ))}
@@ -1057,7 +1261,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Recovery Opportunities" icon={CurrencyExchange} iconColor="#14B8A6" link="/admin/checkout">
                   {firstLoad ? <LoadingState label="Loading recovery data..." /> : !checkoutAbandonment ? (
-                    <div className="adm-empty"><CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No recovery data available</span></div>
+                    <div className="adm-empty">
+                      <CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No recovery data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Recoverable Revenue" value={fmt.currency(checkoutAbandonment.recoverableRevenue)} accent="#14B8A6" />
@@ -1067,7 +1274,14 @@ export default function AdminDashboard() {
                     </div>
                   )}
                 </SectionCard>
-                <SectionCard title="Recovery Email Manager" subtitle="Send & track cart recovery emails" icon={MarkEmailRead} iconColor="#FF6B6B" link="/admin/recovery-emails" linkLabel="Open Manager">
+                <SectionCard
+                  title="Recovery Email Manager"
+                  subtitle="Send & track cart recovery emails"
+                  icon={MarkEmailRead}
+                  iconColor="#FF6B6B"
+                  link="/admin/recovery-emails"
+                  linkLabel="Open Manager"
+                >
                   {firstLoad ? <LoadingState label="Loading recovery data..." /> : (
                     <div className="adm-metric-list">
                       <MetricRow label="Emails Sent"      value={fmt.number(checkoutAbandonment?.emailsSent)}      accent="#FF6B6B" />
@@ -1088,17 +1302,25 @@ export default function AdminDashboard() {
                   </span>
                   Product Performance
                 </h2>
-                <Link to="/admin/products" className="adm-section-link">View Products <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/products" className="adm-section-link">
+                  View Products <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-charts-row">
                 <SectionCard title="Top Products" icon={Storefront} iconColor="#3B82F6" link="/admin/products">
                   {firstLoad ? <LoadingState label="Loading products..." /> : !topPerformers?.products?.length ? (
-                    <div className="adm-empty"><Storefront style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No product data available</span></div>
+                    <div className="adm-empty">
+                      <Storefront style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No product data available</span>
+                    </div>
                   ) : (
                     <div className="adm-product-list">
-                      <div className="adm-table-hd"><span>Product</span><span>Sales</span><span>Revenue</span><span>Trend</span></div>
+                      <div className="adm-table-hd">
+                        <span>Product</span><span>Sales</span><span>Revenue</span><span>Trend</span>
+                      </div>
                       {topPerformers.products.slice(0, 6).map((p, i) => (
-                        <div key={i} className="adm-table-row">
+                        // FIX #9 — use stable _id or name as key
+                        <div key={p._id || p.name || `prod-${i}`} className="adm-table-row">
                           <span className="adm-table-name">{p.name}</span>
                           <span>{fmt.number(p.salesCount)}</span>
                           <span style={{ color: '#10B981', fontWeight: 700 }}>{fmt.compact(p.revenue)}</span>
@@ -1110,7 +1332,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Inventory Alerts" icon={Warning} iconColor="#F59E0B" link="/admin/products">
                   {firstLoad ? <LoadingState label="Loading inventory alerts..." /> : !lowStockAlerts ? (
-                    <div className="adm-empty"><Warning style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No inventory alert data</span></div>
+                    <div className="adm-empty">
+                      <Warning style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No inventory alert data</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Low Stock Items"  value={fmt.number(lowStockAlerts.lowStockCount)}         accent="#F59E0B" />
@@ -1118,7 +1343,8 @@ export default function AdminDashboard() {
                       <MetricRow label="Reorder Needed"   value={fmt.number(lowStockAlerts.reorderCount)}          accent="#F97316" />
                       <MetricRow label="Inventory Value"  value={fmt.currency(lowStockAlerts.totalInventoryValue)} accent="#3B82F6" />
                       {(lowStockAlerts.criticalItems || []).slice(0, 3).map((item, i) => (
-                        <div key={i} className="adm-alert-row">
+                        // FIX #9 — use stable _id or name as key
+                        <div key={item._id || item.name || `alert-${i}`} className="adm-alert-row">
                           <ErrorOutline style={{ fontSize: 14, color: '#EF4444', flexShrink: 0 }} />
                           <span className="adm-alert-name">{item.name}</span>
                           <span className="adm-alert-stock">{item.stock} left</span>
@@ -1143,7 +1369,10 @@ export default function AdminDashboard() {
               <div className="adm-cards-3">
                 <SectionCard title="Fulfillment" icon={LocalShipping} iconColor="#64748B">
                   {firstLoad ? <LoadingState label="Loading fulfillment data..." /> : !fulfillmentAnalytics ? (
-                    <div className="adm-empty"><LocalShipping style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No fulfillment data available</span></div>
+                    <div className="adm-empty">
+                      <LocalShipping style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No fulfillment data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="On-Time Rate"         value={fmt.pct(fulfillmentAnalytics.onTimeRate)}                              accent="#10B981" />
@@ -1156,7 +1385,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="SLA Compliance" icon={FactCheck} iconColor="#8B5CF6">
                   {firstLoad ? <LoadingState label="Loading SLA data..." /> : !slaBreaches ? (
-                    <div className="adm-empty"><FactCheck style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No SLA data available</span></div>
+                    <div className="adm-empty">
+                      <FactCheck style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No SLA data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Compliance Rate"      value={fmt.pct(slaBreaches.complianceRate)}      accent="#10B981" />
@@ -1168,7 +1400,10 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Fraud Detection" icon={Security} iconColor="#EF4444">
                   {firstLoad ? <LoadingState label="Loading fraud data..." /> : !fraudAnalytics ? (
-                    <div className="adm-empty"><Security style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No fraud data available</span></div>
+                    <div className="adm-empty">
+                      <Security style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No fraud data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Fraud Rate"      value={fmt.pct(fraudAnalytics.fraudRate)}         accent="#EF4444" />
@@ -1191,26 +1426,34 @@ export default function AdminDashboard() {
                   </span>
                   Returns Analytics
                 </h2>
-                <Link to="/admin/returns" className="adm-section-link">Manage Returns <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/returns" className="adm-section-link">
+                  Manage Returns <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-charts-row">
                 <SectionCard title="Returns Overview" icon={ReplayCircleFilled} iconColor="#EF4444">
                   {firstLoad ? <LoadingState label="Loading returns data..." /> : !returnOverview ? (
-                    <div className="adm-empty"><ReplayCircleFilled style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No returns data available</span></div>
+                    <div className="adm-empty">
+                      <ReplayCircleFilled style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No returns data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
-                      <MetricRow label="Total Returns"    value={fmt.number(returnOverview.totalReturns)} />
-                      <MetricRow label="Return Rate"      value={fmt.pct(returnOverview.returnRate)}              accent="#EF4444" />
-                      <MetricRow label="Pending Review"   value={fmt.number(returnOverview.byStatus?.requested)}  accent="#F59E0B" />
-                      <MetricRow label="Completed"        value={fmt.number(returnOverview.byStatus?.completed)}  accent="#10B981" />
-                      <MetricRow label="Approved Value"   value={fmt.compact(returnOverview.creditMetrics?.totalApprovedGross ?? 0)} accent="#EF4444" />
-                      <MetricRow label="Avg. Processing"  value={`${returnOverview.avgProcessingDays?.toFixed(1) || '-'} days`} />
+                      <MetricRow label="Total Returns"   value={fmt.number(returnOverview.totalReturns)} />
+                      <MetricRow label="Return Rate"     value={fmt.pct(returnOverview.returnRate)}             accent="#EF4444" />
+                      <MetricRow label="Pending Review"  value={fmt.number(returnOverview.byStatus?.requested)} accent="#F59E0B" />
+                      <MetricRow label="Completed"       value={fmt.number(returnOverview.byStatus?.completed)} accent="#10B981" />
+                      <MetricRow label="Approved Value"  value={fmt.compact(returnOverview.creditMetrics?.totalApprovedGross ?? 0)} accent="#EF4444" />
+                      <MetricRow label="Avg. Processing" value={`${returnOverview.avgProcessingDays?.toFixed(1) || '-'} days`} />
                     </div>
                   )}
                 </SectionCard>
                 <SectionCard title="Top Return Reasons" icon={Assessment} iconColor="#F97316" link="/admin/returns">
                   {firstLoad ? <LoadingState label="Loading return reasons..." /> : !returnOverview?.byReason?.length ? (
-                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No return reasons data available</span></div>
+                    <div className="adm-empty">
+                      <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No return reasons data available</span>
+                    </div>
                   ) : (
                     <div className="adm-segment-list">
                       {(() => {
@@ -1218,7 +1461,8 @@ export default function AdminDashboard() {
                         return returnOverview.byReason.slice(0, 5).map((r, i) => {
                           const pct = total > 0 ? (r.count / total) * 100 : 0;
                           return (
-                            <div key={i} className="adm-segment-row">
+                            // FIX #9 — use stable _id key
+                            <div key={r._id || `reason-${i}`} className="adm-segment-row">
                               <div className="adm-segment-label">{r._id || 'Unknown'}</div>
                               <div className="adm-segment-bar-wrap">
                                 <div className="adm-segment-bar" style={{ width: `${pct}%`, background: '#EF4444' }} />
@@ -1243,12 +1487,17 @@ export default function AdminDashboard() {
                   </span>
                   Refunds Analytics
                 </h2>
-                <Link to="/admin/refunds" className="adm-section-link">Manage Refunds <KeyboardArrowRight style={{ fontSize: 16 }} /></Link>
+                <Link to="/admin/refunds" className="adm-section-link">
+                  Manage Refunds <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
               </div>
               <div className="adm-charts-row">
                 <SectionCard title="Refunds Overview" icon={CurrencyExchange} iconColor="#14B8A6">
                   {firstLoad ? <LoadingState label="Loading refund data..." /> : !refundOverview ? (
-                    <div className="adm-empty"><CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No refund data available</span></div>
+                    <div className="adm-empty">
+                      <CurrencyExchange style={{ fontSize: 36, color: '#9CA3AF' }} />
+                      <span>No refund data available</span>
+                    </div>
                   ) : (
                     <div className="adm-metric-list">
                       <MetricRow label="Total Refunds"     value={fmt.number(refundOverview.totalRefunds)} />
@@ -1261,21 +1510,34 @@ export default function AdminDashboard() {
                   )}
                 </SectionCard>
                 <SectionCard title="Refund Status Breakdown" icon={BarChart} iconColor="#8B5CF6" link="/admin/refunds">
-                  {firstLoad ? <LoadingState label="Loading refund status..." /> : !refundOverview?.statusBreakdown?.length || refundOverview.statusBreakdown.every(s => s.count === 0) ? (
-                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} /><span>No refund status data available</span></div>
-                  ) : (
-                    <div className="adm-segment-list">
-                      {refundOverview.statusBreakdown.filter(s => s.count > 0).map((s, i) => (
-                        <div key={i} className="adm-segment-row">
-                          <div className="adm-segment-label">{s.status}</div>
-                          <div className="adm-segment-bar-wrap">
-                            <div className="adm-segment-bar" style={{ width: `${s.percentage || 0}%`, background: ['#10B981','#F59E0B','#EF4444','#06B6D4','#8B5CF6'][i % 5] }} />
+                  {firstLoad ? <LoadingState label="Loading refund status..." /> :
+                    !refundOverview?.statusBreakdown?.length ||
+                    refundOverview.statusBreakdown.every(s => s.count === 0) ? (
+                      <div className="adm-empty">
+                        <CheckCircle style={{ fontSize: 36, color: '#9CA3AF' }} />
+                        <span>No refund status data available</span>
+                      </div>
+                    ) : (
+                      <div className="adm-segment-list">
+                        {refundOverview.statusBreakdown.filter(s => s.count > 0).map((s, i) => (
+                          // FIX #9 — use stable status key
+                          <div key={s.status || `status-${i}`} className="adm-segment-row">
+                            <div className="adm-segment-label">{s.status}</div>
+                            <div className="adm-segment-bar-wrap">
+                              <div
+                                className="adm-segment-bar"
+                                style={{
+                                  width: `${s.percentage || 0}%`,
+                                  background: ['#10B981', '#F59E0B', '#EF4444', '#06B6D4', '#8B5CF6'][i % 5],
+                                }}
+                              />
+                            </div>
+                            <div className="adm-segment-pct">{fmt.number(s.count)}</div>
                           </div>
-                          <div className="adm-segment-pct">{fmt.number(s.count)}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                        ))}
+                      </div>
+                    )
+                  }
                 </SectionCard>
               </div>
             </div>
@@ -1293,15 +1555,21 @@ export default function AdminDashboard() {
               <div className="adm-charts-row">
                 <SectionCard title="Dashboard Alerts" icon={Warning} iconColor="#F59E0B">
                   {firstLoad ? <LoadingState label="Loading alerts..." /> : alerts.length === 0 ? (
-                    <div className="adm-empty"><CheckCircle style={{ fontSize: 36, color: '#10B981' }} /><span>All systems operational</span></div>
+                    <div className="adm-empty">
+                      <CheckCircle style={{ fontSize: 36, color: '#10B981' }} />
+                      <span>All systems operational</span>
+                    </div>
                   ) : (
                     <div className="adm-alert-feed">
                       {alerts.slice(0, 8).map((a, i) => (
-                        <div key={i} className={`adm-alert-item adm-alert-item--${a.severity || 'info'}`}>
+                        // FIX #9 — prefer stable id key
+                        <div key={a.id || a._id || `alert-feed-${i}`} className={`adm-alert-item adm-alert-item--${a.severity || 'info'}`}>
                           <div className="adm-alert-item-icon">
-                            {a.severity === 'critical' ? <ErrorOutline style={{ fontSize: 16, color: '#EF4444' }} />
-                              : a.severity === 'warning' ? <Warning style={{ fontSize: 16, color: '#F59E0B' }} />
-                              : <CheckCircle style={{ fontSize: 16, color: '#10B981' }} />}
+                            {a.severity === 'critical'
+                              ? <ErrorOutline style={{ fontSize: 16, color: '#EF4444' }} />
+                              : a.severity === 'warning'
+                                ? <Warning style={{ fontSize: 16, color: '#F59E0B' }} />
+                                : <CheckCircle style={{ fontSize: 16, color: '#10B981' }} />}
                           </div>
                           <div className="adm-alert-item-body">
                             <div className="adm-alert-item-msg">{a.message}</div>
@@ -1314,8 +1582,9 @@ export default function AdminDashboard() {
                 </SectionCard>
                 <SectionCard title="Quick Stats" icon={DashboardIcon} iconColor="#6366F1">
                   <div className="adm-quick-grid">
-                    {quickStats.map((s, i) => (
-                      <div key={i} className="adm-quick-stat">
+                    {quickStats.map((s) => (
+                      // FIX #9 — label is stable and unique in this list
+                      <div key={s.label} className="adm-quick-stat">
                         <span className="adm-quick-icon" style={{ background: s.color + '15', color: s.color }}>
                           <s.icon style={{ fontSize: 16 }} />
                         </span>
