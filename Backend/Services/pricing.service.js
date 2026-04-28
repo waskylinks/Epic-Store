@@ -9,14 +9,14 @@ const PRICING_CONFIG = {
   TAX_RATE: 0.18,
   FREE_SHIPPING_THRESHOLD: 500,
   STANDARD_SHIPPING_FEE: 50,
-  SUPPORTED_CURRENCIES: ['USD', 'NGN', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR'], // USD first
-  DEFAULT_CURRENCY: 'USD' 
+  SUPPORTED_CURRENCIES: ['USD', 'NGN', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR'],
+  DEFAULT_CURRENCY: 'USD'
 };
 
 /**
  * Validate and calculate order totals with server-side pricing
  * This is the core security function that prevents price manipulation
- * 
+ *
  * @param {Array} cartItems - Array of {product: productId, quantity: number}
  * @param {string} currency - Currency code (NGN, USD, etc.)
  * @returns {Object} Validated order with calculated prices
@@ -82,9 +82,9 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
       const product = productMap[productId];
       const quantity = cartItem.quantity;
 
-      // FIXED: Better price extraction with multiple fallbacks
+      // Price extraction: sale → regular → throw (product.price is legacy dead code)
       let dbPrice = 0;
-      
+
       if (product.pricing?.sale && product.pricing.sale > 0) {
         dbPrice = Number(product.pricing.sale);
       } else if (product.pricing?.regular && product.pricing.regular > 0) {
@@ -105,10 +105,9 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
         );
       }
 
-      // FIXED: Better stock extraction with fallbacks
+      // Stock extraction: prefer inventory.stock, fall back to top-level stock
       const availableStock = product.inventory?.stock ?? product.stock ?? 0;
 
-      // Check stock availability
       if (availableStock < quantity) {
         throw new HandleError(
           `Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${quantity}`,
@@ -116,18 +115,16 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
         );
       }
 
-      // Calculate line total
       const lineTotal = dbPrice * quantity;
       itemPrice += lineTotal;
 
-      // Build validated order item
       validatedOrderItems.push({
         product: product._id,
         name: product.name,
         price: dbPrice,
         quantity: quantity,
         image: product.images?.[0]?.url || product.images?.[0] || '',
-        category: product.category,  
+        category: product.category,
       });
     }
 
@@ -135,8 +132,8 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
     const taxPrice = Number((itemPrice * PRICING_CONFIG.TAX_RATE).toFixed(2));
 
     // 8. Calculate shipping
-    const shippingPrice = itemPrice > PRICING_CONFIG.FREE_SHIPPING_THRESHOLD 
-      ? 0 
+    const shippingPrice = itemPrice > PRICING_CONFIG.FREE_SHIPPING_THRESHOLD
+      ? 0
       : PRICING_CONFIG.STANDARD_SHIPPING_FEE;
 
     // 9. Calculate total
@@ -159,13 +156,11 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
     };
   } catch (error) {
     console.error('❌ validateAndCalculateOrder error:', error);
-    
-    // If it's already a HandleError, rethrow it
+
     if (error.statusCode) {
       throw error;
     }
-    
-    // Otherwise wrap in HandleError
+
     throw new HandleError(
       error.message || 'Failed to validate and calculate order',
       error.statusCode || 500
@@ -176,36 +171,55 @@ export const validateAndCalculateOrder = async (cartItems, currency = 'USD') => 
 /**
  * Validate single product availability and price
  * Useful for quick checks before adding to cart
- * 
+ *
+ * FIX #5: Previously referenced product.price and product.stock directly,
+ * which do not match the Product schema (pricing.regular / pricing.sale and
+ * inventory.stock). Updated to use the same field resolution logic as
+ * validateAndCalculateOrder so behaviour is consistent across the service.
+ *
  * @param {string} productId - Product ID
  * @param {number} quantity - Requested quantity
  * @returns {Object} Product with availability info
  */
 export const validateProductAvailability = async (productId, quantity = 1) => {
-  const product = await Product.findById(productId).select('_id name price stock');
+  // FIX #5: select the correct schema fields — pricing and inventory, not price/stock
+  const product = await Product.findById(productId)
+    .select('_id name pricing price stock inventory');
 
   if (!product) {
     throw new HandleError('Product not found', 404);
   }
 
-  const isAvailable = product.stock >= quantity;
-  const maxAvailable = product.stock;
+  // FIX #5: mirror the same price-resolution logic used in validateAndCalculateOrder
+  let resolvedPrice = 0;
+  if (product.pricing?.sale && product.pricing.sale > 0) {
+    resolvedPrice = Number(product.pricing.sale);
+  } else if (product.pricing?.regular && product.pricing.regular > 0) {
+    resolvedPrice = Number(product.pricing.regular);
+  } else if (product.price && product.price > 0) {
+    resolvedPrice = Number(product.price);
+  }
+
+  // FIX #5: mirror the same stock-resolution logic
+  const availableStock = product.inventory?.stock ?? product.stock ?? 0;
+
+  const isAvailable = availableStock >= quantity;
 
   return {
     productId: product._id,
     name: product.name,
-    price: product.price,
+    price: resolvedPrice,        // FIX #5: was product.price (often undefined)
     requestedQuantity: quantity,
     isAvailable,
-    maxAvailable,
+    maxAvailable: availableStock, // FIX #5: was product.stock (often undefined)
     stockStatus: isAvailable ? 'In Stock' : 'Out of Stock'
   };
 };
 
 /**
  * Recalculate order total (used for order updates)
- * 
- * @param {Array} orderItems - Existing order items
+ *
+ * @param {Array} orderItems - Existing order items (already validated; price field is correct)
  * @returns {Object} Recalculated totals
  */
 export const recalculateOrderTotal = (orderItems) => {
@@ -216,8 +230,8 @@ export const recalculateOrderTotal = (orderItems) => {
   });
 
   const taxPrice = Number((itemPrice * PRICING_CONFIG.TAX_RATE).toFixed(2));
-  const shippingPrice = itemPrice > PRICING_CONFIG.FREE_SHIPPING_THRESHOLD 
-    ? 0 
+  const shippingPrice = itemPrice > PRICING_CONFIG.FREE_SHIPPING_THRESHOLD
+    ? 0
     : PRICING_CONFIG.STANDARD_SHIPPING_FEE;
   const totalPrice = Number((itemPrice + taxPrice + shippingPrice).toFixed(2));
 
@@ -231,7 +245,6 @@ export const recalculateOrderTotal = (orderItems) => {
 
 /**
  * Update pricing configuration (admin function)
- * Can be expanded to store in database
  */
 export const updatePricingConfig = (newConfig) => {
   if (newConfig.TAX_RATE !== undefined) {

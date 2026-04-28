@@ -122,7 +122,7 @@ app.use(
       prefix: 'epicstore:session:',
       ttl: 900
     }),
-    secret: process.env.SESSION_SECRET || 'fallback-secret-change-in-production',
+    secret: process.env.SESSION_SECRET ,
     resave: false,
     saveUninitialized: false,
     cookie: {

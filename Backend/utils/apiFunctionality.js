@@ -18,11 +18,26 @@ class APIFunctionality {
     }
 
     filter() {
-        const queryCopy = {...this.queryStr};
+        const queryCopy = { ...this.queryStr };
 
         const removeFields = ['keyword', 'page', 'limit'];
         removeFields.forEach((key) => delete queryCopy[key]);
-        this.query = this.query.find(queryCopy);
+
+        // FIX #2: Sanitize remaining fields before passing to .find().
+        // Blocks two NoSQL injection vectors:
+        //   1. Top-level operator keys  e.g. ?$where=...
+        //   2. Nested operator values   e.g. ?price[$gt]=0  → { price: { $gt: 0 } }
+        const sanitized = {};
+        for (const [key, value] of Object.entries(queryCopy)) {
+            if (key.startsWith('$')) continue;
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                const hasOperator = Object.keys(value).some(k => k.startsWith('$'));
+                if (hasOperator) continue;
+            }
+            sanitized[key] = value;
+        }
+
+        this.query = this.query.find(sanitized);
         
         return this;
     }

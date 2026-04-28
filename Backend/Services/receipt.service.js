@@ -17,7 +17,7 @@ export const formatCurrency = (amount, currency = "NGN") => {
     EUR: "en-DE",
     GHS: "en-GH",
     KES: "en-KE",
-    ZAR: "en-ZA"
+    ZAR: "en-ZA",
   };
 
   const locale = localeMap[currency] || "en-US";
@@ -46,25 +46,32 @@ export const createReceiptIfNotExists = async ({
   paymentGateway = "paystack",
 }) => {
   try {
-    // Check if receipt exists
+    // Check if receipt already exists
     let receipt = await Receipt.findOne({ reference });
     if (receipt) {
       console.log(`ℹ️ Receipt already exists for reference: ${reference}`);
       return receipt;
     }
 
-    // Snapshot customer info
-    const user = await User.findById(userId).select("name email");
+    // FIX #4: User model uses firstName / lastName, not a single `name` field.
+    // Selecting both fields and composing the display name here so receipts
+    // always have a non-undefined customer name.
+    const user = await User.findById(userId).select("firstName lastName email");
     if (!user) throw new HandleError("User not found for receipt", 404);
 
-    // Try to create receipt
+    const customerName =
+      user.fullName ||
+      `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() ||
+      user.email; // final fallback so the field is never blank
+
     try {
       receipt = await Receipt.create({
         order: orderId,
         user: userId,
         reference,
         customer: {
-          name: user.name,
+          // FIX #4: was `user.name` (undefined). Now uses composed name.
+          name: customerName,
           email: user.email,
           phoneNo: shippingInfo.phoneNo,
         },
@@ -73,7 +80,7 @@ export const createReceiptIfNotExists = async ({
           city: shippingInfo.city,
           state: shippingInfo.state,
           country: shippingInfo.country,
-          pinCode: shippingInfo.pinCode
+          pinCode: shippingInfo.pinCode,
         },
         orderItems,
         itemPrice,
@@ -88,19 +95,18 @@ export const createReceiptIfNotExists = async ({
 
       console.log(`✅ New receipt created for reference: ${reference}`);
       return receipt;
-      
     } catch (createError) {
-      // If duplicate key error (race condition), fetch the existing receipt
+      // Race condition: another process already created the receipt
       if (createError.code === 11000) {
-        console.log(`ℹ️ Receipt created by another process, fetching existing one`);
+        console.log(
+          `ℹ️ Receipt created by another process, fetching existing one`
+        );
         receipt = await Receipt.findOne({ reference });
         if (receipt) return receipt;
       }
-      
-      // Re-throw other errors
+
       throw createError;
     }
-
   } catch (error) {
     console.error("Receipt creation error:", error);
     throw error;
@@ -111,9 +117,10 @@ export const createReceiptIfNotExists = async ({
  * Get all receipts for a user
  */
 export const getAllReceipts = async (req, res) => {
-  const receipts = await Receipt.find({ user: req.user._id })
-    .sort({ createdAt: -1 });
-  
+  const receipts = await Receipt.find({ user: req.user._id }).sort({
+    createdAt: -1,
+  });
+
   return res.status(200).json({ success: true, receipts });
 };
 
@@ -142,15 +149,15 @@ export const checkReceiptExists = handleAsyncError(async (req, res, next) => {
   const { reference } = req.params;
   const userId = req.user._id;
 
-  const receipt = await Receipt.findOne({ 
+  const receipt = await Receipt.findOne({
     reference,
-    user: userId 
+    user: userId,
   });
 
   return res.status(200).json({
     success: true,
     exists: !!receipt,
-    receipt: receipt || null
+    receipt: receipt || null,
   });
 });
 
@@ -163,29 +170,32 @@ export const emailReceipt = handleAsyncError(async (req, res, next) => {
   const { reference } = req.params;
   const userId = req.user._id;
 
-  // Find receipt
-  const receipt = await Receipt.findOne({ 
+  const receipt = await Receipt.findOne({
     reference,
-    user: userId 
+    user: userId,
   });
 
   if (!receipt) {
     return next(new HandleError("Receipt not found", 404));
   }
 
-  // Get user email
-  const user = await User.findById(userId).select('email name');
+  // FIX #4 (same fix applied here): select firstName + lastName, not name
+  const user = await User.findById(userId).select("email firstName lastName");
+
+  const displayName =
+    user.fullName ||
+    `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim() ||
+    user.email;
 
   // TODO: Implement email sending logic
-  // This is a placeholder - integrate with your email service (SendGrid, AWS SES, etc.)
   // Example implementation:
   /*
   import { sendReceiptEmail } from './email.service.js';
-  
+
   try {
     await sendReceiptEmail({
       to: user.email,
-      name: user.name,
+      name: displayName,
       receipt: receipt,
       reference: reference
     });
@@ -200,11 +210,11 @@ export const emailReceipt = handleAsyncError(async (req, res, next) => {
     reference: receipt.reference,
     total: receipt.totalPrice,
     currency: receipt.currency,
-    items: receipt.orderItems.length
+    items: receipt.orderItems.length,
   });
 
   return res.status(200).json({
     success: true,
-    message: `Receipt will be sent to ${user.email}`
+    message: `Receipt will be sent to ${user.email}`,
   });
 });
