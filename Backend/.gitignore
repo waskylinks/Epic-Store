@@ -1,7 +1,9 @@
 .env
 
+/credentials
+
 # Logs
 logs/
 *.log
 
-credentials
+
