@@ -1,9 +1,10 @@
 .env
 
-/credentials
+# Credentials - never commit these
+credentials/
+Backend/credentials/
+*.json
 
 # Logs
 logs/
 *.log
-
-
