@@ -3,3 +3,5 @@
 # Logs
 logs/
 *.log
+
+Backend/credentials/
