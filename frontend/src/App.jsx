@@ -58,47 +58,54 @@ import DiscountAnalytics from './Admin/DiscountAnalytics';
 import ReturnAnalytics from './Admin/ReturnAnalytics';
 import RecoveryEmailAnalytics from './Admin/RecoveryEmailAnalytics';
 import CronHealth from './Admin/CronHealth';
-// FIX #8: import captureUTMsOnLoad so landing-page UTMs are persisted to
-// sessionStorage before the user navigates away from the entry URL.
-import { captureUTMsOnLoad } from './features/order/orderSlice';
 
-
+import { initAnalytics, debugAnalyticsState } from './utils/analytics';
 
 function App() {
   const { initializing, isAuthenticated } = useSelector(state => state.user);
   const dispatch = useDispatch();
 
-  // Initialize session tracking for analytics
+  // ── PHASE 1: Analytics initialization ──────────────────────────────────────
+  // Runs ONCE on app mount before any routing occurs.
+  //
+  // initAnalytics() does three things in the correct order:
+  //   1. captureClickIds()    — stores gclid/fbclid/ttclid from landing URL
+  //   2. captureUTMsOnLoad()  — stores UTMs from landing URL (idempotent)
+  //   3. getOrCreateSessionId() — creates/refreshes cross-tab session
+  //
+  // Why this order matters:
+  //   captureClickIds() runs before the UTM captured-flag check so click IDs
+  //   are always captured on new ad clicks, even if UTMs were already stored
+  //   from a previous session.
+  //
+  // Why localStorage and not sessionStorage:
+  //   OAuth redirects (Google/Facebook login) destroy sessionStorage.
+  //   A user who lands via a Google Ad, clicks "Login with Google", and
+  //   completes OAuth would lose all UTM attribution with sessionStorage.
+  //   localStorage survives the redirect and preserves first-touch attribution.
   useEffect(() => {
-    // FIX #8: Capture UTM parameters from the landing-page URL into
-    // sessionStorage immediately on app mount, before any navigation occurs.
-    // getAnalyticsData() in orderSlice reads from sessionStorage, so values
-    // are available at order-creation time even though the user will be on
-    // /process/payment (no UTMs in URL) by then.
-    captureUTMsOnLoad();
+    initAnalytics();
 
-    // Session ID — generated once per browser tab and reused for the
-    // lifetime of the session so all events can be correlated.
-    if (!sessionStorage.getItem('sessionId')) {
-      const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      sessionStorage.setItem('sessionId', sessionId);
-      sessionStorage.setItem('landingPage', window.location.pathname);
-      sessionStorage.setItem('sessionStartTime', new Date().toISOString());
+    // Expose debug helper in development
+    // Usage in DevTools: window.__epicAnalytics.debug()
+    if (import.meta.env.DEV) {
+      window.__epicAnalytics = { debug: debugAnalyticsState };
     }
-  }, []);
+  }, []); // Empty deps — run once on mount only
 
   // Always load user on app start
   useEffect(() => {
     dispatch(loadUser());
   }, [dispatch]);
 
+  // Sync server cart after auth state is resolved
   useEffect(() => {
     if (!initializing && isAuthenticated) {
       dispatch(syncServerCart());
     }
   }, [initializing, isAuthenticated, dispatch]);
 
-  // Prevent routes from rendering until loadUser() finishes
+  // Block routes until loadUser() resolves — prevents flash of unauthenticated UI
   if (initializing) {
     return <Loader />;
   }
