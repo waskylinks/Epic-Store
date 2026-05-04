@@ -3,9 +3,15 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon server.js"
-  },
+  "dev": "nodemon server.js",
+  "start": "node server.js",
+
+  "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+  "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+  "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose",
+
+  "test:analytics": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/analyticsEvent.test.js --verbose"
+},
   "keywords": [
     "MongoDB",
     "Express",
@@ -61,3 +67,4 @@
     "xss-clean": "^0.1.4"
   }
 }
+
