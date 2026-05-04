@@ -1,136 +1,44 @@
-// features/order/orderSlice.js - CUSTOMER with Complete Analytics Integration
-import { createAsyncThunk, createSlice } from "@reduxjs/toolkit";
-import axios from "axios";
-
-const API_BASE = "/api/v1";
-
-// ============================================
-// ANALYTICS HELPERS
-// ============================================
-
 /**
- * FIX #8: getUTMParams() previously read window.location.search at order-
- * creation time, by which point the user is on /process/payment and all
- * UTM parameters have been lost from the URL. The values were therefore
- * always null, making the frontend attribution data unreliable.
+ * frontend/src/features/order/orderSlice.js — MODIFIED FOR PHASE 1
  *
- * Resolution (option chosen: capture once on app load, store in sessionStorage):
- *  - captureUTMsOnLoad() must be called once when the app first mounts
- *    (e.g. in App.jsx useEffect or the root layout component).
- *  - getUTMParams() now reads from sessionStorage, so the values survive
- *    page transitions within the same tab.
- *  - The authoritative source for server-side attribution remains the
- *    captureUTMParameters middleware cookie (already correct per issue list).
- *    The frontend data here is supplementary / for optimistic UI only.
+ * Changes from previous version:
+ *
+ *   1. REMOVED captureUTMsOnLoad export — this now lives in utils/analytics.js.
+ *      The orderSlice should not be responsible for session/UTM capture.
+ *      App.jsx now imports initAnalytics() from the SDK directly.
+ *
+ *   2. REMOVED getUTMParams, getDeviceInfo, getAnalyticsData helpers —
+ *      replaced by getAttributionContext() and buildClientAnalyticsPayload()
+ *      from utils/analytics.js which handle all of this correctly.
+ *
+ *   3. MODIFIED createOrder thunk — now imports buildClientAnalyticsPayload
+ *      and generateEventId from the analytics SDK and attaches the full
+ *      client analytics payload to the order request body.
+ *
+ *   4. All other thunks and reducers are unchanged.
  */
 
-/**
- * Call this ONCE on initial app load (e.g. App.jsx top-level useEffect).
- * Reads UTMs from the landing-page URL and persists them for the session.
- */
-export const captureUTMsOnLoad = () => {
-  // Only capture if not already stored (preserve the very first landing page values)
-  if (sessionStorage.getItem("utm_captured")) return;
+import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
+import axios from 'axios';
 
-  const params = new URLSearchParams(window.location.search);
-  const utmKeys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"];
+// PHASE 1: Import analytics SDK helpers
+// generateEventId — creates the UUID that ties client and server events together
+// buildClientAnalyticsPayload — builds the full attribution context object
+import {
+  generateEventId,
+  buildClientAnalyticsPayload,
+} from '../../utils/analytics';
 
-  utmKeys.forEach((key) => {
-    const val = params.get(key);
-    if (val) sessionStorage.setItem(key, val);
-  });
+const API_BASE = '/api/v1';
 
-  sessionStorage.setItem("landingPage", window.location.pathname + window.location.search);
-  sessionStorage.setItem("utm_captured", "1");
-};
-
-/**
- * FIX #8: Read UTMs from sessionStorage (populated on landing) rather than
- * from the current URL (which no longer contains them at checkout time).
- */
-const getUTMParams = () => ({
-  utm_source:   sessionStorage.getItem("utm_source"),
-  utm_medium:   sessionStorage.getItem("utm_medium"),
-  utm_campaign: sessionStorage.getItem("utm_campaign"),
-  utm_term:     sessionStorage.getItem("utm_term"),
-  utm_content:  sessionStorage.getItem("utm_content"),
-});
-
-/**
- * Detect device and browser (server-side middleware is authoritative;
- * this is kept as a lightweight client-side supplement).
- */
-const getDeviceInfo = () => {
-  const ua = navigator.userAgent;
-  const isMobile = /mobile/i.test(ua);
-  const isTablet = /tablet|ipad/i.test(ua);
-
-  let browser = "unknown";
-  if (/chrome/i.test(ua)) browser = "Chrome";
-  else if (/safari/i.test(ua)) browser = "Safari";
-  else if (/firefox/i.test(ua)) browser = "Firefox";
-  else if (/edge/i.test(ua)) browser = "Edge";
-
-  return {
-    device: isMobile ? "mobile" : isTablet ? "tablet" : "desktop",
-    browser,
-  };
-};
-
-/**
- * Check if this is user's first purchase
- */
-const checkIsFirstPurchase = (existingOrders) => {
-  return !existingOrders || existingOrders.length === 0;
-};
-
-/**
- * Get analytics data for order.
- * FIX #8: UTMs now come from sessionStorage (captured at landing), not from
- * the current URL which would be empty at checkout time.
- */
-const getAnalyticsData = (isFirstPurchase = false) => {
-  const utmParams = getUTMParams(); // FIX #8
-  const deviceInfo = getDeviceInfo();
-
-  const sessionId =
-    sessionStorage.getItem("sessionId") ||
-    `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-
-  // FIX #8: landingPage also comes from sessionStorage (set at first load)
-  const landingPage =
-    sessionStorage.getItem("landingPage") || window.location.pathname;
-
-  if (!sessionStorage.getItem("sessionId")) {
-    sessionStorage.setItem("sessionId", sessionId);
-  }
-
-  return {
-    source: utmParams.utm_source || "direct",
-    medium: utmParams.utm_medium,
-    campaign: utmParams.utm_campaign,
-    term: utmParams.utm_term,
-    content: utmParams.utm_content,
-    device: deviceInfo.device,
-    browser: deviceInfo.browser,
-    referrer: document.referrer || null,
-    landingPage,
-    sessionId,
-    isFirstPurchase,
-    capturedAt: new Date().toISOString(),
-  };
-};
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
+// ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
 
 const createFormDataWithFiles = (data, files = []) => {
   const formData = new FormData();
 
   Object.keys(data).forEach((key) => {
     if (data[key] !== undefined && data[key] !== null) {
-      if (typeof data[key] === "object" && !Array.isArray(data[key])) {
+      if (typeof data[key] === 'object' && !Array.isArray(data[key])) {
         formData.append(key, JSON.stringify(data[key]));
       } else if (Array.isArray(data[key])) {
         formData.append(key, JSON.stringify(data[key]));
@@ -141,18 +49,16 @@ const createFormDataWithFiles = (data, files = []) => {
   });
 
   files.forEach((file) => {
-    formData.append(`images`, file);
+    formData.append('images', file);
   });
 
   return formData;
 };
 
-// ============================================
-// BASIC ORDER OPERATIONS
-// ============================================
+// ─── BASIC ORDER OPERATIONS ───────────────────────────────────────────────────
 
 export const getAllMyOrders = createAsyncThunk(
-  "order/getAllMyOrders",
+  'order/getAllMyOrders',
   async (_, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(`${API_BASE}/orders/user`, {
@@ -161,14 +67,14 @@ export const getAllMyOrders = createAsyncThunk(
       return data.orders;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch orders"
+        error.response?.data?.message || 'Failed to fetch orders'
       );
     }
   }
 );
 
 export const getOrderDetails = createAsyncThunk(
-  "order/getOrderDetails",
+  'order/getOrderDetails',
   async (id, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(`${API_BASE}/order/${id}`, {
@@ -177,14 +83,14 @@ export const getOrderDetails = createAsyncThunk(
       return data.order;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch order details"
+        error.response?.data?.message || 'Failed to fetch order details'
       );
     }
   }
 );
 
 export const getOrderByReference = createAsyncThunk(
-  "order/getOrderByReference",
+  'order/getOrderByReference',
   async (reference, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
@@ -194,46 +100,69 @@ export const getOrderByReference = createAsyncThunk(
       return data.order;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch order"
+        error.response?.data?.message || 'Failed to fetch order'
       );
     }
   }
 );
 
 /**
- * Create new order WITH COMPLETE ANALYTICS
- * FIX #8: analytics.source now correctly reflects the landing-page UTMs
- * stored in sessionStorage, not the (empty) checkout-page URL params.
+ * createOrder
+ *
+ * PHASE 1 CHANGES:
+ *   - Generates a UUID event_id at the moment of order creation
+ *   - Builds a full client analytics payload using the SDK
+ *   - Attaches the payload to the request body so the backend can:
+ *       a) Use the event_id for GA4 + Meta CAPI deduplication
+ *       b) Use ga4ClientId to match the server-side event to the browser session
+ *       c) Use fbp/fbc for Meta CAPI user matching
+ *       d) Use clientAttribution as a redundant source alongside server cookies
+ *
+ * The backend verifyPaymentController.js reads:
+ *   req.body.analyticsEventId  — the UUID
+ *   req.body.clientTimestamp   — ISO string from browser
+ *   req.body.ga4ClientId       — _ga cookie value
+ *   req.body.fbp               — _fbp cookie value
+ *   req.body.fbc               — _fbc or fbclid value
+ *   req.body.clientAttribution — full attribution snapshot
  */
 export const createOrder = createAsyncThunk(
-  "order/createOrder",
+  'order/createOrder',
   async (orderData, { rejectWithValue, getState }) => {
     try {
-      const existingOrders = getState().order.orders || [];
-      const isFirstPurchase = checkIsFirstPurchase(existingOrders);
-      const analytics = getAnalyticsData(isFirstPurchase);
+      // PHASE 1: Generate event_id at the moment of order creation.
+      // This UUID is the deduplication key for GA4 and Meta CAPI.
+      // Store it on the order so we can reference it in the success handler
+      // if we need to fire a client-side gtag/fbq event.
+      const eventId = generateEventId();
+
+      // PHASE 1: Build complete client analytics payload.
+      // This captures: UTMs, click IDs, session ID, GA4 client ID,
+      // Meta Pixel cookies, and a client-side timestamp.
+      const analyticsPayload = buildClientAnalyticsPayload(eventId);
 
       const { data } = await axios.post(
         `${API_BASE}/order/new`,
-        { ...orderData, analytics },
+        {
+          ...orderData,
+          ...analyticsPayload, // Spread all analytics fields into the request body
+        },
         { withCredentials: true }
       );
 
       return data.order;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to create order"
+        error.response?.data?.message || 'Failed to create order'
       );
     }
   }
 );
 
-// ============================================
-// STATUS HISTORY & TIMELINE
-// ============================================
+// ─── STATUS HISTORY & TIMELINE ────────────────────────────────────────────────
 
 export const getOrderTimeline = createAsyncThunk(
-  "order/getOrderTimeline",
+  'order/getOrderTimeline',
   async (orderId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
@@ -242,49 +171,43 @@ export const getOrderTimeline = createAsyncThunk(
       );
       return {
         orderId,
-        timeline: data.timeline,
+        timeline:      data.timeline,
         currentStatus: data.currentStatus,
       };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch order timeline"
+        error.response?.data?.message || 'Failed to fetch order timeline'
       );
     }
   }
 );
 
-// ============================================
-// NOTES & COMMUNICATION
-// ============================================
+// ─── NOTES & COMMUNICATION ────────────────────────────────────────────────────
 
 export const addOrderNote = createAsyncThunk(
-  "order/addOrderNote",
-  async (
-    { orderId, content, type = "customer", attachments = [] },
-    { rejectWithValue }
-  ) => {
+  'order/addOrderNote',
+  async ({ orderId, content, type = 'customer', attachments = [] }, { rejectWithValue }) => {
     try {
       const formData = createFormDataWithFiles({ content, type }, attachments);
-
       const { data } = await axios.post(
         `${API_BASE}/orders/${orderId}/notes`,
         formData,
         {
           withCredentials: true,
-          headers: { "Content-Type": "multipart/form-data" },
+          headers: { 'Content-Type': 'multipart/form-data' },
         }
       );
       return { orderId, note: data.note };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to add note"
+        error.response?.data?.message || 'Failed to add note'
       );
     }
   }
 );
 
 export const getOrderNotes = createAsyncThunk(
-  "order/getOrderNotes",
+  'order/getOrderNotes',
   async (orderId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
@@ -294,14 +217,14 @@ export const getOrderNotes = createAsyncThunk(
       return { orderId, notes: data.notes };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch notes"
+        error.response?.data?.message || 'Failed to fetch notes'
       );
     }
   }
 );
 
 export const editOrderNote = createAsyncThunk(
-  "order/editOrderNote",
+  'order/editOrderNote',
   async ({ orderId, noteId, content }, { rejectWithValue }) => {
     try {
       const { data } = await axios.put(
@@ -312,18 +235,16 @@ export const editOrderNote = createAsyncThunk(
       return { orderId, noteId, note: data.note };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to edit note"
+        error.response?.data?.message || 'Failed to edit note'
       );
     }
   }
 );
 
-// ============================================
-// TRACKING INFORMATION
-// ============================================
+// ─── TRACKING INFORMATION ─────────────────────────────────────────────────────
 
 export const getTrackingInfo = createAsyncThunk(
-  "order/getTrackingInfo",
+  'order/getTrackingInfo',
   async (orderId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
@@ -333,18 +254,16 @@ export const getTrackingInfo = createAsyncThunk(
       return { orderId, tracking: data.tracking };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch tracking info"
+        error.response?.data?.message || 'Failed to fetch tracking info'
       );
     }
   }
 );
 
-// ============================================
-// ORDER MESSAGES (Customer)
-// ============================================
+// ─── ORDER MESSAGES ───────────────────────────────────────────────────────────
 
 export const addOrderMessage = createAsyncThunk(
-  "order/addOrderMessage",
+  'order/addOrderMessage',
   async ({ orderId, content, attachments = [] }, { rejectWithValue }) => {
     try {
       const { data } = await axios.post(
@@ -355,14 +274,14 @@ export const addOrderMessage = createAsyncThunk(
       return { orderId, message: data.orderMessage };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to send message"
+        error.response?.data?.message || 'Failed to send message'
       );
     }
   }
 );
 
 export const getOrderMessages = createAsyncThunk(
-  "order/getOrderMessages",
+  'order/getOrderMessages',
   async (orderId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
@@ -372,14 +291,14 @@ export const getOrderMessages = createAsyncThunk(
       return { orderId, messages: data.messages };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch messages"
+        error.response?.data?.message || 'Failed to fetch messages'
       );
     }
   }
 );
 
 export const markOrderMessagesRead = createAsyncThunk(
-  "order/markOrderMessagesRead",
+  'order/markOrderMessagesRead',
   async (orderId, { rejectWithValue }) => {
     try {
       await axios.put(
@@ -390,66 +309,55 @@ export const markOrderMessagesRead = createAsyncThunk(
       return { orderId };
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to mark messages as read"
+        error.response?.data?.message || 'Failed to mark messages as read'
       );
     }
   }
 );
 
-// ============================================
-// INVOICE MANAGEMENT
-// ============================================
+// ─── INVOICE ──────────────────────────────────────────────────────────────────
 
 export const downloadInvoice = createAsyncThunk(
-  "order/downloadInvoice",
+  'order/downloadInvoice',
   async (orderId, { rejectWithValue }) => {
     try {
       const response = await axios.get(
         `${API_BASE}/orders/${orderId}/invoice`,
-        {
-          withCredentials: true,
-          responseType: "blob",
-        }
+        { withCredentials: true, responseType: 'blob' }
       );
 
-      const blob = new Blob([response.data], { type: "application/pdf" });
-      const url = window.URL.createObjectURL(blob);
-
-      const link = document.createElement("a");
-      link.href = url;
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url  = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href     = url;
       link.download = `Invoice-${orderId}.pdf`;
       document.body.appendChild(link);
       link.click();
-
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
 
-      return { success: true, message: "Invoice downloaded successfully" };
+      return { success: true, message: 'Invoice downloaded successfully' };
     } catch (error) {
       if (error.response?.data instanceof Blob) {
         const text = await error.response.data.text();
         try {
           const jsonError = JSON.parse(text);
-          return rejectWithValue(
-            jsonError.message || "Failed to download invoice"
-          );
+          return rejectWithValue(jsonError.message || 'Failed to download invoice');
         } catch {
-          return rejectWithValue(text || "Failed to download invoice");
+          return rejectWithValue(text || 'Failed to download invoice');
         }
       }
       return rejectWithValue(
-        error.response?.data?.message || "Failed to download invoice"
+        error.response?.data?.message || 'Failed to download invoice'
       );
     }
   }
 );
 
-// ============================================
-// ANALYTICS & CUSTOMER DATA
-// ============================================
+// ─── CUSTOMER ANALYTICS ───────────────────────────────────────────────────────
 
 export const getCustomerOrderAnalytics = createAsyncThunk(
-  "order/getCustomerOrderAnalytics",
+  'order/getCustomerOrderAnalytics',
   async (userId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
@@ -459,32 +367,30 @@ export const getCustomerOrderAnalytics = createAsyncThunk(
       return data.analytics;
     } catch (error) {
       return rejectWithValue(
-        error.response?.data?.message || "Failed to fetch customer analytics"
+        error.response?.data?.message || 'Failed to fetch customer analytics'
       );
     }
   }
 );
 
-// ============================================
-// SLICE DEFINITION
-// ============================================
+// ─── SLICE ────────────────────────────────────────────────────────────────────
 
 const orderSlice = createSlice({
-  name: "order",
+  name: 'order',
   initialState: {
-    orders: [],
-    order: null,
-    timeline: [],
-    notes: [],
-    tracking: null,
-    orderMessages: [],
+    orders:            [],
+    order:             null,
+    timeline:          [],
+    notes:             [],
+    tracking:          null,
+    orderMessages:     [],
     customerAnalytics: null,
 
-    loading: false,
+    loading:       false,
     actionLoading: false,
-    error: null,
-    success: false,
-    message: null,
+    error:         null,
+    success:       false,
+    message:       null,
   },
   reducers: {
     removeErrors: (state) => {
@@ -495,9 +401,9 @@ const orderSlice = createSlice({
       state.success = false;
     },
     clearOrder: (state) => {
-      state.order = null;
+      state.order    = null;
       state.timeline = [];
-      state.notes = [];
+      state.notes    = [];
       state.tracking = null;
     },
     setActionLoading: (state, action) => {
@@ -505,87 +411,94 @@ const orderSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
+
+    // getAllMyOrders
     builder
       .addCase(getAllMyOrders.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(getAllMyOrders.fulfilled, (state, action) => {
         state.loading = false;
-        state.orders = action.payload;
+        state.orders  = action.payload;
       })
       .addCase(getAllMyOrders.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error   = action.payload;
       });
 
+    // getOrderDetails
     builder
       .addCase(getOrderDetails.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(getOrderDetails.fulfilled, (state, action) => {
         state.loading = false;
-        state.order = action.payload;
+        state.order   = action.payload;
         state.success = true;
       })
       .addCase(getOrderDetails.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error   = action.payload;
       });
 
+    // getOrderByReference
     builder
       .addCase(getOrderByReference.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(getOrderByReference.fulfilled, (state, action) => {
         state.loading = false;
-        state.order = action.payload;
+        state.order   = action.payload;
         state.success = true;
       })
       .addCase(getOrderByReference.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error   = action.payload;
       });
 
+    // createOrder
     builder
       .addCase(createOrder.pending, (state) => {
         state.loading = true;
-        state.error = null;
+        state.error   = null;
       })
       .addCase(createOrder.fulfilled, (state, action) => {
         state.loading = false;
-        state.order = action.payload;
+        state.order   = action.payload;
         state.success = true;
-        state.message = "Order created successfully";
+        state.message = 'Order created successfully';
       })
       .addCase(createOrder.rejected, (state, action) => {
         state.loading = false;
-        state.error = action.payload;
+        state.error   = action.payload;
       });
 
+    // getOrderTimeline
     builder
       .addCase(getOrderTimeline.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(getOrderTimeline.fulfilled, (state, action) => {
         state.actionLoading = false;
-        state.timeline = action.payload.timeline;
+        state.timeline      = action.payload.timeline;
         if (state.order) {
           state.order.orderStatus = action.payload.currentStatus;
         }
       })
       .addCase(getOrderTimeline.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // addOrderNote
     builder
       .addCase(addOrderNote.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(addOrderNote.fulfilled, (state, action) => {
         state.actionLoading = false;
@@ -593,83 +506,82 @@ const orderSlice = createSlice({
         if (state.order?.notes) {
           state.order.notes.push(action.payload.note);
         }
-        state.message = "Note added successfully";
+        state.message = 'Note added successfully';
       })
       .addCase(addOrderNote.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // getOrderNotes
     builder
       .addCase(getOrderNotes.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(getOrderNotes.fulfilled, (state, action) => {
         state.actionLoading = false;
-        state.notes = action.payload.notes;
+        state.notes         = action.payload.notes;
       })
       .addCase(getOrderNotes.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // editOrderNote
     builder
       .addCase(editOrderNote.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(editOrderNote.fulfilled, (state, action) => {
         state.actionLoading = false;
-        const index = state.notes.findIndex(
-          (note) => note._id === action.payload.noteId
-        );
-        if (index !== -1) {
-          state.notes[index] = action.payload.note;
-        }
-        state.message = "Note updated successfully";
+        const index = state.notes.findIndex(n => n._id === action.payload.noteId);
+        if (index !== -1) state.notes[index] = action.payload.note;
+        state.message = 'Note updated successfully';
       })
       .addCase(editOrderNote.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // getTrackingInfo
     builder
       .addCase(getTrackingInfo.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(getTrackingInfo.fulfilled, (state, action) => {
         state.actionLoading = false;
-        state.tracking = action.payload.tracking;
-        if (state.order) {
-          state.order.tracking = action.payload.tracking;
-        }
+        state.tracking      = action.payload.tracking;
+        if (state.order) state.order.tracking = action.payload.tracking;
       })
       .addCase(getTrackingInfo.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // addOrderMessage
     builder
       .addCase(addOrderMessage.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(addOrderMessage.fulfilled, (state, action) => {
         state.actionLoading = false;
         state.orderMessages.push(action.payload.message);
-        state.message = "Message sent successfully";
+        state.message = 'Message sent successfully';
       })
       .addCase(addOrderMessage.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // getOrderMessages
     builder
       .addCase(getOrderMessages.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(getOrderMessages.fulfilled, (state, action) => {
         state.actionLoading = false;
@@ -677,48 +589,55 @@ const orderSlice = createSlice({
       })
       .addCase(getOrderMessages.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // markOrderMessagesRead
     builder.addCase(markOrderMessagesRead.fulfilled, (state) => {
-      state.orderMessages = state.orderMessages.map((msg) => ({
+      state.orderMessages = state.orderMessages.map(msg => ({
         ...msg,
         isRead: true,
       }));
     });
 
+    // downloadInvoice
     builder
       .addCase(downloadInvoice.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(downloadInvoice.fulfilled, (state, action) => {
         state.actionLoading = false;
-        state.message = action.payload.message;
-        state.success = true;
+        state.message       = action.payload.message;
+        state.success       = true;
       })
       .addCase(downloadInvoice.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
 
+    // getCustomerOrderAnalytics
     builder
       .addCase(getCustomerOrderAnalytics.pending, (state) => {
         state.actionLoading = true;
-        state.error = null;
+        state.error         = null;
       })
       .addCase(getCustomerOrderAnalytics.fulfilled, (state, action) => {
-        state.actionLoading = false;
+        state.actionLoading    = false;
         state.customerAnalytics = action.payload;
       })
       .addCase(getCustomerOrderAnalytics.rejected, (state, action) => {
         state.actionLoading = false;
-        state.error = action.payload;
+        state.error         = action.payload;
       });
   },
 });
 
-export const { removeErrors, clearMessage, clearOrder, setActionLoading } =
-  orderSlice.actions;
+export const {
+  removeErrors,
+  clearMessage,
+  clearOrder,
+  setActionLoading,
+} = orderSlice.actions;
 
 export default orderSlice.reducer;
