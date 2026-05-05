@@ -146,9 +146,6 @@ if (process.env.NODE_ENV === 'development') {
         method: req.method,
         path: req.originalUrl,
         contentType: req.headers['content-type'],
-        // NOTE: bodyExists will always be false for multipart/form-data here
-        // because multer only runs inside the route, not at app level.
-        // This is expected and does NOT mean the body is missing.
         bodyExists: !!req.body,
         bodyKeys: req.body ? Object.keys(req.body) : []
       });
