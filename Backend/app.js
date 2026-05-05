@@ -23,7 +23,7 @@ import productRoutes from './routes/products-route.js';
 import customerOrderRoutes from './routes/customer-order-routes.js';
 import adminOrderRoutes from './routes/admin-order-routes.js';
 import refundRoutes from './routes/refund-routes.js';
-import returnRoutes from './routes/return-routes.js';;
+import returnRoutes from './routes/return-routes.js';
 import oauthRoutes from './routes/oauth-routes.js';
 import paymentRoutes from './routes/payment-routes.js';
 import receiptRoutes from './routes/receipts-routes.js';
@@ -35,11 +35,12 @@ import checkoutRoutes from './routes/checkout-routes.js';
 import analyticsRoutes from './routes/analytics-routes-index.js';
 import adminStatsRoutes from './routes/admin-stats-routes.js';
 import discountAnalyticsRoutes from './routes/discount-analytics-routes.js';
-import recoveryEmailRoutes from './routes/recovery-email-routes.js'
+import recoveryEmailRoutes from './routes/recovery-email-routes.js';
 import seoRoutes from './routes/seo-routes.js';
 import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
+import { sessionMiddleware }  from './middleware/sessionMiddleware.js';
+import { identityMiddleware } from './middleware/identityMiddleware.js';
 import cronHealthRouter from './routes/cronHealthRoutes.js';
-
 
 import './config/passport.js';
 
@@ -122,7 +123,7 @@ app.use(
       prefix: 'epicstore:session:',
       ttl: 900
     }),
-    secret: process.env.SESSION_SECRET ,
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -159,17 +160,18 @@ startupGuards(app);
 app.use(cors(corsOptions));
 app.use(helmetConfig);
 
-
 app.use((req, res, next) => {
   const contentType = req.headers['content-type'] || '';
   if (contentType.includes('multipart/form-data')) {
-    return next(); // skip hpp for file upload requests
+    return next();
   }
   return hppProtection(req, res, next);
 });
 
 app.use(additionalSecurityHeaders);
-app.use(trackAttribution);
+app.use(sessionMiddleware);   // Phase 2 — sets req.sessionId + epicstore_sid cookie
+app.use(identityMiddleware);  // Phase 2 — sets req.anonymousId + epicstore_anon cookie
+app.use(trackAttribution);    // existing — sets req.attribution (must stay last in this group)
 
 /* ================= ROUTES ================= */
 app.use('/api/v1/admin/cron', cronHealthRouter);
@@ -189,12 +191,12 @@ app.use('/api/v1/cart', cartRoutes);
 app.use('/api/v1', cartRoutes);
 app.use('/api/v1/shipping', shippingRoutes);
 app.use('/api/v1/discounts', discountRoutes);
-app.use("/api/v1/recovery", recoveryEmailRoutes);
+app.use('/api/v1/recovery', recoveryEmailRoutes);
 app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1', seoRoutes);
 app.use('/api/v1/analytics', analyticsRoutes);
 app.use('/api/v1/admin', adminStatsRoutes);
-app.use("/api/v1/discount-analytics", discountAnalyticsRoutes);
+app.use('/api/v1/discount-analytics', discountAnalyticsRoutes);
 
 app.use(redirectHandler);
 

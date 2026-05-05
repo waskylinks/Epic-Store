@@ -328,3 +328,4 @@ describe('stitchIdentityFromRequest', () => {
     expect(mockFindOneAndUpdate).not.toHaveBeenCalled();
   });
 });
+

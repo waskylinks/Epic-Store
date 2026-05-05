@@ -7,6 +7,8 @@ import { emailTemplates } from "../utils/emailTemplates.js";
 import { v2 as cloudinary } from 'cloudinary';
 import { deleteCachePattern } from '../utils/redis.js';
 import { syncCustomerAnalytics } from '../Services/customer-analytics-service.js';
+import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
+import { invalidateSession } from '../middleware/sessionMiddleware.js';
 
 const invalidateCaches = async () => {
   try {
@@ -112,16 +114,18 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
     // Welcome email failure must not block verification success
   }
 
-  // FIX UC1: Changed from blocking await to fire-and-forget.
-  // Analytics init for a brand-new user (zero orders) is non-critical.
-  // Blocking here delays email verification — a UX-critical path — by the
-  // full duration of a DB aggregation that will return empty results anyway.
   syncCustomerAnalytics(user._id).catch(() => {});
+
+  // PHASE 2: Stitch anonymous ID — first moment the user is fully authenticated
+  stitchIdentityFromRequest(req).catch(err =>
+    console.error('[Identity] VerifyEmail stitch failed (non-fatal):', err.message)
+  );
 
   await invalidateCaches();
 
   sendToken(user, 200, res);
 });
+
 
 // ============================================
 // RESEND VERIFICATION CODE
@@ -220,6 +224,12 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
   }
 
   await user.resetLoginAttempts();
+
+  // PHASE 2: Stitch anonymous ID to authenticated user (non-blocking)
+  stitchIdentityFromRequest(req).catch(err =>
+    console.error('[Identity] Login stitch failed (non-fatal):', err.message)
+  );
+
   sendToken(user, 200, res);
 });
 
@@ -235,6 +245,11 @@ export const logout = handleAsyncError(async (req, res) => {
     sameSite: "strict",
     path: "/"
   });
+
+  // PHASE 2: Invalidate analytics session (non-blocking)
+  invalidateSession(req.sessionId, res).catch(err =>
+    console.error('[Session] Invalidation failed (non-fatal):', err.message)
+  );
 
   res.status(200).json({ success: true, message: "Successfully logged out" });
 });
