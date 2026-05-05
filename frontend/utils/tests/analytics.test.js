@@ -1,24 +1,4 @@
-/**
- * frontend/src/utils/__tests__/analytics.test.js
- *
- * Phase 1 — Test Suite for frontend/src/utils/analytics.js
- *
- * Run with:
- *   npx vitest run src/utils/__tests__/analytics.test.js
- *   OR
- *   npx jest src/utils/__tests__/analytics.test.js --verbose
- *
- * These tests validate:
- *   1. Session management — creation, reuse, expiry, cross-tab behaviour
- *   2. UTM capture — idempotency, correct keys, no overwrite on re-visit
- *   3. Click ID capture — stored with timestamp, expiry enforcement
- *   4. Attribution context — complete snapshot with correct fallbacks
- *   5. Meta/GA4 cookie readers — correct parsing of _fbp, _fbc, _ga formats
- *   6. buildClientAnalyticsPayload — all fields present, eventId preserved
- *
- * Note: localStorage is mocked by Jest's jsdom environment automatically.
- * document.cookie requires manual setup — see beforeEach blocks.
- */
+import { vi, beforeEach, describe, test, expect } from 'vitest';
 
 import {
   generateEventId,
@@ -31,42 +11,33 @@ import {
   buildClientAnalyticsPayload,
   initAnalytics,
   resetAnalyticsState,
-} from '../analytics';
+} from '../analytics.js';
 
-// ─── SETUP ────────────────────────────────────────────────────────────────────
+import { KEYS } from '../analytics.js';
 
-// Storage key constants — mirrors the KEYS object in analytics.js
-const KEYS = {
-  UTM_SOURCE:   'epic_utm_source',
-  UTM_MEDIUM:   'epic_utm_medium',
-  UTM_CAMPAIGN: 'epic_utm_campaign',
-  UTM_TERM:     'epic_utm_term',
-  UTM_CONTENT:  'epic_utm_content',
-  UTM_CAPTURED: 'epic_utm_captured',
-  LANDING_PAGE: 'epic_landing_page',
-  GCLID:        'epic_gclid',
-  FBCLID:       'epic_fbclid',
-  TTCLID:       'epic_ttclid',
-  MSCLKID:      'epic_msclkid',
-  SESSION:      'epic_session',
+const mockLocation = (input = 'http://localhost/') => {
+  const url = typeof input === 'string'
+    ? new URL(input)
+    : new URL('http://localhost' + (input.pathname ?? '/') + (input.search ?? '') + (input.hash ?? ''));
+
+  vi.stubGlobal('location', {
+    href:     url.href,
+    pathname: url.pathname,
+    search:   url.search,
+    hash:     url.hash,
+    origin:   url.origin,
+    assign:   vi.fn(),
+    replace:  vi.fn(),
+  });
 };
 
 beforeEach(() => {
-  // Clear localStorage before each test
   localStorage.clear();
-
-  // Reset URL to clean state
-  delete window.location;
-  window.location = {
-    pathname: '/',
-    search:   '',
-    href:     'http://localhost/',
-  };
-
-  // Clear cookies
+  mockLocation();
   document.cookie.split(';').forEach(cookie => {
     const name = cookie.split('=')[0].trim();
-    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+    if (name)
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
   });
 });
 
@@ -116,7 +87,6 @@ describe('getOrCreateSessionId', () => {
   });
 
   test('creates new session when existing session has expired', () => {
-    // Manually store an expired session (lastSeen 31 minutes ago)
     const expiredSession = {
       id:       'expired-session-id',
       lastSeen: Date.now() - 31 * 60 * 1000,
@@ -131,24 +101,22 @@ describe('getOrCreateSessionId', () => {
     const id1 = getOrCreateSessionId();
     const firstSeen = JSON.parse(localStorage.getItem(KEYS.SESSION)).lastSeen;
 
-    // Small delay to ensure timestamps differ
-    jest.advanceTimersByTime ? jest.advanceTimersByTime(100) : null;
+    // Manually advance lastSeen by manipulating the stored value so the
+    // next call sees a slightly older timestamp, confirming it updates it.
+    const stored = JSON.parse(localStorage.getItem(KEYS.SESSION));
+    stored.lastSeen = stored.lastSeen - 1000;
+    localStorage.setItem(KEYS.SESSION, JSON.stringify(stored));
 
     const id2 = getOrCreateSessionId();
     const secondSeen = JSON.parse(localStorage.getItem(KEYS.SESSION)).lastSeen;
 
     expect(id1).toBe(id2);
-    expect(secondSeen).toBeGreaterThanOrEqual(firstSeen);
+    expect(secondSeen).toBeGreaterThan(firstSeen - 1000);
   });
 
   test('simulates cross-tab behaviour — same session read from storage', () => {
-    // Simulate Tab 1 creating a session
     const sessionFromTab1 = getOrCreateSessionId();
-
-    // Simulate Tab 2 reading the same session (same localStorage)
-    // In a real browser both tabs share localStorage
     const sessionFromTab2 = getOrCreateSessionId();
-
     expect(sessionFromTab1).toBe(sessionFromTab2);
   });
 });
@@ -157,7 +125,7 @@ describe('getOrCreateSessionId', () => {
 
 describe('captureUTMsOnLoad', () => {
   test('stores UTM parameters from URL to localStorage', () => {
-    window.location.search = '?utm_source=google&utm_medium=cpc&utm_campaign=summer_sale';
+    mockLocation({ search: '?utm_source=google&utm_medium=cpc&utm_campaign=summer_sale' });
 
     captureUTMsOnLoad();
 
@@ -167,8 +135,10 @@ describe('captureUTMsOnLoad', () => {
   });
 
   test('stores landing page URL', () => {
-    window.location.pathname = '/products/blue-sneakers';
-    window.location.search   = '?utm_source=google';
+    mockLocation({
+      pathname: '/products/blue-sneakers',
+      search:   '?utm_source=google',
+    });
 
     captureUTMsOnLoad();
 
@@ -181,20 +151,18 @@ describe('captureUTMsOnLoad', () => {
   });
 
   test('is idempotent — does NOT overwrite UTMs on second call', () => {
-    // First visit: UTMs from landing page
-    window.location.search = '?utm_source=google&utm_medium=cpc';
+    mockLocation({ search: '?utm_source=google&utm_medium=cpc' });
     captureUTMsOnLoad();
 
-    // User navigates to another page (different URL, no UTMs)
-    window.location.search = '';
-    captureUTMsOnLoad(); // Should NOT overwrite
+    mockLocation({ search: '' });
+    captureUTMsOnLoad();
 
     expect(localStorage.getItem(KEYS.UTM_SOURCE)).toBe('google');
     expect(localStorage.getItem(KEYS.UTM_MEDIUM)).toBe('cpc');
   });
 
   test('does not store null UTM values', () => {
-    window.location.search = '?utm_source=google'; // Only utm_source present
+    mockLocation({ search: '?utm_source=google' });
 
     captureUTMsOnLoad();
 
@@ -204,10 +172,9 @@ describe('captureUTMsOnLoad', () => {
   });
 
   test('handles URL with no UTM parameters gracefully', () => {
-    window.location.search = '';
+    mockLocation({ search: '' });
     expect(() => captureUTMsOnLoad()).not.toThrow();
 
-    // No UTMs stored, but sentinel and landing page should still be set
     expect(localStorage.getItem(KEYS.UTM_CAPTURED)).toBe('1');
     expect(localStorage.getItem(KEYS.UTM_SOURCE)).toBeNull();
   });
@@ -217,7 +184,7 @@ describe('captureUTMsOnLoad', () => {
 
 describe('captureClickIds', () => {
   test('stores gclid from URL with timestamp', () => {
-    window.location.search = '?gclid=Cj0KCQiA_test_gclid';
+    mockLocation({ search: '?gclid=Cj0KCQiA_test_gclid' });
 
     captureClickIds();
 
@@ -227,7 +194,7 @@ describe('captureClickIds', () => {
   });
 
   test('stores fbclid from URL', () => {
-    window.location.search = '?fbclid=AbCdEfGh_test_fbclid';
+    mockLocation({ search: '?fbclid=AbCdEfGh_test_fbclid' });
 
     captureClickIds();
 
@@ -236,7 +203,7 @@ describe('captureClickIds', () => {
   });
 
   test('stores multiple click IDs simultaneously', () => {
-    window.location.search = '?gclid=google123&fbclid=meta456&ttclid=tiktok789';
+    mockLocation({ search: '?gclid=google123&fbclid=meta456&ttclid=tiktok789' });
 
     captureClickIds();
 
@@ -246,12 +213,10 @@ describe('captureClickIds', () => {
   });
 
   test('overwrites existing click ID with new one (not idempotent like UTMs)', () => {
-    // First ad click
-    window.location.search = '?gclid=first_click';
+    mockLocation({ search: '?gclid=first_click' });
     captureClickIds();
 
-    // Second ad click (different ad, new gclid)
-    window.location.search = '?gclid=second_click';
+    mockLocation({ search: '?gclid=second_click' });
     captureClickIds();
 
     const stored = JSON.parse(localStorage.getItem(KEYS.GCLID));
@@ -259,7 +224,7 @@ describe('captureClickIds', () => {
   });
 
   test('does not store click IDs when not in URL', () => {
-    window.location.search = '?utm_source=google'; // No click IDs
+    mockLocation({ search: '?utm_source=google' });
 
     captureClickIds();
 
@@ -272,7 +237,6 @@ describe('captureClickIds', () => {
 
 describe('getAttributionContext', () => {
   beforeEach(() => {
-    // Set up a known state
     localStorage.setItem(KEYS.UTM_SOURCE,   'google');
     localStorage.setItem(KEYS.UTM_MEDIUM,   'cpc');
     localStorage.setItem(KEYS.UTM_CAMPAIGN, 'test_campaign');
@@ -301,7 +265,6 @@ describe('getAttributionContext', () => {
   });
 
   test('returns null for expired gclid', () => {
-    // Store a gclid captured 91 days ago (beyond 90-day expiry)
     const ninetyOneDaysAgo = new Date(Date.now() - 91 * 24 * 60 * 60 * 1000).toISOString();
     localStorage.setItem(KEYS.GCLID, JSON.stringify({
       value:      'expired_gclid',
@@ -310,8 +273,6 @@ describe('getAttributionContext', () => {
 
     const ctx = getAttributionContext();
     expect(ctx.gclid).toBeNull();
-
-    // Also verifies expired key is cleaned up
     expect(localStorage.getItem(KEYS.GCLID)).toBeNull();
   });
 
@@ -340,7 +301,6 @@ describe('getAttributionContext', () => {
 
   test('returns null for missing fields, not undefined', () => {
     const ctx = getAttributionContext();
-    // Fields not set in localStorage should be null, not undefined
     expect(ctx.utm_term).toBeNull();
     expect(ctx.utm_content).toBeNull();
   });
@@ -409,7 +369,6 @@ describe('getGA4ClientId', () => {
 
 describe('buildClientAnalyticsPayload', () => {
   beforeEach(() => {
-    // Set up realistic state
     localStorage.setItem(KEYS.UTM_SOURCE,   'google');
     localStorage.setItem(KEYS.UTM_MEDIUM,   'cpc');
     localStorage.setItem(KEYS.UTM_CAPTURED, '1');
@@ -419,16 +378,13 @@ describe('buildClientAnalyticsPayload', () => {
       capturedAt: new Date().toISOString(),
     }));
 
-    // Set GA4 cookie
     document.cookie = '_ga=GA1.1.111111111.222222222';
-
-    // Set Meta cookies
     document.cookie = '_fbp=fb.1.333333333.444444444';
   });
 
   test('includes the eventId unchanged', () => {
-    const eventId  = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
-    const payload  = buildClientAnalyticsPayload(eventId);
+    const eventId = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
+    const payload = buildClientAnalyticsPayload(eventId);
     expect(payload.analyticsEventId).toBe(eventId);
   });
 
@@ -466,7 +422,6 @@ describe('buildClientAnalyticsPayload', () => {
   });
 
   test('fbc falls back to fbclid from attribution when _fbc cookie missing', () => {
-    // No _fbc cookie, but fbclid stored from ad click
     localStorage.setItem(KEYS.FBCLID, JSON.stringify({
       value:      'fbclid_from_url',
       capturedAt: new Date().toISOString(),
@@ -481,12 +436,12 @@ describe('buildClientAnalyticsPayload', () => {
 
 describe('initAnalytics', () => {
   test('runs without throwing when called on clean state', () => {
-    window.location.search = '?utm_source=google&gclid=test123';
+    mockLocation({ search: '?utm_source=google&gclid=test123' });
     expect(() => initAnalytics()).not.toThrow();
   });
 
   test('captures UTMs and click IDs in one call', () => {
-    window.location.search = '?utm_source=facebook&utm_medium=social&fbclid=fb_test';
+    mockLocation({ search: '?utm_source=facebook&utm_medium=social&fbclid=fb_test' });
 
     initAnalytics();
 
@@ -504,18 +459,14 @@ describe('initAnalytics', () => {
   });
 
   test('captureClickIds runs before UTM idempotency check', () => {
-    // First init: UTMs captured and sentinel set
-    window.location.search = '?utm_source=google&gclid=gclid_v1';
+    mockLocation({ search: '?utm_source=google&gclid=gclid_v1' });
     initAnalytics();
 
-    // Second init: user comes via new ad click (new gclid), UTMs already stored
-    window.location.search = '?gclid=gclid_v2';
+    mockLocation({ search: '?gclid=gclid_v2' });
     initAnalytics();
 
-    // UTMs should be preserved (idempotent)
     expect(localStorage.getItem(KEYS.UTM_SOURCE)).toBe('google');
 
-    // But gclid should be the new one (click IDs are NOT idempotent)
     const gclid = JSON.parse(localStorage.getItem(KEYS.GCLID));
     expect(gclid.value).toBe('gclid_v2');
   });
@@ -525,7 +476,6 @@ describe('initAnalytics', () => {
 
 describe('resetAnalyticsState', () => {
   test('clears all analytics localStorage keys', () => {
-    // Set up state
     localStorage.setItem(KEYS.UTM_SOURCE,   'google');
     localStorage.setItem(KEYS.UTM_CAPTURED, '1');
     localStorage.setItem(KEYS.SESSION, JSON.stringify({ id: 'test', lastSeen: Date.now() }));
@@ -538,16 +488,13 @@ describe('resetAnalyticsState', () => {
   });
 
   test('after reset, initAnalytics captures new UTMs', () => {
-    // First session
-    window.location.search = '?utm_source=google';
+    mockLocation({ search: '?utm_source=google' });
     initAnalytics();
     expect(localStorage.getItem(KEYS.UTM_SOURCE)).toBe('google');
 
-    // Reset simulates new user / cleared state
     resetAnalyticsState();
 
-    // New session with different source
-    window.location.search = '?utm_source=facebook';
+    mockLocation({ search: '?utm_source=facebook' });
     initAnalytics();
     expect(localStorage.getItem(KEYS.UTM_SOURCE)).toBe('facebook');
   });

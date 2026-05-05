@@ -43,7 +43,7 @@ import { v4 as uuidv4 } from 'uuid';
 // ─── STORAGE KEYS ─────────────────────────────────────────────────────────────
 // Centralised here so typos don't create orphaned localStorage keys.
 
-const KEYS = {
+export const KEYS = {
   // UTM parameters (first-touch, captured once on landing)
   UTM_SOURCE:   'epic_utm_source',
   UTM_MEDIUM:   'epic_utm_medium',
@@ -434,16 +434,21 @@ export const buildClientAnalyticsPayload = (eventId) => {
  *
  * @returns {Object} Initial attribution context (useful for debugging)
  */
+
 export const initAnalytics = () => {
   captureClickIds();
   captureUTMsOnLoad();
   const sessionId = getOrCreateSessionId();
 
-  if (import.meta.env.DEV) {
-    console.debug('[Analytics] Initialized', {
-      sessionId,
-      attribution: getAttributionContext(),
-    });
+  try {
+    if (import.meta?.env?.DEV) {
+      console.debug('[Analytics] Initialized', {
+        sessionId,
+        attribution: getAttributionContext(),
+      });
+    }
+  } catch {
+    // import.meta.env not available in all environments
   }
 
   return getAttributionContext();
@@ -451,17 +456,7 @@ export const initAnalytics = () => {
 
 // ─── DEBUG UTILITY ────────────────────────────────────────────────────────────
 
-/**
- * debugAnalyticsState
- *
- * Prints the current analytics state to the console.
- * Call from browser DevTools: window.__epicAnalytics?.debug()
- *
- * Only available in development. Expose via App.jsx:
- *   if (process.env.NODE_ENV === 'development') {
- *     window.__epicAnalytics = { debug: debugAnalyticsState };
- *   }
- */
+
 export const debugAnalyticsState = () => {
   const state = {
     session:     JSON.parse(localStorage.getItem(KEYS.SESSION) || 'null'),
