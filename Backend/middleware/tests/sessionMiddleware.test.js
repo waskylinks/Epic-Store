@@ -6,53 +6,65 @@
  * Run with:
  *   npx jest middleware/__tests__/sessionMiddleware.test.js --verbose
  *
- * Tests validate:
- *   1. Cookie creation — new session gets a valid UUID cookie
- *   2. Cookie rolling — existing session cookie TTL is refreshed every request
- *   3. req.sessionId — always populated regardless of Redis state
- *   4. Redis enrichment — page views increment, lastSeenAt updates
- *   5. Redis failure resilience — middleware never throws when Redis is down
- *   6. getSessionMeta — returns null gracefully on missing/expired sessions
- *   7. invalidateSession — clears cookie and removes Redis key
+ * WHY jest.unstable_mockModule instead of jest.mock?
+ *
+ *   This test suite runs under --experimental-vm-modules (ESM mode).
+ *   In ESM, jest.mock() with a factory that closes over outer-scope variables
+ *   does NOT work correctly — the factory executes before `const` declarations
+ *   are initialised (the temporal dead zone), so the mock module receives
+ *   `undefined` instead of the jest.fn() instances. The mock is registered,
+ *   but the functions inside it are dead references that cannot be controlled
+ *   from the test scope.
+ *
+ *   jest.unstable_mockModule is the ESM-correct alternative. It:
+ *     1. Accepts an async factory (required for ESM).
+ *     2. Must be called BEFORE the module under test is imported.
+ *     3. Works correctly with dynamic import() — which is why all imports of
+ *        the module under test are done with await import() inside
+ *        beforeAll(), AFTER the mock is registered.
+ *
+ *   The trade-off: imports must be deferred to module-level let variables
+ *   populated in beforeAll(). This is the standard pattern for ESM Jest mocks.
  */
 
 import { jest } from '@jest/globals';
 
 // ─── MOCK REDIS ───────────────────────────────────────────────────────────────
-// We mock the redis utility so tests don't require a real Redis instance.
-// Each test controls exactly what getCache returns and what setCache receives.
 
-const mockGetCache = jest.fn();
-const mockSetCache = jest.fn();
+const mockGetCache    = jest.fn();
+const mockSetCache    = jest.fn();
 const mockDeleteCache = jest.fn();
 
-jest.mock('../../utils/redis.js', () => ({
+// Must be called before any import of the module under test.
+// jest.unstable_mockModule is the ESM-safe replacement for jest.mock()
+// with a factory function that closes over outer-scope jest.fn() instances.
+jest.unstable_mockModule('../../utils/redis.js', () => ({
   getCache:    mockGetCache,
   setCache:    mockSetCache,
   deleteCache: mockDeleteCache,
 }));
 
-import {
-  sessionMiddleware,
-  getSessionMeta,
-  invalidateSession,
-} from '../sessionMiddleware.js';
+// ─── DEFERRED IMPORTS ────────────────────────────────────────────────────────
+// In ESM mode, static imports are hoisted above jest.unstable_mockModule,
+// so the module under test would load the real redis.js before the mock
+// is registered. Dynamic import() respects module registration order —
+// importing after jest.unstable_mockModule guarantees the mock is in place.
+
+let sessionMiddleware;
+let getSessionMeta;
+let invalidateSession;
+
+beforeAll(async () => {
+  const mod = await import('../sessionMiddleware.js');
+  sessionMiddleware  = mod.sessionMiddleware;
+  getSessionMeta     = mod.getSessionMeta;
+  invalidateSession  = mod.invalidateSession;
+});
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
-/**
- * buildMockReq
- * Builds a minimal Express request object for testing.
- * Cookies can be pre-populated to simulate returning visitors.
- */
-const buildMockReq = (cookies = {}) => ({
-  cookies,
-});
+const buildMockReq = (cookies = {}) => ({ cookies });
 
-/**
- * buildMockRes
- * Builds a minimal Express response object that captures cookie calls.
- */
 const buildMockRes = () => {
   const res = {
     _cookies:    {},
@@ -65,14 +77,12 @@ const buildMockRes = () => {
 
 const buildMockNext = () => jest.fn();
 
-// UUID v4 regex for assertions
 const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ─── SETUP ────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
   jest.clearAllMocks();
-  // Default: Redis returns null (no existing session meta)
   mockGetCache.mockResolvedValue(null);
   mockSetCache.mockResolvedValue(true);
   mockDeleteCache.mockResolvedValue(true);
@@ -157,7 +167,6 @@ describe('Cookie rolling — returning session', () => {
 
     await sessionMiddleware(req, res, next);
 
-    // Cookie should be set again (rolling) with the same ID
     expect(res.cookie).toHaveBeenCalledWith(
       'epicstore_sid',
       existingId,
@@ -215,7 +224,7 @@ describe('req.sessionId attachment', () => {
     await sessionMiddleware(req, res, next);
 
     expect(next).toHaveBeenCalledTimes(1);
-    expect(next).toHaveBeenCalledWith(); // no error argument
+    expect(next).toHaveBeenCalledWith();
   });
 });
 
@@ -227,7 +236,7 @@ describe('Redis enrichment', () => {
     const res  = buildMockRes();
     const next = buildMockNext();
 
-    mockGetCache.mockResolvedValue(null); // No existing meta
+    mockGetCache.mockResolvedValue(null);
 
     await sessionMiddleware(req, res, next);
 
@@ -285,7 +294,7 @@ describe('Redis enrichment', () => {
     expect(mockSetCache).toHaveBeenCalledWith(
       `session_meta:${existingId}`,
       expect.objectContaining({ pageViews: 3 }),
-      1800 // SESSION_ROLLING_TTL default
+      1800
     );
   });
 });
@@ -300,7 +309,6 @@ describe('Redis failure resilience', () => {
 
     mockGetCache.mockRejectedValue(new Error('Redis connection refused'));
 
-    // Should not throw
     await expect(sessionMiddleware(req, res, next)).resolves.not.toThrow();
   });
 
@@ -314,7 +322,7 @@ describe('Redis failure resilience', () => {
     await sessionMiddleware(req, res, next);
 
     expect(next).toHaveBeenCalledTimes(1);
-    expect(next).toHaveBeenCalledWith(); // no error
+    expect(next).toHaveBeenCalledWith();
   });
 
   test('still sets req.sessionId when Redis fails', async () => {
@@ -428,7 +436,6 @@ describe('invalidateSession', () => {
   test('does not throw when sessionId is null', async () => {
     const res = buildMockRes();
     await expect(invalidateSession(null, res)).resolves.not.toThrow();
-    // Cookie should still be cleared
     expect(res.clearCookie).toHaveBeenCalled();
   });
 

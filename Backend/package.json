@@ -10,7 +10,10 @@
   "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
   "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose",
 
-  "test:analytics": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/analyticsEvent.test.js --verbose"
+  "test:analytics": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/analyticsEvent.test.js --verbose",
+  "test:session":  "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/sessionMiddleware.test.js --verbose",
+  "test:identity": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/identityMiddleware.test.js --verbose"
+
 },
   "keywords": [
     "MongoDB",

@@ -44,12 +44,12 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { getCache, setCache } from '../utils/redis.js';
+import { getCache, setCache, deleteCache } from '../utils/redis.js';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
-const SESSION_COOKIE  = 'epicstore_sid';
-const TTL_SECONDS     = parseInt(process.env.SESSION_ROLLING_TTL) || 1800; // 30 min default
+const SESSION_COOKIE   = 'epicstore_sid';
+const TTL_SECONDS      = parseInt(process.env.SESSION_ROLLING_TTL) || 1800; // 30 min default
 const REDIS_KEY_PREFIX = 'session_meta:';
 
 // ─── COOKIE OPTIONS ───────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ const buildCookieOptions = () => ({
  * @param {Function}                   next
  */
 export const sessionMiddleware = async (req, res, next) => {
-  let sessionId = req.cookies?.[SESSION_COOKIE];
+  let sessionId    = req.cookies?.[SESSION_COOKIE];
   let isNewSession = false;
 
   // ── Create session if none exists ──────────────────────────────────────────
@@ -117,15 +117,15 @@ export const sessionMiddleware = async (req, res, next) => {
 
     let meta = await getCache(redisKey);
 
-    if (!meta || isNewSession) {
-      // New session — initialise metadata
+    if (isNewSession || !meta) {
+      // New session (or no cached meta) — initialise metadata
       meta = {
-        pageViews: 0,
-        startedAt: new Date().toISOString(),
+        pageViews:  0,
+        startedAt:  new Date().toISOString(),
         lastSeenAt: new Date().toISOString(),
       };
     } else {
-      // Existing session — increment page view count and update lastSeenAt
+      // Returning session with cached meta — increment page view count
       meta.pageViews  = (meta.pageViews || 0) + 1;
       meta.lastSeenAt = new Date().toISOString();
     }
@@ -192,10 +192,8 @@ export const invalidateSession = async (sessionId, res) => {
     sameSite: 'lax',
   });
 
-  // Remove from Redis (non-blocking)
   if (sessionId) {
     try {
-      const { deleteCache } = await import('../utils/redis.js');
       await deleteCache(`${REDIS_KEY_PREFIX}${sessionId}`);
     } catch (err) {
       console.error('[sessionMiddleware] Failed to invalidate session in Redis:', err.message);
