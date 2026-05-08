@@ -6,41 +6,63 @@
  * Run with:
  *   npx jest middleware/__tests__/identityMiddleware.test.js --verbose
  *
- * Tests validate:
- *   1. Cookie creation — new anonymous ID is a valid UUID v4
- *   2. Cookie persistence — existing anonymous ID is never regenerated
- *   3. req.anonymousId — always populated
- *   4. Cookie options — httpOnly, sameSite, maxAge
- *   5. stitchIdentity — links anonymousId to CustomerAnalytics
- *   6. stitchIdentity resilience — never throws, never blocks auth
- *   7. stitchIdentityFromRequest — reads from req correctly
+ * WHY jest.unstable_mockModule instead of jest.mock?
+ *
+ *   Same reason as sessionMiddleware.test.js — this suite runs under
+ *   --experimental-vm-modules (ESM mode). jest.mock() factory functions
+ *   that close over outer-scope variables fail in ESM because the factory
+ *   executes before `const` declarations are initialised.
+ *
+ *   Additionally, stitchIdentity uses a dynamic import() to load
+ *   CustomerAnalytics (to avoid circular deps). jest.mock() cannot
+ *   intercept dynamic imports at all in ESM mode — jest.unstable_mockModule
+ *   registers the mock in Jest's module registry so both static and dynamic
+ *   imports of that path receive the mock.
+ *
+ *   Pattern:
+ *     1. Call jest.unstable_mockModule BEFORE any import of the module under test
+ *     2. Import the module under test with await import() inside beforeAll()
+ *     3. All mock fn references (mockFindOneAndUpdate) remain in outer scope
+ *        and are controlled per-test via mockResolvedValue / mockRejectedValue
  */
 
 import { jest } from '@jest/globals';
 
 // ─── MOCK CustomerAnalytics ───────────────────────────────────────────────────
-// We mock the model to avoid requiring a real MongoDB connection in unit tests.
 
 const mockFindOneAndUpdate = jest.fn();
 
-jest.mock('../../models/customer-analytics-model.js', () => ({
+// Must be called before any import of identityMiddleware.js.
+// Intercepts both the static import path and the dynamic import() path
+// used inside stitchIdentity — jest.unstable_mockModule handles both.
+jest.unstable_mockModule('../../models/customer-analytics-model.js', () => ({
   default: {
     findOneAndUpdate: mockFindOneAndUpdate,
   },
 }));
 
-import {
-  identityMiddleware,
-  stitchIdentity,
-  stitchIdentityFromRequest,
-} from '../identityMiddleware.js';
+// ─── DEFERRED IMPORTS ────────────────────────────────────────────────────────
+// Static imports are hoisted above jest.unstable_mockModule in ESM, so the
+// module under test would load the real CustomerAnalytics before the mock
+// is registered. Dynamic import() respects registration order.
+
+let identityMiddleware;
+let stitchIdentity;
+let stitchIdentityFromRequest;
+
+beforeAll(async () => {
+  const mod = await import('../identityMiddleware.js');
+  identityMiddleware          = mod.identityMiddleware;
+  stitchIdentity              = mod.stitchIdentity;
+  stitchIdentityFromRequest   = mod.stitchIdentityFromRequest;
+});
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 const buildMockReq = (cookies = {}, user = null) => ({
   cookies,
   user,
-  anonymousId: undefined, // will be set by middleware
+  anonymousId: undefined,
 });
 
 const buildMockRes = () => {
@@ -55,7 +77,7 @@ const buildMockRes = () => {
 
 const buildMockNext = () => jest.fn();
 
-const UUID_V4_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_V4_REGEX   = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TTL_365_DAYS_MS = 365 * 24 * 60 * 60 * 1000;
 
 // ─── SETUP ────────────────────────────────────────────────────────────────────
@@ -152,7 +174,6 @@ describe('Cookie persistence — returning visitor', () => {
 
     identityMiddleware(req, res, next);
 
-    // Cookie should NOT be set again — existing ID is preserved
     expect(res.cookie).not.toHaveBeenCalled();
   });
 
@@ -170,7 +191,6 @@ describe('Cookie persistence — returning visitor', () => {
   test('anonymous ID is stable across many requests', () => {
     const existingId = 'f47ac10b-58cc-4372-a567-0e02b2c3d479';
 
-    // Simulate 10 consecutive requests from the same user
     for (let i = 0; i < 10; i++) {
       const req  = buildMockReq({ epicstore_anon: existingId });
       const res  = buildMockRes();
@@ -179,7 +199,7 @@ describe('Cookie persistence — returning visitor', () => {
       identityMiddleware(req, res, next);
 
       expect(req.anonymousId).toBe(existingId);
-      expect(res.cookie).not.toHaveBeenCalled(); // No new cookie set
+      expect(res.cookie).not.toHaveBeenCalled();
     }
   });
 });
@@ -217,7 +237,7 @@ describe('req.anonymousId attachment', () => {
     identityMiddleware(req, res, next);
 
     expect(next).toHaveBeenCalledTimes(1);
-    expect(next).toHaveBeenCalledWith(); // no error argument
+    expect(next).toHaveBeenCalledWith();
   });
 });
 
@@ -238,11 +258,9 @@ describe('stitchIdentity', () => {
   });
 
   test('uses $addToSet to prevent duplicate anonymous IDs', async () => {
-    // Simulate the same anonymousId being stitched twice (e.g. user logs in twice)
     await stitchIdentity('user_123', 'anon_456');
     await stitchIdentity('user_123', 'anon_456');
 
-    // Both calls should use $addToSet — MongoDB handles deduplication
     const calls = mockFindOneAndUpdate.mock.calls;
     expect(calls[0][1].$addToSet.anonymousIds).toBe('anon_456');
     expect(calls[1][1].$addToSet.anonymousIds).toBe('anon_456');
@@ -250,7 +268,6 @@ describe('stitchIdentity', () => {
 
   test('does NOT throw when userId is null', async () => {
     await expect(stitchIdentity(null, 'anon_456')).resolves.not.toThrow();
-    // Should return early without calling the DB
     expect(mockFindOneAndUpdate).not.toHaveBeenCalled();
   });
 
@@ -267,14 +284,12 @@ describe('stitchIdentity', () => {
   test('does NOT throw when CustomerAnalytics.findOneAndUpdate rejects', async () => {
     mockFindOneAndUpdate.mockRejectedValue(new Error('MongoDB connection lost'));
 
-    // Must not throw — caller uses .catch() logging only
+    // stitchIdentity propagates the error so the caller's .catch() fires —
+    // this is intentional. The controller wraps it: stitchIdentity(...).catch(...)
     await expect(stitchIdentity('user_123', 'anon_456')).rejects.toThrow('MongoDB connection lost');
-    // Note: stitchIdentity itself propagates the error so the caller's .catch() fires
-    // This is intentional — the controller wraps it in .catch() for non-blocking behaviour
   });
 
   test('different anonymousIds are stitched independently for same user', async () => {
-    // User has two devices — two different anonymous IDs
     await stitchIdentity('user_123', 'anon_device1');
     await stitchIdentity('user_123', 'anon_device2');
 
@@ -309,10 +324,7 @@ describe('stitchIdentityFromRequest', () => {
   });
 
   test('does NOT throw when req.user is null (unauthenticated request)', async () => {
-    const req = {
-      user:        null,
-      anonymousId: 'anon_456',
-    };
+    const req = { user: null, anonymousId: 'anon_456' };
 
     await expect(stitchIdentityFromRequest(req)).resolves.not.toThrow();
     expect(mockFindOneAndUpdate).not.toHaveBeenCalled();
@@ -328,4 +340,3 @@ describe('stitchIdentityFromRequest', () => {
     expect(mockFindOneAndUpdate).not.toHaveBeenCalled();
   });
 });
-
