@@ -115,7 +115,12 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     taxPrice,
     shippingPrice,
     totalPrice,
-    analytics: clientAnalytics
+    analyticsEventId,
+    clientTimestamp,
+    clientAttribution,
+    ga4ClientId,
+    fbp,
+    fbc,
   } = req.body;
 
   if (!orderItems || orderItems.length === 0) {
@@ -123,24 +128,33 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
   }
 
   const serverAnalytics = extractAnalyticsData(req);
-  const utmParams       = clientAnalytics
-    ? parseUTMParams(clientAnalytics)
-    : parseUTMParams(req.query);
+  const utmParams       = parseUTMParams(clientAttribution || req.query);
 
   const fullAnalytics = {
-    source:          utmParams.source,
-    medium:          utmParams.medium,
-    campaign:        utmParams.campaign,
-    term:            utmParams.term,
-    content:         utmParams.content,
-    device:          clientAnalytics?.device   || serverAnalytics.device,
-    browser:         clientAnalytics?.browser  || serverAnalytics.browser,
-    referrer:        clientAnalytics?.referrer || serverAnalytics.referrer,
-    landingPage:     clientAnalytics?.landingPage  || null,
-    sessionId:       clientAnalytics?.sessionId    || null,
-    isFirstPurchase: clientAnalytics?.isFirstPurchase || false,
-    capturedAt:      new Date()
-  };
+    source:    utmParams.source,
+    medium:    utmParams.medium,
+    campaign:  utmParams.campaign,
+
+    device:    clientAttribution?.device   || serverAnalytics.device,
+    browser:   clientAttribution?.browser  || serverAnalytics.browser,
+    referrer:  clientAttribution?.referrer || serverAnalytics.referrer,
+
+    landingPage:  clientAttribution?.landing_page || null,
+    eventId:      analyticsEventId                || null,
+    anonymousId:  req.anonymousId                 || null,
+
+    gclid:   req.attribution?.gclid  || clientAttribution?.gclid  || null,
+    fbclid:  req.attribution?.fbclid || clientAttribution?.fbclid || fbc || null,
+    ttclid:  req.attribution?.ttclid || clientAttribution?.ttclid || null,
+
+    confidenceScore:    req.attribution?.confidenceScore   ?? null,
+    confidenceLevel:    req.attribution?.confidenceLevel   || null,
+    isReconstructed:    req.attribution?.isReconstructed   || false,
+    reconstructionRule: req.attribution?.reconstructionRule || null,
+
+    isFirstPurchase: false,
+    capturedAt:      new Date(),
+  }
 
   const user        = await User.findById(req.user._id);
   const fraudCheck  = calculateFraudRisk({

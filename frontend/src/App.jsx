@@ -59,7 +59,7 @@ import ReturnAnalytics from './Admin/ReturnAnalytics';
 import RecoveryEmailAnalytics from './Admin/RecoveryEmailAnalytics';
 import CronHealth from './Admin/CronHealth';
 
-import { initAnalytics, debugAnalyticsState } from './utils/analytics';
+import { initAnalytics, debugAnalyticsState } from './utils/analytics.js';
 
 function App() {
   const { initializing, isAuthenticated } = useSelector(state => state.user);

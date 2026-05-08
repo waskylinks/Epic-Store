@@ -1,23 +1,3 @@
-/**
- * frontend/src/features/order/orderSlice.js — MODIFIED FOR PHASE 1
- *
- * Changes from previous version:
- *
- *   1. REMOVED captureUTMsOnLoad export — this now lives in utils/analytics.js.
- *      The orderSlice should not be responsible for session/UTM capture.
- *      App.jsx now imports initAnalytics() from the SDK directly.
- *
- *   2. REMOVED getUTMParams, getDeviceInfo, getAnalyticsData helpers —
- *      replaced by getAttributionContext() and buildClientAnalyticsPayload()
- *      from utils/analytics.js which handle all of this correctly.
- *
- *   3. MODIFIED createOrder thunk — now imports buildClientAnalyticsPayload
- *      and generateEventId from the analytics SDK and attaches the full
- *      client analytics payload to the order request body.
- *
- *   4. All other thunks and reducers are unchanged.
- */
-
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
 import axios from 'axios';
 
@@ -27,7 +7,7 @@ import axios from 'axios';
 import {
   generateEventId,
   buildClientAnalyticsPayload,
-} from '../../utils/analytics';
+} from '../../utils/analytics.js';
 
 const API_BASE = '/api/v1';
 
