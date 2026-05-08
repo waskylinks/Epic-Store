@@ -6,14 +6,14 @@
  * Run with:
  *   npx jest middleware/__tests__/attributionMiddleware.test.js --verbose
  *
- * Tests validate:
- *   1. computeConfidence — score calculation for all signal combinations
- *   2. Click ID capture — query param → cookie, cookie fallback
- *   3. UTM extraction — query param → cookie fallback
- *   4. Confidence thresholds — HIGH / MEDIUM / LOW boundaries
- *   5. Reconstruction trigger — only fires when LOW + no signals
- *   6. req.attribution shape — all fields present with correct types
- *   7. Failure resilience — never throws, always calls next()
+ * WHY jest.unstable_mockModule:
+ *   Running under --experimental-vm-modules (ESM mode). jest.mock() with a
+ *   factory that closes over outer-scope jest.fn() instances silently fails —
+ *   the factory runs before `const` declarations are initialised, so the mock
+ *   module receives `undefined` instead of the jest.fn() references.
+ *
+ *   jest.unstable_mockModule + deferred await import() is the correct pattern.
+ *   See sessionMiddleware.test.js for a detailed explanation.
  */
 
 import { jest } from '@jest/globals';
@@ -22,19 +22,28 @@ import { jest } from '@jest/globals';
 
 const mockReconstructReferrer = jest.fn();
 
-jest.mock('../../utils/referrerReconstruction.js', () => ({
+jest.unstable_mockModule('../../utils/referrerReconstruction.js', () => ({
   reconstructReferrer: mockReconstructReferrer,
 }));
 
-import { trackAttribution, computeConfidence } from '../attributionMiddleware.js';
+// ─── DEFERRED IMPORTS ────────────────────────────────────────────────────────
+
+let trackAttribution;
+let computeConfidence;
+
+beforeAll(async () => {
+  const mod        = await import('../attributionMiddleware.js');
+  trackAttribution = mod.trackAttribution;
+  computeConfidence = mod.computeConfidence;
+});
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 const buildMockReq = ({
-  query   = {},
-  cookies = {},
-  headers = {},
-  sessionId = null,
+  query       = {},
+  cookies     = {},
+  headers     = {},
+  sessionId   = null,
   originalUrl = '/products/test-product',
 } = {}) => ({
   query,
@@ -63,7 +72,7 @@ const buildMockNext = () => jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockReconstructReferrer.mockReturnValue(null); // Default: no reconstruction
+  mockReconstructReferrer.mockReturnValue(null);
 });
 
 // ─── computeConfidence ────────────────────────────────────────────────────────
@@ -169,7 +178,6 @@ describe('computeConfidence', () => {
   });
 
   test('score is rounded to 2 decimal places — no floating point noise', () => {
-    // 0.50 + 0.20 + 0.10 could produce 0.8000000000000001 without rounding
     const { score } = computeConfidence({
       hasClickId:        true,
       hasUTM:            true,
@@ -215,22 +223,25 @@ describe('trackAttribution — req.attribution shape', () => {
 
     trackAttribution(req, res, next);
 
+    // Check all required keys exist with correct types.
+    // Nullable fields (medium, campaign, referrer, click IDs, reconstructionRule)
+    // are validated with toHaveProperty — they must be present on the object
+    // but may legitimately be null. expect.anything() rejects null so cannot
+    // be used for optional fields.
     expect(req.attribution).toMatchObject({
-      source:             expect.any(String),
-      medium:             expect.anything(),
-      campaign:           expect.anything(),
-      referrer:           expect.anything(),
-      landingPage:        expect.any(String),
-      device:             expect.any(String),
-      browser:            expect.any(String),
-      gclid:              expect.anything(),
-      fbclid:             expect.anything(),
-      ttclid:             expect.anything(),
-      msclkid:            expect.anything(),
-      confidenceScore:    expect.any(Number),
-      confidenceLevel:    expect.stringMatching(/^(HIGH|MEDIUM|LOW)$/),
-      isReconstructed:    expect.any(Boolean),
-      reconstructionRule: expect.anything(),
+      source:          expect.any(String),
+      landingPage:     expect.any(String),
+      device:          expect.any(String),
+      browser:         expect.any(String),
+      confidenceScore: expect.any(Number),
+      confidenceLevel: expect.stringMatching(/^(HIGH|MEDIUM|LOW)$/),
+      isReconstructed: expect.any(Boolean),
+    });
+
+    // Nullable fields — must be present on the object (not missing), but value may be null
+    const nullableFields = ['medium', 'campaign', 'referrer', 'gclid', 'fbclid', 'ttclid', 'msclkid', 'reconstructionRule'];
+    nullableFields.forEach(field => {
+      expect(req.attribution).toHaveProperty(field);
     });
   });
 
@@ -349,11 +360,10 @@ describe('Click ID capture', () => {
     trackAttribution(req, res, next);
 
     expect(req.attribution.gclid).toBe('cookie_gclid_value');
-    // Should NOT set a new cookie since it came from existing cookie
     expect(res._cookies['gclid']).toBeUndefined();
   });
 
-  test('gclid presence gives HIGH confidence when combined with session', () => {
+  test('gclid presence gives MEDIUM confidence when combined with session', () => {
     const req  = buildMockReq({
       query:     { gclid: 'test_gclid' },
       sessionId: 'existing-session',
@@ -533,12 +543,11 @@ describe('Failure resilience', () => {
   });
 
   test('sets safe default attribution when an unexpected error occurs', () => {
-    // Cause an error by making headers throw
     const req = {
       get query() { throw new Error('Unexpected error'); },
-      cookies: {},
-      headers: {},
-      sessionId: null,
+      cookies:     {},
+      headers:     {},
+      sessionId:   null,
       originalUrl: '/',
     };
     const res  = buildMockRes();
