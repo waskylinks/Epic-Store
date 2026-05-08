@@ -14,7 +14,7 @@ const isAbortError = (error) =>
 
 export const fetchCheckoutAbandonmentStats = createAsyncThunk(
     "operations/fetchCheckoutAbandonmentStats",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/checkout/abandonment?timeframe=${timeframe}`,
@@ -185,7 +185,7 @@ export const fetchLowStockAlerts = createAsyncThunk(
 
 export const fetchCategoryPerformance = createAsyncThunk(
     "operations/fetchCategoryPerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/products/category-performance?timeframe=${timeframe}`,
@@ -244,7 +244,7 @@ export const fetchProductsBoughtTogether = createAsyncThunk(
 
 export const fetchFulfillmentAnalytics = createAsyncThunk(
     "operations/fetchFulfillmentAnalytics",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/operations/fulfillment?timeframe=${timeframe}`,
@@ -262,7 +262,7 @@ export const fetchFulfillmentAnalytics = createAsyncThunk(
 
 export const fetchSLABreaches = createAsyncThunk(
     "operations/fetchSLABreaches",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/operations/sla-breaches?timeframe=${timeframe}`,
@@ -280,7 +280,7 @@ export const fetchSLABreaches = createAsyncThunk(
 
 export const fetchFraudAnalytics = createAsyncThunk(
     "operations/fetchFraudAnalytics",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/operations/fraud?timeframe=${timeframe}`,

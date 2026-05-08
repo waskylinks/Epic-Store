@@ -47,7 +47,7 @@ export const fetchDashboardOverview = createAsyncThunk(
 
 export const fetchDashboardKPIs = createAsyncThunk(
     "dashboard/fetchDashboardKPIs",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/dashboard/kpis?timeframe=${timeframe}`,
@@ -83,7 +83,7 @@ export const fetchRevenueTrends = createAsyncThunk(
 
 export const fetchTopPerformers = createAsyncThunk(
     "dashboard/fetchTopPerformers",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/dashboard/top-performers?timeframe=${timeframe}`,

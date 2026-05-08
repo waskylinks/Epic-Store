@@ -27,7 +27,7 @@ const isAbortError = (error) =>
 
 export const fetchReturnOverview = createAsyncThunk(
     "returnAnalytics/fetchReturnOverview",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/returns/overview?timeframe=${timeframe}`,
@@ -140,7 +140,7 @@ export const fetchReturnLifecycleTiming = createAsyncThunk(
 
 export const fetchRefundOverview = createAsyncThunk(
     "returnAnalytics/fetchRefundOverview",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/refunds/overview?timeframe=${timeframe}`,

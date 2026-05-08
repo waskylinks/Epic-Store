@@ -21,7 +21,7 @@ const isAbortError = (error) =>
 
 export const fetchChannelPerformance = createAsyncThunk(
     "attribution/fetchChannelPerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/channels?timeframe=${timeframe}`,
@@ -57,7 +57,7 @@ export const fetchCampaignPerformance = createAsyncThunk(
 
 export const fetchDevicePerformance = createAsyncThunk(
     "attribution/fetchDevicePerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/devices?timeframe=${timeframe}`,

@@ -31,17 +31,16 @@ export const fetchAdminStats = createAsyncThunk(
     }
 );
 
-
 export const fetchOrderStatusBreakdown = createAsyncThunk(
     "coreAnalytics/fetchOrderStatusBreakdown",
-    async (timeframe, { rejectWithValue, signal }) => {
+    async (arg, { rejectWithValue, signal }) => {
         try {
+            const timeframe = arg?.timeframe ?? arg ?? null;
             const url = timeframe
                 ? `${API_BASE}/admin/order-status-breakdown?timeframe=${timeframe}`
                 : `${API_BASE}/admin/order-status-breakdown`;
             const { data } = await axios.get(url, { signal });
-            // Embed the requested timeframe (may be undefined for all-time calls)
-            return { ...data, _timeframe: timeframe ?? null };
+            return { ...data, _timeframe: timeframe };
         } catch (error) {
             if (isAbortError(error)) return rejectWithValue({ aborted: true });
             return rejectWithValue(
