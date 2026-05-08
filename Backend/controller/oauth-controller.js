@@ -5,6 +5,7 @@ import { sendEmail } from "../utils/sendEmail.js";
 import { emailTemplates } from "../utils/emailTemplates.js";
 import { oauthLogger } from "../utils/logger.js";
 import crypto from "crypto";
+import { stitchIdentity, stitchIdentityFromRequest } from '../middleware/identityMiddleware.js'; // PHASE 2
 
 // GOOGLE OAUTH CONTROLLERS
 
@@ -15,7 +16,6 @@ import crypto from "crypto";
  */
 
 export const googleAuth = (req, res, next) => {
-    // Generate and store state parameter for CSRF protection
     const state = crypto.randomBytes(32).toString('hex');
     req.session.oauthState = state;
     
@@ -34,7 +34,6 @@ export const googleAuth = (req, res, next) => {
  */
 
 export const googleAuthCallback = (req, res, next) => {
-    // Verify state parameter
     const returnedState = req.query.state;
     const storedState = req.session.oauthState;
     
@@ -47,9 +46,8 @@ export const googleAuthCallback = (req, res, next) => {
         return res.redirect(`${process.env.FRONTEND_URL}/login?error=invalid_state`);
     }
     
-    // Clear state after verification
     delete req.session.oauthState;
-    
+
     passport.authenticate('google', {
         session: false
     }, async (err, user, info) => {
@@ -67,7 +65,6 @@ export const googleAuthCallback = (req, res, next) => {
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=authentication_failed`);
             }
 
-            // Check if newly created user
             const isNewUser = user.createdAt && (Date.now() - new Date(user.createdAt).getTime() < 5000);
 
             if (isNewUser) {
@@ -83,7 +80,6 @@ export const googleAuthCallback = (req, res, next) => {
                 });
             }
 
-            // Send welcome email for new users
             if (isNewUser) {
                 try {
                     const fullName = `${user.firstName} ${user.lastName}`;
@@ -94,14 +90,12 @@ export const googleAuthCallback = (req, res, next) => {
                         message: welcomeTemplate.text,
                         html: welcomeTemplate.html
                     });
-                    
                     oauthLogger.info('Welcome email sent', { userId: user._id });
                 } catch (error) {
                     oauthLogger.error('Welcome email failed', { 
                         userId: user._id,
                         error: error.message 
                     });
-                    // Don't block login if email fails
                 }
             }
 
@@ -111,8 +105,17 @@ export const googleAuthCallback = (req, res, next) => {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+                maxAge: 7 * 24 * 60 * 60 * 1000
             });
+
+            // PHASE 2: Stitch anonymous ID to authenticated user (non-blocking)
+            // req.user is not populated in session:false passport callbacks,
+            // so we call stitchIdentity directly with user._id and req.anonymousId.
+            // req.anonymousId is set by identityMiddleware — the epicstore_anon
+            // httpOnly cookie survives the Google OAuth redirect correctly.
+            stitchIdentity(user._id.toString(), req.anonymousId).catch(err =>
+                oauthLogger.error('Google OAuth identity stitch failed (non-fatal)', { error: err.message })
+            );
 
             return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
@@ -133,7 +136,6 @@ export const googleAuthCallback = (req, res, next) => {
  */
 
 export const linkGoogleAccount = (req, res, next) => {
-    // Generate and store state parameter
     const state = crypto.randomBytes(32).toString('hex');
     req.session.oauthLinkState = state;
     
@@ -156,7 +158,6 @@ export const linkGoogleAccount = (req, res, next) => {
  */
 
 export const linkGoogleAccountCallback = (req, res, next) => {
-    // Verify state parameter
     const returnedState = req.query.state;
     const storedState = req.session.oauthLinkState;
     
@@ -169,7 +170,6 @@ export const linkGoogleAccountCallback = (req, res, next) => {
         return res.redirect(`${process.env.FRONTEND_URL}/profile?error=invalid_state`);
     }
     
-    // Clear state after verification
     delete req.session.oauthLinkState;
     
     passport.authenticate('google', {
@@ -189,14 +189,18 @@ export const linkGoogleAccountCallback = (req, res, next) => {
                 email: user.email
             });
 
-            // Update token cookie with new user data
             const token = user.getJWTToken();
             res.cookie('token', token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+                maxAge: 7 * 24 * 60 * 60 * 1000
             });
+
+            // PHASE 2: Stitch anonymous ID on account linking (non-blocking)
+            stitchIdentityFromRequest(req).catch(err =>
+                oauthLogger.error('Google link identity stitch failed (non-fatal)', { error: err.message })
+            );
 
             return res.redirect(`${process.env.FRONTEND_URL}/profile?success=google_linked`);
 
@@ -223,7 +227,6 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Google account is not linked", 400));
     }
 
-    // Prevent unlinking if it's the only auth method and user has no password
     if (user.authProvider === 'google' && !user.password) {
         oauthLogger.warn('Attempted to unlink Google without alternative auth', {
             userId: user._id
@@ -231,10 +234,8 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Cannot unlink Google account. Please set a password first to maintain account access.", 400));
     }
 
-    // Unlink Google account
     user.googleId = undefined;
     
-    // If primary auth was Google, switch to local
     if (user.authProvider === 'google') {
         user.authProvider = 'local';
     }
@@ -253,7 +254,7 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
 });
 
 
-   // FACEBOOK OAUTH CONTROLLERS
+// FACEBOOK OAUTH CONTROLLERS
 
 /**
  * @desc    Initiate Facebook OAuth login
@@ -262,7 +263,6 @@ export const unlinkGoogleAccount = handleAsyncError(async (req, res, next) => {
  */
 
 export const facebookAuth = (req, res, next) => {
-    // Generate and store state parameter for CSRF protection
     const state = crypto.randomBytes(32).toString('hex');
     req.session.oauthState = state;
     
@@ -281,7 +281,6 @@ export const facebookAuth = (req, res, next) => {
  */
 
 export const facebookAuthCallback = (req, res, next) => {
-    // Verify state parameter
     const returnedState = req.query.state;
     const storedState = req.session.oauthState;
     
@@ -294,7 +293,6 @@ export const facebookAuthCallback = (req, res, next) => {
         return res.redirect(`${process.env.FRONTEND_URL}/login?error=invalid_state`);
     }
     
-    // Clear state after verification
     delete req.session.oauthState;
     
     passport.authenticate('facebook', {
@@ -307,7 +305,6 @@ export const facebookAuthCallback = (req, res, next) => {
                     stack: err.stack
                 });
                 
-                // Handle specific error for missing required data
                 if (err.message && err.message.includes('must provide email')) {
                     oauthLogger.warn('Facebook OAuth rejected - missing required data', {
                         error: err.message
@@ -323,7 +320,6 @@ export const facebookAuthCallback = (req, res, next) => {
                 return res.redirect(`${process.env.FRONTEND_URL}/login?error=authentication_failed`);
             }
 
-            // Check if newly created user
             const isNewUser = user.createdAt && (Date.now() - new Date(user.createdAt).getTime() < 5000);
 
             if (isNewUser) {
@@ -339,7 +335,6 @@ export const facebookAuthCallback = (req, res, next) => {
                 });
             }
 
-            // Send welcome email for new users
             if (isNewUser) {
                 try {
                     const fullName = `${user.firstName} ${user.lastName}`;
@@ -350,14 +345,12 @@ export const facebookAuthCallback = (req, res, next) => {
                         message: welcomeTemplate.text,
                         html: welcomeTemplate.html
                     });
-                    
                     oauthLogger.info('Welcome email sent', { userId: user._id });
                 } catch (error) {
                     oauthLogger.error('Welcome email failed', { 
                         userId: user._id,
                         error: error.message 
                     });
-                    // Don't block login if email fails
                 }
             }
 
@@ -367,8 +360,16 @@ export const facebookAuthCallback = (req, res, next) => {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+                maxAge: 7 * 24 * 60 * 60 * 1000
             });
+
+            // PHASE 2: Stitch anonymous ID to authenticated user (non-blocking)
+            // req.user is not populated in session:false passport callbacks,
+            // so we call stitchIdentity directly with user._id and req.anonymousId.
+            // The epicstore_anon httpOnly cookie survives the Facebook OAuth redirect.
+            stitchIdentity(user._id.toString(), req.anonymousId).catch(err =>
+                oauthLogger.error('Facebook OAuth identity stitch failed (non-fatal)', { error: err.message })
+            );
 
             return res.redirect(`${process.env.FRONTEND_URL}/oauth/callback?success=true`);
 
@@ -389,7 +390,6 @@ export const facebookAuthCallback = (req, res, next) => {
  */
 
 export const linkFacebookAccount = (req, res, next) => {
-    // Generate and store state parameter
     const state = crypto.randomBytes(32).toString('hex');
     req.session.oauthLinkState = state;
     
@@ -412,7 +412,6 @@ export const linkFacebookAccount = (req, res, next) => {
  */
 
 export const linkFacebookAccountCallback = (req, res, next) => {
-    // Verify state parameter
     const returnedState = req.query.state;
     const storedState = req.session.oauthLinkState;
     
@@ -425,7 +424,6 @@ export const linkFacebookAccountCallback = (req, res, next) => {
         return res.redirect(`${process.env.FRONTEND_URL}/profile?error=invalid_state`);
     }
     
-    // Clear state after verification
     delete req.session.oauthLinkState;
     
     passport.authenticate('facebook', {
@@ -445,14 +443,18 @@ export const linkFacebookAccountCallback = (req, res, next) => {
                 email: user.email
             });
 
-            // Update token cookie with new user data
             const token = user.getJWTToken();
             res.cookie('token', token, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+                maxAge: 7 * 24 * 60 * 60 * 1000
             });
+
+            // PHASE 2: Stitch anonymous ID on account linking (non-blocking)
+            stitchIdentityFromRequest(req).catch(err =>
+                oauthLogger.error('Facebook link identity stitch failed (non-fatal)', { error: err.message })
+            );
 
             return res.redirect(`${process.env.FRONTEND_URL}/profile?success=facebook_linked`);
 
@@ -479,7 +481,6 @@ export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => 
         return next(new HandleError("Facebook account is not linked", 400));
     }
 
-    // Prevent unlinking if it's the only auth method and user has no password
     if (user.authProvider === 'facebook' && !user.password) {
         oauthLogger.warn('Attempted to unlink Facebook without alternative auth', {
             userId: user._id
@@ -487,10 +488,8 @@ export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => 
         return next(new HandleError("Cannot unlink Facebook account. Please set a password first to maintain account access.", 400));
     }
 
-    // Unlink Facebook account
     user.facebookId = undefined;
     
-    // If primary auth was Facebook, switch to local
     if (user.authProvider === 'facebook') {
         user.authProvider = 'local';
     }
@@ -509,8 +508,7 @@ export const unlinkFacebookAccount = handleAsyncError(async (req, res, next) => 
 });
 
 
-   // SHARED OAUTH CONTROLLERS
-
+// SHARED OAUTH CONTROLLERS
 
 /**
  * @desc    Get OAuth connection status

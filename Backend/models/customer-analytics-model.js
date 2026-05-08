@@ -503,6 +503,16 @@ const customerAnalyticsSchema = new mongoose.Schema(
       default: false
     },
 
+    anonymousIds: {
+      type:    [String],
+      default: [],
+    },
+
+    lastStitchedAt: {
+      type:    Date,
+      default: null,
+    },
+
     // ============================================
     // LAST SYNC
     // ============================================

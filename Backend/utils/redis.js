@@ -112,6 +112,7 @@ export const deleteCache = async key => {
  * @param {string} pattern - Glob pattern, e.g. 'sitemap*', 'product_*_seo'
  * @returns {Promise<number>} Number of keys deleted
  */
+
 export const deleteCachePattern = async pattern => {
   try {
     if (!isReady()) {
@@ -122,21 +123,13 @@ export const deleteCachePattern = async pattern => {
     const fullPattern = PREFIX + pattern;
     let cursor = 0;
     let deletedCount = 0;
-    let iterationCount = 0;
-    const maxIterations = 1000;
 
     do {
-      iterationCount++;
-
-      // FIX: Pass cursor as String — node-redis v4 RESP encoder rejects raw numbers.
-      // Without String() the encoder throws:
-      //   TypeError: "arguments[1]" must be of type "string | Buffer", got number
       const result = await redis.scan(String(cursor), {
         MATCH: fullPattern,
         COUNT: 100
       });
 
-      // result.cursor is returned as a number by node-redis v4
       cursor = result.cursor;
       const keys = result.keys;
 
@@ -145,11 +138,7 @@ export const deleteCachePattern = async pattern => {
         deletedCount += keys.length;
       }
 
-      if (iterationCount > maxIterations) {
-        console.warn(`⚠️ SCAN exceeded ${maxIterations} iterations, stopping`);
-        break;
-      }
-    } while (cursor !== 0); // number comparison — result.cursor is always a number
+    } while (cursor !== 0);
 
     if (deletedCount > 0) {
       console.log(`🗑️ Deleted ${deletedCount} keys matching pattern: ${pattern}`);
