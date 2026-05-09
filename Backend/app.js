@@ -37,7 +37,7 @@ import adminStatsRoutes from './routes/admin-stats-routes.js';
 import discountAnalyticsRoutes from './routes/discount-analytics-routes.js';
 import recoveryEmailRoutes from './routes/recovery-email-routes.js';
 import seoRoutes from './routes/seo-routes.js';
-import { trackAttribution } from './middleware/attribution-tracking-middleware.js';
+import { trackAttribution } from './middleware/attributionMiddleware.js';
 import { sessionMiddleware }  from './middleware/sessionMiddleware.js';
 import { identityMiddleware } from './middleware/identityMiddleware.js';
 import cronHealthRouter from './routes/cronHealthRoutes.js';
