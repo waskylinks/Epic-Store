@@ -14,7 +14,8 @@
   "test:session":  "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/sessionMiddleware.test.js --verbose",
   "test:identity": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/identityMiddleware.test.js --verbose",
   "test:attribution": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/attributionMiddleware.test.js --verbose",
-  "test:referrer": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/referrerReconstruction.test.js --verbose"
+  "test:referrer": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/referrerReconstruction.test.js --verbose",
+  "test:ga4service": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/ga4Service.test.js --verbose"
 
 },
   "keywords": [

@@ -1,10 +1,10 @@
 /**
- * backend/services/analytics/__tests__/ga4Service.test.js
+ * backend/Services/analytics/tests/ga4Service.test.js
  *
  * Phase 4 — Test Suite for ga4Service.js
  *
  * Run with:
- *   npx jest services/analytics/__tests__/ga4Service.test.js --verbose
+ *   npm run test:ga4service
  *
  * Tests validate:
  *   1. sendGA4Event — payload structure, client_id fallback, debug_mode
@@ -20,14 +20,20 @@
 import { jest } from '@jest/globals';
 
 // ─── MOCK AXIOS ───────────────────────────────────────────────────────────────
+//
+// jest.mock() is CJS-only; with NODE_OPTIONS=--experimental-vm-modules we must
+// use jest.unstable_mockModule() so the mock is in place before the dynamic
+// import of ga4Service.js resolves its own `import axios from 'axios'`.
 
 const mockAxiosPost = jest.fn();
 
-jest.mock('axios', () => ({
-  post: mockAxiosPost,
+jest.unstable_mockModule('axios', () => ({
+  default: { post: mockAxiosPost },
 }));
 
-import {
+// Dynamic import MUST come after unstable_mockModule so the mock is registered
+// before the module under test is evaluated.
+const {
   sendGA4Event,
   sendGA4Purchase,
   sendGA4CheckoutStep,
@@ -36,7 +42,7 @@ import {
   sendGA4SignUp,
   sendGA4Refund,
   checkGA4Config,
-} from '../ga4Service.js';
+} = await import('../ga4Service.js');
 
 // ─── SETUP ────────────────────────────────────────────────────────────────────
 
@@ -45,14 +51,12 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   jest.clearAllMocks();
 
-  // Set required env vars
-  process.env.GA4_MEASUREMENT_ID  = 'G-TEST123456';
-  process.env.GA4_API_SECRET      = 'test_api_secret';
-  process.env.GA4_ENDPOINT        = 'https://www.google-analytics.com/mp/collect';
-  process.env.GA4_DEBUG_ENDPOINT  = 'https://www.google-analytics.com/debug/mp/collect';
-  process.env.NODE_ENV            = 'test'; // triggers debug endpoint
+  process.env.GA4_MEASUREMENT_ID = 'G-TEST123456';
+  process.env.GA4_API_SECRET     = 'test_api_secret';
+  process.env.GA4_ENDPOINT       = 'https://www.google-analytics.com/mp/collect';
+  process.env.GA4_DEBUG_ENDPOINT = 'https://www.google-analytics.com/debug/mp/collect';
+  process.env.NODE_ENV           = 'test'; // triggers debug endpoint
 
-  // Default successful axios response
   mockAxiosPost.mockResolvedValue({
     status: 204,
     data:   { validationMessages: [] },
@@ -83,8 +87,8 @@ const buildMockOrder = (overrides = {}) => ({
       quantity: 1,
     },
   ],
-  totalPrice:   224.97,
-  taxPrice:     36.00,
+  totalPrice:    224.97,
+  taxPrice:      36.00,
   shippingPrice: 0,
   paymentInfo: {
     reference: 'PAY_REF_123',
