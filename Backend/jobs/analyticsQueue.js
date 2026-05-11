@@ -29,8 +29,8 @@
  *      If any platform fails after max retries, the event moves to 'dead_letter'
  *      so it can be investigated without blocking the queue.
  *
- *   5. Dead-letter Slack alert — when events reach dead_letter status,
- *      a Slack alert fires via your existing cronAlert infrastructure.
+ *   5. Dead-letter Cron alert — when events reach dead_letter status,
+ *      a Cron alert fires via your existing cronAlert infrastructure.
  *      This ensures silent failures are never missed.
  *
  * Environment variables:
@@ -40,10 +40,10 @@
  */
 
 import AnalyticsEvent           from '../models/AnalyticsEvent.js';
-import { sendGA4Purchase, sendGA4Login, sendGA4SignUp, sendGA4CheckoutStep, sendGA4Refund } from '../services/analytics/ga4Service.js';
-import { sendMetaPurchase, sendMetaInitiateCheckout, sendMetaCompleteRegistration }        from '../services/analytics/metaCapiService.js';
-import { streamEventToBigQuery }  from '../services/analytics/bigQueryService.js';
-import { sendSlackAlert }         from '../utils/cronAlert.js';
+import { sendGA4Purchase, sendGA4Login, sendGA4SignUp, sendGA4CheckoutStep, sendGA4Refund } from '../Services/analytics/ga4Service.js';
+import { sendMetaPurchase, sendMetaInitiateCheckout, sendMetaCompleteRegistration }        from '../Services/analytics/metaCapiService.js';
+import { streamEventToBigQuery }  from '../Services/analytics/bigQueryService.js';
+import { sendCronAlert }         from '../utils/cronAlert.js';
 
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
 
@@ -370,7 +370,7 @@ export const processAnalyticsQueue = async () => {
 /**
  * sendDeadLetterAlert
  *
- * Sends a Slack alert when an event reaches dead_letter status.
+ * Sends a Cron alert when an event reaches dead_letter status.
  * Uses your existing cronAlert infrastructure.
  *
  * @param {Object} event     - AnalyticsEvent document
@@ -382,7 +382,7 @@ const sendDeadLetterAlert = async (event, platforms) => {
     .map(([key, val]) => `${key}: ${val.error}`)
     .join('\n');
 
-  await sendSlackAlert({
+  await sendCronAlert({
     jobName: 'AnalyticsQueue',
     status:  'dead_letter',
     message: `Analytics event moved to dead_letter after ${MAX_RETRIES} attempts`,
