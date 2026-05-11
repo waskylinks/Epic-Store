@@ -18,6 +18,8 @@ import {
   handleDuplicateKeyError,
 } from '../utils/productController.js';
 
+import { checkGA4Config } from '../Services/analytics/ga4Service.js';
+
 // ============================================
 // SHARED HELPERS
 // ============================================
@@ -148,6 +150,7 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
     totalPages,
     currentPage: page
   });
+  console.log('[GA4 Config]', checkGA4Config());
 });
 
 // ============================================
