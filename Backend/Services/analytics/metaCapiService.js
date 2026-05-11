@@ -262,7 +262,7 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
   // Build user data from authenticated user + shipping info + Meta cookies
   const userData = {
     email:     user.email,
-    phone:     user.phone || order.shippingInfo?.phoneNo,
+    phone:     order.shippingInfo?.phoneNo,
     firstName: user.firstName,
     lastName:  user.lastName,
     userId:    user._id?.toString(),
