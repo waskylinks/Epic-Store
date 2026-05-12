@@ -19,6 +19,9 @@
 import { jest } from '@jest/globals';
 
 // ─── MOCKS ────────────────────────────────────────────────────────────────────
+// Must use unstable_mockModule for ESM — jest.mock() hoisting does not work
+// with native ES modules. All service imports are deferred below so they
+// receive the mocked bindings.
 
 const mockFindOne           = jest.fn();
 const mockCreate            = jest.fn();
@@ -28,7 +31,7 @@ const mockUpdateMany        = jest.fn();
 const mockDeleteMany        = jest.fn();
 const mockAggregate         = jest.fn();
 
-jest.mock('../../models/AnalyticsEvent.js', () => ({
+jest.unstable_mockModule('../../models/AnalyticsEvent.js', () => ({
   default: {
     findOne:           mockFindOne,
     create:            mockCreate,
@@ -40,13 +43,13 @@ jest.mock('../../models/AnalyticsEvent.js', () => ({
   },
 }));
 
-const mockSendGA4Purchase      = jest.fn();
-const mockSendGA4CheckoutStep  = jest.fn();
-const mockSendGA4Login         = jest.fn();
-const mockSendGA4SignUp        = jest.fn();
-const mockSendGA4Refund        = jest.fn();
+const mockSendGA4Purchase     = jest.fn();
+const mockSendGA4CheckoutStep = jest.fn();
+const mockSendGA4Login        = jest.fn();
+const mockSendGA4SignUp       = jest.fn();
+const mockSendGA4Refund       = jest.fn();
 
-jest.mock('../../Services/analytics/ga4Service.js', () => ({
+jest.unstable_mockModule('../../Services/analytics/ga4Service.js', () => ({
   sendGA4Purchase:     mockSendGA4Purchase,
   sendGA4CheckoutStep: mockSendGA4CheckoutStep,
   sendGA4Login:        mockSendGA4Login,
@@ -54,11 +57,11 @@ jest.mock('../../Services/analytics/ga4Service.js', () => ({
   sendGA4Refund:       mockSendGA4Refund,
 }));
 
-const mockSendMetaPurchase              = jest.fn();
-const mockSendMetaInitiateCheckout      = jest.fn();
-const mockSendMetaCompleteRegistration  = jest.fn();
+const mockSendMetaPurchase             = jest.fn();
+const mockSendMetaInitiateCheckout     = jest.fn();
+const mockSendMetaCompleteRegistration = jest.fn();
 
-jest.mock('../../Services/analytics/metaCapiService.js', () => ({
+jest.unstable_mockModule('../../Services/analytics/metaCapiService.js', () => ({
   sendMetaPurchase:             mockSendMetaPurchase,
   sendMetaInitiateCheckout:     mockSendMetaInitiateCheckout,
   sendMetaCompleteRegistration: mockSendMetaCompleteRegistration,
@@ -66,23 +69,24 @@ jest.mock('../../Services/analytics/metaCapiService.js', () => ({
 
 const mockStreamEventToBigQuery = jest.fn();
 
-jest.mock('../../Services/analytics/bigQueryService.js', () => ({
+jest.unstable_mockModule('../../Services/analytics/bigQueryService.js', () => ({
   streamEventToBigQuery: mockStreamEventToBigQuery,
 }));
 
 const mockSendCronAlert = jest.fn();
 
-jest.mock('../../utils/cronAlert.js', () => ({
+jest.unstable_mockModule('../../utils/cronAlert.js', () => ({
   sendCronAlert: mockSendCronAlert,
 }));
 
-import {
+// Deferred imports — must come AFTER all jest.unstable_mockModule() calls
+const {
   enqueueAnalyticsEvent,
   processAnalyticsQueue,
   getNextRetryDelay,
   retryDeadLetterEvents,
   purgeCompletedEvents,
-} from '../analyticsQueue.js';
+} = await import('../analyticsQueue.js');
 
 // ─── SETUP ────────────────────────────────────────────────────────────────────
 
@@ -110,11 +114,11 @@ afterAll(() => {
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 const buildMockEvent = (overrides = {}) => ({
-  _id:        'doc_123',
-  eventId:    'f47ac10b-58cc-4372-a567-0e02b2c3d479',
-  eventType:  'purchase',
-  status:     'pending',
-  attempts:   0,
+  _id:         'doc_123',
+  eventId:     'f47ac10b-58cc-4372-a567-0e02b2c3d479',
+  eventType:   'purchase',
+  status:      'pending',
+  attempts:    0,
   maxAttempts: 3,
   payload: {
     event_id: 'f47ac10b-58cc-4372-a567-0e02b2c3d479',
@@ -215,7 +219,7 @@ describe('enqueueAnalyticsEvent', () => {
     await enqueueAnalyticsEvent('purchase', { event_id: 'uuid_123' });
     const after = Date.now();
 
-    const createCall = mockCreate.mock.calls[0][0];
+    const createCall  = mockCreate.mock.calls[0][0];
     const nextRetryAt = createCall.nextRetryAt.getTime();
     expect(nextRetryAt).toBeGreaterThanOrEqual(before);
     expect(nextRetryAt).toBeLessThanOrEqual(after);
@@ -335,9 +339,9 @@ describe('processAnalyticsQueue — partial failure', () => {
       call => call[1]?.$set?.status === 'failed'
     );
 
-    const nextRetryAt = failedCall[1].$set.nextRetryAt;
-    const expectedDelay = getNextRetryDelay(0); // 2000ms for attempt 0
-    const expectedTime = Date.now() + expectedDelay;
+    const nextRetryAt    = failedCall[1].$set.nextRetryAt;
+    const expectedDelay  = getNextRetryDelay(0); // 2000ms for attempt 0
+    const expectedTime   = Date.now() + expectedDelay;
 
     // Allow 1 second tolerance for test execution time
     expect(Math.abs(nextRetryAt.getTime() - expectedTime)).toBeLessThan(1000);
@@ -349,7 +353,6 @@ describe('processAnalyticsQueue — partial failure', () => {
 
     await processAnalyticsQueue();
 
-    // BigQuery should still have been called
     expect(mockStreamEventToBigQuery).toHaveBeenCalledTimes(1);
   });
 
@@ -462,7 +465,7 @@ describe('retryDeadLetterEvents', () => {
     await retryDeadLetterEvents();
     const after = Date.now();
 
-    const updateCall = mockUpdateMany.mock.calls[0][1];
+    const updateCall  = mockUpdateMany.mock.calls[0][1];
     const nextRetryAt = updateCall.$set.nextRetryAt.getTime();
     expect(nextRetryAt).toBeGreaterThanOrEqual(before);
     expect(nextRetryAt).toBeLessThanOrEqual(after);
@@ -480,7 +483,7 @@ describe('purgeCompletedEvents', () => {
     expect(count).toBe(15);
     expect(mockDeleteMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: 'completed',
+        status:      'completed',
         completedAt: expect.objectContaining({ $lt: expect.any(Date) }),
       })
     );
@@ -491,8 +494,8 @@ describe('purgeCompletedEvents', () => {
 
     await purgeCompletedEvents();
 
-    const filter = mockDeleteMany.mock.calls[0][0];
-    const cutoff = filter.completedAt.$lt;
+    const filter         = mockDeleteMany.mock.calls[0][0];
+    const cutoff         = filter.completedAt.$lt;
     const expectedCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
     expect(Math.abs(cutoff.getTime() - expectedCutoff)).toBeLessThan(1000);
   });
