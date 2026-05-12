@@ -54,6 +54,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let _bigquery = null;
 
+export const resetBigQueryClient = () => { _bigquery = null; };
+
 /**
  * getBigQuery
  * Lazy singleton — only instantiated on first use.

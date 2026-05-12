@@ -578,7 +578,7 @@ const orderSchema = new mongoose.Schema(
       eventId: {
         type:    String,
         default: null,
-        index:   true,
+        
       },
 
       // Anonymous ID from epicstore_anon cookie (identityMiddleware.js).
@@ -587,7 +587,7 @@ const orderSchema = new mongoose.Schema(
       anonymousId: {
         type:    String,
         default: null,
-        index:   true,
+       
       },
 
       // Click IDs — stored permanently on the order even after cookie windows expire.

@@ -20,14 +20,17 @@
 import { jest } from '@jest/globals';
 
 // ─── MOCK @google-cloud/bigquery ──────────────────────────────────────────────
+// Must use unstable_mockModule for ESM — jest.mock() hoisting does not work
+// with native ES modules. Imports of the service are deferred below so they
+// receive the mocked BigQuery binding.
 
-const mockTableInsert  = jest.fn();
-const mockTableExists  = jest.fn();
+const mockTableInsert        = jest.fn();
+const mockTableExists        = jest.fn();
 const mockDatasetCreateTable = jest.fn();
 const mockDatasetExists      = jest.fn();
 const mockDatasetTable       = jest.fn();
 
-jest.mock('@google-cloud/bigquery', () => ({
+jest.unstable_mockModule('@google-cloud/bigquery', () => ({
   BigQuery: jest.fn().mockImplementation(() => ({
     dataset: jest.fn().mockReturnValue({
       table:       mockDatasetTable,
@@ -37,18 +40,14 @@ jest.mock('@google-cloud/bigquery', () => ({
   })),
 }));
 
-// Set up mockDatasetTable to return a table object
-mockDatasetTable.mockReturnValue({
-  exists: mockTableExists,
-  insert: mockTableInsert,
-});
-
-import {
+// Deferred imports — must come AFTER jest.unstable_mockModule()
+const {
   streamEventToBigQuery,
   initializeBigQuerySchema,
   checkBigQueryConfig,
+  resetBigQueryClient,
   TABLE_SCHEMAS,
-} from '../bigQueryService.js';
+} = await import('../bigQueryService.js');
 
 // ─── SETUP ────────────────────────────────────────────────────────────────────
 
@@ -57,13 +56,24 @@ const ORIGINAL_ENV = { ...process.env };
 beforeEach(() => {
   jest.clearAllMocks();
 
-  process.env.BIGQUERY_PROJECT_ID             = 'epicstore-test';
-  process.env.BIGQUERY_DATASET_ID             = 'epicstore_analytics_test';
-  process.env.GOOGLE_APPLICATION_CREDENTIALS  = './credentials/bigquery.json';
+  // resetBigQueryClient() forces the lazy singleton to re-instantiate so it
+  // picks up the mock constructor on the next call rather than caching the
+  // real BigQuery instance created before the mock was wired.
+  resetBigQueryClient();
+
+  // mockDatasetTable return value must be re-set after clearAllMocks() wipes it
+  mockDatasetTable.mockReturnValue({
+    exists: mockTableExists,
+    insert: mockTableInsert,
+  });
+
+  process.env.BIGQUERY_PROJECT_ID            = 'epicstore-test';
+  process.env.BIGQUERY_DATASET_ID            = 'epicstore_analytics_test';
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = './credentials/bigquery.json';
 
   // Default: successful inserts
   mockTableInsert.mockResolvedValue([{}]);
-  mockTableExists.mockResolvedValue([false]); // Table does not exist → create
+  mockTableExists.mockResolvedValue([false]); // table does not exist → create
   mockDatasetCreateTable.mockResolvedValue([{}]);
   mockDatasetExists.mockResolvedValue([true]);
 });
@@ -86,30 +96,30 @@ const buildMockEvent = (overrides = {}) => ({
   anonymous_id:         'anon_456',
   session_id:           'sess_789',
   attribution: {
-    source:            'google',
-    medium:            'cpc',
-    campaign:          'summer_sale',
-    referrer:          'https://google.com',
-    landing_page:      '/products/sneakers',
-    gclid:             'test_gclid',
-    fbclid:            null,
-    ttclid:            null,
-    confidence_score:  0.90,
-    confidence_level:  'HIGH',
-    is_reconstructed:  false,
+    source:              'google',
+    medium:              'cpc',
+    campaign:            'summer_sale',
+    referrer:            'https://google.com',
+    landing_page:        '/products/sneakers',
+    gclid:               'test_gclid',
+    fbclid:              null,
+    ttclid:              null,
+    confidence_score:    0.90,
+    confidence_level:    'HIGH',
+    is_reconstructed:    false,
     reconstruction_rule: null,
-    device:            'desktop',
-    browser:           'Chrome',
+    device:              'desktop',
+    browser:             'Chrome',
   },
   properties: {
-    order_id:           'order_123',
-    payment_reference:  'PAY_REF_123',
-    revenue:            224.97,
-    currency:           'USD',
-    is_first_purchase:  true,
-    purchase_number:    1,
-    item_count:         2,
-    coupon:             null,
+    order_id:          'order_123',
+    payment_reference: 'PAY_REF_123',
+    revenue:           224.97,
+    currency:          'USD',
+    is_first_purchase: true,
+    purchase_number:   1,
+    item_count:        2,
+    coupon:            null,
     items: [
       { item_id: 'product_abc', item_name: 'Blue Sneakers', price: 99.99, quantity: 2 },
     ],
@@ -123,10 +133,8 @@ describe('streamEventToBigQuery — table routing', () => {
   test('always inserts into events table for any event type', async () => {
     await streamEventToBigQuery(buildMockEvent());
 
-    // events table is always called
     expect(mockTableInsert).toHaveBeenCalled();
-    const insertCalls = mockTableInsert.mock.calls;
-    const tableNames  = mockDatasetTable.mock.calls.map(call => call[0]);
+    const tableNames = mockDatasetTable.mock.calls.map(call => call[0]);
     expect(tableNames).toContain('events');
   });
 
@@ -148,11 +156,11 @@ describe('streamEventToBigQuery — table routing', () => {
     await streamEventToBigQuery(buildMockEvent({
       event_type: 'checkout_step',
       properties: {
-        checkout_id: 'checkout_123',
-        step:        'shipping_info',
-        cart_value:  99.99,
-        item_count:  2,
-        currency:    'USD',
+        checkout_id:  'checkout_123',
+        step:         'shipping_info',
+        cart_value:   99.99,
+        item_count:   2,
+        currency:     'USD',
         has_discount: false,
       },
     }));
@@ -179,7 +187,7 @@ describe('streamEventToBigQuery — table routing', () => {
     expect(funnelIndex).toBeGreaterThan(-1);
 
     const funnelInsertCall = mockTableInsert.mock.calls[funnelIndex];
-    const insertedRow = funnelInsertCall[0][0].json;
+    const insertedRow      = funnelInsertCall[0][0].json;
     expect(insertedRow.abandoned).toBe(true);
   });
 
@@ -199,8 +207,8 @@ describe('events table row transformation', () => {
     await streamEventToBigQuery(buildMockEvent());
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const insertCall = mockTableInsert.mock.calls[eventsTableIndex];
-    const row = insertCall[0][0].json;
+    const insertCall       = mockTableInsert.mock.calls[eventsTableIndex];
+    const row              = insertCall[0][0].json;
 
     expect(row.event_id).toBe('f47ac10b-58cc-4372-a567-0e02b2c3d479');
   });
@@ -209,7 +217,7 @@ describe('events table row transformation', () => {
     await streamEventToBigQuery(buildMockEvent());
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const row = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
+    const row              = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
 
     expect(row.source).toBe('google');
     expect(row.medium).toBe('cpc');
@@ -224,7 +232,7 @@ describe('events table row transformation', () => {
     await streamEventToBigQuery(buildMockEvent());
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const row = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
+    const row              = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
 
     expect(row.user_id).toBe('user_123');
     expect(row.anonymous_id).toBe('anon_456');
@@ -234,20 +242,21 @@ describe('events table row transformation', () => {
   test('sets event_time_processed to current time', async () => {
     const before = new Date().toISOString();
     await streamEventToBigQuery(buildMockEvent());
-    const after = new Date().toISOString();
+    const after  = new Date().toISOString();
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const row = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
+    const row              = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
 
-    expect(row.event_time_processed).toBeGreaterThanOrEqual(before);
-    expect(row.event_time_processed).toBeLessThanOrEqual(after);
+    expect(typeof row.event_time_processed).toBe('string');
+    expect(row.event_time_processed >= before).toBe(true);
+    expect(row.event_time_processed <= after).toBe(true);
   });
 
   test('serializes properties as JSON string', async () => {
     await streamEventToBigQuery(buildMockEvent());
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const row = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
+    const row              = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
 
     expect(typeof row.properties).toBe('string');
     const parsed = JSON.parse(row.properties);
@@ -258,7 +267,7 @@ describe('events table row transformation', () => {
     await streamEventToBigQuery(buildMockEvent({ attribution: null }));
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const row = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
+    const row              = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
 
     expect(row.source).toBe('direct');
   });
@@ -269,9 +278,9 @@ describe('events table row transformation', () => {
     }));
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const row = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
+    const row              = mockTableInsert.mock.calls[eventsTableIndex][0][0].json;
 
-    expect(row.source).toBe('direct'); // falls back to default
+    expect(row.source).toBe('direct');
     expect(row.medium).toBeNull();
   });
 });
@@ -283,7 +292,7 @@ describe('attribution_snapshots row transformation', () => {
     await streamEventToBigQuery(buildMockEvent({ event_type: 'purchase' }));
 
     const snapIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'attribution_snapshots');
-    const row = mockTableInsert.mock.calls[snapIndex][0][0].json;
+    const row       = mockTableInsert.mock.calls[snapIndex][0][0].json;
 
     expect(row.order_id).toBe('order_123');
     expect(row.payment_reference).toBe('PAY_REF_123');
@@ -293,7 +302,7 @@ describe('attribution_snapshots row transformation', () => {
     await streamEventToBigQuery(buildMockEvent({ event_type: 'purchase' }));
 
     const snapIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'attribution_snapshots');
-    const row = mockTableInsert.mock.calls[snapIndex][0][0].json;
+    const row       = mockTableInsert.mock.calls[snapIndex][0][0].json;
 
     expect(row.revenue).toBe(224.97);
     expect(row.currency).toBe('USD');
@@ -303,7 +312,7 @@ describe('attribution_snapshots row transformation', () => {
     await streamEventToBigQuery(buildMockEvent({ event_type: 'purchase' }));
 
     const snapIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'attribution_snapshots');
-    const row = mockTableInsert.mock.calls[snapIndex][0][0].json;
+    const row       = mockTableInsert.mock.calls[snapIndex][0][0].json;
 
     expect(row.is_first_purchase).toBe(true);
     expect(row.purchase_number).toBe(1);
@@ -313,7 +322,7 @@ describe('attribution_snapshots row transformation', () => {
     await streamEventToBigQuery(buildMockEvent({ event_type: 'purchase' }));
 
     const snapIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'attribution_snapshots');
-    const row = mockTableInsert.mock.calls[snapIndex][0][0].json;
+    const row       = mockTableInsert.mock.calls[snapIndex][0][0].json;
 
     expect(row.confidence_score).toBe(0.90);
     expect(row.confidence_level).toBe('HIGH');
@@ -340,7 +349,7 @@ describe('funnel_states row transformation', () => {
     await streamEventToBigQuery(checkoutEvent);
 
     const funnelIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'funnel_states');
-    const row = mockTableInsert.mock.calls[funnelIndex][0][0].json;
+    const row         = mockTableInsert.mock.calls[funnelIndex][0][0].json;
 
     expect(row.step).toBe('shipping_info');
   });
@@ -349,7 +358,7 @@ describe('funnel_states row transformation', () => {
     await streamEventToBigQuery(checkoutEvent);
 
     const funnelIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'funnel_states');
-    const row = mockTableInsert.mock.calls[funnelIndex][0][0].json;
+    const row         = mockTableInsert.mock.calls[funnelIndex][0][0].json;
 
     expect(row.step_number).toBe(1);
   });
@@ -358,7 +367,7 @@ describe('funnel_states row transformation', () => {
     await streamEventToBigQuery(checkoutEvent);
 
     const funnelIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'funnel_states');
-    const row = mockTableInsert.mock.calls[funnelIndex][0][0].json;
+    const row         = mockTableInsert.mock.calls[funnelIndex][0][0].json;
 
     expect(row.cart_value).toBe(150.00);
     expect(row.item_count).toBe(3);
@@ -373,7 +382,7 @@ describe('insertId deduplication', () => {
     await streamEventToBigQuery(buildMockEvent());
 
     const eventsTableIndex = mockDatasetTable.mock.calls.findIndex(c => c[0] === 'events');
-    const rawRows = mockTableInsert.mock.calls[eventsTableIndex][0];
+    const rawRows          = mockTableInsert.mock.calls[eventsTableIndex][0];
 
     expect(rawRows[0].insertId).toContain('f47ac10b-58cc-4372-a567-0e02b2c3d479');
   });
@@ -387,7 +396,6 @@ describe('insertId deduplication', () => {
     const eventsInsertId = mockTableInsert.mock.calls[eventsIndex][0][0].insertId;
     const snapInsertId   = mockTableInsert.mock.calls[snapIndex][0][0].insertId;
 
-    // Both contain event_id but are different strings (different table suffix)
     expect(eventsInsertId).not.toBe(snapInsertId);
     expect(eventsInsertId).toContain('events');
     expect(snapInsertId).toContain('attribution_snapshots');
@@ -412,7 +420,7 @@ describe('initializeBigQuerySchema', () => {
   });
 
   test('does NOT create tables that already exist', async () => {
-    mockTableExists.mockResolvedValue([true]); // All tables exist
+    mockTableExists.mockResolvedValue([true]);
 
     await initializeBigQuerySchema();
 
@@ -423,7 +431,6 @@ describe('initializeBigQuerySchema', () => {
     let callCount = 0;
     mockTableExists.mockImplementation(() => {
       callCount++;
-      // First 2 tables exist, rest don't
       return Promise.resolve([callCount <= 2]);
     });
 
