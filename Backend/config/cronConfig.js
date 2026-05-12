@@ -12,6 +12,11 @@
  *   - Added checkoutRetention block for the new three-pass retention job
  *   - Added recoveryEmailRetention block for the new two-pass recovery email
  *     lifecycle job (orphan resolution + snapshot prune + hard delete)
+ *   - Added analyticsQueue block for the Phase 6 event queue worker.
+ *     Centralises the three env vars previously read directly in
+ *     analyticsQueue.js (ANALYTICS_QUEUE_RETRY_MAX, ANALYTICS_QUEUE_BACKOFF_BASE,
+ *     ANALYTICS_QUEUE_CONCURRENCY) plus a cronExpression var so the schedule
+ *     can be overridden without touching cronRegistry.js.
  *
  * Import pattern in job files:
  *   import { cronConfig } from '../config/cronConfig.js';
@@ -140,6 +145,40 @@ export const cronConfig = Object.freeze({
     cartSnapshotPruneDays:int('RECOVERY_CART_SNAPSHOT_PRUNE_DAYS',    90),
     hardDeleteYears:      int('RECOVERY_RETENTION_HARD_DELETE_YEARS', 7),
     batchSize:            int('RECOVERY_RETENTION_BATCH_SIZE',        200),
+  },
+
+  // ── Analytics Queue ──────────────────────────────────────────────────────
+  //
+  // Event queue worker that dispatches analytics events to GA4, Meta CAPI,
+  // and BigQuery. Runs every 60 seconds via cronRegistry.js.
+  //
+  // Previously these three vars were read directly inside analyticsQueue.js
+  // via inline parseInt(process.env.X) calls. They are centralised here so
+  // all cron-related env vars remain in one place and analyticsQueue.js
+  // imports from cronConfig like every other job file.
+  //
+  // cronExpression — default '* * * * *' (every 60 seconds). Purchase events
+  //   should reach GA4 and Meta within ~1 minute; GA4 Measurement Protocol
+  //   recommends delivery within 1 hour. For sub-30s delivery, set
+  //   ANALYTICS_QUEUE_CRON to '*/30 * * * * *' if your cron infrastructure
+  //   supports sub-minute expressions.
+  //
+  // maxRetries — attempts before an event is promoted to dead_letter.
+  //   Default 3 gives three platform dispatch attempts (backoff: 2s, 4s, 8s)
+  //   before the event is flagged for human investigation via Slack alert.
+  //
+  // backoffBase — base milliseconds for exponential backoff between retries.
+  //   Attempt N retries after backoffBase × 2^N ms. Default 1000 ms.
+  //   Increase in production if downstream platforms are rate-sensitive.
+  //
+  // concurrency — events processed per 60-second sweep. Default 5 processes
+  //   events sequentially within the sweep to avoid overwhelming GA4/Meta.
+  //   Raise carefully: each event issues up to 3 parallel platform calls.
+  analyticsQueue: {
+    cronExpression: env('ANALYTICS_QUEUE_CRON',         '* * * * *'),
+    maxRetries:     int('ANALYTICS_QUEUE_RETRY_MAX',    3),
+    backoffBase:    int('ANALYTICS_QUEUE_BACKOFF_BASE', 1000),
+    concurrency:    int('ANALYTICS_QUEUE_CONCURRENCY',  5),
   },
 
   // ── Global ───────────────────────────────────────────────────────────────

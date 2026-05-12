@@ -20,6 +20,15 @@
  *     Same rationale as CheckoutRetention — monthly schedule means success
  *     alerts are low-value noise. Admins who want monthly confirmation can
  *     set SLACK_PREF_RECOVERY_EMAIL_RETENTION=all in their environment.
+ *
+ *   - Added AnalyticsQueue to jobPreferences driven by
+ *     SLACK_PREF_ANALYTICS_QUEUE env var, defaulting to 'fail-only'.
+ *     AnalyticsQueue runs every 60 seconds — alerting on every successful
+ *     sweep would be extreme noise. fail-only ensures dead_letter promotions
+ *     and sweep errors surface in Slack while healthy runs stay silent.
+ *     The dead_letter path already calls sendCronAlert directly from
+ *     analyticsQueue.js; this preference gate ensures the job-level alert
+ *     from runCronJob follows the same policy.
  */
 
 export function getSlackConfig() {
@@ -36,6 +45,7 @@ export function getSlackConfig() {
       RecoveryEmailCron:       process.env.SLACK_PREF_RECOVERY_EMAIL             ?? 'fail-only',
       CheckoutRetention:       process.env.SLACK_PREF_CHECKOUT_RETENTION         ?? 'fail-only',
       RecoveryEmailRetention:  process.env.SLACK_PREF_RECOVERY_EMAIL_RETENTION   ?? 'fail-only',
+      AnalyticsQueue:          process.env.SLACK_PREF_ANALYTICS_QUEUE            ?? 'fail-only',
     },
   });
 }
