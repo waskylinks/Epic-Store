@@ -34,7 +34,7 @@
 import Order           from '../models/order-model.js';
 import AnalyticsEvent  from '../models/AnalyticsEvent.js';
 import HandleError     from '../utils/handleError.js';
-import catchAsyncErrors from '../middleware/catchAsyncErrors.js';
+import handleAsyncError from '../middleware/handleAsyncError.js';
 import { getReconstructionRules } from '../utils/referrerReconstruction.js';
 
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
@@ -64,7 +64,7 @@ const HEALTH_WINDOW_DAYS = 30;
  *   identity_match_rate < 70%   → Anonymous ID stitching not working
  *   unattributed_rate > 50%     → Over half of orders appear as "direct"
  */
-export const getAttributionHealth = catchAsyncErrors(async (req, res) => {
+export const getAttributionHealth = handleAsyncError(async (req, res) => {
   const windowStart = new Date();
   windowStart.setDate(windowStart.getDate() - HEALTH_WINDOW_DAYS);
 
@@ -213,7 +213,7 @@ export const getAttributionHealth = catchAsyncErrors(async (req, res) => {
  * The "killer feature" of this observability system — detects tracking
  * bugs before they corrupt weeks of data and campaign decisions.
  */
-export const getAttributionDrift = catchAsyncErrors(async (req, res) => {
+export const getAttributionDrift = handleAsyncError(async (req, res) => {
   const now         = new Date();
   const last7Start  = new Date(now); last7Start.setDate(now.getDate() - 7);
   const last30Start = new Date(now); last30Start.setDate(now.getDate() - 30);
@@ -322,7 +322,7 @@ export const getAttributionDrift = catchAsyncErrors(async (req, res) => {
  * Returns the current state of the analytics event queue.
  * High pending/failed/dead_letter counts indicate dispatch problems.
  */
-export const getQueueHealth = catchAsyncErrors(async (req, res) => {
+export const getQueueHealth = handleAsyncError(async (req, res) => {
   const [queueSummary, recentDeadLetters, recentFailed] = await Promise.all([
     AnalyticsEvent.getQueueHealth(),
 
@@ -400,7 +400,7 @@ export const getQueueHealth = catchAsyncErrors(async (req, res) => {
  *   - Queue events associated with this user
  *   - Anonymous IDs linked to this user (identity stitching history)
  */
-export const getUserEventTrace = catchAsyncErrors(async (req, res) => {
+export const getUserEventTrace = handleAsyncError(async (req, res) => {
   const { userId } = req.params;
 
   if (!userId) {
