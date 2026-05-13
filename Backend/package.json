@@ -19,7 +19,8 @@
   "test:metacapiservice": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/metaCAPIService.test.js --verbose",
   "test:analyticsqueue": "NODE_OPTIONS=--experimental-vm-modules jest jobs/tests/analyticsQueue.test.js --verbose",
   "test:bigqueryservice": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/bigQueryService.test.js --verbose",
-  "test:analyticsobservability": "NODE_OPTIONS=--experimental-vm-modules jest controller/tests/analyticsObservabilityController.test.js --verbose"
+  "test:analyticsobservability": "NODE_OPTIONS=--experimental-vm-modules jest controller/tests/analyticsObservabilityController.test.js --verbose",
+  "test:analyticsorchestrator": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/analyticsOrchestrator.test.js --verbose"
 
 },
   "keywords": [

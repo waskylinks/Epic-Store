@@ -55,12 +55,12 @@ const dispatchFastPath = async (eventType, payload) => {
   if (eventType === ANALYTICS_EVENTS.PURCHASE) {
     promises.push(
       sendGA4Purchase(order, context)
-        .then(r  => console.debug('[Analytics FastPath] GA4 purchase sent:', r.eventId))
+        .then(r  => console.debug('[Analytics FastPath] GA4 purchase sent:', r?.eventId))
         .catch(e => console.error('[Analytics FastPath] GA4 purchase failed:', e.message))
     );
     promises.push(
       sendMetaPurchase(order, user, context)
-        .then(r  => console.debug('[Analytics FastPath] Meta purchase sent, events_received:', r.eventsReceived))
+        .then(r  => console.debug('[Analytics FastPath] Meta purchase sent, events_received:', r?.eventsReceived))
         .catch(e => console.error('[Analytics FastPath] Meta purchase failed:', e.message))
     );
   }
@@ -136,7 +136,7 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
     queue    = true,
   } = options;
 
-  const { order, user, checkout, req, method } = data;
+  const { order, user, checkout, req, method, step } = data;
 
   // ── Extract context from request ──────────────────────────────────────────
   const analyticsEventId = req?.body?.analyticsEventId || null;
@@ -151,7 +151,7 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
     analyticsEvent = buildPurchaseEvent(order, req, analyticsEventId);
   } else if ((eventType === ANALYTICS_EVENTS.CHECKOUT_STEP || eventType === ANALYTICS_EVENTS.BEGIN_CHECKOUT) && checkout) {
     analyticsEvent = buildCheckoutStepEvent(
-      eventType === ANALYTICS_EVENTS.BEGIN_CHECKOUT ? 'shipping_info' : data.step,
+      step || (eventType === ANALYTICS_EVENTS.BEGIN_CHECKOUT ? 'shipping_info' : data.step),
       checkout,
       req,
       analyticsEventId
@@ -192,14 +192,26 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   };
 
   // ── Build full queue payload ──────────────────────────────────────────────
+  // Merge attribution into root level for test compatibility and easier access
+  const attribution = req?.attribution || {};
+  
   const queuePayload = {
     ...analyticsEvent,
     order,
     user,
     checkout,
     context,
-    step:   data.step || null,
-    method: method    || null,
+    step:   step || data.step || null,
+    method: method || null,
+    // Root-level attribution fields for easier access in tests and workers
+    source: attribution.source || null,
+    medium: attribution.medium || null,
+    campaign: attribution.campaign || null,
+    gclid: attribution.gclid || null,
+    fbclid: attribution.fbclid || null,
+    confidenceLevel: attribution.confidenceLevel || null,
+    confidenceScore: attribution.confidenceScore || null,
+    isReconstructed: attribution.isReconstructed || false,
   };
 
   // ── Fast path: immediate dispatch (best effort) ───────────────────────────
