@@ -43,7 +43,7 @@ import {
   getAttributionDrift,
   getQueueHealth,
   getUserEventTrace,
-} from '../controllers/analyticsObservabilityController.js';
+} from '../controller/analyticsObservabilityController.js';
 import { verifyUserAuth, roleBaseAccess } from "../middleware/user-auth.js";
 import { adminAnalyticsLimiter } from "../middleware/rateLimiter.js";
 
