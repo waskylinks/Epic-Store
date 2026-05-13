@@ -148,12 +148,11 @@ checkoutArchiveSchema.index(
   { name: 'archive_date_converted_idx' }
 );
 
-// Thin index for the source checkout _id — allows O(1) existence check
-// before insertMany to prevent duplicate archives on partial-run restart.
-checkoutArchiveSchema.index(
-  { _id: 1 },
-  { unique: true, name: 'source_id_unique_idx' }
-);
+// NOTE: No explicit _id index is defined here. MongoDB guarantees a unique
+// index on _id for every collection by default. Defining a custom index on
+// _id via schema.index() triggers a Mongoose warning and is silently ignored
+// by MongoDB — the duplicate-on-restart guard for archiveCheckouts() is
+// already enforced by the default _id uniqueness constraint.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // STATICS
@@ -165,7 +164,7 @@ checkoutArchiveSchema.index(
  * Inserts an array of pre-formatted archive documents in one ordered batch.
  * Uses ordered: false so a duplicate _id (from a previous partial run) does
  * not abort the entire batch — the duplicate is silently skipped via the
- * unique index, and the rest of the batch proceeds.
+ * default _id uniqueness constraint, and the rest of the batch proceeds.
  *
  * NEVER call this with raw checkout documents — always pass documents that
  * have already been projected through the retention job's mapToArchive()

@@ -25,6 +25,11 @@
  *     runs. The one-hour buffer also prevents both jobs competing for MongoDB
  *     write throughput simultaneously.
  *
+ *   - Added AnalyticsQueue import and JOB_REGISTRY entry (Phase 6).
+ *     Runs every 60 seconds via cronConfig.analyticsQueue.cronExpression.
+ *     Dispatches pending analytics events to GA4, Meta CAPI, and BigQuery
+ *     with exponential backoff retry and dead-letter promotion.
+ *
  * Integration in server.js:
  *   REMOVE:
  *     import { startDiscountCleanupJob }  from './jobs/discount-cleanup.js';
@@ -58,8 +63,36 @@ import {
   startRecoveryEmailRetentionJob,
   stopRecoveryEmailRetentionJob,
 }                                                             from './recoveryEmailRetentionJob.js';
+import { processAnalyticsQueue }                              from './analyticsQueue.js';
 import { cronConfig }    from '../config/cronConfig.js';
 import CronJobStatus     from '../models/CronJobStatus.js';
+import cron              from 'node-cron';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ANALYTICS QUEUE — start/stop wrappers
+// analyticsQueue.js exports only processAnalyticsQueue (the worker function).
+// We wrap it here to match the startFn/stopFn pattern used by all other jobs.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _analyticsQueueTask = null;
+
+const startAnalyticsQueue = () => {
+  _analyticsQueueTask = cron.schedule(
+    cronConfig.analyticsQueue.cronExpression,
+    () => {
+      processAnalyticsQueue().catch(err =>
+        console.error('[AnalyticsQueue] Cron error:', err.message)
+      );
+    }
+  );
+};
+
+const stopAnalyticsQueue = () => {
+  if (_analyticsQueueTask) {
+    _analyticsQueueTask.stop();
+    _analyticsQueueTask = null;
+  }
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // JOB REGISTRY DEFINITION
@@ -117,6 +150,19 @@ const JOB_REGISTRY = [
     startFn:       startRecoveryEmailRetentionJob,
     stopFn:        stopRecoveryEmailRetentionJob,
     note:          'Orphan resolution + snapshot prune (Pass 1) → hard delete (7yr, production only, Pass 2)',
+  },
+  {
+    // Phase 6 — Analytics event queue worker.
+    // Picks up pending/failed AnalyticsEvent documents and dispatches them
+    // to GA4, Meta CAPI, and BigQuery in parallel via Promise.allSettled.
+    // Retries with exponential backoff; promotes to dead_letter after maxRetries.
+    // Dead-letter events trigger a Slack alert via sendCronAlert.
+    jobName:       'AnalyticsQueue',
+    scheduleLabel: 'Every 60 seconds',
+    schedule:      cronConfig.analyticsQueue.cronExpression,
+    startFn:       startAnalyticsQueue,
+    stopFn:        stopAnalyticsQueue,
+    note:          'Dispatches analytics events to GA4, Meta CAPI, and BigQuery with retry',
   },
   {
     jobName:       'RecoveryEmailCron',
