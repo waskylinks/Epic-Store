@@ -20,9 +20,7 @@ import Checkout from '../models/checkout-model.js';
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
-// ============================================
-// PHASE 9 ANALYTICS IMPORTS
-// ============================================
+
 import { buildPurchaseEvent } from '../utils/analyticsEvent.js';
 import { enqueueAnalyticsEvent } from '../jobs/analyticsQueue.js';
 import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
