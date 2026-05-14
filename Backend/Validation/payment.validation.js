@@ -226,10 +226,52 @@ export const verifyPaymentSchema = Joi.object({
 
   // transactionId is Flutterwave-specific — numeric transaction ID used to
   // bypass the unreliable tx_ref search endpoint.
-  transactionId: Joi.string()
+    transactionId: Joi.string()
     .allow(null, '')
+    .optional(),
+
+  // Phase 9 — analytics fields forwarded from the browser SDK.
+  // All optional — analytics failure must never block a payment.
+  analyticsEventId: Joi.string()
+    .uuid()
+    .allow(null, '')
+    .optional(),
+
+  clientTimestamp: Joi.string()
+    .isoDate()
+    .allow(null, '')
+    .optional(),
+
+  ga4ClientId: Joi.string()
+    .allow(null, '')
+    .optional(),
+
+  fbp: Joi.string()
+    .allow(null, '')
+    .optional(),
+
+  fbc: Joi.string()
+    .allow(null, '')
+    .optional(),
+
+  clientAttribution: Joi.object({
+    utm_source:   Joi.string().allow(null, '').optional(),
+    utm_medium:   Joi.string().allow(null, '').optional(),
+    utm_campaign: Joi.string().allow(null, '').optional(),
+    utm_term:     Joi.string().allow(null, '').optional(),
+    utm_content:  Joi.string().allow(null, '').optional(),
+    landing_page: Joi.string().allow(null, '').optional(),
+    gclid:        Joi.string().allow(null, '').optional(),
+    fbclid:       Joi.string().allow(null, '').optional(),
+    ttclid:       Joi.string().allow(null, '').optional(),
+    msclkid:      Joi.string().allow(null, '').optional(),
+    sessionId:    Joi.string().allow(null, '').optional(),
+    capturedAt:   Joi.string().allow(null, '').optional(),
+  })
+    .allow(null)
     .optional()
 });
+
 
 /**
  * Validation schema for product availability check (optional - for frontend use)

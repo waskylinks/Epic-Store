@@ -131,7 +131,7 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
   const utmParams       = parseUTMParams(clientAttribution || req.query);
 
   const fullAnalytics = {
-    source:    utmParams.source,
+    source:    req.attribution?.source || utmParams.source,
     medium:    utmParams.medium,
     campaign:  utmParams.campaign,
 
