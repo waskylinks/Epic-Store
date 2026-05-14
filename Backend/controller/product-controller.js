@@ -19,7 +19,7 @@ import {
 } from '../utils/productController.js';
 
 
-// import { streamEventToBigQuery } from '../Services/analytics/bigQueryService.js';
+import { streamEventToBigQuery } from '../Services/analytics/bigQueryService.js';
 
 // ============================================
 // SHARED HELPERS
@@ -153,6 +153,54 @@ export const getAllProducts = handleAsyncError(async (req, res, next) => {
   });
 
   //tests
+
+  // TEMP: Phase 6 queue verification — remove after testing
+try {
+  const { v4: uuidv4 } = await import('uuid');
+  const { enqueueAnalyticsEvent } = await import('../jobs/analyticsQueue.js');
+  const { buildAnalyticsEvent } = await import('../utils/analyticsEvent.js');
+
+  const eventId = uuidv4();
+
+  const event = buildAnalyticsEvent({
+    eventType:       'purchase',
+    eventId,
+    userId:          'test_user_123',
+    anonymousId:     req.cookies?.epicstore_anon || 'test_anon_456',
+    sessionId:       req.cookies?.epicstore_sid  || 'test_sess_789',
+    clientTimestamp: null,
+    attribution:     req.attribution || {},
+    properties: {
+      order_id:          'test_order_' + Date.now(),
+      payment_reference: 'TEST_PAY_' + Date.now(),
+      revenue:           99.99,
+      currency:          'USD',
+      is_first_purchase: true,
+      purchase_number:   1,
+      item_count:        2,
+    },
+  });
+
+  const queued = await enqueueAnalyticsEvent('purchase', {
+    ...event,
+    order:   null,
+    user:    null,
+    context: {
+      eventId,
+      clientId:  null,
+      sessionId: req.cookies?.epicstore_sid || null,
+    },
+  });
+
+  console.log('[Queue Test] Enqueued:', JSON.stringify({
+    id:       queued._id,
+    eventId:  queued.eventId,
+    status:   queued.status,
+    priority: queued.priority,
+  }, null, 2));
+} catch (err) {
+  console.error('[Queue Test] Error:', err.message);
+}
 
   
 });

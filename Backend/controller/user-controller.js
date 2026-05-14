@@ -114,18 +114,15 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
     // Welcome email failure must not block verification success
   }
 
+  // Fire-and-forget — none of these should block the token response
   syncCustomerAnalytics(user._id).catch(() => {});
-
-  // PHASE 2: Stitch anonymous ID — first moment the user is fully authenticated
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] VerifyEmail stitch failed (non-fatal):', err.message)
   );
-
-  await invalidateCaches();
+  invalidateCaches(); // fire-and-forget — must not block sendToken
 
   sendToken(user, 200, res);
 });
-
 
 // ============================================
 // RESEND VERIFICATION CODE
@@ -186,7 +183,7 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
 
   if (user.lockUntil && user.lockUntil > Date.now()) {
     const mins = Math.ceil((user.lockUntil - Date.now()) / 60000);
-    return next(new HandleError(`Account locked. Try again in ${mins} minutes.`, 403));
+    return next(new HandleError(`Too many failed attempts. Your account has been temporarily locked. Please try again in ${mins} minute${mins === 1 ? '' : 's'}.`, 403));
   }
 
   if (user.authProvider === "local" && !user.emailVerified) {
@@ -225,11 +222,12 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
 
   await user.resetLoginAttempts();
 
-  // PHASE 2: Stitch anonymous ID to authenticated user (non-blocking)
+  // Fire-and-forget — must not block login response
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] Login stitch failed (non-fatal):', err.message)
   );
 
+ 
   sendToken(user, 200, res);
 });
 
@@ -246,7 +244,7 @@ export const logout = handleAsyncError(async (req, res) => {
     path: "/"
   });
 
-  // PHASE 2: Invalidate analytics session (non-blocking)
+  // Fire-and-forget — must not block logout response
   invalidateSession(req.sessionId, res).catch(err =>
     console.error('[Session] Invalidation failed (non-fatal):', err.message)
   );
@@ -304,8 +302,12 @@ export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => 
     return next(new HandleError("Email and reset code are required", 400));
   }
 
+  if (!password || password.length < 8) {
+    return next(new HandleError("Password must be at least 8 characters", 400));
+  }
+
   if (password !== confirmPassword) {
-    return next(new HandleError("Passwords do not match", 400));
+    return next(new HandleError("The passwords you entered do not match. Please try again.", 400));
   }
 
   const user = await User.findOne({ email: email.toLowerCase() }).select("+password");
@@ -318,7 +320,7 @@ export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => 
   }
 
   if (await user.isPasswordReused(password)) {
-    return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
+    return next(new HandleError("This password was used recently. Please choose a different password.", 400));
   }
 
   user.password = password;
@@ -374,15 +376,19 @@ export const UpdatePassword = handleAsyncError(async (req, res, next) => {
   const user = await User.findById(req.user.id).select("+password");
 
   if (!(await user.comparePassword(oldPassword))) {
-    return next(new HandleError("Old password is incorrect", 400));
+    return next(new HandleError("Your current password is incorrect. Please try again.", 400));
+  }
+
+  if (!newPassword || newPassword.length < 8) {
+    return next(new HandleError("Password must be at least 8 characters", 400));
   }
 
   if (newPassword !== confirmPassword) {
-    return next(new HandleError("Passwords do not match", 400));
+    return next(new HandleError("The new passwords you entered do not match. Please try again.", 400));
   }
 
   if (await user.isPasswordReused(newPassword)) {
-    return next(new HandleError("Cannot reuse any of your last 5 passwords", 400));
+    return next(new HandleError("This password was used recently. Please choose a different password.", 400));
   }
 
   user.password = newPassword;
@@ -454,9 +460,8 @@ export const updateProfile = handleAsyncError(async (req, res, next) => {
     runValidators: true
   });
 
-  // FIX UC1 (same fix as verifyEmail): fire-and-forget.
-  // Profile updates happen frequently; blocking every save on an analytics
-  // sync makes the update feel slow and provides no user-visible benefit.
+  // Fire-and-forget — profile updates happen frequently; blocking on analytics
+  // sync makes the update feel slow and provides no user-visible benefit
   syncCustomerAnalytics(user._id).catch(() => {});
 
   res.status(200).json({
@@ -566,7 +571,7 @@ export const getSingleUser = handleAsyncError(async (req, res, next) => {
 export const updateUserRole = handleAsyncError(async (req, res, next) => {
   const { role } = req.body;
   const targetUserId = req.params.id;
-  const requestingUser = req.user; // set by verifyUserAuth middleware
+  const requestingUser = req.user;
 
   const VALID_ROLES = ['user', 'admin', 'superAdmin'];
   if (!VALID_ROLES.includes(role)) {
@@ -582,7 +587,7 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
     requestingUser.role === 'superAdmin' &&
     role !== 'superAdmin'
   ) {
-    return next(new HandleError('A superAdmin cannot change their own role', 403));
+    return next(new HandleError('You cannot change your own role.', 403));
   }
 
   // Only superAdmin can touch admin or superAdmin accounts
@@ -598,7 +603,7 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
       role: { $in: ['admin', 'superAdmin'] },
     });
     if (privilegedCount <= 1) {
-      return next(new HandleError('Cannot demote the last admin/superAdmin account', 403));
+      return next(new HandleError('This action is not allowed. At least one admin account must remain active.', 403));
     }
   }
 
@@ -610,11 +615,10 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
 
   if (!updatedUser) return next(new HandleError('User not found', 404));
 
-  await invalidateCaches();
+  invalidateCaches(); // fire-and-forget
 
   res.status(200).json({ success: true, user: updatedUser });
 });
-
 
 // ============================================
 // ADMIN — DELETE USER
@@ -625,11 +629,10 @@ export const deleteUser = handleAsyncError(async (req, res, next) => {
   if (!user) return next(new HandleError('Invalid user', 400));
 
   await User.findByIdAndDelete(req.params.id);
-  await invalidateCaches();
+  invalidateCaches(); // fire-and-forget
 
   return res.status(200).json({
     success: true,
     message: `User with ID: ${req.params.id} was deleted successfully`
   });
 });
-

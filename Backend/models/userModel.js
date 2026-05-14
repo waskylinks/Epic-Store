@@ -33,7 +33,7 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      minlength: 12,
+      minlength: [8, "Password must be at least 8 characters"],
       select: false,
       required: function () {
         return this.authProvider === "local";
