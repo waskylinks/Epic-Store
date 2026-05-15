@@ -41,6 +41,33 @@ const AMOUNT_TOLERANCE = {
 const SUPPORTED_CURRENCIES = ['USD', 'NGN', 'GBP', 'EUR', 'GHS', 'KES', 'ZAR'];
 
 // ============================================
+// SOURCE NORMALIZATION
+// ============================================
+
+const VALID_SOURCES = new Set([
+  'direct', 'organic', 'paid', 'referral', 'email', 'social',
+  'google', 'bing', 'yahoo', 'duckduckgo', 'baidu', 'yandex',
+  'facebook', 'instagram', 'meta', 'twitter', 'x', 'tiktok',
+  'snapchat', 'pinterest', 'linkedin', 'youtube', 'reddit',
+  'whatsapp', 'telegram', 'threads', 'discord',
+  'google_ads', 'meta_ads', 'tiktok_ads', 'bing_ads', 'twitter_ads',
+  'linkedin_ads', 'pinterest_ads', 'snapchat_ads', 'amazon_ads',
+  'taboola', 'outbrain', 'criteo',
+  'klaviyo', 'mailchimp', 'sendgrid', 'hubspot', 'newsletter',
+  'affiliate', 'influencer', 'partner',
+  'dark_social', 'returning_direct', 'likely_email_or_social',
+  'likely_retargeting', 'likely_organic',
+  'other',
+]);
+
+const normalizeSource = (source) => {
+  if (!source) return 'direct';
+  const lower = source.toLowerCase().trim();
+  if (VALID_SOURCES.has(lower)) return lower;
+  return 'other';
+};
+
+// ============================================
 // HELPERS
 // ============================================
 
@@ -548,6 +575,19 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
+  // ============================================
+  // PHASE 9: Extract analytics fields from body
+  // ============================================
+  const analyticsEventId  = req.body?.analyticsEventId  || null;
+  const clientTimestamp   = req.body?.clientTimestamp    || null;
+  const ga4ClientId       = req.body?.ga4ClientId        || null;
+  const fbp               = req.body?.fbp                || req.cookies?._fbp  || null;
+  const fbc               = req.body?.fbc                || req.cookies?._fbc  || null;
+  // clientAttribution is the full attribution snapshot from the browser SDK.
+  // Used as fallback when the backend attribution middleware couldn't capture
+  // click IDs or UTMs directly (SPA — query string never hits Express).
+  const clientAttribution = req.body?.clientAttribution  || null;
+
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -581,28 +621,36 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     paymentMeta:  buildPaymentMeta(gateway, gatewayResponse),
     orderStatus:  "Processing",
     analytics: {
-      source:          session.analytics?.source      || 'direct',
-      medium:          session.analytics?.medium      || null,
-      campaign:        session.analytics?.campaign    || null,
-      referrer:        session.analytics?.referrer    || null,
-      landingPage:     session.analytics?.landingPage || null,
-      device:          session.analytics?.device      || 'desktop',
-      browser:         session.analytics?.browser     || 'unknown',
+      // Source — Phase 3 middleware wins if it resolved a non-direct source.
+      // Falls back to clientAttribution UTMs (SPA path) then session cache.
+      source: normalizeSource(
+        req.attribution?.source && req.attribution.source !== 'direct'
+          ? req.attribution.source
+          : clientAttribution?.utm_source || session.analytics?.source || 'direct'
+      ),
+      medium:   req.attribution?.medium   || clientAttribution?.utm_medium   || session.analytics?.medium   || null,
+      campaign: req.attribution?.campaign || clientAttribution?.utm_campaign || session.analytics?.campaign || null,
+      referrer:    req.attribution?.referrer  || session.analytics?.referrer    || null,
+      landingPage: clientAttribution?.landing_page || session.analytics?.landingPage || null,
+      device:   session.analytics?.device  || req.attribution?.device  || 'desktop',
+      browser:  session.analytics?.browser || req.attribution?.browser || 'unknown',
       customerSegment: null,
       isFirstPurchase,
       purchaseNumber,
-      // Phase 2 analytics fields
-      anonymousId:     req.anonymousId || null,
-      eventId:         req.body?.analyticsEventId || null,
-      sessionId:       req.sessionId || null,
-      // Attribution tracking (Phase 3)
-      gclid:           req.attribution?.gclid || null,
-      fbclid:          req.attribution?.fbclid || null,
-      ttclid:          req.attribution?.ttclid || null,
-      msclkid:         req.attribution?.msclkid || null,
-      confidenceScore: req.attribution?.confidenceScore || null,
-      confidenceLevel: req.attribution?.confidenceLevel || null,
-      isReconstructed: req.attribution?.isReconstructed || false,
+      // Phase 2
+      anonymousId: req.anonymousId || null,
+      eventId:     analyticsEventId,
+      sessionId:   req.sessionId   || null,
+      // Click IDs — backend httpOnly cookie first (set when backend saw the
+      // query string), clientAttribution fallback for SPA landing pages.
+      gclid:   req.attribution?.gclid   || clientAttribution?.gclid   || null,
+      fbclid:  req.attribution?.fbclid  || clientAttribution?.fbclid  || fbc  || null,
+      ttclid:  req.attribution?.ttclid  || clientAttribution?.ttclid  || null,
+      msclkid: req.attribution?.msclkid || clientAttribution?.msclkid || null,
+      // Phase 3 confidence scoring
+      confidenceScore:    req.attribution?.confidenceScore    ?? null,
+      confidenceLevel:    req.attribution?.confidenceLevel    || null,
+      isReconstructed:    req.attribution?.isReconstructed    || false,
       reconstructionRule: req.attribution?.reconstructionRule || null,
     },
     fraudCheck,
@@ -621,9 +669,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   }
 
   // ── Resolve RecoveryEmail outcome immediately after order creation ─────────
-  // Only runs when the user had a previously abandoned checkout with a recovery
-  // email in-flight. Clean (never-abandoned) checkouts have no RecoveryEmail
-  // document, so this block is a no-op for them.
   try {
     const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
 
@@ -641,8 +686,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
       if (recoveryEmailDoc) {
         const { resolveRecoveryOutcome } = await import('../Services/recoveryEmailService.js');
-        // totalLinkClicks > 0 → user followed the email link → 'converted'
-        // totalLinkClicks === 0 → user came back on their own → 'organic'
         const outcomeToSet = recoveryEmailDoc.totalLinkClicks > 0 ? 'converted' : 'organic';
         await resolveRecoveryOutcome(recoveryEmailDoc.checkout, outcomeToSet);
         console.log(
@@ -651,7 +694,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       }
     }
   } catch (err) {
-    // Non-fatal — order already saved, log and continue
     console.error('[payment] RecoveryEmail outcome resolution failed:', err.message);
   }
 
@@ -664,26 +706,8 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // ============================================
   // PHASE 9: Analytics event enqueue
   // ============================================
-  // Fires after the order is confirmed and payment is verified.
-  // Completely non-blocking — wrapped in .catch() to guarantee analytics
-  // failure never fails the payment or delays the response.
-  //
-  // req.body.analyticsEventId — UUID generated by browser SDK (Phase 1)
-  // req.anonymousId           — set by identityMiddleware (Phase 2)
-  // req.sessionId             — set by sessionMiddleware (Phase 2)
-  // req.attribution           — set by trackAttribution (Phase 3)
-
-  const analyticsEventId = req.body?.analyticsEventId || null;
-  const clientTimestamp  = req.body?.clientTimestamp   || null;
-  const ga4ClientId      = req.body?.ga4ClientId       || null;
-  const fbp              = req.body?.fbp               || req.cookies?._fbp || null;
-  const fbc              = req.body?.fbc               || req.cookies?._fbc || null;
-
-  // Build the normalized purchase event (Phase 1 schema)
   const purchaseEvent = buildPurchaseEvent(order, req, analyticsEventId);
 
-  // Enqueue for reliable dispatch to GA4, Meta CAPI, and BigQuery (Phase 6)
-  // The payload carries everything the queue worker needs to dispatch
   enqueueAnalyticsEvent('purchase', {
     ...purchaseEvent,
     order,
@@ -694,7 +718,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       clientId:       ga4ClientId || req.sessionId,
       sessionId:      req.sessionId,
       fbp,
-      fbc:            fbc || req.attribution?.fbclid,
+      fbc:            fbc || req.attribution?.fbclid || clientAttribution?.fbclid || null,
       eventSourceUrl: req.headers?.referer || process.env.FRONTEND_URL,
       clientIp:       req.ip,
       userAgent:      req.headers?.['user-agent'],
@@ -704,13 +728,11 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     console.error('[Analytics] Purchase event enqueue failed (non-fatal):', err.message)
   );
 
-  // Identity stitching — links anonymous browsing session to authenticated user
-  // Non-blocking — failure never delays the payment response (Phase 2)
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] Purchase stitch failed (non-fatal):', err.message)
   );
   // ============================================
-  // END PHASE 9 ANALYTICS ADDITION
+  // END PHASE 9
   // ============================================
 
   res.status(200).json({
@@ -723,13 +745,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // ── Post-payment async tasks ──────────────────────────────────────────────
   setImmediate(async () => {
 
-    // ── Checkout conversion attribution ──────────────────────────────────────
-    // FIX: Query for ANY active checkout belonging to this user — not just
-    // abandoned ones. A clean checkout (never abandoned) still needs
-    // markAsConverted() called so it counts correctly in the analytics
-    // denominator. Without this, clean conversions were invisible: they
-    // were neither abandoned nor converted, leaking out of both buckets
-    // and silently deflating totalCheckouts and completedCheckouts counts.
     try {
       const checkout = await Checkout.findOne({
         user:                     userId,
@@ -742,13 +757,10 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         const emailWasSent       = checkout.abandonment?.recoveryEmailSent === true;
         const linkWasEverClicked = !!checkout.abandonment?.recoveryLinkClickedAt;
 
-        // Only set organicRecovery on checkouts that were actually abandoned
-        // and had a recovery email sent but the link was never clicked.
         if (wasAbandoned && emailWasSent && !linkWasEverClicked) {
           checkout.abandonment.organicRecovery = true;
         }
 
-        // Only compute cart diff for recovery sessions where the link was clicked.
         if (wasAbandoned && linkWasEverClicked) {
           checkout.computeRecoveryCartDiff(order.orderItems);
         }
@@ -761,10 +773,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
           ` (wasAbandoned=${wasAbandoned})`
         );
       } else {
-        // No matching checkout document found. This can happen legitimately
-        // if the user completed payment without ever hitting the checkout
-        // creation endpoint (e.g. a direct API call or a very old session
-        // that already expired via TTL). Log but do not throw.
         console.warn(
           `[payment] No unconverted checkout found for user ${userId} ` +
           `after order ${order._id} — skipping conversion attribution.`
@@ -774,7 +782,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       console.error('[payment] Checkout conversion attribution failed:', err.message, err.stack);
     }
 
-    // ── Discount sync ─────────────────────────────────────────────────────────
     try {
       if (session.discount) {
         const discountLookup = session.discount.discountId
@@ -800,7 +807,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       console.error('[payment] Discount sync failed:', err.message);
     }
 
-    // ── Remaining fire-and-forget tasks ──────────────────────────────────────
     syncCustomerAfterOrder(order._id).catch(() => {});
 
     createReceiptIfNotExists({
@@ -832,7 +838,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
     invalidatePaymentCaches().catch(() => {});
 
-    // Flush recovery caches now that checkout doc is saved
     import('../Services/recoveryEmailService.js')
       .then(({ invalidateRecoveryCaches }) => invalidateRecoveryCaches())
       .catch(() => {});

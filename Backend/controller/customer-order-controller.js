@@ -10,6 +10,33 @@ import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
 // ============================================
+// SOURCE NORMALIZATION
+// ============================================
+
+const VALID_SOURCES = new Set([
+  'direct', 'organic', 'paid', 'referral', 'email', 'social',
+  'google', 'bing', 'yahoo', 'duckduckgo', 'baidu', 'yandex',
+  'facebook', 'instagram', 'meta', 'twitter', 'x', 'tiktok',
+  'snapchat', 'pinterest', 'linkedin', 'youtube', 'reddit',
+  'whatsapp', 'telegram', 'threads', 'discord',
+  'google_ads', 'meta_ads', 'tiktok_ads', 'bing_ads', 'twitter_ads',
+  'linkedin_ads', 'pinterest_ads', 'snapchat_ads', 'amazon_ads',
+  'taboola', 'outbrain', 'criteo',
+  'klaviyo', 'mailchimp', 'sendgrid', 'hubspot', 'newsletter',
+  'affiliate', 'influencer', 'partner',
+  'dark_social', 'returning_direct', 'likely_email_or_social',
+  'likely_retargeting', 'likely_organic',
+  'other',
+]);
+
+const normalizeSource = (source) => {
+  if (!source) return 'direct';
+  const lower = source.toLowerCase().trim();
+  if (VALID_SOURCES.has(lower)) return lower;
+  return 'other';
+};
+
+// ============================================
 // ANALYTICS HELPER FUNCTIONS
 // ============================================
 
@@ -36,13 +63,8 @@ const extractAnalyticsData = (req) => {
 };
 
 const parseUTMParams = (data) => {
-  // FIX: Normalise source to valid enum values only
-  const rawSource = data.utm_source || data.source || 'direct';
-  const validSources = ['organic', 'paid', 'referral', 'email', 'social', 'direct'];
-  const source = validSources.includes(rawSource) ? rawSource : 'direct';
-
   return {
-    source,
+    source:   data.utm_source   || data.source   || 'direct',
     medium:   data.utm_medium   || data.medium   || null,
     campaign: data.utm_campaign || data.campaign || null,
     term:     data.utm_term     || null,
@@ -131,7 +153,7 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
   const utmParams       = parseUTMParams(clientAttribution || req.query);
 
   const fullAnalytics = {
-    source:    req.attribution?.source || utmParams.source,
+    source: normalizeSource(req.attribution?.source || utmParams.source),
     medium:    utmParams.medium,
     campaign:  utmParams.campaign,
 

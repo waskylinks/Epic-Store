@@ -555,11 +555,81 @@ const orderSchema = new mongoose.Schema(
     // ============================================
     analytics: {
       // ── Existing fields ─────────────────────────────────────────────────
-      source: {
-        type: String,
-        enum: ['organic', 'paid', 'referral', 'email', 'social', 'direct'],
-        default: 'direct',
-      },
+source: {
+  type: String,
+  enum: [
+    // ── Channel categories ────────────────────────
+    'direct',
+    'organic',
+    'paid',
+    'referral',
+    'email',
+    'social',
+
+    // ── Search engines ────────────────────────────
+    'google',
+    'bing',
+    'yahoo',
+    'duckduckgo',
+    'baidu',
+    'yandex',
+
+    // ── Social platforms ──────────────────────────
+    'facebook',
+    'instagram',
+    'meta',
+    'twitter',
+    'x',
+    'tiktok',
+    'snapchat',
+    'pinterest',
+    'linkedin',
+    'youtube',
+    'reddit',
+    'whatsapp',
+    'telegram',
+    'threads',
+    'discord',
+
+    // ── Ad networks ───────────────────────────────
+    'google_ads',
+    'meta_ads',
+    'tiktok_ads',
+    'bing_ads',
+    'twitter_ads',
+    'linkedin_ads',
+    'pinterest_ads',
+    'snapchat_ads',
+    'amazon_ads',
+    'taboola',
+    'outbrain',
+    'criteo',
+
+    // ── Email platforms ───────────────────────────
+    'klaviyo',
+    'mailchimp',
+    'sendgrid',
+    'hubspot',
+    'newsletter',
+
+    // ── Affiliate / referral ──────────────────────
+    'affiliate',
+    'influencer',
+    'partner',
+
+    // ── Reconstruction values (Phase 3) ───────────
+    'dark_social',
+    'returning_direct',
+    'likely_email_or_social',
+    'likely_retargeting',
+    'likely_organic',
+
+    // ── Fallback for unrecognized sources ─────────
+    'other',
+  ],
+  default: 'direct',
+},
+
       medium:          { type: String, default: null },
       campaign:        { type: String, default: null },
       referrer:        { type: String, default: null },
