@@ -108,7 +108,7 @@ export const getOrderByReference = createAsyncThunk(
  */
 export const createOrder = createAsyncThunk(
   'order/createOrder',
-  async (orderData, { rejectWithValue, getState }) => {
+  async (orderData, { rejectWithValue }) => {
     try {
       // PHASE 1: Generate event_id at the moment of order creation.
       // This UUID is the deduplication key for GA4 and Meta CAPI.

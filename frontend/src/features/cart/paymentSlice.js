@@ -1,5 +1,6 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
+import { generateEventId, buildClientAnalyticsPayload } from '../../utils/analytics.js';
 
 // ============================================
 // THUNKS
@@ -39,16 +40,27 @@ export const initializePayment = createAsyncThunk(
   }
 );
 
-// FIX: same — replaced localStorage Bearer token with withCredentials
 export const verifyPayment = createAsyncThunk(
   "payment/verifyPayment",
   async (payload, { rejectWithValue }) => {
     try {
       const { gateway = "paystack", reference, transactionId } = payload;
+      
+      // PHASE 9: Generate analytics event ID and payload
+      const eventId = generateEventId();
+      const analyticsPayload = buildClientAnalyticsPayload(eventId);
+      
+       // TEMP DEBUG — remove after testing
+      console.log('[Analytics Payload]', JSON.stringify(analyticsPayload, null, 2));
 
       const { data } = await axios.post(
         "/api/v1/payment/verify",
-        { gateway, reference, transactionId },
+        {
+          gateway,
+          reference,
+          transactionId,
+          ...analyticsPayload,  // Add analytics fields to request body
+        },
         { withCredentials: true }
       );
 
