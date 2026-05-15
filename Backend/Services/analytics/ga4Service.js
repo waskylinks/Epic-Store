@@ -30,26 +30,41 @@
  *   The Phase 1 frontend SDK reads the _ga cookie and sends ga4ClientId
  *   in the request body.
  *
- * Endpoints:
- *   Production: https://www.google-analytics.com/mp/collect
- *   Debug:      https://www.google-analytics.com/debug/mp/collect
- *   Debug endpoint returns validation errors — use in development only.
+ * Endpoint strategy (per official Google documentation):
+ *
+ *   Development:
+ *     1. Validate payload against the debug endpoint first.
+ *        Debug endpoint returns validationMessages — logged to console.
+ *        Events sent to /debug are NOT stored in GA4 reports.
+ *     2. Always send to production endpoint regardless of validation result.
+ *        This ensures events appear in GA4 Realtime reports in development.
+ *        Check GA4 → Reports → Realtime (not DebugView) during local testing.
+ *
+ *   Production:
+ *     Send to production endpoint only — no debug call overhead.
+ *
+ *   Why not DebugView?
+ *     Per Google docs and Simo Ahava's research, Measurement Protocol events
+ *     only appear in DebugView when the client_id has prior data collected.
+ *     A server-generated or session-based client_id has no prior GA4 data,
+ *     so DebugView shows nothing. Realtime reports always work.
  *
  * Environment variables required:
  *   GA4_MEASUREMENT_ID   — G-XXXXXXXXXX from GA4 Data Streams
  *   GA4_API_SECRET       — Measurement Protocol API secret
- *   GA4_ENDPOINT         — Production endpoint URL
- *   GA4_DEBUG_ENDPOINT   — Debug endpoint URL
+ *   GA4_ENDPOINT         — Production endpoint URL (optional, has default)
+ *   GA4_DEBUG_ENDPOINT   — Debug endpoint URL (optional, has default)
  */
 
 import axios from 'axios';
 
-// ─── ENDPOINT SELECTION ───────────────────────────────────────────────────────
+// ─── ENDPOINTS ────────────────────────────────────────────────────────────────
 
-const getEndpoint = () =>
-  process.env.NODE_ENV === 'production'
-    ? process.env.GA4_ENDPOINT         || 'https://www.google-analytics.com/mp/collect'
-    : process.env.GA4_DEBUG_ENDPOINT   || 'https://www.google-analytics.com/debug/mp/collect';
+const PRODUCTION_ENDPOINT =
+  process.env.GA4_ENDPOINT       || 'https://www.google-analytics.com/mp/collect';
+
+const DEBUG_ENDPOINT =
+  process.env.GA4_DEBUG_ENDPOINT || 'https://www.google-analytics.com/debug/mp/collect';
 
 // ─── PAYLOAD BUILDER ─────────────────────────────────────────────────────────
 
@@ -69,11 +84,11 @@ const getEndpoint = () =>
  */
 const buildGA4Payload = ({ clientId, userId, sessionId, eventName, eventParams }) => {
   const payload = {
-    // client_id ties this event to a browser session in GA4 reports
-    // Falls back to sessionId if ga4ClientId is unavailable
+    // client_id ties this event to a browser session in GA4 reports.
+    // Falls back to sessionId if ga4ClientId is unavailable.
     client_id: clientId || sessionId || `server_${Date.now()}`,
 
-    // user_id enables cross-device user stitching in GA4 Explorer
+    // user_id enables cross-device user stitching in GA4 Explorer.
     // Must be the same ID used in browser gtag('set', { user_id: '...' })
     ...(userId && { user_id: userId }),
 
@@ -86,16 +101,14 @@ const buildGA4Payload = ({ clientId, userId, sessionId, eventName, eventParams }
           ...(sessionId && { session_id: sessionId }),
           // Required by GA4 to count as an engaged session
           engagement_time_msec: 1,
+          // debug_mode: 1 causes events to appear in DebugView when the
+          // client_id has prior GA4 data. Also causes the debug endpoint
+          // to return richer validation messages. Safe to include in production.
+          ...(process.env.NODE_ENV !== 'production' && { debug_mode: 1 }),
         },
       },
     ],
   };
-
-  // Add debug_mode in non-production so events appear in GA4 DebugView
-  // DebugView: GA4 Admin → DebugView (real-time event inspector)
-  if (process.env.NODE_ENV !== 'production') {
-    payload.events[0].params.debug_mode = 1;
-  }
 
   return payload;
 };
@@ -106,9 +119,17 @@ const buildGA4Payload = ({ clientId, userId, sessionId, eventName, eventParams }
  * sendGA4Event
  *
  * Sends a single event to the GA4 Measurement Protocol endpoint.
- * Throws on network failure or GA4 validation error (debug mode only).
  *
- * The queue worker (Phase 8) catches these throws and handles retry/dead-letter.
+ * Development strategy (dual send):
+ *   1. Validate against debug endpoint — logs any payload issues to console.
+ *      This call is non-fatal: if the debug call fails, the production send
+ *      still runs.
+ *   2. Always send to production endpoint — events appear in Realtime reports.
+ *
+ * Production strategy (single send):
+ *   Send to production endpoint only. No debug overhead.
+ *
+ * The queue worker (Phase 6) catches thrown errors and handles retry/dead-letter.
  * Controllers must never call this directly — always go through the queue.
  *
  * @param {string}   eventName   - GA4 event name
@@ -118,7 +139,7 @@ const buildGA4Payload = ({ clientId, userId, sessionId, eventName, eventParams }
  * @param {string}   context.userId     - Authenticated user ID
  * @param {string}   context.sessionId  - Session ID
  * @param {string}   context.eventId    - UUID for deduplication
- * @returns {Promise<Object>} GA4 response data
+ * @returns {Promise<Object>} Result object
  */
 export const sendGA4Event = async (eventName, eventParams, context = {}) => {
   const { clientId, userId, sessionId, eventId } = context;
@@ -127,8 +148,7 @@ export const sendGA4Event = async (eventName, eventParams, context = {}) => {
     throw new Error('GA4_MEASUREMENT_ID or GA4_API_SECRET not configured');
   }
 
-  const endpoint = getEndpoint();
-  const url = `${endpoint}?measurement_id=${process.env.GA4_MEASUREMENT_ID}&api_secret=${process.env.GA4_API_SECRET}`;
+  const queryParams = `measurement_id=${process.env.GA4_MEASUREMENT_ID}&api_secret=${process.env.GA4_API_SECRET}`;
 
   const payload = buildGA4Payload({
     clientId,
@@ -137,29 +157,57 @@ export const sendGA4Event = async (eventName, eventParams, context = {}) => {
     eventName,
     eventParams: {
       ...eventParams,
-      // event_id is the deduplication key — must match the browser gtag event_id
-      // GA4 deduplicates same event_id within 24 hours
+      // event_id is the deduplication key — must match the browser gtag event_id.
+      // GA4 deduplicates same event_id within 24 hours.
       ...(eventId && { event_id: eventId }),
     },
   });
 
-  const response = await axios.post(url, payload, {
-    headers: { 'Content-Type': 'application/json' },
-    timeout: 5000, // Never block payment flow longer than 5 seconds
-  });
+  // ── Development: validate then send to production ─────────────────────────
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      const debugResponse = await axios.post(
+        `${DEBUG_ENDPOINT}?${queryParams}`,
+        payload,
+        { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
+      );
 
-  // In debug mode, GA4 returns validation messages — log them for debugging
-  if (process.env.NODE_ENV !== 'production' && response.data?.validationMessages?.length > 0) {
-    console.warn('[GA4] Validation messages:', JSON.stringify(response.data.validationMessages, null, 2));
+      if (debugResponse.data?.validationMessages?.length > 0) {
+        // Payload has issues — log them clearly so they can be fixed
+        console.warn(
+          `[GA4] Validation issues for "${eventName}" event:`,
+          JSON.stringify(debugResponse.data.validationMessages, null, 2)
+        );
+      } else {
+        console.debug(`[GA4] Payload validation passed for event: "${eventName}"`);
+      }
+    } catch (debugErr) {
+      // Debug endpoint failure is non-fatal — production send still runs.
+      // This can happen if the debug endpoint is temporarily unreachable.
+      console.warn(
+        `[GA4] Debug validation request failed (non-fatal): ${debugErr.message}`
+      );
+    }
   }
 
+  // ── Always send to production endpoint (both dev and prod) ───────────────
+  // Events sent here are processed and stored in GA4.
+  // Check GA4 → Reports → Realtime to verify events in development.
+  const response = await axios.post(
+    `${PRODUCTION_ENDPOINT}?${queryParams}`,
+    payload,
+    { headers: { 'Content-Type': 'application/json' }, timeout: 5000 }
+  );
+
   return {
-    success:            true,
-    statusCode:         response.status,
-    validationMessages: response.data?.validationMessages || [],
+    success:    true,
+    statusCode: response.status,
+    // GA4 production endpoint always returns 204 with no body — validationMessages
+    // are only available from the debug endpoint (already logged above in dev).
+    validationMessages: [],
     eventName,
-    eventId:            eventId || null,
-    sentAt:             new Date().toISOString(),
+    eventId:    eventId || null,
+    sentAt:     new Date().toISOString(),
   };
 };
 
@@ -212,7 +260,9 @@ export const sendGA4Purchase = async (order, context = {}) => {
       coupon: order.discounts.codes[0].code,
     }),
 
-    // Attribution confidence — custom dimension for filtering in GA4 reports
+    // Attribution quality — custom dimensions for filtering in GA4 reports.
+    // Reads from context.attribution which is now sourced from order.analytics
+    // (the correctly resolved attribution with clientAttribution fallback applied).
     attribution_confidence:    context.attribution?.confidenceLevel    || 'UNKNOWN',
     attribution_reconstructed: context.attribution?.isReconstructed    || false,
     attribution_source:        context.attribution?.source             || 'direct',
@@ -271,7 +321,6 @@ export const sendGA4CheckoutStep = async (step, checkout, context = {}) => {
     currency:   checkout.pricing?.currency   || 'USD',
     value:      checkout.pricing?.totalPrice || 0,
     items,
-    // Custom step tracking for non-standard steps
     checkout_step: step,
     ...(checkout.discount?.code && { coupon: checkout.discount.code }),
   };
@@ -348,9 +397,9 @@ export const sendGA4SignUp = async (method = 'email', context = {}) => {
  * GA4 uses this to adjust revenue metrics — without it, refunded orders
  * continue to inflate conversion value in reports.
  *
- * @param {Object} order      - Original order document
+ * @param {Object} order        - Original order document
  * @param {number} refundAmount - Amount refunded
- * @param {Object} context    - Analytics context
+ * @param {Object} context      - Analytics context
  * @returns {Promise<Object>}
  */
 export const sendGA4Refund = async (order, refundAmount, context = {}) => {
@@ -359,10 +408,10 @@ export const sendGA4Refund = async (order, refundAmount, context = {}) => {
     value:          Number(refundAmount) || 0,
     currency:       order.paymentInfo?.currency || 'USD',
     items: (order.orderItems || []).map((item, index) => ({
-      item_id:  item.product?.toString() || `item_${index}`,
+      item_id:   item.product?.toString() || `item_${index}`,
       item_name: item.name,
-      price:    Number(item.price),
-      quantity: Number(item.quantity),
+      price:     Number(item.price),
+      quantity:  Number(item.quantity),
     })),
   }, context);
 };
@@ -375,16 +424,20 @@ export const sendGA4Refund = async (order, refundAmount, context = {}) => {
  * Validates that GA4 environment variables are configured correctly.
  * Called by server.js on startup and by the observability controller.
  *
- * @returns {{ configured: boolean, missing: string[] }}
+ * @returns {{ configured: boolean, missing: string[], productionEndpoint: string, debugEndpoint: string, dualSendInDev: boolean }}
  */
 export const checkGA4Config = () => {
   const required = ['GA4_MEASUREMENT_ID', 'GA4_API_SECRET'];
   const missing  = required.filter(key => !process.env[key]);
+
   return {
-    configured: missing.length === 0,
+    configured:         missing.length === 0,
     missing,
-    endpoint:   getEndpoint(),
-    debug:      process.env.NODE_ENV !== 'production',
+    productionEndpoint: PRODUCTION_ENDPOINT,
+    debugEndpoint:      DEBUG_ENDPOINT,
+    // In development: validates against debug endpoint then sends to production.
+    // In production: sends to production endpoint only (no debug overhead).
+    // Check GA4 → Reports → Realtime in both environments — not DebugView.
+    dualSendInDev:      process.env.NODE_ENV !== 'production',
   };
 };
-

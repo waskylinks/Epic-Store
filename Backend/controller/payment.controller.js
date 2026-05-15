@@ -308,10 +308,20 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
     });
   }
 
-  const attributionData = req.attributionData || {
+  const attributionData = req.attribution || {
     source: 'direct', medium: null, campaign: null, referrer: null, landingPage: null
   };
-  const deviceInfo = req.deviceInfo || { device: 'desktop', browser: 'unknown' };
+
+  const userAgent = req.headers['user-agent'] || '';
+  const deviceInfo = {
+    device:  /mobile/i.test(userAgent) ? 'mobile' : /tablet|ipad/i.test(userAgent) ? 'tablet' : 'desktop',
+    browser: /edg\//i.test(userAgent) ? 'Edge'
+          : /chrome/i.test(userAgent) ? 'Chrome'
+          : /firefox/i.test(userAgent) ? 'Firefox'
+          : /safari/i.test(userAgent) ? 'Safari'
+          : /opera|opr/i.test(userAgent) ? 'Opera'
+          : 'unknown',
+  };
 
   const reference = generateOrderReference();
 
@@ -703,30 +713,45 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     // Non-fatal
   }
 
-  // ============================================
-  // PHASE 9: Analytics event enqueue
-  // ============================================
-  const purchaseEvent = buildPurchaseEvent(order, req, analyticsEventId);
+// ============================================
+// PHASE 9: Analytics event enqueue
+// ============================================
+const purchaseEvent = buildPurchaseEvent(order, req, analyticsEventId);
 
-  enqueueAnalyticsEvent('purchase', {
-    ...purchaseEvent,
-    order,
-    user:    req.user,
-    context: {
-      eventId:        purchaseEvent.event_id,
-      userId:         req.user?._id?.toString(),
-      clientId:       ga4ClientId || req.sessionId,
-      sessionId:      req.sessionId,
-      fbp,
-      fbc:            fbc || req.attribution?.fbclid || clientAttribution?.fbclid || null,
-      eventSourceUrl: req.headers?.referer || process.env.FRONTEND_URL,
-      clientIp:       req.ip,
-      userAgent:      req.headers?.['user-agent'],
-      attribution:    req.attribution,
+enqueueAnalyticsEvent('purchase', {
+  ...purchaseEvent,
+  order,
+  user:    req.user,
+  context: {
+    eventId:        purchaseEvent.event_id,
+    userId:         req.user?._id?.toString(),
+    clientId:       ga4ClientId || req.sessionId,
+    sessionId:      req.sessionId,
+    fbp,
+    fbc:            fbc || req.attribution?.fbclid || clientAttribution?.fbclid || null,
+    eventSourceUrl: req.headers?.referer || process.env.FRONTEND_URL,
+    clientIp:       req.ip,
+    userAgent:      req.headers?.['user-agent'],
+    // Use the saved order's analytics subdocument — this has the correct
+    // source/gclid resolved from clientAttribution fallback (SPA path).
+    attribution: {
+      source:             order.analytics.source,
+      medium:             order.analytics.medium,
+      campaign:           order.analytics.campaign,
+      gclid:              order.analytics.gclid,
+      fbclid:             order.analytics.fbclid,
+      ttclid:             order.analytics.ttclid,
+      msclkid:            order.analytics.msclkid,
+      confidenceScore:    order.analytics.confidenceScore,
+      confidenceLevel:    order.analytics.confidenceLevel,
+      isReconstructed:    order.analytics.isReconstructed,
+      reconstructionRule: order.analytics.reconstructionRule,
     },
-  }).catch(err =>
-    console.error('[Analytics] Purchase event enqueue failed (non-fatal):', err.message)
-  );
+  },
+}).catch(err =>
+  console.error('[Analytics] Purchase event enqueue failed (non-fatal):', err.message)
+);
+
 
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] Purchase stitch failed (non-fatal):', err.message)
