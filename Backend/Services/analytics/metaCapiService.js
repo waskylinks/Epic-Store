@@ -26,31 +26,62 @@
  * PII hashing requirement:
  *   Meta requires all personally identifiable information to be hashed
  *   with SHA-256 before sending. This is a legal requirement under Meta's
- *   data use policy and GDPR. The hash() function in this file handles
- *   normalization (lowercase, trim) before hashing.
+ *   data use policy and GDPR. The hash() function handles normalization
+ *   (lowercase, trim) before hashing.
  *
- * User data matching:
- *   Meta matches CAPI events to users using a combination of:
- *     em  (email)       — strongest signal, hash required
- *     ph  (phone)       — E.164 format, hash required
- *     fn  (first name)  — hash required
- *     ln  (last name)   — hash required
- *     fbp (_fbp cookie) — Meta browser ID, set by Pixel automatically
- *     fbc (_fbc cookie) — Meta click ID cookie (from fbclid param)
- *     external_id       — your internal user ID, hash required
+ * fbc / fbp parameter rules (per official Meta documentation):
+ *   fbp — Meta browser ID set by the Pixel automatically. Format: fb.1.{timestamp}.{random}
+ *         Send as-is from the _fbp cookie. NEVER hash.
+ *   fbc — Meta click ID derived from fbclid URL param. Format: fb.1.{timestamp}.{fbclid}
+ *         MUST follow this exact format. Passing a raw fbclid string causes a 400 error.
+ *         Only set fbc when a real fbclid exists — never fabricate it.
+ *         Send as-is. NEVER hash.
  *
- *   More matching signals = higher match rate = better attribution.
- *   Always send as many as you have available.
+ * Development vs Production strategy:
+ *   Development:
+ *     - Include META_TEST_EVENT_CODE in payload so events appear in
+ *       Meta Events Manager → Test Events tab instantly for validation.
+ *     - Test events do NOT feed ad optimization or reporting.
+ *     - Remove META_TEST_EVENT_CODE from production .env entirely.
+ *
+ *   Production:
+ *     - No test_event_code — events feed real reporting and optimization.
+ *     - Events appear in Events Manager → Overview within ~20 minutes.
  *
  * Environment variables required:
- *   META_PIXEL_ID        — Your Facebook Pixel ID
+ *   META_PIXEL_ID        — Your Facebook Pixel ID (16-digit number)
  *   META_ACCESS_TOKEN    — System user access token (never expires)
- *   META_CAPI_ENDPOINT   — https://graph.facebook.com/v18.0
- *   META_TEST_EVENT_CODE — Test event code (development only, remove in production)
+ *   META_CAPI_ENDPOINT   — https://graph.facebook.com/v18.0 (optional, has default)
+ *   META_TEST_EVENT_CODE — Test event code (development only, REMOVE in production .env)
  */
 
 import crypto from 'crypto';
 import axios  from 'axios';
+
+// ─── FBC FORMATTER ────────────────────────────────────────────────────────────
+
+/**
+ * formatFbc
+ *
+ * Formats a raw fbclid value into the Meta-required fbc format.
+ * Per Meta's official documentation, fbc MUST be: fb.1.{timestamp}.{fbclid}
+ *
+ * A raw fbclid string passed directly as fbc causes a 400 Bad Request.
+ * The _fbc cookie (set by the Meta Pixel) already contains the formatted
+ * value — use it directly when available. Only call this when you have
+ * a raw fbclid that has not yet been formatted.
+ *
+ * @param {string} fbclid - Raw click ID from URL param or attribution
+ * @returns {string|null} Formatted fbc string or null if fbclid is falsy
+ */
+const formatFbc = (fbclid) => {
+  if (!fbclid || typeof fbclid !== 'string') return null;
+  // If it already looks like a properly formatted fbc, return as-is
+  if (fbclid.startsWith('fb.1.')) return fbclid;
+  // Format raw fbclid into fb.1.{timestamp_seconds}.{fbclid}
+  const timestampSeconds = Math.floor(Date.now() / 1000);
+  return `fb.1.${timestampSeconds}.${fbclid}`;
+};
 
 // ─── PII HASHING ──────────────────────────────────────────────────────────────
 
@@ -94,6 +125,9 @@ const hash = (value, type = 'default') => {
  * Constructs the Meta CAPI user_data object from available signals.
  * Only includes fields that have values — empty fields reduce match quality.
  *
+ * Critical: fbp and fbc are NEVER hashed — they are sent as-is.
+ * All other PII fields MUST be hashed with SHA-256.
+ *
  * Match rate is directly correlated with conversion attribution accuracy.
  * A match rate below 40% indicates insufficient user data is being sent.
  *
@@ -103,14 +137,14 @@ const hash = (value, type = 'default') => {
  * @param {string} userData.firstName  - User first name
  * @param {string} userData.lastName   - User last name
  * @param {string} userData.userId     - Internal MongoDB user ID
- * @param {string} userData.fbp        - _fbp cookie value
- * @param {string} userData.fbc        - _fbc cookie value or fbclid
+ * @param {string} userData.fbp        - _fbp cookie value (NOT hashed)
+ * @param {string} userData.fbc        - Already-formatted fbc value (NOT hashed)
  * @param {string} userData.city       - City (from shipping info)
  * @param {string} userData.state      - State/region
  * @param {string} userData.country    - Country code (2-letter ISO)
  * @param {string} userData.zipCode    - Postal/zip code
- * @param {string} userData.clientIp   - Client IP address
- * @param {string} userData.userAgent  - Browser user agent
+ * @param {string} userData.clientIp   - Client IP address (NOT hashed)
+ * @param {string} userData.userAgent  - Browser user agent (NOT hashed)
  * @returns {Object} Meta CAPI user_data object
  */
 const buildUserData = (userData = {}) => {
@@ -129,16 +163,16 @@ const buildUserData = (userData = {}) => {
     ...(userId    && { external_id: hash(userId) }),
 
     // Hashed geographic data — improves match rate
-    ...(city      && { ct:  hash(city) }),
-    ...(state     && { st:  hash(state) }),
+    ...(city      && { ct:      hash(city) }),
+    ...(state     && { st:      hash(state) }),
     ...(country   && { country: hash(country) }),
-    ...(zipCode   && { zp:  hash(zipCode) }),
+    ...(zipCode   && { zp:      hash(zipCode) }),
 
-    // Un-hashed Meta cookies — sent as-is (already set by Meta infrastructure)
+    // Un-hashed Meta cookies — MUST be sent as-is, hashing breaks matching
     ...(fbp       && { fbp }),
     ...(fbc       && { fbc }),
 
-    // Un-hashed technical signals
+    // Un-hashed technical signals — hashing breaks these
     ...(clientIp  && { client_ip_address: clientIp }),
     ...(userAgent && { client_user_agent: userAgent }),
   };
@@ -152,7 +186,10 @@ const buildUserData = (userData = {}) => {
  * Sends a single event to the Meta Conversions API.
  * Throws on network failure, API error, or invalid credentials.
  *
- * The queue worker (Phase 8) catches these throws and handles retry.
+ * Development: includes test_event_code so events appear in Test Events tab.
+ * Production: no test_event_code — events feed real reporting.
+ *
+ * The queue worker (Phase 6) catches these throws and handles retry.
  * Controllers must never call this directly — always go through the queue.
  *
  * @param {string} eventName     - Meta standard event name (e.g. "Purchase")
@@ -186,8 +223,8 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
       {
         event_name:       eventName,
         event_time:       eventTime,
-        // eventID is the deduplication key — must match the browser fbq eventID
-        // Meta deduplicates same eventID within 48 hours
+        // event_id is the deduplication key — must match the browser fbq eventID.
+        // Meta deduplicates same event_id within 48 hours.
         event_id:         eventId,
         event_source_url: eventSourceUrl || process.env.FRONTEND_URL,
         action_source:    actionSource,
@@ -200,14 +237,17 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
       },
     ],
 
-    // Test event code — only present in development
-    // Remove META_TEST_EVENT_CODE from production .env entirely
+    // Development: test_event_code routes events to Test Events tab in Events Manager.
+    // This lets you validate payloads in real time without polluting production data.
+    // Production: META_TEST_EVENT_CODE must NOT be set — test events don't feed
+    // ad optimization or reporting, causing zero attributed conversions in Ads Manager.
     ...(process.env.META_TEST_EVENT_CODE && {
       test_event_code: process.env.META_TEST_EVENT_CODE,
     }),
   };
 
-  const url = `${process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0'}/${process.env.META_PIXEL_ID}/events`;
+  const endpoint = process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0';
+  const url = `${endpoint}/${process.env.META_PIXEL_ID}/events`;
 
   const response = await axios.post(url, payload, {
     params:  { access_token: process.env.META_ACCESS_TOKEN },
@@ -215,19 +255,30 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
     timeout: 8000, // Meta CAPI can be slower than GA4 — 8 second timeout
   });
 
-  // Log any API-level errors returned in the response body
+  // Log API-level errors returned in the response body
   if (response.data?.error) {
     throw new Error(`Meta CAPI error: ${JSON.stringify(response.data.error)}`);
   }
 
+  // In development, log confirmation so you know the Test Events tab should show it
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug(
+      `[Meta CAPI] "${eventName}" sent successfully.`,
+      process.env.META_TEST_EVENT_CODE
+        ? `Check Test Events tab in Events Manager (code: ${process.env.META_TEST_EVENT_CODE})`
+        : 'No test_event_code set — check production Events Manager Overview.',
+      { eventsReceived: response.data?.events_received, fbtrace_id: response.data?.fbtrace_id }
+    );
+  }
+
   return {
-    success:       true,
-    statusCode:    response.status,
+    success:        true,
+    statusCode:     response.status,
     eventsReceived: response.data?.events_received || 0,
-    fbtrace_id:    response.data?.fbtrace_id       || null,
+    fbtrace_id:     response.data?.fbtrace_id      || null,
     eventName,
-    eventId:       eventId || null,
-    sentAt:        new Date().toISOString(),
+    eventId:        eventId || null,
+    sentAt:         new Date().toISOString(),
   };
 };
 
@@ -240,8 +291,13 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
  * This is the most critical CAPI event — it feeds Meta's conversion
  * attribution and campaign optimization algorithm (ROAS calculation).
  *
- * Maps to Meta's standard Purchase event:
- * https://developers.facebook.com/docs/meta-pixel/reference#standard-events
+ * fbc handling:
+ *   Priority 1: context.fbc — the _fbc cookie value set by Meta Pixel.
+ *               Already formatted as fb.1.{timestamp}.{fbclid}. Use as-is.
+ *   Priority 2: context.attribution.fbclid — raw click ID from Phase 3.
+ *               Must be formatted into fb.1.{timestamp}.{fbclid} via formatFbc().
+ *               Passing raw fbclid as fbc causes a 400 Bad Request.
+ *   If neither is present: omit fbc entirely — never fabricate it.
  *
  * @param {Object} order    - Mongoose Order document (post-save)
  * @param {Object} user     - Mongoose User document
@@ -259,6 +315,11 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     attribution,
   } = context;
 
+  // Resolve fbc: use cookie value if available (already formatted),
+  // otherwise format the raw fbclid from attribution into the required fb.1.* format.
+  // Never fabricate fbc if no real fbclid exists.
+  const resolvedFbc = fbc || formatFbc(attribution?.fbclid) || null;
+
   // Build user data from authenticated user + shipping info + Meta cookies
   const userData = {
     email:     user.email,
@@ -267,9 +328,7 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     lastName:  user.lastName,
     userId:    user._id?.toString(),
     fbp,
-    // fbc comes from _fbc cookie (set by Pixel on fbclid landing)
-    // or fallback to fbclid stored in attribution (from Phase 3)
-    fbc:       fbc || attribution?.fbclid,
+    fbc:       resolvedFbc,
     // Geographic data from shipping info improves match rate
     city:      order.shippingInfo?.city,
     state:     order.shippingInfo?.state,
@@ -334,13 +393,15 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
  * @returns {Promise<Object>}
  */
 export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => {
+  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
+
   const userData = {
     email:     user?.email,
     firstName: user?.firstName,
     lastName:  user?.lastName,
     userId:    user?._id?.toString(),
     fbp:       context.fbp,
-    fbc:       context.fbc || context.attribution?.fbclid,
+    fbc:       resolvedFbc,
     clientIp:  context.clientIp,
     userAgent: context.userAgent,
   };
@@ -350,11 +411,11 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
   );
 
   const customData = {
-    value:       Number(checkout.pricing?.totalPrice) || 0,
-    currency:    checkout.pricing?.currency || 'USD',
-    content_ids: contentIds,
+    value:        Number(checkout.pricing?.totalPrice) || 0,
+    currency:     checkout.pricing?.currency || 'USD',
+    content_ids:  contentIds,
     content_type: 'product',
-    num_items:   checkout.items?.length || 0,
+    num_items:    checkout.items?.length || 0,
   };
 
   return sendMetaEvent('InitiateCheckout', userData, customData, context);
@@ -376,6 +437,7 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
  */
 export const sendMetaAddToCart = async (product, quantity, user, context = {}) => {
   const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
 
   const userData = {
     email:     user?.email,
@@ -383,7 +445,7 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
     lastName:  user?.lastName,
     userId:    user?._id?.toString(),
     fbp:       context.fbp,
-    fbc:       context.fbc || context.attribution?.fbclid,
+    fbc:       resolvedFbc,
     clientIp:  context.clientIp,
     userAgent: context.userAgent,
   };
@@ -419,22 +481,23 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
  */
 export const sendMetaViewContent = async (product, user, context = {}) => {
   const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
 
   const userData = {
     email:     user?.email,
     userId:    user?._id?.toString(),
     fbp:       context.fbp,
-    fbc:       context.fbc || context.attribution?.fbclid,
+    fbc:       resolvedFbc,
     clientIp:  context.clientIp,
     userAgent: context.userAgent,
   };
 
   const customData = {
-    value:        Number(price),
-    currency:     'USD',
-    content_ids:  [product._id?.toString()],
-    content_name: product.name,
-    content_type: 'product',
+    value:            Number(price),
+    currency:         'USD',
+    content_ids:      [product._id?.toString()],
+    content_name:     product.name,
+    content_type:     'product',
     content_category: product.category || 'uncategorized',
   };
 
@@ -454,21 +517,23 @@ export const sendMetaViewContent = async (product, user, context = {}) => {
  * @returns {Promise<Object>}
  */
 export const sendMetaCompleteRegistration = async (user, context = {}) => {
+  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
+
   const userData = {
     email:     user.email,
     firstName: user.firstName,
     lastName:  user.lastName,
     userId:    user._id?.toString(),
     fbp:       context.fbp,
-    fbc:       context.fbc || context.attribution?.fbclid,
+    fbc:       resolvedFbc,
     clientIp:  context.clientIp,
     userAgent: context.userAgent,
   };
 
   return sendMetaEvent('CompleteRegistration', userData, {
-    status: true,
+    status:   true,
     currency: 'USD',
-    value: 0,
+    value:    0,
   }, context);
 };
 
@@ -489,8 +554,13 @@ export const checkMetaConfig = () => {
   return {
     configured: missing.length === 0,
     missing,
+    // testMode: true in development (META_TEST_EVENT_CODE set).
+    // Events in test mode appear in Events Manager → Test Events tab only.
+    // They do NOT feed ad optimization — remove test_event_code for production.
     testMode:   !!process.env.META_TEST_EVENT_CODE,
-    pixelId:    process.env.META_PIXEL_ID ? `${process.env.META_PIXEL_ID.slice(0, 4)}****` : null,
+    pixelId:    process.env.META_PIXEL_ID
+      ? `${process.env.META_PIXEL_ID.slice(0, 4)}****`
+      : null,
     endpoint:   process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0',
   };
 };
