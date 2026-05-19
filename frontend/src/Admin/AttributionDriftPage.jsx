@@ -26,9 +26,9 @@ import {
   selectAttributionDrift,
   selectDriftLoading,
   selectDriftError,
-} from '../../features/analytics/analyticsObservabilitySlice';
-import Navbar from '../../components/Navbar';
-import '../../AdminStyles/AttributionDrift.css';
+} from '../features/analytics/analyticsObservabilitySlice';
+import Navbar from '../components/Navbar';
+import '../AdminStyles/AttributionDrift.css';
 
 // ─── PALETTE ──────────────────────────────────────────────────────────────────
 const PAL = ['#6366F1','#10B981','#F59E0B','#3B82F6','#EF4444','#06B6D4','#8B5CF6','#F97316'];

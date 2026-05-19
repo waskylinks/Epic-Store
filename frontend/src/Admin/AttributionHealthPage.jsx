@@ -26,9 +26,9 @@ import {
   selectAttributionHealth,
   selectHealthLoading,
   selectHealthError,
-} from '../../features/analytics/analyticsObservabilitySlice';
-import Navbar from '../../components/Navbar';
-import '../../AdminStyles/AttributionHealth.css';
+} from '../features/analytics/analyticsObservabilitySlice';
+import Navbar from '../components/Navbar';
+import '../AdminStyles/AttributionHealth.css';
 
 // ─── PALETTE ──────────────────────────────────────────────────────────────────
 const CONF_COLORS = { HIGH: '#10B981', MEDIUM: '#F59E0B', LOW: '#EF4444', unknown: '#9CA3AF' };
