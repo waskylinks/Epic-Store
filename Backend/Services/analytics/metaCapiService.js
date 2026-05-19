@@ -347,6 +347,7 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     id:         item.product?.toString() || 'unknown',
     quantity:   Number(item.quantity)   || 1,
     item_price: Number(item.price)      || 0,
+    title:      item.name               || 'Product',
   }));
 
   const customData = {

@@ -20,7 +20,6 @@ import Checkout from '../models/checkout-model.js';
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 
-
 import { buildPurchaseEvent } from '../utils/analyticsEvent.js';
 import { enqueueAnalyticsEvent } from '../jobs/analyticsQueue.js';
 import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
@@ -65,6 +64,27 @@ const normalizeSource = (source) => {
   const lower = source.toLowerCase().trim();
   if (VALID_SOURCES.has(lower)) return lower;
   return 'other';
+};
+
+// ============================================
+// FBC FORMATTER
+// ============================================
+
+/**
+ * formatFbc
+ *
+ * Formats a raw fbclid into Meta's required fbc format: fb.1.{timestamp}.{fbclid}
+ * The _fbc cookie set by Meta Pixel is already in this format — use as-is.
+ * Only call this when you have a raw fbclid that has not yet been formatted.
+ * Never fabricate fbc if no real fbclid exists.
+ *
+ * @param {string|null} fbclid - Raw click ID from attribution or URL param
+ * @returns {string|null}
+ */
+const formatFbc = (fbclid) => {
+  if (!fbclid || typeof fbclid !== 'string') return null;
+  if (fbclid.startsWith('fb.1.')) return fbclid; // already formatted
+  return `fb.1.${Math.floor(Date.now() / 1000)}.${fbclid}`;
 };
 
 // ============================================
@@ -598,6 +618,16 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // click IDs or UTMs directly (SPA — query string never hits Express).
   const clientAttribution = req.body?.clientAttribution  || null;
 
+  // Resolve fbc for Meta CAPI:
+  //   Priority 1: _fbc cookie or req.body.fbc — already formatted as fb.1.{ts}.{fbclid}
+  //   Priority 2: raw fbclid from attribution — must be formatted via formatFbc()
+  //   Never fabricate fbc if no real fbclid exists.
+  const resolvedFbc =
+    fbc ||
+    formatFbc(req.attribution?.fbclid) ||
+    formatFbc(clientAttribution?.fbclid) ||
+    null;
+
   const orderData = {
     user:          userId,
     shippingInfo:  session.shippingInfo,
@@ -638,12 +668,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
           ? req.attribution.source
           : clientAttribution?.utm_source || session.analytics?.source || 'direct'
       ),
-      medium:   req.attribution?.medium   || clientAttribution?.utm_medium   || session.analytics?.medium   || null,
-      campaign: req.attribution?.campaign || clientAttribution?.utm_campaign || session.analytics?.campaign || null,
+      medium:      req.attribution?.medium   || clientAttribution?.utm_medium   || session.analytics?.medium   || null,
+      campaign:    req.attribution?.campaign || clientAttribution?.utm_campaign || session.analytics?.campaign || null,
       referrer:    req.attribution?.referrer  || session.analytics?.referrer    || null,
       landingPage: clientAttribution?.landing_page || session.analytics?.landingPage || null,
-      device:   session.analytics?.device  || req.attribution?.device  || 'desktop',
-      browser:  session.analytics?.browser || req.attribution?.browser || 'unknown',
+      device:      session.analytics?.device  || req.attribution?.device  || 'desktop',
+      browser:     session.analytics?.browser || req.attribution?.browser || 'unknown',
       customerSegment: null,
       isFirstPurchase,
       purchaseNumber,
@@ -654,7 +684,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       // Click IDs — backend httpOnly cookie first (set when backend saw the
       // query string), clientAttribution fallback for SPA landing pages.
       gclid:   req.attribution?.gclid   || clientAttribution?.gclid   || null,
-      fbclid:  req.attribution?.fbclid  || clientAttribution?.fbclid  || fbc  || null,
+      fbclid:  req.attribution?.fbclid  || clientAttribution?.fbclid  || null,
       ttclid:  req.attribution?.ttclid  || clientAttribution?.ttclid  || null,
       msclkid: req.attribution?.msclkid || clientAttribution?.msclkid || null,
       // Phase 3 confidence scoring
@@ -713,45 +743,48 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     // Non-fatal
   }
 
-// ============================================
-// PHASE 9: Analytics event enqueue
-// ============================================
-const purchaseEvent = buildPurchaseEvent(order, req, analyticsEventId);
+  // ============================================
+  // PHASE 9: Analytics event enqueue
+  // ============================================
+  const purchaseEvent = buildPurchaseEvent(order, req, analyticsEventId);
 
-enqueueAnalyticsEvent('purchase', {
-  ...purchaseEvent,
-  order,
-  user:    req.user,
-  context: {
-    eventId:        purchaseEvent.event_id,
-    userId:         req.user?._id?.toString(),
-    clientId:       ga4ClientId || req.sessionId,
-    sessionId:      req.sessionId,
-    fbp,
-    fbc:            fbc || req.attribution?.fbclid || clientAttribution?.fbclid || null,
-    eventSourceUrl: req.headers?.referer || process.env.FRONTEND_URL,
-    clientIp:       req.ip,
-    userAgent:      req.headers?.['user-agent'],
-    // Use the saved order's analytics subdocument — this has the correct
-    // source/gclid resolved from clientAttribution fallback (SPA path).
-    attribution: {
-      source:             order.analytics.source,
-      medium:             order.analytics.medium,
-      campaign:           order.analytics.campaign,
-      gclid:              order.analytics.gclid,
-      fbclid:             order.analytics.fbclid,
-      ttclid:             order.analytics.ttclid,
-      msclkid:            order.analytics.msclkid,
-      confidenceScore:    order.analytics.confidenceScore,
-      confidenceLevel:    order.analytics.confidenceLevel,
-      isReconstructed:    order.analytics.isReconstructed,
-      reconstructionRule: order.analytics.reconstructionRule,
+  enqueueAnalyticsEvent('purchase', {
+    ...purchaseEvent,
+    order,
+    user:    req.user,
+    context: {
+      eventId:        purchaseEvent.event_id,
+      userId:         req.user?._id?.toString(),
+      clientId:       ga4ClientId || req.sessionId,
+      sessionId:      req.sessionId,
+      fbp,
+      // resolvedFbc is already in fb.1.{ts}.{fbclid} format — safe to pass
+      // directly to metaCapiService without further formatting.
+      fbc:            resolvedFbc,
+      eventSourceUrl: req.headers?.referer || process.env.FRONTEND_URL,
+      clientIp:       req.ip,
+      userAgent:      req.headers?.['user-agent'],
+      // Use the saved order's analytics subdocument — this has the correct
+      // source/gclid resolved from clientAttribution fallback (SPA path).
+      // req.attribution sees the POST /verify request as "direct" because
+      // the query string never hits Express on a SPA.
+      attribution: {
+        source:             order.analytics.source,
+        medium:             order.analytics.medium,
+        campaign:           order.analytics.campaign,
+        gclid:              order.analytics.gclid,
+        fbclid:             order.analytics.fbclid,
+        ttclid:             order.analytics.ttclid,
+        msclkid:            order.analytics.msclkid,
+        confidenceScore:    order.analytics.confidenceScore,
+        confidenceLevel:    order.analytics.confidenceLevel,
+        isReconstructed:    order.analytics.isReconstructed,
+        reconstructionRule: order.analytics.reconstructionRule,
+      },
     },
-  },
-}).catch(err =>
-  console.error('[Analytics] Purchase event enqueue failed (non-fatal):', err.message)
-);
-
+  }).catch(err =>
+    console.error('[Analytics] Purchase event enqueue failed (non-fatal):', err.message)
+  );
 
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] Purchase stitch failed (non-fatal):', err.message)

@@ -4,6 +4,8 @@ import Product from '../models/product-model.js';
 import Discount from '../models/discount-model.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import Cart from '../models/cart-model.js';
+import { sendGA4AddToCart } from '../Services/analytics/ga4Service.js';
+import { sendMetaAddToCart } from '../Services/analytics/metaCapiService.js';
 
 // ============================================
 // SHARED PRICE RESOLUTION
@@ -51,7 +53,7 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// ADD TO CART  (FIXED — now persists to DB)
+// ADD TO CART
 // ============================================
 
 export const addToCart = handleAsyncError(async (req, res, next) => {
@@ -85,7 +87,6 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   if (existingItem) {
     existingItem.quantity = Math.min(existingItem.quantity + quantity, availableStock);
   } else {
-    // ── Check limit BEFORE pushing, not after ──────────────────────────
     if (cart.cartItems.length >= 100) {
       return next(new HandleError('Cart limit reached (100 items)', 400));
     }
@@ -93,13 +94,39 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   }
 
   await cart.save();
-  // ──────────────────────────────────────────────────────────────────────
 
-  try { await product.incrementCart(true); } catch { /* analytics non-fatal */ }
+  // ── Product analytics increment (non-fatal) ────────────────────────────
+  try { await product.incrementCart(true); } catch { /* non-fatal */ }
   Promise.all([
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
+
+  // ── Analytics: fire GA4 + Meta add_to_cart (fire-and-forget) ──────────
+  // Build analytics context from Phase 2/3 middleware — same pattern as
+  // verifyPaymentController. Non-fatal: cart add is never blocked by this.
+  const analyticsContext = {
+    clientId:       req.body?.ga4ClientId || req.sessionId || null,
+    userId:         req.user?._id?.toString(),
+    sessionId:      req.sessionId         || null,
+    eventId:        req.body?.analyticsEventId || null,
+    eventSourceUrl: req.headers?.referer  || process.env.FRONTEND_URL,
+    clientIp:       req.ip,
+    userAgent:      req.headers?.['user-agent'],
+    fbp:            req.cookies?._fbp     || null,
+    // fbc from cookie is already formatted (fb.1.{ts}.{fbclid}) — use as-is.
+    // Raw fbclid from attribution is formatted by metaCapiService.formatFbc internally.
+    fbc:            req.cookies?._fbc     || null,
+    attribution:    req.attribution       || null,
+  };
+
+  sendGA4AddToCart(product, quantity, analyticsContext).catch(err =>
+    console.error('[Analytics] GA4 add_to_cart failed (non-fatal):', err.message)
+  );
+
+  sendMetaAddToCart(product, quantity, req.user, analyticsContext).catch(err =>
+    console.error('[Analytics] Meta add_to_cart failed (non-fatal):', err.message)
+  );
 
   return res.status(200).json({
     success: true,
@@ -116,7 +143,7 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// GET CART  (required by syncServerCart)
+// GET CART
 // GET /api/v1/cart  — auth required
 // ============================================
 
@@ -129,7 +156,7 @@ export const getUserCart = handleAsyncError(async (req, res) => {
 });
 
 // ============================================
-// UPDATE CART ITEM  (FIXED — now persists to DB)
+// UPDATE CART ITEM
 // ============================================
 
 export const updateCartItem = handleAsyncError(async (req, res, next) => {
@@ -150,14 +177,12 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
 
   const finalQuantity = Math.min(quantity, availableStock);
 
-  // ── Persist to DB ─────────────────────────────────────────────────────────
   if (req.user?._id) {
     await Cart.findOneAndUpdate(
       { user: req.user._id, 'cartItems.product': productId },
       { $set: { 'cartItems.$.quantity': finalQuantity } }
     );
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
   return res.status(200).json({
     success: true,
@@ -167,26 +192,24 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// REMOVE FROM CART  (FIXED — now persists to DB)
+// REMOVE FROM CART
 // ============================================
 
 export const removeFromCart = handleAsyncError(async (req, res, next) => {
   const { productId } = req.params;
   if (!productId) return next(new HandleError('Product ID is required', 400));
 
-  // ── Persist to DB ─────────────────────────────────────────────────────────
   if (req.user?._id) {
     await Cart.findOneAndUpdate(
       { user: req.user._id },
       { $pull: { cartItems: { product: productId } } }
     );
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
   try {
     const product = await Product.findById(productId);
     if (product) await product.incrementCart(false);
-  } catch { /* analytics non-fatal */ }
+  } catch { /* non-fatal */ }
 
   deleteCachePattern('product_conversion*').catch(() => {});
 
@@ -194,13 +217,12 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
 });
 
 // ============================================
-// CLEAR CART  (FIXED — now persists to DB)
+// CLEAR CART
 // ============================================
 
 export const clearCart = handleAsyncError(async (req, res, next) => {
   const { items } = req.body ?? {};
 
-  // ── Persist to DB ─────────────────────────────────────────────────────────
   if (req.user?._id) {
     await Cart.findOneAndUpdate(
       { user: req.user._id },
@@ -208,7 +230,6 @@ export const clearCart = handleAsyncError(async (req, res, next) => {
       { upsert: true }
     );
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
   if (items && items.length > 0) {
     try {
@@ -226,7 +247,7 @@ export const clearCart = handleAsyncError(async (req, res, next) => {
           }
         ]);
       }
-    } catch { /* analytics non-fatal */ }
+    } catch { /* non-fatal */ }
     deleteCachePattern('product_conversion*').catch(() => {});
   }
 
@@ -399,7 +420,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
       invalidItems,
     });
   }
-
 
   const canUse = await discount.canUserUse(userId ?? null);
   if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
