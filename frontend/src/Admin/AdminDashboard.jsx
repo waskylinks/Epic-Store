@@ -29,6 +29,8 @@ import {
   PersonAdd,
   Insights,
   Schedule,
+  TrackChanges,
+  Loop,
 } from '@mui/icons-material';
 import {
   BarChart as ReChart, Bar,
@@ -77,6 +79,11 @@ import {
 import {
   fetchCronHealth,
 } from '../features/admin/cronHealthSlice';
+import {
+  fetchQueueHealth,
+  selectQueueHealth,
+  selectQueueLoading,
+} from '../features/analytics/analyticsObservabilitySlice';
 
 import Navbar from '../components/Navbar';
 import '../AdminStyles/Dashboard.css';
@@ -92,16 +99,20 @@ const NAV_GROUPS = [
   {
     group: 'Analytics',
     items: [
-      { path: '/admin/cron-health',            icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
-      { path: '/admin/analytics',              icon: BarChart,           label: 'Overview',        color: '#8B5CF6' },
-      { path: '/admin/reports',                icon: Assessment,         label: 'Reports',         color: '#EC4899' },
-      { path: '/admin/customers',              icon: PersonSearch,       label: 'Customers',       color: '#06B6D4' },
-      { path: '/admin/attribution',            icon: CampaignOutlined,   label: 'Attribution',     color: '#F59E0B' },
-      { path: '/admin/checkout',               icon: ShoppingCartCheckout, label: 'Checkout',      color: '#10B981' },
-      { path: '/admin/refund-analytics',       icon: CurrencyExchange,   label: 'Refund Analytics', color: '#14B8A6' },
-      { path: '/admin/return-analytics',       icon: ReplayCircleFilled, label: 'Return Analytics', color: '#EF4444' },
-      { path: '/admin/discount-analytics',     icon: Insights,           label: 'Discount ROI',    color: '#e563f1' },
-      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,    label: 'Recovery Email',  color: '#fb7185' },
+      { path: '/admin/cron-health',              icon: Schedule,           label: 'Cron Health',     color: '#6366F1' },
+      { path: '/admin/analytics',                icon: BarChart,           label: 'Overview',        color: '#8B5CF6' },
+      { path: '/admin/reports',                  icon: Assessment,         label: 'Reports',         color: '#EC4899' },
+      { path: '/admin/customers',                icon: PersonSearch,       label: 'Customers',       color: '#06B6D4' },
+      { path: '/admin/attribution',              icon: CampaignOutlined,   label: 'Attribution',     color: '#F59E0B' },
+      { path: '/admin/checkout',                 icon: ShoppingCartCheckout, label: 'Checkout',      color: '#10B981' },
+      { path: '/admin/refund-analytics',         icon: CurrencyExchange,   label: 'Refund Analytics', color: '#14B8A6' },
+      { path: '/admin/return-analytics',         icon: ReplayCircleFilled, label: 'Return Analytics', color: '#EF4444' },
+      { path: '/admin/discount-analytics',       icon: Insights,           label: 'Discount ROI',    color: '#e563f1' },
+      { path: '/admin/recovery-email-analytics', icon: MarkEmailRead,      label: 'Recovery Email',  color: '#fb7185' },
+      { path: '/admin/analytics/health',         icon: TrackChanges,       label: 'Attr. Health',    color: '#6366F1' },
+      { path: '/admin/analytics/drift',          icon: TrendingDown,       label: 'Attr. Drift',     color: '#EF4444' },
+      { path: '/admin/analytics/queue',          icon: Loop,               label: 'Queue Health',    color: '#10B981' },
+      { path: '/admin/analytics/user-trace',     icon: PersonSearch,       label: 'User Trace',      color: '#8B5CF6' },
     ],
   },
   {
@@ -134,7 +145,6 @@ const STALE_DATA_THRESHOLD  = 3 * 60 * 1000;
 const DEBOUNCE_DELAY        = 800;
 
 // ── Module-level formatters (stable, never recreated) ─────────
-// Defined outside component so they are never recreated on render.
 const currencyFmt = new Intl.NumberFormat('en-US', {
   style: 'currency', currency: 'USD', maximumFractionDigits: 0,
 });
@@ -295,7 +305,6 @@ function TimeframeSheet({ timeframe, onChange, disabled }) {
   );
 }
 
-// FIX #7 — useDebounce: stable hook, no changes needed
 function useDebounce(callback, delay) {
   const cbRef    = useRef(callback);
   const timerRef = useRef(null);
@@ -356,6 +365,9 @@ export default function AdminDashboard() {
 
   const { jobs: cronJobs, jobsLoading: cronJobsLoading } = useSelector((s) => s.cronHealth);
 
+  const queueData    = useSelector(selectQueueHealth);
+  const queueLoading = useSelector(selectQueueLoading);
+
   const error = useSelector(
     (s) => s.coreAnalytics.error || s.dashboard.error || s.operations.error || s.returnAnalytics.error || null
   );
@@ -364,8 +376,6 @@ export default function AdminDashboard() {
   const [sidebarOpen,   setSidebarOpen]   = useState(false);
   const [lastFetchTime, setLastFetchTime] = useState(null);
 
-  // FIX #10 — single source of truth: timeframe lives only in Redux.
-  // Read it from Redux; write it via setActiveTimeframe.
   const timeframe = useSelector((s) => s.dashboard.activeTimeframe || 'month');
 
   const kpisReady = (
@@ -376,12 +386,10 @@ export default function AdminDashboard() {
 
   const firstLoad = !basicStatsFetched;
 
-  // FIX #1 — move mutable refs into component scope so they are
-  // never shared across instances or navigation events.
   const isLoadingRef        = useRef(false);
   const autoRefreshTimerRef = useRef(null);
-  const lastFetchedCacheRef = useRef({});   // was module-level lastFetchedCache
-  const abortControllerRef  = useRef(null); // was module-level activeAbortController
+  const lastFetchedCacheRef = useRef({});
+  const abortControllerRef  = useRef(null);
 
   // ── Static data (one-time) ───────────────────────────────
   const loadStaticData = useCallback(() => {
@@ -398,7 +406,6 @@ export default function AdminDashboard() {
       thunks.map(thunk =>
         dispatch(thunk)
           .unwrap()
-          // FIX #3 — log errors instead of silently swallowing them
           .catch((err) => console.error('[Dashboard] static fetch failed:', err))
       )
     );
@@ -409,11 +416,9 @@ export default function AdminDashboard() {
     if (isLoadingRef.current) return;
 
     const now  = Date.now();
-    // FIX #1 — use ref instead of module-level variable
     const last = lastFetchedCacheRef.current[currentTimeframe] || 0;
     if (!force && now - last < 30000) return;
 
-    // FIX #1 + #2 — abort via ref; actually wire signal into thunks
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -429,8 +434,6 @@ export default function AdminDashboard() {
     setLastFetchTime(now);
     isLoadingRef.current = true;
 
-    // FIX #2 — pass signal into every thunk so requests are
-    // actually cancelled when a new timeframe is selected.
     const thunks = [
       fetchDashboardKPIs({ timeframe: currentTimeframe, signal }),
       fetchRevenueTrends({ timeframe: currentTimeframe, groupBy: 'day', signal }),
@@ -447,13 +450,13 @@ export default function AdminDashboard() {
       fetchRefundOverview({ timeframe: currentTimeframe, signal }),
       fetchDiscountAnalyticsOverview({ signal }),
       fetchCronHealth({ signal }),
+      fetchQueueHealth({ signal }),
     ];
 
     Promise.allSettled(
       thunks.map(thunk =>
         dispatch(thunk)
           .unwrap()
-          // FIX #3 — log errors; ignore AbortError (intentional cancellation)
           .catch((err) => {
             if (err?.name !== 'AbortError' && err?.message !== 'Aborted') {
               console.error('[Dashboard] timeframe fetch failed:', err);
@@ -462,7 +465,6 @@ export default function AdminDashboard() {
       )
     ).finally(() => {
       isLoadingRef.current = false;
-      // Only clear the ref if this is still the active controller
       if (abortControllerRef.current === controller) {
         abortControllerRef.current = null;
       }
@@ -476,7 +478,6 @@ export default function AdminDashboard() {
 
   const handleTimeframeChange = useCallback((newTf) => {
     if (kpisLoading) return;
-    // FIX #10 — dispatch to Redux only; no local setState
     dispatch(setActiveTimeframe(newTf));
     cancelDebounce();
     debouncedLoadTimeframe(newTf, true);
@@ -484,13 +485,11 @@ export default function AdminDashboard() {
 
   // ── Mount effect ─────────────────────────────────────────
   useEffect(() => {
-    // FIX #1 — clear cache for 'month' on the ref, not a module variable
     delete lastFetchedCacheRef.current['month'];
     loadStaticData();
     loadTimeframeData('month', true);
     return () => {
       cancelDebounce();
-      // Abort any in-flight requests on unmount
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
       }
@@ -498,9 +497,6 @@ export default function AdminDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // FIX #7 — replace setInterval with recursive setTimeout so the
-  // next refresh is always scheduled AFTER the previous one settles,
-  // preventing drift and overlapping fetches.
   useEffect(() => {
     if (autoRefreshTimerRef.current) {
       clearTimeout(autoRefreshTimerRef.current);
@@ -582,7 +578,6 @@ export default function AdminDashboard() {
     (topPerformers?.categories || categoryPerformance?.categories || [])
       .slice(0, 5)
       .map((c, i) => ({
-        // FIX #9 — use stable name key for identity; index only as fallback label
         name: c.name,
         value: c.revenue,
         fill: ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i],
@@ -761,7 +756,6 @@ export default function AdminDashboard() {
                     )
                     : cronJobs.map((job) => (
                         <Link
-                          // FIX #9 — use job.jobName as stable key (was implicit index)
                           key={job.jobName}
                           to="/admin/cron-health"
                           className="adm-cron-mini-card"
@@ -789,6 +783,88 @@ export default function AdminDashboard() {
                       ))
                 }
               </div>
+            </div>
+
+            {/* ── Analytics Queue (Queue Health Mini-Widget) ── */}
+            <div className="adm-section">
+              <div className="adm-section-hd">
+                <h2 className="adm-section-title">
+                  <span className="adm-section-icon-wrap" style={{ background: '#6366F115', color: '#6366F1' }}>
+                    <Loop style={{ fontSize: 16 }} />
+                  </span>
+                  Analytics Queue
+                </h2>
+                <Link to="/admin/analytics/queue" className="adm-section-link">
+                  Full Queue Health <KeyboardArrowRight style={{ fontSize: 16 }} />
+                </Link>
+              </div>
+
+              {(queueLoading && !queueData) ? (
+                <div className="adm-cron-mini-strip">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="adm-cron-mini-card adm-cron-mini-card--skeleton">
+                      <div className="adm-skeleton" style={{ width: 8, height: 8, borderRadius: '50%' }} />
+                      <div className="adm-skeleton" style={{ flex: 1, height: 12 }} />
+                    </div>
+                  ))}
+                </div>
+              ) : queueData ? (
+                <div className="adm-queue-mini-strip">
+                  {[
+                    {
+                      label: 'Completed',
+                      value: queueData.summary?.completed   ?? 0,
+                      color: '#10B981',
+                      dot:   'adm-cron-mini-dot--ok',
+                    },
+                    {
+                      label: 'Pending',
+                      value: queueData.summary?.pending     ?? 0,
+                      color: '#6366F1',
+                      dot:   'adm-cron-mini-dot--unknown',
+                    },
+                    {
+                      label: 'Failed',
+                      value: queueData.summary?.failed      ?? 0,
+                      color: '#F59E0B',
+                      dot:   (queueData.summary?.failed ?? 0) > 0 ? 'adm-cron-mini-dot--failed' : 'adm-cron-mini-dot--ok',
+                    },
+                    {
+                      label: 'Dead Letter',
+                      value: queueData.summary?.dead_letter ?? 0,
+                      color: (queueData.summary?.dead_letter ?? 0) > 0 ? '#EF4444' : '#10B981',
+                      dot:   (queueData.summary?.dead_letter ?? 0) > 0 ? 'adm-cron-mini-dot--failed' : 'adm-cron-mini-dot--ok',
+                      alert: (queueData.summary?.dead_letter ?? 0) > 0,
+                    },
+                    {
+                      label: 'Health Ratio',
+                      value: `${queueData.summary?.healthyRatio ?? 100}%`,
+                      color: (queueData.summary?.healthyRatio ?? 100) >= 90 ? '#10B981' : '#F59E0B',
+                      dot:   (queueData.summary?.healthyRatio ?? 100) >= 90 ? 'adm-cron-mini-dot--ok' : 'adm-cron-mini-dot--failed',
+                    },
+                    {
+                      label: 'GA4 Failures',
+                      value: queueData.platformFailures?.ga4 ?? 0,
+                      color: (queueData.platformFailures?.ga4 ?? 0) > 0 ? '#EF4444' : '#9CA3AF',
+                      dot:   (queueData.platformFailures?.ga4 ?? 0) > 0 ? 'adm-cron-mini-dot--failed' : 'adm-cron-mini-dot--ok',
+                    },
+                  ].map(({ label, value, color, dot, alert }) => (
+                    <Link
+                      key={label}
+                      to="/admin/analytics/queue"
+                      className="adm-cron-mini-card"
+                      title={`${label}: ${value}`}
+                    >
+                      <span className={`adm-cron-mini-dot ${dot}`} />
+                      <span className="adm-cron-mini-name">{label}</span>
+                      <span className="adm-cron-mini-time" style={{ color }}>
+                        {value}
+                        {alert && ' ⚠'}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* ── Orders & Inventory ────────────────────────── */}
@@ -933,7 +1009,6 @@ export default function AdminDashboard() {
                           formatter={(v) => [fmt.currency(v), 'Revenue']}
                         />
                         <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                          {/* FIX #9 — use stable name key, not array index */}
                           {catData.map((entry) => <Cell key={entry.name} fill={entry.fill} />)}
                         </Bar>
                       </ReChart>
@@ -1029,7 +1104,6 @@ export default function AdminDashboard() {
                           const pct   = maxRev > 0 ? (cat.totalRevenueInfluenced / maxRev) * 100 : 0;
                           const color = ['#6366F1', '#10B981', '#F59E0B', '#EF4444', '#14B8A6'][i % 5];
                           return (
-                            // FIX #9 — prefer stable _id key over index
                             <div key={cat._id || `cat-${i}`} className="adm-discount-cat-row">
                               <span className="adm-discount-cat-name">{cat._id || 'Unknown'}</span>
                               <div className="adm-discount-cat-bar-wrap">
@@ -1092,7 +1166,6 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-segment-list">
                       {safeSegments.map((seg, i) => (
-                        // FIX #9 — prefer stable name key
                         <div key={seg.name || `seg-${i}`} className="adm-segment-row">
                           <div className="adm-segment-label">{seg.name}</div>
                           <div className="adm-segment-bar-wrap">
@@ -1119,7 +1192,6 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-metric-list">
                       {topPerformers.customers.slice(0, 5).map((c, i) => (
-                        // FIX #9 — prefer stable _id or email as key
                         <MetricRow
                           key={c._id || c.email || `cust-${i}`}
                           label={c.name || c.email || `Customer #${i + 1}`}
@@ -1157,7 +1229,6 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-metric-list">
                       {channelData.slice(0, 6).map((ch, i) => (
-                        // FIX #9 — use channel/name/source as stable key
                         <div key={ch.channel || ch.name || ch.source || `ch-${i}`} className="adm-channel-row">
                           <span
                             className="adm-channel-dot"
@@ -1193,7 +1264,6 @@ export default function AdminDashboard() {
                           outerRadius={80}
                           label={({ device, percent }) => `${device} ${(percent * 100).toFixed(0)}%`}
                         >
-                          {/* FIX #9 — use stable device key */}
                           {deviceData.map((entry, i) => (
                             <Cell key={entry.device || `dev-${i}`} fill={['#6366F1', '#10B981', '#F59E0B'][i % 3]} />
                           ))}
@@ -1247,7 +1317,6 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-segment-list">
                       {checkoutAbandonment.stepBreakdown.map((step, i) => (
-                        // FIX #9 — use stable step name key
                         <div key={step.step || `step-${i}`} className="adm-segment-row">
                           <div className="adm-segment-label">{step.step}</div>
                           <div className="adm-segment-bar-wrap">
@@ -1319,7 +1388,6 @@ export default function AdminDashboard() {
                         <span>Product</span><span>Sales</span><span>Revenue</span><span>Trend</span>
                       </div>
                       {topPerformers.products.slice(0, 6).map((p, i) => (
-                        // FIX #9 — use stable _id or name as key
                         <div key={p._id || p.name || `prod-${i}`} className="adm-table-row">
                           <span className="adm-table-name">{p.name}</span>
                           <span>{fmt.number(p.salesCount)}</span>
@@ -1343,7 +1411,6 @@ export default function AdminDashboard() {
                       <MetricRow label="Reorder Needed"   value={fmt.number(lowStockAlerts.reorderCount)}          accent="#F97316" />
                       <MetricRow label="Inventory Value"  value={fmt.currency(lowStockAlerts.totalInventoryValue)} accent="#3B82F6" />
                       {(lowStockAlerts.criticalItems || []).slice(0, 3).map((item, i) => (
-                        // FIX #9 — use stable _id or name as key
                         <div key={item._id || item.name || `alert-${i}`} className="adm-alert-row">
                           <ErrorOutline style={{ fontSize: 14, color: '#EF4444', flexShrink: 0 }} />
                           <span className="adm-alert-name">{item.name}</span>
@@ -1461,7 +1528,6 @@ export default function AdminDashboard() {
                         return returnOverview.byReason.slice(0, 5).map((r, i) => {
                           const pct = total > 0 ? (r.count / total) * 100 : 0;
                           return (
-                            // FIX #9 — use stable _id key
                             <div key={r._id || `reason-${i}`} className="adm-segment-row">
                               <div className="adm-segment-label">{r._id || 'Unknown'}</div>
                               <div className="adm-segment-bar-wrap">
@@ -1520,7 +1586,6 @@ export default function AdminDashboard() {
                     ) : (
                       <div className="adm-segment-list">
                         {refundOverview.statusBreakdown.filter(s => s.count > 0).map((s, i) => (
-                          // FIX #9 — use stable status key
                           <div key={s.status || `status-${i}`} className="adm-segment-row">
                             <div className="adm-segment-label">{s.status}</div>
                             <div className="adm-segment-bar-wrap">
@@ -1562,7 +1627,6 @@ export default function AdminDashboard() {
                   ) : (
                     <div className="adm-alert-feed">
                       {alerts.slice(0, 8).map((a, i) => (
-                        // FIX #9 — prefer stable id key
                         <div key={a.id || a._id || `alert-feed-${i}`} className={`adm-alert-item adm-alert-item--${a.severity || 'info'}`}>
                           <div className="adm-alert-item-icon">
                             {a.severity === 'critical'
@@ -1583,7 +1647,6 @@ export default function AdminDashboard() {
                 <SectionCard title="Quick Stats" icon={DashboardIcon} iconColor="#6366F1">
                   <div className="adm-quick-grid">
                     {quickStats.map((s) => (
-                      // FIX #9 — label is stable and unique in this list
                       <div key={s.label} className="adm-quick-stat">
                         <span className="adm-quick-icon" style={{ background: s.color + '15', color: s.color }}>
                           <s.icon style={{ fontSize: 16 }} />

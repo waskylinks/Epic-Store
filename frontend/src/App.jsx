@@ -58,6 +58,11 @@ import DiscountAnalytics from './Admin/DiscountAnalytics';
 import ReturnAnalytics from './Admin/ReturnAnalytics';
 import RecoveryEmailAnalytics from './Admin/RecoveryEmailAnalytics';
 import CronHealth from './Admin/CronHealth';
+// ── Phase 9: Observability pages ─────────────────────────────────────────────
+import AttributionHealthPage from './Admin/AttributionHealthPage';
+import AttributionDriftPage from './Admin/AttributionDriftPage';
+import QueueHealthPage from './Admin/QueueHealthPage';
+import UserEventTracePage from './Admin/UserEventTracePage';
 
 import { initAnalytics, debugAnalyticsState } from './utils/analytics.js';
 
@@ -178,6 +183,11 @@ function App() {
         <Route path='/admin/discount-analytics' element={<ProtectedRoute element={<DiscountAnalytics />} adminOnly={true} />} />
         <Route path='/admin/recovery-email-analytics' element={<ProtectedRoute element={<RecoveryEmailAnalytics />} adminOnly={true} />} />
         <Route path='/admin/cron-health' element={<ProtectedRoute element={<CronHealth />} adminOnly={true} />} />
+        {/* Phase 9: Observability routes */}
+        <Route path='/admin/analytics/health' element={<ProtectedRoute element={<AttributionHealthPage />} adminOnly={true} />} />
+        <Route path='/admin/analytics/drift' element={<ProtectedRoute element={<AttributionDriftPage />} adminOnly={true} />} />
+        <Route path='/admin/analytics/queue' element={<ProtectedRoute element={<QueueHealthPage />} adminOnly={true} />} />
+        <Route path='/admin/analytics/user-trace' element={<ProtectedRoute element={<UserEventTracePage />} adminOnly={true} />} />
       </Routes>
     </Router>
   );
