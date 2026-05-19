@@ -25,45 +25,43 @@ import customerAnalyticsReducer from '../features/analytics/customerAnalyticsSli
 import attributionReducer from '../features/analytics/attributionSlice';
 import operationsReducer from '../features/analytics/operationsSlice';
 import returnAnalyticsReducer from '../features/analytics/returnAnalyticsSlice';
+import analyticsObservabilityReducer from '../features/analytics/analyticsObservabilitySlice'; // Added
 import recoveryReducer from '../features/admin/recoveryEmailSlice';
 import cronHealthReducer from '../features/admin/cronHealthSlice';
 import cronLogReducer from '../features/admin/cronLogSlice';    
 
-
-
 export const store = configureStore({
     reducer: {
-        product:           productReducer,
-        user:              userReducer,
-        cart:              cartReducer,
-        payment:           paymentReducer,
-        receipt:           receiptReducer,
-        order:             orderReducer,
-        admin:             adminReducer,
-        publicProducts:    publicProductsReducer,
-        wishlist:          wishlistReducer,
-        shipping:          shippingReducer,
-        checkout:          checkoutReducer,
-        adminRefund:       adminRefundReducer,
-        adminReturn:       adminReturnReducer,
-        adminProducts:     adminProductReducer,
-        refund:            refundReducer,
-        return:            returnReducer,
-        adminDiscount:     adminDiscountReducer,
-        userDiscount:      userDiscountReducer,
-        discountAnalytics: discountAnalyticsReducer,
-        coreAnalytics:     coreAnalyticsReducer,
-        dashboard:         dashboardReducer,
-        reports:           reportsReducer,
-        customerAnalytics: customerAnalyticsReducer,
-        attribution:       attributionReducer,
-        operations:        operationsReducer,
-        recovery: recoveryReducer, 
-        returnAnalytics:   returnAnalyticsReducer,
-        cronHealth: cronHealthReducer,
-        cronLog: cronLogReducer,
-
-
+        product:               productReducer,
+        user:                  userReducer,
+        cart:                  cartReducer,
+        payment:               paymentReducer,
+        receipt:               receiptReducer,
+        order:                 orderReducer,
+        admin:                 adminReducer,
+        publicProducts:        publicProductsReducer,
+        wishlist:              wishlistReducer,
+        shipping:              shippingReducer,
+        checkout:              checkoutReducer,
+        adminRefund:           adminRefundReducer,
+        adminReturn:           adminReturnReducer,
+        adminProducts:         adminProductReducer,
+        refund:                refundReducer,
+        return:                returnReducer,
+        adminDiscount:         adminDiscountReducer,
+        userDiscount:          userDiscountReducer,
+        discountAnalytics:     discountAnalyticsReducer,
+        coreAnalytics:         coreAnalyticsReducer,
+        dashboard:             dashboardReducer,
+        reports:               reportsReducer,
+        customerAnalytics:     customerAnalyticsReducer,
+        attribution:           attributionReducer,
+        operations:            operationsReducer,
+        returnAnalytics:       returnAnalyticsReducer,
+        analyticsObservability: analyticsObservabilityReducer, // Added
+        recovery:              recoveryReducer,
+        cronHealth:            cronHealthReducer,
+        cronLog:               cronLogReducer,
     },
 
     middleware: (getDefaultMiddleware) =>
