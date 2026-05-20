@@ -9,6 +9,10 @@ import {
   buildClientAnalyticsPayload,
 } from '../../utils/analytics.js';
 
+// DEDUP: Import trackPurchase to fire the browser pixel with the same eventId
+// that was sent to the server. Meta matches both and shows "Deduped".
+import { trackPurchase } from '../../utils/eventBridge.js';
+
 const API_BASE = '/api/v1';
 
 // ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
@@ -98,6 +102,11 @@ export const getOrderByReference = createAsyncThunk(
  *       c) Use fbp/fbc for Meta CAPI user matching
  *       d) Use clientAttribution as a redundant source alongside server cookies
  *
+ * DEDUP CHANGE:
+ *   - eventId is now returned alongside the order in the fulfilled payload
+ *   - The fulfilled reducer fires trackPurchase() with that same eventId
+ *   - Meta sees browser pixel + CAPI both carrying the same eventID and dedupes
+ *
  * The backend verifyPaymentController.js reads:
  *   req.body.analyticsEventId  — the UUID
  *   req.body.clientTimestamp   — ISO string from browser
@@ -110,27 +119,21 @@ export const createOrder = createAsyncThunk(
   'order/createOrder',
   async (orderData, { rejectWithValue }) => {
     try {
-      // PHASE 1: Generate event_id at the moment of order creation.
-      // This UUID is the deduplication key for GA4 and Meta CAPI.
-      // Store it on the order so we can reference it in the success handler
-      // if we need to fire a client-side gtag/fbq event.
       const eventId = generateEventId();
-
-      // PHASE 1: Build complete client analytics payload.
-      // This captures: UTMs, click IDs, session ID, GA4 client ID,
-      // Meta Pixel cookies, and a client-side timestamp.
       const analyticsPayload = buildClientAnalyticsPayload(eventId);
 
       const { data } = await axios.post(
         `${API_BASE}/order/new`,
         {
           ...orderData,
-          ...analyticsPayload, // Spread all analytics fields into the request body
+          ...analyticsPayload,
         },
         { withCredentials: true }
       );
 
-      return data.order;
+      // Return eventId alongside the order so the fulfilled handler can
+      // fire the browser pixel with the matching UUID for Meta deduplication
+      return { order: data.order, eventId };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || 'Failed to create order'
@@ -440,16 +443,33 @@ const orderSlice = createSlice({
       });
 
     // createOrder
+    // DEDUP: fulfilled now receives { order, eventId } — fires browser pixel
+    // with the matching UUID so Meta can deduplicate against the CAPI event
+    // fired server-side in verifyPaymentController.js
     builder
       .addCase(createOrder.pending, (state) => {
         state.loading = true;
         state.error   = null;
       })
       .addCase(createOrder.fulfilled, (state, action) => {
+        const { order, eventId } = action.payload;
+
         state.loading = false;
-        state.order   = action.payload;
+        state.order   = order;
         state.success = true;
         state.message = 'Order created successfully';
+
+        // Fire browser pixel with the same eventId sent to the server.
+        // trackPurchase is fire-and-forget — never throws, never blocks.
+        trackPurchase(
+          {
+            orderId:  order?._id || order?.id,
+            revenue:  order?.pricing?.totalPrice || order?.totalPrice || 0,
+            currency: order?.pricing?.currency   || 'USD',
+            items:    order?.items || [],
+          },
+          eventId
+        );
       })
       .addCase(createOrder.rejected, (state, action) => {
         state.loading = false;

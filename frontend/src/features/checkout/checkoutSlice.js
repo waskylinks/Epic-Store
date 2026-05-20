@@ -1,10 +1,35 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
+// PHASE 1: Analytics SDK for event_id generation and payload building
+import {
+  generateEventId,
+  buildClientAnalyticsPayload,
+} from '../../utils/analytics.js';
+
+// DEDUP: Browser pixel for funnel events with shared eventId
+import {
+  trackBeginCheckout,
+  trackCheckoutStep,
+} from '../../utils/eventBridge.js';
+
 // ============================================
 // THUNKS
 // ============================================
 
+/**
+ * createCheckoutSession
+ *
+ * ANALYTICS CHANGES:
+ *   - Generates a UUID eventId at session creation time
+ *   - Builds full client analytics payload (UTMs, fbp, fbc, ga4ClientId)
+ *   - Sends payload to server so backend has attribution context
+ *   - Returns eventId alongside checkout for the fulfilled handler to use
+ *
+ * The fulfilled handler fires trackBeginCheckout() with the same eventId
+ * so Meta can deduplicate the browser InitiateCheckout pixel against any
+ * server-side CAPI event if you choose to add one later.
+ */
 export const createCheckoutSession = createAsyncThunk(
   "checkout/createSession",
   async ({ items, shippingInfo }, { getState, rejectWithValue }) => {
@@ -12,35 +37,52 @@ export const createCheckoutSession = createAsyncThunk(
       const { discount } = getState().cart;
       const hasDiscount  = discount.applied && discount.code && discount.discountAmount > 0;
 
-      // discountAmount is intentionally NOT sent — the server derives the
-      // discount amount from the stored Discount document. Sending a client-
-      // supplied amount would be silently ignored server-side, but omitting it
-      // removes the misleading field from the request entirely.
+      // Generate shared eventId for browser pixel + server attribution
+      const eventId          = generateEventId();
+      const analyticsPayload = buildClientAnalyticsPayload(eventId);
+
       const { data } = await axios.post("/api/v1/checkout/create", {
         items,
         shippingInfo,
-        ...(hasDiscount && {
-          discountCode: discount.code,
-        }),
+        ...(hasDiscount && { discountCode: discount.code }),
+        ...analyticsPayload,
       }, { withCredentials: true });
 
-      return data.checkout;
+      // Return eventId so the fulfilled handler can fire the browser pixel
+      return { checkout: data.checkout, eventId, items, hasDiscount };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || "Failed to create checkout session");
     }
   }
 );
 
+/**
+ * updateCheckoutStep
+ *
+ * ANALYTICS CHANGES:
+ *   - Fires trackCheckoutStep() browser pixel for payment funnel steps
+ *   - payment_selection and payment_gateway fire Meta AddPaymentInfo
+ *   - All steps fire GA4 checkout_progress
+ *   - No server analytics payload needed here — step updates are captured
+ *     by the backend checkoutController which already logs step transitions
+ */
 export const updateCheckoutStep = createAsyncThunk(
   "checkout/updateStep",
-  async ({ checkoutId, step, gateway }, { rejectWithValue }) => {
+  async ({ checkoutId, step, gateway, cartContext = {} }, { rejectWithValue }) => {
     try {
       const { data } = await axios.put(
         `/api/v1/checkout/${checkoutId}/step`,
         { step, gateway },
         { withCredentials: true }
       );
-      return { currentStep: data.currentStep, stepsCompleted: data.stepsCompleted, gateway };
+      // Pass step and cartContext through so fulfilled can fire the pixel
+      return {
+        currentStep:    data.currentStep,
+        stepsCompleted: data.stepsCompleted,
+        gateway,
+        step,
+        cartContext,
+      };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || "Failed to update checkout step");
     }
@@ -162,21 +204,37 @@ const checkoutSlice = createSlice({
 
   extraReducers: (builder) => {
     // ── CREATE SESSION ──────────────────────────────────────────────────────
+    // ANALYTICS: fulfilled receives { checkout, eventId, items, hasDiscount }
+    // Fires trackBeginCheckout() with the shared eventId so Meta can
+    // deduplicate browser InitiateCheckout against any server CAPI call.
     builder
       .addCase(createCheckoutSession.pending, (state) => {
         state.loading = true;
         state.error   = null;
       })
       .addCase(createCheckoutSession.fulfilled, (state, action) => {
+        const { checkout, eventId, items, hasDiscount } = action.payload;
+
         state.loading           = false;
-        state.session           = action.payload;
-        state.checkoutId        = action.payload.id;
-        state.currentStep       = action.payload.currentStep    || 'shipping_info';
-        state.stepsCompleted    = action.payload.stepsCompleted || [];
-        state.pricing           = action.payload.pricing        || initialState.pricing;
+        state.session           = checkout;
+        state.checkoutId        = checkout.id;
+        state.currentStep       = checkout.currentStep    || 'shipping_info';
+        state.stepsCompleted    = checkout.stepsCompleted || [];
+        state.pricing           = checkout.pricing        || initialState.pricing;
         state.hasActiveCheckout = true;
         state.success           = true;
         state.message           = "Checkout session created";
+
+        // Fire browser pixel — fire-and-forget, never throws
+        trackBeginCheckout(
+          {
+            cartValue:   checkout.pricing?.totalPrice || 0,
+            itemCount:   (items || []).length,
+            hasDiscount: hasDiscount || false,
+            items:       items || [],
+          },
+          eventId
+        );
       })
       .addCase(createCheckoutSession.rejected, (state, action) => {
         state.loading = false;
@@ -184,18 +242,32 @@ const checkoutSlice = createSlice({
       });
 
     // ── UPDATE STEP ─────────────────────────────────────────────────────────
+    // ANALYTICS: fires trackCheckoutStep() for payment funnel steps.
+    // Meta AddPaymentInfo fires on payment_selection + payment_gateway.
+    // GA4 checkout_progress fires on every step.
     builder
       .addCase(updateCheckoutStep.pending, (state) => {
         state.actionLoading = true;
         state.error         = null;
       })
       .addCase(updateCheckoutStep.fulfilled, (state, action) => {
+        const { currentStep, stepsCompleted, gateway, step, cartContext } = action.payload;
+
         state.actionLoading  = false;
-        state.currentStep    = action.payload.currentStep;
-        state.stepsCompleted = action.payload.stepsCompleted;
-        if (action.payload.gateway) state.selectedGateway = action.payload.gateway;
+        state.currentStep    = currentStep;
+        state.stepsCompleted = stepsCompleted;
+        if (gateway) state.selectedGateway = gateway;
         state.success = true;
         state.message = "Step updated";
+
+        // Fire browser pixel for payment-related steps — fire-and-forget
+        if (step === 'payment_selection' || step === 'payment_gateway') {
+          trackCheckoutStep(step, {
+            cartValue:   state.pricing?.totalPrice || cartContext?.cartValue || 0,
+            itemCount:   cartContext?.itemCount || 0,
+            hasDiscount: cartContext?.hasDiscount ?? false,
+          });
+        }
       })
       .addCase(updateCheckoutStep.rejected, (state, action) => {
         state.actionLoading = false;
