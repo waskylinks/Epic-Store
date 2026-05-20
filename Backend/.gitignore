@@ -1,9 +1,8 @@
 .env
 
-# Credentials - never commit these
-credentials/
-Backend/credentials/
-*.json
+# sensitive credentials only
+credentials/*.json
+Backend/credentials/*.json
 
 # Logs
 logs/

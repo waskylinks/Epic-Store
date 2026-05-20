@@ -1,0 +1,22 @@
+[
+  { "name": "order_id",             "type": "STRING",    "mode": "REQUIRED",  "description": "MongoDB ObjectId of the order. Primary key." },
+  { "name": "event_id",             "type": "STRING",    "mode": "NULLABLE",  "description": "UUID analytics event ID for cross-joining with events table" },
+  { "name": "user_id",              "type": "STRING",    "mode": "NULLABLE",  "description": "MongoDB ObjectId of the purchasing user" },
+  { "name": "anonymous_id",         "type": "STRING",    "mode": "NULLABLE",  "description": "Anonymous identifier at time of purchase (for guest checkouts)" },
+  { "name": "order_date",           "type": "TIMESTAMP", "mode": "REQUIRED",  "description": "Timestamp when the order was created. Partition field." },
+  { "name": "revenue",              "type": "FLOAT",     "mode": "NULLABLE",  "description": "Order total (revenue attributed to this channel/campaign)" },
+  { "name": "currency",             "type": "STRING",    "mode": "NULLABLE",  "description": "3-letter ISO currency code (e.g. USD, GBP, NGN)" },
+  { "name": "source",               "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution source at time of purchase" },
+  { "name": "medium",               "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution medium at time of purchase" },
+  { "name": "campaign",             "type": "STRING",    "mode": "NULLABLE",  "description": "UTM campaign at time of purchase" },
+  { "name": "confidence_score",     "type": "FLOAT",     "mode": "NULLABLE",  "description": "Attribution confidence score 0.0–1.0 at time of purchase" },
+  { "name": "confidence_level",     "type": "STRING",    "mode": "NULLABLE",  "description": "HIGH | MEDIUM | LOW at time of purchase" },
+  { "name": "is_reconstructed",     "type": "BOOLEAN",   "mode": "NULLABLE",  "description": "True if attribution was inferred rather than directly captured" },
+  { "name": "reconstruction_rule",  "type": "STRING",    "mode": "NULLABLE",  "description": "Name of reconstruction rule used (when is_reconstructed=true)" },
+  { "name": "gclid",                "type": "STRING",    "mode": "NULLABLE",  "description": "Google click ID present at time of purchase" },
+  { "name": "fbclid",               "type": "STRING",    "mode": "NULLABLE",  "description": "Facebook click ID present at time of purchase" },
+  { "name": "ttclid",               "type": "STRING",    "mode": "NULLABLE",  "description": "TikTok click ID present at time of purchase" },
+  { "name": "has_coupon",           "type": "BOOLEAN",   "mode": "NULLABLE",  "description": "True if a discount code was applied to this order" },
+  { "name": "coupon_code",          "type": "STRING",    "mode": "NULLABLE",  "description": "Discount code applied (null if no discount)" },
+  { "name": "item_count",           "type": "INTEGER",   "mode": "NULLABLE",  "description": "Number of line items in the order" }
+]

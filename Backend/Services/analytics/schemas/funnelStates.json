@@ -1,0 +1,16 @@
+[
+  { "name": "event_id",             "type": "STRING",    "mode": "REQUIRED",  "description": "UUID event ID for this funnel step. Primary key." },
+  { "name": "checkout_id",          "type": "STRING",    "mode": "NULLABLE",  "description": "MongoDB ObjectId of the checkout/abandoned cart document" },
+  { "name": "user_id",              "type": "STRING",    "mode": "NULLABLE",  "description": "MongoDB ObjectId of the authenticated user (null for anonymous)" },
+  { "name": "anonymous_id",         "type": "STRING",    "mode": "NULLABLE",  "description": "Anonymous identifier for guest checkout tracking" },
+  { "name": "session_id",           "type": "STRING",    "mode": "NULLABLE",  "description": "Session ID for linking funnel steps to a session" },
+  { "name": "step",                 "type": "STRING",    "mode": "REQUIRED",  "description": "Funnel step name: cart | shipping | payment | review | complete" },
+  { "name": "step_time",            "type": "TIMESTAMP", "mode": "REQUIRED",  "description": "Timestamp when the user entered this step. Partition field." },
+  { "name": "time_in_step_seconds", "type": "INTEGER",   "mode": "NULLABLE",  "description": "Time spent on this step before proceeding or dropping off (seconds)" },
+  { "name": "proceeded",            "type": "BOOLEAN",   "mode": "NULLABLE",  "description": "True if user moved to the next step; false if they dropped off" },
+  { "name": "cart_value",           "type": "FLOAT",     "mode": "NULLABLE",  "description": "Total cart value at the time of this step" },
+  { "name": "item_count",           "type": "INTEGER",   "mode": "NULLABLE",  "description": "Number of items in cart at the time of this step" },
+  { "name": "has_discount",         "type": "BOOLEAN",   "mode": "NULLABLE",  "description": "True if a discount code was applied at the time of this step" },
+  { "name": "source",               "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution source at the time of checkout initiation" },
+  { "name": "confidence_level",     "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution confidence level for this checkout session" }
+]

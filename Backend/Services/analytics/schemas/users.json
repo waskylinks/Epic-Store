@@ -1,0 +1,14 @@
+[
+  { "name": "user_id",              "type": "STRING",    "mode": "REQUIRED",  "description": "MongoDB ObjectId of the user. Primary key." },
+  { "name": "anonymous_ids",        "type": "STRING",    "mode": "REPEATED",  "description": "All anonymous identifiers ever stitched to this user (for cross-device analysis)" },
+  { "name": "first_seen_at",        "type": "TIMESTAMP", "mode": "NULLABLE",  "description": "Timestamp of the user's first tracked event. Partition field." },
+  { "name": "last_seen_at",         "type": "TIMESTAMP", "mode": "NULLABLE",  "description": "Timestamp of the user's most recent tracked event" },
+  { "name": "total_orders",         "type": "INTEGER",   "mode": "NULLABLE",  "description": "Lifetime count of paid orders" },
+  { "name": "lifetime_value",       "type": "FLOAT",     "mode": "NULLABLE",  "description": "Total revenue across all paid orders (lifetime value)" },
+  { "name": "first_touch_source",   "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution source at first ever conversion (first-touch model)" },
+  { "name": "first_touch_medium",   "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution medium at first ever conversion" },
+  { "name": "last_touch_source",    "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution source at most recent conversion (last-touch model)" },
+  { "name": "last_touch_medium",    "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution medium at most recent conversion" },
+  { "name": "last_touch_campaign",  "type": "STRING",    "mode": "NULLABLE",  "description": "UTM campaign at most recent conversion" },
+  { "name": "avg_confidence_score", "type": "FLOAT",     "mode": "NULLABLE",  "description": "Average attribution confidence score across all orders" }
+]

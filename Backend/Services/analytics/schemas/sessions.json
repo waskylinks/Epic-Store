@@ -1,0 +1,18 @@
+[
+  { "name": "session_id",           "type": "STRING",    "mode": "REQUIRED",  "description": "Rolling session identifier from epicstore_sid cookie. Primary key." },
+  { "name": "user_id",              "type": "STRING",    "mode": "NULLABLE",  "description": "MongoDB ObjectId of the authenticated user (null for anonymous sessions)" },
+  { "name": "anonymous_id",         "type": "STRING",    "mode": "NULLABLE",  "description": "Long-lived anonymous identifier from epicstore_anon cookie" },
+  { "name": "session_start",        "type": "TIMESTAMP", "mode": "REQUIRED",  "description": "Timestamp of the first event in this session. Partition field." },
+  { "name": "session_end",          "type": "TIMESTAMP", "mode": "NULLABLE",  "description": "Timestamp of the last event in this session (updated on session close)" },
+  { "name": "page_views",           "type": "INTEGER",   "mode": "NULLABLE",  "description": "Total number of page view events in this session" },
+  { "name": "entry_page",           "type": "STRING",    "mode": "NULLABLE",  "description": "URL path of the first page viewed in this session (landing page)" },
+  { "name": "exit_page",            "type": "STRING",    "mode": "NULLABLE",  "description": "URL path of the last page viewed before session ended" },
+  { "name": "source",               "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution source at session start" },
+  { "name": "medium",               "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution medium at session start" },
+  { "name": "campaign",             "type": "STRING",    "mode": "NULLABLE",  "description": "UTM campaign at session start" },
+  { "name": "confidence_level",     "type": "STRING",    "mode": "NULLABLE",  "description": "Attribution confidence level for this session" },
+  { "name": "converted",            "type": "BOOLEAN",   "mode": "NULLABLE",  "description": "True if a purchase occurred during this session" },
+  { "name": "revenue",              "type": "FLOAT",     "mode": "NULLABLE",  "description": "Total revenue from purchases in this session (0 if no conversion)" },
+  { "name": "device",               "type": "STRING",    "mode": "NULLABLE",  "description": "Device type for this session: desktop | mobile | tablet" },
+  { "name": "browser",              "type": "STRING",    "mode": "NULLABLE",  "description": "Browser name for this session" }
+]
