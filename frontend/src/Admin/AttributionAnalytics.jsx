@@ -23,6 +23,16 @@ import {
   fetchAttributionModels,
   fetchLandingPagePerformance,
 } from '../features/analytics/attributionSlice';
+// ── CHANGE 1 ──────────────────────────────────────────────────
+import {
+  fetchAttributionHealth,
+  fetchAttributionDrift,
+  selectAttributionHealth,
+  selectAttributionDrift,
+  selectHealthLoading,
+  selectDriftLoading,
+} from '../features/analytics/analyticsObservabilitySlice';
+// ─────────────────────────────────────────────────────────────
 import Navbar from '../components/Navbar';
 import '../AdminStyles/AttributionAnalytics.css';
 
@@ -123,6 +133,13 @@ export default function AttributionAnalytics() {
     landingPagePerformance, error,
   } = useSelector(s => s.attribution);
 
+  // ── CHANGE 2 ──────────────────────────────────────────────────
+  const health        = useSelector(selectAttributionHealth);
+  const healthLoading = useSelector(selectHealthLoading);
+  const drift         = useSelector(selectAttributionDrift);
+  const driftLoading  = useSelector(selectDriftLoading);
+  // ─────────────────────────────────────────────────────────────
+
   const [activeView, setActiveView] = useState('channels');
   const [timeframe,  setTimeframe]  = useState('month');
   const [hasFetched, setHasFetched] = useState(false);
@@ -143,6 +160,10 @@ export default function AttributionAnalytics() {
       dispatch(fetchReferrerPerformance(timeframe)),
       dispatch(fetchAttributionModels(timeframe)),
       dispatch(fetchLandingPagePerformance(timeframe)),
+      // ── CHANGE 3 ──────────────────────────────────────────────
+      dispatch(fetchAttributionHealth()),
+      dispatch(fetchAttributionDrift()),
+      // ─────────────────────────────────────────────────────────
     ]).finally(() => {
       loadingRef.current = false;
       setRefreshing(false);
@@ -215,6 +236,16 @@ export default function AttributionAnalytics() {
     ),
   }));
 
+  // ── CHANGE 4 ──────────────────────────────────────────────────
+  const confidenceLevels = health?.confidenceDistribution || [];
+  const confHigh   = confidenceLevels.find(c => c.level === 'HIGH')?.count   ?? null;
+  const confMedium = confidenceLevels.find(c => c.level === 'MEDIUM')?.count ?? null;
+  const confLow    = confidenceLevels.find(c => c.level === 'LOW')?.count    ?? null;
+  const confTotal  = (confHigh ?? 0) + (confMedium ?? 0) + (confLow ?? 0);
+  const driftAlerts = drift?.driftAlerts || [];
+  const hasDriftAlert = driftAlerts.length > 0;
+  // ─────────────────────────────────────────────────────────────
+
   /* ── Totals for overview KPIs ─────────────────────────────── */
   const totalRevenue   = channels.reduce((s, c) => s + (c.revenue   || 0), 0);
   const totalOrders    = channels.reduce((s, c) => s + (c.orders    || 0), 0);
@@ -272,6 +303,27 @@ export default function AttributionAnalytics() {
 
           {error && <div className="at-error"><ErrorOutline style={{ fontSize: 17 }} />{error}</div>}
 
+          {/* ── CHANGE 5 ──────────────────────────────────────── */}
+          {hasDriftAlert && !driftLoading && (
+            <div className="at-drift-banner" role="alert">
+              <div className="at-drift-banner-left">
+                <ErrorOutline style={{ fontSize: 16, color: '#EF4444' }} />
+                <div>
+                  <span className="at-drift-banner-title">
+                    Attribution drift detected — {driftAlerts.length} source{driftAlerts.length !== 1 ? 's' : ''} outside baseline
+                  </span>
+                  <span className="at-drift-banner-detail">
+                    {driftAlerts.map(a => `${a.source} (${a.drift_pct > 0 ? '+' : ''}${a.drift_pct?.toFixed(1)}pp)`).join(' · ')}
+                  </span>
+                </div>
+              </div>
+              <a href="/admin/analytics/drift" className="at-drift-banner-link">
+                View Drift Monitor →
+              </a>
+            </div>
+          )}
+          {/* ──────────────────────────────────────────────────── */}
+
           {/* ── Summary KPIs ──────────────────────────────── */}
           <div className="at-grid-4">
             {first ? Array.from({ length: 4 }).map((_, i) => <KpiSkel key={i} />) : (
@@ -296,6 +348,31 @@ export default function AttributionAnalytics() {
                   <div className="at-kpi-value">{channels.length}</div>
                   <div className="at-kpi-label">{campaigns.length} campaigns tracked</div>
                 </div>
+                {/* ── CHANGE 6 ──────────────────────────────────── */}
+                <div className="at-kpi at-kpi--split" style={{ '--kpi-color': '#6366F1' }}>
+                  <div className="at-kpi-eyebrow">Attribution Confidence</div>
+                  {(healthLoading && confHigh === null) ? (
+                    <div className="at-skel" style={{ height: 28, width: '70%', borderRadius: 5 }} />
+                  ) : confTotal === 0 ? (
+                    <div className="at-kpi-value" style={{ fontSize: 14, color: '#9CA3AF' }}>No data</div>
+                  ) : (
+                    <div className="at-conf-strip">
+                      <span className="at-conf-pill at-conf-pill--high"  title={`${confHigh} HIGH confidence orders`}>
+                        H {confHigh ?? '—'}
+                      </span>
+                      <span className="at-conf-pill at-conf-pill--medium" title={`${confMedium} MEDIUM confidence orders`}>
+                        M {confMedium ?? '—'}
+                      </span>
+                      <span className="at-conf-pill at-conf-pill--low"   title={`${confLow} LOW confidence orders`}>
+                        L {confLow ?? '—'}
+                      </span>
+                    </div>
+                  )}
+                  <div className="at-kpi-label">
+                    <a href="/admin/analytics/health" className="at-kpi-link">View Health →</a>
+                  </div>
+                </div>
+                {/* ──────────────────────────────────────────────── */}
               </>
             )}
           </div>

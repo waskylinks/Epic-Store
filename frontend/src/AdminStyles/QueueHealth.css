@@ -1,0 +1,320 @@
+/* ================================================================
+   QUEUE HEALTH MONITOR — QueueHealth.css
+   Prefix: qh-  |  White background  |  Enterprise grade
+   Matches existing page CSS aesthetic (at-, ck-, ca-, crn-, ah-, adr-)
+   ================================================================ */
+
+/* ── Page shell ─────────────────────────────────────────────── */
+.qh-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #F0F2F5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  color: #111827;
+  -webkit-font-smoothing: antialiased;
+}
+.qh-body {
+  flex: 1;
+  padding: 24px 32px 56px;
+  max-width: 1600px;
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* ── Back button ────────────────────────────────────────────── */
+.qh-back {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; font-weight: 600; color: #6B7280;
+  text-decoration: none; padding: 7px 12px;
+  border: 1px solid #D1D5DB; border-radius: 8px; background: #fff;
+  transition: all 0.15s; white-space: nowrap; margin-bottom: 20px;
+}
+.qh-back:hover { color: #111827; border-color: #9CA3AF; background: #F9FAFB; }
+
+/* ── Page header ────────────────────────────────────────────── */
+.qh-hd {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin-bottom: 28px; flex-wrap: wrap;
+}
+.qh-hd-left  { display: flex; align-items: center; gap: 14px; }
+.qh-hd-icon  {
+  width: 48px; height: 48px; border-radius: 13px;
+  background: #6366F115; color: #6366F1;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.qh-hd-eyebrow { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: #6B7280; margin-bottom: 4px; }
+.qh-hd-title   { font-size: 22px; font-weight: 800; color: #111827; margin: 0; letter-spacing: -0.4px; line-height: 1.2; }
+.qh-hd-sub     { font-size: 13px; color: #6B7280; margin: 3px 0 0; font-weight: 500; }
+.qh-hd-right   { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* ── Auto-refresh toggle ────────────────────────────────────── */
+.qh-auto-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 13px; border: 1px solid #D1D5DB; border-radius: 8px;
+  background: #fff; font-size: 12.5px; font-weight: 600; color: #374151;
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.qh-auto-btn:hover { border-color: #9CA3AF; background: #F9FAFB; }
+.qh-auto-btn--on   { background: #DCFCE7; border-color: #86EFAC; color: #15803D; }
+
+/* ── Nav pills ──────────────────────────────────────────────── */
+.qh-nav-pill {
+  display: inline-flex; align-items: center;
+  padding: 6px 14px; border: 1px solid #D1D5DB; border-radius: 8px;
+  background: #fff; font-size: 12.5px; font-weight: 600;
+  color: #374151; text-decoration: none; transition: all 0.15s; white-space: nowrap;
+}
+.qh-nav-pill:hover { border-color: #9CA3AF; background: #F9FAFB; color: #111827; }
+
+/* ── Refresh button ─────────────────────────────────────────── */
+.qh-refresh {
+  width: 36px; height: 36px; border: 1px solid #D1D5DB; background: #fff;
+  color: #374151; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.15s; flex-shrink: 0;
+}
+.qh-refresh:hover    { background: #F3F4F6; border-color: #9CA3AF; }
+.qh-refresh:disabled { opacity: 0.4; cursor: not-allowed; }
+.qh-refresh--spin svg { animation: qh-spin 0.9s linear infinite; }
+@keyframes qh-spin { to { transform: rotate(360deg); } }
+
+/* ── Error banner ───────────────────────────────────────────── */
+.qh-error {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 16px; border-radius: 8px;
+  background: #FEE2E2; border: 1px solid #FECACA;
+  color: #B91C1C; font-size: 13px; font-weight: 600; margin-bottom: 20px;
+}
+
+/* ── Flags ──────────────────────────────────────────────────── */
+.qh-flags { display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px; }
+.qh-flag {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; border-radius: 10px; border: 1px solid;
+  font-size: 13px; font-weight: 600;
+}
+.qh-flag--critical { background: #FEF2F2; border-color: #FECACA; color: #B91C1C; border-left: 4px solid #EF4444; }
+.qh-flag--warning  { background: #FFFBEB; border-color: #FDE68A; color: #92400E; border-left: 4px solid #F59E0B; }
+
+/* ── KPI strip ──────────────────────────────────────────────── */
+.qh-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.qh-kpi {
+  background: #fff; border: 1px solid #D1D5DB; border-radius: 14px;
+  padding: 18px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  transition: box-shadow 0.2s, transform 0.2s;
+  position: relative; overflow: hidden;
+}
+.qh-kpi::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--kpi-color, #6366F1); opacity: 0.8;
+}
+.qh-kpi:hover { box-shadow: 0 4px 14px rgba(0,0,0,0.08); transform: translateY(-2px); }
+.qh-kpi-top {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.qh-kpi-icon {
+  width: 34px; height: 34px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.qh-kpi-alert-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #EF4444;
+  box-shadow: 0 0 0 3px rgba(239,68,68,0.2);
+  animation: qh-pulse 2s ease-in-out infinite;
+}
+@keyframes qh-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(239,68,68,0.2); }
+  50%       { box-shadow: 0 0 0 5px rgba(239,68,68,0.35); }
+}
+.qh-kpi-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.55px; color: #6B7280; margin-bottom: 4px; }
+.qh-kpi-value { font-size: 22px; font-weight: 800; color: #111827; line-height: 1.1; }
+
+/* ── Charts row ─────────────────────────────────────────────── */
+.qh-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+/* ── Card ───────────────────────────────────────────────────── */
+.qh-card {
+  background: #fff; border: 1px solid #D1D5DB; border-radius: 14px;
+  overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  transition: box-shadow 0.2s;
+}
+.qh-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.08); }
+.qh-card-hd {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 20px 12px; border-bottom: 1px solid #E5E7EB;
+}
+.qh-card-icon {
+  width: 32px; height: 32px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.qh-card-title { font-size: 13.5px; font-weight: 700; color: #111827; margin: 0; }
+.qh-card-sub   { font-size: 11.5px; color: #6B7280; margin: 2px 0 0; font-weight: 500; }
+.qh-card-body  { padding: 18px 20px; }
+
+.qh-chart-ph    { display: flex; align-items: center; justify-content: center; height: 200px; }
+.qh-chart-empty { display: flex; align-items: center; justify-content: center; height: 200px; color: #9CA3AF; font-size: 13px; }
+
+/* ── Health ratio display ───────────────────────────────────── */
+.qh-health-layout { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.qh-ratio-display { display: flex; flex-direction: column; align-items: center; padding: 16px 0 0; }
+.qh-ratio-num     { font-size: 36px; font-weight: 800; line-height: 1; }
+.qh-ratio-label   { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #6B7280; margin-top: 4px; }
+
+/* ── Platform failure bars ──────────────────────────────────── */
+.qh-plat-list  { display: flex; flex-direction: column; gap: 12px; }
+.qh-plat-row   { display: flex; align-items: center; gap: 10px; }
+.qh-plat-icon  { width: 28px; height: 28px; border-radius: 7px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.qh-plat-label { font-size: 12px; font-weight: 600; color: #374151; width: 160px; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qh-plat-track { flex: 1; height: 7px; background: #E5E7EB; border-radius: 20px; overflow: hidden; }
+.qh-plat-fill  { height: 100%; border-radius: 20px; min-width: 3px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
+.qh-plat-count { font-size: 13px; font-weight: 800; width: 32px; text-align: right; flex-shrink: 0; }
+.qh-plat-ok    { display: flex; align-items: center; gap: 8px; padding: 10px 0; font-size: 12.5px; font-weight: 500; color: #15803D; }
+.qh-plat-note  { font-size: 11px; color: #9CA3AF; margin-top: 12px; padding-top: 10px; border-top: 1px solid #F3F4F6; }
+.qh-plat-skels { display: flex; flex-direction: column; gap: 10px; }
+
+/* ── Section divider ────────────────────────────────────────── */
+.qh-section      { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.qh-section-text {
+  font-size: 12px; font-weight: 700; color: #374151;
+  text-transform: uppercase; letter-spacing: 0.6px; white-space: nowrap;
+  display: flex; align-items: center; gap: 8px;
+}
+.qh-section-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 18px; padding: 0 5px;
+  font-size: 11px; font-weight: 700; border-radius: 20px;
+  background: #111827; color: #fff;
+}
+.qh-section-count--red   { background: #EF4444; }
+.qh-section-count--amber { background: #F59E0B; color: #fff; }
+.qh-section-line { flex: 1; height: 1px; background: #E5E7EB; }
+
+/* ── Tables ─────────────────────────────────────────────────── */
+.qh-tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.qh-tbl {
+  width: 100%; border-collapse: collapse; font-size: 12.5px; min-width: 520px;
+}
+.qh-tbl thead tr { border-bottom: 2px solid #E5E7EB; background: #F9FAFB; }
+.qh-tbl tbody tr { border-bottom: 1px solid #F3F4F6; transition: background 0.1s; }
+.qh-tbl tbody tr:last-child { border-bottom: none; }
+.qh-tbl tbody tr:hover { background: #FAFAFA; }
+.qh-tbl-row--dead { background: #FFF1F2 !important; }
+.qh-tbl th {
+  padding: 9px 14px; text-align: left;
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.55px; color: #6B7280; white-space: nowrap;
+}
+.qh-tbl td { padding: 10px 14px; color: #374151; white-space: nowrap; vertical-align: middle; }
+
+.qh-td-id       { display: flex; align-items: center; gap: 8px; font-family: 'SFMono-Regular', Consolas, monospace; font-size: 11.5px; color: #111827; }
+.qh-td-attempts { font-weight: 700; color: #374151; }
+.qh-td-error    { font-family: 'SFMono-Regular', Consolas, monospace; font-size: 11px; color: #B91C1C; max-width: 240px; overflow: hidden; text-overflow: ellipsis; cursor: default; }
+.qh-td-muted    { color: #9CA3AF; font-size: 11.5px; }
+
+.qh-tbl-skels { display: flex; flex-direction: column; gap: 8px; }
+.qh-tbl-empty {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 32px 20px; font-size: 13px; font-weight: 500; color: #15803D;
+}
+
+/* Type pill */
+.qh-type-pill {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 20px;
+  font-size: 11px; font-weight: 700;
+  background: #EEF2FF; color: #4338CA;
+  white-space: nowrap;
+}
+
+/* Per-platform status in failed table */
+.qh-plat-fail    { font-size: 11px; font-weight: 700; color: #B91C1C; }
+.qh-plat-ok-badge { font-size: 11px; font-weight: 700; color: #15803D; }
+
+/* Status dot */
+.qh-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; flex-shrink: 0;
+}
+.qh-dot--ok         { background: #10B981; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
+.qh-dot--pending    { background: #6366F1; }
+.qh-dot--processing { background: #06B6D4; }
+.qh-dot--failed     { background: #F59E0B; }
+.qh-dot--dead       { background: #EF4444; box-shadow: 0 0 0 2px rgba(239,68,68,0.2); }
+.qh-dot--unknown    { background: #9CA3AF; }
+
+/* ── Guide cards ────────────────────────────────────────────── */
+.qh-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.qh-guide-card {
+  background: #fff; border: 1px solid #D1D5DB; border-radius: 12px;
+  border-left: 4px solid var(--guide-color, #6366F1);
+  padding: 16px 18px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.qh-guide-title {
+  font-size: 13px; font-weight: 700; color: var(--guide-color, #111827);
+  margin-bottom: 10px;
+}
+.qh-guide-steps {
+  margin: 0; padding-left: 18px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.qh-guide-steps li { font-size: 12.5px; color: #374151; font-weight: 500; line-height: 1.5; }
+
+/* ── Skeleton ───────────────────────────────────────────────── */
+.qh-skel {
+  display: block;
+  background: linear-gradient(90deg, #E5E7EB 25%, #F3F4F6 50%, #E5E7EB 75%);
+  background-size: 200% 100%;
+  animation: qh-shimmer 1.4s infinite;
+}
+@keyframes qh-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── Spinner ────────────────────────────────────────────────── */
+.qh-spinner {
+  width: 28px; height: 28px;
+  border: 3px solid #E5E7EB; border-top-color: #6366F1;
+  border-radius: 50%; animation: qh-spin 0.65s linear infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RESPONSIVE
+═══════════════════════════════════════════════════════════ */
+@media (max-width: 1280px) {
+  .qh-kpi-strip  { grid-template-columns: repeat(3, 1fr); }
+  .qh-charts-row { grid-template-columns: 1fr 1fr; }
+  .qh-guide-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 1024px) {
+  .qh-charts-row { grid-template-columns: 1fr; }
+  .qh-plat-label { width: 120px; }
+}
+@media (max-width: 768px) {
+  .qh-body       { padding: 16px 14px 40px; }
+  .qh-hd         { flex-direction: column; align-items: flex-start; gap: 14px; }
+  .qh-hd-right   { width: 100%; flex-wrap: wrap; }
+  .qh-kpi-strip  { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .qh-kpi-value  { font-size: 20px; }
+  .qh-guide-grid { grid-template-columns: 1fr; }
+  .qh-nav-pill   { font-size: 11.5px; padding: 5px 10px; }
+}
+@media (max-width: 480px) {
+  .qh-body       { padding: 12px 10px 32px; }
+  .qh-kpi-strip  { grid-template-columns: repeat(2, 1fr); }
+  .qh-hd-title   { font-size: 18px; }
+  .qh-td-error   { max-width: 120px; }
+}

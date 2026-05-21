@@ -886,3 +886,128 @@
   .at-summary-item { padding: 10px 12px; }
   .at-tf-btn     { padding: 5px 9px; font-size: 11px; }
 }
+
+/* ================================================================
+   ADDITIONS — append to end of AttributionAnalytics.css
+   Required by: AttributionAnalytics.jsx observability patch
+   ================================================================ */
+
+/* ── Drift alert banner ─────────────────────────────────────── */
+
+.at-drift-banner {
+  display:         flex;
+  align-items:     flex-start;
+  justify-content: space-between;
+  gap:             12px;
+  padding:         12px 18px;
+  background:      #FEF2F2;
+  border:          1px solid #FECACA;
+  border-radius:   10px;
+  margin-bottom:   20px;
+  flex-wrap:       wrap;
+}
+
+.at-drift-banner-left {
+  display:     flex;
+  align-items: flex-start;
+  gap:         10px;
+  flex:        1;
+  min-width:   0;
+}
+
+.at-drift-banner-title {
+  display:     block;
+  font-size:   13px;
+  font-weight: 700;
+  color:       #991B1B;
+  line-height: 1.4;
+}
+
+.at-drift-banner-detail {
+  display:    block;
+  font-size:  11.5px;
+  color:      #B91C1C;
+  margin-top: 3px;
+  line-height: 1.6;
+  word-break: break-word;
+}
+
+.at-drift-banner-link {
+  display:         inline-flex;
+  align-items:     center;
+  font-size:       12px;
+  font-weight:     700;
+  color:           #EF4444;
+  text-decoration: none;
+  white-space:     nowrap;
+  padding:         5px 12px;
+  border:          1px solid #FECACA;
+  border-radius:   7px;
+  background:      #fff;
+  flex-shrink:     0;
+  align-self:      center;
+  transition:      background 0.15s, border-color 0.15s;
+}
+
+.at-drift-banner-link:hover {
+  background:   #FEE2E2;
+  border-color: #FCA5A5;
+}
+
+/* ── Confidence KPI — H/M/L pill strip ──────────────────────── */
+
+.at-kpi--split {
+  display:        flex;
+  flex-direction: column;
+}
+
+.at-conf-strip {
+  display:   flex;
+  gap:       5px;
+  margin:    8px 0 6px;
+  flex-wrap: wrap;
+}
+
+.at-conf-pill {
+  display:        inline-flex;
+  align-items:    center;
+  font-size:      11.5px;
+  font-weight:    700;
+  padding:        3px 9px;
+  border-radius:  12px;
+  letter-spacing: 0.2px;
+  white-space:    nowrap;
+}
+
+.at-conf-pill--high   { background: #DCFCE7; color: #166534; }
+.at-conf-pill--medium { background: #FEF3C7; color: #92400E; }
+.at-conf-pill--low    { background: #FEE2E2; color: #991B1B; }
+
+/* ── KPI internal link ──────────────────────────────────────── */
+
+.at-kpi-link {
+  font-size:       11px;
+  color:           #6366F1;
+  text-decoration: none;
+  font-weight:     600;
+  transition:      color 0.15s;
+}
+
+.at-kpi-link:hover {
+  color:           #4338CA;
+  text-decoration: underline;
+}
+
+/* ── Responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  .at-drift-banner      { flex-direction: column; gap: 10px; }
+  .at-drift-banner-link { width: 100%; justify-content: center; }
+  .at-conf-pill         { font-size: 11px; padding: 2px 7px; }
+}
+
+@media (max-width: 480px) {
+  .at-drift-banner { padding: 10px 14px; }
+  .at-conf-pill    { font-size: 10.5px; padding: 2px 6px; }
+}
+

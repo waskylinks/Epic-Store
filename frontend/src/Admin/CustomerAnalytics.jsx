@@ -23,6 +23,7 @@ import {
   ShoppingCart,
   AttachMoney,
   ErrorOutline,
+  Fingerprint,          // ADDED for anonymous ID stitching
 } from '@mui/icons-material';
 import {
   AreaChart, Area,
@@ -118,6 +119,21 @@ function KpiSkel() {
       <div className="ca-skel" style={{ width: '55%', height: 11, marginBottom: 8 }} />
       <div className="ca-skel" style={{ width: '75%', height: 28 }} />
     </div>
+  );
+}
+
+// ── Stitch Badge (anonymous ID indicator) ────────────────────
+function StitchBadge({ anonymousIds }) {
+  const count = Array.isArray(anonymousIds) ? anonymousIds.length : 0;
+  if (count === 0) return <span className="ca-td-muted">—</span>;
+  return (
+    <span
+      className="ca-stitch-badge"
+      title={`${count} anonymous session${count !== 1 ? 's' : ''} stitched:\n${anonymousIds.join('\n')}`}
+    >
+      <Fingerprint style={{ fontSize: 11 }} />
+      {count}
+    </span>
   );
 }
 
@@ -644,7 +660,9 @@ export default function CustomerAnalytics() {
                     <div className="ca-tbl-wrap">
                       <table className="ca-tbl">
                         <thead>
-                          <tr><th>#</th><th>Customer</th><th>Email</th><th>Total Revenue</th><th>Total Orders</th><th>Avg Order</th><th>Segment</th></tr>
+                          <tr>
+                            <th>#</th><th>Customer</th><th>Email</th><th>Total Revenue</th><th>Total Orders</th><th>Avg Order</th><th>Segment</th><th>Stitched</th>
+                          </tr>
                         </thead>
                         <tbody>
                           {hvList.slice(0, 25).map((c, i) => {
@@ -660,6 +678,7 @@ export default function CustomerAnalytics() {
                                 <td>{fmt.number(clv.totalOrders)}</td>
                                 <td className="ca-td-mono">{fmt.currency(clv.averageOrderValue)}</td>
                                 <td><span className="ca-seg-pill">{rfm.segment || '—'}</span></td>
+                                <td><StitchBadge anonymousIds={c.anonymousIds} /></td>
                               </tr>
                             );
                           })}
@@ -761,7 +780,9 @@ export default function CustomerAnalytics() {
                     <div className="ca-tbl-wrap">
                       <table className="ca-tbl">
                         <thead>
-                          <tr><th>#</th><th>Customer</th><th>Email</th><th>Revenue</th><th>Orders</th><th>Risk Level</th><th>Segment</th></tr>
+                          <tr>
+                            <th>#</th><th>Customer</th><th>Email</th><th>Revenue</th><th>Orders</th><th>Risk Level</th><th>Segment</th><th>Stitched</th>
+                          </tr>
                         </thead>
                         <tbody>
                           {arList.slice(0, 30).map((c, i) => {
@@ -782,6 +803,7 @@ export default function CustomerAnalytics() {
                                   </span>
                                 </td>
                                 <td><span className="ca-seg-pill">{rfm.segment || '—'}</span></td>
+                                <td><StitchBadge anonymousIds={c.anonymousIds} /></td>
                               </tr>
                             );
                           })}
@@ -835,7 +857,9 @@ export default function CustomerAnalytics() {
                     <div className="ca-tbl-wrap">
                       <table className="ca-tbl">
                         <thead>
-                          <tr><th>#</th><th>Customer</th><th>Email</th><th>Total Revenue</th><th>Orders</th><th>AOV</th><th>Segment</th><th>VIP</th></tr>
+                          <tr>
+                            <th>#</th><th>Customer</th><th>Email</th><th>Total Revenue</th><th>Orders</th><th>AOV</th><th>Segment</th><th>VIP</th><th>Stitched</th>
+                          </tr>
                         </thead>
                         <tbody>
                           {vipList.slice(0, 25).map((c, i) => {
@@ -852,6 +876,7 @@ export default function CustomerAnalytics() {
                                 <td className="ca-td-mono">{fmt.currency(clv.averageOrderValue)}</td>
                                 <td><span className="ca-seg-pill">{rfm.segment || '—'}</span></td>
                                 <td><span className="ca-vip-badge"><Star style={{ fontSize: 10 }} />VIP</span></td>
+                                <td><StitchBadge anonymousIds={c.anonymousIds} /></td>
                               </tr>
                             );
                           })}

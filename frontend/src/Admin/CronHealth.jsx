@@ -18,6 +18,7 @@ import {
   History,
   ExpandMore,
   ExpandLess,
+  Loop,
 } from '@mui/icons-material';
 import {
   fetchCronHealth,
@@ -41,10 +42,10 @@ import '../AdminStyles/CronHealth.css';
 
 const AUTO_REFRESH_MS  = 60_000;
 
-// ── CHANGE 1: Added 'RecoveryEmailRetention' to TRIGGERABLE_JOBS ──────────────
-const TRIGGERABLE_JOBS = new Set(['DiscountCleanup', 'AuditCleanup', 'CheckoutRetention', 'RecoveryEmailRetention']);
+// ── CHANGE 1: Added 'AnalyticsQueue' to TRIGGERABLE_JOBS ─────────────────────
+const TRIGGERABLE_JOBS = new Set(['DiscountCleanup', 'AuditCleanup', 'CheckoutRetention', 'RecoveryEmailRetention', 'AnalyticsQueue']);
 
-// ── CHANGE 2: Added RecoveryEmailRetention entry to JOB_META ─────────────────
+// ── CHANGE 2: Added AnalyticsQueue entry to JOB_META ─────────────────────────
 const JOB_META = {
   AbandonmentSweep: {
     label:       'Abandonment Sweep',
@@ -81,6 +82,12 @@ const JOB_META = {
     description: 'Sends abandoned cart recovery emails sequentially. Respects per-attempt delay rules, overlap guard, and per-run cap.',
     icon:        MarkEmailRead,
     color:       '#fb7185',
+  },
+  AnalyticsQueue: {
+    label:       'Analytics Queue',
+    description: 'Processes the analytics event queue: dispatches pending events to GA4, Meta CAPI, and BigQuery. Retries failed events up to 3 times before moving to dead-letter.',
+    icon:        Loop,
+    color:       '#6366F1',
   },
 };
 

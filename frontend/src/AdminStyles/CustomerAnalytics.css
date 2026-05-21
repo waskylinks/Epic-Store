@@ -388,3 +388,34 @@
   .ca-freq-label { width: 80px; }
   .ca-cohort-row { grid-template-columns: 70px 1fr 1fr; }
 }
+
+/* ================================================================
+   ADDITIONS — append to end of CustomerAnalytics.css
+   Required by: CustomerAnalytics.jsx stitch badge patch
+   ================================================================ */
+
+/* ── Anonymous ID stitch badge ──────────────────────────────── */
+/* Shown in High Value, At-Risk, and VIP table Stitched column. */
+/* Displays count of linked anonymous sessions with a tooltip.  */
+
+.ca-stitch-badge {
+  display:       inline-flex;
+  align-items:   center;
+  gap:           4px;
+  font-size:     11px;
+  font-weight:   700;
+  color:         #6366F1;
+  background:    #EEF2FF;
+  border:        1px solid #C7D2FE;
+  border-radius: 10px;
+  padding:       2px 7px;
+  white-space:   nowrap;
+  cursor:        default;
+  transition:    background 0.15s, border-color 0.15s;
+}
+
+.ca-stitch-badge:hover {
+  background:   #E0E7FF;
+  border-color: #A5B4FC;
+}
+
