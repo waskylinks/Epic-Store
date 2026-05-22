@@ -19,9 +19,7 @@ import { syncDiscountAfterOrderCreated, syncBaselineAfterNonDiscountedOrder } fr
 import Checkout from '../models/checkout-model.js';
 import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
-
-import { buildPurchaseEvent } from '../utils/analyticsEvent.js';
-import { enqueueAnalyticsEvent } from '../jobs/analyticsQueue.js';
+import { firePurchaseEvent } from '../Services/analytics/analyticsOrchestrator.js';
 import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
 
 // ============================================
@@ -70,20 +68,9 @@ const normalizeSource = (source) => {
 // FBC FORMATTER
 // ============================================
 
-/**
- * formatFbc
- *
- * Formats a raw fbclid into Meta's required fbc format: fb.1.{timestamp}.{fbclid}
- * The _fbc cookie set by Meta Pixel is already in this format — use as-is.
- * Only call this when you have a raw fbclid that has not yet been formatted.
- * Never fabricate fbc if no real fbclid exists.
- *
- * @param {string|null} fbclid - Raw click ID from attribution or URL param
- * @returns {string|null}
- */
 const formatFbc = (fbclid) => {
   if (!fbclid || typeof fbclid !== 'string') return null;
-  if (fbclid.startsWith('fb.1.')) return fbclid; // already formatted
+  if (fbclid.startsWith('fb.1.')) return fbclid;
   return `fb.1.${Math.floor(Date.now() / 1000)}.${fbclid}`;
 };
 
@@ -153,10 +140,10 @@ const buildPaymentMeta = (gateway, raw) => {
       customer: { email: raw.receipt_email },
       cardDetails: paymentMethod?.card
         ? {
-            last4: paymentMethod.card.last4,
-            brand: paymentMethod.card.brand,
+            last4:    paymentMethod.card.last4,
+            brand:    paymentMethod.card.brand,
             expMonth: paymentMethod.card.exp_month,
-            expYear: paymentMethod.card.exp_year
+            expYear:  paymentMethod.card.exp_year
           }
         : undefined,
       customMetadata: raw.metadata,
@@ -166,15 +153,15 @@ const buildPaymentMeta = (gateway, raw) => {
 
   if (gateway === 'paystack') {
     return {
-      channel: raw.channel,
-      ipAddress: raw.ip_address,
-      customer: raw.customer,
+      channel:       raw.channel,
+      ipAddress:     raw.ip_address,
+      customer:      raw.customer,
       authorization: raw.authorization,
       cardDetails: {
-        last4: raw.authorization?.last4,
-        brand: raw.authorization?.brand,
+        last4:    raw.authorization?.last4,
+        brand:    raw.authorization?.brand,
         expMonth: raw.authorization?.exp_month,
-        expYear: raw.authorization?.exp_year
+        expYear:  raw.authorization?.exp_year
       },
       customMetadata: raw.metadata,
       raw
@@ -183,15 +170,15 @@ const buildPaymentMeta = (gateway, raw) => {
 
   if (gateway === 'flutterwave') {
     return {
-      channel: raw.payment_type,
+      channel:   raw.payment_type,
       ipAddress: raw.ip,
-      customer: raw.customer,
+      customer:  raw.customer,
       cardDetails: raw.card
         ? {
-            last4: raw.card.last_4digits,
-            brand: raw.card.type,
+            last4:    raw.card.last_4digits,
+            brand:    raw.card.type,
             expMonth: raw.card.expiry?.split('/')[0],
-            expYear: raw.card.expiry?.split('/')[1]
+            expYear:  raw.card.expiry?.split('/')[1]
           }
         : undefined,
       customMetadata: raw.meta,
@@ -335,11 +322,11 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
   const userAgent = req.headers['user-agent'] || '';
   const deviceInfo = {
     device:  /mobile/i.test(userAgent) ? 'mobile' : /tablet|ipad/i.test(userAgent) ? 'tablet' : 'desktop',
-    browser: /edg\//i.test(userAgent) ? 'Edge'
-          : /chrome/i.test(userAgent) ? 'Chrome'
-          : /firefox/i.test(userAgent) ? 'Firefox'
-          : /safari/i.test(userAgent) ? 'Safari'
-          : /opera|opr/i.test(userAgent) ? 'Opera'
+    browser: /edg\//i.test(userAgent)     ? 'Edge'
+          : /chrome/i.test(userAgent)     ? 'Chrome'
+          : /firefox/i.test(userAgent)    ? 'Firefox'
+          : /safari/i.test(userAgent)     ? 'Safari'
+          : /opera|opr/i.test(userAgent)  ? 'Opera'
           : 'unknown',
   };
 
@@ -445,8 +432,8 @@ export const initializePaymentController = handleAsyncError(async (req, res, nex
   } else if (gateway === 'flutterwave') {
     responseData.payment_link = gatewayResponse.payment_link;
   } else if (gateway === 'stripe') {
-    responseData.client_secret      = gatewayResponse.client_secret;
-    responseData.payment_intent_id  = gatewayResponse.payment_intent_id;
+    responseData.client_secret     = gatewayResponse.client_secret;
+    responseData.payment_intent_id = gatewayResponse.payment_intent_id;
   }
 
   return res.status(200).json({
@@ -590,7 +577,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  const user = await User.findById(userId).select('email name country createdAt orderHistory');
+  const user = await User.findById(userId).select('email firstName lastName name country createdAt orderHistory');
   if (!user) return next(new HandleError("User not found", 404));
 
   const userOrderCount  = await Order.countDocuments({ user: userId, 'paymentInfo.status': 'success' });
@@ -605,23 +592,14 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
 
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
-  // ============================================
-  // PHASE 9: Extract analytics fields from body
-  // ============================================
+  // ── Extract analytics fields from request body ────────────────────────────
   const analyticsEventId  = req.body?.analyticsEventId  || null;
   const clientTimestamp   = req.body?.clientTimestamp    || null;
   const ga4ClientId       = req.body?.ga4ClientId        || null;
-  const fbp               = req.body?.fbp                || req.cookies?._fbp  || null;
-  const fbc               = req.body?.fbc                || req.cookies?._fbc  || null;
-  // clientAttribution is the full attribution snapshot from the browser SDK.
-  // Used as fallback when the backend attribution middleware couldn't capture
-  // click IDs or UTMs directly (SPA — query string never hits Express).
+  const fbp               = req.body?.fbp                || req.cookies?._fbp || null;
+  const fbc               = req.body?.fbc                || req.cookies?._fbc || null;
   const clientAttribution = req.body?.clientAttribution  || null;
 
-  // Resolve fbc for Meta CAPI:
-  //   Priority 1: _fbc cookie or req.body.fbc — already formatted as fb.1.{ts}.{fbclid}
-  //   Priority 2: raw fbclid from attribution — must be formatted via formatFbc()
-  //   Never fabricate fbc if no real fbclid exists.
   const resolvedFbc =
     fbc ||
     formatFbc(req.attribution?.fbclid) ||
@@ -661,8 +639,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     paymentMeta:  buildPaymentMeta(gateway, gatewayResponse),
     orderStatus:  "Processing",
     analytics: {
-      // Source — Phase 3 middleware wins if it resolved a non-direct source.
-      // Falls back to clientAttribution UTMs (SPA path) then session cache.
       source: normalizeSource(
         req.attribution?.source && req.attribution.source !== 'direct'
           ? req.attribution.source
@@ -677,17 +653,13 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       customerSegment: null,
       isFirstPurchase,
       purchaseNumber,
-      // Phase 2
       anonymousId: req.anonymousId || null,
       eventId:     analyticsEventId,
       sessionId:   req.sessionId   || null,
-      // Click IDs — backend httpOnly cookie first (set when backend saw the
-      // query string), clientAttribution fallback for SPA landing pages.
       gclid:   req.attribution?.gclid   || clientAttribution?.gclid   || null,
       fbclid:  req.attribution?.fbclid  || clientAttribution?.fbclid  || null,
       ttclid:  req.attribution?.ttclid  || clientAttribution?.ttclid  || null,
       msclkid: req.attribution?.msclkid || clientAttribution?.msclkid || null,
-      // Phase 3 confidence scoring
       confidenceScore:    req.attribution?.confidenceScore    ?? null,
       confidenceLevel:    req.attribution?.confidenceLevel    || null,
       isReconstructed:    req.attribution?.isReconstructed    || false,
@@ -708,7 +680,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // ── Resolve RecoveryEmail outcome immediately after order creation ─────────
+  // ── Resolve RecoveryEmail outcome ─────────────────────────────────────────
   try {
     const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
 
@@ -728,9 +700,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
         const { resolveRecoveryOutcome } = await import('../Services/recoveryEmailService.js');
         const outcomeToSet = recoveryEmailDoc.totalLinkClicks > 0 ? 'converted' : 'organic';
         await resolveRecoveryOutcome(recoveryEmailDoc.checkout, outcomeToSet);
-        console.log(
-          `[payment] RecoveryEmail ${recoveryEmailDoc._id} resolved to '${outcomeToSet}'`
-        );
+        console.log(`[payment] RecoveryEmail ${recoveryEmailDoc._id} resolved to '${outcomeToSet}'`);
       }
     }
   } catch (err) {
@@ -743,55 +713,28 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     // Non-fatal
   }
 
-  // ============================================
-  // PHASE 9: Analytics event enqueue
-  // ============================================
-  const purchaseEvent = buildPurchaseEvent(order, req, analyticsEventId);
+  // ── Fire analytics via orchestrator ──────────────────────────────────────
+  // firePurchaseEvent runs the fast path (immediate CAPI + GA4) and enqueues
+  // for reliable retry — replacing the previous direct enqueueAnalyticsEvent
+  // call that bypassed the fast path entirely.
+  //
+  // req is augmented with resolvedFbc and ga4ClientId so the orchestrator
+  // can build the correct context without re-reading the request body.
+  req._resolvedFbc  = resolvedFbc;
+  req._ga4ClientId  = ga4ClientId;
+  req._analyticsEventId = analyticsEventId;
 
-  enqueueAnalyticsEvent('purchase', {
-    ...purchaseEvent,
-    order,
-    user:    req.user,
-    context: {
-      eventId:        purchaseEvent.event_id,
-      userId:         req.user?._id?.toString(),
-      clientId:       ga4ClientId || req.sessionId,
-      sessionId:      req.sessionId,
-      fbp,
-      // resolvedFbc is already in fb.1.{ts}.{fbclid} format — safe to pass
-      // directly to metaCapiService without further formatting.
-      fbc:            resolvedFbc,
-      eventSourceUrl: req.headers?.referer || process.env.FRONTEND_URL,
-      clientIp:       req.ip,
-      userAgent:      req.headers?.['user-agent'],
-      // Use the saved order's analytics subdocument — this has the correct
-      // source/gclid resolved from clientAttribution fallback (SPA path).
-      // req.attribution sees the POST /verify request as "direct" because
-      // the query string never hits Express on a SPA.
-      attribution: {
-        source:             order.analytics.source,
-        medium:             order.analytics.medium,
-        campaign:           order.analytics.campaign,
-        gclid:              order.analytics.gclid,
-        fbclid:             order.analytics.fbclid,
-        ttclid:             order.analytics.ttclid,
-        msclkid:            order.analytics.msclkid,
-        confidenceScore:    order.analytics.confidenceScore,
-        confidenceLevel:    order.analytics.confidenceLevel,
-        isReconstructed:    order.analytics.isReconstructed,
-        reconstructionRule: order.analytics.reconstructionRule,
-      },
-    },
-  }).catch(err =>
-    console.error('[Analytics] Purchase event enqueue failed (non-fatal):', err.message)
+  // Stamp the clean ORD-xxx reference so the queue worker never falls back
+  // to the raw gateway reference stored in paymentMeta.raw which can cause confusion in analytics and duplicate orders if the same payment is verified multiple times with different gateway references (e.g. Stripe PaymentIntent ID vs Paystack reference).
+  req.body.resolvedOrderReference = orderReference;
+
+  firePurchaseEvent(order, user, req).catch(err =>
+    console.error('[Analytics] Purchase event failed (non-fatal):', err.message)
   );
 
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] Purchase stitch failed (non-fatal):', err.message)
   );
-  // ============================================
-  // END PHASE 9
-  // ============================================
 
   res.status(200).json({
     success:    true,
@@ -900,5 +843,4 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
       .then(({ invalidateRecoveryCaches }) => invalidateRecoveryCaches())
       .catch(() => {});
   });
-
 });

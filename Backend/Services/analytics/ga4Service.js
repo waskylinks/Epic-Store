@@ -236,15 +236,14 @@ export const sendGA4Purchase = async (order, context = {}) => {
   } = context;
 
   // Map order items to GA4 e-commerce items array
-  const items = (order.orderItems || []).map((item, index) => ({
-    item_id:       item.product?.toString() || `item_${index}`,
-    item_name:     item.name                || 'Unknown Product',
-    item_category: item.category            || 'uncategorized',
-    price:         Number(item.price)       || 0,
-    quantity:      Number(item.quantity)    || 1,
-    // index position in the cart — used for cart position analysis
-    index,
-  }));
+    const items = (order.orderItems || []).map((item, index) => ({
+      item_id:       (item.product?._id || item.product)?.toString() || `item_${index}`,
+      item_name:     item.name     || 'Unknown Product',
+      item_category: item.category || 'uncategorized',
+      price:         Number(item.price)    || 0,
+      quantity:      Number(item.quantity) || 1,
+      index,
+    }));
 
   const eventParams = {
     // Required GA4 purchase parameters

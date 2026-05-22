@@ -189,6 +189,7 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
     clientIp:       req?.ip || null,
     userAgent:      req?.headers?.['user-agent'] || null,
     attribution:    req?.attribution || {},
+    resolvedOrderReference: req?.body?.resolvedOrderReference || null, 
   };
 
   // ── Build full queue payload ──────────────────────────────────────────────

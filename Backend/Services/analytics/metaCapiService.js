@@ -339,16 +339,21 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
   };
 
   // content_ids and contents are required for Meta catalogue matching
-  const contentIds = (order.orderItems || []).map(item =>
-    item.product?.toString() || 'unknown'
-  );
+    const contentIds = (order.orderItems || []).map(item => {
+      const p = item.product;
+      // Handle both populated doc and plain ObjectId
+      return (p?._id || p)?.toString() || 'unknown';
+    });
 
-  const contents = (order.orderItems || []).map(item => ({
-    id:         item.product?.toString() || 'unknown',
-    quantity:   Number(item.quantity)   || 1,
-    item_price: Number(item.price)      || 0,
-    title:      item.name               || 'Product',
-  }));
+    const contents = (order.orderItems || []).map(item => {
+      const p = item.product;
+      return {
+        id:         (p?._id || p)?.toString() || 'unknown',
+        quantity:   Number(item.quantity) || 1,
+        item_price: Number(item.price)    || 0,
+        title:      item.name             || 'Product',
+      };
+    });
 
   const customData = {
     // Required Meta purchase parameters
@@ -360,7 +365,9 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     num_items:    order.orderItems?.length || 0,
 
     // Order reference for cross-platform reconciliation
-    order_id:     order.paymentInfo?.reference || order._id?.toString(),
+    order_id: order.paymentInfo?.reference?.startsWith('ORD-')
+      ? order.paymentInfo.reference
+      : context?.resolvedOrderReference || order._id?.toString(),
 
     // Discount information
     ...(order.discounts?.codes?.[0]?.code && {
