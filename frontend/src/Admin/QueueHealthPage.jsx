@@ -27,9 +27,9 @@ import {
   selectQueueHealth,
   selectQueueLoading,
   selectQueueError,
-} from '../../features/analytics/analyticsObservabilitySlice';
-import Navbar from '../../components/Navbar';
-import '../../AdminStyles/QueueHealth.css';
+} from '../features/analytics/analyticsObservabilitySlice';
+import Navbar from '../components/Navbar';
+import '../AdminStyles/QueueHealth.css';
 
 // ─── FORMATTERS ───────────────────────────────────────────────────────────────
 const fmtTimeAgo = (d) => {

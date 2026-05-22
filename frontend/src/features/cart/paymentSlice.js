@@ -1,10 +1,12 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 import { generateEventId, buildClientAnalyticsPayload } from '../../utils/analytics.js';
+import { trackPurchase } from '../../utils/eventBridge.js';
 
 // ============================================
 // THUNKS
 // ============================================
+
 export const initializePayment = createAsyncThunk(
   "payment/initializePayment",
   async (payload, { rejectWithValue }) => {
@@ -45,13 +47,14 @@ export const verifyPayment = createAsyncThunk(
   async (payload, { rejectWithValue }) => {
     try {
       const { gateway = "paystack", reference, transactionId } = payload;
-      
-      // PHASE 9: Generate analytics event ID and payload
-      const eventId = generateEventId();
-      const analyticsPayload = buildClientAnalyticsPayload(eventId);
-      
-       // TEMP DEBUG — remove after testing
-      console.log('[Analytics Payload]', JSON.stringify(analyticsPayload, null, 2));
+
+      // Generate eventId and build analytics payload with correct object signature.
+      // eventId is returned alongside the order so the fulfilled reducer can fire
+      // the browser pixel with the matching UUID for Meta deduplication.
+      const eventId          = generateEventId();
+      const analyticsPayload = buildClientAnalyticsPayload({
+        analyticsEventId: eventId,
+      });
 
       const { data } = await axios.post(
         "/api/v1/payment/verify",
@@ -59,12 +62,13 @@ export const verifyPayment = createAsyncThunk(
           gateway,
           reference,
           transactionId,
-          ...analyticsPayload,  // Add analytics fields to request body
+          ...analyticsPayload,
         },
         { withCredentials: true }
       );
 
-      return data;
+      // Return eventId so the fulfilled handler can fire trackPurchase()
+      return { ...data, eventId };
     } catch (error) {
       return rejectWithValue(
         error.response?.data || { message: "Payment verification failed" }
@@ -130,11 +134,29 @@ const paymentSlice = createSlice({
         state.idempotent = false;
       })
       .addCase(verifyPayment.fulfilled, (state, action) => {
+        const { order, message, idempotent, eventId } = action.payload;
+
         state.loading    = false;
         state.success    = true;
-        state.order      = action.payload.order   ?? null;
-        state.message    = action.payload.message ?? "Payment verified successfully";
-        state.idempotent = action.payload.idempotent ?? false;
+        state.order      = order ?? null;
+        state.message    = message ?? "Payment verified successfully";
+        state.idempotent = idempotent ?? false;
+
+        // Fire the browser pixel with the same eventId sent to the server.
+        // Meta matches browser fbq() + CAPI server event via this UUID and
+        // shows "Deduped" in Events Manager — preventing double-counting.
+        // trackPurchase is fire-and-forget — never throws, never blocks.
+        if (order && eventId) {
+          trackPurchase(
+            {
+              orderId:  order._id || order.id,
+              revenue:  order.totalPrice || 0,
+              currency: order.paymentInfo?.currency || 'USD',
+              items:    order.orderItems || [],
+            },
+            eventId
+          );
+        }
       })
       .addCase(verifyPayment.rejected, (state, action) => {
         state.loading    = false;
