@@ -177,9 +177,7 @@ const buildUserData = (userData = {}) => {
     ...(userAgent && { client_user_agent: userAgent }),
   };
 };
-
 // ─── CORE SENDER ─────────────────────────────────────────────────────────────
-
 /**
  * sendMetaEvent
  *
@@ -304,6 +302,7 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
  * @param {Object} context  - Analytics context from the event payload
  * @returns {Promise<Object>}
  */
+
 export const sendMetaPurchase = async (order, user, context = {}) => {
   const {
     eventId,
@@ -315,12 +314,8 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     attribution,
   } = context;
 
-  // Resolve fbc: use cookie value if available (already formatted),
-  // otherwise format the raw fbclid from attribution into the required fb.1.* format.
-  // Never fabricate fbc if no real fbclid exists.
   const resolvedFbc = fbc || formatFbc(attribution?.fbclid) || null;
 
-  // Build user data from authenticated user + shipping info + Meta cookies
   const userData = {
     email:     user.email,
     phone:     order.shippingInfo?.phoneNo,
@@ -329,7 +324,6 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     userId:    user._id?.toString(),
     fbp,
     fbc:       resolvedFbc,
-    // Geographic data from shipping info improves match rate
     city:      order.shippingInfo?.city,
     state:     order.shippingInfo?.state,
     country:   order.shippingInfo?.country,
@@ -338,20 +332,22 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     userAgent,
   };
 
-  // content_ids and contents are required for Meta catalogue matching
-  const contentIds = (order.orderItems || []).map(item =>
-    item.product?.toString() || 'unknown'
-  );
+  const contentIds = (order.orderItems || []).map(item => {
+    const p = item.product;
+    return (p?._id || p)?.toString() || 'unknown';
+  });
 
-  const contents = (order.orderItems || []).map(item => ({
-    id:         item.product?.toString() || 'unknown',
-    quantity:   Number(item.quantity)   || 1,
-    item_price: Number(item.price)      || 0,
-    title:      item.name               || 'Product',
-  }));
+  const contents = (order.orderItems || []).map(item => {
+    const p = item.product;
+    return {
+      id:         (p?._id || p)?.toString() || 'unknown',
+      quantity:   Number(item.quantity) || 1,
+      item_price: Number(item.price)    || 0,
+      title:      item.name             || 'Product',
+    };
+  });
 
   const customData = {
-    // Required Meta purchase parameters
     value:        Number(order.totalPrice) || 0,
     currency:     order.paymentInfo?.currency || 'USD',
     content_ids:  contentIds,
@@ -359,17 +355,20 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     content_type: 'product',
     num_items:    order.orderItems?.length || 0,
 
-    // Order reference for cross-platform reconciliation
-    order_id: order.paymentInfo?.reference?.startsWith('ORD-')
-      ? order.paymentInfo.reference
-      : context?.resolvedOrderReference || order._id?.toString(),
+    // resolvedOrderReference is primary — explicitly stamped in verifyPaymentController
+    // and survives serialization through both the fast path and queue path reliably.
+    // Falls back to order.paymentInfo.reference if resolvedOrderReference is absent,
+    // then to order._id as a last resort.
+    order_id: context?.resolvedOrderReference?.startsWith('ORD-')
+      ? context.resolvedOrderReference
+      : order.paymentInfo?.reference?.startsWith('ORD-')
+        ? order.paymentInfo.reference
+        : order._id?.toString(),
 
-    // Discount information
     ...(order.discounts?.codes?.[0]?.code && {
       coupon_code: order.discounts.codes[0].code,
     }),
 
-    // Attribution quality metadata
     attribution_confidence: attribution?.confidenceLevel || 'UNKNOWN',
   };
 

@@ -73,7 +73,6 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   const currentPrice = resolveProductPrice(product);
   if (currentPrice === 0) return next(new HandleError('Product has no valid price', 500));
 
-  // ── Persist to DB ──────────────────────────────────────────────────────
   const cart = await Cart.findOneAndUpdate(
     { user: req.user._id },
     { $setOnInsert: { user: req.user._id } },
@@ -95,16 +94,12 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
 
   await cart.save();
 
-  // ── Product analytics increment (non-fatal) ────────────────────────────
   try { await product.incrementCart(true); } catch { /* non-fatal */ }
   Promise.all([
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
-  // ── Analytics: fire GA4 + Meta add_to_cart (fire-and-forget) ──────────
-  // Build analytics context from Phase 2/3 middleware — same pattern as
-  // verifyPaymentController. Non-fatal: cart add is never blocked by this.
   const analyticsContext = {
     clientId:       req.body?.ga4ClientId || req.sessionId || null,
     userId:         req.user?._id?.toString(),
@@ -114,11 +109,16 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     clientIp:       req.ip,
     userAgent:      req.headers?.['user-agent'],
     fbp:            req.cookies?._fbp     || null,
-    // fbc from cookie is already formatted (fb.1.{ts}.{fbclid}) — use as-is.
-    // Raw fbclid from attribution is formatted by metaCapiService.formatFbc internally.
     fbc:            req.cookies?._fbc     || null,
     attribution:    req.attribution       || null,
   };
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[Cart Analytics] Cookie signals:', {
+      fbp: req.cookies?._fbp,
+      fbc: req.cookies?._fbc,
+    });
+  }
 
   sendGA4AddToCart(product, quantity, analyticsContext).catch(err =>
     console.error('[Analytics] GA4 add_to_cart failed (non-fatal):', err.message)

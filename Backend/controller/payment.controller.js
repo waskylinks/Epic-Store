@@ -727,6 +727,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // Stamp the clean ORD-xxx reference so the queue worker never falls back
   // to the raw gateway reference stored in paymentMeta.raw which can cause confusion in analytics and duplicate orders if the same payment is verified multiple times with different gateway references (e.g. Stripe PaymentIntent ID vs Paystack reference).
   req.body.resolvedOrderReference = orderReference;
+  req._resolvedFbc                = resolvedFbc;
+  req._ga4ClientId                = ga4ClientId;
+  req._analyticsEventId           = analyticsEventId;
 
   firePurchaseEvent(order, user, req).catch(err =>
     console.error('[Analytics] Purchase event failed (non-fatal):', err.message)

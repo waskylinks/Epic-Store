@@ -130,6 +130,7 @@ const dispatchFastPath = async (eventType, payload) => {
  * @param {boolean} [options.queue=true]    - Enqueue for reliable delivery
  * @returns {Promise<void>}
  */
+
 export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   const {
     fastPath = true,
@@ -143,6 +144,31 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   const ga4ClientId      = req?.body?.ga4ClientId      || null;
   const fbp              = req?.body?.fbp              || req?.cookies?._fbp || null;
   const fbc              = req?.body?.fbc              || req?.cookies?._fbc || req?.attribution?.fbclid || null;
+
+  // ── Resolve order reference ───────────────────────────────────────────────
+  // IIFE is required — the previous ternary had an operator precedence bug
+  // where the ternary bound to the right operand of || causing the entire
+  // expression to short-circuit incorrectly. Without parentheses:
+  //
+  //   a || b.startsWith('ORD-') ? x : y
+  //
+  // parses as:
+  //
+  //   (a || b.startsWith('ORD-')) ? x : y
+  //
+  // which means when a is falsy and startsWith returns true, x is evaluated
+  // as (undefined || b) — returning the raw gateway reference (pi_3... or
+  // EII1|...) instead of the ORD-xxx reference. The IIFE makes priority
+  // explicit and unambiguous.
+  const resolvedOrderReference = (() => {
+    if (req?.body?.resolvedOrderReference?.startsWith('ORD-')) {
+      return req.body.resolvedOrderReference;
+    }
+    if (order?.paymentInfo?.reference?.startsWith('ORD-')) {
+      return order.paymentInfo.reference;
+    }
+    return order?._id?.toString() || null;
+  })();
 
   // ── Build normalized event (Phase 1) ─────────────────────────────────────
   let analyticsEvent;
@@ -189,34 +215,51 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
     clientIp:       req?.ip || null,
     userAgent:      req?.headers?.['user-agent'] || null,
     attribution:    req?.attribution || {},
-    resolvedOrderReference: req?.body?.resolvedOrderReference || null, 
+    resolvedOrderReference,
   };
 
   // ── Build full queue payload ──────────────────────────────────────────────
-  // Merge attribution into root level for test compatibility and easier access
   const attribution = req?.attribution || {};
-  
+
   const queuePayload = {
     ...analyticsEvent,
-    order,
-    user,
+    order: order ? {
+      _id:           order._id?.toString(),
+      totalPrice:    order.totalPrice,
+      taxPrice:      order.taxPrice,
+      shippingPrice: order.shippingPrice,
+      orderItems:    order.orderItems,
+      shippingInfo:  order.shippingInfo,
+      discounts:     order.discounts,
+      paymentInfo: {
+        reference: order.paymentInfo?.reference,
+        currency:  order.paymentInfo?.currency,
+        method:    order.paymentInfo?.method,
+        status:    order.paymentInfo?.status,
+      },
+      analytics: order.analytics,
+    } : null,
+    user: user ? {
+      _id:       user._id?.toString(),
+      email:     user.email,
+      firstName: user.firstName,
+      lastName:  user.lastName,
+    } : null,
     checkout,
     context,
-    step:   step || data.step || null,
-    method: method || null,
-    // Root-level attribution fields for easier access in tests and workers
-    source: attribution.source || null,
-    medium: attribution.medium || null,
-    campaign: attribution.campaign || null,
-    gclid: attribution.gclid || null,
-    fbclid: attribution.fbclid || null,
+    step:            step || data.step || null,
+    method:          method || null,
+    source:          attribution.source          || null,
+    medium:          attribution.medium          || null,
+    campaign:        attribution.campaign        || null,
+    gclid:           attribution.gclid           || null,
+    fbclid:          attribution.fbclid          || null,
     confidenceLevel: attribution.confidenceLevel || null,
     confidenceScore: attribution.confidenceScore || null,
     isReconstructed: attribution.isReconstructed || false,
   };
 
   // ── Fast path: immediate dispatch (best effort) ───────────────────────────
-  // Only for high-value events — purchase, checkout, login, sign_up
   const HIGH_VALUE_EVENTS = new Set([
     ANALYTICS_EVENTS.PURCHASE,
     ANALYTICS_EVENTS.BEGIN_CHECKOUT,

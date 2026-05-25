@@ -40,8 +40,6 @@
 
 import mongoose from 'mongoose';
 
-// ─── PER-PLATFORM RESULT SCHEMA ───────────────────────────────────────────────
-
 const platformResultSchema = new mongoose.Schema(
   {
     success: { type: Boolean, default: null },
@@ -51,13 +49,8 @@ const platformResultSchema = new mongoose.Schema(
   { _id: false }
 );
 
-// ─── MAIN SCHEMA ──────────────────────────────────────────────────────────────
-
 const analyticsEventSchema = new mongoose.Schema(
   {
-    // ── Identity ──────────────────────────────────────────────────────────────
-    // eventId is the UUID from Phase 1 — the deduplication key for GA4 and Meta.
-    // Unique index prevents the same event from being enqueued twice.
     eventId: {
       type:     String,
       required: true,
@@ -65,7 +58,6 @@ const analyticsEventSchema = new mongoose.Schema(
       index:    true,
     },
 
-    // Human-readable event type for filtering and observability
     eventType: {
       type:     String,
       required: true,
@@ -87,7 +79,6 @@ const analyticsEventSchema = new mongoose.Schema(
       ],
     },
 
-    // ── State machine ─────────────────────────────────────────────────────────
     status: {
       type:    String,
       enum:    ['pending', 'processing', 'completed', 'failed', 'dead_letter'],
@@ -95,7 +86,6 @@ const analyticsEventSchema = new mongoose.Schema(
       index:   true,
     },
 
-    // ── Retry tracking ────────────────────────────────────────────────────────
     attempts: {
       type:    Number,
       default: 0,
@@ -107,8 +97,6 @@ const analyticsEventSchema = new mongoose.Schema(
       default: 3,
     },
 
-    // When the worker should next attempt this event
-    // Set to new Date() on creation so it is immediately eligible
     nextRetryAt: {
       type:    Date,
       default: () => new Date(),
@@ -125,27 +113,17 @@ const analyticsEventSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ── Per-platform results ──────────────────────────────────────────────────
-    // Tracks success/failure independently per platform.
-    // A partial success (GA4 ok, Meta failed) is recorded accurately.
     platforms: {
       ga4:      { type: platformResultSchema, default: () => ({}) },
       meta:     { type: platformResultSchema, default: () => ({}) },
       bigquery: { type: platformResultSchema, default: () => ({}) },
     },
 
-    // ── Event payload ─────────────────────────────────────────────────────────
-    // The full normalized analytics event from buildAnalyticsEvent() (Phase 1).
-    // Also includes the raw order, user, and context objects needed by the
-    // platform-specific senders (ga4Service, metaCapiService, bigQueryService).
     payload: {
       type:     mongoose.Schema.Types.Mixed,
       required: true,
     },
 
-    // ── Priority ──────────────────────────────────────────────────────────────
-    // Higher priority events are processed first.
-    // purchase = 10 (highest), page_view = 1 (lowest)
     priority: {
       type:    Number,
       default: 5,
@@ -154,34 +132,70 @@ const analyticsEventSchema = new mongoose.Schema(
     },
   },
   {
-    timestamps: true, // adds createdAt and updatedAt
+    timestamps: true,
   }
 );
 
+analyticsEventSchema.pre('save', function (next) {
+  if (this.eventType !== 'purchase') return next();
+  if (!this.payload) return next();
+
+  const context = this.payload.context;
+  const order   = this.payload.order;
+
+  if (!context || !order) return next();
+
+  // Already a valid ORD- reference — nothing to do
+  if (
+    typeof context.resolvedOrderReference === 'string' &&
+    context.resolvedOrderReference.startsWith('ORD-')
+  ) {
+    return next();
+  }
+
+  // order.paymentInfo.reference may be a Stripe PaymentIntent ID (pi_3...)
+  // or a Stripe token (EII1|...) — only trust it if it starts with ORD-.
+  // Falls back to order._id which is always a clean MongoDB ObjectId string.
+  let resolved = null;
+
+  if (
+    typeof order.paymentInfo?.reference === 'string' &&
+    order.paymentInfo.reference.startsWith('ORD-')
+  ) {
+    resolved = order.paymentInfo.reference;
+  } else if (typeof order._id === 'string') {
+    resolved = order._id;
+  }
+
+  if (resolved) {
+    console.warn(
+      '[AnalyticsEvent] pre-save corrected resolvedOrderReference:',
+      context.resolvedOrderReference ?? 'undefined', '→', resolved
+    );
+    this.payload.context.resolvedOrderReference = resolved;
+    this.markModified('payload');
+  }
+
+  next();
+});
+
 // ─── INDEXES ──────────────────────────────────────────────────────────────────
 
-// Compound index for the worker sweep query:
-// db.analyticsevents.find({ status: { $in: ['pending','failed'] }, nextRetryAt: { $lte: now } })
-// Sorted by priority DESC so high-priority events are processed first
 analyticsEventSchema.index(
   { status: 1, nextRetryAt: 1, priority: -1 },
   { name: 'worker_sweep_idx' }
 );
 
-// Index for observability queries by event type
 analyticsEventSchema.index(
   { eventType: 1, status: 1, createdAt: -1 },
   { name: 'observability_idx' }
 );
 
-// TTL index: automatically delete completed events after 30 days
-// Dead-letter events (status: 'dead_letter') do not have completedAt set
-// so they are retained indefinitely for manual investigation
 analyticsEventSchema.index(
   { completedAt: 1 },
   {
     name:               'ttl_completed_idx',
-    expireAfterSeconds: 30 * 24 * 60 * 60, // 30 days
+    expireAfterSeconds: 30 * 24 * 60 * 60,
     partialFilterExpression: { status: 'completed' },
   }
 );
@@ -194,17 +208,6 @@ analyticsEventSchema.virtual('isRetryable').get(function () {
 
 // ─── STATIC METHODS ───────────────────────────────────────────────────────────
 
-/**
- * AnalyticsEvent.findEligible
- *
- * Finds events that are ready to be processed by the queue worker.
- * Returns pending events and failed events whose nextRetryAt has passed.
- * Sorted by priority descending so purchase events (priority 10) are
- * processed before view_item events (priority 1).
- *
- * @param {number} limit - Max number of events to return per sweep
- * @returns {Promise<AnalyticsEvent[]>}
- */
 analyticsEventSchema.statics.findEligible = function (limit = 5) {
   return this.find({
     status:      { $in: ['pending', 'failed'] },
@@ -215,14 +218,6 @@ analyticsEventSchema.statics.findEligible = function (limit = 5) {
     .limit(limit);
 };
 
-/**
- * AnalyticsEvent.getQueueHealth
- *
- * Returns a summary of the current queue state for observability.
- * Called by the observability controller (Phase 7) for the health dashboard.
- *
- * @returns {Promise<Object>}
- */
 analyticsEventSchema.statics.getQueueHealth = async function () {
   const counts = await this.aggregate([
     {
@@ -245,8 +240,8 @@ analyticsEventSchema.statics.getQueueHealth = async function () {
     if (_id in summary) summary[_id] = count;
   });
 
-  summary.total         = Object.values(summary).reduce((a, b) => a + b, 0);
-  summary.healthyRatio  = summary.total > 0
+  summary.total        = Object.values(summary).reduce((a, b) => a + b, 0);
+  summary.healthyRatio = summary.total > 0
     ? Math.round((summary.completed / summary.total) * 100)
     : 100;
 
