@@ -42,6 +42,29 @@
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Epic Store</title>
+
+    <!-- Meta Pixel base loader — defines window.fbq only, no Pixel ID here.
+         fbq('init', PIXEL_ID) is called in App.jsx from VITE_META_PIXEL_ID.
+         This separation keeps the Pixel ID out of source control entirely. -->
+    <script>
+      !function(f,b,e,v,n,t,s)
+      {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+      n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+      if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+      n.queue=[];t=b.createElement(e);t.async=!0;
+      t.src=v;s=b.getElementsByTagName(e)[0];
+      s.parentNode.insertBefore(t,s)}(window, document,'script',
+      'https://connect.facebook.net/en_US/fbevents.js');
+    </script>
+
+    <!-- GA4 base loader — defines window.gtag only, no Measurement ID here.
+         gtag('config', ID) is called in App.jsx from VITE_GA4_MEASUREMENT_ID. -->
+    <script async src="https://www.googletagmanager.com/gtag/js"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+    </script>
   </head>
   <body>
     <div id="root"></div>

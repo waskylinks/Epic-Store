@@ -29,6 +29,13 @@
  *   trackPurchase() fires the browser pixel client-side for deduplication.
  *   The server-side conversion event is fired in verifyPaymentController.js.
  *   Both carry the same eventId so Meta deduplicates them automatically.
+ *
+ * ORDER ID CONSISTENCY:
+ *   The browser pixel and the server CAPI event MUST carry the same order_id.
+ *   The server always uses order.paymentInfo.reference (ORD-xxx format).
+ *   The browser pixel must also use paymentInfo.reference — never order._id
+ *   (MongoDB ObjectId) which Meta cannot recognise and replaces with its own
+ *   internal EII1|... identifier in Events Manager.
  */
 
 import {
@@ -40,7 +47,6 @@ import {
 
 // ─── BACKEND ENDPOINT ─────────────────────────────────────────────────────────
 
-// vite.config.js proxies /api → localhost:8000, no base URL needed
 const ANALYTICS_ENDPOINT = '/api/v1/analytics/event';
 
 // ─── PIXEL HELPERS ────────────────────────────────────────────────────────────
@@ -110,11 +116,9 @@ const sendEvent = (eventType, properties = {}, eventId, overrides = {}) => {
       method:      'POST',
       headers:     { 'Content-Type': 'application/json' },
       body:        JSON.stringify(payload),
-      keepalive:   true,   // survives page navigation
+      keepalive:   true,
       credentials: 'include',
-    }).catch(() => {
-      // Silently swallow — analytics must never block or surface errors
-    });
+    }).catch(() => {});
   } catch {
     // Catch payload build errors silently
   }
@@ -126,49 +130,59 @@ const sendEvent = (eventType, properties = {}, eventId, overrides = {}) => {
  * trackPurchase
  *
  * Fires the browser-side Purchase pixel using the SAME eventId that was
- * sent to the server in createOrder → verifyPaymentController.
+ * sent to the server in verifyPaymentController.
  *
- * WHY: Meta CAPI and GA4 Measurement Protocol fire server-side after payment
- * verification. The browser pixel also fires (here). Both carry the same
- * eventId so the ad platform deduplicates them — you see one conversion,
- * not two. Without this the browser pixel event inflates reported ROAS.
+ * CRITICAL — order_id must be the ORD-xxx payment reference, not the
+ * MongoDB _id. The server CAPI event always uses order.paymentInfo.reference
+ * as order_id. If the browser pixel sends a different value (e.g. the MongoDB
+ * ObjectId), Meta receives two events with the same event_id but different
+ * order_ids. Meta deduplicates on event_id correctly but then cannot reconcile
+ * the order_id mismatch — it replaces the unrecognised value with its own
+ * internal EII1|... identifier in Events Manager.
  *
- * CALL SITE: orderSlice.js createOrder.fulfilled — pass the eventId that
- * was generated in createOrder's thunk body.
+ * Callers must pass orderData.orderId as order.paymentInfo.reference,
+ * which is the ORD-xxx string written by verifyPaymentController.
  *
  * @param {{ orderId: string, revenue: number, currency?: string, items?: Array }} orderData
- * @param {string} eventId - The UUID generated in createOrder (MUST match server)
+ * @param {string} eventId - The UUID generated in verifyPayment thunk (MUST match server)
  */
 export const trackPurchase = (orderData, eventId) => {
   const id = eventId || generateEventId();
 
-  // Meta Pixel — eventID here matches CAPI eventId → "Deduped" in Events Manager
+  // Meta Pixel — eventID here matches CAPI eventId → "Deduped" in Events Manager.
+  // order_id MUST match what the server sends in sendMetaPurchase — both must
+  // be the ORD-xxx reference so Meta can reconcile the two events cleanly.
   fireFbq('track', 'Purchase', {
     value:        orderData.revenue || 0,
     currency:     orderData.currency || 'USD',
-    content_ids:  (orderData.items || []).map(i => i.productId || i._id).filter(Boolean),
+    content_ids:  (orderData.items || []).map(i =>
+      (i.product?._id || i.product || i.productId || i._id)?.toString()
+    ).filter(Boolean),
     content_type: 'product',
+    // FIX: order_id must be the ORD-xxx payment reference — not the MongoDB _id.
+    // Callers pass order.paymentInfo.reference from paymentSlice.fulfilled.
     order_id:     orderData.orderId,
   }, id);
 
-  // GA4 — deduplication uses transaction_id, not event_id
+  // GA4 — deduplication uses transaction_id, not event_id.
+  // transaction_id also uses the ORD-xxx reference to match the server event.
   fireGtag('purchase', {
     transaction_id: orderData.orderId,
     value:          orderData.revenue || 0,
     currency:       orderData.currency || 'USD',
-    items:          (orderData.items || []).map(item => ({
-      item_id:   item.productId || item._id,
-      item_name: item.name,
-      price:     item.price,
+    items:          (orderData.items || []).map((item, index) => ({
+      item_id:   (item.product?._id || item.product || item.productId || item._id)?.toString() || `item_${index}`,
+      item_name: item.name || 'Product',
+      price:     item.price || 0,
       quantity:  item.quantity || 1,
     })),
   });
 
-  // Also send to our own ingestion endpoint for BigQuery
+  // Backend ingestion for BigQuery
   sendEvent(ANALYTICS_EVENTS.PURCHASE || 'purchase', {
-    order_id:  orderData.orderId,
-    revenue:   orderData.revenue,
-    currency:  orderData.currency || 'USD',
+    order_id:   orderData.orderId,
+    revenue:    orderData.revenue,
+    currency:   orderData.currency || 'USD',
     item_count: (orderData.items || []).length,
   }, id);
 };
@@ -179,16 +193,14 @@ export const trackPurchase = (orderData, eventId) => {
  * trackBeginCheckout
  *
  * Fires when the user first opens the checkout flow (cart → shipping step).
- * Generates a shared eventId used by both browser pixel and server.
  *
  * @param {Object} cartContext - { cartValue, itemCount, hasDiscount, items }
  * @param {string} [eventId]   - Pass the eventId from createCheckoutSession if available
- * @returns {string} eventId   - Returns the UUID so the caller can attach it to the session
+ * @returns {string} eventId
  */
 export const trackBeginCheckout = (cartContext = {}, eventId) => {
   const id = eventId || generateEventId();
 
-  // Meta Pixel
   fireFbq('track', 'InitiateCheckout', {
     value:        cartContext.cartValue || 0,
     currency:     'USD',
@@ -197,7 +209,6 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
     content_type: 'product',
   }, id);
 
-  // GA4
   fireGtag('begin_checkout', {
     currency: 'USD',
     value:    cartContext.cartValue || 0,
@@ -209,7 +220,6 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
     })),
   });
 
-  // Server ingestion
   sendEvent(ANALYTICS_EVENTS.CHECKOUT_STEP || 'checkout_step', {
     step:         'cart',
     cart_value:   cartContext.cartValue  || null,
@@ -233,7 +243,6 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
 export const trackCheckoutStep = (step, cartContext = {}, eventId) => {
   const id = eventId || generateEventId();
 
-  // Meta tracks payment info entry as a standard event
   if (step === 'payment_selection' || step === 'payment_gateway') {
     fireFbq('track', 'AddPaymentInfo', {
       value:    cartContext.cartValue || 0,
@@ -241,14 +250,12 @@ export const trackCheckoutStep = (step, cartContext = {}, eventId) => {
     }, id);
   }
 
-  // GA4 checkout progress
   fireGtag('checkout_progress', {
     checkout_step: step,
     currency:      'USD',
     value:         cartContext.cartValue || 0,
   });
 
-  // Server ingestion
   sendEvent(ANALYTICS_EVENTS.CHECKOUT_STEP || 'checkout_step', {
     step,
     cart_value:   cartContext.cartValue  || null,
@@ -261,8 +268,6 @@ export const trackCheckoutStep = (step, cartContext = {}, eventId) => {
 
 /**
  * trackProductView
- *
- * Fire when a user views a product detail page.
  *
  * @param {{ productId: string, name: string, price: number, category?: string }} product
  */
@@ -299,8 +304,6 @@ export const trackProductView = (product) => {
 /**
  * trackAddToCart
  *
- * Fire when a user adds an item to their cart.
- *
  * @param {{ productId: string, name: string, price: number, quantity: number }} item
  */
 export const trackAddToCart = (item) => {
@@ -336,8 +339,6 @@ export const trackAddToCart = (item) => {
 /**
  * trackRemoveFromCart
  *
- * Fire when a user removes an item from their cart.
- *
  * @param {{ productId: string, name: string, price: number }} item
  */
 export const trackRemoveFromCart = (item) => {
@@ -353,7 +354,6 @@ export const trackRemoveFromCart = (item) => {
     }],
   });
 
-  // Meta has no standard RemoveFromCart event — use custom
   fireFbq('trackCustom', 'RemoveFromCart', {
     content_ids:  [item.productId || item._id].filter(Boolean),
     content_name: item.name,
@@ -372,8 +372,6 @@ export const trackRemoveFromCart = (item) => {
 
 /**
  * trackSearch
- *
- * Fire when a user submits a search query.
  *
  * @param {string} query       - Search term
  * @param {number} resultCount - Number of results returned
@@ -400,13 +398,9 @@ export const trackSearch = (query, resultCount = 0) => {
 /**
  * trackPageView
  *
- * Fire on route changes for SPA page view tracking.
- * Called automatically by App.jsx via initAnalytics() on mount.
- *
  * @param {string} [path] - URL path (defaults to window.location.pathname)
  */
 export const trackPageView = (path) => {
-  // No eventId needed — page views are not deduplicated server-side
   fireGtag('page_view', {
     page_path:  path || window.location.pathname,
     page_title: document.title,

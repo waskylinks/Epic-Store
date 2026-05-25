@@ -58,7 +58,6 @@ import DiscountAnalytics from './Admin/DiscountAnalytics';
 import ReturnAnalytics from './Admin/ReturnAnalytics';
 import RecoveryEmailAnalytics from './Admin/RecoveryEmailAnalytics';
 import CronHealth from './Admin/CronHealth';
-// ── Phase 9: Observability pages ─────────────────────────────────────────────
 import AttributionHealthPage from './Admin/AttributionHealthPage';
 import AttributionDriftPage from './Admin/AttributionDriftPage';
 import QueueHealthPage from './Admin/QueueHealthPage';
@@ -66,33 +65,71 @@ import UserEventTracePage from './Admin/UserEventTracePage';
 
 import { initAnalytics, debugAnalyticsState } from './utils/analytics.js';
 
+// ─── META PIXEL ID ────────────────────────────────────────────────────────────
+// Read from Vite env — add VITE_META_PIXEL_ID=your_pixel_id to your .env file.
+// Must be VITE_ prefixed to be exposed to the browser bundle.
+const META_PIXEL_ID = import.meta.env.VITE_META_PIXEL_ID;
+
+// ─── GA4 MEASUREMENT ID ───────────────────────────────────────────────────────
+// Read from Vite env — add VITE_GA4_MEASUREMENT_ID=G-XXXXXXXXXX to your .env.
+const GA4_MEASUREMENT_ID = import.meta.env.VITE_GA4_MEASUREMENT_ID;
+
 function App() {
   const { initializing, isAuthenticated } = useSelector(state => state.user);
   const dispatch = useDispatch();
 
-  // ── PHASE 1: Analytics initialization ──────────────────────────────────────
+  // ── PHASE 1: Analytics + Pixel initialisation ─────────────────────────────
+  //
   // Runs ONCE on app mount before any routing occurs.
   //
-  // initAnalytics() does three things in the correct order:
-  //   1. captureClickIds()    — stores gclid/fbclid/ttclid from landing URL
-  //   2. captureUTMsOnLoad()  — stores UTMs from landing URL (idempotent)
-  //   3. getOrCreateSessionId() — creates/refreshes cross-tab session
+  // Order matters:
+  //   1. initAnalytics()  — captures click IDs, UTMs, creates session ID
+  //   2. fbq('init', ...) — initialises Meta Pixel, sets _fbp cookie on domain
+  //   3. fbq('track', 'PageView') — fires the initial page view to Meta
+  //   4. gtag('config', ...) — initialises GA4, sets _ga cookie on domain
   //
-  // Why this order matters:
-  //   captureClickIds() runs before the UTM captured-flag check so click IDs
-  //   are always captured on new ad clicks, even if UTMs were already stored
-  //   from a previous session.
+  // Why fbq('init') must run here and not in index.html:
+  //   The standard Meta Pixel base code goes in index.html, but that approach
+  //   requires hardcoding the Pixel ID. By initialising here from VITE env vars,
+  //   the Pixel ID stays out of source control and can differ between environments.
+  //   The _fbp cookie is set by fbq('init') — without it every CAPI event has
+  //   fbp: null, reducing Meta match rate and attribution accuracy.
   //
-  // Why localStorage and not sessionStorage:
-  //   OAuth redirects (Google/Facebook login) destroy sessionStorage.
-  //   A user who lands via a Google Ad, clicks "Login with Google", and
-  //   completes OAuth would lose all UTM attribution with sessionStorage.
-  //   localStorage survives the redirect and preserves first-touch attribution.
+  // Why initAnalytics() runs before fbq('init'):
+  //   captureClickIds() must capture fbclid from the URL before any redirects
+  //   or navigation. fbq('init') itself does not capture fbclid from the URL
+  //   into localStorage — that is handled by our SDK. The _fbc cookie is set
+  //   by the Pixel when fbclid is present in the URL, which only works after
+  //   fbq('init') runs. Both must run on the same tick for fbclid pages.
   useEffect(() => {
+    // Step 1 — capture UTMs, click IDs, create session
     initAnalytics();
 
+    // Step 2 — initialise Meta Pixel
+    // fbq('init') sets the _fbp cookie which identifies this browser to Meta.
+    // Every subsequent fbq('track') call requires init to have run first.
+    // Without init, track calls are silently queued and never dispatched.
+    if (META_PIXEL_ID && typeof window.fbq === 'function') {
+      window.fbq('init', META_PIXEL_ID);
+      window.fbq('track', 'PageView');
+    } else if (META_PIXEL_ID) {
+      // fbq not loaded yet — this means the Pixel base script in index.html
+      // is missing. Add it (see comment below about index.html).
+      console.warn('[Analytics] Meta Pixel not loaded — fbq is not defined. Check index.html.');
+    }
+
+    // Step 3 — initialise GA4 browser tracking
+    // gtag('config') sets the _ga cookie and starts session tracking.
+    // Without this, getGA4ClientId() in analytics.js returns null on every
+    // event, causing server-side Measurement Protocol events to appear as
+    // new users in GA4 reports instead of being stitched to the browser session.
+    if (GA4_MEASUREMENT_ID && typeof window.gtag === 'function') {
+      window.gtag('config', GA4_MEASUREMENT_ID);
+    } else if (GA4_MEASUREMENT_ID) {
+      console.warn('[Analytics] GA4 gtag not loaded — gtag is not defined. Check index.html.');
+    }
+
     // Expose debug helper in development
-    // Usage in DevTools: window.__epicAnalytics.debug()
     if (import.meta.env.DEV) {
       window.__epicAnalytics = { debug: debugAnalyticsState };
     }
@@ -110,7 +147,6 @@ function App() {
     }
   }, [initializing, isAuthenticated, dispatch]);
 
-  // Block routes until loadUser() resolves — prevents flash of unauthenticated UI
   if (initializing) {
     return <Loader />;
   }
@@ -183,7 +219,6 @@ function App() {
         <Route path='/admin/discount-analytics' element={<ProtectedRoute element={<DiscountAnalytics />} adminOnly={true} />} />
         <Route path='/admin/recovery-email-analytics' element={<ProtectedRoute element={<RecoveryEmailAnalytics />} adminOnly={true} />} />
         <Route path='/admin/cron-health' element={<ProtectedRoute element={<CronHealth />} adminOnly={true} />} />
-        {/* Phase 9: Observability routes */}
         <Route path='/admin/analytics/health' element={<ProtectedRoute element={<AttributionHealthPage />} adminOnly={true} />} />
         <Route path='/admin/analytics/drift' element={<ProtectedRoute element={<AttributionDriftPage />} adminOnly={true} />} />
         <Route path='/admin/analytics/queue' element={<ProtectedRoute element={<QueueHealthPage />} adminOnly={true} />} />
