@@ -53,10 +53,28 @@
  *   META_ACCESS_TOKEN    — System user access token (never expires)
  *   META_CAPI_ENDPOINT   — https://graph.facebook.com/v18.0 (optional, has default)
  *   META_TEST_EVENT_CODE — Test event code (development only, REMOVE in production .env)
+ *   DEFAULT_CURRENCY     — Fallback currency code (e.g. "USD", "NGN")
  */
 
-import crypto from 'crypto';
-import axios  from 'axios';
+import crypto    from 'crypto';
+import axios     from 'axios';
+import http      from 'http';
+import https     from 'https';
+import countries from 'i18n-iso-countries';
+import enLocale  from 'i18n-iso-countries/langs/en.json' assert { type: 'json' };
+
+countries.registerLocale(enLocale);
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+
+const MAX_CONTENTS = 100;
+
+const DEDUP_REQUIRED_EVENTS = new Set(['Purchase', 'InitiateCheckout', 'AddToCart']);
+
+// ─── HTTP KEEP-ALIVE AGENTS ───────────────────────────────────────────────────
+
+const httpAgent  = new http.Agent({ keepAlive: true });
+const httpsAgent = new https.Agent({ keepAlive: true });
 
 // ─── FBC FORMATTER ────────────────────────────────────────────────────────────
 
@@ -76,11 +94,136 @@ import axios  from 'axios';
  */
 const formatFbc = (fbclid) => {
   if (!fbclid || typeof fbclid !== 'string') return null;
-  // If it already looks like a properly formatted fbc, return as-is
   if (fbclid.startsWith('fb.1.')) return fbclid;
-  // Format raw fbclid into fb.1.{timestamp_seconds}.{fbclid}
-  const timestampSeconds = Math.floor(Date.now() / 1000);
-  return `fb.1.${timestampSeconds}.${fbclid}`;
+  // Meta uses millisecond timestamps in _fbc cookies
+  return `fb.1.${Date.now()}.${fbclid}`;
+};
+
+// ─── FBP VALIDATION ───────────────────────────────────────────────────────────
+
+/**
+ * isValidFbp
+ *
+ * Validates the _fbp cookie format before sending to Meta.
+ * Malformed fbp values reduce Event Match Quality (EMQ) significantly.
+ * Expected format: fb.1.{timestamp}.{random_number}
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+const isValidFbp = (value) => {
+  if (!value || typeof value !== 'string') return false;
+  return /^fb\.1\.\d+\.\d+$/.test(value);
+};
+
+// ─── COUNTRY NORMALIZER ───────────────────────────────────────────────────────
+
+/**
+ * Common non-standard aliases not resolved by i18n-iso-countries.
+ * Keys are lowercase. Values are the canonical English name the library
+ * understands, or a direct ISO alpha-2 code for single-letter exceptions.
+ *
+ * Add entries here for any abbreviation or colloquial name your
+ * user base submits that the library cannot resolve on its own.
+ */
+const COUNTRY_ALIASES = {
+  'uae':                      'United Arab Emirates',
+  'usa':                      'United States',
+  'uk':                       'United Kingdom',
+  'great britain':            'United Kingdom',
+  'south korea':              'Korea, Republic of',
+  'north korea':              "Korea, Democratic People's Republic of",
+  'russia':                   'Russian Federation',
+  'iran':                     'Iran, Islamic Republic of',
+  'tanzania':                 'Tanzania, United Republic of',
+  'bolivia':                  'Bolivia, Plurinational State of',
+  'venezuela':                'Venezuela, Bolivarian Republic of',
+  'syria':                    'Syrian Arab Republic',
+  'laos':                     "Lao People's Democratic Republic",
+  'moldova':                  'Moldova, Republic of',
+  'vietnam':                  'Viet Nam',
+  'taiwan':                   'Taiwan, Province of China',
+};
+
+/**
+ * normalizeCountry
+ *
+ * Normalizes any country name, alias, or code to an ISO 3166-1 alpha-2
+ * lowercase string, as required by Meta CAPI before hashing.
+ *
+ * Resolution order:
+ *   1. Null / non-string guard → undefined
+ *   2. Already a valid ISO alpha-2 code → lowercase passthrough
+ *   3. Alias map lookup → resolve to canonical name, then continue
+ *   4. i18n-iso-countries full-name lookup (English locale)
+ *   5. Unresolvable → undefined (field omitted from payload)
+ *
+ * Sending "Nigeria" or "USA" un-normalized directly to Meta destroys
+ * the country match signal and reduces Event Match Quality (EMQ).
+ *
+ * @param {string} country - Any country name, alias, or ISO code variant
+ * @returns {string|undefined} ISO alpha-2 lowercase code, or undefined if unknown
+ */
+const normalizeCountry = (country) => {
+  if (!country || typeof country !== 'string') return undefined;
+
+  const trimmed    = country.trim();
+  const lowerInput = trimmed.toLowerCase();
+
+  // Already ISO alpha-2 — pass through normalized to lowercase
+  if (/^[a-zA-Z]{2}$/.test(trimmed)) {
+    const name = countries.getName(lowerInput, 'en');
+    return name ? lowerInput : undefined;
+  }
+
+  // Resolve alias to canonical English name before library lookup
+  const aliased    = COUNTRY_ALIASES[lowerInput];
+  const lookupName = aliased || trimmed;
+
+  const code = countries.getAlpha2Code(lookupName, 'en');
+
+  if (!code) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(`[Meta CAPI] Unknown country value — omitting from payload: "${country}"`);
+    }
+    return undefined;
+  }
+
+  return code.toLowerCase();
+};
+
+// ─── SAFE NUMBER ──────────────────────────────────────────────────────────────
+
+/**
+ * safeNumber
+ *
+ * Converts a value to a finite number, returning 0 as fallback.
+ * Prevents NaN values in value/price fields — Meta sometimes silently
+ * rejects or mishandles NaN in custom_data.
+ *
+ * @param {*} v
+ * @returns {number}
+ */
+const safeNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+
+// ─── CURRENCY RESOLVER ────────────────────────────────────────────────────────
+
+/**
+ * resolveCurrency
+ *
+ * Resolves currency with a consistent priority chain.
+ * Priority: explicit context currency → product/order currency → env default → 'USD'
+ *
+ * @param {...string} candidates - Currency values in priority order
+ * @returns {string} Uppercase ISO 4217 currency code
+ */
+const resolveCurrency = (...candidates) => {
+  for (const c of candidates) {
+    if (c && typeof c === 'string' && c.trim().length === 3) {
+      return c.trim().toUpperCase();
+    }
+  }
+  return process.env.DEFAULT_CURRENCY || 'USD';
 };
 
 // ─── PII HASHING ──────────────────────────────────────────────────────────────
@@ -96,19 +239,27 @@ const formatFbc = (fbclid) => {
  *   - Lowercase
  *   - Trim leading/trailing whitespace
  *   - Phone: digits only, E.164 without the + prefix
+ *   - Country: normalized to ISO alpha-2 before hashing (see normalizeCountry)
  *
  * @param {string|null|undefined} value
- * @param {string} type - 'default' | 'phone' — controls normalization
+ * @param {string} type - 'default' | 'phone' | 'country'
  * @returns {string|undefined}
  */
 const hash = (value, type = 'default') => {
   if (!value || typeof value !== 'string') return undefined;
 
-  let normalized = value.trim().toLowerCase();
+  let normalized;
+
+  if (type === 'country') {
+    normalized = normalizeCountry(value);
+    if (!normalized) return undefined;
+  } else {
+    normalized = value.trim().toLowerCase();
+  }
 
   if (type === 'phone') {
-    // Strip all non-digit characters for phone number normalization
     normalized = normalized.replace(/\D/g, '');
+    if (normalized.length < 7) return undefined;
   }
 
   return crypto
@@ -136,12 +287,12 @@ const hash = (value, type = 'default') => {
  * @param {string} userData.phone      - User phone number (any format)
  * @param {string} userData.firstName  - User first name
  * @param {string} userData.lastName   - User last name
- * @param {string} userData.userId     - Internal MongoDB user ID
- * @param {string} userData.fbp        - _fbp cookie value (NOT hashed)
+ * @param {string} userData.userId     - Internal user ID
+ * @param {string} userData.fbp        - _fbp cookie value (NOT hashed, validated)
  * @param {string} userData.fbc        - Already-formatted fbc value (NOT hashed)
  * @param {string} userData.city       - City (from shipping info)
  * @param {string} userData.state      - State/region
- * @param {string} userData.country    - Country code (2-letter ISO)
+ * @param {string} userData.country    - Country code or name (normalized before hash)
  * @param {string} userData.zipCode    - Postal/zip code
  * @param {string} userData.clientIp   - Client IP address (NOT hashed)
  * @param {string} userData.userAgent  - Browser user agent (NOT hashed)
@@ -154,51 +305,55 @@ const buildUserData = (userData = {}) => {
     clientIp, userAgent,
   } = userData;
 
+  const validatedFbp = isValidFbp(fbp) ? fbp : undefined;
+
   return {
-    // Hashed PII — required fields for good match rate
-    ...(email     && { em:  hash(email) }),
-    ...(phone     && { ph:  hash(phone, 'phone') }),
-    ...(firstName && { fn:  hash(firstName) }),
-    ...(lastName  && { ln:  hash(lastName) }),
+    // Hashed PII
+    ...(email     && { em:          hash(email) }),
+    ...(phone     && { ph:          hash(phone, 'phone') }),
+    ...(firstName && { fn:          hash(firstName) }),
+    ...(lastName  && { ln:          hash(lastName) }),
     ...(userId    && { external_id: hash(userId) }),
 
-    // Hashed geographic data — improves match rate
-    ...(city      && { ct:      hash(city) }),
-    ...(state     && { st:      hash(state) }),
-    ...(country   && { country: hash(country) }),
-    ...(zipCode   && { zp:      hash(zipCode) }),
+    // Hashed geographic data
+    ...(city    && { ct:      hash(city) }),
+    ...(state   && { st:      hash(state) }),
+    ...(country && { country: hash(country, 'country') }),
+    // Spaces stripped before hashing (UK/Canada postal codes contain spaces)
+    ...(zipCode && { zp:      hash(zipCode.replace(/\s+/g, '').toLowerCase()) }),
 
     // Un-hashed Meta cookies — MUST be sent as-is, hashing breaks matching
-    ...(fbp       && { fbp }),
-    ...(fbc       && { fbc }),
+    ...(validatedFbp && { fbp: validatedFbp }),
+    ...(fbc          && { fbc }),
 
-    // Un-hashed technical signals — hashing breaks these
+    // Un-hashed technical signals
     ...(clientIp  && { client_ip_address: clientIp }),
     ...(userAgent && { client_user_agent: userAgent }),
   };
 };
+
 // ─── CORE SENDER ─────────────────────────────────────────────────────────────
+
 /**
  * sendMetaEvent
  *
  * Sends a single event to the Meta Conversions API.
  * Throws on network failure, API error, or invalid credentials.
- *
- * Development: includes test_event_code so events appear in Test Events tab.
- * Production: no test_event_code — events feed real reporting.
+ * Thrown errors carry a `retryable` boolean for queue worker classification.
  *
  * The queue worker (Phase 6) catches these throws and handles retry.
  * Controllers must never call this directly — always go through the queue.
  *
- * @param {string} eventName     - Meta standard event name (e.g. "Purchase")
- * @param {Object} userData      - PII data for user matching
- * @param {Object} customData    - Event-specific data (value, currency, etc.)
- * @param {Object} context       - Request context
- * @param {string} context.eventId        - UUID for deduplication with browser Pixel
- * @param {string} context.eventSourceUrl - URL where the event occurred
- * @param {string} context.actionSource   - "website" | "app" | "email"
- * @param {string} context.clientIp       - Client IP from req.ip
- * @param {string} context.userAgent      - User agent from req.headers
+ * @param {string}  eventName                  - Meta standard event name (e.g. "Purchase")
+ * @param {Object}  userData                   - PII data for user matching
+ * @param {Object}  customData                 - Event-specific data (value, currency, etc.)
+ * @param {Object}  context                    - Request context
+ * @param {string}  context.eventId            - UUID for deduplication with browser Pixel
+ * @param {string}  context.eventSourceUrl     - URL where the event occurred
+ * @param {string}  context.actionSource       - "website" | "app" | "email"
+ * @param {string}  context.clientIp           - Client IP from req.ip
+ * @param {string}  context.userAgent          - User agent from req.headers
+ * @param {boolean} context.marketingConsent   - GDPR/DMA consent gate
  * @returns {Promise<Object>}
  */
 export const sendMetaEvent = async (eventName, userData, customData, context = {}) => {
@@ -212,60 +367,98 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
     actionSource = 'website',
     clientIp,
     userAgent,
+    marketingConsent,
   } = context;
 
-  const eventTime = Math.floor(Date.now() / 1000); // Unix timestamp (seconds)
+  // Consent gate — do not send PII to Meta without marketing consent.
+  // Required under GDPR, DMA (EU), UK GDPR, CPRA.
+  // Returns (not throws) so queue workers don't retry consent skips.
+  if (marketingConsent === false) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug(`[Meta CAPI] "${eventName}" skipped — no marketing consent.`);
+    }
+    return { success: false, skipped: true, reason: 'no_consent', eventName };
+  }
+
+  // Hard fail on missing eventId for deduplication-critical events.
+  // Without a matching eventId, Meta cannot deduplicate against the browser
+  // Pixel event — resulting in double-counted conversions and corrupted ROAS.
+  if (DEDUP_REQUIRED_EVENTS.has(eventName) && !eventId) {
+    const err = new Error(`Meta CAPI ${eventName} missing required eventId for deduplication`);
+    err.retryable = false;
+    throw err;
+  }
+
+  const eventTime  = Math.floor(Date.now() / 1000);
+  const resolvedUrl = eventSourceUrl || process.env.FRONTEND_URL || null;
 
   const payload = {
     data: [
       {
-        event_name:       eventName,
-        event_time:       eventTime,
+        event_name:    eventName,
+        event_time:    eventTime,
         // event_id is the deduplication key — must match the browser fbq eventID.
         // Meta deduplicates same event_id within 48 hours.
-        event_id:         eventId,
-        event_source_url: eventSourceUrl || process.env.FRONTEND_URL,
-        action_source:    actionSource,
-        user_data: buildUserData({
-          ...userData,
-          clientIp,
-          userAgent,
-        }),
-        custom_data: customData,
+        ...(eventId    && { event_id:         eventId }),
+        ...(resolvedUrl && { event_source_url: resolvedUrl }),
+        action_source: actionSource,
+        user_data:     buildUserData({ ...userData, clientIp, userAgent }),
+        custom_data:   customData,
       },
     ],
-
-    // Development: test_event_code routes events to Test Events tab in Events Manager.
-    // This lets you validate payloads in real time without polluting production data.
-    // Production: META_TEST_EVENT_CODE must NOT be set — test events don't feed
-    // ad optimization or reporting, causing zero attributed conversions in Ads Manager.
-    ...(process.env.META_TEST_EVENT_CODE && {
-      test_event_code: process.env.META_TEST_EVENT_CODE,
-    }),
   };
 
-  const endpoint = process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0';
-  const url = `${endpoint}/${process.env.META_PIXEL_ID}/events`;
-
-  const response = await axios.post(url, payload, {
-    params:  { access_token: process.env.META_ACCESS_TOKEN },
-    headers: { 'Content-Type': 'application/json' },
-    timeout: 8000, // Meta CAPI can be slower than GA4 — 8 second timeout
-  });
-
-  // Log API-level errors returned in the response body
-  if (response.data?.error) {
-    throw new Error(`Meta CAPI error: ${JSON.stringify(response.data.error)}`);
+  // test_event_code is only injected outside production, even if the env var
+  // is accidentally set — prevents live conversions routing to the Test Events
+  // tab and disappearing from Ads Manager optimization.
+  if (process.env.NODE_ENV !== 'production' && process.env.META_TEST_EVENT_CODE) {
+    payload.test_event_code = process.env.META_TEST_EVENT_CODE;
   }
 
-  // In development, log confirmation so you know the Test Events tab should show it
+  const endpoint = process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0';
+  const url      = `${endpoint}/${process.env.META_PIXEL_ID}/events`;
+
+  let response;
+  try {
+    response = await axios.post(url, payload, {
+      params:     { access_token: process.env.META_ACCESS_TOKEN },
+      headers:    { 'Content-Type': 'application/json' },
+      timeout:    8000,
+      httpAgent,
+      httpsAgent,
+    });
+  } catch (err) {
+    const status  = err.response?.status;
+    err.retryable = (
+      status >= 500       ||
+      status === 429      ||
+      err.code === 'ECONNABORTED' ||
+      err.code === 'ECONNRESET'   ||
+      err.code === 'ETIMEDOUT'
+    );
+    if (status === 400 || status === 401 || status === 403) {
+      err.retryable = false;
+    }
+    throw err;
+  }
+
+  if (response.data?.error) {
+    const err     = new Error(`Meta CAPI error: ${JSON.stringify(response.data.error)}`);
+    err.retryable = false;
+    throw err;
+  }
+
   if (process.env.NODE_ENV !== 'production') {
     console.debug(
       `[Meta CAPI] "${eventName}" sent successfully.`,
       process.env.META_TEST_EVENT_CODE
         ? `Check Test Events tab in Events Manager (code: ${process.env.META_TEST_EVENT_CODE})`
         : 'No test_event_code set — check production Events Manager Overview.',
-      { eventsReceived: response.data?.events_received, fbtrace_id: response.data?.fbtrace_id }
+      {
+        eventsReceived: response.data?.events_received,
+        fbtrace_id:     response.data?.fbtrace_id,
+        messages:       response.data?.messages,
+      }
     );
   }
 
@@ -274,6 +467,7 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
     statusCode:     response.status,
     eventsReceived: response.data?.events_received || 0,
     fbtrace_id:     response.data?.fbtrace_id      || null,
+    messages:       response.data?.messages        || [],
     eventName,
     eventId:        eventId || null,
     sentAt:         new Date().toISOString(),
@@ -302,17 +496,8 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
  * @param {Object} context  - Analytics context from the event payload
  * @returns {Promise<Object>}
  */
-
 export const sendMetaPurchase = async (order, user, context = {}) => {
-  const {
-    eventId,
-    fbp,
-    fbc,
-    eventSourceUrl,
-    clientIp,
-    userAgent,
-    attribution,
-  } = context;
+  const { eventId, fbp, fbc, eventSourceUrl, clientIp, userAgent, attribution } = context;
 
   const resolvedFbc = fbc || formatFbc(attribution?.fbclid) || null;
 
@@ -332,38 +517,29 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     userAgent,
   };
 
-  const contentIds = (order.orderItems || []).map(item => {
-    const p = item.product;
-    return (p?._id || p)?.toString() || 'unknown';
+  // Filter out items with unresolvable IDs — invalid IDs break Dynamic Ads catalog matching
+  const validItems = (order.orderItems || []).filter(item => {
+    const id = (item.product?._id || item.product)?.toString();
+    return id && id !== 'unknown';
   });
 
-  const contents = (order.orderItems || []).map(item => {
-    const p = item.product;
-    return {
-      id:         (p?._id || p)?.toString() || 'unknown',
-      quantity:   Number(item.quantity) || 1,
-      item_price: Number(item.price)    || 0,
-      title:      item.name             || 'Product',
-    };
-  });
+  const contentIds = validItems.map(item => (item.product?._id || item.product).toString());
+
+  const contents = validItems.slice(0, MAX_CONTENTS).map(item => ({
+    id:         (item.product?._id || item.product).toString(),
+    quantity:   safeNumber(item.quantity) || 1,
+    item_price: safeNumber(item.price),
+    title:      item.name || 'Product',
+  }));
 
   const customData = {
-    value:        Number(order.totalPrice) || 0,
-    currency:     order.paymentInfo?.currency || 'USD',
+    value:        safeNumber(order.totalPrice),
+    currency:     resolveCurrency(order.paymentInfo?.currency, context.currency),
     content_ids:  contentIds,
     contents,
     content_type: 'product',
     num_items:    order.orderItems?.length || 0,
-
-    // resolvedOrderReference is primary — explicitly stamped in verifyPaymentController
-    // and survives serialization through both the fast path and queue path reliably.
-    // Falls back to order.paymentInfo.reference if resolvedOrderReference is absent,
-    // then to order._id as a last resort.
-    order_id: context?.resolvedOrderReference?.startsWith('ORD-')
-      ? context.resolvedOrderReference
-      : order.paymentInfo?.reference?.startsWith('ORD-')
-        ? order.paymentInfo.reference
-        : order._id?.toString(),
+    order_id:     context.resolvedOrderReference,
 
     ...(order.discounts?.codes?.[0]?.code && {
       coupon_code: order.discounts.codes[0].code,
@@ -375,9 +551,10 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
   return sendMetaEvent('Purchase', userData, customData, {
     eventId,
     eventSourceUrl,
-    actionSource: 'website',
+    actionSource:     'website',
     clientIp,
     userAgent,
+    marketingConsent: context.marketingConsent,
   });
 };
 
@@ -408,13 +585,13 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
     userAgent: context.userAgent,
   };
 
-  const contentIds = (checkout.items || []).map(item =>
-    item.product?.toString() || 'unknown'
-  );
+  const contentIds = (checkout.items || [])
+    .map(item => item.product?.toString())
+    .filter(id => id && id !== 'unknown');
 
   const customData = {
-    value:        Number(checkout.pricing?.totalPrice) || 0,
-    currency:     checkout.pricing?.currency || 'USD',
+    value:        safeNumber(checkout.pricing?.totalPrice),
+    currency:     resolveCurrency(checkout.pricing?.currency, context.currency),
     content_ids:  contentIds,
     content_type: 'product',
     num_items:    checkout.items?.length || 0,
@@ -438,7 +615,7 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
  * @returns {Promise<Object>}
  */
 export const sendMetaAddToCart = async (product, quantity, user, context = {}) => {
-  const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  const price       = safeNumber(product.pricing?.sale || product.pricing?.regular || product.price);
   const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
 
   const userData = {
@@ -453,15 +630,15 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
   };
 
   const customData = {
-    value:        Number(price) * Number(quantity),
-    currency:     'USD',
-    content_ids:  [product._id?.toString()],
+    value:        safeNumber(price) * safeNumber(quantity),
+    currency:     resolveCurrency(product.currency, context.currency),
+    content_ids:  [product._id?.toString()].filter(Boolean),
     content_name: product.name,
     content_type: 'product',
     contents: [{
       id:         product._id?.toString(),
-      quantity:   Number(quantity),
-      item_price: Number(price),
+      quantity:   safeNumber(quantity),
+      item_price: price,
     }],
   };
 
@@ -482,7 +659,7 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
  * @returns {Promise<Object>}
  */
 export const sendMetaViewContent = async (product, user, context = {}) => {
-  const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  const price       = safeNumber(product.pricing?.sale || product.pricing?.regular || product.price);
   const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
 
   const userData = {
@@ -495,9 +672,9 @@ export const sendMetaViewContent = async (product, user, context = {}) => {
   };
 
   const customData = {
-    value:            Number(price),
-    currency:         'USD',
-    content_ids:      [product._id?.toString()],
+    value:            price,
+    currency:         resolveCurrency(product.currency, context.currency),
+    content_ids:      [product._id?.toString()].filter(Boolean),
     content_name:     product.name,
     content_type:     'product',
     content_category: product.category || 'uncategorized',
@@ -534,7 +711,7 @@ export const sendMetaCompleteRegistration = async (user, context = {}) => {
 
   return sendMetaEvent('CompleteRegistration', userData, {
     status:   true,
-    currency: 'USD',
+    currency: resolveCurrency(context.currency),
     value:    0,
   }, context);
 };
@@ -547,22 +724,36 @@ export const sendMetaCompleteRegistration = async (user, context = {}) => {
  * Validates that Meta CAPI environment variables are configured.
  * Called by server.js on startup and by the observability controller.
  *
- * @returns {{ configured: boolean, missing: string[], testMode: boolean }}
+ * Warns if META_TEST_EVENT_CODE is set in production — this causes all live
+ * conversion events to route to the Test Events tab only, making them invisible
+ * to Ads Manager optimization and attribution reporting.
+ *
+ * @returns {{ configured: boolean, missing: string[], testMode: boolean, productionWarnings: string[] }}
  */
 export const checkMetaConfig = () => {
   const required = ['META_PIXEL_ID', 'META_ACCESS_TOKEN'];
   const missing  = required.filter(key => !process.env[key]);
 
+  const productionWarnings = [];
+  if (process.env.NODE_ENV === 'production' && process.env.META_TEST_EVENT_CODE) {
+    productionWarnings.push(
+      'META_TEST_EVENT_CODE is set in production — all conversion events will route to ' +
+      'Test Events tab and will NOT feed Ads Manager optimization or attribution. Remove it immediately.'
+    );
+  }
+
+  if (productionWarnings.length > 0) {
+    console.warn('[Meta CAPI] Production configuration warnings:', productionWarnings);
+  }
+
   return {
-    configured: missing.length === 0,
+    configured:         missing.length === 0,
     missing,
-    // testMode: true in development (META_TEST_EVENT_CODE set).
-    // Events in test mode appear in Events Manager → Test Events tab only.
-    // They do NOT feed ad optimization — remove test_event_code for production.
-    testMode:   !!process.env.META_TEST_EVENT_CODE,
-    pixelId:    process.env.META_PIXEL_ID
-      ? `${process.env.META_PIXEL_ID.slice(0, 4)}****`
-      : null,
-    endpoint:   process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0',
+    testMode:           !!process.env.META_TEST_EVENT_CODE,
+    pixelId:            process.env.META_PIXEL_ID
+                          ? `${process.env.META_PIXEL_ID.slice(0, 4)}****`
+                          : null,
+    endpoint:           process.env.META_CAPI_ENDPOINT || 'https://graph.facebook.com/v18.0',
+    productionWarnings,
   };
 };
