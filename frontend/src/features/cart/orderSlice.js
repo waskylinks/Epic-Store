@@ -120,7 +120,7 @@ export const createOrder = createAsyncThunk(
   async (orderData, { rejectWithValue }) => {
     try {
       const eventId = generateEventId();
-      const analyticsPayload = buildClientAnalyticsPayload({ analyticsEventId: eventId });
+      const analyticsPayload = buildClientAnalyticsPayload(eventId);
 
       const { data } = await axios.post(
         `${API_BASE}/order/new`,
@@ -463,7 +463,7 @@ const orderSlice = createSlice({
         // trackPurchase is fire-and-forget — never throws, never blocks.
         trackPurchase(
           {
-            orderId:  order.paymentInfo.reference,
+            orderId:  order?._id || order?.id,
             revenue:  order?.pricing?.totalPrice || order?.totalPrice || 0,
             currency: order?.pricing?.currency   || 'USD',
             items:    order?.items || [],

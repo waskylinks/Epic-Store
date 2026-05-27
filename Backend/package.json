@@ -3,23 +3,26 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "nodemon server.js",
-    "start": "node server.js",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
-    "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose",
-    "test:analytics": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/analyticsEvent.test.js --verbose",
-    "test:session": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/sessionMiddleware.test.js --verbose",
-    "test:identity": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/identityMiddleware.test.js --verbose",
-    "test:attribution": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/attributionMiddleware.test.js --verbose",
-    "test:referrer": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/referrerReconstruction.test.js --verbose",
-    "test:ga4service": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/ga4Service.test.js --verbose",
-    "test:metacapiservice": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/metaCAPIService.test.js --verbose",
-    "test:analyticsqueue": "NODE_OPTIONS=--experimental-vm-modules jest jobs/tests/analyticsQueue.test.js --verbose",
-    "test:bigqueryservice": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/bigQueryService.test.js --verbose",
-    "test:analyticsobservability": "NODE_OPTIONS=--experimental-vm-modules jest controller/tests/analyticsObservabilityController.test.js --verbose",
-    "test:analyticsorchestrator": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/analyticsOrchestrator.test.js --verbose"
-  },
+  "dev": "nodemon server.js",
+  "start": "node server.js",
+
+  "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+  "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --watch",
+  "test:verbose": "NODE_OPTIONS=--experimental-vm-modules jest --verbose",
+
+  "test:analytics": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/analyticsEvent.test.js --verbose",
+  "test:session":  "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/sessionMiddleware.test.js --verbose",
+  "test:identity": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/identityMiddleware.test.js --verbose",
+  "test:attribution": "NODE_OPTIONS=--experimental-vm-modules jest middleware/tests/attributionMiddleware.test.js --verbose",
+  "test:referrer": "NODE_OPTIONS=--experimental-vm-modules jest utils/tests/referrerReconstruction.test.js --verbose",
+  "test:ga4service": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/ga4Service.test.js --verbose",
+  "test:metacapiservice": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/metaCAPIService.test.js --verbose",
+  "test:analyticsqueue": "NODE_OPTIONS=--experimental-vm-modules jest jobs/tests/analyticsQueue.test.js --verbose",
+  "test:bigqueryservice": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/bigQueryService.test.js --verbose",
+  "test:analyticsobservability": "NODE_OPTIONS=--experimental-vm-modules jest controller/tests/analyticsObservabilityController.test.js --verbose",
+  "test:analyticsorchestrator": "NODE_OPTIONS=--experimental-vm-modules jest Services/analytics/tests/analyticsOrchestrator.test.js --verbose"
+
+},
   "keywords": [
     "MongoDB",
     "Express",
@@ -48,7 +51,6 @@
     "fs": "^0.0.1-security",
     "helmet": "^8.1.0",
     "hpp": "^0.2.3",
-    "i18n-iso-countries": "^7.14.0",
     "ioredis": "^5.8.2",
     "isomorphic-dompurify": "^3.0.0",
     "joi": "^18.0.2",
@@ -76,3 +78,4 @@
     "xss-clean": "^0.1.4"
   }
 }
+

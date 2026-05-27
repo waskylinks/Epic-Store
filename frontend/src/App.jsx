@@ -82,70 +82,54 @@ function App() {
   //
   // Runs ONCE on app mount before any routing occurs.
   //
-  // Initialisation order is deliberate:
-  //   1. initAnalytics()  — captures click IDs and UTMs from the landing URL,
-  //                         and creates the app session ID. Must run before
-  //                         fbq('init') so that fbclid is in localStorage
-  //                         before the Meta Pixel also reads it from the URL
-  //                         to set the _fbc cookie.
-  //   2. fbq('init', ...) — initialises Meta Pixel, sets _fbp cookie on domain.
-  //                         Without this, every CAPI event has fbp: null,
-  //                         reducing Meta match rate and attribution accuracy.
-  //   3. fbq('track', 'PageView') — fires the initial page view to Meta.
-  //   4. gtag config      — queues or directly fires the GA4 config command,
-  //                         which causes gtag.js to set the _ga cookie
-  //                         (client ID) and _ga_XXXXXXXX cookie (session ID).
-  //                         Both cookies are read by analytics.js at payment
-  //                         time to populate ga4ClientId and ga4SessionId in
-  //                         the Measurement Protocol payload.
-  // See detailed comment on the gtag block below.
+  // Order matters:
+  //   1. initAnalytics()  — captures click IDs, UTMs, creates session ID
+  //   2. fbq('init', ...) — initialises Meta Pixel, sets _fbp cookie on domain
+  //   3. fbq('track', 'PageView') — fires the initial page view to Meta
+  //   4. gtag('config', ...) — initialises GA4, sets _ga cookie on domain
+  //
+  // Why fbq('init') must run here and not in index.html:
+  //   The standard Meta Pixel base code goes in index.html, but that approach
+  //   requires hardcoding the Pixel ID. By initialising here from VITE env vars,
+  //   the Pixel ID stays out of source control and can differ between environments.
+  //   The _fbp cookie is set by fbq('init') — without it every CAPI event has
+  //   fbp: null, reducing Meta match rate and attribution accuracy.
+  //
+  // Why initAnalytics() runs before fbq('init'):
+  //   captureClickIds() must capture fbclid from the URL before any redirects
+  //   or navigation. fbq('init') itself does not capture fbclid from the URL
+  //   into localStorage — that is handled by our SDK. The _fbc cookie is set
+  //   by the Pixel when fbclid is present in the URL, which only works after
+  //   fbq('init') runs. Both must run on the same tick for fbclid pages.
   useEffect(() => {
-    // Step 1 — capture UTMs, click IDs, create app session
+    // Step 1 — capture UTMs, click IDs, create session
     initAnalytics();
 
+    // Step 2 — initialise Meta Pixel
+    // fbq('init') sets the _fbp cookie which identifies this browser to Meta.
+    // Every subsequent fbq('track') call requires init to have run first.
+    // Without init, track calls are silently queued and never dispatched.
     if (META_PIXEL_ID && typeof window.fbq === 'function') {
       window.fbq('init', META_PIXEL_ID);
       window.fbq('track', 'PageView');
     } else if (META_PIXEL_ID) {
-      console.warn(
-        '[Analytics] Meta Pixel not loaded — fbq is not defined. ' +
-        'Ensure the Meta Pixel base code snippet is present in index.html.'
-      );
+      // fbq not loaded yet — this means the Pixel base script in index.html
+      // is missing. Add it (see comment below about index.html).
+      console.warn('[Analytics] Meta Pixel not loaded — fbq is not defined. Check index.html.');
     }
 
-    // Step 3 — configure GA4 browser tracking
-    
-    if (GA4_MEASUREMENT_ID) {
-      if (typeof window.gtag === 'function') {
-        // Standard path: gtag snippet is installed and ready
-        window.gtag('config', GA4_MEASUREMENT_ID);
-      } else if (Array.isArray(window.dataLayer)) {
-        const gtagQueue = function () { window.dataLayer.push(arguments); };
-        gtagQueue('config', GA4_MEASUREMENT_ID);
-        if (import.meta.env.DEV) {
-          console.debug(
-            '[Analytics] GA4 config queued via dataLayer (gtag not yet defined). ' +
-            'This is normal when gtag.js loads asynchronously. ' +
-            'ga4ClientId and ga4SessionId will be available after gtag.js executes.'
-          );
-        }
-      } else {
-        // gtag snippet and GTM snippet are both missing from index.html
-        console.warn(
-          '[Analytics] GA4 not configured — window.gtag and window.dataLayer ' +
-          'are both unavailable. Add the gtag snippet to index.html:\n' +
-          '  window.dataLayer = window.dataLayer || [];\n' +
-          '  function gtag(){dataLayer.push(arguments);}\n' +
-          '  gtag("js", new Date());\n' +
-          '  gtag("config", "' + GA4_MEASUREMENT_ID + '");'
-        );
-      }
+    // Step 3 — initialise GA4 browser tracking
+    // gtag('config') sets the _ga cookie and starts session tracking.
+    // Without this, getGA4ClientId() in analytics.js returns null on every
+    // event, causing server-side Measurement Protocol events to appear as
+    // new users in GA4 reports instead of being stitched to the browser session.
+    if (GA4_MEASUREMENT_ID && typeof window.gtag === 'function') {
+      window.gtag('config', GA4_MEASUREMENT_ID);
+    } else if (GA4_MEASUREMENT_ID) {
+      console.warn('[Analytics] GA4 gtag not loaded — gtag is not defined. Check index.html.');
     }
 
     // Expose debug helper in development
-    // window.__epicAnalytics.debug() logs the full attribution state including
-    // ga4ClientId and ga4SessionId so misconfigured gtag setups are immediately
-    // visible without inspecting cookies manually.
     if (import.meta.env.DEV) {
       window.__epicAnalytics = { debug: debugAnalyticsState };
     }
