@@ -159,8 +159,6 @@ export const trackPurchase = (orderData, eventId) => {
       (i.product?._id || i.product || i.productId || i._id)?.toString()
     ).filter(Boolean),
     content_type: 'product',
-    // FIX: order_id must be the ORD-xxx payment reference — not the MongoDB _id.
-    // Callers pass order.paymentInfo.reference from paymentSlice.fulfilled.
     order_id:     orderData.orderId,
   }, id);
 

@@ -5,6 +5,7 @@
  *
  * Generates event UUIDs, manages cross-tab sessions, captures UTMs and click
  * IDs at landing time, and builds the attribution payload sent to the backend.
+ *
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -30,7 +31,6 @@ export const KEYS = {
 const SESSION_TTL_MS = 30 * 60 * 1000;
 
 // ─── EVENT NAME CONSTANTS ─────────────────────────────────────────────────────
-// Consumed by eventBridge.js — add new event types here as the plan grows.
 
 export const ANALYTICS_EVENTS = {
   PAGE_VIEW:        'page_view',
@@ -75,7 +75,6 @@ export const getOrCreateSessionId = () => {
     const id = uuidv4();
     localStorage.setItem(KEYS.SESSION, JSON.stringify({ id, lastSeen: Date.now(), startedAt: new Date().toISOString() }));
     return id;
-
   } catch (err) {
     console.warn('[Analytics] localStorage unavailable, session will not persist:', err.message);
     return uuidv4();
@@ -109,7 +108,6 @@ export const captureUTMsOnLoad = () => {
 
     localStorage.setItem(KEYS.LANDING_PAGE, window.location.pathname + window.location.search);
     localStorage.setItem(KEYS.UTM_CAPTURED, '1');
-
   } catch (err) {
     console.warn('[Analytics] captureUTMsOnLoad failed:', err.message);
   }
@@ -136,7 +134,6 @@ export const captureClickIds = () => {
     Object.entries(clickIdMap).forEach(([key, value]) => {
       if (value) localStorage.setItem(key, JSON.stringify({ value, capturedAt: new Date().toISOString() }));
     });
-
   } catch (err) {
     console.warn('[Analytics] captureClickIds failed:', err.message);
   }
@@ -169,6 +166,11 @@ const getClickId = (key, expiryDays) => {
  * Pass to the backend on every checkout/order request so server-side events
  * carry the same context. The backend also captures independently from cookies
  * and headers — this is a redundant source that includes the sessionId.
+ *
+ * NOTE: sessionId here is the application session UUID (for attribution
+ * tracking continuity). It is separate from ga4SessionId which is the numeric
+ * GA4 session identifier read from the _ga_XXXXXXXX cookie. The two serve
+ * different purposes and must not be conflated.
  */
 export const getAttributionContext = () => {
   try {
@@ -179,10 +181,10 @@ export const getAttributionContext = () => {
       utm_term:     localStorage.getItem(KEYS.UTM_TERM)     || null,
       utm_content:  localStorage.getItem(KEYS.UTM_CONTENT)  || null,
       landing_page: localStorage.getItem(KEYS.LANDING_PAGE) || window.location.pathname,
-      gclid:        getClickId(KEYS.GCLID,   90),
-      fbclid:       getClickId(KEYS.FBCLID,   7),
-      ttclid:       getClickId(KEYS.TTCLID,   7),
-      msclkid:      getClickId(KEYS.MSCLKID, 90),
+      gclid:        getClickId(KEYS.GCLID,    90),
+      fbclid:       getClickId(KEYS.FBCLID,    7),
+      ttclid:       getClickId(KEYS.TTCLID,    7),
+      msclkid:      getClickId(KEYS.MSCLKID,  90),
       sessionId:    getOrCreateSessionId(),
       capturedAt:   new Date().toISOString(),
     };
@@ -194,8 +196,11 @@ export const getAttributionContext = () => {
 
 // ─── META PIXEL HELPERS ───────────────────────────────────────────────────────
 
-// Reads _fbp and _fbc cookies set by the Meta Pixel script.
-// The backend passes these to CAPI user_data for identity matching.
+/**
+ * Reads _fbp and _fbc cookies set by the Meta Pixel script.
+ * The backend passes these to CAPI user_data for identity matching.
+ * Neither value is hashed — Meta requires them as-is.
+ */
 export const getMetaPixelCookies = () => {
   try {
     const cookies = Object.fromEntries(
@@ -212,9 +217,20 @@ export const getMetaPixelCookies = () => {
 
 // ─── GA4 CLIENT ID HELPER ─────────────────────────────────────────────────────
 
-// Reads the GA4 client ID from the _ga cookie (format: GA1.1.XXXX.XXXX).
-// Required for Measurement Protocol events to associate with the existing
-// browser session — without it, server events appear as new users in GA4.
+/**
+ * Reads the GA4 client ID from the _ga cookie.
+ *
+ * The _ga cookie is set by gtag('config', ...) and has the format:
+ *   GA1.1.XXXXXXXXXX.YYYYYYYYYY
+ * This function strips the "GA1.1." prefix and returns "XXXXXXXXXX.YYYYYYYYYY"
+ * which is the client_id expected by the GA4 Measurement Protocol.
+ *
+ * Required for Measurement Protocol events to associate with the existing
+ * browser session. Without it, server events appear as new users in GA4.
+ *
+ * Returns null when gtag has not yet set the cookie or document.cookie
+ * is unavailable (SSR, test environments).
+ */
 export const getGA4ClientId = () => {
   try {
     const match = document.cookie.match(/_ga=([^;]+)/);
@@ -226,21 +242,55 @@ export const getGA4ClientId = () => {
   }
 };
 
+// ─── GA4 SESSION ID HELPER ────────────────────────────────────────────────────
+
+/**
+ *
+ * @returns {string|null} Numeric session ID string or null
+ */
+export const getGA4SessionId = () => {
+  try {
+    const allCookies = document.cookie.split('; ');
+
+    for (const cookie of allCookies) {
+      const eqIdx = cookie.indexOf('=');
+      if (eqIdx === -1) continue;
+
+      const key = cookie.substring(0, eqIdx);
+      const val = cookie.substring(eqIdx + 1);
+
+      // Match _ga_XXXXXXXX cookie (suffix is alphanumeric, uppercase)
+      if (!/^_ga_[A-Z0-9]+$/.test(key)) continue;
+
+      // Cookie format: GS1.1.{sessionId}.{count}.{engaged}.{timestamp}...
+      const parts     = val.split('.');
+      const sessionId = parts[2];
+
+      // Validate: must be a non-empty, non-zero, purely numeric string
+      if (!sessionId || !/^\d+$/.test(sessionId) || sessionId === '0') {
+        return null;
+      }
+
+      return sessionId;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
 // ─── CLIENT ANALYTICS PAYLOAD BUILDER ────────────────────────────────────────
 
 /**
- * Builds the normalized payload POSTed to /api/v1/analytics/event.
- * Called by eventBridge.js sendEvent() on every tracked action.
  *
- * Accepts an options object (not a bare eventId string) so eventBridge can
- * pass eventType, properties, and an already-resolved attribution context
- * in one call — avoiding a redundant getAttributionContext() read per event.
- *
- * @param {string}  options.eventType          - Event name from ANALYTICS_EVENTS
- * @param {Object}  [options.properties]       - Event-specific properties
- * @param {Object}  [options.attribution]      - Pre-resolved attribution context
- * @param {string}  [options.analyticsEventId] - Deduplication UUID
- * @param {...*}    [overrides]                - Additional top-level fields
+ * @param {Object}  options
+ * @param {string}  [options.eventType]          - Event name from ANALYTICS_EVENTS
+ * @param {Object}  [options.properties]         - Event-specific properties
+ * @param {Object}  [options.attribution]        - Pre-resolved attribution context
+ * @param {string}  [options.analyticsEventId]   - Deduplication UUID
+ * @param {...*}    [overrides]                  - Additional top-level fields
+ * @returns {Object} Payload ready to spread into a POST body
  */
 export const buildClientAnalyticsPayload = ({
   eventType,
@@ -248,7 +298,7 @@ export const buildClientAnalyticsPayload = ({
   attribution,
   analyticsEventId,
   ...overrides
-}) => {
+} = {}) => {
   const resolvedAttribution = attribution || getAttributionContext();
   const metaCookies         = getMetaPixelCookies();
   const ga4ClientId         = getGA4ClientId();
@@ -260,8 +310,9 @@ export const buildClientAnalyticsPayload = ({
     properties,
     clientAttribution: resolvedAttribution,
     ga4ClientId,
-    fbp: metaCookies.fbp,
-    fbc: metaCookies.fbc || resolvedAttribution?.fbclid || null,
+    ga4SessionId:      getGA4SessionId(),
+    fbp:               metaCookies.fbp,
+    fbc:               metaCookies.fbc || resolvedAttribution?.fbclid || null,
     ...overrides,
   };
 };
@@ -271,8 +322,14 @@ export const buildClientAnalyticsPayload = ({
 /**
  * Runs all capture functions in the correct order.
  * Call once in App.jsx useEffect on mount (empty dependency array).
- * captureClickIds must run before captureUTMsOnLoad so click IDs are stored
- * even when UTM capture has already been marked done.
+ *
+ * captureClickIds runs before captureUTMsOnLoad so click IDs are stored
+ * even when UTM capture has already been marked done for this visitor.
+ *
+ * getGA4SessionId is NOT called here. The _ga_XXXXXXXX cookie is set by
+ * gtag('config') which runs after initAnalytics() in the same useEffect.
+ * The session ID is read lazily at payload-build time (inside
+ * buildClientAnalyticsPayload) when the cookie is guaranteed to exist.
  */
 export const initAnalytics = () => {
   captureClickIds();
@@ -292,11 +349,13 @@ export const initAnalytics = () => {
 
 // ─── DEBUG UTILITY ────────────────────────────────────────────────────────────
 
+
 export const debugAnalyticsState = () => {
   const state = {
     session:      JSON.parse(localStorage.getItem(KEYS.SESSION) || 'null'),
     attribution:  getAttributionContext(),
     ga4ClientId:  getGA4ClientId(),
+    ga4SessionId: getGA4SessionId(),   // [FIX-A3]
     metaCookies:  getMetaPixelCookies(),
     localStorage: Object.fromEntries(
       Object.entries(KEYS).map(([label, key]) => [label, localStorage.getItem(key)])
@@ -309,8 +368,16 @@ export const debugAnalyticsState = () => {
 
 // ─── RESET (TESTING ONLY) ─────────────────────────────────────────────────────
 
-// Clears all analytics keys — simulates a first-time visitor.
-// Usage: import { resetAnalyticsState } from './utils/analytics'; resetAnalyticsState(); location.reload();
+/**
+ * Clears all analytics keys from localStorage.
+ * Simulates a first-time visitor. Does not clear browser cookies (_ga, _fbp, etc.)
+ * as those are managed by gtag and Meta Pixel respectively.
+ *
+ * Usage:
+ *   import { resetAnalyticsState } from './utils/analytics';
+ *   resetAnalyticsState();
+ *   location.reload();
+ */
 export const resetAnalyticsState = () => {
   Object.values(KEYS).forEach(key => localStorage.removeItem(key));
   console.info('[Analytics] State reset — reload the page to simulate first visit');

@@ -13,45 +13,41 @@ import {
   trackCheckoutStep,
 } from '../../utils/eventBridge.js';
 
+
 // ============================================
 // THUNKS
 // ============================================
 
 /**
  * createCheckoutSession
- *
- * ANALYTICS CHANGES:
- *   - Generates a UUID eventId at session creation time
- *   - Builds full client analytics payload (UTMs, fbp, fbc, ga4ClientId)
- *   - Sends payload to server so backend has attribution context
- *   - Returns eventId alongside checkout for the fulfilled handler to use
- *
- * The fulfilled handler fires trackBeginCheckout() with the same eventId
- * so Meta can deduplicate the browser InitiateCheckout pixel against any
- * server-side CAPI event if you choose to add one later.
  */
 export const createCheckoutSession = createAsyncThunk(
-  "checkout/createSession",
+  'checkout/createSession',
   async ({ items, shippingInfo }, { getState, rejectWithValue }) => {
     try {
       const { discount } = getState().cart;
       const hasDiscount  = discount.applied && discount.code && discount.discountAmount > 0;
 
-      // Generate shared eventId for browser pixel + server attribution
       const eventId          = generateEventId();
-      const analyticsPayload = buildClientAnalyticsPayload(eventId);
+      // [FIX-CS1] Pass object with named key, not a bare string
+      const analyticsPayload = buildClientAnalyticsPayload({ analyticsEventId: eventId });
 
-      const { data } = await axios.post("/api/v1/checkout/create", {
-        items,
-        shippingInfo,
-        ...(hasDiscount && { discountCode: discount.code }),
-        ...analyticsPayload,
-      }, { withCredentials: true });
+      const { data } = await axios.post(
+        '/api/v1/checkout/create',
+        {
+          items,
+          shippingInfo,
+          ...(hasDiscount && { discountCode: discount.code }),
+          ...analyticsPayload,
+        },
+        { withCredentials: true }
+      );
 
-      // Return eventId so the fulfilled handler can fire the browser pixel
       return { checkout: data.checkout, eventId, items, hasDiscount };
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to create checkout session");
+      return rejectWithValue(
+        error.response?.data?.message || 'Failed to create checkout session'
+      );
     }
   }
 );
@@ -59,15 +55,12 @@ export const createCheckoutSession = createAsyncThunk(
 /**
  * updateCheckoutStep
  *
- * ANALYTICS CHANGES:
- *   - Fires trackCheckoutStep() browser pixel for payment funnel steps
- *   - payment_selection and payment_gateway fire Meta AddPaymentInfo
- *   - All steps fire GA4 checkout_progress
- *   - No server analytics payload needed here — step updates are captured
- *     by the backend checkoutController which already logs step transitions
+ * No analytics payload sent server-side — step updates are captured by the
+ * backend checkoutController which logs step transitions directly.
+ * The fulfilled handler fires the browser pixel for payment funnel steps.
  */
 export const updateCheckoutStep = createAsyncThunk(
-  "checkout/updateStep",
+  'checkout/updateStep',
   async ({ checkoutId, step, gateway, cartContext = {} }, { rejectWithValue }) => {
     try {
       const { data } = await axios.put(
@@ -75,7 +68,6 @@ export const updateCheckoutStep = createAsyncThunk(
         { step, gateway },
         { withCredentials: true }
       );
-      // Pass step and cartContext through so fulfilled can fire the pixel
       return {
         currentStep:    data.currentStep,
         stepsCompleted: data.stepsCompleted,
@@ -84,31 +76,41 @@ export const updateCheckoutStep = createAsyncThunk(
         cartContext,
       };
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to update checkout step");
+      return rejectWithValue(
+        error.response?.data?.message || 'Failed to update checkout step'
+      );
     }
   }
 );
 
 export const getActiveCheckout = createAsyncThunk(
-  "checkout/getActive",
+  'checkout/getActive',
   async (_, { rejectWithValue }) => {
     try {
-      const { data } = await axios.get("/api/v1/checkout/active", { withCredentials: true });
+      const { data } = await axios.get('/api/v1/checkout/active', { withCredentials: true });
       return data.checkout;
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to load checkout session");
+      return rejectWithValue(
+        error.response?.data?.message || 'Failed to load checkout session'
+      );
     }
   }
 );
 
 export const abandonCheckout = createAsyncThunk(
-  "checkout/abandon",
+  'checkout/abandon',
   async (checkoutId, { rejectWithValue }) => {
     try {
-      await axios.put(`/api/v1/checkout/${checkoutId}/abandon`, {}, { withCredentials: true });
+      await axios.put(
+        `/api/v1/checkout/${checkoutId}/abandon`,
+        {},
+        { withCredentials: true }
+      );
       return { success: true };
     } catch (error) {
-      return rejectWithValue(error.response?.data?.message || "Failed to abandon checkout");
+      return rejectWithValue(
+        error.response?.data?.message || 'Failed to abandon checkout'
+      );
     }
   }
 );
@@ -179,7 +181,7 @@ const initialState = {
 // ============================================
 
 const checkoutSlice = createSlice({
-  name: "checkout",
+  name: 'checkout',
   initialState,
   reducers: {
     removeErrors:       (state) => { state.error = null; },
@@ -187,6 +189,7 @@ const checkoutSlice = createSlice({
     setSelectedGateway: (state, action) => { state.selectedGateway = action.payload; },
     setCurrentStep:     (state, action) => { state.currentStep = action.payload; },
 
+   
     clearCheckout: (state) => {
       state.session           = null;
       state.currentStep       = 'shipping_info';
@@ -195,18 +198,20 @@ const checkoutSlice = createSlice({
       state.checkoutId        = null;
       state.pricing           = initialState.pricing;
       state.hasActiveCheckout = false;
-      state.message           = "Checkout cleared";
+      state.message           = 'Checkout cleared';
       state.recovery          = initialRecoveryState;
+      state.loading           = false;
+      state.actionLoading     = false;
+      state.error             = null;
+      state.success           = false;
     },
 
     resetCheckout: () => ({ ...initialState, recovery: { ...initialRecoveryState } }),
   },
 
   extraReducers: (builder) => {
+
     // ── CREATE SESSION ──────────────────────────────────────────────────────
-    // ANALYTICS: fulfilled receives { checkout, eventId, items, hasDiscount }
-    // Fires trackBeginCheckout() with the shared eventId so Meta can
-    // deduplicate browser InitiateCheckout against any server CAPI call.
     builder
       .addCase(createCheckoutSession.pending, (state) => {
         state.loading = true;
@@ -217,15 +222,14 @@ const checkoutSlice = createSlice({
 
         state.loading           = false;
         state.session           = checkout;
-        state.checkoutId        = checkout.id;
+        state.checkoutId        = checkout._id;
         state.currentStep       = checkout.currentStep    || 'shipping_info';
         state.stepsCompleted    = checkout.stepsCompleted || [];
         state.pricing           = checkout.pricing        || initialState.pricing;
         state.hasActiveCheckout = true;
         state.success           = true;
-        state.message           = "Checkout session created";
+        state.message           = 'Checkout session created';
 
-        // Fire browser pixel — fire-and-forget, never throws
         trackBeginCheckout(
           {
             cartValue:   checkout.pricing?.totalPrice || 0,
@@ -242,9 +246,6 @@ const checkoutSlice = createSlice({
       });
 
     // ── UPDATE STEP ─────────────────────────────────────────────────────────
-    // ANALYTICS: fires trackCheckoutStep() for payment funnel steps.
-    // Meta AddPaymentInfo fires on payment_selection + payment_gateway.
-    // GA4 checkout_progress fires on every step.
     builder
       .addCase(updateCheckoutStep.pending, (state) => {
         state.actionLoading = true;
@@ -258,13 +259,13 @@ const checkoutSlice = createSlice({
         state.stepsCompleted = stepsCompleted;
         if (gateway) state.selectedGateway = gateway;
         state.success = true;
-        state.message = "Step updated";
+        state.message = 'Step updated';
 
         // Fire browser pixel for payment-related steps — fire-and-forget
         if (step === 'payment_selection' || step === 'payment_gateway') {
           trackCheckoutStep(step, {
             cartValue:   state.pricing?.totalPrice || cartContext?.cartValue || 0,
-            itemCount:   cartContext?.itemCount || 0,
+            itemCount:   cartContext?.itemCount  || 0,
             hasDiscount: cartContext?.hasDiscount ?? false,
           });
         }
@@ -290,10 +291,10 @@ const checkoutSlice = createSlice({
           state.selectedGateway   = action.payload.selectedGateway || null;
           state.pricing           = action.payload.pricing         || initialState.pricing;
           state.hasActiveCheckout = true;
-          state.message           = "Active checkout loaded";
+          state.message           = 'Active checkout loaded';
         } else {
           state.hasActiveCheckout = false;
-          state.message           = "No active checkout found";
+          state.message           = 'No active checkout found';
         }
       })
       .addCase(getActiveCheckout.rejected, (state, action) => {
@@ -317,7 +318,7 @@ const checkoutSlice = createSlice({
         state.checkoutId        = null;
         state.pricing           = initialState.pricing;
         state.hasActiveCheckout = false;
-        state.message           = "Checkout abandoned";
+        state.message           = 'Checkout abandoned';
         state.success           = true;
       })
       .addCase(abandonCheckout.rejected, (state, action) => {
@@ -331,7 +332,7 @@ const checkoutSlice = createSlice({
         state.recovery = { ...initialRecoveryState, loading: true };
       })
       .addCase(redeemRecoveryToken.fulfilled, (state, action) => {
-        const payload = action.payload;
+        const payload          = action.payload;
         state.recovery.loading = false;
         state.recovery.message = payload.message;
 
@@ -355,8 +356,8 @@ const checkoutSlice = createSlice({
         state.recovery.discountWarning     = payload.discountWarning || null;
 
         state.session           = c;
-        state.checkoutId        = c.id;
-        state.currentStep       = c.currentStep   || 'shipping_info';
+        state.checkoutId        = c._id;
+        state.currentStep       = c.currentStep    || 'shipping_info';
         state.pricing           = c.pricing        || initialState.pricing;
         state.hasActiveCheckout = true;
         state.stepsCompleted    = c.stepsCompleted || [];
@@ -379,6 +380,7 @@ export const {
 } = checkoutSlice.actions;
 
 // ── SELECTORS ────────────────────────────────────────────────────────────────
+
 export const selectCheckoutSession     = (state) => state.checkout.session;
 export const selectCheckoutId          = (state) => state.checkout.checkoutId;
 export const selectCurrentStep         = (state) => state.checkout.currentStep;
@@ -391,7 +393,7 @@ export const selectHasUnavailableItems = (state) => state.checkout.recovery.hasU
 export const selectDiscountWarning     = (state) => state.checkout.recovery.discountWarning;
 export const selectRecoveryUserHint    = (state) => state.checkout.recovery.userHint;
 export const selectRecoveryIsExpired   = (state) => state.checkout.recovery.isExpired;
-export const selectAuthenticatedUser   = selectRecoveryUserHint; // DEPRECATED
+
 
 export const selectIsStepCompleted = (step) => (state) =>
   state.checkout.stepsCompleted.some(s => s.step === step);

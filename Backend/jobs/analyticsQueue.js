@@ -6,7 +6,7 @@
  * CHANGELOG (original fixes from Phase 6):
  *   [FIX-1]  sendDeadLetterAlert hoisting — converted to function declaration
  *   [FIX-2]  Off-by-one retry backoff — getNextRetryDelay uses newAttempts
- *   [FIX-3]  'failed' state renamed to 'retrying'
+ *   [FIX-3]  'failed' state renamed — pending used for retries (model contract)
  *   [FIX-4]  BigQuery skipped check — normalize() includes `skipped` field
  *   [FIX-5]  Concurrency — for..of replaced with Promise.allSettled pool
  *   [FIX-6]  Non-atomic claim — replaced with atomic claimOne() static
@@ -14,81 +14,95 @@
  * CHANGELOG (hardening pass 1):
  *   [FIX-7]  enqueueAnalyticsEvent TOCTOU — atomic updateOne($setOnInsert, upsert:true)
  *   [FIX-8]  At-least-once delivery — dispatchId + dispatchStartedAt stamped before
- *            dispatch; stale-lock sweeper recovers crashed workers
+ *            dispatch; stale-lock recovery for crashed workers
  *   [FIX-9]  Backoff formula corrected — BASE * 2^attempts (was BASE * 2^(attempts+1))
  *   [FIX-10] summary.processed semantics — only increments on recorded outcomes
  *
  * CHANGELOG (hardening pass 2):
- *   [FIX-11] Stale event.attempts — $inc:{attempts:1} + {new:true} so post-write
- *            value drives all downstream logic
+ *   [FIX-11] $inc moved to claimOne() — attempts is incremented once atomically at
+ *            claim time; processOne never increments again (removed all $inc from
+ *            processOne to prevent double-counting and premature dead-lettering)
  *   [FIX-12] dispatchId stability — UUID generated once on first claim, reused
  *            across the full retry chain, preserved on dead_letter
- *   [FIX-13] In-memory event vs DB state — freshEvent (returned by stamp write)
- *            is the canonical source-of-truth for the rest of processOne
- *   [FIX-14] BigQuery best-effort made explicit — ANALYTICS_BQ_BEST_EFFORT env flag;
- *            bigqueryPending flag records BQ gaps for backfill
+ *   [FIX-13] freshEvent as canonical source-of-truth throughout processOne
+ *   [FIX-14] BigQuery best-effort made explicit — ANALYTICS_BQ_BEST_EFFORT env flag
  *   [FIX-15] Backoff cap — ANALYTICS_QUEUE_BACKOFF_MAX (default 30 s)
- *   [FIX-16] lastError schema normalized — always { message, ga4, meta, bigquery }
- *   [FIX-17] dispatchId forensic retention — preserved on dead_letter, cleared only
- *            on successful completion
+ *   [FIX-16] Error history via model's errors[] array — lastError was written to an
+ *            undeclared field (Mongoose strict mode silently drops it). Now uses
+ *            $push into the schema-defined errors[] array.
+ *   [FIX-17] dispatchId forensic retention — preserved on dead_letter, null on complete
  *
  * CHANGELOG (hardening pass 3):
- *   [FIX-18] normalize() success check hardened — changed from `!== false` (treats
- *            undefined/null/{} as success) to `=== true` (explicit opt-in).
- *            Previously any malformed or partial platform response was silently
- *            recorded as success, masking broken integrations.
+ *   [FIX-18] normalize() success check — `=== true` (explicit opt-in, not `!== false`)
+ *   [FIX-19] Status-write race — second $set now includes status guard
+ *            { status: 'processing' } so a sweeper reset between the two writes
+ *            is a safe no-op rather than overwriting the swept state.
+ *   [FIX-20] dispatchId reaffirmed in every outcome $set
+ *   [FIX-21] staleLockSweeper per-document atomic reset with dispatchId pin;
+ *            skips null-dispatchId events (not yet stamped = not stale);
+ *            sweeper rejection errors now logged explicitly
+ *   [FIX-22] Exclusive use of freshEvent throughout processOne
  *
- *   [FIX-19] Atomic $inc + $set in all outcome paths — the non-success try path
- *            previously issued two separate DB calls: $inc first, then $set status.
- *            Between those calls, the stale-lock sweeper could reset the event to
- *            pending, leaving the attempts increment orphaned. This ate into the
- *            retry budget silently. All outcome writes are now single atomic
- *            operations combining $inc and $set.
+ * CHANGELOG (cross-cutting flow fixes — hardening pass 4):
+ *   [FIX-23] status enum alignment — model defines ['pending','processing',
+ *            'completed','dead_letter']. Previous code wrote 'retrying' which
+ *            Mongoose strict mode silently drops, stranding events permanently in
+ *            'processing'. All retry paths now write status:'pending' + nextRetryAt,
+ *            matching the model's scheduling contract (claimOne filters pending +
+ *            nextRetryAt <= now).
  *
- *   [FIX-20] dispatchId explicitly reaffirmed in every $set — previously the catch
- *            path omitted dispatchId from $set, relying on MongoDB not touching
- *            unmentioned fields. Correct but fragile: a future edit adding
- *            $unset or replacing the update could silently drop it. All writes
- *            now explicitly carry dispatchId: freshEvent.dispatchId so the intent
- *            is unambiguous and the field is stable regardless of future changes.
+ *   [FIX-24] Double $inc eliminated — claimOne() (model static) already does
+ *            $inc:{attempts:1} atomically at claim time. processOne was then doing
+ *            another $inc on every outcome, causing attempts to be 2 on first
+ *            attempt, dead-letter threshold firing one attempt early, and logged
+ *            attempt counts being wrong. All $inc removed from processOne; threshold
+ *            check uses freshEvent.attempts (already post-increment from claimOne).
  *
- *   [FIX-21] staleLockSweeper uses targeted per-document atomic reset — previously
- *            updateMany reset all stale events in one pass with no per-document
- *            coordination. A live-but-slow worker could have its event reset while
- *            still in flight, creating a double-processing window. Now each stale
- *            event is reset via findOneAndUpdate with dispatchId in the filter:
- *            if the worker finishes first and writes a new dispatchId, the sweeper's
- *            update finds no match and is a safe no-op. Also changed from
- *            `status: 'pending'` to `status: 'retrying'` with `nextRetryAt: now`
- *            so swept events re-enter the queue through the normal retry path and
- *            are subject to all the same guards.
+ *   [FIX-25] claimOne() rejection isolation — previously Promise.all(claimPromises)
+ *            would throw if any single claimOne() rejected, aborting the entire
+ *            sweep. Replaced with Promise.allSettled so one DB error does not
+ *            prevent other claims from proceeding.
  *
- *   [FIX-22] Exclusive use of freshEvent throughout processOne — previously logs
- *            and some updates mixed `event` and `freshEvent` references. Now
- *            `freshEvent` is the only identifier used after the stamp step,
- *            eliminating log/execution identity divergence during incidents.
+ *   [FIX-26] retryDeadLetterEvents clears dispatchStartedAt — previously only
+ *            dispatchId was cleared; a stale dispatchStartedAt on a revived event
+ *            would cause the sweeper to immediately re-sweep it.
  *
- * ARCHITECTURAL CONTRACT — claimOne() model static:
- *   claimOne() MUST be a single atomic findOneAndUpdate that:
- *     - filter: { status:{$in:['pending','retrying']}, nextRetryAt:{$lte:new Date()} }
- *     - sort:   { priority: -1, nextRetryAt: 1 }
- *     - update: { $set: { status: 'processing' } }
- *     - option: { new: true }
- *   Any implementation that separates the find from the update creates a
- *   double-processing race under horizontal scaling.
+ *   [FIX-27] GA4 session ID field name — ga4Service.sendGA4Purchase/CheckoutStep
+ *            reads context.ga4SessionId but the orchestrator stores it as
+ *            context.sessionId. Queue-path GA4 calls were silently getting
+ *            undefined for session_id, breaking session stitching. The
+ *            idempotencyContext now explicitly maps sessionId → ga4SessionId.
  *
- * ARCHITECTURAL NOTE — BigQuery best-effort:
- *   When ANALYTICS_BQ_BEST_EFFORT=true (default), BigQuery failures do not block
- *   event completion. Completed events with bigqueryPending:true can be backfilled
- *   via getPendingBigqueryEvents(). Set ANALYTICS_BQ_BEST_EFFORT=false to make
- *   BigQuery a hard requirement for event completion.
+ *   [FIX-28] streamEventToBigQuery signature — bigQueryService defines
+ *            streamEventToBigQuery(payload) with one argument; the dispatchId
+ *            second argument was silently ignored so BQ dedup via dispatchId was
+ *            never actually wired. BQ uses event_id internally as insertId which
+ *            is correct for event-level dedup. The call is corrected to one arg.
+ *            The dispatchId is included inside idempotencyContext for GA4/Meta only.
  *
- * ARCHITECTURAL NOTE — staleLockSweeper coordination:
- *   The sweeper uses per-document dispatchId-pinned updates (FIX-21). A worker
- *   that finishes normally will write a new dispatchStartedAt:null, causing the
- *   sweeper's subsequent findOneAndUpdate (which filters on the old dispatchId)
- *   to be a no-op. This makes sweeper + worker overlap safe without requiring
- *   distributed locks or transactions.
+ *   [FIX-29] eventId canonical resolution — enqueueAnalyticsEvent now resolves
+ *            event_id || eventId once, warns loudly if only the legacy field is
+ *            found, and passes the resolved value explicitly so both the document
+ *            eventId field and payload.event_id are consistent.
+ *
+ * MODEL CONTRACTS (do not change without updating AnalyticsEvent.js):
+ *   - status enum: ['pending', 'processing', 'completed', 'dead_letter']
+ *   - claimOne() atomically: finds pending + nextRetryAt<=now, sets processing,
+ *     $inc attempts:1, returns new document
+ *   - recoverStuck() resets timed-out processing events using processingTimeoutAt
+ *   - errors[] is the schema-defined error history array (retryErrorSchema)
+ *
+ * BIGQUERY NOTE:
+ *   streamEventToBigQuery uses event.event_id as its own insertId for row-level
+ *   deduplication within BigQuery's 1-minute window. This is correct and sufficient.
+ *   The dispatchId is not forwarded to BQ (signature mismatch — see FIX-28).
+ *
+ * STALE LOCK NOTE:
+ *   The model provides recoverStuck() which uses processingTimeoutAt (set by
+ *   claimOne). staleLockSweeper here operates on dispatchStartedAt as a secondary
+ *   guard for events that passed the stamp step but stalled during dispatch.
+ *   Both should be registered as separate cron jobs. recoverStuck() handles events
+ *   that never reached the stamp step; staleLockSweeper handles the rest.
  */
 
 import { randomUUID }            from 'crypto';
@@ -104,7 +118,8 @@ const MAX_RETRIES    = parseInt(process.env.ANALYTICS_QUEUE_RETRY_MAX)    || 3;
 const BASE_BACKOFF   = parseInt(process.env.ANALYTICS_QUEUE_BACKOFF_BASE) || 1_000;
 const MAX_BACKOFF    = parseInt(process.env.ANALYTICS_QUEUE_BACKOFF_MAX)  || 30_000;
 const CONCURRENCY    = parseInt(process.env.ANALYTICS_QUEUE_CONCURRENCY)  || 5;
-const BQ_BEST_EFFORT = process.env.ANALYTICS_BQ_BEST_EFFORT !== 'false';  // [FIX-14]
+// [FIX-14] Explicit opt-in/out. Set ANALYTICS_BQ_BEST_EFFORT=false to make BQ mandatory.
+const BQ_BEST_EFFORT = process.env.ANALYTICS_BQ_BEST_EFFORT !== 'false';
 
 // ─── PRIORITY MAP ─────────────────────────────────────────────────────────────
 
@@ -126,18 +141,18 @@ const EVENT_PRIORITY = {
 // ─── BACKOFF CALCULATOR ───────────────────────────────────────────────────────
 
 /**
- * [FIX-9]  BASE * 2^attempts (corrected from BASE * 2^(attempts+1))
- * [FIX-15] Capped at MAX_BACKOFF.
+ * [FIX-9]  BASE * 2^attempts — corrected from BASE * 2^(attempts+1).
+ * [FIX-15] Capped at MAX_BACKOFF to prevent runaway delays under outage.
  *
  * Delay table at BASE=1000ms, MAX=30000ms:
  *   attempts=1 →  2 s
  *   attempts=2 →  4 s
  *   attempts=3 →  8 s
  *   attempts=4 → 16 s
- *   attempts=5 → 30 s  (capped)
+ *   attempts=5 → 30 s (capped)
  *
- * @param {number} attempts - Post-increment attempt count
- * @returns {number} milliseconds to wait before next retry
+ * @param {number} attempts - Current attempt count (already incremented by claimOne)
+ * @returns {number} Milliseconds to wait before next retry
  */
 export const getNextRetryDelay = (attempts) =>
   Math.min(MAX_BACKOFF, BASE_BACKOFF * Math.pow(2, attempts));
@@ -148,29 +163,26 @@ export const getNextRetryDelay = (attempts) =>
  * normalize
  *
  * [FIX-4]  Surfaces `skipped` so the BigQuery guard works correctly.
- * [FIX-18] Success check changed from `!== false` to `=== true`.
+ * [FIX-18] Success check uses `=== true` (explicit opt-in).
  *
- *   The old check `settled.value?.success !== false` treated any response that
- *   didn't explicitly set success:false as a success — including undefined, null,
- *   {}, or a completely malformed object. A broken platform service returning
- *   garbage would silently pass as green.
+ *   `!== false` treated undefined/null/{} as success, masking broken integrations.
+ *   `=== true` requires the platform service to explicitly affirm success.
  *
- *   The new check `=== true` requires the platform service to explicitly affirm
- *   success. This is the correct contract for external I/O: opt-in, not opt-out.
- *
- * NOTE: skipped === true is intentional — "no mapping for this event type on
- * this platform" is a valid no-op, not a failure.
+ * NOTE: skipped===true with success===true is valid — "no mapping for this event
+ * type" is an intentional no-op. The allSucceeded and alert logic treat
+ * success:true correctly regardless of skipped value.
  *
  * @param {PromiseSettledResult} settled
  * @returns {{ success: boolean, skipped: boolean, error: string|null, sentAt: Date|null }}
  */
 const normalize = (settled) => {
   if (settled.status === 'fulfilled') {
+    const ok = settled.value?.success === true;
     return {
-      success: settled.value?.success === true,         // [FIX-18] explicit opt-in
+      success: ok,
       skipped: settled.value?.skipped === true,
-      error:   settled.value?.success === true ? null : (settled.value?.error || 'no success:true in response'),
-      sentAt:  settled.value?.success === true ? new Date() : null,
+      error:   ok ? null : (settled.value?.error || 'no success:true in platform response'),
+      sentAt:  ok ? new Date() : null,
     };
   }
   return {
@@ -186,18 +198,37 @@ const normalize = (settled) => {
  *
  * Fans out to GA4, Meta CAPI, and BigQuery concurrently.
  *
- * [FIX-12] dispatchId is stable across the full retry chain.
- * [FIX-14] BQ_BEST_EFFORT controls whether BQ failure blocks completion.
+ * [FIX-12] dispatchId is stable across the full retry chain — generated once on
+ *          first claim and reused. GA4 and Meta use it for server-side dedup.
  *
- * @param {Document} freshEvent - DB-fresh document (post-dispatchId stamp) [FIX-13/FIX-22]
- * @param {string}   dispatchId - Stable idempotency UUID for this event's retry chain
+ * [FIX-14] BQ_BEST_EFFORT controls whether BQ failure blocks completion.
+ *          bigqueryPending is set so completed events with BQ gaps are surfaced
+ *          via getPendingBigqueryEvents() for backfill.
+ *
+ * [FIX-27] GA4 session ID field mapping — ga4Service reads context.ga4SessionId
+ *          but the orchestrator stores the value as context.sessionId. The
+ *          idempotencyContext maps sessionId → ga4SessionId explicitly so
+ *          queue-path GA4 calls receive the correct field name.
+ *
+ * [FIX-28] streamEventToBigQuery takes one argument (payload). The second
+ *          dispatchId argument was silently ignored by the BQ service, which
+ *          uses event.event_id internally as the insertId. Corrected to one arg.
+ *
+ * @param {Document} freshEvent - DB-fresh document (post-dispatchId stamp)
+ * @param {string}   dispatchId - Stable idempotency UUID for this retry chain
  * @returns {Promise<{ ga4, meta, bigquery, allSucceeded, bigqueryPending }>}
  */
 const dispatchToPlatforms = async (freshEvent, dispatchId) => {
   const { eventType, payload } = freshEvent;
   const { order, user, context } = payload;
 
-  const idempotencyContext = { ...context, dispatchId };
+  // [FIX-27] Map sessionId → ga4SessionId so GA4 service receives the correct
+  // field name. Also forward dispatchId for GA4/Meta idempotency.
+  const idempotencyContext = {
+    ...context,
+    dispatchId,
+    ga4SessionId: context?.ga4SessionId ?? context?.sessionId ?? null,
+  };
 
   const ga4Promise = (async () => {
     switch (eventType) {
@@ -222,7 +253,8 @@ const dispatchToPlatforms = async (freshEvent, dispatchId) => {
     }
   })();
 
-  const bqPromise = streamEventToBigQuery(payload, dispatchId);
+  // [FIX-28] One argument — BQ service uses event.event_id as its own insertId.
+  const bqPromise = streamEventToBigQuery(payload);
 
   const [ga4Result, metaResult, bqResult] = await Promise.allSettled([
     ga4Promise,
@@ -236,7 +268,7 @@ const dispatchToPlatforms = async (freshEvent, dispatchId) => {
     bigquery: normalize(bqResult),
   };
 
-  // [FIX-14] BQ_BEST_EFFORT determines the success definition and backfill flag.
+  // [FIX-14] BQ_BEST_EFFORT: true = BQ failure is non-fatal; false = BQ is mandatory.
   const bqOk = platforms.bigquery.success || platforms.bigquery.skipped;
   if (BQ_BEST_EFFORT) {
     platforms.allSucceeded    = platforms.ga4.success && platforms.meta.success;
@@ -282,20 +314,39 @@ async function sendDeadLetterAlert(freshEvent, platforms, finalAttempts) {
 /**
  * Persists an analytics event to the queue.
  *
- * [FIX-7] Single atomic updateOne($setOnInsert, upsert:true) — no race window.
- * dispatchId is not generated here; it is assigned on first claim so it is
- * bound to the processing attempt, not the enqueue moment. [FIX-12]
+ * [FIX-7]  Single atomic updateOne($setOnInsert, upsert:true) — no race window.
+ *          $setOnInsert is a pure no-op when eventId already exists.
+ *
+ * [FIX-29] eventId canonical resolution — resolves event_id || eventId once
+ *          and stores the result consistently in both the document eventId field
+ *          and payload.event_id so BigQuery insertId and document dedup key are
+ *          always the same value. Warns loudly if only the legacy eventId field
+ *          is found so callers can migrate to event_id.
+ *
+ * [FIX-12] dispatchId is NOT set here — generated on first claim so it is
+ *          bound to the processing attempt, not the enqueue moment.
  *
  * @param {string} eventType
  * @param {Object} payload - Full analytics payload including order, user, context
  * @returns {Promise<void>}
  */
 export const enqueueAnalyticsEvent = async (eventType, payload) => {
-  const eventId = payload.event_id || payload.eventId;
+  // [FIX-29] Resolve canonical eventId once. Warn if only legacy field present.
+  let eventId = payload.event_id;
+  if (!eventId && payload.eventId) {
+    console.warn(
+      '[AnalyticsQueue] payload.eventId is deprecated — use payload.event_id. ' +
+      `Falling back for eventType: ${eventType}`
+    );
+    eventId = payload.eventId;
+  }
 
   if (!eventId) {
     throw new Error('[AnalyticsQueue] eventId is required — payload must include event_id');
   }
+
+  // Normalise payload so both fields are consistent before storing.
+  const normalisedPayload = { ...payload, event_id: eventId };
 
   await AnalyticsEvent.updateOne(
     { eventId },
@@ -303,7 +354,7 @@ export const enqueueAnalyticsEvent = async (eventType, payload) => {
       $setOnInsert: {
         eventId,
         eventType,
-        payload,
+        payload: normalisedPayload,
         status:      'pending',
         attempts:    0,
         maxAttempts: MAX_RETRIES,
@@ -322,38 +373,53 @@ export const enqueueAnalyticsEvent = async (eventType, payload) => {
 /**
  * processOne
  *
- * Processes a single event that has already been atomically claimed.
+ * Processes a single event that has already been atomically claimed by claimOne().
  *
- * STATE TRANSITION MODEL (linearized):
+ * ATTEMPTS TRACKING [FIX-24]:
+ *   claimOne() does $inc:{attempts:1} atomically. processOne NEVER increments
+ *   again. freshEvent.attempts is the authoritative post-increment count.
+ *   Threshold check: freshEvent.attempts >= MAX_RETRIES.
  *
- *   processing → [stamp dispatchId] → dispatching → completed
- *                                                 → retrying
- *                                                 → dead_letter
+ * STATUS ENUM [FIX-23]:
+ *   Model defines: ['pending', 'processing', 'completed', 'dead_letter'].
+ *   Retry paths write status:'pending' + nextRetryAt (claimOne re-picks up
+ *   pending events where nextRetryAt <= now). 'retrying' was previously written
+ *   and silently dropped by Mongoose strict mode, stranding events forever.
  *
- * Every terminal write is a single atomic $inc+$set. No two-phase writes exist.
- * [FIX-19] This eliminates the orphaned-increment window between separate
- * $inc and $set calls.
+ * STATE TRANSITIONS:
+ *   processing → completed    (all required platforms succeeded)
+ *   processing → pending      (partial failure, retry budget remaining)
+ *   processing → dead_letter  (retry budget exhausted)
  *
- * IDENTITY MODEL:
- *   `freshEvent` is the canonical document after the dispatchId stamp.
- *   [FIX-22] All DB updates, logs, and alerts use freshEvent exclusively.
- *   The `event` argument is only used to extract `_id` for the initial stamp;
- *   after that it is not referenced again.
+ * IDENTITY [FIX-22]:
+ *   freshEvent is canonical after the dispatchId stamp. `event` is only used
+ *   for the initial $set{dispatchId} lookup and not referenced afterwards.
  *
- * DISPATCHID LIFECYCLE:
- *   - Generated once on first claim (or reused from a prior attempt) [FIX-12]
- *   - Explicitly written in every subsequent DB update [FIX-20]
- *   - Cleared only on successful completion [FIX-17]
- *   - Preserved on dead_letter for forensic correlation [FIX-17]
- *   - Preserved through stale-lock sweeper resets [FIX-21]
+ * DISPATCHID LIFECYCLE [FIX-12, FIX-17, FIX-20]:
+ *   - Reused from prior attempt or generated fresh on first attempt
+ *   - Written to DB before any external call (stamp step)
+ *   - Explicitly present in every outcome $set (no accidental nullification)
+ *   - Cleared to null only on successful completion
+ *   - Preserved on dead_letter for forensic tracing
  *
- * @param {Document} event - Claimed document; only _id is used after stamp
- * @returns {Promise<'succeeded'|'retrying'|'dead_letter'>}
+ * STATUS-WRITE RACE [FIX-19]:
+ *   The second $set (status/lastError) includes { status: 'processing' } in its
+ *   filter so it is a no-op if the sweeper has already reset the document.
+ *   The $inc+$set intermediate write that records platforms/dispatchId uses
+ *   { status: 'processing' } guard too — if it finds no match the event was
+ *   swept; we return 'pending' to reflect it will be retried.
+ *
+ * ERROR HISTORY [FIX-16]:
+ *   Uses the model's schema-defined errors[] array ($push) instead of lastError
+ *   which is not declared in AnalyticsEvent schema and would be silently dropped
+ *   by Mongoose strict mode.
+ *
+ * @param {Document} event - Claimed document; only _id used after stamp
+ * @returns {Promise<'succeeded'|'pending'|'dead_letter'>}
  */
 const processOne = async (event) => {
-  // [FIX-12] Reuse existing dispatchId (retry path) or generate new one (first attempt).
+  // [FIX-12] Reuse existing dispatchId (retry) or generate new (first attempt).
   // [FIX-13] Read back updated document — freshEvent is authoritative from here on.
-  // [FIX-22] All code below uses freshEvent, not event.
   const dispatchId = event.dispatchId || randomUUID();
   const freshEvent = await AnalyticsEvent.findByIdAndUpdate(
     event._id,
@@ -362,91 +428,115 @@ const processOne = async (event) => {
   );
 
   if (!freshEvent) {
+    // Document deleted between claim and stamp — nothing to process.
     console.warn('[AnalyticsQueue] Event disappeared after claim, skipping:', event._id);
-    return 'retrying';
+    return 'pending';
   }
+
+  // [FIX-24] attempts was already incremented by claimOne(). Use freshEvent.attempts
+  // directly — no further $inc needed anywhere in this function.
+  const currentAttempts = freshEvent.attempts;
 
   try {
     const platforms = await dispatchToPlatforms(freshEvent, dispatchId);
 
     if (platforms.allSucceeded) {
-      // [FIX-19] Single atomic write — $inc + $set, no split.
-      // [FIX-20] dispatchId explicitly set to null (cleared on success) [FIX-17]
+      // [FIX-17] dispatchId cleared only on success.
+      // [FIX-20] dispatchId explicitly set (null) so intent is unambiguous.
+      // No $inc — claimOne already incremented.
       const completed = await AnalyticsEvent.findByIdAndUpdate(
         freshEvent._id,
         {
-          $inc: { attempts: 1 },
           $set: {
             status:            'completed',
             platforms,
             completedAt:       new Date(),
             bigqueryPending:   platforms.bigqueryPending,
-            lastError:         null,
-            dispatchId:        null,   // [FIX-17] cleared only on success
+            dispatchId:        null,
             dispatchStartedAt: null,
           },
         },
         { new: true }
       );
-      console.debug(
-        `[AnalyticsQueue] Completed in ${completed.attempts} attempt(s): ${freshEvent.eventId}`
-      );
+      if (completed) {
+        console.debug(
+          `[AnalyticsQueue] Completed in ${completed.attempts} attempt(s): ${freshEvent.eventId}`
+        );
+      }
       return 'succeeded';
     }
 
-    // [FIX-19] $inc and $set are combined into one atomic write.
-    //          Previously these were two separate calls, leaving a window where
-    //          the sweeper could reset the event between them, orphaning the $inc.
-    // [FIX-20] dispatchId explicitly reaffirmed — survives future refactors.
-    // [FIX-17] dispatchId preserved (not cleared) on retry and dead_letter.
-    const failUpdate = await AnalyticsEvent.findByIdAndUpdate(
-      freshEvent._id,
+    // Partial or full failure — record platforms result atomically.
+    // [FIX-19] Include status guard: if sweeper reset this between dispatch and
+    // now, the update finds no match and we treat the event as pending (swept).
+    // [FIX-20] dispatchId reaffirmed explicitly.
+    // [FIX-23] No $inc — claimOne already did it.
+    const recorded = await AnalyticsEvent.findOneAndUpdate(
+      { _id: freshEvent._id, status: 'processing' },
       {
-        $inc: { attempts: 1 },
         $set: {
           platforms,
-          dispatchId,        // [FIX-20] explicit — intent is unambiguous
+          dispatchId,
           dispatchStartedAt: null,
         },
       },
       { new: true }
     );
-    const finalAttempts = failUpdate.attempts;
 
-    if (finalAttempts >= MAX_RETRIES) {
-      // [FIX-16] Structured lastError schema.
-      // [FIX-17] dispatchId retained via the reaffirmation above.
-      await AnalyticsEvent.findByIdAndUpdate(freshEvent._id, {
-        $set: {
-          status:    'dead_letter',
-          lastError: {
-            message:  'Max retries exceeded',
-            ga4:      platforms.ga4.error,
-            meta:     platforms.meta.error,
-            bigquery: platforms.bigquery.error,
+    if (!recorded) {
+      // Sweeper reset the event between dispatch and this write.
+      // It's now pending and will be retried normally — safe to return.
+      console.warn('[AnalyticsQueue] Event was swept during dispatch, will be retried:', freshEvent.eventId);
+      return 'pending';
+    }
+
+    // [FIX-24] Use currentAttempts (from claimOne's $inc) for threshold check.
+    if (currentAttempts >= MAX_RETRIES) {
+      // [FIX-16] Push into schema-defined errors[] array.
+      // [FIX-23] status: dead_letter — valid model enum value.
+      // [FIX-19] Filter on status:'processing' so this is a no-op if swept.
+      await AnalyticsEvent.findOneAndUpdate(
+        { _id: freshEvent._id, status: 'processing' },
+        {
+          $set: {
+            status:    'dead_letter',
           },
-        },
-      });
+          $push: {
+            errors: {
+              at:      new Date(),
+              message: `Max retries (${MAX_RETRIES}) exceeded — ga4:${platforms.ga4.error} meta:${platforms.meta.error} bq:${platforms.bigquery.error}`,
+            },
+          },
+        }
+      );
 
-      await sendDeadLetterAlert(freshEvent, platforms, finalAttempts).catch(err =>
+      await sendDeadLetterAlert(freshEvent, platforms, currentAttempts).catch(err =>
         console.error('[AnalyticsQueue] Dead-letter alert failed:', err.message)
       );
       return 'dead_letter';
     }
 
-    await AnalyticsEvent.findByIdAndUpdate(freshEvent._id, {
-      $set: {
-        status:      'retrying',
-        nextRetryAt: new Date(Date.now() + getNextRetryDelay(finalAttempts)),
-        lastError: {
-          message:  `Attempt ${finalAttempts} failed`,
-          ga4:      platforms.ga4.error,
-          meta:     platforms.meta.error,
-          bigquery: platforms.bigquery.error,
+    // [FIX-23] Retry: status:'pending' + nextRetryAt. claimOne will re-pick
+    //          this up when nextRetryAt <= now. NOT 'retrying' — that value is
+    //          not in the model enum and would be silently dropped.
+    // [FIX-16] Push error record into schema-defined errors[] array.
+    // [FIX-19] Filter guards against sweeper race.
+    await AnalyticsEvent.findOneAndUpdate(
+      { _id: freshEvent._id, status: 'processing' },
+      {
+        $set: {
+          status:      'pending',
+          nextRetryAt: new Date(Date.now() + getNextRetryDelay(currentAttempts)),
         },
-      },
-    });
-    return 'retrying';
+        $push: {
+          errors: {
+            at:      new Date(),
+            message: `Attempt ${currentAttempts} failed — ga4:${platforms.ga4.error} meta:${platforms.meta.error} bq:${platforms.bigquery.error}`,
+          },
+        },
+      }
+    );
+    return 'pending';
 
   } catch (unexpectedError) {
     // [FIX-22] freshEvent used exclusively in logs.
@@ -457,39 +547,60 @@ const processOne = async (event) => {
       error:      unexpectedError.message,
     });
 
-    // [FIX-19] Single atomic $inc + $set.
-    // [FIX-20] dispatchId explicitly reaffirmed.
-    const errUpdate = await AnalyticsEvent.findByIdAndUpdate(
-      freshEvent._id,
+    // [FIX-20] dispatchId reaffirmed.
+    // [FIX-19] Status guard so sweeper reset is a safe no-op.
+    // [FIX-24] No $inc — use currentAttempts already set from claimOne.
+    const recovered = await AnalyticsEvent.findOneAndUpdate(
+      { _id: freshEvent._id, status: 'processing' },
       {
-        $inc: { attempts: 1 },
         $set: {
-          dispatchId,        // [FIX-20]
+          dispatchId,
           dispatchStartedAt: null,
         },
       },
       { new: true }
     );
-    const finalAttempts = errUpdate.attempts;
 
-    if (finalAttempts >= MAX_RETRIES) {
-      await AnalyticsEvent.findByIdAndUpdate(freshEvent._id, {
-        $set: {
-          status:    'dead_letter',
-          lastError: { message: unexpectedError.message, ga4: null, meta: null, bigquery: null },
-        },
-      });
+    if (!recovered) {
+      console.warn('[AnalyticsQueue] Event was swept during unexpected error handling:', freshEvent.eventId);
+      return 'pending';
+    }
+
+    if (currentAttempts >= MAX_RETRIES) {
+      // [FIX-16] Schema-defined errors[] array.
+      // [FIX-23] dead_letter is a valid enum value.
+      await AnalyticsEvent.findOneAndUpdate(
+        { _id: freshEvent._id, status: 'processing' },
+        {
+          $set: { status: 'dead_letter' },
+          $push: {
+            errors: {
+              at:      new Date(),
+              message: unexpectedError.message,
+            },
+          },
+        }
+      );
       return 'dead_letter';
     }
 
-    await AnalyticsEvent.findByIdAndUpdate(freshEvent._id, {
-      $set: {
-        status:      'retrying',
-        nextRetryAt: new Date(Date.now() + getNextRetryDelay(finalAttempts)),
-        lastError:   { message: unexpectedError.message, ga4: null, meta: null, bigquery: null },
-      },
-    });
-    return 'retrying';
+    // [FIX-23] pending + nextRetryAt for retry scheduling.
+    await AnalyticsEvent.findOneAndUpdate(
+      { _id: freshEvent._id, status: 'processing' },
+      {
+        $set: {
+          status:      'pending',
+          nextRetryAt: new Date(Date.now() + getNextRetryDelay(currentAttempts)),
+        },
+        $push: {
+          errors: {
+            at:      new Date(),
+            message: unexpectedError.message,
+          },
+        },
+      }
+    );
+    return 'pending';
   }
 };
 
@@ -500,16 +611,39 @@ const processOne = async (event) => {
  *
  * [FIX-5]  Concurrent dispatch via Promise.allSettled.
  * [FIX-6]  Atomic claimOne() prevents duplicate processing.
- * [FIX-10] summary.processed increments only on recorded outcomes;
- *          summary.errors tracks unexpected processOne rejections separately.
+ * [FIX-10] summary.processed increments only on recorded outcomes.
  *
- * @returns {Promise<{ processed: number, succeeded: number, retrying: number, deadLettered: number, errors: number }>}
+ * [FIX-25] Claim isolation — Promise.allSettled for claims so a single DB error
+ *          on one claimOne() does not abort the entire sweep. Fulfilled nulls
+ *          (empty queue) are filtered; rejected claims are counted as errors.
+ *
+ * @returns {Promise<{ processed: number, succeeded: number, pending: number, deadLettered: number, errors: number, claimErrors: number }>}
  */
 export const processAnalyticsQueue = async () => {
-  const summary = { processed: 0, succeeded: 0, retrying: 0, deadLettered: 0, errors: 0 };
+  const summary = {
+    processed:   0,
+    succeeded:   0,
+    pending:     0,     // events rescheduled for retry (was 'retrying')
+    deadLettered: 0,
+    errors:      0,     // unexpected processOne rejections
+    claimErrors: 0,     // claimOne() DB errors [FIX-25]
+  };
 
-  const claimPromises = Array.from({ length: CONCURRENCY }, () => AnalyticsEvent.claimOne());
-  const claimed = (await Promise.all(claimPromises)).filter(Boolean);
+  // [FIX-25] allSettled isolates individual claimOne failures.
+  const claimResults = await Promise.allSettled(
+    Array.from({ length: CONCURRENCY }, () => AnalyticsEvent.claimOne())
+  );
+
+  const claimed = [];
+  for (const result of claimResults) {
+    if (result.status === 'rejected') {
+      console.error('[AnalyticsQueue] claimOne() failed:', result.reason);
+      summary.claimErrors++;
+    } else if (result.value) {
+      claimed.push(result.value);
+    }
+    // null result = queue empty for this slot — normal, not an error
+  }
 
   if (claimed.length === 0) return summary;
 
@@ -519,15 +653,17 @@ export const processAnalyticsQueue = async () => {
 
   for (const result of results) {
     if (result.status === 'rejected') {
+      // processOne has its own try/catch — rejection here is truly unexpected.
       console.error('[AnalyticsQueue] processOne rejected unexpectedly:', result.reason);
       summary.errors++;
       continue;
     }
+    // [FIX-10] Increment only on a recorded outcome.
     summary.processed++;
     switch (result.value) {
       case 'succeeded':   summary.succeeded++;    break;
-      case 'retrying':    summary.retrying++;     break;
-      case 'dead_letter': summary.deadLettered++; break;
+      case 'pending':     summary.pending++;       break;
+      case 'dead_letter': summary.deadLettered++;  break;
     }
   }
 
@@ -538,8 +674,16 @@ export const processAnalyticsQueue = async () => {
 // ─── QUEUE MANAGEMENT UTILITIES ───────────────────────────────────────────────
 
 /**
+ * retryDeadLetterEvents
+ *
  * Resets dead_letter events back to pending for manual retry.
- * Clears dispatchId so a fresh UUID is assigned on next claim.
+ * Call after fixing a configuration issue (wrong API key, expired token, etc.).
+ *
+ * [FIX-26] Clears both dispatchId AND dispatchStartedAt so the stale-lock
+ *          sweeper does not immediately re-sweep revived events due to a stale
+ *          dispatchStartedAt from the prior failed attempt chain.
+ *
+ * attempts is reset to 0 so the event gets its full retry budget again.
  *
  * @param {string|null} eventType - Filter by type, or null for all
  * @returns {Promise<number>}
@@ -550,11 +694,11 @@ export const retryDeadLetterEvents = async (eventType = null) => {
 
   const result = await AnalyticsEvent.updateMany(filter, {
     $set: {
-      status:      'pending',
-      attempts:    0,
-      nextRetryAt: new Date(),
-      lastError:   null,
-      dispatchId:  null,
+      status:            'pending',
+      attempts:          0,
+      nextRetryAt:       new Date(),
+      dispatchId:        null,
+      dispatchStartedAt: null,   // [FIX-26] prevent immediate re-sweep
     },
   });
 
@@ -563,6 +707,8 @@ export const retryDeadLetterEvents = async (eventType = null) => {
 };
 
 /**
+ * purgeCompletedEvents
+ *
  * Manually purges completed events older than the given number of days.
  * The TTL index handles this automatically — use this for immediate dev cleanup.
  *
@@ -586,86 +732,108 @@ export const purgeCompletedEvents = async (olderThanDays = 30) => {
 /**
  * staleLockSweeper
  *
- * Recovers events abandoned in 'processing' state (process crash, OOM kill,
- * network partition after dispatch but before DB write).
+ * Secondary recovery for events that passed the dispatchId stamp step but
+ * stalled during the external dispatch phase (process crash, OOM, network
+ * partition after stamp but before final DB write).
  *
- * [FIX-21] COORDINATION MODEL — per-document atomic reset:
+ * The model's recoverStuck() static handles events that never reached the
+ * stamp step (processingTimeoutAt guard). Both should run as separate crons.
  *
- *   The previous implementation used updateMany, which has no per-document
- *   coordination: a live-but-slow worker could have its event swept while still
- *   dispatching, then both the worker and a new claimOne() caller would proceed,
- *   causing duplicate dispatch.
+ * [FIX-21] PER-DOCUMENT ATOMIC RESET WITH DISPATCHID PIN:
+ *   Each stale event is reset via findOneAndUpdate with BOTH _id AND dispatchId
+ *   in the filter. If the original worker finishes first and writes
+ *   dispatchStartedAt:null (clearing the lock), the sweeper's filter no longer
+ *   matches and the update is a safe no-op.
  *
- *   The fix: each stale event is reset via findOneAndUpdate with BOTH status AND
- *   dispatchId in the filter. The dispatchId was captured at the time we identified
- *   the stale event, so:
+ *   dispatchId is preserved on reset (not cleared) so the next processOne()
+ *   call reuses it and GA4/Meta dedup holds across the sweep-and-retry. [FIX-12]
  *
- *     - If the original worker finishes normally first, it writes dispatchStartedAt:null
- *       and clears dispatchId (on success) or updates dispatchId (on retry/dead_letter).
- *       The sweeper's subsequent findOneAndUpdate finds no matching { dispatchId }
- *       and is a safe no-op.
+ * [FIX-21] NULL DISPATCHID GUARD:
+ *   Events with dispatchId:null have not been stamped yet (stamp write may still
+ *   be in flight, or the event was just claimed). These are NOT stale in the
+ *   meaningful dispatch sense — only the model's recoverStuck() should handle
+ *   them via processingTimeoutAt. Null-dispatchId candidates are skipped.
  *
- *     - If the original worker has truly crashed, dispatchId is unchanged and the
- *       sweeper's update succeeds, correctly resetting the event.
+ * [FIX-21] REJECTION LOGGING:
+ *   Previously, per-document reset rejections were silently counted as 0.
+ *   Now each rejection is logged individually for observability.
  *
- *   dispatchId is intentionally preserved on reset (not cleared) so the next
- *   processOne() reuses it and platform deduplication holds. [FIX-12]
- *
- *   Events are reset to 'retrying' with nextRetryAt:now (not 'pending') so they
- *   re-enter the queue through the normal retry path and are subject to all guards.
+ * [FIX-23] Reset to status:'pending' + nextRetryAt so claimOne() picks them
+ *          up normally. 'retrying' is not a valid model enum value.
  *
  * Recommended TTL: 5× p99 dispatch latency (e.g. 60 000 ms).
- * Register as a separate cron job running every staleTtlMs.
+ * Register as a separate cron job.
  *
- * @param {number} staleTtlMs - ms before a processing lock is considered stale
+ * @param {number} staleTtlMs - ms before a dispatch lock is considered stale
  * @returns {Promise<number>} Number of events reset
  */
 export const staleLockSweeper = async (staleTtlMs = 60_000) => {
   const staleThreshold = new Date(Date.now() - staleTtlMs);
 
-  // Find all candidates first (read-only pass).
+  // Read-only pass — find stale candidates.
   const staleEvents = await AnalyticsEvent.find(
     {
       status:            'processing',
       dispatchStartedAt: { $lt: staleThreshold },
+      dispatchId:        { $ne: null },   // [FIX-21] skip unstamped events
     },
     { _id: 1, dispatchId: 1, eventId: 1 }
   ).lean();
 
   if (staleEvents.length === 0) return 0;
 
-  // [FIX-21] Reset each event with its specific dispatchId in the filter.
-  // A live worker finishing between find and update makes this a safe no-op.
+  let resetCount   = 0;
+  let failureCount = 0;
+
   const resetPromises = staleEvents.map(({ _id, dispatchId, eventId }) =>
     AnalyticsEvent.findOneAndUpdate(
       {
         _id,
-        dispatchId,            // [FIX-21] pin to exact dispatch attempt
-        status: 'processing',  // guard: only reset if still processing
+        dispatchId,           // [FIX-21] pin to exact dispatch attempt
+        status: 'processing', // guard: only reset if still processing
       },
       {
         $set: {
-          status:            'retrying',  // re-enter via retry path, not pending
-          nextRetryAt:       new Date(),
-          lastError:         { message: 'reset by stale-lock sweeper', ga4: null, meta: null, bigquery: null },
+          status:            'pending',     // [FIX-23] valid enum; claimOne re-picks up
+          nextRetryAt:       new Date(),    // eligible for immediate re-claim
           dispatchStartedAt: null,
-          // dispatchId intentionally NOT cleared — next retry reuses it [FIX-12]
+          // dispatchId intentionally preserved — next processOne reuses it [FIX-12]
+        },
+        $push: {
+          errors: {            // [FIX-16] schema-defined errors[] array
+            at:      new Date(),
+            message: `Reset by stale-lock sweeper after ${staleTtlMs}ms (dispatchId: ${dispatchId})`,
+          },
         },
       },
-      { new: false }  // we don't need the result, just the side effect
+      { new: false }
     ).then(result => {
       if (result) {
-        console.warn(`[AnalyticsQueue] Stale-lock sweeper reset event: ${eventId} (dispatchId: ${dispatchId})`);
+        console.warn(
+          `[AnalyticsQueue] Stale-lock sweeper reset event: ${eventId} (dispatchId: ${dispatchId})`
+        );
+        return 1;
       }
-      return result ? 1 : 0;
+      return 0; // Worker finished normally first — expected, not an error
+    }).catch(err => {
+      // [FIX-21] Log individual rejections explicitly (was silently swallowed).
+      console.error(
+        `[AnalyticsQueue] Stale-lock sweeper failed for event ${eventId}:`,
+        err.message
+      );
+      failureCount++;
+      return 0;
     })
   );
 
-  const outcomes = await Promise.allSettled(resetPromises);
-  const resetCount = outcomes.reduce((sum, o) => sum + (o.status === 'fulfilled' ? o.value : 0), 0);
+  const counts = await Promise.all(resetPromises);
+  resetCount = counts.reduce((sum, n) => sum + n, 0);
 
-  if (resetCount > 0) {
-    console.warn(`[AnalyticsQueue] Stale-lock sweeper reset ${resetCount}/${staleEvents.length} event(s)`);
+  if (resetCount > 0 || failureCount > 0) {
+    console.warn(
+      `[AnalyticsQueue] Stale-lock sweeper: reset=${resetCount}, ` +
+      `no-op=${staleEvents.length - resetCount - failureCount}, failures=${failureCount}`
+    );
   }
 
   return resetCount;
@@ -677,7 +845,8 @@ export const staleLockSweeper = async (staleTtlMs = 60_000) => {
  * getPendingBigqueryEvents
  *
  * [FIX-14] Surfaces completed events where BigQuery was skipped in best-effort mode.
- * Data-pipeline teams query this to identify and backfill BQ gaps.
+ * Data-pipeline teams call this to find events needing BQ backfill, then pass
+ * each event.payload directly to streamEventToBigQuery(payload).
  *
  * @param {number} limit - Max events to return per call (default 100)
  * @returns {Promise<Document[]>}

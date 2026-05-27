@@ -144,7 +144,7 @@ const paymentSlice = createSlice({
         if (order && eventId) {
           trackPurchase(
             {
-              orderId:  order.paymentInfo?.reference || order._id || order.id,
+              orderId:  order.paymentInfo.reference,
               revenue:  order.totalPrice || 0,
               currency: order.paymentInfo?.currency || 'USD',
               items:    order.orderItems || [],
