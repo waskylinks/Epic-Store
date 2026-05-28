@@ -437,12 +437,14 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
  * @param {Object} context  - Analytics context
  * @returns {Promise<Object>}
  */
+
 export const sendMetaAddToCart = async (product, quantity, user, context = {}) => {
   const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
   const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
 
   const userData = {
     email:     user?.email,
+    phone:     user?.phone || user?.phoneNo || null,
     firstName: user?.firstName,
     lastName:  user?.lastName,
     userId:    user?._id?.toString(),
@@ -487,6 +489,7 @@ export const sendMetaViewContent = async (product, user, context = {}) => {
 
   const userData = {
     email:     user?.email,
+    phone:     user?.phone || user?.phoneNo || null,
     userId:    user?._id?.toString(),
     fbp:       context.fbp,
     fbc:       resolvedFbc,

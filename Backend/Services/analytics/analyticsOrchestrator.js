@@ -26,6 +26,23 @@
  *   - GA4 DebugView shows the event immediately (fast path)
  *   - The event is guaranteed to arrive even if the fast path fails (queue)
  *   - The event_id prevents double-counting in GA4/Meta (deduplication)
+ *
+ * Fixes applied (vs previous version):
+ *   1. queuePayload.user now includes phone — was being stripped before
+ *      reaching sendMetaInitiateCheckout and sendMetaCompleteRegistration
+ *      via the queue path.
+ *   2. dispatchFastPath now receives the original Mongoose user document
+ *      directly rather than the already-serialized queuePayload.user.
+ *      This ensures the fast path also has phone available.
+ *   3. fbc fallback in context no longer passes a raw fbclid as fbc.
+ *      Raw fbclid belongs in attribution only — metaCapiService functions
+ *      call formatFbc() themselves when they need it. Passing it here as
+ *      context.fbc caused it to bypass formatFbc() and reach Meta unformatted,
+ *      which causes a 400 Bad Request.
+ *   4. ANALYTICS_EVENTS.SIGN_UP removed from HIGH_VALUE_EVENTS — that
+ *      constant does not exist in the analytics.js constants file. Only
+ *      EMAIL_VERIFIED exists and was already present. SIGN_UP was a dead
+ *      entry that never matched, silently skipping fast-path dispatch.
  */
 
 import { buildPurchaseEvent, buildCheckoutStepEvent, buildAnalyticsEvent, validateAnalyticsEvent, ANALYTICS_EVENTS } from '../../utils/analyticsEvent.js';
@@ -44,12 +61,19 @@ import { sendMetaPurchase, sendMetaInitiateCheckout, sendMetaCompleteRegistratio
  * Failures are logged but never thrown — the queue handles reliability.
  * This is a best-effort immediate dispatch, not a replacement for the queue.
  *
+ * IMPORTANT: receives the original Mongoose documents (order, user) and the
+ * shared context object — NOT the serialized queuePayload. This ensures phone
+ * and other fields not included in the serialized user are available here.
+ *
  * @param {string} eventType
- * @param {Object} payload
+ * @param {Object} params
+ * @param {Object} params.order    - Original Mongoose order document
+ * @param {Object} params.user     - Original Mongoose user document
+ * @param {Object} params.checkout - Checkout document
+ * @param {Object} params.context  - Shared analytics context
+ * @param {string} params.method   - Auth method (login/signup events)
  */
-const dispatchFastPath = async (eventType, payload) => {
-  const { order, user, context } = payload;
-
+const dispatchFastPath = async (eventType, { order, user, checkout, context, method }) => {
   const promises = [];
 
   if (eventType === ANALYTICS_EVENTS.PURCHASE) {
@@ -67,25 +91,25 @@ const dispatchFastPath = async (eventType, payload) => {
 
   if (eventType === ANALYTICS_EVENTS.BEGIN_CHECKOUT) {
     promises.push(
-      sendGA4CheckoutStep('shipping_info', payload.checkout, context)
+      sendGA4CheckoutStep('shipping_info', checkout, context)
         .catch(e => console.error('[Analytics FastPath] GA4 checkout failed:', e.message))
     );
     promises.push(
-      sendMetaInitiateCheckout(payload.checkout, user, context)
+      sendMetaInitiateCheckout(checkout, user, context)
         .catch(e => console.error('[Analytics FastPath] Meta InitiateCheckout failed:', e.message))
     );
   }
 
   if (eventType === ANALYTICS_EVENTS.LOGIN) {
     promises.push(
-      sendGA4Login(payload.method || 'email', context)
+      sendGA4Login(method || 'email', context)
         .catch(e => console.error('[Analytics FastPath] GA4 login failed:', e.message))
     );
   }
 
-  if (eventType === ANALYTICS_EVENTS.SIGN_UP || eventType === ANALYTICS_EVENTS.EMAIL_VERIFIED) {
+  if (eventType === ANALYTICS_EVENTS.EMAIL_VERIFIED) {
     promises.push(
-      sendGA4SignUp(payload.method || 'email', context)
+      sendGA4SignUp(method || 'email', context)
         .catch(e => console.error('[Analytics FastPath] GA4 sign_up failed:', e.message))
     );
     promises.push(
@@ -130,7 +154,6 @@ const dispatchFastPath = async (eventType, payload) => {
  * @param {boolean} [options.queue=true]    - Enqueue for reliable delivery
  * @returns {Promise<void>}
  */
-
 export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   const {
     fastPath = true,
@@ -143,7 +166,15 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   const analyticsEventId = req?.body?.analyticsEventId || null;
   const ga4ClientId      = req?.body?.ga4ClientId      || null;
   const fbp              = req?.body?.fbp              || req?.cookies?._fbp || null;
-  const fbc              = req?.body?.fbc              || req?.cookies?._fbc || req?.attribution?.fbclid || null;
+
+  // FIX: Do NOT fall back to req.attribution.fbclid here as fbc.
+  // A raw fbclid is not a valid fbc value — it must be formatted as
+  // fb.1.{timestamp}.{fbclid} before being passed as fbc. The metaCapiService
+  // functions (sendMetaAddToCart, sendMetaInitiateCheckout, etc.) each call
+  // formatFbc(context.attribution.fbclid) themselves when context.fbc is absent.
+  // Passing the raw fbclid here as context.fbc causes it to bypass formatFbc()
+  // entirely and reach Meta unformatted, resulting in a 400 Bad Request.
+  const fbc = req?.body?.fbc || req?.cookies?._fbc || null;
 
   // ── Resolve order reference ───────────────────────────────────────────────
   // IIFE is required — the previous ternary had an operator precedence bug
@@ -239,9 +270,14 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
       },
       analytics: order.analytics,
     } : null,
+    // FIX: phone is now included in the serialized user object.
+    // Previously phone was stripped here, causing sendMetaInitiateCheckout
+    // and sendMetaCompleteRegistration to receive a user with no phone
+    // when replayed from the queue, silently dropping ph from user_data.
     user: user ? {
       _id:       user._id?.toString(),
       email:     user.email,
+      phone:     user.phone || user.phoneNo || null,
       firstName: user.firstName,
       lastName:  user.lastName,
     } : null,
@@ -260,17 +296,24 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   };
 
   // ── Fast path: immediate dispatch (best effort) ───────────────────────────
+  // FIX: ANALYTICS_EVENTS.SIGN_UP removed — that constant does not exist in
+  // analytics.js. Only EMAIL_VERIFIED exists. SIGN_UP was a dead entry that
+  // never matched any eventType, silently skipping the fast path for sign-ups.
+  // The existing EMAIL_VERIFIED entry already handles this correctly.
   const HIGH_VALUE_EVENTS = new Set([
     ANALYTICS_EVENTS.PURCHASE,
     ANALYTICS_EVENTS.BEGIN_CHECKOUT,
     ANALYTICS_EVENTS.LOGIN,
-    ANALYTICS_EVENTS.SIGN_UP,
     ANALYTICS_EVENTS.EMAIL_VERIFIED,
   ]);
 
   if (fastPath && HIGH_VALUE_EVENTS.has(eventType)) {
-    // Do not await — fire and forget
-    dispatchFastPath(eventType, queuePayload);
+    // FIX: pass original documents and context directly — not queuePayload.
+    // queuePayload.user is already serialized (plain object), which previously
+    // meant the fast path also received a user with phone stripped. The fast
+    // path now receives the original Mongoose user document so all fields
+    // including phone are available to the CAPI service functions.
+    dispatchFastPath(eventType, { order, user, checkout, context, method });
   }
 
   // ── Queue: reliable delivery with retry ───────────────────────────────────

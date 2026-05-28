@@ -713,23 +713,12 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     // Non-fatal
   }
 
-  // ── Fire analytics via orchestrator ──────────────────────────────────────
-  // firePurchaseEvent runs the fast path (immediate CAPI + GA4) and enqueues
-  // for reliable retry — replacing the previous direct enqueueAnalyticsEvent
-  // call that bypassed the fast path entirely.
-  //
-  // req is augmented with resolvedFbc and ga4ClientId so the orchestrator
-  // can build the correct context without re-reading the request body.
-  req._resolvedFbc  = resolvedFbc;
-  req._ga4ClientId  = ga4ClientId;
-  req._analyticsEventId = analyticsEventId;
+  // ── Fire analytics via orchestrator ──────────────────────────
 
-  // Stamp the clean ORD-xxx reference so the queue worker never falls back
-  // to the raw gateway reference stored in paymentMeta.raw which can cause confusion in analytics and duplicate orders if the same payment is verified multiple times with different gateway references (e.g. Stripe PaymentIntent ID vs Paystack reference).
   req.body.resolvedOrderReference = orderReference;
-  req._resolvedFbc                = resolvedFbc;
-  req._ga4ClientId                = ga4ClientId;
-  req._analyticsEventId           = analyticsEventId;
+  req.body.fbc                    = resolvedFbc         || req.body.fbc         || null;
+  req.body.ga4ClientId            = ga4ClientId         || req.body.ga4ClientId || null;
+  req.body.analyticsEventId       = analyticsEventId    || req.body.analyticsEventId || null;
 
   firePurchaseEvent(order, user, req).catch(err =>
     console.error('[Analytics] Purchase event failed (non-fatal):', err.message)

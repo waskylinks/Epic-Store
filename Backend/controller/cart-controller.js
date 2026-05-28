@@ -100,18 +100,18 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
-  const analyticsContext = {
-    clientId:       req.body?.ga4ClientId || req.sessionId || null,
-    userId:         req.user?._id?.toString(),
-    sessionId:      req.sessionId         || null,
-    eventId:        req.body?.analyticsEventId || null,
-    eventSourceUrl: req.headers?.referer  || process.env.FRONTEND_URL,
-    clientIp:       req.ip,
-    userAgent:      req.headers?.['user-agent'],
-    fbp:            req.cookies?._fbp     || null,
-    fbc:            req.cookies?._fbc     || null,
-    attribution:    req.attribution       || null,
-  };
+const analyticsContext = {
+  clientId:       req.body?.ga4ClientId || req.sessionId || null,
+  userId:         req.user?._id?.toString(),
+  sessionId:      req.sessionId         || null,
+  eventId:        req.body?.analyticsEventId || null,
+  eventSourceUrl: req.headers?.referer  || process.env.FRONTEND_URL,
+  clientIp:       req.ip,
+  userAgent:      req.headers?.['user-agent'],
+  fbp:            req.body?.fbp || req.cookies?._fbp || null,
+  fbc:            req.body?.fbc || req.cookies?._fbc || null,
+  attribution:    req.attribution       || null,
+};
 
   if (process.env.NODE_ENV !== 'production') {
     console.debug('[Cart Analytics] Cookie signals:', {
