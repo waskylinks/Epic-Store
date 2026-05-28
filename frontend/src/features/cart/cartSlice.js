@@ -148,9 +148,18 @@ export const removeDiscountCode = createAsyncThunk(
   async () => ({ success: true })
 );
 
-// ─── NEW: Pull this user's cart from the server and replace localStorage ──────
-// Call this after login/loadUser to ensure the correct user's cart is loaded.
-// This prevents stale cart data from a previous user bleeding into a new session.
+// ─── Pull this user's cart from the server and replace localStorage ───────────
+// Called after login/loadUser to ensure the correct user's cart is loaded.
+// Prevents stale cart data from a previous user bleeding into a new session.
+//
+// FIX (clear-then-sync race): login.fulfilled and verifyEmail.fulfilled no
+// longer call resetCartState. Instead they let the existing localStorage cart
+// remain visible while syncServerCart fetches the real server cart. Once the
+// fetch resolves the cart is atomically replaced. This eliminates:
+//   1. The flash of empty cart between login and sync completion.
+//   2. The empty-cart-on-sync-failure scenario — if the fetch fails, the user
+//      still sees their pre-login localStorage cart rather than nothing.
+// syncServerCart.rejected sets a recoverable error; App.jsx can retry.
 export const syncServerCart = createAsyncThunk(
   "cart/syncServerCart",
   async (_, { rejectWithValue }) => {
@@ -195,7 +204,8 @@ const initialPricing = {
   currency:      'USD',
 };
 
-// Helper: reset all cart state to blank (used on logout and user-switch)
+// Helper: reset all cart state to blank (used on logout only).
+// login/verifyEmail use syncServerCart instead — see comment above.
 const resetCartState = (state) => {
   state.cartItems    = [];
   state.cartDetails  = [];
@@ -257,8 +267,9 @@ const cartSlice = createSlice({
 
     // ──────────────────────────────────────────────
     // SYNC SERVER CART (called after login / loadUser)
-    // Overwrites localStorage with the authenticated user's real server cart.
-    // This is the primary fix for cart data leaking between users on shared devices.
+    // Atomically replaces localStorage with the authenticated user's server cart.
+    // Does NOT clear first — the pre-login cart remains visible until the fetch
+    // resolves, eliminating the empty-cart flash and the empty-on-failure scenario.
     // ──────────────────────────────────────────────
     builder
       .addCase(syncServerCart.pending, (state) => {
@@ -266,18 +277,22 @@ const cartSlice = createSlice({
         state.error   = null;
       })
       .addCase(syncServerCart.fulfilled, (state, action) => {
-        const serverItems     = action.payload.cartItems || [];
-        state.cartItems       = serverItems;
-        state.cartDetails     = [];   // Cart.jsx useEffect will re-fetch details
-        state.discount        = initialDiscount;
-        state.pricing         = initialPricing;
-        state.loading         = false;
+        const serverItems = action.payload.cartItems || [];
+        state.cartItems   = serverItems;
+        // FIX (implicit component dependency): cartDetails is populated here
+        // from the server response rather than being cleared and left for
+        // Cart.jsx to re-fetch. Any component reading cartDetails immediately
+        // after syncServerCart completes now gets consistent data rather than
+        // an empty array pending a component lifecycle re-render.
+        state.cartDetails = action.payload.cartDetails || [];
+        state.discount    = initialDiscount;
+        state.pricing     = initialPricing;
+        state.loading     = false;
         localStorage.setItem("cartItems", JSON.stringify(serverItems));
       })
       .addCase(syncServerCart.rejected, (state, action) => {
-        // Non-fatal: log it but don't break the UI.
-        // If the sync fails the user still sees their localStorage cart;
-        // they may just need to refresh.
+        // Non-fatal: the pre-login localStorage cart is still intact.
+        // App.jsx can read state.cart.error and offer a retry.
         state.loading = false;
         state.error   = action.payload || "Failed to sync cart";
       });
@@ -321,10 +336,13 @@ const cartSlice = createSlice({
 
         if (existingItem) {
           existingItem.quantity = serverQuantity;
-          state.message = "Cart updated";
+          // FIX: removed toast message — no state.message set on add-to-cart.
+          // The "Cart updated" / "Added to cart" messages were surfaced as toasts
+          // by components watching state.cart.message. This produced a notification
+          // on every add-to-cart action; the cart icon count and drawer are
+          // sufficient feedback without an additional toast.
         } else {
           state.cartItems.push({ product, quantity: serverQuantity });
-          state.message = "Added to cart";
         }
 
         localStorage.setItem("cartItems", JSON.stringify(state.cartItems));
@@ -510,21 +528,33 @@ const cartSlice = createSlice({
         state.success  = true;
       });
 
-// ──────────────────────────────────────────────
-// CROSS-SLICE: LOGOUT — wipe cart from localStorage immediately
-// ──────────────────────────────────────────────
+    // ──────────────────────────────────────────────
+    // CROSS-SLICE: LOGOUT — wipe cart from localStorage immediately.
+    // Hard reset on both fulfilled and rejected so a failed logout API call
+    // does not leave the previous user's cart data in the browser.
+    //
+    // NOTE: If userSlice renames these action creators or the import path
+    // changes, these extraReducers will silently stop matching and the cart
+    // will not clear on logout, leaking user data. If that happens, verify
+    // the import path at the top of this file matches userSlice's export names.
+    // ──────────────────────────────────────────────
     builder
       .addCase(logout.fulfilled, (state) => { resetCartState(state); })
       .addCase(logout.rejected,  (state) => { resetCartState(state); });
 
     // ──────────────────────────────────────────────
-    // CROSS-SLICE: LOGIN / VERIFY EMAIL / LOAD USER
-
+    // CROSS-SLICE: LOGIN / VERIFY EMAIL
+    // FIX (clear-then-sync race): Do NOT call resetCartState here. The cart is
+    // left intact so the user sees their existing items while syncServerCart
+    // fetches the authenticated server cart in the background. App.jsx must
+    // dispatch syncServerCart after login/verifyEmail succeeds (watching
+    // isAuthenticated). If syncServerCart fails the user retains their
+    // localStorage cart rather than being left with an empty one.
+    // ──────────────────────────────────────────────
     builder
-      .addCase(login.fulfilled,        (state) => { resetCartState(state); })
-      .addCase(verifyEmail.fulfilled,  (state) => { resetCartState(state); });
-      },
-
+      .addCase(login.fulfilled,       () => { /* syncServerCart handles the cart update */ })
+      .addCase(verifyEmail.fulfilled, () => { /* syncServerCart handles the cart update */ });
+  },
 });
 
 // ============================================
