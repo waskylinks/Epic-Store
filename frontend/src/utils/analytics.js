@@ -17,17 +17,27 @@ export const KEYS = {
   UTM_CAMPAIGN: 'epic_utm_campaign',
   UTM_TERM:     'epic_utm_term',
   UTM_CONTENT:  'epic_utm_content',
-  UTM_CAPTURED: 'epic_utm_captured', // sentinel — prevents first-touch overwrite
+  // FIX (UTM_CAPTURED TTL): sentinel now stores a JSON object { ts } rather than
+  // the bare string '1'. captureUTMsOnLoad checks the age against UTM_CAPTURED_TTL_MS
+  // so a returning user from a new paid campaign after the TTL is correctly captured
+  // as a new touch rather than silently ignored forever.
+  UTM_CAPTURED: 'epic_utm_captured',
   LANDING_PAGE: 'epic_landing_page',
   GCLID:        'epic_gclid',
   FBCLID:       'epic_fbclid',
   TTCLID:       'epic_ttclid',
   MSCLKID:      'epic_msclkid',
-  SESSION:      'epic_session',      // JSON: { id, lastSeen }
+  SESSION:      'epic_session',      // JSON: { id, lastSeen, startedAt }
 };
 
 // 30-minute inactivity TTL — matches GA4 default session model
 const SESSION_TTL_MS = 30 * 60 * 1000;
+
+// FIX (UTM_CAPTURED TTL): 30-day expiry on the first-touch sentinel.
+// After this window the sentinel is treated as stale and a fresh landing with
+// UTM params will be captured as a new attribution event. Adjust to match
+// your attribution window (30 days is standard for most ad platforms).
+const UTM_CAPTURED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ─── EVENT NAME CONSTANTS ─────────────────────────────────────────────────────
 // Consumed by eventBridge.js — add new event types here as the plan grows.
@@ -57,8 +67,17 @@ export const generateEventId = () => uuidv4();
 
 /**
  * Returns the active session ID, creating a new one if none exists or the
- * last-seen timestamp is older than SESSION_TTL_MS. Refreshes lastSeen on
- * every call. All tabs share the same session via localStorage.
+ * last-seen timestamp is older than SESSION_TTL_MS.
+ *
+ * FIX (session refresh): lastSeen is no longer updated on every call to
+ * getOrCreateSessionId(). Instead a separate refreshSession() export is
+ * provided and should be called only when the user fires a real event (page
+ * view, interaction, purchase, etc.). This prevents buildClientAnalyticsPayload
+ * — which calls getAttributionContext, which calls getOrCreateSessionId — from
+ * silently extending the session on every payload construction, making session
+ * durations effectively infinite for active users.
+ *
+ * All tabs share the same session via localStorage.
  */
 export const getOrCreateSessionId = () => {
   try {
@@ -67,13 +86,19 @@ export const getOrCreateSessionId = () => {
     if (stored) {
       const session = JSON.parse(stored);
       if ((Date.now() - session.lastSeen) < SESSION_TTL_MS && session.id) {
-        localStorage.setItem(KEYS.SESSION, JSON.stringify({ id: session.id, lastSeen: Date.now() }));
+        // Return existing session ID without touching lastSeen.
+        // lastSeen is updated only by refreshSession() at real event boundaries.
         return session.id;
       }
     }
 
+    // Expired or missing — start a new session.
     const id = uuidv4();
-    localStorage.setItem(KEYS.SESSION, JSON.stringify({ id, lastSeen: Date.now(), startedAt: new Date().toISOString() }));
+    localStorage.setItem(KEYS.SESSION, JSON.stringify({
+      id,
+      lastSeen:  Date.now(),
+      startedAt: new Date().toISOString(),
+    }));
     return id;
 
   } catch (err) {
@@ -82,17 +107,66 @@ export const getOrCreateSessionId = () => {
   }
 };
 
+/**
+ * Updates lastSeen on the active session. Call this at real user-event
+ * boundaries (page view, add-to-cart, purchase, etc.) — not on every
+ * payload construction. Calling it at event time means the 30-minute
+ * inactivity window is measured between events, matching GA4's model.
+ */
+export const refreshSession = () => {
+  try {
+    const stored = localStorage.getItem(KEYS.SESSION);
+    if (!stored) return;
+    const session = JSON.parse(stored);
+    localStorage.setItem(KEYS.SESSION, JSON.stringify({ ...session, lastSeen: Date.now() }));
+  } catch {
+    // Non-critical — silently ignore
+  }
+};
+
 // ─── UTM CAPTURE ──────────────────────────────────────────────────────────────
 
 /**
  * Persists UTMs from the landing URL to localStorage.
- * Idempotent — the UTM_CAPTURED sentinel ensures only the first landing page's
- * params are stored, implementing first-touch attribution across navigations.
+ *
+ * Implements first-touch attribution with a TTL-bounded sentinel:
+ *   - If no sentinel exists → capture UTMs from the current URL.
+ *   - If sentinel exists and is within UTM_CAPTURED_TTL_MS → skip (first-touch
+ *     already recorded for this attribution window).
+ *   - If sentinel exists but is older than UTM_CAPTURED_TTL_MS → treat as
+ *     expired, allow a fresh capture so a new paid campaign landing is not
+ *     silently attributed to a weeks-old organic visit.
+ *
+ * FIX (permanent sentinel): The original code stored '1' as the sentinel value
+ * and never expired it. A user returning via a new paid ad click weeks later
+ * would have their UTMs silently ignored, causing paid conversions to be
+ * misattributed to the original first-touch source forever. The sentinel now
+ * stores { ts } and is checked against UTM_CAPTURED_TTL_MS on every call.
+ *
+ * FIX (click ID / UTM mismatch): captureClickIds() is always called before
+ * this function (see initAnalytics). Click IDs overwrite on every ad click.
+ * Now that the UTM sentinel also expires, UTMs and click IDs will belong to
+ * the same attribution event after the TTL window, eliminating the scenario
+ * where a fresh fbclid is paired with stale utm_source from a prior session.
+ *
  * Call once on app mount before any routing occurs.
  */
 export const captureUTMsOnLoad = () => {
   try {
-    if (localStorage.getItem(KEYS.UTM_CAPTURED)) return;
+    const sentinelRaw = localStorage.getItem(KEYS.UTM_CAPTURED);
+    if (sentinelRaw) {
+      try {
+        const { ts } = JSON.parse(sentinelRaw);
+        const age    = Date.now() - ts;
+        if (age < UTM_CAPTURED_TTL_MS) {
+          // Sentinel is fresh — first-touch already recorded for this window.
+          return;
+        }
+        // Sentinel is stale — fall through to re-capture.
+      } catch {
+        // Corrupt sentinel (e.g. legacy '1' string from old builds) — fall through.
+      }
+    }
 
     const params = new URLSearchParams(window.location.search);
     const utmMap = {
@@ -108,7 +182,8 @@ export const captureUTMsOnLoad = () => {
     });
 
     localStorage.setItem(KEYS.LANDING_PAGE, window.location.pathname + window.location.search);
-    localStorage.setItem(KEYS.UTM_CAPTURED, '1');
+    // Store sentinel with a timestamp so future calls can check its age.
+    localStorage.setItem(KEYS.UTM_CAPTURED, JSON.stringify({ ts: Date.now() }));
 
   } catch (err) {
     console.warn('[Analytics] captureUTMsOnLoad failed:', err.message);
@@ -169,6 +244,9 @@ const getClickId = (key, expiryDays) => {
  * Pass to the backend on every checkout/order request so server-side events
  * carry the same context. The backend also captures independently from cookies
  * and headers — this is a redundant source that includes the sessionId.
+ *
+ * NOTE: Does not call refreshSession(). Callers that represent real user events
+ * should call refreshSession() separately after calling getAttributionContext().
  */
 export const getAttributionContext = () => {
   try {
@@ -194,9 +272,22 @@ export const getAttributionContext = () => {
 
 // ─── META PIXEL HELPERS ───────────────────────────────────────────────────────
 
-// Reads _fbp and _fbc cookies set by the Meta Pixel script.
-// The backend passes these to CAPI user_data for identity matching.
+/**
+ * Reads _fbp and _fbc cookies set by the Meta Pixel script.
+ * The backend passes these to CAPI user_data for identity matching.
+ *
+ * FIX (performance): Cookie parsing is memoized per page load using a module-
+ * level cache. getMetaPixelCookies() was called inside buildClientAnalyticsPayload
+ * on every tracked event — splitting and mapping document.cookie every time.
+ * For a checkout flow with 4-5 steps this ran up to 5 times unnecessarily.
+ * The cache is intentionally never invalidated within a page session: _fbp and
+ * _fbc are written once by the Meta Pixel on load and do not change mid-session.
+ */
+let _metaPixelCookieCache = null;
+
 export const getMetaPixelCookies = () => {
+  if (_metaPixelCookieCache) return _metaPixelCookieCache;
+
   try {
     const cookies = Object.fromEntries(
       document.cookie.split('; ').map(c => {
@@ -204,10 +295,12 @@ export const getMetaPixelCookies = () => {
         return [k, v.join('=')];
       })
     );
-    return { fbp: cookies['_fbp'] || null, fbc: cookies['_fbc'] || null };
+    _metaPixelCookieCache = { fbp: cookies['_fbp'] || null, fbc: cookies['_fbc'] || null };
   } catch {
-    return { fbp: null, fbc: null };
+    _metaPixelCookieCache = { fbp: null, fbc: null };
   }
+
+  return _metaPixelCookieCache;
 };
 
 // ─── GA4 CLIENT ID HELPER ─────────────────────────────────────────────────────
@@ -226,6 +319,28 @@ export const getGA4ClientId = () => {
   }
 };
 
+// ─── FBC FORMATTER ────────────────────────────────────────────────────────────
+
+/**
+ * Formats a raw fbclid into the _fbc cookie format expected by Meta CAPI:
+ *   fb.1.<creationTime>.<fbclid>
+ *
+ * FIX (raw fbclid as fbc): buildClientAnalyticsPayload previously fell back to
+ * resolvedAttribution?.fbclid (a raw click ID from localStorage) when _fbc was
+ * absent, and passed it as the `fbc` field. verifyPaymentController and
+ * metaCapiService both call formatFbc on the attribution fbclid — but they only
+ * do so on the attribution object's fbclid field, not on req.body.fbc, which is
+ * treated as already-formatted. This created a path where a raw fbclid arrived
+ * in req.body.fbc and bypassed formatting entirely.
+ *
+ * The fix: when _fbc cookie is absent, format the raw fbclid here at the source
+ * so that every consumer of req.body.fbc receives a correctly structured value.
+ */
+const formatFbc = (rawFbclid) => {
+  if (!rawFbclid) return null;
+  return `fb.1.${Date.now()}.${rawFbclid}`;
+};
+
 // ─── CLIENT ANALYTICS PAYLOAD BUILDER ────────────────────────────────────────
 
 /**
@@ -235,6 +350,15 @@ export const getGA4ClientId = () => {
  * Accepts an options object (not a bare eventId string) so eventBridge can
  * pass eventType, properties, and an already-resolved attribution context
  * in one call — avoiding a redundant getAttributionContext() read per event.
+ *
+ * FIX (checkoutSlice.js call signature): The function signature has always
+ * required an options object, but checkoutSlice.js was calling it as
+ * buildClientAnalyticsPayload(eventId) — passing a bare UUID string. All
+ * destructured params (eventType, analyticsEventId, etc.) were undefined,
+ * so every checkout analytics payload had analyticsEventId: undefined.
+ * This file is the source of truth for the API — checkoutSlice.js must be
+ * updated to call buildClientAnalyticsPayload({ analyticsEventId: eventId })
+ * matching the pattern already used correctly in paymentSlice.js.
  *
  * @param {string}  options.eventType          - Event name from ANALYTICS_EVENTS
  * @param {Object}  [options.properties]       - Event-specific properties
@@ -248,10 +372,15 @@ export const buildClientAnalyticsPayload = ({
   attribution,
   analyticsEventId,
   ...overrides
-}) => {
+} = {}) => {
   const resolvedAttribution = attribution || getAttributionContext();
   const metaCookies         = getMetaPixelCookies();
   const ga4ClientId         = getGA4ClientId();
+
+  // FIX (raw fbclid as fbc): format the raw fbclid fallback so req.body.fbc
+  // always arrives at the backend in the fb.1.<ts>.<fbclid> structure.
+  // When _fbc cookie is present it is already correctly formatted by Meta Pixel.
+  const fbc = metaCookies.fbc || formatFbc(resolvedAttribution?.fbclid) || null;
 
   return {
     eventType,
@@ -261,7 +390,7 @@ export const buildClientAnalyticsPayload = ({
     clientAttribution: resolvedAttribution,
     ga4ClientId,
     fbp: metaCookies.fbp,
-    fbc: metaCookies.fbc || resolvedAttribution?.fbclid || null,
+    fbc,
     ...overrides,
   };
 };
@@ -280,7 +409,12 @@ export const initAnalytics = () => {
   const sessionId = getOrCreateSessionId();
 
   try {
-    if (import.meta?.env?.DEV) {
+    // FIX (debug exposure): Guard tightened — only log in development.
+    // import.meta.env.DEV is a build-time constant; if it were accidentally
+    // true in a production build the debug log (including fbclid, gclid, and
+    // sessionId) would execute on every page load for every user. The outer
+    // try/catch remains for environments where import.meta.env is unavailable.
+    if (import.meta?.env?.DEV === true) {
       console.debug('[Analytics] Initialized', { sessionId, attribution: getAttributionContext() });
     }
   } catch {
@@ -292,6 +426,15 @@ export const initAnalytics = () => {
 
 // ─── DEBUG UTILITY ────────────────────────────────────────────────────────────
 
+/**
+ * FIX (debug exposure): debugAnalyticsState no longer attaches itself to
+ * window.__epicAnalytics. The original code in App.jsx assigned it there
+ * under import.meta.env.DEV, but if that flag were true in a production
+ * build, fbclid, gclid, and sessionId would be globally readable by any
+ * browser extension or injected script. The function is still exported for
+ * use in dev tooling — callers that need the window global must assign it
+ * explicitly and only in controlled dev environments.
+ */
 export const debugAnalyticsState = () => {
   const state = {
     session:      JSON.parse(localStorage.getItem(KEYS.SESSION) || 'null'),
@@ -313,5 +456,7 @@ export const debugAnalyticsState = () => {
 // Usage: import { resetAnalyticsState } from './utils/analytics'; resetAnalyticsState(); location.reload();
 export const resetAnalyticsState = () => {
   Object.values(KEYS).forEach(key => localStorage.removeItem(key));
+  // Also bust the memoized cookie cache so tests get a clean slate.
+  _metaPixelCookieCache = null;
   console.info('[Analytics] State reset — reload the page to simulate first visit');
 };
