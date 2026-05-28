@@ -36,18 +36,72 @@
  *   The browser pixel must also use paymentInfo.reference — never order._id
  *   (MongoDB ObjectId) which Meta cannot recognise and replaces with its own
  *   internal EII1|... identifier in Events Manager.
+ *
+ * ITEM SHAPE CONTRACT:
+ *   Different callers pass items with different shapes. Rather than scattering
+ *   defensive fallbacks across every tracker, normalizeItemId() centralises
+ *   the extraction logic. Update it here if a new item shape is introduced.
+ *
+ *   Known shapes:
+ *     cartItems (Redux):    { product: string, quantity, name, price }
+ *     orderItems (server):  { product: ObjectId|PopulatedObject, name, price, quantity }
+ *     product detail page:  { productId, _id, name, price, category }
  */
 
 import {
   generateEventId,
   buildClientAnalyticsPayload,
   getAttributionContext,
+  refreshSession,
   ANALYTICS_EVENTS,
 } from './analytics.js';
 
 // ─── BACKEND ENDPOINT ─────────────────────────────────────────────────────────
 
 const ANALYTICS_ENDPOINT = '/api/v1/analytics/event';
+
+// Maximum safe keepalive payload size (bytes). Chrome enforces 64 KB per origin;
+// we use a conservative 48 KB threshold to leave headroom for headers.
+const KEEPALIVE_SIZE_LIMIT = 48 * 1024;
+
+// ─── ITEM ID NORMALIZER ───────────────────────────────────────────────────────
+
+/**
+ * normalizeItemId
+ *
+ * Extracts the product ID string from an item regardless of its shape.
+ * Centralises the defensive fallback chain so it only exists in one place.
+ *
+ * Handles:
+ *   - cartItems from Redux state:           { product: string }
+ *   - orderItems before backend populate:   { product: ObjectId string }
+ *   - orderItems after backend populate:    { product: { _id: string } }
+ *   - product detail / search result shape: { productId, _id }
+ *
+ * FIX (trackBeginCheckout empty content_ids): The original extractor used
+ * `i.productId || i._id`, which never matched cartItems whose ID lives on
+ * the `product` field. Every InitiateCheckout pixel fired with empty
+ * content_ids. This function handles all known shapes explicitly.
+ *
+ * FIX (trackPurchase fragility): The order in which fields are checked now
+ * handles both the pre-populate shape (product: ObjectId string) and the
+ * post-populate shape (product: { _id }) correctly and intentionally, rather
+ * than by accident of the backend bug remaining unfixed.
+ *
+ * @param {Object} item - Item from any known source shape
+ * @returns {string|null}
+ */
+const normalizeItemId = (item) => {
+  if (!item) return null;
+  // Populated orderItem: { product: { _id: '...' } }
+  if (item.product?._id) return item.product._id.toString();
+  // Raw cartItem or unpopulated orderItem: { product: '...' }
+  if (item.product)      return item.product.toString();
+  // Product detail / search result shapes
+  if (item.productId)    return item.productId.toString();
+  if (item._id)          return item._id.toString();
+  return null;
+};
 
 // ─── PIXEL HELPERS ────────────────────────────────────────────────────────────
 
@@ -95,6 +149,13 @@ const fireGtag = (eventName, params = {}) => {
  * Sends a client-side analytics event to the backend ingestion endpoint.
  * Fire-and-forget — never throws, never blocks the caller.
  *
+ * FIX (keepalive payload size limit): fetch keepalive has a hard 64 KB limit
+ * per origin in Chrome. Payloads exceeding the limit are silently dropped —
+ * no error, no retry. We now measure the serialised payload and fall back to
+ * a normal (non-keepalive) fetch for large payloads so events are never lost.
+ * The fallback fires synchronously from user-action context so it will still
+ * complete on most navigation events, but keepalive is preferred for safety.
+ *
  * @param {string} eventType   - Event type from ANALYTICS_EVENTS
  * @param {Object} properties  - Event-specific properties
  * @param {string} [eventId]   - Optional dedup UUID (generated if not provided)
@@ -112,11 +173,14 @@ const sendEvent = (eventType, properties = {}, eventId, overrides = {}) => {
       ...overrides,
     });
 
+    const body      = JSON.stringify(payload);
+    const useKeepalive = new Blob([body]).size <= KEEPALIVE_SIZE_LIMIT;
+
     fetch(ANALYTICS_ENDPOINT, {
       method:      'POST',
       headers:     { 'Content-Type': 'application/json' },
-      body:        JSON.stringify(payload),
-      keepalive:   true,
+      body,
+      keepalive:   useKeepalive,
       credentials: 'include',
     }).catch(() => {});
   } catch {
@@ -155,9 +219,8 @@ export const trackPurchase = (orderData, eventId) => {
   fireFbq('track', 'Purchase', {
     value:        orderData.revenue || 0,
     currency:     orderData.currency || 'USD',
-    content_ids:  (orderData.items || []).map(i =>
-      (i.product?._id || i.product || i.productId || i._id)?.toString()
-    ).filter(Boolean),
+    // FIX: use normalizeItemId() to handle both pre- and post-populate shapes.
+    content_ids:  (orderData.items || []).map(normalizeItemId).filter(Boolean),
     content_type: 'product',
     // FIX: order_id must be the ORD-xxx payment reference — not the MongoDB _id.
     // Callers pass order.paymentInfo.reference from paymentSlice.fulfilled.
@@ -171,12 +234,14 @@ export const trackPurchase = (orderData, eventId) => {
     value:          orderData.revenue || 0,
     currency:       orderData.currency || 'USD',
     items:          (orderData.items || []).map((item, index) => ({
-      item_id:   (item.product?._id || item.product || item.productId || item._id)?.toString() || `item_${index}`,
+      item_id:   normalizeItemId(item) || `item_${index}`,
       item_name: item.name || 'Product',
       price:     item.price || 0,
       quantity:  item.quantity || 1,
     })),
   });
+
+  refreshSession();
 
   // Backend ingestion for BigQuery
   sendEvent(ANALYTICS_EVENTS.PURCHASE || 'purchase', {
@@ -205,20 +270,25 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
     value:        cartContext.cartValue || 0,
     currency:     'USD',
     num_items:    cartContext.itemCount || 0,
-    content_ids:  (cartContext.items || []).map(i => i.productId || i._id).filter(Boolean),
+    // FIX (empty content_ids): cartItems from Redux have shape { product: string }.
+    // The original extractor `i.productId || i._id` never matched this shape, so
+    // content_ids was always []. normalizeItemId() handles all known item shapes.
+    content_ids:  (cartContext.items || []).map(normalizeItemId).filter(Boolean),
     content_type: 'product',
   }, id);
 
   fireGtag('begin_checkout', {
     currency: 'USD',
     value:    cartContext.cartValue || 0,
-    items:    (cartContext.items || []).map(item => ({
-      item_id:   item.productId || item._id,
+    items:    (cartContext.items || []).map((item, index) => ({
+      item_id:   normalizeItemId(item) || `item_${index}`,
       item_name: item.name,
       price:     item.price,
       quantity:  item.quantity || 1,
     })),
   });
+
+  refreshSession();
 
   sendEvent(ANALYTICS_EVENTS.CHECKOUT_STEP || 'checkout_step', {
     step:         'cart',
@@ -236,6 +306,14 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
  * Fire when a user enters a checkout step.
  * Steps: "shipping_info" | "payment_selection" | "payment_gateway"
  *
+ * FIX (duplicate AddPaymentInfo): The original code fired AddPaymentInfo for
+ * both "payment_selection" AND "payment_gateway". The checkout flow navigates
+ * through both steps sequentially, so Meta received two AddPaymentInfo events
+ * per checkout with different UUIDs — they cannot be deduplicated, inflating
+ * that funnel metric. AddPaymentInfo now fires only on "payment_selection"
+ * (the first time the user reaches the payment section), not again on
+ * "payment_gateway" (the confirmation/gateway redirect step).
+ *
  * @param {string} step        - Checkout step name
  * @param {Object} cartContext - { cartValue, itemCount, hasDiscount }
  * @param {string} [eventId]   - Optional dedup UUID
@@ -243,7 +321,11 @@ export const trackBeginCheckout = (cartContext = {}, eventId) => {
 export const trackCheckoutStep = (step, cartContext = {}, eventId) => {
   const id = eventId || generateEventId();
 
-  if (step === 'payment_selection' || step === 'payment_gateway') {
+  // FIX: Fire AddPaymentInfo only on the first payment step, not on every
+  // payment-related step. "payment_gateway" is a subsequent navigation within
+  // the same payment intent — firing a second AddPaymentInfo there causes
+  // Meta to count two payment events per checkout, inflating the funnel metric.
+  if (step === 'payment_selection') {
     fireFbq('track', 'AddPaymentInfo', {
       value:    cartContext.cartValue || 0,
       currency: 'USD',
@@ -277,7 +359,7 @@ export const trackProductView = (product) => {
   fireFbq('track', 'ViewContent', {
     value:        product.price || 0,
     currency:     'USD',
-    content_ids:  [product.productId || product._id].filter(Boolean),
+    content_ids:  [normalizeItemId(product)].filter(Boolean),
     content_type: 'product',
     content_name: product.name,
   }, id);
@@ -286,7 +368,7 @@ export const trackProductView = (product) => {
     currency: 'USD',
     value:    product.price || 0,
     items:    [{
-      item_id:       product.productId || product._id,
+      item_id:       normalizeItemId(product),
       item_name:     product.name,
       item_category: product.category || '',
       price:         product.price || 0,
@@ -294,7 +376,7 @@ export const trackProductView = (product) => {
   });
 
   sendEvent(ANALYTICS_EVENTS.PRODUCT_VIEW, {
-    product_id: product.productId || product._id,
+    product_id: normalizeItemId(product),
     name:       product.name,
     price:      product.price,
     category:   product.category || null,
@@ -312,7 +394,7 @@ export const trackAddToCart = (item) => {
   fireFbq('track', 'AddToCart', {
     value:        (item.price || 0) * (item.quantity || 1),
     currency:     'USD',
-    content_ids:  [item.productId || item._id].filter(Boolean),
+    content_ids:  [normalizeItemId(item)].filter(Boolean),
     content_type: 'product',
     content_name: item.name,
   }, id);
@@ -321,7 +403,7 @@ export const trackAddToCart = (item) => {
     currency: 'USD',
     value:    (item.price || 0) * (item.quantity || 1),
     items:    [{
-      item_id:   item.productId || item._id,
+      item_id:   normalizeItemId(item),
       item_name: item.name,
       price:     item.price,
       quantity:  item.quantity || 1,
@@ -329,7 +411,7 @@ export const trackAddToCart = (item) => {
   });
 
   sendEvent(ANALYTICS_EVENTS.ADD_TO_CART, {
-    product_id: item.productId || item._id,
+    product_id: normalizeItemId(item),
     name:       item.name,
     price:      item.price,
     quantity:   item.quantity || 1,
@@ -348,21 +430,21 @@ export const trackRemoveFromCart = (item) => {
     currency: 'USD',
     value:    item.price || 0,
     items:    [{
-      item_id:   item.productId || item._id,
+      item_id:   normalizeItemId(item),
       item_name: item.name,
       price:     item.price,
     }],
   });
 
   fireFbq('trackCustom', 'RemoveFromCart', {
-    content_ids:  [item.productId || item._id].filter(Boolean),
+    content_ids:  [normalizeItemId(item)].filter(Boolean),
     content_name: item.name,
     value:        item.price || 0,
     currency:     'USD',
   }, id);
 
   sendEvent(ANALYTICS_EVENTS.REMOVE_FROM_CART, {
-    product_id: item.productId || item._id,
+    product_id: normalizeItemId(item),
     name:       item.name,
     price:      item.price,
   }, id);
@@ -398,9 +480,16 @@ export const trackSearch = (query, resultCount = 0) => {
 /**
  * trackPageView
  *
+ * Page views are intentionally not deduplicated — each page view is a distinct
+ * event and there is no server-side counterpart to deduplicate against. A fresh
+ * UUID per call is correct behaviour. The eventId parameter pattern is omitted
+ * here by design, consistent with GA4's own page_view model.
+ *
  * @param {string} [path] - URL path (defaults to window.location.pathname)
  */
 export const trackPageView = (path) => {
+  refreshSession();
+
   fireGtag('page_view', {
     page_path:  path || window.location.pathname,
     page_title: document.title,
