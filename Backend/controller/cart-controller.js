@@ -6,6 +6,7 @@ import { deleteCachePattern } from '../utils/redis.js';
 import Cart from '../models/cart-model.js';
 import { sendGA4AddToCart } from '../Services/analytics/ga4Service.js';
 import { sendMetaAddToCart } from '../Services/analytics/metaCapiService.js';
+import mongoose from 'mongoose';
 
 // ============================================
 // SHARED PRICE RESOLUTION
@@ -15,6 +16,27 @@ const resolveProductPrice = (product) => {
   if (product.pricing?.sale > 0) return product.pricing.sale;
   if (product.pricing?.regular > 0) return product.pricing.regular;
   return 0;
+};
+
+// ============================================
+// SHARED HELPERS
+// ============================================
+
+/**
+ * Validates that a value is a valid MongoDB ObjectId string.
+ * Prevents CastErrors from propagating to the DB layer.
+ */
+const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
+
+/**
+ * Fetches products by an array of IDs in a single query and returns a
+ * Map keyed by string ID for O(1) lookup. Replaces N+1 findById patterns.
+ */
+const fetchProductMap = async (productIds) => {
+  const validIds = productIds.filter(isValidObjectId);
+  if (validIds.length === 0) return new Map();
+  const products = await Product.find({ _id: { $in: validIds } });
+  return new Map(products.map(p => [p._id.toString(), p]));
 };
 
 // ============================================
@@ -28,10 +50,22 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, cartItems: [] });
   }
 
+  // Validate item structure before hitting the DB — prevents CastErrors
+  // from malformed product IDs propagating to findById.
+  for (const item of items) {
+    if (!item.product || !isValidObjectId(item.product)) {
+      return next(new HandleError(`Invalid product ID: ${item.product}`, 400));
+    }
+  }
+
+  // Single batched query replaces N+1 sequential findById calls.
+  const productIds = items.map(i => i.product);
+  const productMap = await fetchProductMap(productIds);
+
   const cartItems = [];
 
   for (const item of items) {
-    const product = await Product.findById(item.product);
+    const product = productMap.get(item.product.toString());
 
     if (!product || product.status !== 'published') continue;
 
@@ -61,12 +95,24 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
 
   if (!productId) return next(new HandleError('Product ID is required', 400));
 
+  // Validate ObjectId format before DB call to avoid an unhandled CastError.
+  if (!isValidObjectId(productId)) {
+    return next(new HandleError('Invalid product ID format', 400));
+  }
+
+  // Validate quantity: must be a positive integer.
+  // A float like 0.5 would pass stock comparison checks and be stored otherwise.
+  const parsedQuantity = Number(quantity);
+  if (!Number.isInteger(parsedQuantity) || parsedQuantity < 1) {
+    return next(new HandleError('Quantity must be a positive integer', 400));
+  }
+
   const product = await Product.findById(productId);
   if (!product)                       return next(new HandleError('Product not found', 404));
   if (product.status !== 'published') return next(new HandleError('Product is not available', 400));
 
   const availableStock = product.inventory?.stock ?? product.stock ?? 0;
-  if (availableStock < quantity) {
+  if (availableStock < parsedQuantity) {
     return next(new HandleError(`Only ${availableStock} items available in stock`, 400));
   }
 
@@ -84,12 +130,12 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
   );
 
   if (existingItem) {
-    existingItem.quantity = Math.min(existingItem.quantity + quantity, availableStock);
+    existingItem.quantity = Math.min(existingItem.quantity + parsedQuantity, availableStock);
   } else {
     if (cart.cartItems.length >= 100) {
       return next(new HandleError('Cart limit reached (100 items)', 400));
     }
-    cart.cartItems.push({ product: productId, quantity });
+    cart.cartItems.push({ product: productId, quantity: parsedQuantity });
   }
 
   await cart.save();
@@ -100,18 +146,18 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
-const analyticsContext = {
-  clientId:       req.body?.ga4ClientId || req.sessionId || null,
-  userId:         req.user?._id?.toString(),
-  sessionId:      req.sessionId         || null,
-  eventId:        req.body?.analyticsEventId || null,
-  eventSourceUrl: req.headers?.referer  || process.env.FRONTEND_URL,
-  clientIp:       req.ip,
-  userAgent:      req.headers?.['user-agent'],
-  fbp:            req.body?.fbp || req.cookies?._fbp || null,
-  fbc:            req.body?.fbc || req.cookies?._fbc || null,
-  attribution:    req.attribution       || null,
-};
+  const analyticsContext = {
+    clientId:       req.body?.ga4ClientId || req.sessionId || null,
+    userId:         req.user?._id?.toString(),
+    sessionId:      req.sessionId         || null,
+    eventId:        req.body?.analyticsEventId || null,
+    eventSourceUrl: req.headers?.referer  || process.env.FRONTEND_URL,
+    clientIp:       req.ip,
+    userAgent:      req.headers?.['user-agent'],
+    fbp:            req.body?.fbp || req.cookies?._fbp || null,
+    fbc:            req.body?.fbc || req.cookies?._fbc || null,
+    attribution:    req.attribution       || null,
+  };
 
   if (process.env.NODE_ENV !== 'production') {
     console.debug('[Cart Analytics] Cookie signals:', {
@@ -120,11 +166,11 @@ const analyticsContext = {
     });
   }
 
-  sendGA4AddToCart(product, quantity, analyticsContext).catch(err =>
+  sendGA4AddToCart(product, parsedQuantity, analyticsContext).catch(err =>
     console.error('[Analytics] GA4 add_to_cart failed (non-fatal):', err.message)
   );
 
-  sendMetaAddToCart(product, quantity, req.user, analyticsContext).catch(err =>
+  sendMetaAddToCart(product, parsedQuantity, req.user, analyticsContext).catch(err =>
     console.error('[Analytics] Meta add_to_cart failed (non-fatal):', err.message)
   );
 
@@ -135,7 +181,7 @@ const analyticsContext = {
       product:  product._id,
       name:     product.name,
       price:    currentPrice,
-      quantity,
+      quantity: parsedQuantity,
       image:    product.images?.[0]?.url || product.image?.[0]?.url,
       stock:    availableStock
     }
@@ -165,6 +211,9 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
   if (!productId || !quantity) {
     return next(new HandleError('Product ID and quantity are required', 400));
   }
+  if (!isValidObjectId(productId)) {
+    return next(new HandleError('Invalid product ID format', 400));
+  }
   if (quantity < 1) return next(new HandleError('Quantity must be at least 1', 400));
 
   const product = await Product.findById(productId);
@@ -184,10 +233,15 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
     );
   }
 
+  // Return the full updated cart so the client can reconcile totals
+  // without a follow-up GET request.
+  const updatedCart = await Cart.findOne({ user: req.user._id }).lean();
+
   return res.status(200).json({
-    success: true,
-    message: 'Cart updated',
-    item:    { product: product._id, quantity: finalQuantity }
+    success:   true,
+    message:   'Cart updated',
+    item:      { product: product._id, quantity: finalQuantity },
+    cartItems: updatedCart?.cartItems ?? []
   });
 });
 
@@ -199,6 +253,10 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
   const { productId } = req.params;
   if (!productId) return next(new HandleError('Product ID is required', 400));
 
+  if (!isValidObjectId(productId)) {
+    return next(new HandleError('Invalid product ID format', 400));
+  }
+
   if (req.user?._id) {
     await Cart.findOneAndUpdate(
       { user: req.user._id },
@@ -206,6 +264,9 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
     );
   }
 
+  // Fire-and-forget: if product was deleted between add and remove the
+  // error is swallowed intentionally. The analytics count will drift in
+  // that case — acceptable vs. blocking the remove response.
   try {
     const product = await Product.findById(productId);
     if (product) await product.incrementCart(false);
@@ -233,21 +294,36 @@ export const clearCart = handleAsyncError(async (req, res, next) => {
 
   if (items && items.length > 0) {
     try {
-      for (const item of items) {
-        await Product.findByIdAndUpdate(item.product, [
-          {
-            $set: {
-              'analytics.addedToCart': {
-                $max: [
-                  { $subtract: ['$analytics.addedToCart', item.quantity || 1] },
-                  0
-                ]
+      // Batched bulkWrite replaces N+1 sequential per-item awaited updates.
+      // All decrements are sent in a single round-trip; MongoDB applies them
+      // atomically per-document. A mid-batch failure will still leave some
+      // documents partially decremented — acceptable for a non-critical
+      // analytics counter where no rollback strategy exists.
+      const bulkOps = items
+        .filter(item => item.product && isValidObjectId(item.product))
+        .map(item => ({
+          updateOne: {
+            filter: { _id: item.product },
+            update: [
+              {
+                $set: {
+                  'analytics.addedToCart': {
+                    $max: [
+                      { $subtract: ['$analytics.addedToCart', item.quantity || 1] },
+                      0
+                    ]
+                  }
+                }
               }
-            }
+            ]
           }
-        ]);
+        }));
+
+      if (bulkOps.length > 0) {
+        await Product.bulkWrite(bulkOps, { ordered: false });
       }
     } catch { /* non-fatal */ }
+
     deleteCachePattern('product_conversion*').catch(() => {});
   }
 
@@ -265,12 +341,23 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Cart is empty', 400));
   }
 
+  // Validate ObjectId format on all items before hitting the DB.
+  for (const item of items) {
+    if (!item.product || !isValidObjectId(item.product)) {
+      return next(new HandleError(`Invalid product ID: ${item.product}`, 400));
+    }
+  }
+
+  // Single batched query replaces N+1 sequential findById calls.
+  const productIds = items.map(i => i.product);
+  const productMap = await fetchProductMap(productIds);
+
   let itemPrice = 0;
   const validItems   = [];
   const invalidItems = [];
 
   for (const item of items) {
-    const product = await Product.findById(item.product);
+    const product = productMap.get(item.product.toString());
 
     if (!product) {
       invalidItems.push({
@@ -358,6 +445,13 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   if (!items || items.length === 0)
     return next(new HandleError('Cart is empty', 400));
 
+  // Validate ObjectId format on all items before hitting the DB.
+  for (const item of items) {
+    if (!item.product || !isValidObjectId(item.product)) {
+      return next(new HandleError(`Invalid product ID: ${item.product}`, 400));
+    }
+  }
+
   const discount = await Discount.findActiveByCode(code);
   if (!discount)
     return next(new HandleError('Invalid or expired discount code', 400));
@@ -369,12 +463,16 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     );
   }
 
+  // Single batched query replaces N+1 sequential findById calls.
+  const productIds = items.map(i => i.product);
+  const productMap = await fetchProductMap(productIds);
+
   let itemPrice = 0;
   const validItems   = [];
   const invalidItems = [];
 
   for (const item of items) {
-    const product = await Product.findById(item.product);
+    const product = productMap.get(item.product.toString());
 
     if (!product) {
       invalidItems.push({ productId: item.product, reason: 'Product not found' });
@@ -421,10 +519,15 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  const canUse = await discount.canUserUse(userId ?? null);
+  // Coerce userId to a mongoose ObjectId string for consistent comparison
+  // inside canUserUse — req.user._id may be an ObjectId or string depending
+  // on auth middleware, and the Discount model likely compares with .toString().
+  const normalizedUserId = userId ? new mongoose.Types.ObjectId(userId.toString()) : null;
+
+  const canUse = await discount.canUserUse(normalizedUserId);
   if (!canUse.canUse) return next(new HandleError(canUse.reason, 400));
 
-  const validation = discount.validateCart(itemPrice, validItems, userId);
+  const validation = discount.validateCart(itemPrice, validItems, normalizedUserId);
   if (!validation.valid)
     return next(new HandleError(validation.reason, 400));
 
