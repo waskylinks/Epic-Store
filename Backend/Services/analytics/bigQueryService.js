@@ -221,13 +221,17 @@ const TABLE_SCHEMAS = {
 };
 
 // ─── SCHEMA INITIALIZATION ────────────────────────────────────────────────────
-
+ 
 /**
  * initializeBigQuerySchema
  *
  * Creates all five tables in the BigQuery dataset if they do not exist.
  * Idempotent — safe to call on every server startup.
- * Logs creation or confirmation for each table.
+ *
+ * Validates that GOOGLE_APPLICATION_CREDENTIALS points to a readable file
+ * before attempting any BigQuery API calls. A missing or unreadable credentials
+ * file will fail silently at the client instantiation level otherwise, causing
+ * confusing errors in queue lastError fields rather than a clear startup warning.
  *
  * Call this from server.js after MongoDB connection is established:
  *   await initializeBigQuerySchema();
@@ -239,14 +243,30 @@ export const initializeBigQuerySchema = async () => {
     console.warn('[BigQuery] BIGQUERY_PROJECT_ID or BIGQUERY_DATASET_ID not set — skipping schema init');
     return;
   }
-
+ 
+  // Eagerly validate credentials file existence at startup so failures surface
+  // here with a clear message rather than appearing later in queue lastError fields.
+  const credsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  if (credsPath) {
+    try {
+      fs.accessSync(path.resolve(credsPath), fs.constants.R_OK);
+    } catch {
+      console.warn(
+        `[BigQuery] GOOGLE_APPLICATION_CREDENTIALS file not readable at "${credsPath}". ` +
+        'BigQuery streaming inserts will fail until this is resolved. Server starting normally.'
+      );
+      // Do not proceed — getBigQuery() will fail the same way and pollute queue error fields
+      return;
+    }
+  }
+ 
   const dataset = getDataset();
-
+ 
   for (const [tableName, config] of Object.entries(TABLE_SCHEMAS)) {
     try {
       const table = dataset.table(tableName);
       const [exists] = await table.exists();
-
+ 
       if (!exists) {
         await dataset.createTable(tableName, {
           schema: config,
@@ -377,7 +397,7 @@ const transformToFunnelStateRow = (event) => {
 };
 
 // ─── STREAMING INSERT HELPERS ─────────────────────────────────────────────────
-
+ 
 /**
  * insertRows
  *
@@ -385,34 +405,52 @@ const transformToFunnelStateRow = (event) => {
  * The insertId uses the event_id (UUID from Phase 1) to prevent duplicate
  * rows when the queue retries a failed BigQuery insert.
  *
+ * BigQuery streaming inserts can return HTTP 200 with insertErrors in the
+ * response body — a successful API call does not guarantee successful ingestion.
+ * This function inspects the response for partial failures and throws if any
+ * row was rejected, so the queue worker records the real error rather than
+ * silently treating a rejected row as a success.
+ *
  * @param {string} tableName - One of the five table names
  * @param {Object[]} rows    - Array of row objects matching the table schema
  * @param {string} eventId   - UUID used as insertId for deduplication
  */
 const insertRows = async (tableName, rows, eventId) => {
   const table = getDataset().table(tableName);
-
-  const options = {
-    // insertId enables BigQuery to deduplicate within a 1-minute window
-    // Uses the event_id so retried inserts don't create duplicate rows
-    raw: true,
-  };
-
+ 
   const rawRows = rows.map(row => ({
     insertId: `${eventId}_${tableName}`,
     json:     row,
   }));
-
-  await table.insert(rawRows, options);
+ 
+  // table.insert returns [apiResponse] — BigQuery may return HTTP 200 with
+  // insertErrors for individual rows. We must inspect this rather than treating
+  // a non-throwing call as success.
+  const [apiResponse] = await table.insert(rawRows, { raw: true });
+ 
+  // insertErrors is an array when present; each entry has { index, errors[] }
+  const insertErrors = apiResponse?.insertErrors;
+  if (insertErrors && insertErrors.length > 0) {
+    const details = insertErrors
+      .map(e => e.errors?.map(err => err.message).join(', '))
+      .join('; ');
+    throw new Error(`[BigQuery] Partial insert failure in ${tableName}: ${details}`);
+  }
 };
 
 // ─── MAIN STREAMING FUNCTION ──────────────────────────────────────────────────
-
+ 
 /**
  * streamEventToBigQuery
  *
  * Streams a normalized analytics event payload to the appropriate BigQuery tables.
  * Called by the queue worker (analyticsQueue.js) for every event.
+ *
+ * When BigQuery is not configured (missing BIGQUERY_PROJECT_ID), the function
+ * returns a skipped result rather than throwing. This prevents development
+ * environments from polluting queue lastError fields with configuration errors
+ * and keeps BigQuery as a best-effort platform — the queue worker only gates
+ * allSucceeded on GA4 + Meta, so a BigQuery skip is non-fatal by design.
  *
  * Table routing:
  *   ALL events         → events table (raw events)
@@ -424,44 +462,56 @@ const insertRows = async (tableName, rows, eventId) => {
  * @returns {Promise<Object>}
  */
 export const streamEventToBigQuery = async (payload) => {
+  // Return a skipped result rather than throwing when BigQuery is not configured.
+  // Throwing here causes the queue to record a lastError on every event in
+  // development, polluting observability data and making dead_letter counts
+  // misleading. BigQuery is best-effort — the worker does not gate allSucceeded
+  // on BigQuery, so skipping is the correct signal.
   if (!process.env.BIGQUERY_PROJECT_ID) {
-    throw new Error('BIGQUERY_PROJECT_ID not configured');
+    return {
+      success: true,
+      skipped: true,
+      reason:  'BIGQUERY_PROJECT_ID not configured',
+    };
   }
-
+ 
   const event   = payload;
   const eventId = event.event_id;
-
+ 
   if (!eventId) {
     throw new Error('[BigQuery] event_id is required for streaming insert');
   }
-
+ 
   const insertPromises = [];
-
+  const tablesWritten  = [];
+ 
   // ── Always insert into events table ──────────────────────────────────────
   const eventRow = transformToEventRow(event);
   insertPromises.push(
-    insertRows('events', [eventRow], eventId)
+    insertRows('events', [eventRow], eventId).then(() => tablesWritten.push('events'))
   );
-
+ 
   // ── Route to specialized tables based on event type ───────────────────────
   switch (event.event_type) {
     case 'purchase': {
       const snapshotRow = transformToAttributionSnapshotRow(event);
       insertPromises.push(
         insertRows('attribution_snapshots', [snapshotRow], eventId)
+          .then(() => tablesWritten.push('attribution_snapshots'))
       );
       break;
     }
-
+ 
     case 'checkout_step':
     case 'begin_checkout': {
       const funnelRow = transformToFunnelStateRow(event);
       insertPromises.push(
         insertRows('funnel_states', [funnelRow], eventId)
+          .then(() => tablesWritten.push('funnel_states'))
       );
       break;
     }
-
+ 
     case 'checkout_abandon': {
       const funnelRow = transformToFunnelStateRow({
         ...event,
@@ -469,21 +519,25 @@ export const streamEventToBigQuery = async (payload) => {
       });
       insertPromises.push(
         insertRows('funnel_states', [funnelRow], eventId)
+          .then(() => tablesWritten.push('funnel_states'))
       );
       break;
     }
   }
-
-  // Run all inserts in parallel
+ 
+  // Run all table inserts in parallel. A partial failure in any table throws
+  // and propagates to the queue worker, which records it in platforms.bigquery.error.
   await Promise.all(insertPromises);
-
+ 
   return {
-    success:    true,
-    tablesWritten: ['events', ...(insertPromises.length > 1 ? [event.event_type === 'purchase' ? 'attribution_snapshots' : 'funnel_states'] : [])],
+    success:       true,
+    skipped:       false,
+    tablesWritten,
     eventId,
-    insertedAt: new Date().toISOString(),
+    insertedAt:    new Date().toISOString(),
   };
 };
+ 
 
 // ─── HEALTH CHECK ─────────────────────────────────────────────────────────────
 
