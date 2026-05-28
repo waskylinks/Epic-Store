@@ -149,6 +149,30 @@ export const createOrder = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('No order items provided', 400));
   }
 
+  // FIX: Validate stock for every ordered item before creating the order.
+  // createOrder is a standalone endpoint — it can be called directly, bypassing
+  // any upstream validateCheckout middleware. Without this check, orders can be
+  // created for out-of-stock or deleted products, causing fulfilment failures.
+  // We fetch all products in a single query to avoid N round-trips.
+  const productIds   = orderItems.map(item => item.product);
+  const products     = await Product.find({ _id: { $in: productIds } }).select('stock name');
+  const productMap   = new Map(products.map(p => [p._id.toString(), p]));
+
+  for (const item of orderItems) {
+    const product = productMap.get(item.product.toString());
+    if (!product) {
+      return next(new HandleError(`Product not found: ${item.product}`, 404));
+    }
+    if (product.stock < item.quantity) {
+      return next(
+        new HandleError(
+          `Insufficient stock for "${product.name}": ${product.stock} available, ${item.quantity} requested`,
+          400
+        )
+      );
+    }
+  }
+
   const serverAnalytics = extractAnalyticsData(req);
   const utmParams       = parseUTMParams(clientAttribution || req.query);
 
@@ -527,23 +551,61 @@ export const getOrderByReference = handleAsyncError(async (req, res, next) => {
 // ============================================
 // ANALYTICS (customer-facing)
 // ============================================
+
+// FIX: Replaced Order.find() + in-memory reduce with a MongoDB aggregation pipeline.
+// The original code fetched full order documents — including orderItems, paymentMeta,
+// paymentInfo, and all analytics sub-documents — into Node.js memory just to compute
+// four aggregate numbers. For users with large order histories this is a significant
+// memory and latency problem. The pipeline pushes all arithmetic to MongoDB and returns
+// a single lightweight document. $facet is used so that min/max date and the filtered
+// counts (refunded, returned, cancelled) are computed in one round-trip.
 export const getCustomerOrderAnalytics = handleAsyncError(async (req, res, next) => {
   const { userId } = req.params;
-  const orders     = await Order.find({ user: userId });
-  const sorted     = [...orders].sort((a, b) => a.createdAt - b.createdAt);
+
+  const [result] = await Order.aggregate([
+    { $match: { user: userId } },
+    {
+      $facet: {
+        totals: [
+          {
+            $group: {
+              _id:             null,
+              totalOrders:     { $sum: 1 },
+              totalSpent:      { $sum: '$totalPrice' },
+              firstOrderDate:  { $min: '$createdAt' },
+              lastOrderDate:   { $max: '$createdAt' },
+            },
+          },
+        ],
+        refunded: [
+          { $match: { 'refundInfo.status': 'completed' } },
+          { $count: 'count' },
+        ],
+        returned: [
+          { $match: { 'returnInfo.status': 'completed' } },
+          { $count: 'count' },
+        ],
+        cancelled: [
+          { $match: { orderStatus: 'Cancelled' } },
+          { $count: 'count' },
+        ],
+      },
+    },
+  ]);
+
+  const totals         = result?.totals?.[0]  || {};
+  const totalOrders    = totals.totalOrders    ?? 0;
+  const totalSpent     = totals.totalSpent     ?? 0;
 
   const analytics = {
-    totalOrders:     orders.length,
-    totalSpent:      orders.reduce((sum, o) => sum + (o.totalPrice || 0), 0),
-    averageOrderValue:
-      orders.length > 0
-        ? orders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) / orders.length
-        : 0,
-    firstOrderDate:  sorted.length > 0 ? sorted[0].createdAt              : null,
-    lastOrderDate:   sorted.length > 0 ? sorted[sorted.length - 1].createdAt : null,
-    refundedOrders:  orders.filter(o => o.refundInfo?.status  === 'completed').length,
-    returnedOrders:  orders.filter(o => o.returnInfo?.status  === 'completed').length,
-    cancelledOrders: orders.filter(o => o.orderStatus         === 'Cancelled').length
+    totalOrders,
+    totalSpent,
+    averageOrderValue: totalOrders > 0 ? totalSpent / totalOrders : 0,
+    firstOrderDate:    totals.firstOrderDate  ?? null,
+    lastOrderDate:     totals.lastOrderDate   ?? null,
+    refundedOrders:    result?.refunded?.[0]?.count  ?? 0,
+    returnedOrders:    result?.returned?.[0]?.count  ?? 0,
+    cancelledOrders:   result?.cancelled?.[0]?.count ?? 0,
   };
 
   return res.status(200).json({ success: true, userId, analytics });
