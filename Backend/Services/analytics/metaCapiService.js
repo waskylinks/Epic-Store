@@ -37,6 +37,13 @@
  *         Only set fbc when a real fbclid exists — never fabricate it.
  *         Send as-is. NEVER hash.
  *
+ * fbc resolution — single source of truth:
+ *   All fbc resolution (raw fbclid → formatted fbc) flows through formatFbc()
+ *   exported from this file. verifyPaymentController and any other callers
+ *   should import formatFbc from here rather than duplicating the implementation.
+ *   This ensures the format fb.1.{seconds}.{fbclid} is applied consistently
+ *   and future format changes only need to be made in one place.
+ *
  * Development vs Production strategy:
  *   Development:
  *     - Include META_TEST_EVENT_CODE in payload so events appear in
@@ -64,7 +71,12 @@ import axios  from 'axios';
  * formatFbc
  *
  * Formats a raw fbclid value into the Meta-required fbc format.
- * Per Meta's official documentation, fbc MUST be: fb.1.{timestamp}.{fbclid}
+ * Per Meta's official documentation, fbc MUST be: fb.1.{timestamp_seconds}.{fbclid}
+ *
+ * This is the single canonical implementation. All callers — including
+ * verifyPaymentController.js — must import this rather than maintaining
+ * a local copy. Duplicate implementations caused silent divergence risk:
+ * any future format change would need to be made in multiple files.
  *
  * A raw fbclid string passed directly as fbc causes a 400 Bad Request.
  * The _fbc cookie (set by the Meta Pixel) already contains the formatted
@@ -74,13 +86,38 @@ import axios  from 'axios';
  * @param {string} fbclid - Raw click ID from URL param or attribution
  * @returns {string|null} Formatted fbc string or null if fbclid is falsy
  */
-const formatFbc = (fbclid) => {
+export const formatFbc = (fbclid) => {
   if (!fbclid || typeof fbclid !== 'string') return null;
   // If it already looks like a properly formatted fbc, return as-is
   if (fbclid.startsWith('fb.1.')) return fbclid;
   // Format raw fbclid into fb.1.{timestamp_seconds}.{fbclid}
   const timestampSeconds = Math.floor(Date.now() / 1000);
   return `fb.1.${timestampSeconds}.${fbclid}`;
+};
+
+/**
+ * resolveFbc
+ *
+ * Resolves the correct fbc value from a context object using a defined
+ * priority chain. Centralises the fallback logic so callers don't need
+ * to reproduce it inline — and so the chain is auditable in one place.
+ *
+ * Priority:
+ *   1. context.fbc          — already-formatted value from _fbc cookie (most reliable)
+ *   2. context.fbclid       — raw click ID on context, needs formatting
+ *   3. attribution.fbclid   — raw click ID from Phase 3 attribution middleware
+ *
+ * Returns null if no fbclid signal is available — never fabricates a value.
+ * A fabricated fbc causes a 400 from Meta and marks the event as failed.
+ *
+ * @param {Object} context - Analytics context
+ * @returns {string|null}
+ */
+export const resolveFbc = (context = {}) => {
+  if (context.fbc)                    return context.fbc;
+  if (context.fbclid)                 return formatFbc(context.fbclid);
+  if (context.attribution?.fbclid)    return formatFbc(context.attribution.fbclid);
+  return null;
 };
 
 // ─── PII HASHING ──────────────────────────────────────────────────────────────
@@ -127,6 +164,13 @@ const hash = (value, type = 'default') => {
  *
  * Critical: fbp and fbc are NEVER hashed — they are sent as-is.
  * All other PII fields MUST be hashed with SHA-256.
+ *
+ * Phone field resolution:
+ *   The User model stores phone as `phone` but auth middleware may expose
+ *   the JWT payload with different field names. `resolvePhone` checks the
+ *   known field variants in priority order so the hash is computed regardless
+ *   of which auth path produced the user object — silently missing phone
+ *   reduces Meta match rate.
  *
  * Match rate is directly correlated with conversion attribution accuracy.
  * A match rate below 40% indicates insufficient user data is being sent.
@@ -177,7 +221,26 @@ const buildUserData = (userData = {}) => {
     ...(userAgent && { client_user_agent: userAgent }),
   };
 };
+
+// ─── PHONE FIELD RESOLVER ─────────────────────────────────────────────────────
+
+/**
+ * resolvePhone
+ *
+ * Resolves the phone number from a user object regardless of which field
+ * name was used. req.user may be a full Mongoose document, a lean object,
+ * or a JWT payload — field names vary across auth paths.
+ *
+ * Checked in priority order: phone → phoneNo → shippingInfo.phoneNo
+ *
+ * @param {Object} user
+ * @returns {string|null}
+ */
+const resolvePhone = (user) =>
+  user?.phone || user?.phoneNo || user?.shippingInfo?.phoneNo || null;
+
 // ─── CORE SENDER ─────────────────────────────────────────────────────────────
+
 /**
  * sendMetaEvent
  *
@@ -289,36 +352,33 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
  * This is the most critical CAPI event — it feeds Meta's conversion
  * attribution and campaign optimization algorithm (ROAS calculation).
  *
- * fbc handling:
- *   Priority 1: context.fbc — the _fbc cookie value set by Meta Pixel.
- *               Already formatted as fb.1.{timestamp}.{fbclid}. Use as-is.
- *   Priority 2: context.attribution.fbclid — raw click ID from Phase 3.
- *               Must be formatted into fb.1.{timestamp}.{fbclid} via formatFbc().
- *               Passing raw fbclid as fbc causes a 400 Bad Request.
- *   If neither is present: omit fbc entirely — never fabricate it.
+ * fbc resolution is delegated to resolveFbc() which applies a defined
+ * priority chain in one place rather than inline fallback chains that
+ * are hard to audit and can produce incorrectly-formatted values.
  *
  * @param {Object} order    - Mongoose Order document (post-save)
- * @param {Object} user     - Mongoose User document
+ * @param {Object} user     - Mongoose User document or JWT payload
  * @param {Object} context  - Analytics context from the event payload
  * @returns {Promise<Object>}
  */
-
 export const sendMetaPurchase = async (order, user, context = {}) => {
   const {
     eventId,
     fbp,
-    fbc,
     eventSourceUrl,
     clientIp,
     userAgent,
     attribution,
   } = context;
 
-  const resolvedFbc = fbc || formatFbc(attribution?.fbclid) || null;
+  // All fbc resolution goes through resolveFbc() — single auditable chain.
+  const resolvedFbc = resolveFbc(context);
 
   const userData = {
     email:     user.email,
-    phone:     order.shippingInfo?.phoneNo,
+    // resolvePhone handles the field name variance between Mongoose documents,
+    // lean objects, and JWT payloads — silent null previously reduced match rate.
+    phone:     resolvePhone(user) || order.shippingInfo?.phoneNo,
     firstName: user.firstName,
     lastName:  user.lastName,
     userId:    user._id?.toString(),
@@ -395,10 +455,11 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
  * @returns {Promise<Object>}
  */
 export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => {
-  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
+  const resolvedFbc = resolveFbc(context);
 
   const userData = {
     email:     user?.email,
+    phone:     resolvePhone(user),
     firstName: user?.firstName,
     lastName:  user?.lastName,
     userId:    user?._id?.toString(),
@@ -431,20 +492,27 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
  * Sends a Meta CAPI `AddToCart` event.
  * Feeds Meta's retargeting audiences (abandoned cart campaigns).
  *
+ * Called from cartController as:
+ *   sendMetaAddToCart(product, quantity, req.user, analyticsContext)
+ *
+ * req.user may be a Mongoose document, a lean object, or a JWT payload —
+ * phone field name varies across these. resolvePhone() handles all variants.
+ *
  * @param {Object} product  - Product document
  * @param {number} quantity - Quantity added
- * @param {Object} user     - User document (may be null for anonymous)
+ * @param {Object} user     - User document or JWT payload (may be null for anonymous)
  * @param {Object} context  - Analytics context
  * @returns {Promise<Object>}
  */
-
 export const sendMetaAddToCart = async (product, quantity, user, context = {}) => {
   const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
-  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
+  const resolvedFbc = resolveFbc(context);
 
   const userData = {
     email:     user?.email,
-    phone:     user?.phone || user?.phoneNo || null,
+    // resolvePhone covers phone, phoneNo, and shippingInfo.phoneNo variants —
+    // a silent null here reduces Meta match rate for retargeting audiences.
+    phone:     resolvePhone(user),
     firstName: user?.firstName,
     lastName:  user?.lastName,
     userId:    user?._id?.toString(),
@@ -485,11 +553,11 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
  */
 export const sendMetaViewContent = async (product, user, context = {}) => {
   const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
-  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
+  const resolvedFbc = resolveFbc(context);
 
   const userData = {
     email:     user?.email,
-    phone:     user?.phone || user?.phoneNo || null,
+    phone:     resolvePhone(user),
     userId:    user?._id?.toString(),
     fbp:       context.fbp,
     fbc:       resolvedFbc,
@@ -522,7 +590,7 @@ export const sendMetaViewContent = async (product, user, context = {}) => {
  * @returns {Promise<Object>}
  */
 export const sendMetaCompleteRegistration = async (user, context = {}) => {
-  const resolvedFbc = context.fbc || formatFbc(context.attribution?.fbclid) || null;
+  const resolvedFbc = resolveFbc(context);
 
   const userData = {
     email:     user.email,
