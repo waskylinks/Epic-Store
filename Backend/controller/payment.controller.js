@@ -508,9 +508,17 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
+  // Validate gateway against known list before using it in any response
+  const SUPPORTED_GATEWAYS = ['stripe', 'paystack', 'flutterwave'];
+  if (!SUPPORTED_GATEWAYS.includes(session.gateway)) {
+    return next(new HandleError(
+      "Payment session contains an unsupported gateway. Please start a new payment.", 400
+    ));
+  }
+
   if (session.gateway !== gateway) {
     return next(new HandleError(
-      `Gateway mismatch: this payment was initialized with ${session.gateway}, not ${gateway}`, 400
+      `Gateway mismatch: this payment was initialized with a different gateway, not ${gateway}`, 400
     ));
   }
 
@@ -518,6 +526,9 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     $or: [
       { "paymentInfo.reference":             orderReference },
       { "paymentInfo.stripePaymentIntentId": reference      },
+      // Only include the third condition when reference differs from orderReference
+      // (i.e. Stripe PaymentIntent ID vs ORD- reference). For non-Stripe gateways
+      // they are the same value, making this condition redundant but harmless.
       { "paymentInfo.reference":             reference       }
     ]
   }).lean();
@@ -593,6 +604,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   const fulfillmentSLA = calculateFulfillmentSLA(new Date(), 'Processing');
 
   // ── Extract analytics fields from request body ────────────────────────────
+
   const analyticsEventId  = req.body?.analyticsEventId  || null;
   const clientTimestamp   = req.body?.clientTimestamp    || null;
   const ga4ClientId       = req.body?.ga4ClientId        || null;
@@ -681,6 +693,7 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   }
 
   // ── Resolve RecoveryEmail outcome ─────────────────────────────────────────
+
   try {
     const RecoveryEmail = (await import('../models/recovery-email-model.js')).default;
 
@@ -707,26 +720,40 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     console.error('[payment] RecoveryEmail outcome resolution failed:', err.message);
   }
 
+  // ── Populate order BEFORE sending response ────────────────────────────────
+  // Must happen here — once res.json() is called the populated data is discarded.
+
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch {
-    // Non-fatal
+    // Non-fatal — client receives unpopulated product refs as fallback
   }
 
-  // ── Fire analytics via orchestrator ──────────────────────────
+  // ── Build analytics overrides without mutating req.body ──────────────────
+  // Passing overrides explicitly avoids silent coupling if firePurchaseEvent
+  // is ever called from another context that doesn't carry a mutated req.body.
 
-  req.body.resolvedOrderReference = orderReference;
-  req.body.fbc                    = resolvedFbc         || req.body.fbc         || null;
-  req.body.ga4ClientId            = ga4ClientId         || req.body.ga4ClientId || null;
-  req.body.analyticsEventId       = analyticsEventId    || req.body.analyticsEventId || null;
+  const purchaseEventOverrides = {
+    resolvedOrderReference: orderReference,
+    fbc:              resolvedFbc         || req.body.fbc         || null,
+    ga4ClientId:      ga4ClientId         || req.body.ga4ClientId || null,
+    analyticsEventId: analyticsEventId    || req.body.analyticsEventId || null,
+  };
 
-  firePurchaseEvent(order, user, req).catch(err =>
-    console.error('[Analytics] Purchase event failed (non-fatal):', err.message)
-  );
+  // ── Fire analytics via orchestrator ──────────────────────────────────────
+  // Wrapped in async IIFE with try/catch so synchronous throws inside
+  // firePurchaseEvent (e.g. missing import) are caught rather than becoming
+  // unhandled exceptions — .catch() alone only catches Promise rejections.
 
-  stitchIdentityFromRequest(req).catch(err =>
-    console.error('[Identity] Purchase stitch failed (non-fatal):', err.message)
-  );
+  (async () => {
+    try {
+      await firePurchaseEvent(order, user, req, purchaseEventOverrides);
+    } catch (err) {
+      console.error('[Analytics] Purchase event failed (non-fatal):', err.message);
+    }
+  })();
+
+  // ── Send response ─────────────────────────────────────────────────────────
 
   res.status(200).json({
     success:    true,
@@ -736,7 +763,18 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   });
 
   // ── Post-payment async tasks ──────────────────────────────────────────────
+
   setImmediate(async () => {
+
+    // ── Identity stitch ───────────────────────────────────────────────────
+    // Moved into setImmediate so all post-response side effects live in one
+    // place and execution order is consistent.
+
+    try {
+      await stitchIdentityFromRequest(req);
+    } catch (err) {
+      console.error('[Identity] Purchase stitch failed (non-fatal):', err.message);
+    }
 
     try {
       const checkout = await Checkout.findOne({
