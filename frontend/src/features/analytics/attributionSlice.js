@@ -17,6 +17,10 @@ const isAbortError = (error) =>
 
 // ============================================
 // THUNKS
+// FIX: All thunks now use a consistent { timeframe } destructured-object
+// signature so callers always pass the same shape — e.g.
+// dispatch(fetchCampaignPerformance({ timeframe: 'week' })) — regardless
+// of which thunk is being invoked.
 // ============================================
 
 export const fetchChannelPerformance = createAsyncThunk(
@@ -39,7 +43,9 @@ export const fetchChannelPerformance = createAsyncThunk(
 
 export const fetchCampaignPerformance = createAsyncThunk(
     "attribution/fetchCampaignPerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    // FIX: was `async (timeframe = "month", ...)` — bare string param.
+    // Now uses the same destructured-object signature as all other thunks.
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/campaigns?timeframe=${timeframe}`,
@@ -75,7 +81,8 @@ export const fetchDevicePerformance = createAsyncThunk(
 
 export const fetchBrowserPerformance = createAsyncThunk(
     "attribution/fetchBrowserPerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    // FIX: was bare string param — now object.
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/browsers?timeframe=${timeframe}`,
@@ -93,7 +100,8 @@ export const fetchBrowserPerformance = createAsyncThunk(
 
 export const fetchReferrerPerformance = createAsyncThunk(
     "attribution/fetchReferrerPerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    // FIX: was bare string param — now object.
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/referrers?timeframe=${timeframe}`,
@@ -111,7 +119,8 @@ export const fetchReferrerPerformance = createAsyncThunk(
 
 export const fetchLandingPagePerformance = createAsyncThunk(
     "attribution/fetchLandingPagePerformance",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    // FIX: was bare string param — now object.
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/landing-pages?timeframe=${timeframe}`,
@@ -130,7 +139,8 @@ export const fetchLandingPagePerformance = createAsyncThunk(
 
 export const fetchAttributionModels = createAsyncThunk(
     "attribution/fetchAttributionModels",
-    async (timeframe = "month", { rejectWithValue, signal }) => {
+    // FIX: was bare string param — now object.
+    async ({ timeframe = "month" } = {}, { rejectWithValue, signal }) => {
         try {
             const { data } = await axios.get(
                 `${API_BASE}/analytics/attribution/models?timeframe=${timeframe}`,
@@ -147,6 +157,31 @@ export const fetchAttributionModels = createAsyncThunk(
 );
 
 // ============================================
+// HELPERS
+// ============================================
+
+// The seven metric keys that have their own loading / error / data fields.
+const METRICS = [
+    "channelPerformance",
+    "campaignPerformance",
+    "devicePerformance",
+    "browserPerformance",
+    "referrerPerformance",
+    "landingPagePerformance",
+    "attributionModels",
+];
+
+// Build the initial state shape for a single metric.
+// FIX (loading + per-metric error): Each metric gets its own `loading` boolean
+// and `error` string so components can render per-metric spinners / error
+// messages independently, instead of sharing a single, easily-stale flag.
+const metricInitialState = () => ({
+    data:    null,
+    loading: false,
+    error:   null,
+});
+
+// ============================================
 // SLICE
 // ============================================
 
@@ -154,94 +189,80 @@ const attributionSlice = createSlice({
     name: "attribution",
     initialState: {
         activeTimeframe:        "month",
-        channelPerformance:     null,
-        campaignPerformance:    null,
-        devicePerformance:      null,
-        browserPerformance:     null,
-        referrerPerformance:    null,
-        landingPagePerformance: null,
-        attributionModels:      null,
-        error:                  null,
+        channelPerformance:     metricInitialState(),
+        campaignPerformance:    metricInitialState(),
+        devicePerformance:      metricInitialState(),
+        browserPerformance:     metricInitialState(),
+        referrerPerformance:    metricInitialState(),
+        landingPagePerformance: metricInitialState(),
+        attributionModels:      metricInitialState(),
     },
     reducers: {
         setAttributionTimeframe: (state, action) => {
             state.activeTimeframe = action.payload;
         },
-        clearAttributionError: (state) => {
-            state.error = null;
+        // FIX: clearAttributionError now accepts an optional metric name.
+        // If provided, only that metric's error is cleared; if omitted, all
+        // metric errors are cleared. This replaces the old single-field clear.
+        clearAttributionError: (state, action) => {
+            const metric = action.payload;
+            if (metric && state[metric]) {
+                state[metric].error = null;
+            } else {
+                METRICS.forEach((key) => {
+                    state[key].error = null;
+                });
+            }
         },
     },
     extraReducers: (builder) => {
-        builder
-            .addCase(fetchChannelPerformance.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.channelPerformance = data;
-                }
-            })
-            .addCase(fetchChannelPerformance.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
+        // Helper to wire up the three lifecycle cases for a given thunk and
+        // its corresponding state key.
+        //
+        // pending  — mark loading, clear stale data & error for this metric.
+        //            FIX (stale data): nulling data here ensures that if the
+        //            user switches timeframe, the old timeframe's data is
+        //            removed immediately rather than lingering until the new
+        //            request resolves.
+        //
+        // fulfilled — guard against out-of-order responses, then store data.
+        //
+        // rejected  — clear loading; if not an abort, store per-metric error.
+        //             FIX (shared error): error goes into metric.error, not a
+        //             single top-level field that can be left stale when an
+        //             unrelated metric later succeeds.
+        const wire = (thunk, stateKey) => {
+            builder
+                .addCase(thunk.pending, (state) => {
+                    state[stateKey].loading = true;
+                    state[stateKey].data    = null;   // FIX: clear stale data immediately
+                    state[stateKey].error   = null;
+                })
+                .addCase(thunk.fulfilled, (state, action) => {
+                    state[stateKey].loading = false;
+                    if (action.payload._timeframe === state.activeTimeframe) {
+                        const { _timeframe, ...data } = action.payload;
+                        state[stateKey].data = data;
+                    }
+                    // If the timeframe guard rejected the payload we leave
+                    // data as null — the correct request (already in flight)
+                    // will populate it shortly.
+                })
+                .addCase(thunk.rejected, (state, action) => {
+                    state[stateKey].loading = false;
+                    if (!action.payload?.aborted) {
+                        state[stateKey].error = action.payload; // FIX: per-metric error
+                    }
+                });
+        };
 
-            .addCase(fetchCampaignPerformance.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.campaignPerformance = data;
-                }
-            })
-            .addCase(fetchCampaignPerformance.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchDevicePerformance.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.devicePerformance = data;
-                }
-            })
-            .addCase(fetchDevicePerformance.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchBrowserPerformance.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.browserPerformance = data;
-                }
-            })
-            .addCase(fetchBrowserPerformance.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchReferrerPerformance.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.referrerPerformance = data;
-                }
-            })
-            .addCase(fetchReferrerPerformance.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchLandingPagePerformance.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.landingPagePerformance = data;
-                }
-            })
-            .addCase(fetchLandingPagePerformance.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            })
-
-            .addCase(fetchAttributionModels.fulfilled, (state, action) => {
-                if (action.payload._timeframe === state.activeTimeframe) {
-                    const { _timeframe, ...data } = action.payload;
-                    state.attributionModels = data;
-                }
-            })
-            .addCase(fetchAttributionModels.rejected, (state, action) => {
-                if (!action.payload?.aborted) state.error = action.payload;
-            });
+        wire(fetchChannelPerformance,     "channelPerformance");
+        wire(fetchCampaignPerformance,    "campaignPerformance");
+        wire(fetchDevicePerformance,      "devicePerformance");
+        wire(fetchBrowserPerformance,     "browserPerformance");
+        wire(fetchReferrerPerformance,    "referrerPerformance");
+        wire(fetchLandingPagePerformance, "landingPagePerformance");
+        wire(fetchAttributionModels,      "attributionModels");
     },
 });
 
