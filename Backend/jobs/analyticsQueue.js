@@ -54,8 +54,14 @@ export const getNextRetryDelay = (attempts) =>
 
 const dispatchToPlatforms = async (event) => {
   const { eventType, payload } = event;
-  const { order, user, context } = payload;
-
+ 
+  // Payload shape from buildPurchaseEvent stores data under named keys.
+  // Destructure defensively — callers that omit these keys get undefined
+  // rather than a throw, which is handled by the null guards in each service.
+  const order   = payload?.order   ?? null;
+  const user    = payload?.user    ?? null;
+  const context = payload?.context ?? payload ?? {};
+ 
   const ga4Promise = (async () => {
     switch (eventType) {
       case 'purchase':
@@ -74,7 +80,7 @@ const dispatchToPlatforms = async (event) => {
         return { success: true, skipped: true, reason: 'no_ga4_mapping' };
     }
   })();
-
+ 
   const metaPromise = (async () => {
     switch (eventType) {
       case 'purchase':
@@ -88,36 +94,57 @@ const dispatchToPlatforms = async (event) => {
         return { success: true, skipped: true, reason: 'no_meta_mapping' };
     }
   })();
-
+ 
   const bqPromise = streamEventToBigQuery(payload);
-
+ 
   const [ga4Result, metaResult, bqResult] = await Promise.allSettled([
     ga4Promise,
     metaPromise,
     bqPromise,
   ]);
-
+ 
   const normalize = (settled) => {
     if (settled.status === 'fulfilled') {
-      return { success: settled.value?.success !== false, error: null, sentAt: new Date() };
+      return {
+        success: settled.value?.success !== false,
+        skipped: settled.value?.skipped === true,
+        error:   null,
+        sentAt:  new Date(),
+      };
     }
-    return { success: false, error: settled.reason?.message || String(settled.reason), sentAt: null };
+    return {
+      success: false,
+      skipped: false,
+      error:   settled.reason?.message || String(settled.reason),
+      sentAt:  null,
+    };
   };
-
+ 
   const platforms = {
     ga4:      normalize(ga4Result),
     meta:     normalize(metaResult),
     bigquery: normalize(bqResult),
   };
-
-  // BigQuery is best-effort — billing may not be enabled in all environments.
-  // GA4 + Meta success is sufficient to mark the event completed.
-  platforms.allSucceeded = platforms.ga4.success && platforms.meta.success;
-
+ 
+  // An event is considered fully succeeded only when GA4 and Meta both either
+  // dispatched successfully or were intentionally skipped (no mapping for this
+  // event type). A skipped platform is not a failure — it means this event type
+  // has no handler on that platform. Previously, skipped events were silently
+  // counted as successes via success: true, which was correct, but the skipped
+  // flag was not propagated into the normalized result, making it invisible in
+  // queue health metrics.
+  const ga4Done  = platforms.ga4.success  && (platforms.ga4.skipped  || !platforms.ga4.error);
+  const metaDone = platforms.meta.success && (platforms.meta.skipped || !platforms.meta.error);
+  platforms.allSucceeded = ga4Done && metaDone;
+ 
+  // Track whether the event was entirely skipped on both primary platforms
+  // so queue health can distinguish zero-dispatch completions from real sends.
+  platforms.allSkipped = platforms.ga4.skipped && platforms.meta.skipped;
+ 
   if (!platforms.bigquery.success && !platforms.bigquery.skipped) {
     console.warn('[AnalyticsQueue] BigQuery dispatch failed (non-fatal):', platforms.bigquery.error);
   }
-
+ 
   return platforms;
 };
 
@@ -157,32 +184,46 @@ export const enqueueAnalyticsEvent = async (eventType, payload) => {
 };
 
 // ─── QUEUE WORKER ─────────────────────────────────────────────────────────────
-
+ 
 /**
  * Main worker — called by cronRegistry.js every 60 seconds.
- * Returns a summary: { processed, succeeded, failed, deadLettered }
+ * Returns a summary: { processed, succeeded, failed, deadLettered, skipped }
+ *
+ * Events are processed concurrently up to CONCURRENCY limit via
+ * Promise.allSettled — previously the for loop was serial despite the
+ * CONCURRENCY constant implying parallel execution.
+ *
+ * Each event now does a single DB write after dispatch rather than two
+ * (set-to-processing + update-with-result), reducing round-trips per event.
  */
-export const processAnalyticsQueue = async () => {
-  const summary = { processed: 0, succeeded: 0, failed: 0, deadLettered: 0 };
 
+export const processAnalyticsQueue = async () => {
+  const summary = { processed: 0, succeeded: 0, failed: 0, deadLettered: 0, skipped: 0 };
+ 
   const events = await AnalyticsEvent.findEligible(CONCURRENCY);
   if (events.length === 0) return summary;
-
+ 
   console.debug(`[AnalyticsQueue] Processing ${events.length} event(s)`);
-
-  for (const event of events) {
-    summary.processed++;
-
-    await AnalyticsEvent.findByIdAndUpdate(event._id, {
-      $set: { status: 'processing' },
-    });
-
+ 
+  // Mark all fetched events as 'processing' in a single batched write
+  // before dispatching — prevents a second cron sweep from picking up
+  // the same events while this sweep is in flight.
+  const eventIds = events.map(e => e._id);
+  await AnalyticsEvent.updateMany(
+    { _id: { $in: eventIds } },
+    { $set: { status: 'processing' } }
+  );
+ 
+  // Process events concurrently rather than serially. Each task resolves to
+  // a summary increment so we can tally results after allSettled.
+  const tasks = events.map(async (event) => {
+    const newAttempts = event.attempts + 1;
+ 
     try {
-      const platforms   = await dispatchToPlatforms(event);
-      const newAttempts = event.attempts + 1;
-
+      const platforms = await dispatchToPlatforms(event);
+ 
       if (platforms.allSucceeded) {
-        // GA4 + Meta both succeeded — mark completed regardless of BigQuery
+        // Single write — replaces the two-write pattern (set processing, then result).
         await AnalyticsEvent.findByIdAndUpdate(event._id, {
           $set: {
             status:      'completed',
@@ -192,10 +233,10 @@ export const processAnalyticsQueue = async () => {
             lastError:   null,
           },
         });
-        summary.succeeded++;
-
+ 
+        return platforms.allSkipped ? 'skipped' : 'succeeded';
+ 
       } else if (newAttempts >= MAX_RETRIES) {
-        // GA4 or Meta failed after max retries → dead_letter
         await AnalyticsEvent.findByIdAndUpdate(event._id, {
           $set: {
             status:    'dead_letter',
@@ -208,16 +249,18 @@ export const processAnalyticsQueue = async () => {
             }),
           },
         });
-        summary.deadLettered++;
-
-        await sendDeadLetterAlert(event, platforms).catch(err =>
+ 
+        // Pass newAttempts explicitly so the alert reflects the correct final
+        // attempt count, not event.attempts which is the pre-update value.
+        await sendDeadLetterAlert(event, platforms, newAttempts).catch(err =>
           console.error('[AnalyticsQueue] Dead-letter Slack alert failed:', err.message)
         );
-
+ 
+        return 'deadLettered';
+ 
       } else {
-        // GA4 or Meta failed — schedule retry. BigQuery failure alone never reaches here.
         const delay = getNextRetryDelay(event.attempts);
-
+ 
         await AnalyticsEvent.findByIdAndUpdate(event._id, {
           $set: {
             status:      'failed',
@@ -231,18 +274,17 @@ export const processAnalyticsQueue = async () => {
             }),
           },
         });
-        summary.failed++;
+ 
+        return 'failed';
       }
-
+ 
     } catch (unexpectedError) {
-      const newAttempts = event.attempts + 1;
-
       console.error('[AnalyticsQueue] Unexpected error processing event:', {
         eventId:   event.eventId,
         eventType: event.eventType,
         error:     unexpectedError.message,
       });
-
+ 
       if (newAttempts >= MAX_RETRIES) {
         await AnalyticsEvent.findByIdAndUpdate(event._id, {
           $set: {
@@ -251,7 +293,7 @@ export const processAnalyticsQueue = async () => {
             lastError: unexpectedError.message,
           },
         });
-        summary.deadLettered++;
+        return 'deadLettered';
       } else {
         await AnalyticsEvent.findByIdAndUpdate(event._id, {
           $set: {
@@ -261,14 +303,30 @@ export const processAnalyticsQueue = async () => {
             lastError:   unexpectedError.message,
           },
         });
-        summary.failed++;
+        return 'failed';
       }
     }
+  });
+ 
+  const results = await Promise.allSettled(tasks);
+ 
+  for (const result of results) {
+    summary.processed++;
+    if (result.status === 'fulfilled') {
+      const bucket = result.value; // 'succeeded' | 'skipped' | 'failed' | 'deadLettered'
+      if (bucket in summary) summary[bucket]++;
+    } else {
+      // The task itself threw — shouldn't happen since each task catches
+      // internally, but guard against it to avoid an under-counted summary.
+      summary.failed++;
+      console.error('[AnalyticsQueue] Task promise rejected unexpectedly:', result.reason);
+    }
   }
-
+ 
   console.debug('[AnalyticsQueue] Sweep complete:', summary);
   return summary;
 };
+ 
 
 // ─── DEAD-LETTER ALERT ────────────────────────────────────────────────────────
 
