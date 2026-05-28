@@ -3,6 +3,22 @@ import axios from "axios";
 
 axios.defaults.withCredentials = true;
 
+
+const SERVER_SESSION_KEY = 'epic_session';
+
+const syncServerSessionId = (sessionId) => {
+  if (!sessionId) return;
+  try {
+    localStorage.setItem(SERVER_SESSION_KEY, JSON.stringify({
+      id:        sessionId,
+      lastSeen:  Date.now(),
+      startedAt: new Date().toISOString(),
+    }));
+  } catch {
+    // localStorage unavailable (private browsing quota exceeded, etc.) — non-fatal
+  }
+};
+
 // REGISTER
 export const register = createAsyncThunk(
   "user/register",
@@ -296,6 +312,11 @@ const userSlice = createSlice({
       });
 
     // LOAD USER
+    // FIX (session ID collision): on success, write the server's sessionId
+    // into localStorage so getOrCreateSessionId() returns the same value
+    // that req.sessionId carries on every backend request. Without this,
+    // browser analytics events and server order events use two different
+    // session ID values and BigQuery session joins produce zero rows.
     builder
       .addCase(loadUser.pending,   (state) => { state.loading = true; })
       .addCase(loadUser.fulfilled, (state, action) => {
@@ -303,6 +324,10 @@ const userSlice = createSlice({
         state.user            = action.payload.user || null;
         state.isAuthenticated = Boolean(action.payload.user);
         state.initializing    = false;
+
+        // Sync server session ID to localStorage — runs outside the Redux
+        // state update since localStorage is a side effect, not Redux state.
+        syncServerSessionId(action.payload.sessionId);
       })
       .addCase(loadUser.rejected, (state) => {
         state.loading         = false;

@@ -43,6 +43,21 @@
  *      constant does not exist in the analytics.js constants file. Only
  *      EMAIL_VERIFIED exists and was already present. SIGN_UP was a dead
  *      entry that never matched, silently skipping fast-path dispatch.
+ *   5. firePurchaseEvent now accepts and merges purchaseEventOverrides.
+ *      verifyPaymentController builds resolvedFbc (correctly formatted),
+ *      resolvedOrderReference (ORD-xxx), and analyticsEventId and passes
+ *      them as a fourth argument. The previous three-parameter wrapper
+ *      silently dropped that argument, meaning:
+ *        - resolvedFbc never reached the context — raw req.body.fbc was
+ *          used instead, bypassing formatFbc() and causing Meta 400 errors
+ *        - resolvedOrderReference never reached customData.order_id in
+ *          sendMetaPurchase — MongoDB ObjectId was used instead of ORD-xxx,
+ *          breaking Meta's order reconciliation
+ *        - analyticsEventId from purchaseEventOverrides was ignored —
+ *          fireAnalyticsEvent fell back to req.body.analyticsEventId which
+ *          is the same value, so this was harmless, but the intent was lost
+ *      The fix threads overrides through fireAnalyticsEvent into context so
+ *      all three values reach both the fast path and the queue path.
  */
 
 import { buildPurchaseEvent, buildCheckoutStepEvent, buildAnalyticsEvent, validateAnalyticsEvent, ANALYTICS_EVENTS } from '../../utils/analyticsEvent.js';
@@ -134,7 +149,7 @@ const dispatchFastPath = async (eventType, { order, user, checkout, context, met
  * Usage in controllers:
  *
  *   // Purchase event (from verifyPaymentController):
- *   fireAnalyticsEvent('purchase', { order, user, req });
+ *   fireAnalyticsEvent('purchase', { order, user, req }, {}, overrides);
  *
  *   // Checkout initiation (from checkoutController):
  *   fireAnalyticsEvent('begin_checkout', { checkout, user, req });
@@ -147,14 +162,22 @@ const dispatchFastPath = async (eventType, { order, user, checkout, context, met
  *     console.error('[Analytics] Failed:', err.message)
  *   );
  *
- * @param {string} eventType  - One of ANALYTICS_EVENTS constants
- * @param {Object} data       - Event data (order, user, checkout, req, etc.)
- * @param {Object} [options]  - Optional overrides
+ * @param {string} eventType   - One of ANALYTICS_EVENTS constants
+ * @param {Object} data        - Event data (order, user, checkout, req, etc.)
+ * @param {Object} [options]   - Optional dispatch flags
  * @param {boolean} [options.fastPath=true] - Fire immediate dispatch for high-value events
  * @param {boolean} [options.queue=true]    - Enqueue for reliable delivery
+ * @param {Object} [overrides] - Values from the controller that take priority over
+ *                               req.body equivalents. Supported keys:
+ *                                 fbc                    — pre-formatted fbc string
+ *                                 ga4ClientId            — GA4 client ID
+ *                                 analyticsEventId       — browser pixel event UUID
+ *                                 resolvedOrderReference — ORD-xxx reference
+ *                               These are merged into context AFTER it is built
+ *                               from req so they always win over raw req.body values.
  * @returns {Promise<void>}
  */
-export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
+export const fireAnalyticsEvent = async (eventType, data, options = {}, overrides = {}) => {
   const {
     fastPath = true,
     queue    = true,
@@ -179,19 +202,13 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   // ── Resolve order reference ───────────────────────────────────────────────
   // IIFE is required — the previous ternary had an operator precedence bug
   // where the ternary bound to the right operand of || causing the entire
-  // expression to short-circuit incorrectly. Without parentheses:
-  //
-  //   a || b.startsWith('ORD-') ? x : y
-  //
-  // parses as:
-  //
-  //   (a || b.startsWith('ORD-')) ? x : y
-  //
-  // which means when a is falsy and startsWith returns true, x is evaluated
-  // as (undefined || b) — returning the raw gateway reference (pi_3... or
-  // EII1|...) instead of the ORD-xxx reference. The IIFE makes priority
-  // explicit and unambiguous.
+  // expression to short-circuit incorrectly.
   const resolvedOrderReference = (() => {
+    // FIX: overrides.resolvedOrderReference wins first — it was built by
+    // verifyPaymentController and is guaranteed to be ORD-xxx format.
+    if (overrides.resolvedOrderReference?.startsWith('ORD-')) {
+      return overrides.resolvedOrderReference;
+    }
     if (req?.body?.resolvedOrderReference?.startsWith('ORD-')) {
       return req.body.resolvedOrderReference;
     }
@@ -202,21 +219,28 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   })();
 
   // ── Build normalized event (Phase 1) ─────────────────────────────────────
+  // FIX: prefer overrides.analyticsEventId — it is the UUID the browser pixel
+  // already used for trackPurchase(). Falling back to req.body.analyticsEventId
+  // is equivalent here since verifyPaymentController reads from the same source,
+  // but the override makes the intent explicit and survives future refactors.
+  const resolvedAnalyticsEventId =
+    overrides.analyticsEventId || analyticsEventId || null;
+
   let analyticsEvent;
 
   if (eventType === ANALYTICS_EVENTS.PURCHASE && order) {
-    analyticsEvent = buildPurchaseEvent(order, req, analyticsEventId);
+    analyticsEvent = buildPurchaseEvent(order, req, resolvedAnalyticsEventId);
   } else if ((eventType === ANALYTICS_EVENTS.CHECKOUT_STEP || eventType === ANALYTICS_EVENTS.BEGIN_CHECKOUT) && checkout) {
     analyticsEvent = buildCheckoutStepEvent(
       step || (eventType === ANALYTICS_EVENTS.BEGIN_CHECKOUT ? 'shipping_info' : data.step),
       checkout,
       req,
-      analyticsEventId
+      resolvedAnalyticsEventId
     );
   } else {
     analyticsEvent = buildAnalyticsEvent({
       eventType,
-      eventId:         analyticsEventId,
+      eventId:         resolvedAnalyticsEventId,
       userId:          user?._id?.toString() || req?.user?._id?.toString() || null,
       anonymousId:     req?.anonymousId || null,
       sessionId:       req?.sessionId   || null,
@@ -235,6 +259,22 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
   }
 
   // ── Build shared context ──────────────────────────────────────────────────
+  // FIX: overrides are merged last so controller-supplied values always win
+  // over values derived from req. Specifically:
+  //
+  //   overrides.fbc    — verifyPaymentController runs resolveFbc() which
+  //                      applies formatFbc() to raw fbclid values. That
+  //                      formatted value must reach Meta; using req.body.fbc
+  //                      raw would bypass the formatter. Merging last
+  //                      guarantees the pre-formatted value is used.
+  //
+  //   overrides.resolvedOrderReference — ORD-xxx format; used by
+  //                      sendMetaPurchase as customData.order_id. Without
+  //                      this, Meta receives a MongoDB ObjectId which cannot
+  //                      be reconciled against CAPI events using ORD-xxx.
+  //
+  //   overrides.ga4ClientId — passed explicitly for completeness; in practice
+  //                      the same as req.body.ga4ClientId for now.
   const context = {
     eventId:        analyticsEvent.event_id,
     userId:         user?._id?.toString() || req?.user?._id?.toString() || null,
@@ -247,6 +287,15 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
     userAgent:      req?.headers?.['user-agent'] || null,
     attribution:    req?.attribution || {},
     resolvedOrderReference,
+
+    // FIX: spread overrides last so controller-built values take priority
+    // over every field derived from req above. Only truthy override values
+    // replace their counterparts — undefined/null overrides are ignored so
+    // a controller that omits a key doesn't accidentally null out a valid
+    // req-derived value.
+    ...Object.fromEntries(
+      Object.entries(overrides).filter(([, v]) => v != null)
+    ),
   };
 
   // ── Build full queue payload ──────────────────────────────────────────────
@@ -329,12 +378,25 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}) => {
  * firePurchaseEvent
  * Call from verifyPaymentController after order creation.
  *
- * @param {Object} order - Created order document
- * @param {Object} user  - Authenticated user document
- * @param {Object} req   - Express request (carries session, attribution, body)
+ * FIX: now accepts a fourth `overrides` argument and forwards it to
+ * fireAnalyticsEvent. verifyPaymentController builds:
+ *   - resolvedFbc              — formatFbc() already applied; must reach Meta
+ *   - resolvedOrderReference   — ORD-xxx format for Meta order_id
+ *   - analyticsEventId         — browser pixel UUID for deduplication
+ *   - ga4ClientId              — GA4 client ID
+ *
+ * The previous three-parameter signature silently dropped all of these,
+ * meaning the raw req.body.fbc (potentially an unformatted fbclid) reached
+ * Meta CAPI and caused 400 Bad Request errors on purchase events for users
+ * whose _fbc cookie was absent and whose fbclid fallback was unformatted.
+ *
+ * @param {Object} order     - Created order document
+ * @param {Object} user      - Authenticated user document
+ * @param {Object} req       - Express request (carries session, attribution, body)
+ * @param {Object} overrides - Controller-built analytics values that win over req
  */
-export const firePurchaseEvent = (order, user, req) =>
-  fireAnalyticsEvent(ANALYTICS_EVENTS.PURCHASE, { order, user, req });
+export const firePurchaseEvent = (order, user, req, overrides = {}) =>
+  fireAnalyticsEvent(ANALYTICS_EVENTS.PURCHASE, { order, user, req }, {}, overrides);
 
 /**
  * fireCheckoutStartEvent

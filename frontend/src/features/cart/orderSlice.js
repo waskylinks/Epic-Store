@@ -7,6 +7,7 @@ import axios from 'axios';
 import {
   generateEventId,
   buildClientAnalyticsPayload,
+  ANALYTICS_EVENTS,
 } from '../../utils/analytics.js';
 
 // DEDUP: Import trackPurchase to fire the browser pixel with the same eventId
@@ -105,7 +106,9 @@ export const getOrderByReference = createAsyncThunk(
  * DEDUP CHANGE:
  *   - eventId is now returned alongside the order in the fulfilled payload
  *   - The fulfilled reducer fires trackPurchase() with that same eventId
- *   - Meta sees browser pixel + CAPI both carrying the same eventID and dedupes
+ *     ONLY when paymentInfo.reference is absent (i.e. this is a non-gateway
+ *     direct order path). For gateway-verified orders, paymentSlice owns the
+ *     purchase pixel — see FIX (double trackPurchase) note below.
  *
  * The backend verifyPaymentController.js reads:
  *   req.body.analyticsEventId  — the UUID
@@ -120,7 +123,21 @@ export const createOrder = createAsyncThunk(
   async (orderData, { rejectWithValue }) => {
     try {
       const eventId = generateEventId();
-      const analyticsPayload = buildClientAnalyticsPayload(eventId);
+
+      // FIX (string instead of object): buildClientAnalyticsPayload was called
+      // as buildClientAnalyticsPayload(eventId) — passing a plain UUID string.
+      // The function destructures { eventType, properties, attribution,
+      // analyticsEventId, ...overrides } from its argument. Passing a string
+      // means every named param is undefined and the ...overrides spread
+      // produces no enumerable properties (strings have none). The analytics
+      // payload sent to /api/v1/order/new was entirely empty — no UTMs,
+      // no attribution, no analyticsEventId — so the backend had no event ID
+      // to link against the browser pixel's UUID, breaking browser/server
+      // deduplication for all createOrder events.
+      const analyticsPayload = buildClientAnalyticsPayload({
+        eventType:        ANALYTICS_EVENTS.PURCHASE,
+        analyticsEventId: eventId,
+      });
 
       const { data } = await axios.post(
         `${API_BASE}/order/new`,
@@ -344,7 +361,7 @@ export const getCustomerOrderAnalytics = createAsyncThunk(
   async (userId, { rejectWithValue }) => {
     try {
       const { data } = await axios.get(
-        `${API_BASE}/orders/customer/${userId}/analytics`,
+        `${API_BASE}/analytics/customer/${userId}/orders`,
         { withCredentials: true }
       );
       return data.analytics;
@@ -443,9 +460,6 @@ const orderSlice = createSlice({
       });
 
     // createOrder
-    // DEDUP: fulfilled now receives { order, eventId } — fires browser pixel
-    // with the matching UUID so Meta can deduplicate against the CAPI event
-    // fired server-side in verifyPaymentController.js
     builder
       .addCase(createOrder.pending, (state) => {
         state.loading = true;
@@ -459,17 +473,37 @@ const orderSlice = createSlice({
         state.success = true;
         state.message = 'Order created successfully';
 
-        // Fire browser pixel with the same eventId sent to the server.
-        // trackPurchase is fire-and-forget — never throws, never blocks.
-        trackPurchase(
-          {
-            orderId:  order?._id || order?.id,
-            revenue:  order?.pricing?.totalPrice || order?.totalPrice || 0,
-            currency: order?.pricing?.currency   || 'USD',
-            items:    order?.items || [],
-          },
-          eventId
-        );
+        // FIX (double trackPurchase): Only fire the browser purchase pixel when
+        // this order was NOT created through the payment gateway verification
+        // flow. Gateway-verified orders always have paymentInfo.reference set
+        // (ORD-xxx) because verifyPaymentController writes it before responding.
+        // paymentSlice.verifyPayment.fulfilled owns the purchase pixel for that
+        // path and fires trackPurchase with the correct ORD-xxx reference.
+        //
+        // If paymentInfo.reference is present here it means verifyPayment has
+        // already run (or will run) and will fire its own pixel — firing here
+        // too would send two Purchase events to Meta with different UUIDs,
+        // which Meta cannot deduplicate, inflating conversion counts.
+        //
+        // FIX (orderId as MongoDB ObjectId): The original code passed
+        // order?._id || order?.id — the MongoDB ObjectId — as orderId. The
+        // server CAPI event always uses order.paymentInfo.reference (ORD-xxx).
+        // Meta cannot reconcile an ObjectId against an ORD-xxx reference and
+        // replaces it with an internal EII1|... identifier in Events Manager,
+        // breaking order-level deduplication. The fix uses paymentInfo.reference
+        // when present, and only falls back to _id for non-gateway direct orders
+        // where no ORD-xxx reference exists and no server CAPI event is fired.
+        if (order && eventId && !order.paymentInfo?.reference) {
+          trackPurchase(
+            {
+              orderId:  order?._id || order?.id,
+              revenue:  order?.pricing?.totalPrice || order?.totalPrice || 0,
+              currency: order?.pricing?.currency   || 'USD',
+              items:    order?.items || [],
+            },
+            eventId
+          );
+        }
       })
       .addCase(createOrder.rejected, (state, action) => {
         state.loading = false;

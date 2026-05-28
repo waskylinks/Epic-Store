@@ -415,7 +415,11 @@ export const UpdatePassword = handleAsyncError(async (req, res, next) => {
 
 export const getUserDetails = handleAsyncError(async (req, res, next) => {
   const user = await User.findById(req.user.id);
-  res.status(200).json({ success: true, user });
+  res.status(200).json({
+    success:   true,
+    user,
+    sessionId: req.sessionId || null,
+  });
 });
 
 // ============================================

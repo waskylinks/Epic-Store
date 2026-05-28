@@ -130,7 +130,7 @@ function App() {
     }
 
     // Expose debug helper in development
-    if (import.meta.env.DEV) {
+    if (import.meta.env.DEV === true) {
       window.__epicAnalytics = { debug: debugAnalyticsState };
     }
   }, []); // Empty deps — run once on mount only
