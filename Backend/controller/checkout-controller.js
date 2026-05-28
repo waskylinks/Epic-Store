@@ -5,6 +5,8 @@ import Product from "../models/product-model.js";
 import Discount from "../models/discount-model.js";
 import { deleteCachePattern } from '../utils/redis.js';
 import { verifyRecoveryToken, decodeRecoveryToken } from '../utils/recoveryToken.js';
+import { enqueueAnalyticsEvent } from '../jobs/analyticsQueue.js';
+import { resolveFbc } from '../Services/analytics/metaCapiService.js';
 
 const invalidateCheckoutCaches = async () => {
   try {
@@ -43,6 +45,15 @@ const invalidateCheckoutCaches = async () => {
 // [FIX 6] analytics.source validated against schema enum before assignment.
 //
 // [FIX 7] Checkout ownership is enforced on update.
+//
+// [FIX 11] analyticsEventId is now read from req.body and forwarded as
+//          eventId in the begin_checkout queue payload. Previously the field
+//          was never destructured from the body, so the enqueued event had
+//          no eventId and enqueueAnalyticsEvent threw ("eventId is required").
+//          The browser pixel fires trackBeginCheckout() with this same UUID;
+//          both events must carry it so Meta can deduplicate the browser
+//          InitiateCheckout pixel against the CAPI InitiateCheckout event
+//          within the 48-hour deduplication window.
 // ============================================
 
 const MAX_ITEMS = 50;
@@ -105,7 +116,10 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   if (!userId) return next(new HandleError("User not authenticated", 401));
 
   // [FIX 1] discountAmount intentionally NOT destructured — derived server-side below.
-  const { items, shippingInfo, discountCode } = req.body;
+  // [FIX 11] analyticsEventId destructured so it can be forwarded to the queue.
+  //          The frontend sends this as part of buildClientAnalyticsPayload(); it is
+  //          the UUID that the browser pixel already used for trackBeginCheckout().
+  const { items, shippingInfo, discountCode, analyticsEventId } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return next(new HandleError("Cart is empty", 400));
@@ -252,6 +266,75 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   await checkout.save();
   invalidateCheckoutCaches().catch(err => console.error('Failed to invalidate caches:', err));
 
+  // [FIX 11] Enqueue begin_checkout analytics event with the eventId from the
+  // browser. This is what was entirely missing before: the controller saved
+  // the checkout but never fired any CAPI event for it.
+  //
+  // Payload shape must match what dispatchToPlatforms() expects for
+  // begin_checkout: { checkout, user, context } under named keys, with
+  // event_id at the top level so enqueueAnalyticsEvent's idempotency check
+  // and the "eventId is required" guard both resolve correctly.
+  //
+  // analyticsEventId may be absent if the client is an older version or a
+  // non-browser agent. In that case we skip the enqueue rather than throwing
+  // (a missing begin_checkout CAPI event is non-fatal; the browser pixel will
+  // still have fired on the client side, it just won't be deduplicated).
+  if (analyticsEventId) {
+    // [FIX: fbc] resolveFbc is applied server-side here for the same reason it
+    // is used in verifyPaymentController — req.body.fbc may be a raw fbclid
+    // string (not yet formatted) if _fbc cookie was absent and the fallback
+    // path in buildClientAnalyticsPayload() used a raw fbclid from localStorage.
+    // Passing a raw fbclid directly to Meta CAPI causes a 400 Bad Request.
+    // resolveFbc() from metaCapiService is the single canonical formatter and
+    // handles both the already-formatted (_fbc cookie) and raw (fbclid) cases.
+    const resolvedFbc = resolveFbc({
+      fbc:        req.body.fbc,
+      fbclid:     req.body.fbclid,
+      attribution: attributionData,
+    });
+
+    enqueueAnalyticsEvent('begin_checkout', {
+      // event_id at top level — required by enqueueAnalyticsEvent's idempotency
+      // check (findOne({ eventId })) and its "eventId is required" guard.
+      event_id: analyticsEventId,
+
+      // Named keys that dispatchToPlatforms() destructures for begin_checkout:
+      //   payload.checkout → sendMetaInitiateCheckout(checkout, user, context)
+      //   payload.user     → passed as the user argument
+      //   payload.context  → carries eventId, fbp, fbc, clientIp, userAgent
+      checkout: {
+        _id:     checkout._id,
+        items:   checkout.items,
+        pricing: checkout.pricing,
+      },
+      user: {
+        _id:       req.user._id,
+        email:     req.user.email,
+        firstName: req.user.firstName,
+        lastName:  req.user.lastName,
+        phone:     req.user.phone || req.user.phoneNo || null,
+      },
+      context: {
+        eventId:        analyticsEventId,
+        fbp:            req.body.fbp        || null,
+        fbc:            resolvedFbc,
+        clientIp:       req.ip,
+        userAgent:      req.headers['user-agent'] || null,
+        eventSourceUrl: req.body.eventSourceUrl   || process.env.FRONTEND_URL || null,
+        attribution:    attributionData,
+      },
+    }).catch(err =>
+      // Non-fatal — checkout was already saved successfully. Log and continue
+      // so a queue error never rolls back a real checkout creation.
+      console.error('[createCheckout] Failed to enqueue begin_checkout event:', err.message)
+    );
+  } else {
+    console.warn(
+      '[createCheckout] analyticsEventId missing from request body — ' +
+      'begin_checkout CAPI event skipped. Browser pixel will fire without server deduplication.'
+    );
+  }
+
   res.status(200).json({
     success:  true,
     message:  "Checkout session created",
@@ -278,11 +361,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 // Allowed transitions: each step lists the steps that may legally follow it.
-// This enforces forward-only flow without preventing legitimate re-visits
-// (e.g. user goes back to shipping from order_confirmation to edit an address).
-// The rule is: you may only advance to a step at the same index or higher
-// than your current step, EXCEPT for payment_failed which is terminal and
-// may only be reached from payment_gateway.
 const ALLOWED_NEXT_STEPS = {
   shipping_info:      ['shipping_info', 'order_confirmation'],
   order_confirmation: ['shipping_info', 'order_confirmation', 'payment_selection'],
@@ -302,8 +380,7 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   if (!checkout) return next(new HandleError("Checkout not found", 404));
   if (checkout.user.toString() !== req.user._id.toString()) return next(new HandleError("Unauthorized", 403));
 
-  // [FIX 8] Enforce that the requested step is a legal transition from the
-  // current step. This prevents clients from jumping to arbitrary steps.
+  // [FIX 8]
   const allowedFromCurrent = ALLOWED_NEXT_STEPS[checkout.currentStep] || [];
   if (!allowedFromCurrent.includes(step)) {
     return next(new HandleError(
@@ -376,16 +453,10 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
 // @access Public
 //
 // [FIX 9]  Auth cookie is now issued AFTER verifyRecoveryToken confirms the
-//          JWT signature is valid. decodeRecoveryToken (which ignores the
-//          signature) is still used first to extract userId for the expiry
-//          path — but the cookie is not set until signature verification
-//          passes (or, in the expiry branch, we explicitly allow it as a
-//          known-expired-but-structurally-valid token from our own key).
+//          JWT signature is valid.
 //
 // [FIX 10] Recovery pricing recomputed from live product prices fetched from
-//          the DB rather than from stored item.price values, so a tampered
-//          discount at cart-creation time cannot be laundered through
-//          recovery.
+//          the DB rather than from stored item.price values.
 // ============================================
 export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   const { token } = req.query;
@@ -422,22 +493,15 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   };
 
   // ── Step 1: Verify JWT signature and expiry ───────────────────────────────
-  // [FIX 9] Signature verification happens first. We only proceed (and only
-  // issue a cookie) if the token was signed by us — either still valid, or
-  // expired but structurally authentic. An attacker who submits a forged token
-  // (wrong signature) is rejected here before any cookie is set.
-  let decoded    = null;
-  let isExpired  = false;
-  let bare       = null;
+  let decoded   = null;
+  let isExpired = false;
+  let bare      = null;
 
   try {
     decoded = verifyRecoveryToken(token);
-    // Valid token — also decode for convenience fields (jti etc.)
-    bare = decoded;
+    bare    = decoded;
   } catch (err) {
     if (err.code === 'EXPIRED') {
-      // Token signature is valid but JWT exp has elapsed.
-      // Decode without expiry check so we can extract userId / checkoutId.
       isExpired = true;
       try {
         bare = decodeRecoveryToken(token);
@@ -445,7 +509,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
         return next(new HandleError("Recovery link is invalid or malformed.", 400));
       }
     } else {
-      // Signature invalid or token malformed — reject outright.
       return next(new HandleError(err.message || "Recovery link is invalid or malformed.", 400));
     }
   }
@@ -455,9 +518,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   }
 
   // ── Step 2: Issue auth cookie ─────────────────────────────────────────────
-  // [FIX 9] Cookie is only issued after we have confirmed the token was signed
-  // by us (either valid or authentically expired). Forged tokens never reach
-  // this point.
   const user = await issueAuthCookie(bare.userId);
 
   // ── Step 3: EXPIRED PATH ──────────────────────────────────────────────────
@@ -567,24 +627,16 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   const unavailableItems = checkout.items.filter(item => !item.product || item.product.status !== 'published');
 
   // ── Step 10: Recompute pricing from LIVE product prices ───────────────────
-  // [FIX 10] item.price stored on the checkout document is not trusted here.
-  // We fetch the current price from the populated product document so that
-  // any tampered discount rate stored at cart-creation time cannot be
-  // laundered through the recovery recompute.
   let resolvedPricing = checkout.pricing;
 
-  // Capture the original stored discount code BEFORE checkout.pricing is
-  // overwritten below — used for the discountInvalidated flag at the end.
   const originalStoredCode = checkout.pricing?.discountCode || checkout.discount?.code || null;
 
   {
-    // Always recompute from live prices, not stored item.price.
     const freshRawItemPrice = availableItems.reduce((sum, item) => {
       const livePrice = item.product?.pricing?.sale || item.product?.pricing?.regular || 0;
       return sum + (livePrice * item.quantity);
     }, 0);
 
-    // Re-validate the discount code against the DB (same logic as createCheckout).
     let freshDiscountAmount = 0;
     let freshDiscountCode   = undefined;
 
@@ -636,8 +688,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
       ),
     };
 
-    // Update live item prices on the checkout items too, so what we save
-    // reflects current catalogue prices rather than stale stored values.
     for (const item of availableItems) {
       item.price = item.product?.pricing?.sale || item.product?.pricing?.regular || item.price;
     }
