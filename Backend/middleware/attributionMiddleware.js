@@ -26,6 +26,9 @@
  *   - Click ID cookies are set with httpOnly: true (not accessible to JS)
  *   - Reconstruction is conservative — returns null rather than guess wrong
  *   - isReconstructed: true is always set when reconstruction fires
+ *   - Click ID values are length-capped before being written to cookies
+ *   - UTM cookies use a 30-day TTL to support multi-session purchase journeys
+ *   - Routes that don't need attribution are skipped via BYPASS_PATHS
  *
  * Mount order in app.js (already correct from Phase 2):
  *   app.use(sessionMiddleware)     ← Phase 2: sets req.sessionId
@@ -43,6 +46,62 @@ const CLICK_ID_TTL = {
   ttclid:  7  * 86400000, // TikTok: 7 days
   msclkid: 90 * 86400000, // Microsoft Ads: 90 days
 };
+
+// ─── CLICK ID VALUE MAX LENGTH ────────────────────────────────────────────────
+// Browser cookie size limit is ~4096 bytes per cookie. Cap individual click ID
+// values well below that to prevent silent cookie drops from malicious or
+// malformed query params.
+
+const CLICK_ID_MAX_LENGTH = 512;
+
+// ─── UTM COOKIE TTL ───────────────────────────────────────────────────────────
+// 30 days — matches industry standard for a multi-session purchase journey.
+// The previous value of 30 minutes matched the payment session window, which
+// caused UTM attribution to be lost for any user who didn't convert immediately.
+
+const UTM_COOKIE_TTL = 30 * 24 * 60 * 60 * 1000; // 30 days in ms
+
+// ─── ROUTES THAT BYPASS ATTRIBUTION ──────────────────────────────────────────
+// Attribution scoring runs on every request by default. These prefixes are
+// skipped because they carry no attribution signals and don't need req.attribution.
+// Health checks, receipts, shipping lookups, and SEO routes are all included.
+
+const BYPASS_PATHS = [
+  '/health',
+  '/api/v1/receipts',
+  '/api/v1/shipping/rates',
+  '/api/v1/shipping/carriers',
+  '/sitemap',
+  '/robots.txt',
+  '/favicon',
+];
+
+const shouldBypass = (path) =>
+  BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(prefix + '/'));
+
+// ─── NULL ATTRIBUTION FALLBACK ────────────────────────────────────────────────
+// Shared shape for both bypass and error-fallback paths. Keeping one definition
+// prevents the two from drifting apart structurally.
+
+const buildNullAttribution = (req) => ({
+  source:             'direct',
+  medium:             null,
+  campaign:           null,
+  term:               null,
+  content:            null,
+  referrer:           null,
+  landingPage:        req.originalUrl || null,
+  device:             'unknown',
+  browser:            'unknown',
+  gclid:              null,
+  fbclid:             null,
+  ttclid:             null,
+  msclkid:            null,
+  confidenceScore:    0,
+  confidenceLevel:    'LOW',
+  isReconstructed:    false,
+  reconstructionRule: null,
+});
 
 // ─── CONFIDENCE SCORE WEIGHTS ─────────────────────────────────────────────────
 
@@ -70,6 +129,17 @@ const buildClickIdCookieOptions = (maxAge) => ({
   maxAge,
 });
 
+// UTM cookies use sameSite: 'strict' to prevent them from being sent on
+// cross-site form submissions. Click IDs intentionally use 'lax' because
+// they arrive via cross-site top-level redirects from ad platforms.
+
+const UTM_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure:   process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  maxAge:   UTM_COOKIE_TTL,
+};
+
 // ─── DEVICE DETECTION ────────────────────────────────────────────────────────
 
 const detectDevice = (userAgent = '') => {
@@ -95,10 +165,14 @@ const captureClickIds = (req, res) => {
   const clickIds = {};
 
   ['gclid', 'fbclid', 'ttclid', 'msclkid'].forEach((key) => {
-    const fromQuery  = req.query[key];
-    const fromCookie = req.cookies?.[key];
+    const rawFromQuery = req.query[key];
+    const fromCookie   = req.cookies?.[key];
 
-    if (fromQuery) {
+    if (rawFromQuery) {
+      // Cap value length before writing to cookie — an oversized click ID value
+      // (e.g. from a malformed or malicious URL) would silently drop the cookie
+      // if it pushes the total cookie size over the ~4096 byte browser limit.
+      const fromQuery = String(rawFromQuery).slice(0, CLICK_ID_MAX_LENGTH);
       res.cookie(key, fromQuery, buildClickIdCookieOptions(CLICK_ID_TTL[key]));
       clickIds[key] = fromQuery;
     } else if (fromCookie) {
@@ -136,6 +210,9 @@ const extractUTMParams = (req) => {
     campaign: fromQuery.campaign || fromCookies.campaign || null,
     term:     fromQuery.term     || fromCookies.term     || null,
     content:  fromQuery.content  || fromCookies.content  || null,
+    // Track whether UTMs arrived fresh on this request so we know whether
+    // to (re)write the cookies below.
+    _freshFromQuery: !!fromQuery.source,
   };
 };
 
@@ -157,9 +234,17 @@ export const computeConfidence = ({ hasClickId, hasUTM, hasReferrer, sessionCont
 // ─── MAIN MIDDLEWARE ──────────────────────────────────────────────────────────
 
 export const trackAttribution = (req, res, next) => {
+  // Skip attribution scoring entirely for routes that don't need it.
+  // This avoids running confidence scoring, cookie reads, and reconstruction
+  // on health checks, receipts, and SEO routes.
+  if (shouldBypass(req.path)) {
+    req.attribution = buildNullAttribution(req);
+    return next();
+  }
+
   try {
-    const userAgent  = req.headers['user-agent'] || '';
-    const referer    = req.headers['referer'] || req.headers['referrer'] || null;
+    const userAgent   = req.headers['user-agent'] || '';
+    const referer     = req.headers['referer'] || req.headers['referrer'] || null;
     const landingPage = req.originalUrl || null;
 
     // ── Extract UTMs ──────────────────────────────────────────────────────────
@@ -172,11 +257,32 @@ export const trackAttribution = (req, res, next) => {
     const device  = detectDevice(userAgent);
     const browser = detectBrowser(userAgent);
 
-    // ── Confidence signals ────────────────────────────────────────────────────
-    const hasClickId        = Object.values(clickIds).some(Boolean);
-    const hasUTM            = !!(utms.source && utms.source !== 'direct');
-    const hasReferrer       = !!referer;
+    // ── Session continuity ────────────────────────────────────────────────────
+    // req.sessionId is set by sessionMiddleware which must be mounted before
+    // trackAttribution in app.js. Both conditions must be true: sessionMiddleware
+    // sets req.sessionId and the client must also carry the session cookie.
+    // If middleware order is wrong, req.sessionId is undefined and this is false —
+    // which is the correct conservative behaviour (no false continuity signal).
     const sessionContinuity = !!(req.sessionId && req.cookies?.epicstore_sid);
+
+    // ── Confidence signals ────────────────────────────────────────────────────
+    const hasClickId = Object.values(clickIds).some(Boolean);
+
+    // hasUTM is true when there is any UTM source other than the literal string
+    // "direct". Previously this only checked utms.source, which caused
+    // reconstruction to fire even when utm_source=direct cookie evidence existed
+    // from a prior real session — an attribution inversion.
+    const hasUTM = !!(utms.source && utms.source !== 'direct');
+
+    // hasUTMCookieEvidence is a softer signal: UTM cookies exist even if source
+    // is "direct". Used to suppress reconstruction when cookie evidence is present.
+    const hasUTMCookieEvidence = !!(
+      req.cookies?.utm_source ||
+      req.cookies?.utm_medium ||
+      req.cookies?.utm_campaign
+    );
+
+    const hasReferrer = !!referer;
 
     // ── Compute confidence score ──────────────────────────────────────────────
     const { score: confidenceScore, level: confidenceLevel } = computeConfidence({
@@ -187,12 +293,22 @@ export const trackAttribution = (req, res, next) => {
     });
 
     // ── Referrer reconstruction ───────────────────────────────────────────────
+    // Reconstruction only fires when ALL direct signals are absent AND there is
+    // no cookie evidence of prior UTM attribution. If utm_source=direct exists
+    // in cookies from a prior session, we do not reconstruct — the cookie is
+    // the evidence.
     let isReconstructed     = false;
     let reconstructionRule  = null;
     let reconstructedSource = null;
     let reconstructedMedium = null;
 
-    if (confidenceLevel === 'LOW' && !hasUTM && !hasClickId && !hasReferrer) {
+    if (
+      confidenceLevel === 'LOW' &&
+      !hasUTM &&
+      !hasClickId &&
+      !hasReferrer &&
+      !hasUTMCookieEvidence
+    ) {
       const reconstruction = reconstructReferrer({
         landingPage,
         sessionContinuity,
@@ -208,18 +324,16 @@ export const trackAttribution = (req, res, next) => {
     }
 
     // ── Persist UTMs to cookies ───────────────────────────────────────────────
-    if (utms.source && req.query.utm_source) {
-      const utmCookieOptions = {
-        httpOnly: true,
-        secure:   process.env.NODE_ENV === 'production',
-        sameSite: 'lax',
-        maxAge:   30 * 60 * 1000,
-      };
-      if (utms.source)   res.cookie('utm_source',   utms.source,   utmCookieOptions);
-      if (utms.medium)   res.cookie('utm_medium',   utms.medium,   utmCookieOptions);
-      if (utms.campaign) res.cookie('utm_campaign', utms.campaign, utmCookieOptions);
-      if (utms.term)     res.cookie('utm_term',     utms.term,     utmCookieOptions);
-      if (utms.content)  res.cookie('utm_content',  utms.content,  utmCookieOptions);
+    // Only write UTM cookies when fresh params arrived on this request.
+    // Cookies persist for 30 days to support multi-session purchase journeys.
+    // The previous 30-minute TTL caused UTM loss for any user who didn't
+    // convert on the landing visit.
+    if (utms._freshFromQuery) {
+      if (utms.source)   res.cookie('utm_source',   utms.source,   UTM_COOKIE_OPTIONS);
+      if (utms.medium)   res.cookie('utm_medium',   utms.medium,   UTM_COOKIE_OPTIONS);
+      if (utms.campaign) res.cookie('utm_campaign', utms.campaign, UTM_COOKIE_OPTIONS);
+      if (utms.term)     res.cookie('utm_term',     utms.term,     UTM_COOKIE_OPTIONS);
+      if (utms.content)  res.cookie('utm_content',  utms.content,  UTM_COOKIE_OPTIONS);
     }
 
     // ── Assemble req.attribution ──────────────────────────────────────────────
@@ -245,25 +359,7 @@ export const trackAttribution = (req, res, next) => {
 
   } catch (err) {
     console.error('[trackAttribution] Failed (non-fatal):', err.message);
-    req.attribution = {
-      source:             'direct',
-      medium:             null,
-      campaign:           null,
-      term:               null,
-      content:            null,
-      referrer:           null,
-      landingPage:        req.originalUrl || null,
-      device:             'unknown',
-      browser:            'unknown',
-      gclid:              null,
-      fbclid:             null,
-      ttclid:             null,
-      msclkid:            null,
-      confidenceScore:    0,
-      confidenceLevel:    'LOW',
-      isReconstructed:    false,
-      reconstructionRule: null,
-    };
+    req.attribution = buildNullAttribution(req);
   }
 
   next();
