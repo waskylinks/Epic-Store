@@ -22,13 +22,22 @@
  *   unattributed_rate       — % of orders with source "direct" and no click IDs
  *
  * Attribution Drift Detection:
- *   Compares source distribution of last 7 days vs last 30 days.
+ *   Compares source distribution of last 7 days vs prior 23 days (day 8–30).
+ *   The two windows are non-overlapping so the baseline is not contaminated
+ *   by the recent data being compared against it.
  *   A shift > DRIFT_THRESHOLD (20pp) on any source triggers an alert flag.
  *   This catches tracking bugs before they corrupt weeks of data.
  *
  *   Example: Facebook drops from 35% → 10% overnight.
  *   That is a tracking bug (pixel blocked, CAPI misconfigured, fbclid stripped),
  *   not a real change in user behavior. Drift detection catches it in hours.
+ *
+ * Security model:
+ *   All four controllers perform an explicit admin role check at the top of
+ *   each handler. This is a defence-in-depth guard — the route-level middleware
+ *   in analyticsObservabilityRoutes.js is the primary enforcement point, but
+ *   a misconfigured route file would otherwise expose full attribution data and
+ *   user event traces publicly.
  */
 
 import Order           from '../models/order-model.js';
@@ -46,6 +55,19 @@ const DRIFT_THRESHOLD = 0.20; // 20 percentage points
 // How many days to look back for the health metrics baseline
 const HEALTH_WINDOW_DAYS = 30;
 
+// ─── SHARED ADMIN GUARD ───────────────────────────────────────────────────────
+// Defence-in-depth: each handler calls this before doing any DB work.
+// Route-level middleware is the primary enforcement point; this ensures
+// a misconfigured route file cannot accidentally expose these endpoints.
+
+const assertAdmin = (req, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    next(new HandleError('Admin access required', 403));
+    return false;
+  }
+  return true;
+};
+
 // ─── HEALTH METRICS ───────────────────────────────────────────────────────────
 
 /**
@@ -56,6 +78,9 @@ const HEALTH_WINDOW_DAYS = 30;
  * Returns six attribution health metrics computed from the last 30 days
  * of orders. All rates are expressed as percentages (0-100).
  *
+ * Metrics are computed via MongoDB aggregation — no documents are loaded
+ * into Node.js memory regardless of order volume.
+ *
  * Low values indicate tracking gaps:
  *   utm_capture_rate < 40%      → UTM params being stripped before landing
  *   click_id_capture_rate < 20% → Ad clicks not reaching server with click IDs
@@ -64,30 +89,84 @@ const HEALTH_WINDOW_DAYS = 30;
  *   identity_match_rate < 70%   → Anonymous ID stitching not working
  *   unattributed_rate > 50%     → Over half of orders appear as "direct"
  */
-export const getAttributionHealth = handleAsyncError(async (req, res) => {
+export const getAttributionHealth = handleAsyncError(async (req, res, next) => {
+  if (!assertAdmin(req, next)) return;
+
   const windowStart = new Date();
   windowStart.setDate(windowStart.getDate() - HEALTH_WINDOW_DAYS);
 
-  // Fetch orders from the last 30 days with analytics fields
-  const orders = await Order.find(
-    { createdAt: { $gte: windowStart } },
+  // All metrics are computed server-side via a single aggregation pipeline.
+  // The previous Order.find() approach loaded every document into Node.js memory
+  // — on a large store this would OOM the process or cause severe GC pressure.
+
+  const [result] = await Order.aggregate([
+    { $match: { createdAt: { $gte: windowStart } } },
     {
-      'analytics.source':          1,
-      'analytics.gclid':           1,
-      'analytics.fbclid':          1,
-      'analytics.ttclid':          1,
-      'analytics.msclkid':         1,
-      'analytics.confidenceLevel': 1,
-      'analytics.isReconstructed': 1,
-      'analytics.anonymousId':     1,
-      'analytics.eventId':         1,
-      'analytics.medium':          1,
+      $group: {
+        _id:   null,
+        total: { $sum: 1 },
+
+        utmCount: {
+          $sum: {
+            $cond: [
+              { $and: [
+                { $ne: ['$analytics.source', null] },
+                { $ne: ['$analytics.source', 'direct'] },
+              ]},
+              1, 0
+            ]
+          }
+        },
+
+        clickIdCount: {
+          $sum: {
+            $cond: [
+              { $or: [
+                { $ifNull: ['$analytics.gclid',   false] },
+                { $ifNull: ['$analytics.fbclid',  false] },
+                { $ifNull: ['$analytics.ttclid',  false] },
+                { $ifNull: ['$analytics.msclkid', false] },
+              ]},
+              1, 0
+            ]
+          }
+        },
+
+        reconstructCount: {
+          $sum: { $cond: ['$analytics.isReconstructed', 1, 0] }
+        },
+
+        identityCount: {
+          $sum: { $cond: [{ $ifNull: ['$analytics.anonymousId', false] }, 1, 0] }
+        },
+
+        unattributed: {
+          $sum: {
+            $cond: [
+              { $and: [
+                { $or: [
+                  { $eq:  ['$analytics.source', 'direct'] },
+                  { $eq:  ['$analytics.source', null] },
+                ]},
+                { $not: { $ifNull: ['$analytics.gclid',   false] } },
+                { $not: { $ifNull: ['$analytics.fbclid',  false] } },
+                { $not: { $ifNull: ['$analytics.ttclid',  false] } },
+                { $not: { $ifNull: ['$analytics.msclkid', false] } },
+              ]},
+              1, 0
+            ]
+          }
+        },
+
+        confHigh:   { $sum: { $cond: [{ $eq: ['$analytics.confidenceLevel', 'HIGH']   }, 1, 0] } },
+        confMedium: { $sum: { $cond: [{ $eq: ['$analytics.confidenceLevel', 'MEDIUM'] }, 1, 0] } },
+        confLow:    { $sum: { $cond: [{ $eq: ['$analytics.confidenceLevel', 'LOW']    }, 1, 0] } },
+        confNull:   { $sum: { $cond: [{ $eq: ['$analytics.confidenceLevel', null]     }, 1, 0] } },
+      }
     }
-  ).lean();
+  ]);
 
-  const total = orders.length;
-
-  if (total === 0) {
+  if (!result || result.total === 0) {
     return res.status(200).json({
       success: true,
       period:  `Last ${HEALTH_WINDOW_DAYS} days`,
@@ -97,56 +176,20 @@ export const getAttributionHealth = handleAsyncError(async (req, res) => {
     });
   }
 
-  // ── Compute metrics ────────────────────────────────────────────────────────
-
-  let utmCount         = 0;
-  let clickIdCount     = 0;
-  let reconstructCount = 0;
-  let identityCount    = 0;
-  let unattributed     = 0;
-
-  const confidenceCounts = { HIGH: 0, MEDIUM: 0, LOW: 0, null: 0 };
-
-  for (const order of orders) {
-    const a = order.analytics || {};
-
-    // UTM captured: source is not "direct" and not null
-    if (a.source && a.source !== 'direct') utmCount++;
-
-    // Click ID captured: any click ID present
-    if (a.gclid || a.fbclid || a.ttclid || a.msclkid) clickIdCount++;
-
-    // Confidence distribution
-    const level = a.confidenceLevel || 'null';
-    if (level in confidenceCounts) confidenceCounts[level]++;
-    else confidenceCounts.null++;
-
-    // Reconstruction fired
-    if (a.isReconstructed) reconstructCount++;
-
-    // Identity stitched: has anonymousId (means identityMiddleware was active)
-    if (a.anonymousId) identityCount++;
-
-    // Unattributed: direct source with no click IDs
-    if (
-      (!a.source || a.source === 'direct') &&
-      !a.gclid && !a.fbclid && !a.ttclid && !a.msclkid
-    ) unattributed++;
-  }
-
+  const { total } = result;
   const pct = (n) => Math.round((n / total) * 100 * 10) / 10;
 
   const metrics = {
-    utm_capture_rate:      pct(utmCount),
-    click_id_capture_rate: pct(clickIdCount),
-    reconstruction_rate:   pct(reconstructCount),
-    identity_match_rate:   pct(identityCount),
-    unattributed_rate:     pct(unattributed),
+    utm_capture_rate:      pct(result.utmCount),
+    click_id_capture_rate: pct(result.clickIdCount),
+    reconstruction_rate:   pct(result.reconstructCount),
+    identity_match_rate:   pct(result.identityCount),
+    unattributed_rate:     pct(result.unattributed),
     confidence_distribution: {
-      HIGH:    pct(confidenceCounts.HIGH),
-      MEDIUM:  pct(confidenceCounts.MEDIUM),
-      LOW:     pct(confidenceCounts.LOW),
-      unknown: pct(confidenceCounts.null),
+      HIGH:    pct(result.confHigh),
+      MEDIUM:  pct(result.confMedium),
+      LOW:     pct(result.confLow),
+      unknown: pct(result.confNull),
     },
   };
 
@@ -207,37 +250,42 @@ export const getAttributionHealth = handleAsyncError(async (req, res) => {
  *
  * GET /api/v1/admin/analytics/drift
  *
- * Compares source distribution of last 7 days vs last 30 days.
- * Returns alerts for any source that shifted more than DRIFT_THRESHOLD.
+ * Compares source distribution of last 7 days vs the prior 23 days (day 8–30).
+ * The two windows are non-overlapping — the baseline excludes the recent window
+ * so that drifting recent data does not contaminate its own baseline, which
+ * would systematically understate the magnitude of any real drift.
  *
- * The "killer feature" of this observability system — detects tracking
- * bugs before they corrupt weeks of data and campaign decisions.
+ * Returns alerts for any source that shifted more than DRIFT_THRESHOLD.
  */
-export const getAttributionDrift = handleAsyncError(async (req, res) => {
-  const now         = new Date();
-  const last7Start  = new Date(now); last7Start.setDate(now.getDate() - 7);
-  const last30Start = new Date(now); last30Start.setDate(now.getDate() - 30);
+export const getAttributionDrift = handleAsyncError(async (req, res, next) => {
+  if (!assertAdmin(req, next)) return;
 
-  // Aggregate source counts for both windows
+  const now          = new Date();
+  const recentStart  = new Date(now); recentStart.setDate(now.getDate() - 7);
+  // Baseline window is day 8–30, intentionally non-overlapping with recent.
+  // Previously both windows shared the last 7 days, understating drift magnitude.
+  const baselineEnd  = new Date(recentStart);
+  const baselineStart = new Date(now); baselineStart.setDate(now.getDate() - 30);
+
   const [recentOrders, baselineOrders] = await Promise.all([
     Order.aggregate([
-      { $match: { createdAt: { $gte: last7Start } } },
+      { $match: { createdAt: { $gte: recentStart, $lte: now } } },
       { $group: { _id: '$analytics.source', count: { $sum: 1 } } },
     ]),
     Order.aggregate([
-      { $match: { createdAt: { $gte: last30Start } } },
+      { $match: { createdAt: { $gte: baselineStart, $lt: baselineEnd } } },
       { $group: { _id: '$analytics.source', count: { $sum: 1 } } },
     ]),
   ]);
 
   // Build source → count maps
   const toMap = (rows) => {
-    const map   = {};
-    let total   = 0;
+    const map = {};
+    let total = 0;
     rows.forEach(({ _id, count }) => {
-      const source  = _id || 'direct';
-      map[source]   = (map[source] || 0) + count;
-      total        += count;
+      const source = _id || 'direct';
+      map[source]  = (map[source] || 0) + count;
+      total       += count;
     });
     return { map, total };
   };
@@ -297,8 +345,8 @@ export const getAttributionDrift = handleAsyncError(async (req, res) => {
   return res.status(200).json({
     success: true,
     periods: {
-      recent:   { start: last7Start.toISOString(),  end: now.toISOString(), days: 7  },
-      baseline: { start: last30Start.toISOString(), end: now.toISOString(), days: 30 },
+      recent:   { start: recentStart.toISOString(),   end: now.toISOString(),        days: 7  },
+      baseline: { start: baselineStart.toISOString(), end: baselineEnd.toISOString(), days: 23 },
     },
     totals: {
       recent:   recent.total,
@@ -322,7 +370,9 @@ export const getAttributionDrift = handleAsyncError(async (req, res) => {
  * Returns the current state of the analytics event queue.
  * High pending/failed/dead_letter counts indicate dispatch problems.
  */
-export const getQueueHealth = handleAsyncError(async (req, res) => {
+export const getQueueHealth = handleAsyncError(async (req, res, next) => {
+  if (!assertAdmin(req, next)) return;
+
   const [queueSummary, recentDeadLetters, recentFailed] = await Promise.all([
     AnalyticsEvent.getQueueHealth(),
 
@@ -400,7 +450,11 @@ export const getQueueHealth = handleAsyncError(async (req, res) => {
  *   - Queue events associated with this user
  *   - Anonymous IDs linked to this user (identity stitching history)
  */
-export const getUserEventTrace = handleAsyncError(async (req, res) => {
+export const getUserEventTrace = handleAsyncError(async (req, res, next) => {
+  // next is declared — previously the handler used `async (req, res) => {`
+  // which caused `return next(new HandleError(...))` to throw a ReferenceError.
+  if (!assertAdmin(req, next)) return;
+
   const { userId } = req.params;
 
   if (!userId) {
@@ -436,7 +490,7 @@ export const getUserEventTrace = handleAsyncError(async (req, res) => {
     success: true,
     userId,
     summary: {
-      totalOrders:     orders.length,
+      totalOrders:      orders.length,
       totalQueueEvents: queueEvents.length,
       anonymousIds,
       sources: [...new Set(orders.map(o => o.analytics?.source).filter(Boolean))],
@@ -452,17 +506,17 @@ export const getUserEventTrace = handleAsyncError(async (req, res) => {
       revenue:          o.totalPrice,
       paymentReference: o.paymentInfo?.reference,
       attribution: {
-        source:           o.analytics?.source,
-        medium:           o.analytics?.medium,
-        campaign:         o.analytics?.campaign,
-        gclid:            o.analytics?.gclid,
-        fbclid:           o.analytics?.fbclid,
-        confidenceScore:  o.analytics?.confidenceScore,
-        confidenceLevel:  o.analytics?.confidenceLevel,
-        isReconstructed:  o.analytics?.isReconstructed,
+        source:             o.analytics?.source,
+        medium:             o.analytics?.medium,
+        campaign:           o.analytics?.campaign,
+        gclid:              o.analytics?.gclid,
+        fbclid:             o.analytics?.fbclid,
+        confidenceScore:    o.analytics?.confidenceScore,
+        confidenceLevel:    o.analytics?.confidenceLevel,
+        isReconstructed:    o.analytics?.isReconstructed,
         reconstructionRule: o.analytics?.reconstructionRule,
-        anonymousId:      o.analytics?.anonymousId,
-        eventId:          o.analytics?.eventId,
+        anonymousId:        o.analytics?.anonymousId,
+        eventId:            o.analytics?.eventId,
       },
     })),
     queueEvents,
