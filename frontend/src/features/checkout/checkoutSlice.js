@@ -5,6 +5,7 @@ import axios from 'axios';
 import {
   generateEventId,
   buildClientAnalyticsPayload,
+  ANALYTICS_EVENTS,
 } from '../../utils/analytics.js';
 
 // DEDUP: Browser pixel for funnel events with shared eventId
@@ -37,9 +38,21 @@ export const createCheckoutSession = createAsyncThunk(
       const { discount } = getState().cart;
       const hasDiscount  = discount.applied && discount.code && discount.discountAmount > 0;
 
-      // Generate shared eventId for browser pixel + server attribution
+      // FIX (string instead of object): buildClientAnalyticsPayload was called
+      // as buildClientAnalyticsPayload(eventId) — passing a plain UUID string.
+      // The function destructures { eventType, properties, attribution,
+      // analyticsEventId, ...overrides } from its argument. Passing a string
+      // means every named param is undefined and the ...overrides spread
+      // produces no enumerable properties (strings have none). The analytics
+      // payload sent to /api/v1/checkout/create was entirely empty — no UTMs,
+      // no attribution, no analyticsEventId — so the backend had no event ID
+      // to link against the browser pixel's UUID, breaking browser/server
+      // deduplication for all checkout events.
       const eventId          = generateEventId();
-      const analyticsPayload = buildClientAnalyticsPayload(eventId);
+      const analyticsPayload = buildClientAnalyticsPayload({
+        eventType:        ANALYTICS_EVENTS.CHECKOUT_STEP,
+        analyticsEventId: eventId,
+      });
 
       const { data } = await axios.post("/api/v1/checkout/create", {
         items,
@@ -61,27 +74,43 @@ export const createCheckoutSession = createAsyncThunk(
  *
  * ANALYTICS CHANGES:
  *   - Fires trackCheckoutStep() browser pixel for payment funnel steps
- *   - payment_selection and payment_gateway fire Meta AddPaymentInfo
+ *   - payment_selection fires Meta AddPaymentInfo (payment_gateway does not —
+ *     see eventBridge.js fix; firing on both steps inflates the funnel metric)
  *   - All steps fire GA4 checkout_progress
  *   - No server analytics payload needed here — step updates are captured
  *     by the backend checkoutController which already logs step transitions
+ *
+ * FIX (inconsistent cart value): state.pricing.totalPrice and
+ * cartContext.cartValue can diverge when a discount is applied — pricing
+ * reflects the server-confirmed discounted total while cartContext may carry
+ * the pre-discount value from the component. To ensure Meta always receives
+ * the same value (the server-confirmed total) across all steps of the same
+ * checkout session, cartValue is now sourced exclusively from the checkout
+ * session pricing returned by the server. cartContext is still accepted for
+ * itemCount and hasDiscount which are not held in Redux pricing state.
  */
 export const updateCheckoutStep = createAsyncThunk(
   "checkout/updateStep",
-  async ({ checkoutId, step, gateway, cartContext = {} }, { rejectWithValue }) => {
+  async ({ checkoutId, step, gateway, cartContext = {} }, { getState, rejectWithValue }) => {
     try {
       const { data } = await axios.put(
         `/api/v1/checkout/${checkoutId}/step`,
         { step, gateway },
         { withCredentials: true }
       );
+
+      // Capture confirmed pricing from Redux state at dispatch time so the
+      // fulfilled handler has a stable server-authoritative totalPrice.
+      const confirmedPricing = getState().checkout.pricing;
+
       // Pass step and cartContext through so fulfilled can fire the pixel
       return {
-        currentStep:    data.currentStep,
-        stepsCompleted: data.stepsCompleted,
+        currentStep:      data.currentStep,
+        stepsCompleted:   data.stepsCompleted,
         gateway,
         step,
         cartContext,
+        confirmedPricing,
       };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || "Failed to update checkout step");
@@ -243,7 +272,8 @@ const checkoutSlice = createSlice({
 
     // ── UPDATE STEP ─────────────────────────────────────────────────────────
     // ANALYTICS: fires trackCheckoutStep() for payment funnel steps.
-    // Meta AddPaymentInfo fires on payment_selection + payment_gateway.
+    // Meta AddPaymentInfo fires on payment_selection only (not payment_gateway
+    // — see eventBridge.js; firing on both steps double-counts the metric).
     // GA4 checkout_progress fires on every step.
     builder
       .addCase(updateCheckoutStep.pending, (state) => {
@@ -251,7 +281,14 @@ const checkoutSlice = createSlice({
         state.error         = null;
       })
       .addCase(updateCheckoutStep.fulfilled, (state, action) => {
-        const { currentStep, stepsCompleted, gateway, step, cartContext } = action.payload;
+        const {
+          currentStep,
+          stepsCompleted,
+          gateway,
+          step,
+          cartContext,
+          confirmedPricing,
+        } = action.payload;
 
         state.actionLoading  = false;
         state.currentStep    = currentStep;
@@ -260,11 +297,19 @@ const checkoutSlice = createSlice({
         state.success = true;
         state.message = "Step updated";
 
-        // Fire browser pixel for payment-related steps — fire-and-forget
+        // Fire browser pixel for payment-related steps — fire-and-forget.
+        // FIX (inconsistent cart value): cartValue is sourced exclusively from
+        // confirmedPricing.totalPrice — the server-authoritative discounted
+        // total captured at dispatch time from Redux state. The cartContext
+        // fallback is intentionally removed for cartValue because it may carry
+        // a pre-discount component value that diverges from the session total,
+        // causing Meta to receive different `value` figures for the same checkout
+        // across step transitions. itemCount and hasDiscount still come from
+        // cartContext since they are not held in Redux pricing state.
         if (step === 'payment_selection' || step === 'payment_gateway') {
           trackCheckoutStep(step, {
-            cartValue:   state.pricing?.totalPrice || cartContext?.cartValue || 0,
-            itemCount:   cartContext?.itemCount || 0,
+            cartValue:   confirmedPricing?.totalPrice ?? state.pricing?.totalPrice ?? 0,
+            itemCount:   cartContext?.itemCount   || 0,
             hasDiscount: cartContext?.hasDiscount ?? false,
           });
         }
