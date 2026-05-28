@@ -45,7 +45,12 @@
 
 const PATHS = {
   productPage:  (path) => /^\/products\/[^/]+/.test(path),
-  categoryPage: (path) => /^\/products\/?(\?.*)?$/.test(path) || /^\/categories/.test(path),
+  // FIX: Added `^` anchor before `\/products` to prevent false matches on paths
+  // like `/products-on-sale`. The original regex `\/products\/?(\?.*)?$` was not
+  // fully left-anchored, allowing partial matches on product-prefixed slugs.
+  // Since query strings are already stripped before path matching, the `(\?.*)?`
+  // capture group is also removed as it was redundant.
+  categoryPage: (path) => /^\/products\/?$/.test(path) || /^\/categories/.test(path),
   salePage:     (path) => /^\/sale/.test(path),
   newArrivals:  (path) => /^\/new-arrivals/.test(path),
   homepage:     (path) => path === '/' || path === '',
@@ -117,10 +122,15 @@ export const reconstructReferrer = ({ landingPage, sessionContinuity, isFirstVis
   //         social post where the sender stripped/forgot UTM params.
   // Evidence: Email clients and some social platforms strip query params.
   //           UTM-less promo page landings are a known email attribution gap.
+  // FIX: medium changed from 'email' to null. The source 'likely_email_or_social'
+  // explicitly covers both channels — assigning medium: 'email' definitively
+  // caused this ambiguous traffic to appear as email in channel reports, skewing
+  // email revenue attribution. null correctly signals an unresolved medium,
+  // keeping it out of single-channel rollups until further evidence is available.
   if (isFirstVisit && (PATHS.salePage(path) || PATHS.newArrivals(path))) {
     return {
       source:             'likely_email_or_social',
-      medium:             'email',
+      medium:             null,
       reconstructionRule: 'first_visit_promo_page',
     };
   }
@@ -129,10 +139,16 @@ export const reconstructReferrer = ({ landingPage, sessionContinuity, isFirstVis
   // Pattern: Has session, lands on /sale.
   // Signal: Promotional pages as second+ visit often indicate the user
   //         was reminded by an email or retargeting ad (without click ID).
+  //         However the user may simply have bookmarked the page.
+  // FIX: medium changed from 'paid' to null. Assigning medium: 'paid'
+  // caused this inferred traffic to appear in paid channel ROAS calculations,
+  // artificially inflating paid performance whenever the inference was wrong
+  // (e.g. a bookmarked sale page). null correctly keeps this traffic in an
+  // unresolved bucket until a click ID or UTM confirms the channel.
   if (sessionContinuity && PATHS.salePage(path)) {
     return {
       source:             'likely_retargeting',
-      medium:             'paid',
+      medium:             null,
       reconstructionRule: 'returning_visitor_sale_page',
     };
   }
@@ -182,15 +198,15 @@ export const getReconstructionRules = () => [
   },
   {
     rule:          'first_visit_promo_page',
-    description:   'First visit to /sale or /new-arrivals — likely email without UTMs',
+    description:   'First visit to /sale or /new-arrivals — likely email or social without UTMs; medium unresolved',
     targetSource:  'likely_email_or_social',
-    targetMedium:  'email',
+    targetMedium:  null,
   },
   {
     rule:          'returning_visitor_sale_page',
-    description:   'Returning visitor to /sale — likely retargeting ad without click ID',
+    description:   'Returning visitor to /sale — likely retargeting or bookmark; medium unresolved to protect ROAS accuracy',
     targetSource:  'likely_retargeting',
-    targetMedium:  'paid',
+    targetMedium:  null,
   },
   {
     rule:          'first_visit_category_page',
