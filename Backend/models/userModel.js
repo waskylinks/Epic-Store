@@ -40,6 +40,52 @@ const userSchema = new mongoose.Schema(
       }
     },
 
+    phone: {
+      type: String,
+      trim: true,
+      required: function () {
+        return this.authProvider === "local";
+      },
+      validate: {
+        validator: function (v) {
+          if (!v) return true;
+          return /^\+?[\d\s\-()]{7,20}$/.test(v);
+        },
+        message: "Invalid phone number format"
+      }
+    },
+
+    dateOfBirth: {
+      type: Date,
+      required: function () {
+        return this.authProvider === "local";
+      },
+      validate: {
+        validator: function (v) {
+          if (!v) return true;
+          const age = (Date.now() - new Date(v).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+          return age >= 13 && age <= 120;
+        },
+        message: "Date of birth must correspond to an age between 13 and 120"
+      }
+    },
+
+    gender: {
+      type: String,
+      enum: ["male", "female", "other"],
+      required: function () {
+        return this.authProvider === "local";
+      }
+    },
+
+    shippingAddress: {
+      address: { type: String, default: null },
+      city:    { type: String, default: null },
+      state:   { type: String, default: null },
+      country: { type: String, default: null },
+      pinCode: { type: String, default: null },
+    },
+
     avatar: {
       public_id: { type: String, default: "default_avatar" },
       url: {
@@ -75,26 +121,24 @@ const userSchema = new mongoose.Schema(
       required: true
     },
 
-    googleId: { type: String, unique: true, sparse: true },
+    googleId:   { type: String, unique: true, sparse: true },
     facebookId: { type: String, unique: true, sparse: true },
 
     emailVerified: { type: Boolean, default: false },
 
-    verificationCode: String,
+    verificationCode:       String,
     verificationCodeExpire: Date,
 
-    resetPasswordCode: String,
+    resetPasswordCode:       String,
     resetPasswordCodeExpire: Date,
 
-    lastLogin: Date,
+    lastLogin:     Date,
     loginAttempts: { type: Number, default: 0 },
-    lockUntil: Date,
+    lockUntil:     Date,
 
     passwordHistory: [
       {
-        // FIX U1: Store HASHED passwords (not plaintext) so bcrypt.compare()
-        // in isPasswordReused() works correctly
-        password: String,
+        password:  String,
         changedAt: Date
       }
     ],
@@ -104,7 +148,7 @@ const userSchema = new mongoose.Schema(
   {
     timestamps: true,
     strict: true,
-    toJSON: { virtuals: true },
+    toJSON:   { virtuals: true },
     toObject: { virtuals: true }
   }
 );
@@ -113,13 +157,13 @@ const userSchema = new mongoose.Schema(
 
 userSchema.virtual("fullName").get(function () {
   const first = this.firstName || "";
-  const last = this.lastName || "";
+  const last  = this.lastName  || "";
   return `${first} ${last}`.trim() || "User";
 });
 
 userSchema.virtual("initials").get(function () {
   const first = this.firstName?.charAt(0) || "";
-  const last = this.lastName?.charAt(0) || "";
+  const last  = this.lastName?.charAt(0)  || "";
   return `${first}${last}`.toUpperCase() || "U";
 });
 
@@ -135,42 +179,35 @@ userSchema.index({ lastSeenDiscountsAt: 1 });
 
 /* ================= MIDDLEWARE ================= */
 
-// Update avatar URL with user's initials on save
 userSchema.pre("save", function (next) {
   if (this.isModified("firstName") || this.isModified("lastName")) {
     if (this.avatar.public_id === "default_avatar") {
       const first = this.firstName || "User";
-      const last = this.lastName || "Name";
-      const name = `${first}+${last}`;
+      const last  = this.lastName  || "Name";
+      const name  = `${first}+${last}`;
       this.avatar.url = `https://ui-avatars.com/api/?background=667eea&color=fff&name=${encodeURIComponent(name)}&size=200`;
     }
   }
   next();
 });
 
-// FIX U1: Password hashing with proper history tracking
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password") || !this.password) return next();
 
-  // On password change (not initial registration), store the OLD hash BEFORE replacing it
-  // This allows isPasswordReused() to compare candidates against all previous passwords
   if (!this.isNew) {
-    // Get the old password hash from the database (this.password is the new plaintext)
-    const oldDoc = await this.constructor.findById(this._id).select('+password');
+    const oldDoc = await this.constructor.findById(this._id).select("+password");
     if (oldDoc && oldDoc.password) {
       this.passwordHistory.push({
-        password: oldDoc.password,  // Store the OLD hash
+        password:  oldDoc.password,
         changedAt: new Date()
       });
 
-      // Keep only the last 5 password hashes
       if (this.passwordHistory.length > 5) {
         this.passwordHistory = this.passwordHistory.slice(-5);
       }
     }
   }
 
-  // Hash the new password
   this.password = await bcrypt.hash(this.password, 12);
   next();
 });
@@ -181,7 +218,6 @@ userSchema.methods.comparePassword = function (candidate) {
   return bcrypt.compare(candidate, this.password);
 };
 
-// Now works correctly because passwordHistory stores hashed passwords
 userSchema.methods.isPasswordReused = async function (candidate) {
   for (const item of this.passwordHistory) {
     if (await bcrypt.compare(candidate, item.password)) return true;
@@ -191,7 +227,7 @@ userSchema.methods.isPasswordReused = async function (candidate) {
 
 userSchema.methods.incrementLoginAttempts = async function () {
   const maxAttempts = 5;
-  const lockTime = 30 * 60 * 1000;
+  const lockTime    = 30 * 60 * 1000;
 
   if (this.lockUntil && this.lockUntil > Date.now()) return;
 
@@ -206,8 +242,8 @@ userSchema.methods.incrementLoginAttempts = async function () {
 
 userSchema.methods.resetLoginAttempts = async function () {
   this.loginAttempts = 0;
-  this.lockUntil = undefined;
-  this.lastLogin = Date.now();
+  this.lockUntil     = undefined;
+  this.lastLogin     = Date.now();
   await this.save({ validateBeforeSave: false });
 };
 
@@ -219,14 +255,14 @@ userSchema.methods.getJWTToken = function () {
 
 userSchema.methods.generateVerificationCode = function () {
   const code = crypto.randomInt(100000, 999999).toString();
-  this.verificationCode = crypto.createHash("sha256").update(code).digest("hex");
+  this.verificationCode       = crypto.createHash("sha256").update(code).digest("hex");
   this.verificationCodeExpire = Date.now() + 10 * 60 * 1000;
   return code;
 };
 
 userSchema.methods.generatePasswordResetCode = function () {
   const code = crypto.randomInt(100000, 999999).toString();
-  this.resetPasswordCode = crypto.createHash("sha256").update(code).digest("hex");
+  this.resetPasswordCode       = crypto.createHash("sha256").update(code).digest("hex");
   this.resetPasswordCodeExpire = Date.now() + 90 * 1000;
   return code;
 };

@@ -29,7 +29,7 @@ const USER_LIST_SELECT = 'firstName lastName email role avatar.url authProvider 
 // ============================================
 
 export const registerUser = handleAsyncError(async (req, res, next) => {
-  const { firstName, lastName, email, password } = req.body;
+  const { firstName, lastName, email, password, phone, dateOfBirth, gender } = req.body;
 
   const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
@@ -45,6 +45,9 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
     lastName,
     email: email.toLowerCase(),
     password,
+    phone,
+    dateOfBirth,
+    gender,
     authProvider: 'local',
     emailVerified: false
   });
@@ -55,16 +58,16 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
   try {
     const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
     await sendEmail({
-      email: user.email,
+      email:   user.email,
       subject: emailTemplate.subject,
       message: emailTemplate.text,
-      html: emailTemplate.html
+      html:    emailTemplate.html
     });
 
     res.status(201).json({
-      success: true,
-      message: `Verification code sent to ${user.email}. Please verify your email to complete registration.`,
-      email: user.email,
+      success:           true,
+      message:           `Verification code sent to ${user.email}. Please verify your email to complete registration.`,
+      email:             user.email,
       needsVerification: true
     });
   } catch {
@@ -97,29 +100,28 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid or expired verification code", 400));
   }
 
-  user.emailVerified = true;
-  user.verificationCode = undefined;
+  user.emailVerified          = true;
+  user.verificationCode       = undefined;
   user.verificationCodeExpire = undefined;
   await user.save();
 
   try {
     const welcomeTemplate = emailTemplates.welcomeEmail(user.fullName);
     await sendEmail({
-      email: user.email,
+      email:   user.email,
       subject: welcomeTemplate.subject,
       message: welcomeTemplate.text,
-      html: welcomeTemplate.html
+      html:    welcomeTemplate.html
     });
   } catch {
     // Welcome email failure must not block verification success
   }
 
-  // Fire-and-forget — none of these should block the token response
   syncCustomerAnalytics(user._id).catch(() => {});
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] VerifyEmail stitch failed (non-fatal):', err.message)
   );
-  invalidateCaches(); // fire-and-forget — must not block sendToken
+  invalidateCaches();
 
   sendToken(user, 200, res);
 });
@@ -147,10 +149,10 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
   try {
     const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
     await sendEmail({
-      email: user.email,
+      email:   user.email,
       subject: emailTemplate.subject,
       message: emailTemplate.text,
-      html: emailTemplate.html
+      html:    emailTemplate.html
     });
 
     res.status(200).json({
@@ -158,7 +160,7 @@ export const resendVerificationCode = handleAsyncError(async (req, res, next) =>
       message: `New verification code sent to ${user.email}`
     });
   } catch {
-    user.verificationCode = undefined;
+    user.verificationCode       = undefined;
     user.verificationCodeExpire = undefined;
     await user.save({ validateBeforeSave: false });
 
@@ -193,20 +195,20 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
     try {
       const emailTemplate = emailTemplates.verificationEmail(user.fullName, verificationCode);
       await sendEmail({
-        email: user.email,
+        email:   user.email,
         subject: emailTemplate.subject,
         message: emailTemplate.text,
-        html: emailTemplate.html
+        html:    emailTemplate.html
       });
 
       return res.status(403).json({
-        success: false,
-        message: "Please verify your email before logging in.",
+        success:           false,
+        message:           "Please verify your email before logging in.",
         needsVerification: true,
-        email: user.email
+        email:             user.email
       });
     } catch {
-      user.verificationCode = undefined;
+      user.verificationCode       = undefined;
       user.verificationCodeExpire = undefined;
       await user.save({ validateBeforeSave: false });
 
@@ -222,12 +224,10 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
 
   await user.resetLoginAttempts();
 
-  // Fire-and-forget — must not block login response
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] Login stitch failed (non-fatal):', err.message)
   );
 
- 
   sendToken(user, 200, res);
 });
 
@@ -237,14 +237,13 @@ export const loginUser = handleAsyncError(async (req, res, next) => {
 
 export const logout = handleAsyncError(async (req, res) => {
   res.cookie("token", null, {
-    expires: new Date(0),
+    expires:  new Date(0),
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure:   process.env.NODE_ENV === "production",
     sameSite: "strict",
-    path: "/"
+    path:     "/"
   });
 
-  // Fire-and-forget — must not block logout response
   invalidateSession(req.sessionId, res).catch(err =>
     console.error('[Session] Invalidation failed (non-fatal):', err.message)
   );
@@ -273,10 +272,10 @@ export const requestPasswordReset = handleAsyncError(async (req, res, next) => {
   try {
     const template = emailTemplates.passwordResetEmail(user.fullName, resetCode);
     await sendEmail({
-      email: user.email,
+      email:   user.email,
       subject: template.subject,
       message: template.text,
-      html: template.html
+      html:    template.html
     });
 
     res.status(200).json({
@@ -284,7 +283,7 @@ export const requestPasswordReset = handleAsyncError(async (req, res, next) => {
       message: `Password reset code sent to ${user.email}`
     });
   } catch {
-    user.resetPasswordCode = undefined;
+    user.resetPasswordCode       = undefined;
     user.resetPasswordCodeExpire = undefined;
     await user.save({ validateBeforeSave: false });
     return next(new HandleError("Could not send password reset email. Please try again later.", 500));
@@ -323,18 +322,18 @@ export const resetPasswordWithCode = handleAsyncError(async (req, res, next) => 
     return next(new HandleError("This password was used recently. Please choose a different password.", 400));
   }
 
-  user.password = password;
-  user.resetPasswordCode = undefined;
+  user.password                = password;
+  user.resetPasswordCode       = undefined;
   user.resetPasswordCodeExpire = undefined;
   await user.save();
 
   try {
     const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
     await sendEmail({
-      email: user.email,
+      email:   user.email,
       subject: emailTemplate.subject,
       message: emailTemplate.text,
-      html: emailTemplate.html
+      html:    emailTemplate.html
     });
   } catch {
     // Email confirmation failure must not block the password reset
@@ -397,10 +396,10 @@ export const UpdatePassword = handleAsyncError(async (req, res, next) => {
   try {
     const emailTemplate = emailTemplates.passwordChangedEmail(user.fullName);
     await sendEmail({
-      email: user.email,
+      email:   user.email,
       subject: emailTemplate.subject,
       message: emailTemplate.text,
-      html: emailTemplate.html
+      html:    emailTemplate.html
     });
   } catch {
     // Email confirmation failure must not block the password update
@@ -427,16 +426,27 @@ export const getUserDetails = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 export const updateProfile = handleAsyncError(async (req, res, next) => {
-  const { firstName, lastName, email, avatar } = req.body;
+  const { firstName, lastName, email, avatar, phone, dateOfBirth, gender, shippingAddress } = req.body;
 
   const updateUserDetails = {};
 
-  if (firstName !== undefined) updateUserDetails.firstName = firstName;
-  if (lastName !== undefined) updateUserDetails.lastName = lastName;
-  if (email !== undefined) updateUserDetails.email = email?.toLowerCase();
+  if (firstName       !== undefined) updateUserDetails.firstName = firstName;
+  if (lastName        !== undefined) updateUserDetails.lastName  = lastName;
+  if (email           !== undefined) updateUserDetails.email     = email?.toLowerCase();
+  if (phone           !== undefined) updateUserDetails.phone     = phone;
+  if (gender          !== undefined) updateUserDetails.gender    = gender;
+  if (shippingAddress !== undefined) updateUserDetails.shippingAddress = shippingAddress;
+
+  if (dateOfBirth !== undefined) {
+    const parsed = new Date(dateOfBirth);
+    if (isNaN(parsed.getTime())) {
+      return next(new HandleError('Invalid date of birth format', 400));
+    }
+    updateUserDetails.dateOfBirth = parsed;
+  }
 
   if (avatar && avatar !== '') {
-    const user = await User.findById(req.user.id);
+    const user    = await User.findById(req.user.id);
     const imageId = user.avatar.public_id;
 
     if (imageId !== 'default_avatar') {
@@ -445,33 +455,38 @@ export const updateProfile = handleAsyncError(async (req, res, next) => {
 
     const myCloud = await cloudinary.uploader.upload(avatar, {
       folder: 'EpicStore/avatars',
-      width: 200,
-      crop: 'scale'
+      width:  200,
+      crop:   'scale'
     });
 
     updateUserDetails.avatar = {
       public_id: myCloud.public_id,
-      url: myCloud.secure_url
+      url:       myCloud.secure_url
     };
   }
 
-  if (firstName && lastName && email) {
-    updateUserDetails.profileCompleted = true;
-  }
+  const current = await User.findById(req.user.id);
+  const merged  = { ...current.toObject(), ...updateUserDetails };
+  updateUserDetails.profileCompleted = !!(
+    merged.firstName   &&
+    merged.lastName    &&
+    merged.email       &&
+    merged.phone       &&
+    merged.dateOfBirth &&
+    merged.gender
+  );
 
-  const user = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
-    new: true,
-    runValidators: true
+  const updatedUser = await User.findByIdAndUpdate(req.user.id, updateUserDetails, {
+    new:            true,
+    runValidators:  true
   });
 
-  // Fire-and-forget — profile updates happen frequently; blocking on analytics
-  // sync makes the update feel slow and provides no user-visible benefit
-  syncCustomerAnalytics(user._id).catch(() => {});
+  syncCustomerAnalytics(updatedUser._id).catch(() => {});
 
   res.status(200).json({
     success: true,
     message: 'Profile updated successfully',
-    user
+    user:    updatedUser
   });
 });
 
@@ -496,8 +511,8 @@ export const getUsersList = handleAsyncError(async (req, res, next) => {
   }
 
   const { role, emailVerified, authProvider } = req.query;
-  if (role          && ['user', 'admin', 'superAdmin'].includes(role)) filter.role          = role;
-  if (authProvider  && ['local', 'google', 'facebook'].includes(authProvider))  filter.authProvider  = authProvider;
+  if (role         && ['user', 'admin', 'superAdmin'].includes(role))              filter.role         = role;
+  if (authProvider && ['local', 'google', 'facebook'].includes(authProvider))      filter.authProvider = authProvider;
   if (emailVerified !== undefined) filter.emailVerified = emailVerified === 'true';
 
   const sortOptions = {
@@ -518,8 +533,6 @@ export const getUsersList = handleAsyncError(async (req, res, next) => {
     User.countDocuments(filter),
   ]);
 
-  // Aggregate stats in one pass — only on unfiltered first page load
-  // (page === 1 && no filters applied) to avoid extra DB round-trips on every page change
   let stats = null;
   const isBaseQuery = !search && !role && !emailVerified && !authProvider;
   if (isBaseQuery && page === 1) {
@@ -527,9 +540,9 @@ export const getUsersList = handleAsyncError(async (req, res, next) => {
       {
         $facet: {
           total:      [{ $count: 'n' }],
-          admins:     [{ $match: { role: 'admin' } },      { $count: 'n' }],
-          superAdmins:[{ $match: { role: 'superAdmin' } }, { $count: 'n' }],
-          verified:   [{ $match: { emailVerified: true } },{ $count: 'n' }],
+          admins:     [{ $match: { role: 'admin' } },       { $count: 'n' }],
+          superAdmins:[{ $match: { role: 'superAdmin' } },  { $count: 'n' }],
+          verified:   [{ $match: { emailVerified: true } },  { $count: 'n' }],
           google:     [{ $match: { authProvider: 'google' } }, { $count: 'n' }],
         }
       }
@@ -546,11 +559,11 @@ export const getUsersList = handleAsyncError(async (req, res, next) => {
   }
 
   res.status(200).json({
-    success: true,
+    success:       true,
     users,
     total,
-    totalPages: Math.ceil(total / limit),
-    currentPage: page,
+    totalPages:    Math.ceil(total / limit),
+    currentPage:   page,
     resultPerPage: limit,
     stats,
   });
@@ -573,9 +586,9 @@ export const getSingleUser = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 export const updateUserRole = handleAsyncError(async (req, res, next) => {
-  const { role } = req.body;
-  const targetUserId = req.params.id;
-  const requestingUser = req.user;
+  const { role }         = req.body;
+  const targetUserId     = req.params.id;
+  const requestingUser   = req.user;
 
   const VALID_ROLES = ['user', 'admin', 'superAdmin'];
   if (!VALID_ROLES.includes(role)) {
@@ -585,7 +598,6 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
   const targetUser = await User.findById(targetUserId);
   if (!targetUser) return next(new HandleError('User not found', 404));
 
-  // Prevent self-demotion by a superAdmin
   if (
     String(targetUser._id) === String(requestingUser._id) &&
     requestingUser.role === 'superAdmin' &&
@@ -594,14 +606,12 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('You cannot change your own role.', 403));
   }
 
-  // Only superAdmin can touch admin or superAdmin accounts
   const isElevatedTarget = ['admin', 'superAdmin'].includes(targetUser.role);
   const isElevatedRole   = ['admin', 'superAdmin'].includes(role);
   if ((isElevatedTarget || isElevatedRole) && requestingUser.role !== 'superAdmin') {
     return next(new HandleError('Only a superAdmin can manage admin and superAdmin roles', 403));
   }
 
-  // Guard: cannot remove the last privileged user
   if (isElevatedTarget && role === 'user') {
     const privilegedCount = await User.countDocuments({
       role: { $in: ['admin', 'superAdmin'] },
@@ -619,7 +629,7 @@ export const updateUserRole = handleAsyncError(async (req, res, next) => {
 
   if (!updatedUser) return next(new HandleError('User not found', 404));
 
-  invalidateCaches(); // fire-and-forget
+  invalidateCaches();
 
   res.status(200).json({ success: true, user: updatedUser });
 });
@@ -633,7 +643,7 @@ export const deleteUser = handleAsyncError(async (req, res, next) => {
   if (!user) return next(new HandleError('Invalid user', 400));
 
   await User.findByIdAndDelete(req.params.id);
-  invalidateCaches(); // fire-and-forget
+  invalidateCaches();
 
   return res.status(200).json({
     success: true,

@@ -12,7 +12,7 @@ export const verifyUserAuth = handleAsyncError(async (req, res, next) => {
 
     const decodedData = jwt.verify(token, process.env.JWT_SECRET_KEY);
     req.user = await User.findById(decodedData.id).select(
-        "+lastSeenDiscountsAt +createdAt +firstName +lastName +email +role +avatar"
+        "+lastSeenDiscountsAt +createdAt +firstName +lastName +email +role +avatar+phone +dateOfBirth +gender"
     );
 
     next();
@@ -26,4 +26,12 @@ export const roleBaseAccess = (...roles) => {
         next();
     }
 }
+
+export const requireCompleteProfile = (req, res, next) => {
+  const { phone, dateOfBirth, gender } = req.user;
+  if (!phone || !dateOfBirth || !gender) {
+    return next(new HandleError('Please complete your profile before proceeding', 403));
+  }
+  next();
+};
 
