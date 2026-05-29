@@ -63,6 +63,8 @@ import AttributionDriftPage from './Admin/AttributionDriftPage';
 import QueueHealthPage from './Admin/QueueHealthPage';
 import UserEventTracePage from './Admin/UserEventTracePage';
 
+import CompleteProfile from './User/CompleteProfile';
+
 import { initAnalytics, debugAnalyticsState } from './utils/analytics.js';
 
 // ─── META PIXEL ID ────────────────────────────────────────────────────────────
@@ -177,6 +179,8 @@ function App() {
         <Route path='/password/forgot' element={<ForgotPassword />} />
         <Route path='/password/verify-code' element={<VerifyResetCode />} />
         <Route path='/password/new' element={<ResetPassword />} />
+
+        <Route path='/complete-profile' element={<ProtectedRoute element={<CompleteProfile />} />} />
 
         {/* Cart Route */}
         <Route path='/cart' element={<Cart />} />
