@@ -1,6 +1,9 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import axios from "axios";
 import { logout, login, verifyEmail } from "../products/userSlice";
+import {  generateEventId } from '../../utils/analytics.js';
+import { getMetaPixelCookies, getGA4ClientId, getAttributionContext } from '../../utils/analytics.js';
+
 
 // ============================================
 // ASYNC THUNKS - SERVER-SIDE CART OPERATIONS
@@ -33,15 +36,22 @@ export const addItemsToCart = createAsyncThunk(
   "cart/addItemsToCart",
   async ({ id, quantity }, { rejectWithValue }) => {
     try {
+      const eventId     = generateEventId();
+      const attribution = getAttributionContext();
+      const metaCookies = getMetaPixelCookies();
+
       const { data } = await axios.post("/api/v1/cart/add", {
-        product: id,
-        quantity
+        product:          id,
+        quantity,
+        analyticsEventId: eventId,
+        ga4ClientId:      getGA4ClientId(),
+        fbp:              metaCookies.fbp,
+        fbc:              metaCookies.fbc,
+        clientAttribution: attribution,
+        clientTimestamp:  new Date().toISOString(),
       });
 
-      return {
-        product:    id,
-        serverData: data,
-      };
+      return { product: id, serverData: data };
     } catch (error) {
       return rejectWithValue(
         error.response?.data?.message || "Failed to add to cart"
@@ -148,18 +158,6 @@ export const removeDiscountCode = createAsyncThunk(
   async () => ({ success: true })
 );
 
-// ─── Pull this user's cart from the server and replace localStorage ───────────
-// Called after login/loadUser to ensure the correct user's cart is loaded.
-// Prevents stale cart data from a previous user bleeding into a new session.
-//
-// FIX (clear-then-sync race): login.fulfilled and verifyEmail.fulfilled no
-// longer call resetCartState. Instead they let the existing localStorage cart
-// remain visible while syncServerCart fetches the real server cart. Once the
-// fetch resolves the cart is atomically replaced. This eliminates:
-//   1. The flash of empty cart between login and sync completion.
-//   2. The empty-cart-on-sync-failure scenario — if the fetch fails, the user
-//      still sees their pre-login localStorage cart rather than nothing.
-// syncServerCart.rejected sets a recoverable error; App.jsx can retry.
 export const syncServerCart = createAsyncThunk(
   "cart/syncServerCart",
   async (_, { rejectWithValue }) => {

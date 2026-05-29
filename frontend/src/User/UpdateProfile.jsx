@@ -9,31 +9,52 @@ import Loader from '../components/Loader';
 import { Camera, ArrowLeft, Save } from 'lucide-react';
 import '../UserStyles/UpdateProfile.css';
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PHONE_RE = /^\+?[\d\s\-(]{7,20}$/;
+
 function UpdateProfile() {
-    const [firstName, setFirstName] = useState('');
-    const [lastName, setLastName] = useState('');
-    const [email, setEmail] = useState('');
-    const [avatar, setAvatar] = useState('');
+    const [form, setForm] = useState({
+        firstName:   '',
+        lastName:    '',
+        email:       '',
+        phone:       '',
+        dateOfBirth: '',
+        gender:      '',
+    });
+
+    const [shipping, setShipping] = useState({
+        address: '',
+        city:    '',
+        state:   '',
+        country: '',
+        pinCode: '',
+    });
+
+    const [avatar,        setAvatar]        = useState('');
     const [avatarPreview, setAvatarPreview] = useState('./images/profile.webp');
-    const [isDragging, setIsDragging] = useState(false);
+    const [isDragging,    setIsDragging]    = useState(false);
+
+    const { firstName, lastName, email, phone, dateOfBirth, gender } = form;
 
     const { user, error, success, message, loading } = useSelector((state) => state.user);
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
+    const onField = (e) => {
+        const { name, value } = e.target;
+        setForm(p => ({ ...p, [name]: value }));
+    };
+
+    const onShipping = (e) => {
+        const { name, value } = e.target;
+        setShipping(p => ({ ...p, [name]: value }));
+    };
+
     const profileImageUpdate = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
-        if (!file.type.startsWith('image/')) {
-            toast.error('Please select an image file');
-            return;
-        }
-
-        if (file.size > 5 * 1024 * 1024) {
-            toast.error('Image size should be less than 5MB');
-            return;
-        }
+        if (!file.type.startsWith('image/')) { toast.error('Please select an image file'); return; }
+        if (file.size > 5 * 1024 * 1024)    { toast.error('Image size should be less than 5MB'); return; }
 
         const reader = new FileReader();
         reader.onload = () => {
@@ -42,30 +63,18 @@ function UpdateProfile() {
                 setAvatar(reader.result);
             }
         };
-        reader.onerror = () => {
-            toast.error('Error reading file');
-        };
+        reader.onerror = () => toast.error('Error reading file');
         reader.readAsDataURL(file);
     };
 
-    const handleDragOver = (e) => {
-        e.preventDefault();
-        setIsDragging(true);
-    };
-
-    const handleDragLeave = (e) => {
+    const handleDragOver  = (e) => { e.preventDefault(); setIsDragging(true); };
+    const handleDragLeave = (e) => { e.preventDefault(); setIsDragging(false); };
+    const handleDrop      = (e) => {
         e.preventDefault();
         setIsDragging(false);
-    };
-
-    const handleDrop = (e) => {
-        e.preventDefault();
-        setIsDragging(false);
-        
         const file = e.dataTransfer.files[0];
         if (file && file.type.startsWith('image/')) {
-            const fakeEvent = { target: { files: [file] } };
-            profileImageUpdate(fakeEvent);
+            profileImageUpdate({ target: { files: [file] } });
         } else {
             toast.error('Please drop an image file');
         }
@@ -74,43 +83,36 @@ function UpdateProfile() {
     const updateSubmit = async (e) => {
         e.preventDefault();
 
-        if (!firstName.trim()) {
-            toast.error('First name is required');
-            return;
-        }
+        if (!firstName.trim())              { toast.error('First name is required');            return; }
+        if (!lastName.trim())               { toast.error('Last name is required');             return; }
+        if (!email.trim())                  { toast.error('Email is required');                 return; }
+        if (!EMAIL_RE.test(email.trim()))   { toast.error('Please enter a valid email');        return; }
+        if (phone && !PHONE_RE.test(phone)) { toast.error('Please enter a valid phone number'); return; }
 
-        if (!lastName.trim()) {
-            toast.error('Last name is required');
-            return;
-        }
-
-        if (!email.trim()) {
-            toast.error('Email is required');
-            return;
-        }
-
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(email)) {
-            toast.error('Please enter a valid email');
-            return;
+        if (dateOfBirth) {
+            const age = (Date.now() - new Date(dateOfBirth).getTime()) / (1000 * 60 * 60 * 24 * 365.25);
+            if (age < 13 || age > 120) { toast.error('Invalid date of birth'); return; }
         }
 
         const updateData = {
             firstName: firstName.trim(),
-            lastName: lastName.trim(),
-            email: email.trim()
+            lastName:  lastName.trim(),
+            email:     email.trim(),
         };
 
-        if (avatar && avatar !== '') {
-            updateData.avatar = avatar;
-        }
-        
+        if (phone)       updateData.phone       = phone.trim();
+        if (dateOfBirth) updateData.dateOfBirth = dateOfBirth;
+        if (gender)      updateData.gender      = gender;
+        if (avatar)      updateData.avatar      = avatar;
+
+        const hasShipping = Object.values(shipping).some(v => v.trim() !== '');
+        if (hasShipping) updateData.shippingAddress = shipping;
+
         try {
             await dispatch(updateProfile(updateData)).unwrap();
-            // Reload user to get fresh avatar from server
             await dispatch(loadUser());
-        } catch (err) {
-            // Error already handled
+        } catch {
+            // handled by useEffect
         }
     };
 
@@ -129,13 +131,27 @@ function UpdateProfile() {
         }
     }, [dispatch, success, message, navigate]);
 
+    // Single setState call avoids cascading renders flagged by react-hooks/set-state-in-effect
     useLayoutEffect(() => {
         if (user) {
-            setFirstName(user.firstName || '');
-            setLastName(user.lastName || '');
-            setEmail(user.email || '');
-            const userAvatar = user?.avatar?.url || './images/profile.webp';
-            setAvatarPreview(userAvatar);
+            setForm({
+                firstName:   user.firstName || '',
+                lastName:    user.lastName  || '',
+                email:       user.email     || '',
+                phone:       user.phone     || '',
+                gender:      user.gender    || '',
+                dateOfBirth: user.dateOfBirth
+                    ? new Date(user.dateOfBirth).toISOString().split('T')[0]
+                    : '',
+            });
+            setShipping({
+                address: user.shippingAddress?.address || '',
+                city:    user.shippingAddress?.city    || '',
+                state:   user.shippingAddress?.state   || '',
+                country: user.shippingAddress?.country || '',
+                pinCode: user.shippingAddress?.pinCode || '',
+            });
+            setAvatarPreview(user?.avatar?.url || './images/profile.webp');
             setAvatar('');
         }
     }, [user]);
@@ -151,7 +167,7 @@ function UpdateProfile() {
                     <div className="update-profile-page">
                         <div className="update-profile-container">
                             <div className="update-profile-header">
-                                <button 
+                                <button
                                     className="back-button"
                                     onClick={() => navigate('/profile')}
                                     type="button"
@@ -165,27 +181,25 @@ function UpdateProfile() {
 
                             <div className="update-profile-card">
                                 <form className="update-profile-form-wrapper" onSubmit={updateSubmit}>
+
+                                    {/* ── Avatar ── */}
                                     <div className="avatar-upload-section">
-                                        <div 
+                                        <div
                                             className={`avatar-upload-wrapper ${isDragging ? 'dragging' : ''}`}
                                             onDragOver={handleDragOver}
                                             onDragLeave={handleDragLeave}
                                             onDrop={handleDrop}
                                         >
                                             <label htmlFor="avatar-input" className="avatar-preview-container">
-                                                <img 
-                                                    src={avatarPreview} 
-                                                    alt="Profile preview" 
-                                                    className="avatar-preview" 
-                                                />
+                                                <img src={avatarPreview} alt="Profile preview" className="avatar-preview" />
                                                 <div className="avatar-overlay">
                                                     <Camera />
                                                     <span>Change Photo</span>
                                                 </div>
-                                                <input 
-                                                    type="file" 
-                                                    className="avatar-input" 
-                                                    accept="image/*" 
+                                                <input
+                                                    type="file"
+                                                    className="avatar-input"
+                                                    accept="image/*"
                                                     onChange={profileImageUpdate}
                                                     name="avatar"
                                                     id="avatar-input"
@@ -199,15 +213,16 @@ function UpdateProfile() {
                                         </div>
                                     </div>
 
+                                    {/* ── Personal Info ── */}
                                     <div className="form-fields">
                                         <div className="form-group">
                                             <label htmlFor="firstName">First Name</label>
-                                            <input 
-                                                type="text" 
+                                            <input
+                                                type="text"
                                                 id="firstName"
-                                                value={firstName} 
-                                                onChange={(e) => setFirstName(e.target.value)}
                                                 name="firstName"
+                                                value={firstName}
+                                                onChange={onField}
                                                 placeholder="Enter your first name"
                                                 className="form-input"
                                                 required
@@ -216,12 +231,12 @@ function UpdateProfile() {
 
                                         <div className="form-group">
                                             <label htmlFor="lastName">Last Name</label>
-                                            <input 
-                                                type="text" 
+                                            <input
+                                                type="text"
                                                 id="lastName"
-                                                value={lastName} 
-                                                onChange={(e) => setLastName(e.target.value)}
                                                 name="lastName"
+                                                value={lastName}
+                                                onChange={onField}
                                                 placeholder="Enter your last name"
                                                 className="form-input"
                                                 required
@@ -230,29 +245,150 @@ function UpdateProfile() {
 
                                         <div className="form-group">
                                             <label htmlFor="email">Email Address</label>
-                                            <input 
-                                                type="email" 
+                                            <input
+                                                type="email"
                                                 id="email"
-                                                value={email} 
-                                                onChange={(e) => setEmail(e.target.value)}
                                                 name="email"
+                                                value={email}
+                                                onChange={onField}
                                                 placeholder="Enter your email"
                                                 className="form-input"
                                                 required
                                             />
                                         </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="phone">Phone Number</label>
+                                            <input
+                                                type="tel"
+                                                id="phone"
+                                                name="phone"
+                                                value={phone}
+                                                onChange={onField}
+                                                placeholder="+1 555 000 0000"
+                                                className="form-input"
+                                                autoComplete="tel"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="dateOfBirth">Date of Birth</label>
+                                            <input
+                                                type="date"
+                                                id="dateOfBirth"
+                                                name="dateOfBirth"
+                                                value={dateOfBirth}
+                                                onChange={onField}
+                                                className="form-input"
+                                                autoComplete="bday"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="gender">Gender</label>
+                                            <select
+                                                id="gender"
+                                                name="gender"
+                                                value={gender}
+                                                onChange={onField}
+                                                className="form-input"
+                                            >
+                                                <option value="">Select gender</option>
+                                                <option value="male">Male</option>
+                                                <option value="female">Female</option>
+                                                <option value="other">Other</option>
+                                            </select>
+                                        </div>
                                     </div>
 
+                                    {/* ── Shipping Address ── */}
+                                    <div className="form-fields">
+                                        <p style={{ fontWeight: 600, fontSize: '1rem', color: '#1a1a1a', marginBottom: '-0.5rem' }}>
+                                            Shipping Address
+                                        </p>
+
+                                        <div className="form-group">
+                                            <label htmlFor="address">Street Address</label>
+                                            <input
+                                                type="text"
+                                                id="address"
+                                                name="address"
+                                                value={shipping.address}
+                                                onChange={onShipping}
+                                                placeholder="123 Main Street"
+                                                className="form-input"
+                                                autoComplete="street-address"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="city">City</label>
+                                            <input
+                                                type="text"
+                                                id="city"
+                                                name="city"
+                                                value={shipping.city}
+                                                onChange={onShipping}
+                                                placeholder="New York"
+                                                className="form-input"
+                                                autoComplete="address-level2"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="state">State / Province</label>
+                                            <input
+                                                type="text"
+                                                id="state"
+                                                name="state"
+                                                value={shipping.state}
+                                                onChange={onShipping}
+                                                placeholder="NY"
+                                                className="form-input"
+                                                autoComplete="address-level1"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="country">Country</label>
+                                            <input
+                                                type="text"
+                                                id="country"
+                                                name="country"
+                                                value={shipping.country}
+                                                onChange={onShipping}
+                                                placeholder="United States"
+                                                className="form-input"
+                                                autoComplete="country-name"
+                                            />
+                                        </div>
+
+                                        <div className="form-group">
+                                            <label htmlFor="pinCode">ZIP / Pin Code</label>
+                                            <input
+                                                type="text"
+                                                id="pinCode"
+                                                name="pinCode"
+                                                value={shipping.pinCode}
+                                                onChange={onShipping}
+                                                placeholder="10001"
+                                                className="form-input"
+                                                autoComplete="postal-code"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* ── Actions ── */}
                                     <div className="form-actions">
-                                        <button 
-                                            type="button" 
+                                        <button
+                                            type="button"
                                             className="cancel-button"
                                             onClick={() => navigate('/profile')}
                                         >
                                             Cancel
                                         </button>
-                                        <button 
-                                            type="submit" 
+                                        <button
+                                            type="submit"
                                             className="save-button"
                                             disabled={loading}
                                         >
