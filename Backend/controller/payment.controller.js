@@ -21,6 +21,11 @@ import { calculateFraudRisk } from '../utils/fraudCheck.js';
 import { calculateFulfillmentSLA } from '../utils/fulfillmentSLA.js';
 import { firePurchaseEvent } from '../Services/analytics/analyticsOrchestrator.js';
 import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
+// [FIX] Import resolveFbc from the single canonical source. Previously
+// verifyPaymentController maintained its own local formatFbc() copy which
+// created divergence risk — any future format change had to be made in two
+// places. resolveFbc() handles the full priority chain: cookie → body → attribution.
+import { resolveFbc } from '../Services/analytics/metaCapiService.js';
 
 // ============================================
 // CONSTANTS
@@ -62,16 +67,6 @@ const normalizeSource = (source) => {
   const lower = source.toLowerCase().trim();
   if (VALID_SOURCES.has(lower)) return lower;
   return 'other';
-};
-
-// ============================================
-// FBC FORMATTER
-// ============================================
-
-const formatFbc = (fbclid) => {
-  if (!fbclid || typeof fbclid !== 'string') return null;
-  if (fbclid.startsWith('fb.1.')) return fbclid;
-  return `fb.1.${Math.floor(Date.now() / 1000)}.${fbclid}`;
 };
 
 // ============================================
@@ -508,7 +503,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  // Validate gateway against known list before using it in any response
   const SUPPORTED_GATEWAYS = ['stripe', 'paystack', 'flutterwave'];
   if (!SUPPORTED_GATEWAYS.includes(session.gateway)) {
     return next(new HandleError(
@@ -526,9 +520,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     $or: [
       { "paymentInfo.reference":             orderReference },
       { "paymentInfo.stripePaymentIntentId": reference      },
-      // Only include the third condition when reference differs from orderReference
-      // (i.e. Stripe PaymentIntent ID vs ORD- reference). For non-Stripe gateways
-      // they are the same value, making this condition redundant but harmless.
       { "paymentInfo.reference":             reference       }
     ]
   }).lean();
@@ -588,7 +579,11 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
     ));
   }
 
-  const user = await User.findById(userId).select('email firstName lastName name country createdAt orderHistory');
+  // Fetch full user document including dateOfBirth, facebookId, shippingAddress
+  // so Meta CAPI purchase event has maximum match quality signals.
+  const user = await User.findById(userId).select(
+    'email firstName lastName name country createdAt orderHistory phone dateOfBirth facebookId shippingAddress'
+  );
   if (!user) return next(new HandleError("User not found", 404));
 
   const userOrderCount  = await Order.countDocuments({ user: userId, 'paymentInfo.status': 'success' });
@@ -609,14 +604,21 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   const clientTimestamp   = req.body?.clientTimestamp    || null;
   const ga4ClientId       = req.body?.ga4ClientId        || null;
   const fbp               = req.body?.fbp                || req.cookies?._fbp || null;
-  const fbc               = req.body?.fbc                || req.cookies?._fbc || null;
   const clientAttribution = req.body?.clientAttribution  || null;
 
-  const resolvedFbc =
-    fbc ||
-    formatFbc(req.attribution?.fbclid) ||
-    formatFbc(clientAttribution?.fbclid) ||
-    null;
+  // [FIX] Use canonical resolveFbc() imported from metaCapiService rather than
+  // a local formatFbc() copy. Handles the full priority chain:
+  //   1. req.body.fbc   — pre-formatted by buildClientAnalyticsPayload on client
+  //   2. req.cookies._fbc — set by Meta Pixel
+  //   3. req.attribution.fbclid — raw click ID, formatted automatically
+  //   4. clientAttribution.fbclid — fallback from localStorage
+  const resolvedFbc = resolveFbc({
+    fbc:         req.body?.fbc || req.cookies?._fbc || null,
+    fbclid:      req.body?.fbclid || null,
+    attribution: req.attribution || null,
+  }) || resolveFbc({
+    fbclid: clientAttribution?.fbclid || null,
+  });
 
   const orderData = {
     user:          userId,
@@ -721,29 +723,23 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   }
 
   // ── Populate order BEFORE sending response ────────────────────────────────
-  // Must happen here — once res.json() is called the populated data is discarded.
 
   try {
     await order.populate('orderItems.product', 'name images pricing');
   } catch {
-    // Non-fatal — client receives unpopulated product refs as fallback
+    // Non-fatal
   }
 
-  // ── Build analytics overrides without mutating req.body ──────────────────
-  // Passing overrides explicitly avoids silent coupling if firePurchaseEvent
-  // is ever called from another context that doesn't carry a mutated req.body.
+  // ── Build analytics overrides ─────────────────────────────────────────────
 
   const purchaseEventOverrides = {
     resolvedOrderReference: orderReference,
-    fbc:              resolvedFbc         || req.body.fbc         || null,
-    ga4ClientId:      ga4ClientId         || req.body.ga4ClientId || null,
-    analyticsEventId: analyticsEventId    || req.body.analyticsEventId || null,
+    fbc:              resolvedFbc                   || null,
+    ga4ClientId:      ga4ClientId                   || null,
+    analyticsEventId: analyticsEventId              || null,
   };
 
   // ── Fire analytics via orchestrator ──────────────────────────────────────
-  // Wrapped in async IIFE with try/catch so synchronous throws inside
-  // firePurchaseEvent (e.g. missing import) are caught rather than becoming
-  // unhandled exceptions — .catch() alone only catches Promise rejections.
 
   (async () => {
     try {
@@ -765,10 +761,6 @@ export const verifyPaymentController = handleAsyncError(async (req, res, next) =
   // ── Post-payment async tasks ──────────────────────────────────────────────
 
   setImmediate(async () => {
-
-    // ── Identity stitch ───────────────────────────────────────────────────
-    // Moved into setImmediate so all post-response side effects live in one
-    // place and execution order is consistent.
 
     try {
       await stitchIdentityFromRequest(req);

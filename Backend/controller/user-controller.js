@@ -9,6 +9,8 @@ import { deleteCachePattern } from '../utils/redis.js';
 import { syncCustomerAnalytics } from '../Services/customer-analytics-service.js';
 import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
 import { invalidateSession } from '../middleware/sessionMiddleware.js';
+// [FIX] Import analytics wrapper so CompleteRegistration fires on email verification
+import { fireSignUpEvent } from '../Services/analytics/analyticsOrchestrator.js';
 
 const invalidateCaches = async () => {
   try {
@@ -118,9 +120,20 @@ export const verifyEmail = handleAsyncError(async (req, res, next) => {
   }
 
   syncCustomerAnalytics(user._id).catch(() => {});
+
   stitchIdentityFromRequest(req).catch(err =>
     console.error('[Identity] VerifyEmail stitch failed (non-fatal):', err.message)
   );
+
+  // [FIX] Fire Meta CAPI CompleteRegistration + GA4 sign_up.
+  // Previously missing — orchestrator and CAPI functions were correct but
+  // this call was never made, so no CompleteRegistration event appeared in
+  // Meta Events Manager for newly verified users.
+  // fire-and-forget — never blocks the auth response
+  fireSignUpEvent('email', user, req).catch(err =>
+    console.error('[Analytics] fireSignUpEvent failed (non-fatal):', err.message)
+  );
+
   invalidateCaches();
 
   sendToken(user, 200, res);

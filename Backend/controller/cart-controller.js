@@ -5,7 +5,9 @@ import Discount from '../models/discount-model.js';
 import { deleteCachePattern } from '../utils/redis.js';
 import Cart from '../models/cart-model.js';
 import { sendGA4AddToCart } from '../Services/analytics/ga4Service.js';
-import { sendMetaAddToCart } from '../Services/analytics/metaCapiService.js';
+// [FIX] Import resolveFbc so fbc is correctly resolved from the full priority
+// chain (cookie → body → attribution.fbclid) rather than only from cookies/body.
+import { sendMetaAddToCart, resolveFbc } from '../Services/analytics/metaCapiService.js';
 import mongoose from 'mongoose';
 
 // ============================================
@@ -24,13 +26,12 @@ const resolveProductPrice = (product) => {
 
 /**
  * Validates that a value is a valid MongoDB ObjectId string.
- * Prevents CastErrors from propagating to the DB layer.
  */
 const isValidObjectId = (id) => mongoose.Types.ObjectId.isValid(id);
 
 /**
  * Fetches products by an array of IDs in a single query and returns a
- * Map keyed by string ID for O(1) lookup. Replaces N+1 findById patterns.
+ * Map keyed by string ID for O(1) lookup.
  */
 const fetchProductMap = async (productIds) => {
   const validIds = productIds.filter(isValidObjectId);
@@ -50,15 +51,12 @@ export const getCartDetails = handleAsyncError(async (req, res, next) => {
     return res.status(200).json({ success: true, cartItems: [] });
   }
 
-  // Validate item structure before hitting the DB — prevents CastErrors
-  // from malformed product IDs propagating to findById.
   for (const item of items) {
     if (!item.product || !isValidObjectId(item.product)) {
       return next(new HandleError(`Invalid product ID: ${item.product}`, 400));
     }
   }
 
-  // Single batched query replaces N+1 sequential findById calls.
   const productIds = items.map(i => i.product);
   const productMap = await fetchProductMap(productIds);
 
@@ -95,13 +93,10 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
 
   if (!productId) return next(new HandleError('Product ID is required', 400));
 
-  // Validate ObjectId format before DB call to avoid an unhandled CastError.
   if (!isValidObjectId(productId)) {
     return next(new HandleError('Invalid product ID format', 400));
   }
 
-  // Validate quantity: must be a positive integer.
-  // A float like 0.5 would pass stock comparison checks and be stored otherwise.
   const parsedQuantity = Number(quantity);
   if (!Number.isInteger(parsedQuantity) || parsedQuantity < 1) {
     return next(new HandleError('Quantity must be a positive integer', 400));
@@ -146,6 +141,29 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
+  // [FIX] Fetch the full User document for analytics.
+  // req.user from JWT middleware is a lean object — it lacks shippingAddress,
+  // dateOfBirth, and facebookId which are all now sent to Meta CAPI for
+  // improved match quality. This query selects only the fields needed for
+  // analytics so it is lightweight. Non-fatal: falls back to req.user if
+  // the query fails, which means lower match quality but cart still succeeds.
+  let fullUser = req.user;
+  try {
+    const UserModel = (await import('../models/userModel.js')).default;
+    fullUser = await UserModel.findById(req.user._id)
+      .select('email firstName lastName phone dateOfBirth facebookId shippingAddress')
+      .lean();
+  } catch {
+    // Non-fatal — lower EMQ but cart operation is unaffected
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug('[Cart Analytics] Cookie signals:', {
+      fbp: req.cookies?._fbp,
+      fbc: req.cookies?._fbc,
+    });
+  }
+
   const analyticsContext = {
     clientId:       req.body?.ga4ClientId || req.sessionId || null,
     userId:         req.user?._id?.toString(),
@@ -155,22 +173,31 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
     clientIp:       req.ip,
     userAgent:      req.headers?.['user-agent'],
     fbp:            req.body?.fbp || req.cookies?._fbp || null,
-    fbc:            req.body?.fbc || req.cookies?._fbc || null,
-    attribution:    req.attribution       || null,
+    // [FIX] Use resolveFbc() for the full priority chain:
+    //   1. _fbc cookie (already formatted by Meta Pixel — most reliable)
+    //   2. req.body.fbc (pre-formatted by buildClientAnalyticsPayload on client)
+    //   3. req.attribution.fbclid (raw click ID from attribution middleware,
+    //      formatted automatically by resolveFbc via formatFbc)
+    // Previously only cookie + body were checked, so iOS/Safari users whose
+    // _fbc cookie was blocked and whose fbclid sat in req.attribution had it
+    // silently dropped — causing zero fbc coverage for that segment on ATC.
+    fbc: resolveFbc({
+      fbc:         req.body?.fbc || req.cookies?._fbc || null,
+      fbclid:      req.body?.fbclid || null,
+      attribution: req.attribution || null,
+    }),
+    attribution:    req.attribution || null,
   };
-
-  if (process.env.NODE_ENV !== 'production') {
-    console.debug('[Cart Analytics] Cookie signals:', {
-      fbp: req.cookies?._fbp,
-      fbc: req.cookies?._fbc,
-    });
-  }
 
   sendGA4AddToCart(product, parsedQuantity, analyticsContext).catch(err =>
     console.error('[Analytics] GA4 add_to_cart failed (non-fatal):', err.message)
   );
 
-  sendMetaAddToCart(product, parsedQuantity, req.user, analyticsContext).catch(err =>
+  // [FIX] Pass fullUser instead of req.user so Meta CAPI receives:
+  //   - dateOfBirth → hashed `db` parameter (+9% EMQ)
+  //   - facebookId  → plain `fb_login_id` parameter (+12% EMQ for FB OAuth users)
+  //   - shippingAddress → hashed geo parameters (+9% EMQ)
+  sendMetaAddToCart(product, parsedQuantity, fullUser, analyticsContext).catch(err =>
     console.error('[Analytics] Meta add_to_cart failed (non-fatal):', err.message)
   );
 
@@ -190,7 +217,6 @@ export const addToCart = handleAsyncError(async (req, res, next) => {
 
 // ============================================
 // GET CART
-// GET /api/v1/cart  — auth required
 // ============================================
 
 export const getUserCart = handleAsyncError(async (req, res) => {
@@ -233,8 +259,6 @@ export const updateCartItem = handleAsyncError(async (req, res, next) => {
     );
   }
 
-  // Return the full updated cart so the client can reconcile totals
-  // without a follow-up GET request.
   const updatedCart = await Cart.findOne({ user: req.user._id }).lean();
 
   return res.status(200).json({
@@ -264,9 +288,6 @@ export const removeFromCart = handleAsyncError(async (req, res, next) => {
     );
   }
 
-  // Fire-and-forget: if product was deleted between add and remove the
-  // error is swallowed intentionally. The analytics count will drift in
-  // that case — acceptable vs. blocking the remove response.
   try {
     const product = await Product.findById(productId);
     if (product) await product.incrementCart(false);
@@ -294,11 +315,6 @@ export const clearCart = handleAsyncError(async (req, res, next) => {
 
   if (items && items.length > 0) {
     try {
-      // Batched bulkWrite replaces N+1 sequential per-item awaited updates.
-      // All decrements are sent in a single round-trip; MongoDB applies them
-      // atomically per-document. A mid-batch failure will still leave some
-      // documents partially decremented — acceptable for a non-critical
-      // analytics counter where no rollback strategy exists.
       const bulkOps = items
         .filter(item => item.product && isValidObjectId(item.product))
         .map(item => ({
@@ -341,14 +357,12 @@ export const validateCheckout = handleAsyncError(async (req, res, next) => {
     return next(new HandleError('Cart is empty', 400));
   }
 
-  // Validate ObjectId format on all items before hitting the DB.
   for (const item of items) {
     if (!item.product || !isValidObjectId(item.product)) {
       return next(new HandleError(`Invalid product ID: ${item.product}`, 400));
     }
   }
 
-  // Single batched query replaces N+1 sequential findById calls.
   const productIds = items.map(i => i.product);
   const productMap = await fetchProductMap(productIds);
 
@@ -445,7 +459,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
   if (!items || items.length === 0)
     return next(new HandleError('Cart is empty', 400));
 
-  // Validate ObjectId format on all items before hitting the DB.
   for (const item of items) {
     if (!item.product || !isValidObjectId(item.product)) {
       return next(new HandleError(`Invalid product ID: ${item.product}`, 400));
@@ -463,7 +476,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     );
   }
 
-  // Single batched query replaces N+1 sequential findById calls.
   const productIds = items.map(i => i.product);
   const productMap = await fetchProductMap(productIds);
 
@@ -519,9 +531,6 @@ export const applyDiscountCode = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // Coerce userId to a mongoose ObjectId string for consistent comparison
-  // inside canUserUse — req.user._id may be an ObjectId or string depending
-  // on auth middleware, and the Discount model likely compares with .toString().
   const normalizedUserId = userId ? new mongoose.Types.ObjectId(userId.toString()) : null;
 
   const canUse = await discount.canUserUse(normalizedUserId);

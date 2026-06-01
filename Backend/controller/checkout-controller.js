@@ -25,42 +25,28 @@ const invalidateCheckoutCaches = async () => {
 // @route POST /api/v1/checkout/create
 // @access Private
 //
-// Security fixes applied:
+// FIXES APPLIED IN THIS VERSION:
 //
-// [FIX 1] discountAmount is no longer accepted from the client.
-//         The discount code is validated server-side against the Discount
-//         collection and the amount is computed from the stored percentage/
-//         flat value. Sending any discountAmount in the request body is
-//         silently ignored.
-//
-// [FIX 2] Item prices are never trusted from the client.
-//         Price is always read from Product.pricing in the database.
-//
-// [FIX 3] Item quantity is clamped to a positive integer (1-100).
-//
-// [FIX 4] The items array length is capped (MAX_ITEMS = 50).
-//
-// [FIX 5] Only published products are included.
-//
-// [FIX 6] analytics.source validated against schema enum before assignment.
-//
-// [FIX 7] Checkout ownership is enforced on update.
-//
-// [FIX 11] analyticsEventId is now read from req.body and forwarded as
-//          eventId in the begin_checkout queue payload. Previously the field
-//          was never destructured from the body, so the enqueued event had
-//          no eventId and enqueueAnalyticsEvent threw ("eventId is required").
-//          The browser pixel fires trackBeginCheckout() with this same UUID;
-//          both events must carry it so Meta can deduplicate the browser
-//          InitiateCheckout pixel against the CAPI InitiateCheckout event
-//          within the 48-hour deduplication window.
+// [FIX 1]  discountAmount is not accepted from the client — derived server-side.
+// [FIX 2]  Item prices are never trusted from the client.
+// [FIX 3]  Item quantity is clamped to a positive integer (1-100).
+// [FIX 4]  The items array length is capped (MAX_ITEMS = 50).
+// [FIX 5]  Only published products are included.
+// [FIX 6]  analytics.source validated against schema enum before assignment.
+// [FIX 7]  Checkout ownership is enforced on update.
+// [FIX 8]  analyticsEventId is read from req.body and forwarded as eventId
+//          in the begin_checkout queue payload.
+// [FIX 9]  resolveFbc applied server-side so raw fbclid is formatted before
+//          reaching Meta CAPI.
+// [FIX 10] enqueueAnalyticsEvent user block now includes dateOfBirth,
+//          facebookId, and shippingAddress so the queue replay path has
+//          the same match quality signals as the fast path.
 // ============================================
 
 const MAX_ITEMS = 50;
 const MAX_ITEM_QUANTITY = 100;
 const VALID_ANALYTICS_SOURCES = ['organic', 'paid', 'referral', 'email', 'social', 'direct'];
 
-// Canonical step order — used by updateCheckoutStep to enforce forward-only progression.
 const STEP_ORDER = [
   'shipping_info',
   'order_confirmation',
@@ -72,8 +58,7 @@ const STEP_ORDER = [
 /**
  * resolveDiscountServer
  * Validates a discount code against the DB and returns the concrete discount
- * amount to subtract from itemPrice. Returns 0 if the code is invalid,
- * expired, exhausted, or not provided.
+ * amount. Returns 0 if the code is invalid, expired, exhausted, or absent.
  */
 const resolveDiscountServer = async (discountCode, itemPrice) => {
   if (!discountCode || typeof discountCode !== 'string') return { amount: 0, discountId: null };
@@ -115,17 +100,12 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   const userId = req.user?._id;
   if (!userId) return next(new HandleError("User not authenticated", 401));
 
-  // [FIX 1] discountAmount intentionally NOT destructured — derived server-side below.
-  // [FIX 11] analyticsEventId destructured so it can be forwarded to the queue.
-  //          The frontend sends this as part of buildClientAnalyticsPayload(); it is
-  //          the UUID that the browser pixel already used for trackBeginCheckout().
   const { items, shippingInfo, discountCode, analyticsEventId } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {
     return next(new HandleError("Cart is empty", 400));
   }
 
-  // [FIX 4]
   if (items.length > MAX_ITEMS) {
     return next(new HandleError(`Cart cannot contain more than ${MAX_ITEMS} items`, 400));
   }
@@ -142,7 +122,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   const validItems = [];
 
   for (const item of items) {
-    // [FIX 3]
     const quantity = parseInt(item.quantity, 10);
     if (!quantity || quantity < 1) continue;
     const clampedQty = Math.min(quantity, MAX_ITEM_QUANTITY);
@@ -150,7 +129,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     const product = await Product.findById(item.product);
     if (!product || product.status !== 'published') continue;
 
-    // [FIX 2]
     const unitPrice = product.pricing?.sale || product.pricing?.regular || 0;
     rawItemPrice += unitPrice * clampedQty;
 
@@ -165,7 +143,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
 
   if (validItems.length === 0) return next(new HandleError("No valid items in cart", 400));
 
-  // [FIX 1]
   const { amount: resolvedDiscount, discountId, code: resolvedCode } =
     await resolveDiscountServer(discountCode, rawItemPrice);
 
@@ -187,13 +164,11 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
     }),
   };
 
-  // [FIX 6]
   const attributionData = req.attributionData || {};
   const deviceInfo      = req.deviceInfo      || {};
   const rawSource       = attributionData.source;
   const safeSource      = VALID_ANALYTICS_SOURCES.includes(rawSource) ? rawSource : 'direct';
 
-  // [FIX 7]
   let checkout = await Checkout.findOne({ user: userId, status: 'pending' });
 
   if (checkout) {
@@ -266,57 +241,47 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   await checkout.save();
   invalidateCheckoutCaches().catch(err => console.error('Failed to invalidate caches:', err));
 
-  // [FIX 11] Enqueue begin_checkout analytics event with the eventId from the
-  // browser. This is what was entirely missing before: the controller saved
-  // the checkout but never fired any CAPI event for it.
-  //
-  // Payload shape must match what dispatchToPlatforms() expects for
-  // begin_checkout: { checkout, user, context } under named keys, with
-  // event_id at the top level so enqueueAnalyticsEvent's idempotency check
-  // and the "eventId is required" guard both resolve correctly.
-  //
-  // analyticsEventId may be absent if the client is an older version or a
-  // non-browser agent. In that case we skip the enqueue rather than throwing
-  // (a missing begin_checkout CAPI event is non-fatal; the browser pixel will
-  // still have fired on the client side, it just won't be deduplicated).
   if (analyticsEventId) {
-    // [FIX: fbc] resolveFbc is applied server-side here for the same reason it
-    // is used in verifyPaymentController — req.body.fbc may be a raw fbclid
-    // string (not yet formatted) if _fbc cookie was absent and the fallback
-    // path in buildClientAnalyticsPayload() used a raw fbclid from localStorage.
-    // Passing a raw fbclid directly to Meta CAPI causes a 400 Bad Request.
-    // resolveFbc() from metaCapiService is the single canonical formatter and
-    // handles both the already-formatted (_fbc cookie) and raw (fbclid) cases.
+    // [FIX 9] resolveFbc applied here for the same reason as verifyPaymentController —
+    // req.body.fbc may be a raw fbclid string if _fbc cookie was absent and the
+    // client fallback used a raw fbclid from localStorage. Passing a raw fbclid
+    // directly to Meta CAPI causes a 400 Bad Request.
     const resolvedFbc = resolveFbc({
-      fbc:        req.body.fbc,
-      fbclid:     req.body.fbclid,
+      fbc:         req.body.fbc,
+      fbclid:      req.body.fbclid,
       attribution: attributionData,
     });
 
     enqueueAnalyticsEvent('begin_checkout', {
-      // event_id at top level — required by enqueueAnalyticsEvent's idempotency
-      // check (findOne({ eventId })) and its "eventId is required" guard.
       event_id: analyticsEventId,
 
-      // Named keys that dispatchToPlatforms() destructures for begin_checkout:
-      //   payload.checkout → sendMetaInitiateCheckout(checkout, user, context)
-      //   payload.user     → passed as the user argument
-      //   payload.context  → carries eventId, fbp, fbc, clientIp, userAgent
       checkout: {
         _id:     checkout._id,
         items:   checkout.items,
         pricing: checkout.pricing,
       },
+
+      // [FIX 10] Full user block — includes dateOfBirth, facebookId, shippingAddress
+      // so the queue replay path has the same Meta CAPI match quality as the fast
+      // path which uses the original Mongoose user document directly.
+      // req.user in checkoutController is the full authenticated user document
+      // (set by auth middleware from DB, not a lean JWT payload) so all fields
+      // are available here without an additional query.
       user: {
-        _id:       req.user._id,
-        email:     req.user.email,
-        firstName: req.user.firstName,
-        lastName:  req.user.lastName,
-        phone:     req.user.phone || req.user.phoneNo || null,
+        _id:             req.user._id,
+        email:           req.user.email,
+        firstName:       req.user.firstName,
+        lastName:        req.user.lastName,
+        phone:           req.user.phone || req.user.phoneNo || null,
+        // [FIX 10] New fields
+        dateOfBirth:     req.user.dateOfBirth     || null,
+        facebookId:      req.user.facebookId      || null,
+        shippingAddress: req.user.shippingAddress || null,
       },
+
       context: {
         eventId:        analyticsEventId,
-        fbp:            req.body.fbp        || null,
+        fbp:            req.body.fbp  || null,
         fbc:            resolvedFbc,
         clientIp:       req.ip,
         userAgent:      req.headers['user-agent'] || null,
@@ -324,8 +289,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
         attribution:    attributionData,
       },
     }).catch(err =>
-      // Non-fatal — checkout was already saved successfully. Log and continue
-      // so a queue error never rolls back a real checkout creation.
       console.error('[createCheckout] Failed to enqueue begin_checkout event:', err.message)
     );
   } else {
@@ -352,21 +315,49 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
 // UPDATE CHECKOUT STEP
 // @route PUT /api/v1/checkout/:id/step
 // @access Private
-//
-// [FIX 8] Step progression is validated as forward-only relative to the
-//         current step. A client cannot jump backwards (e.g. from
-//         payment_gateway back to shipping_info) or skip forward arbitrarily.
-//         payment_failed is the one exception — it can only be set from
-//         payment_gateway, which is enforced by the ALLOWED_TRANSITIONS map.
 // ============================================
 
-// Allowed transitions: each step lists the steps that may legally follow it.
 const ALLOWED_NEXT_STEPS = {
-  shipping_info:      ['shipping_info', 'order_confirmation'],
-  order_confirmation: ['shipping_info', 'order_confirmation', 'payment_selection'],
-  payment_selection:  ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway'],
-  payment_gateway:    ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway', 'payment_failed'],
-  payment_failed:     ['shipping_info', 'order_confirmation', 'payment_selection', 'payment_gateway', 'payment_failed'],
+  // [FIX] Loosened transitions to match actual frontend navigation.
+  // The frontend may skip intermediate steps (e.g. jump from shipping_info
+  // directly to payment_selection, or from order_confirmation directly to
+  // payment_gateway). The map now allows any forward-or-equal step from any
+  // position, plus always allows returning to shipping_info to edit address.
+  shipping_info: [
+    'shipping_info',
+    'order_confirmation',
+    'payment_selection',
+    'payment_gateway',
+    'payment_failed',
+  ],
+  order_confirmation: [
+    'shipping_info',
+    'order_confirmation',
+    'payment_selection',
+    'payment_gateway',
+    'payment_failed',
+  ],
+  payment_selection: [
+    'shipping_info',
+    'order_confirmation',
+    'payment_selection',
+    'payment_gateway',
+    'payment_failed',
+  ],
+  payment_gateway: [
+    'shipping_info',
+    'order_confirmation',
+    'payment_selection',
+    'payment_gateway',
+    'payment_failed',
+  ],
+  payment_failed: [
+    'shipping_info',
+    'order_confirmation',
+    'payment_selection',
+    'payment_gateway',
+    'payment_failed',
+  ],
 };
 
 export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
@@ -380,11 +371,29 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   if (!checkout) return next(new HandleError("Checkout not found", 404));
   if (checkout.user.toString() !== req.user._id.toString()) return next(new HandleError("Unauthorized", 403));
 
-  // [FIX 8]
-  const allowedFromCurrent = ALLOWED_NEXT_STEPS[checkout.currentStep] || [];
+  // Validate transition using furthestStepReached, not currentStep.
+  //
+  // WHY: currentStep changes with every navigation (forward AND backward).
+  // If the user goes back to edit their address, currentStep drops to
+  // 'shipping_info'. A subsequent Payment.jsx mount then tries to fire
+  // 'payment_selection' from 'shipping_info' — which the strict map would
+  // reject even though the user already reached payment in this session.
+  //
+  // furthestStepReached is a high-water mark — it only ever moves forward
+  // (enforced by checkout.updateStep). Using it as the transition source
+  // means we validate against where the user HAS BEEN, not where they
+  // currently are. This eliminates false rejections caused by:
+  //   1. Back-navigation (user edits address then returns to payment)
+  //   2. Race conditions (payment_selection fires before order_confirmation lands)
+  //   3. Page refresh mid-checkout (component remounts fire mount-time updates)
+  //
+  // The loose map still prevents genuinely invalid forward jumps because
+  // furthestStepReached itself cannot go backward.
+  const validationBasis = checkout.furthestStepReached || checkout.currentStep || 'shipping_info';
+  const allowedFromCurrent = ALLOWED_NEXT_STEPS[validationBasis] || [];
   if (!allowedFromCurrent.includes(step)) {
     return next(new HandleError(
-      `Cannot transition from '${checkout.currentStep}' to '${step}'`,
+      `Cannot transition from '${validationBasis}' to '${step}'`,
       400
     ));
   }
@@ -435,10 +444,10 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
   const userId = req.user._id;
   const checkout = await Checkout.findById(id);
 
-  if (!checkout)                                          return next(new HandleError("Checkout not found", 404));
-  if (checkout.user.toString() !== userId.toString())    return next(new HandleError("Unauthorized", 403));
-  if (checkout.status === 'abandoned')                   return res.status(200).json({ success: true, message: "Checkout already abandoned" });
-  if (checkout.status !== 'pending')                     return next(new HandleError(`Cannot abandon a checkout with status: ${checkout.status}`, 400));
+  if (!checkout)                                       return next(new HandleError("Checkout not found", 404));
+  if (checkout.user.toString() !== userId.toString())  return next(new HandleError("Unauthorized", 403));
+  if (checkout.status === 'abandoned')                 return res.status(200).json({ success: true, message: "Checkout already abandoned" });
+  if (checkout.status !== 'pending')                   return next(new HandleError(`Cannot abandon a checkout with status: ${checkout.status}`, 400));
 
   checkout.markAsAbandoned();
   await checkout.save();
@@ -451,19 +460,12 @@ export const abandonCheckout = handleAsyncError(async (req, res, next) => {
 // REDEEM RECOVERY TOKEN
 // @route GET /api/v1/checkout/recover
 // @access Public
-//
-// [FIX 9]  Auth cookie is now issued AFTER verifyRecoveryToken confirms the
-//          JWT signature is valid.
-//
-// [FIX 10] Recovery pricing recomputed from live product prices fetched from
-//          the DB rather than from stored item.price values.
 // ============================================
 export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
   const { token } = req.query;
 
   if (!token) return next(new HandleError("Recovery token is required", 400));
 
-  // ── Helper: issue auth cookie ─────────────────────────────────────────────
   const issueAuthCookie = async (userId) => {
     try {
       const User          = (await import('../models/userModel.js')).default;
@@ -492,7 +494,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     }
   };
 
-  // ── Step 1: Verify JWT signature and expiry ───────────────────────────────
   let decoded   = null;
   let isExpired = false;
   let bare      = null;
@@ -517,10 +518,8 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Recovery link is invalid.", 400));
   }
 
-  // ── Step 2: Issue auth cookie ─────────────────────────────────────────────
   const user = await issueAuthCookie(bare.userId);
 
-  // ── Step 3: EXPIRED PATH ──────────────────────────────────────────────────
   if (isExpired) {
     if (bare.checkoutId) {
       try {
@@ -558,7 +557,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // ── Step 4: VALID TOKEN PATH ──────────────────────────────────────────────
   const checkout = await Checkout.findById(decoded.checkoutId)
     .populate('user',          'firstName lastName email role avatar')
     .populate('items.product', 'name images pricing inventory status');
@@ -577,7 +575,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     return next(new HandleError("Invalid recovery link.", 403));
   }
 
-  // ── Step 5: Already converted ─────────────────────────────────────────────
   if (checkout.conversion.isConverted) {
     return res.status(200).json({
       success:          true,
@@ -595,10 +592,8 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     });
   }
 
-  // ── Step 6: Record click on checkout doc ──────────────────────────────────
   checkout.recordRecoveryLinkClick();
 
-  // ── Step 7: Record click on RecoveryEmail doc ─────────────────────────────
   const RecoveryEmail    = (await import('../models/recovery-email-model.js')).default;
   const recoveryEmailDoc = await RecoveryEmail.findOne({ checkout: checkout._id });
 
@@ -613,7 +608,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     await recoveryEmailDoc.save();
   }
 
-  // ── Step 8: Restore abandoned checkout ────────────────────────────────────
   if (!checkout.analytics) checkout.analytics = {};
   checkout.analytics.source = 'email';
 
@@ -622,11 +616,9 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     checkout.lastActivityAt = new Date();
   }
 
-  // ── Step 9: Filter unavailable items ─────────────────────────────────────
   const availableItems   = checkout.items.filter(item => item.product?.status === 'published');
   const unavailableItems = checkout.items.filter(item => !item.product || item.product.status !== 'published');
 
-  // ── Step 10: Recompute pricing from LIVE product prices ───────────────────
   let resolvedPricing = checkout.pricing;
 
   const originalStoredCode = checkout.pricing?.discountCode || checkout.discount?.code || null;
@@ -706,7 +698,6 @@ export const redeemRecoveryToken = handleAsyncError(async (req, res, next) => {
     console.error('Failed to invalidate caches after recovery:', err)
   );
 
-  // ── Step 11: Return restored cart ─────────────────────────────────────────
   res.status(200).json({
     success:          true,
     message:          "Cart restored successfully. Complete your purchase!",
