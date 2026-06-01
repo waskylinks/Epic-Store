@@ -7,7 +7,7 @@ import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
 import { Save, CheckCircle } from 'lucide-react';
-import './CompleteProfile.css';
+import '../UserStyles/CompleteProfile.css';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE = /^\+?[\d\s\-(]{7,20}$/;

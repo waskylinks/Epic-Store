@@ -5,7 +5,8 @@ import { useDispatch, useSelector } from 'react-redux';
 import { register, removeErrors, removeSuccess } from '../features/products/userSlice';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import FacebookSignInButton from '../components/FacebookSignInButton';
-import './Register.css';
+import '../UserStyles/Register.css'
+;
 
 const SPECIAL_RE = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/;
 const EMAIL_RE   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

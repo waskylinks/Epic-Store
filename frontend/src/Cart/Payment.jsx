@@ -49,6 +49,17 @@ import { Elements, PaymentElement, useStripe, useElements } from "@stripe/react-
 const STRIPE_KEY = import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY;
 const stripePromise = STRIPE_KEY ? loadStripe(STRIPE_KEY) : null;
 
+// Mirrors the server-side STEP_ORDER enum for client-side comparison.
+// Used to determine whether a step update is needed on mount without
+// making an extra network call.
+const STEP_ORDER = [
+  'shipping_info',
+  'order_confirmation',
+  'payment_selection',
+  'payment_gateway',
+  'payment_failed',
+];
+
 function StripeCheckout({ clientSecret, onSuccess }) {
   const stripe   = useStripe();
   const elements = useElements();
@@ -121,30 +132,41 @@ function Payment() {
   const flutterwaveTriggered = useRef(false);
   const stripeFormRef        = useRef(null);
 
-  // ── Abandonment tracking ─────────────────────────────────────────────────
-  // Hook registers at "payment_selection" — the step the user is on when
-  // they land here (gateway/currency chosen, Initialize not yet clicked).
-  // If they bail before clicking anything the abandonment is recorded at
-  // payment_selection — but ONLY if the server-side currentStep also reflects
-  // payment_selection. We guarantee that with the mount-time step update below.
   const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, "payment_selection");
 
-  // ── Record payment_selection on mount ────────────────────────────────────
-  // FIX: Previously there was no mount-time step update here. The server-side
-  // currentStep stayed at "order_confirmation" (set by OrderConfirm.jsx) until
-  // the user clicked "Initialize Payment", at which point it jumped straight to
-  // "payment_gateway". This meant a user who landed on the payment page and
-  // immediately bailed had their abandonment recorded at "order_confirmation"
-  // instead of "payment_selection" — because markAsAbandoned() reads
-  // this.currentStep from the DB, not from the React hook's currentStep arg.
+  // ── Record payment_selection on mount (with race condition guard) ─────────
+  // Only fires the DB update if the session hasn't already reached
+  // payment_selection. This prevents:
   //
-  // The hook's currentStep argument only controls the grace-period log message;
-  // the authoritative abandonment step comes from the DB document. So we must
-  // advance the DB step to "payment_selection" on mount to keep the two in sync.
+  //   1. RACE CONDITION: OrderConfirm.jsx fires order_confirmation just before
+  //      navigating here. Both requests hit the server within milliseconds.
+  //      Without the guard, payment_selection would race against
+  //      order_confirmation. With furthestStepReached as the validation basis
+  //      on the server this is now safe — but skipping the update entirely
+  //      when already past it is cleaner and eliminates unnecessary writes.
   //
-  // Non-fatal: a tracking failure must never block the payment flow.
+  //   2. BACK-NAVIGATION DUPLICATES: User goes back to edit address then
+  //      returns. stepsCompleted already has payment_selection — no need to
+  //      push it again.
+  //
+  // Reads furthest step from Redux state (already fetched) — no extra
+  // network call needed.
   useEffect(() => {
     if (!checkoutId) return;
+
+    // Compute the furthest step the user has reached from Redux state.
+    // stepsCompleted is an array of { step, completedAt } objects.
+    const completedSteps = checkoutSession?.stepsCompleted?.map(s => s.step) || [];
+    const furthest = completedSteps.reduce(
+      (max, s) => STEP_ORDER.indexOf(s) > STEP_ORDER.indexOf(max) ? s : max,
+      checkoutSession?.currentStep || 'shipping_info'
+    );
+
+    // Already at or past payment_selection — skip the update
+    if (STEP_ORDER.indexOf(furthest) >= STEP_ORDER.indexOf('payment_selection')) {
+      return;
+    }
+
     (async () => {
       try {
         await dispatch(updateCheckoutStep({
@@ -155,7 +177,9 @@ function Payment() {
         console.warn("[Payment] Failed to record payment_selection step:", err);
       }
     })();
-    // Run once on mount — checkoutId is stable for the lifetime of this page.
+    // checkoutId and checkoutSession are stable for the lifetime of this page.
+    // Including checkoutSession would cause re-runs after the step update
+    // itself updates the session in Redux — use checkoutId only as the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkoutId]);
 
@@ -227,7 +251,6 @@ function Payment() {
         dispatch(verifyPayment({ gateway: "paystack", reference: ref }))
           .unwrap()
           .then(() => {
-            // Payment succeeded — suppress abandonment hook on unmount
             setIntentionalProceed();
             dispatch(clearEntireCart());
             dispatch(clearPaymentData());
@@ -235,8 +258,6 @@ function Payment() {
             navigate(`/order/success?reference=${ref}`);
           })
           .catch(() => {
-            // Record a failed payment attempt as distinct from never
-            // reaching payment at all — non-fatal, must not block UX
             if (checkoutId) {
               dispatch(updateCheckoutStep({ checkoutId, step: "payment_failed" }))
                 .catch((err) =>
@@ -299,7 +320,6 @@ function Payment() {
           dispatch(verifyPayment({ gateway: "flutterwave", reference: txRef, transactionId }))
             .unwrap()
             .then(() => {
-              // Payment succeeded — suppress abandonment hook on unmount
               setIntentionalProceed();
               dispatch(clearEntireCart());
               dispatch(clearPaymentData());
@@ -307,7 +327,6 @@ function Payment() {
               setTimeout(() => navigate(`/order/success?reference=${txRef}`), 500);
             })
             .catch((err) => {
-              // Record failed payment attempt — non-fatal
               if (checkoutId) {
                 dispatch(updateCheckoutStep({ checkoutId, step: "payment_failed" }))
                   .catch((stepErr) =>
@@ -354,11 +373,9 @@ function Payment() {
     if (selectedGateway === "flutterwave" && !import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY)    { toast.error("Flutterwave is not configured"); return; }
     if (selectedGateway === "paystack"    && !import.meta.env.VITE_PAYSTACK_PUBLIC_KEY)       { toast.error("Paystack is not configured"); return; }
 
-    // Advance persisted step to payment_gateway now that the user has actively
-    // clicked "Initialize Payment". The DB is already at payment_selection
-    // (set on mount above), so any bail-out between mount and this click is
-    // correctly recorded at payment_selection. After this click the user has
-    // committed to the gateway flow — advance to payment_gateway.
+    // Advance to payment_gateway — user has actively committed to the gateway
+    // flow by clicking Initialize. The DB is already at payment_selection
+    // (set on mount). After this the abandonment step is payment_gateway.
     if (checkoutId) {
       try {
         await dispatch(updateCheckoutStep({
@@ -445,7 +462,6 @@ function Payment() {
     dispatch(verifyPayment({ gateway: "stripe", reference: paymentIntentId }))
       .unwrap()
       .then(() => {
-        // Payment succeeded — suppress abandonment hook on unmount
         setIntentionalProceed();
         dispatch(clearEntireCart());
         dispatch(clearPaymentData());
@@ -453,7 +469,6 @@ function Payment() {
         navigate(`/order/success?reference=${successReference}`);
       })
       .catch((err) => {
-        // Record failed payment attempt — non-fatal
         if (checkoutId) {
           dispatch(updateCheckoutStep({ checkoutId, step: "payment_failed" }))
             .catch((stepErr) =>
