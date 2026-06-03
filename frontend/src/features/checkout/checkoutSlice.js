@@ -1,14 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
-
-// PHASE 1: Analytics SDK for event_id generation and payload building
-import {
-  generateEventId,
-  buildClientAnalyticsPayload,
-  ANALYTICS_EVENTS,
-} from '../../utils/analytics.js';
-
-// DEDUP: Browser pixel for funnel events with shared eventId
+import { generateEventId, buildClientAnalyticsPayload, ANALYTICS_EVENTS } from '../../utils/analytics.js';
 import {
   trackBeginCheckout,
   trackCheckoutStep,
@@ -28,8 +20,8 @@ import {
  *   - Returns eventId alongside checkout for the fulfilled handler to use
  *
  * The fulfilled handler fires trackBeginCheckout() with the same eventId
- * so Meta can deduplicate the browser InitiateCheckout pixel against any
- * server-side CAPI event if you choose to add one later.
+ * so Meta can deduplicate the browser InitiateCheckout pixel against the
+ * server-side CAPI event.
  */
 export const createCheckoutSession = createAsyncThunk(
   "checkout/createSession",
@@ -38,16 +30,6 @@ export const createCheckoutSession = createAsyncThunk(
       const { discount } = getState().cart;
       const hasDiscount  = discount.applied && discount.code && discount.discountAmount > 0;
 
-      // FIX (string instead of object): buildClientAnalyticsPayload was called
-      // as buildClientAnalyticsPayload(eventId) — passing a plain UUID string.
-      // The function destructures { eventType, properties, attribution,
-      // analyticsEventId, ...overrides } from its argument. Passing a string
-      // means every named param is undefined and the ...overrides spread
-      // produces no enumerable properties (strings have none). The analytics
-      // payload sent to /api/v1/checkout/create was entirely empty — no UTMs,
-      // no attribution, no analyticsEventId — so the backend had no event ID
-      // to link against the browser pixel's UUID, breaking browser/server
-      // deduplication for all checkout events.
       const eventId          = generateEventId();
       const analyticsPayload = buildClientAnalyticsPayload({
         eventType:        ANALYTICS_EVENTS.CHECKOUT_STEP,
@@ -61,7 +43,6 @@ export const createCheckoutSession = createAsyncThunk(
         ...analyticsPayload,
       }, { withCredentials: true });
 
-      // Return eventId so the fulfilled handler can fire the browser pixel
       return { checkout: data.checkout, eventId, items, hasDiscount };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || "Failed to create checkout session");
@@ -73,29 +54,60 @@ export const createCheckoutSession = createAsyncThunk(
  * updateCheckoutStep
  *
  * ANALYTICS CHANGES:
- *   - Fires trackCheckoutStep() browser pixel for payment funnel steps
- *   - payment_selection fires Meta AddPaymentInfo (payment_gateway does not —
- *     see eventBridge.js fix; firing on both steps inflates the funnel metric)
- *   - All steps fire GA4 checkout_progress
- *   - No server analytics payload needed here — step updates are captured
- *     by the backend checkoutController which already logs step transitions
  *
- * FIX (inconsistent cart value): state.pricing.totalPrice and
- * cartContext.cartValue can diverge when a discount is applied — pricing
- * reflects the server-confirmed discounted total while cartContext may carry
- * the pre-discount value from the component. To ensure Meta always receives
- * the same value (the server-confirmed total) across all steps of the same
- * checkout session, cartValue is now sourced exclusively from the checkout
- * session pricing returned by the server. cartContext is still accepted for
- * itemCount and hasDiscount which are not held in Redux pricing state.
+ *   [FIX] analyticsEventId is now generated here and sent in the request body
+ *         so the backend checkoutController.updateCheckoutStep can fire
+ *         server-side CAPI events (GA4 + Meta AddPaymentInfo) for tracked steps.
+ *
+ *         Previously no analyticsEventId was sent, so the backend always hit
+ *         the console.warn and skipped the CAPI dispatch entirely — the server
+ *         never fired for order_confirmation, payment_selection, or
+ *         payment_gateway steps.
+ *
+ *         The eventId is also returned in the fulfilled payload so the
+ *         trackCheckoutStep() browser pixel call can use the same UUID,
+ *         enabling Meta to deduplicate the browser AddPaymentInfo pixel
+ *         against the server CAPI AddPaymentInfo event.
+ *
+ *   [FIX] The fulfilled handler now passes the eventId to trackCheckoutStep()
+ *         so the browser pixel and server CAPI event share the same UUID.
+ *         Previously trackCheckoutStep() generated its own UUID internally,
+ *         which Meta could not match against the server event — deduplication
+ *         was silently broken for the entire payment funnel.
+ *
+ *   [FIX] cartValue is sourced exclusively from confirmedPricing.totalPrice
+ *         (server-authoritative) to prevent the browser pixel and server CAPI
+ *         event from sending different `value` figures for the same checkout
+ *         step when a discount is applied.
  */
 export const updateCheckoutStep = createAsyncThunk(
   "checkout/updateStep",
   async ({ checkoutId, step, gateway, cartContext = {} }, { getState, rejectWithValue }) => {
     try {
+      // [FIX] Generate a fresh UUID for this specific step event.
+      // The same UUID is sent to the backend (for CAPI deduplication) and
+      // returned in the fulfilled payload (for the browser pixel call).
+      // A new UUID per step is correct — each step is a distinct analytics
+      // event that GA4 and Meta track independently.
+      const eventId          = generateEventId();
+      const analyticsPayload = buildClientAnalyticsPayload({
+        eventType:        ANALYTICS_EVENTS.CHECKOUT_STEP,
+        analyticsEventId: eventId,
+      });
+
       const { data } = await axios.put(
         `/api/v1/checkout/${checkoutId}/step`,
-        { step, gateway },
+        {
+          step,
+          gateway,
+          // [FIX] Send analyticsEventId in the request body.
+          // checkoutController.updateCheckoutStep reads req.body.analyticsEventId
+          // and skips the CAPI dispatch with a console.warn if it is absent.
+          // Without this field the entire server-side funnel tracking for
+          // order_confirmation, payment_selection, and payment_gateway was
+          // silently dead despite the backend code being correct.
+          ...analyticsPayload,
+        },
         { withCredentials: true }
       );
 
@@ -103,7 +115,6 @@ export const updateCheckoutStep = createAsyncThunk(
       // fulfilled handler has a stable server-authoritative totalPrice.
       const confirmedPricing = getState().checkout.pricing;
 
-      // Pass step and cartContext through so fulfilled can fire the pixel
       return {
         currentStep:      data.currentStep,
         stepsCompleted:   data.stepsCompleted,
@@ -111,6 +122,9 @@ export const updateCheckoutStep = createAsyncThunk(
         step,
         cartContext,
         confirmedPricing,
+        // [FIX] Return the eventId so the fulfilled handler can pass it
+        // to trackCheckoutStep() for browser pixel / server CAPI dedup.
+        eventId,
       };
     } catch (error) {
       return rejectWithValue(error.response?.data?.message || "Failed to update checkout step");
@@ -142,8 +156,6 @@ export const abandonCheckout = createAsyncThunk(
   }
 );
 
-// The thunk only fetches — loadUser is called by the component after unwrap()
-// so it always runs regardless of expired/valid/converted outcome.
 export const redeemRecoveryToken = createAsyncThunk(
   'checkout/redeemRecoveryToken',
   async (token, { rejectWithValue }) => {
@@ -233,9 +245,6 @@ const checkoutSlice = createSlice({
 
   extraReducers: (builder) => {
     // ── CREATE SESSION ──────────────────────────────────────────────────────
-    // ANALYTICS: fulfilled receives { checkout, eventId, items, hasDiscount }
-    // Fires trackBeginCheckout() with the shared eventId so Meta can
-    // deduplicate browser InitiateCheckout against any server CAPI call.
     builder
       .addCase(createCheckoutSession.pending, (state) => {
         state.loading = true;
@@ -271,10 +280,22 @@ const checkoutSlice = createSlice({
       });
 
     // ── UPDATE STEP ─────────────────────────────────────────────────────────
-    // ANALYTICS: fires trackCheckoutStep() for payment funnel steps.
-    // Meta AddPaymentInfo fires on payment_selection only (not payment_gateway
-    // — see eventBridge.js; firing on both steps double-counts the metric).
-    // GA4 checkout_progress fires on every step.
+    // ANALYTICS:
+    //   [FIX] trackCheckoutStep() now receives the eventId returned from the
+    //         thunk. The same UUID was already sent to the backend
+    //         (req.body.analyticsEventId) so the server CAPI event and the
+    //         browser pixel share the same deduplication key.
+    //
+    //         Previously trackCheckoutStep() generated its own UUID internally
+    //         via generateEventId() — that UUID was never sent to the server,
+    //         so Meta received two AddPaymentInfo events (browser + server)
+    //         with different event_ids and could not deduplicate them.
+    //
+    //   [FIX] cartValue is sourced exclusively from confirmedPricing.totalPrice
+    //         — the server-authoritative discounted total captured at dispatch
+    //         time from Redux state. This prevents Meta from receiving different
+    //         `value` figures for the same checkout step when a discount is
+    //         applied (browser component may carry pre-discount value).
     builder
       .addCase(updateCheckoutStep.pending, (state) => {
         state.actionLoading = true;
@@ -288,6 +309,7 @@ const checkoutSlice = createSlice({
           step,
           cartContext,
           confirmedPricing,
+          eventId,
         } = action.payload;
 
         state.actionLoading  = false;
@@ -298,20 +320,22 @@ const checkoutSlice = createSlice({
         state.message = "Step updated";
 
         // Fire browser pixel for payment-related steps — fire-and-forget.
-        // FIX (inconsistent cart value): cartValue is sourced exclusively from
-        // confirmedPricing.totalPrice — the server-authoritative discounted
-        // total captured at dispatch time from Redux state. The cartContext
-        // fallback is intentionally removed for cartValue because it may carry
-        // a pre-discount component value that diverges from the session total,
-        // causing Meta to receive different `value` figures for the same checkout
-        // across step transitions. itemCount and hasDiscount still come from
-        // cartContext since they are not held in Redux pricing state.
+        // [FIX] Pass eventId so the browser pixel and server CAPI event share
+        // the same deduplication UUID. Meta will show "Deduped" in Events
+        // Manager for AddPaymentInfo when both events carry the same event_id.
         if (step === 'payment_selection' || step === 'payment_gateway') {
-          trackCheckoutStep(step, {
-            cartValue:   confirmedPricing?.totalPrice ?? state.pricing?.totalPrice ?? 0,
-            itemCount:   cartContext?.itemCount   || 0,
-            hasDiscount: cartContext?.hasDiscount ?? false,
-          });
+          trackCheckoutStep(
+            step,
+            {
+              // [FIX] cartValue from confirmedPricing only — server-authoritative.
+              cartValue:   confirmedPricing?.totalPrice ?? state.pricing?.totalPrice ?? 0,
+              itemCount:   cartContext?.itemCount   || 0,
+              hasDiscount: cartContext?.hasDiscount ?? false,
+            },
+            // [FIX] Pass eventId so browser pixel matches server CAPI event.
+            // trackCheckoutStep's third param is the optional eventId override.
+            eventId
+          );
         }
       })
       .addCase(updateCheckoutStep.rejected, (state, action) => {

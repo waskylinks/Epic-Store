@@ -1,6 +1,16 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
+// [FIX] Import analytics SDK so addToWishlist sends an eventId and full
+// attribution context to the backend. The backend wishlistController uses
+// these to fire Meta CAPI AddToWishlist + GA4 add_to_wishlist with maximum
+// Event Match Quality — the same pattern used in cartSlice.addItemsToCart.
+import {
+  generateEventId,
+  buildClientAnalyticsPayload,
+  ANALYTICS_EVENTS,
+} from '../../utils/analytics.js';
+
 axios.defaults.withCredentials = true;
 
 // ==================== ASYNC THUNKS ====================
@@ -21,14 +31,45 @@ export const getWishlist = createAsyncThunk(
 );
 
 // ADD TO WISHLIST
+// [FIX] Generate eventId and build analytics payload so the backend can fire
+// Meta CAPI AddToWishlist and GA4 add_to_wishlist with:
+//   - analyticsEventId for deduplication against any browser pixel event
+//   - fbp / fbc for Meta user matching
+//   - ga4ClientId to tie the server event to the browser GA4 session
+//   - clientAttribution for UTM / click ID signals
+//
+// The backend wishlistController reads req.body.analyticsEventId,
+// req.body.fbp, req.body.fbc, req.body.ga4ClientId, and
+// req.body.clientAttribution — the same fields as addItemsToCart.
 export const addToWishlist = createAsyncThunk(
   'wishlist/addToWishlist',
   async (productId, { rejectWithValue }) => {
     try {
+      const eventId = generateEventId();
+
+      // buildClientAnalyticsPayload reads UTMs, click IDs, fbp, fbc, and
+      // ga4ClientId from localStorage / cookies at call time and packages
+      // them into a single flat object ready for the request body.
+      // [FIX] Use ADD_TO_WISHLIST, not ADD_TO_CART.
+      // ADD_TO_WISHLIST was missing from the frontend ANALYTICS_EVENTS constants
+      // in analytics.js — it has been added there. Using ADD_TO_CART here was
+      // semantically wrong: the backend ingestion endpoint logs eventType as-is
+      // into BigQuery's events table, so a wishlist add would have appeared as
+      // an add_to_cart event in all analytical queries.
+      const analyticsPayload = buildClientAnalyticsPayload({
+        eventType:        ANALYTICS_EVENTS.ADD_TO_WISHLIST,
+        analyticsEventId: eventId,
+      });
+
       const config = { headers: { 'Content-Type': 'application/json' } };
       const { data } = await axios.post(
         '/api/v1/wishlist/add',
-        { productId },
+        {
+          productId,
+          // [FIX] Spread analytics payload so backend receives all signals
+          // needed by sendMetaAddToWishlist and sendGA4AddToWishlist.
+          ...analyticsPayload,
+        },
         config
       );
       return { ...data, productId };
@@ -167,7 +208,7 @@ const wishlistSlice = createSlice({
         state.success = true;
         state.message = action.payload.message || 'Added to wishlist';
         state.count = action.payload.wishlistCount || state.count;
-        // Note: We'll refresh the full wishlist to get complete product data
+        // Note: Refresh the full wishlist to get complete product data
       })
       .addCase(addToWishlist.rejected, (state, action) => {
         state.itemLoading[action.meta.arg] = false;
@@ -234,11 +275,11 @@ const wishlistSlice = createSlice({
   },
 });
 
-export const { 
-  removeErrors, 
+export const {
+  removeErrors,
   removeMessage,
   optimisticAdd,
-  optimisticRemove 
+  optimisticRemove
 } = wishlistSlice.actions;
 
 export default wishlistSlice.reducer;

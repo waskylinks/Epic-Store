@@ -5,6 +5,17 @@
  *
  * Generates event UUIDs, manages cross-tab sessions, captures UTMs and click
  * IDs at landing time, and builds the attribution payload sent to the backend.
+ *
+ * FIX APPLIED IN THIS VERSION:
+ *
+ *   [FIX] ADD_TO_WISHLIST: 'add_to_wishlist' added to ANALYTICS_EVENTS.
+ *         Previously missing — wishlistSlice.js was forced to fall back to
+ *         ADD_TO_CART as the eventType, causing every wishlist-add event to be
+ *         logged as 'add_to_cart' in BigQuery's events table. This silently
+ *         inflated add-to-cart counts and made wishlist analytics invisible.
+ *         The string 'add_to_wishlist' already matched the backend schema enum
+ *         (AnalyticsEvent.js) and orchestrator constants — the frontend was the
+ *         only place the constant was absent.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -40,13 +51,21 @@ const SESSION_TTL_MS = 30 * 60 * 1000;
 const UTM_CAPTURED_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 // ─── EVENT NAME CONSTANTS ─────────────────────────────────────────────────────
-// Consumed by eventBridge.js — add new event types here as the plan grows.
+// Consumed by eventBridge.js and slice files throughout the app.
+// Add new event types here as the analytics plan grows.
+//
+// IMPORTANT: these string values must match the eventType enum in the backend
+// AnalyticsEvent.js schema. Any new event type added here must also be added to
+// that enum, otherwise queue persistence will throw a validation error.
 
 export const ANALYTICS_EVENTS = {
   PAGE_VIEW:        'page_view',
   PRODUCT_VIEW:     'product_view',
   ADD_TO_CART:      'add_to_cart',
   REMOVE_FROM_CART: 'remove_from_cart',
+  // [FIX] ADD_TO_WISHLIST was missing. wishlistSlice.js was falling back to
+  // ADD_TO_CART which logged every wishlist-add as add_to_cart in BigQuery.
+  ADD_TO_WISHLIST:  'add_to_wishlist',
   CHECKOUT_STEP:    'checkout_step',
   PURCHASE:         'purchase',
   SEARCH:           'search',

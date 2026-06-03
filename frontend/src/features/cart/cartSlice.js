@@ -1,9 +1,12 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
-import axios from "axios";
-import { logout, login, verifyEmail } from "../products/userSlice";
-import {  generateEventId } from '../../utils/analytics.js';
-import { getMetaPixelCookies, getGA4ClientId, getAttributionContext } from '../../utils/analytics.js';
-
+import { createAsyncThunk, createSlice } from '@reduxjs/toolkit';
+import axios from 'axios';
+import { logout, login, verifyEmail } from '../products/userSlice';
+import {
+  generateEventId,
+  getMetaPixelCookies,
+  getGA4ClientId,
+  getAttributionContext,
+} from '../../utils/analytics.js';
 
 // ============================================
 // ASYNC THUNKS - SERVER-SIDE CART OPERATIONS
@@ -47,8 +50,32 @@ export const addItemsToCart = createAsyncThunk(
         ga4ClientId:      getGA4ClientId(),
         fbp:              metaCookies.fbp,
         fbc:              metaCookies.fbc,
+        // [FIX] Send raw fbclid as a separate field alongside fbc.
+        //
+        // WHY: cartController.js builds analyticsContext with:
+        //   fbc: resolveFbc({ fbc, fbclid, attribution })
+        //
+        // resolveFbc priority chain:
+        //   1. metaCookies.fbc  — already-formatted _fbc cookie (most reliable)
+        //   2. req.body.fbclid  — raw click ID, formatted by resolveFbc
+        //   3. req.attribution.fbclid — from attribution middleware cookie
+        //
+        // For Safari/iOS users whose _fbc cookie is blocked by ITP:
+        //   - metaCookies.fbc is null
+        //   - req.body.fbc (from metaCookies.fbc) is also null
+        //   - req.body.fbclid (this field) provides the raw click ID so
+        //     resolveFbc() can format it via formatFbc() server-side
+        //   - req.attribution.fbclid is the final fallback from the
+        //     attribution middleware which reads it from the httpOnly cookie
+        //
+        // Without this field, Safari users with a fresh fbclid from an ad
+        // click but no _fbc cookie had zero fbc coverage on AddToCart events.
+        // The fix closes that gap with a belt-and-suspenders approach:
+        // if the cookie is absent, the raw fbclid from localStorage is the
+        // backup path.
+        fbclid:            attribution?.fbclid || null,
         clientAttribution: attribution,
-        clientTimestamp:  new Date().toISOString(),
+        clientTimestamp:   new Date().toISOString(),
       });
 
       return { product: id, serverData: data };
@@ -163,7 +190,6 @@ export const syncServerCart = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const { data } = await axios.get("/api/v1/cart");
-      // Expected response shape: { cartItems: [{ product, quantity }, ...] }
       return data;
     } catch (error) {
       return rejectWithValue(
@@ -202,8 +228,6 @@ const initialPricing = {
   currency:      'USD',
 };
 
-// Helper: reset all cart state to blank (used on logout only).
-// login/verifyEmail use syncServerCart instead — see comment above.
 const resetCartState = (state) => {
   state.cartItems    = [];
   state.cartDetails  = [];
@@ -264,10 +288,7 @@ const cartSlice = createSlice({
   extraReducers: (builder) => {
 
     // ──────────────────────────────────────────────
-    // SYNC SERVER CART (called after login / loadUser)
-    // Atomically replaces localStorage with the authenticated user's server cart.
-    // Does NOT clear first — the pre-login cart remains visible until the fetch
-    // resolves, eliminating the empty-cart flash and the empty-on-failure scenario.
+    // SYNC SERVER CART
     // ──────────────────────────────────────────────
     builder
       .addCase(syncServerCart.pending, (state) => {
@@ -277,11 +298,6 @@ const cartSlice = createSlice({
       .addCase(syncServerCart.fulfilled, (state, action) => {
         const serverItems = action.payload.cartItems || [];
         state.cartItems   = serverItems;
-        // FIX (implicit component dependency): cartDetails is populated here
-        // from the server response rather than being cleared and left for
-        // Cart.jsx to re-fetch. Any component reading cartDetails immediately
-        // after syncServerCart completes now gets consistent data rather than
-        // an empty array pending a component lifecycle re-render.
         state.cartDetails = action.payload.cartDetails || [];
         state.discount    = initialDiscount;
         state.pricing     = initialPricing;
@@ -289,8 +305,6 @@ const cartSlice = createSlice({
         localStorage.setItem("cartItems", JSON.stringify(serverItems));
       })
       .addCase(syncServerCart.rejected, (state, action) => {
-        // Non-fatal: the pre-login localStorage cart is still intact.
-        // App.jsx can read state.cart.error and offer a retry.
         state.loading = false;
         state.error   = action.payload || "Failed to sync cart";
       });
@@ -334,11 +348,6 @@ const cartSlice = createSlice({
 
         if (existingItem) {
           existingItem.quantity = serverQuantity;
-          // FIX: removed toast message — no state.message set on add-to-cart.
-          // The "Cart updated" / "Added to cart" messages were surfaced as toasts
-          // by components watching state.cart.message. This produced a notification
-          // on every add-to-cart action; the cart icon count and drawer are
-          // sufficient feedback without an additional toast.
         } else {
           state.cartItems.push({ product, quantity: serverQuantity });
         }
@@ -527,14 +536,7 @@ const cartSlice = createSlice({
       });
 
     // ──────────────────────────────────────────────
-    // CROSS-SLICE: LOGOUT — wipe cart from localStorage immediately.
-    // Hard reset on both fulfilled and rejected so a failed logout API call
-    // does not leave the previous user's cart data in the browser.
-    //
-    // NOTE: If userSlice renames these action creators or the import path
-    // changes, these extraReducers will silently stop matching and the cart
-    // will not clear on logout, leaking user data. If that happens, verify
-    // the import path at the top of this file matches userSlice's export names.
+    // CROSS-SLICE: LOGOUT
     // ──────────────────────────────────────────────
     builder
       .addCase(logout.fulfilled, (state) => { resetCartState(state); })
@@ -542,12 +544,6 @@ const cartSlice = createSlice({
 
     // ──────────────────────────────────────────────
     // CROSS-SLICE: LOGIN / VERIFY EMAIL
-    // FIX (clear-then-sync race): Do NOT call resetCartState here. The cart is
-    // left intact so the user sees their existing items while syncServerCart
-    // fetches the authenticated server cart in the background. App.jsx must
-    // dispatch syncServerCart after login/verifyEmail succeeds (watching
-    // isAuthenticated). If syncServerCart fails the user retains their
-    // localStorage cart rather than being left with an empty one.
     // ──────────────────────────────────────────────
     builder
       .addCase(login.fulfilled,       () => { /* syncServerCart handles the cart update */ })
