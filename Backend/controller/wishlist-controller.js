@@ -4,9 +4,6 @@ import Product from "../models/product-model.js";
 import HandleError from "../utils/handleError.js";
 import { getCache, setCache, deleteCache, deleteCachePattern } from "../utils/redis.js";
 
-// FIX WC1: Centralised price resolver — removes the product.price dead field
-// that appeared in the original moveToCart response. The product schema has
-// pricing.sale and pricing.regular; there is no top-level product.price field.
 const resolveProductPrice = (product) => {
   if (product.pricing?.sale > 0) return product.pricing.sale;
   if (product.pricing?.regular > 0) return product.pricing.regular;
@@ -86,6 +83,29 @@ export const addToWishlist = handleAsyncError(async (req, res, next) => {
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
+
+  (async () => {
+    try {
+      const { fireWishlistEvent } = await import('../Services/analytics/analyticsOrchestrator.js');
+
+      // Fetch full user document for maximum EMQ on Meta CAPI.
+      // Falls back to req.user (lower EMQ) if the query fails.
+      let fullUser = req.user;
+      try {
+        fullUser = await User.findById(userId)
+          .select('email firstName lastName phone dateOfBirth facebookId shippingAddress')
+          .lean();
+      } catch (userFetchErr) {
+        console.warn('[Wishlist Analytics] fullUser fetch failed (non-fatal), falling back to req.user:', userFetchErr.message);
+      }
+
+      fireWishlistEvent(product, fullUser || req.user, req).catch(err =>
+        console.error('[Analytics] fireWishlistEvent failed (non-fatal):', err.message)
+      );
+    } catch (err) {
+      console.error('[Wishlist Analytics] Import or dispatch failed (non-fatal):', err.message);
+    }
+  })();
 
   res.status(200).json({
     success: true,
@@ -245,14 +265,12 @@ export const moveToCart = handleAsyncError(async (req, res, next) => {
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
-  // FIX WC1: product.price is always undefined (no such schema field).
-  // resolveProductPrice() reads pricing.sale / pricing.regular correctly.
   res.status(200).json({
     success: true,
     message: "Product removed from wishlist. Add to cart using cart endpoint.",
     product: {
-      id: product._id,
-      name: product.name,
+      id:    product._id,
+      name:  product.name,
       price: resolveProductPrice(product),
       stock
     },

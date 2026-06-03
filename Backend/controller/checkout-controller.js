@@ -25,22 +25,6 @@ const invalidateCheckoutCaches = async () => {
 // @route POST /api/v1/checkout/create
 // @access Private
 //
-// FIXES APPLIED IN THIS VERSION:
-//
-// [FIX 1]  discountAmount is not accepted from the client — derived server-side.
-// [FIX 2]  Item prices are never trusted from the client.
-// [FIX 3]  Item quantity is clamped to a positive integer (1-100).
-// [FIX 4]  The items array length is capped (MAX_ITEMS = 50).
-// [FIX 5]  Only published products are included.
-// [FIX 6]  analytics.source validated against schema enum before assignment.
-// [FIX 7]  Checkout ownership is enforced on update.
-// [FIX 8]  analyticsEventId is read from req.body and forwarded as eventId
-//          in the begin_checkout queue payload.
-// [FIX 9]  resolveFbc applied server-side so raw fbclid is formatted before
-//          reaching Meta CAPI.
-// [FIX 10] enqueueAnalyticsEvent user block now includes dateOfBirth,
-//          facebookId, and shippingAddress so the queue replay path has
-//          the same match quality signals as the fast path.
 // ============================================
 
 const MAX_ITEMS = 50;
@@ -55,11 +39,6 @@ const STEP_ORDER = [
   'payment_failed',
 ];
 
-/**
- * resolveDiscountServer
- * Validates a discount code against the DB and returns the concrete discount
- * amount. Returns 0 if the code is invalid, expired, exhausted, or absent.
- */
 const resolveDiscountServer = async (discountCode, itemPrice) => {
   if (!discountCode || typeof discountCode !== 'string') return { amount: 0, discountId: null };
 
@@ -242,10 +221,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   invalidateCheckoutCaches().catch(err => console.error('Failed to invalidate caches:', err));
 
   if (analyticsEventId) {
-    // [FIX 9] resolveFbc applied here for the same reason as verifyPaymentController —
-    // req.body.fbc may be a raw fbclid string if _fbc cookie was absent and the
-    // client fallback used a raw fbclid from localStorage. Passing a raw fbclid
-    // directly to Meta CAPI causes a 400 Bad Request.
     const resolvedFbc = resolveFbc({
       fbc:         req.body.fbc,
       fbclid:      req.body.fbclid,
@@ -261,19 +236,12 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
         pricing: checkout.pricing,
       },
 
-      // [FIX 10] Full user block — includes dateOfBirth, facebookId, shippingAddress
-      // so the queue replay path has the same Meta CAPI match quality as the fast
-      // path which uses the original Mongoose user document directly.
-      // req.user in checkoutController is the full authenticated user document
-      // (set by auth middleware from DB, not a lean JWT payload) so all fields
-      // are available here without an additional query.
       user: {
         _id:             req.user._id,
         email:           req.user.email,
         firstName:       req.user.firstName,
         lastName:        req.user.lastName,
         phone:           req.user.phone || req.user.phoneNo || null,
-        // [FIX 10] New fields
         dateOfBirth:     req.user.dateOfBirth     || null,
         facebookId:      req.user.facebookId      || null,
         shippingAddress: req.user.shippingAddress || null,
@@ -318,11 +286,6 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
 // ============================================
 
 const ALLOWED_NEXT_STEPS = {
-  // [FIX] Loosened transitions to match actual frontend navigation.
-  // The frontend may skip intermediate steps (e.g. jump from shipping_info
-  // directly to payment_selection, or from order_confirmation directly to
-  // payment_gateway). The map now allows any forward-or-equal step from any
-  // position, plus always allows returning to shipping_info to edit address.
   shipping_info: [
     'shipping_info',
     'order_confirmation',
@@ -360,6 +323,15 @@ const ALLOWED_NEXT_STEPS = {
   ],
 };
 
+// Steps that fire server-side CAPI events in updateCheckoutStep.
+// shipping_info is excluded — begin_checkout covers it.
+// payment_failed is excluded — no standard GA4/Meta event for failed payments.
+const CAPI_TRACKED_STEPS = new Set([
+  'order_confirmation',
+  'payment_selection',
+  'payment_gateway',
+]);
+
 export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   const { id }            = req.params;
   const { step, gateway } = req.body;
@@ -371,24 +343,6 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
   if (!checkout) return next(new HandleError("Checkout not found", 404));
   if (checkout.user.toString() !== req.user._id.toString()) return next(new HandleError("Unauthorized", 403));
 
-  // Validate transition using furthestStepReached, not currentStep.
-  //
-  // WHY: currentStep changes with every navigation (forward AND backward).
-  // If the user goes back to edit their address, currentStep drops to
-  // 'shipping_info'. A subsequent Payment.jsx mount then tries to fire
-  // 'payment_selection' from 'shipping_info' — which the strict map would
-  // reject even though the user already reached payment in this session.
-  //
-  // furthestStepReached is a high-water mark — it only ever moves forward
-  // (enforced by checkout.updateStep). Using it as the transition source
-  // means we validate against where the user HAS BEEN, not where they
-  // currently are. This eliminates false rejections caused by:
-  //   1. Back-navigation (user edits address then returns to payment)
-  //   2. Race conditions (payment_selection fires before order_confirmation lands)
-  //   3. Page refresh mid-checkout (component remounts fire mount-time updates)
-  //
-  // The loose map still prevents genuinely invalid forward jumps because
-  // furthestStepReached itself cannot go backward.
   const validationBasis = checkout.furthestStepReached || checkout.currentStep || 'shipping_info';
   const allowedFromCurrent = ALLOWED_NEXT_STEPS[validationBasis] || [];
   if (!allowedFromCurrent.includes(step)) {
@@ -412,6 +366,36 @@ export const updateCheckoutStep = handleAsyncError(async (req, res, next) => {
 
   await checkout.save();
   invalidateCheckoutCaches().catch(err => console.error('Failed to invalidate caches:', err));
+
+  
+  if (CAPI_TRACKED_STEPS.has(step)) {
+    const analyticsEventId = req.body?.analyticsEventId || null;
+
+    if (analyticsEventId) {
+      (async () => {
+        try {
+          const { fireCheckoutStepEvent } = await import('../Services/analytics/analyticsOrchestrator.js');
+
+          // Pass the populated checkout document and the authenticated user.
+          // req.user is the full Mongoose document set by isAuthenticatedUser
+          // middleware (loaded from DB, not a lean JWT payload), so all user
+          // fields including dateOfBirth, facebookId, and shippingAddress are
+          // available to sendMetaAddPaymentInfo without an extra query.
+          await fireCheckoutStepEvent(step, checkout, req.user, req);
+        } catch (err) {
+          console.error(
+            `[updateCheckoutStep] fireCheckoutStepEvent failed for step "${step}" (non-fatal):`,
+            err.message
+          );
+        }
+      })();
+    } else {
+      console.warn(
+        `[updateCheckoutStep] analyticsEventId missing for step "${step}" — ` +
+        'CAPI event skipped. Browser pixel fires without server deduplication.'
+      );
+    }
+  }
 
   res.status(200).json({
     success:        true,

@@ -2,29 +2,6 @@
  * backend/services/analytics/metaCapiService.js
  *
  * Phase 5 — Meta Conversions API (CAPI)
- *
- * FIXES APPLIED IN THIS VERSION:
- *
- *   [FIX 1] buildUserData now accepts dateOfBirth and fbLoginId.
- *           dateOfBirth is normalized to YYYYMMDD via formatDob() then hashed.
- *           fbLoginId (user.facebookId) is sent as plain fb_login_id — NOT hashed.
- *           Both improve Meta match quality for users with complete profiles.
- *
- *   [FIX 2] sendMetaAddToCart now pulls geographic data from user.shippingAddress
- *           and passes dateOfBirth and fbLoginId. Previously these were never
- *           forwarded for AddToCart events, leaving EMQ below purchase level.
- *
- *   [FIX 3] sendMetaInitiateCheckout now passes dateOfBirth, fbLoginId, and
- *           geographic data. Prefers checkout.shippingInfo if already filled
- *           (user completed shipping step before checkout was created),
- *           falls back to user.shippingAddress from saved profile.
- *
- *   [FIX 4] sendMetaPurchase now passes dateOfBirth and fbLoginId alongside
- *           the existing shipping geo data which was already correct.
- *
- *   [FIX 5] resolveFbc is the single canonical fbc resolution chain used by
- *           all senders. verifyPaymentController imports formatFbc from here
- *           rather than maintaining a local copy.
  */
 
 import crypto from 'crypto';
@@ -153,13 +130,6 @@ const resolvePhone = (user) =>
  *
  * Constructs the Meta CAPI user_data object from available signals.
  *
- * [FIX 1] Now accepts dateOfBirth and fbLoginId:
- *   - dateOfBirth is normalized to YYYYMMDD via formatDob() then hashed as `db`
- *   - fbLoginId (user.facebookId) is sent as plain `fb_login_id` — NOT hashed
- *     Meta requires fb_login_id to be the raw Facebook user ID string
- *
- * Critical: fbp, fbc, fb_login_id are NEVER hashed.
- * All other PII fields MUST be hashed with SHA-256.
  *
  * @param {Object} userData
  * @returns {Object} Meta CAPI user_data object
@@ -183,7 +153,6 @@ const buildUserData = (userData = {}) => {
     ...(lastName    && { ln:          hash(lastName) }),
     ...(userId      && { external_id: hash(userId) }),
 
-    // [FIX 1] Date of birth — hashed YYYYMMDD format per Meta spec
     ...(dobFormatted && { db:         hash(dobFormatted) }),
 
     // Hashed geographic data — improves match rate
@@ -196,8 +165,6 @@ const buildUserData = (userData = {}) => {
     ...(fbp         && { fbp }),
     ...(fbc         && { fbc }),
 
-    // [FIX 1] Facebook Login ID — NOT hashed, plain Facebook user ID string
-    // Only present when user authenticated via Facebook OAuth
     ...(fbLoginId   && { fb_login_id: fbLoginId }),
 
     // Un-hashed technical signals
@@ -295,7 +262,7 @@ export const sendMetaEvent = async (eventName, userData, customData, context = {
 /**
  * sendMetaPurchase
  *
- * [FIX 4] Now passes dateOfBirth and fbLoginId alongside existing signals.
+ * Now passes dateOfBirth and fbLoginId alongside existing signals.
  * Purchase already had the best geo coverage (from shippingInfo) — these
  * additions close the remaining EMQ gap vs InitiateCheckout.
  *
@@ -322,7 +289,6 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
     firstName:   user.firstName,
     lastName:    user.lastName,
     userId:      user._id?.toString(),
-    // [FIX 4] New fields
     dateOfBirth: user?.dateOfBirth || null,
     fbLoginId:   user?.facebookId  || null,
     fbp,
@@ -383,7 +349,7 @@ export const sendMetaPurchase = async (order, user, context = {}) => {
 /**
  * sendMetaInitiateCheckout
  *
- * [FIX 3] Now passes dateOfBirth, fbLoginId, and geographic data.
+ * Now passes dateOfBirth, fbLoginId, and geographic data.
  * Geographic priority: checkout.shippingInfo (if already filled by user)
  * falls back to user.shippingAddress from saved profile.
  *
@@ -401,7 +367,6 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
     firstName:   user?.firstName,
     lastName:    user?.lastName,
     userId:      user?._id?.toString(),
-    // [FIX 3] New fields
     dateOfBirth: user?.dateOfBirth || null,
     fbLoginId:   user?.facebookId  || null,
     // Prefer checkout shippingInfo if already filled, fall back to saved profile
@@ -435,7 +400,7 @@ export const sendMetaInitiateCheckout = async (checkout, user, context = {}) => 
 /**
  * sendMetaAddToCart
  *
- * [FIX 2] Now pulls geographic data from user.shippingAddress and passes
+ *Now pulls geographic data from user.shippingAddress and passes
  * dateOfBirth and fbLoginId. The user argument must be the full User
  * document (not the lean JWT payload) — cartController fetches it explicitly.
  *
@@ -455,7 +420,6 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
     firstName:   user?.firstName,
     lastName:    user?.lastName,
     userId:      user?._id?.toString(),
-    // [FIX 2] New fields — requires full user document in cartController
     dateOfBirth: user?.dateOfBirth || null,
     fbLoginId:   user?.facebookId  || null,
     city:        user?.shippingAddress?.city    || null,
@@ -482,6 +446,129 @@ export const sendMetaAddToCart = async (product, quantity, user, context = {}) =
   };
 
   return sendMetaEvent('AddToCart', userData, customData, context);
+};
+
+// ─── ADD TO WISHLIST EVENT ────────────────────────────────────────────────────
+
+/**
+ * sendMetaAddToWishlist
+ *
+ * New event. Fires Meta CAPI `AddToWishlist` when a user adds a
+ * product to their wishlist. Mirrors sendMetaAddToCart in structure and
+ * match quality signals — requires the full User document (not lean JWT
+ * payload) so dateOfBirth, facebookId, and shippingAddress are available.
+ *
+ * wishlistController.js fetches the full user document explicitly before
+ * calling this function — the same pattern used in cartController.js.
+ *
+ * geo fallback: user.shippingAddress (saved profile) — no checkout shipping
+ * info exists at wishlist-add time.
+ *
+ * @param {Object} product  - Product document
+ * @param {Object} user     - Full User document (not lean JWT payload)
+ * @param {Object} context  - Analytics context
+ * @returns {Promise<Object>}
+ */
+export const sendMetaAddToWishlist = async (product, user, context = {}) => {
+  const price = product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  const resolvedFbc = resolveFbc(context);
+
+  const userData = {
+    email:       user?.email,
+    phone:       resolvePhone(user),
+    firstName:   user?.firstName,
+    lastName:    user?.lastName,
+    userId:      user?._id?.toString(),
+    dateOfBirth: user?.dateOfBirth || null,
+    fbLoginId:   user?.facebookId  || null,
+    city:        user?.shippingAddress?.city    || null,
+    state:       user?.shippingAddress?.state   || null,
+    country:     user?.shippingAddress?.country || null,
+    zipCode:     user?.shippingAddress?.pinCode || null,
+    fbp:         context.fbp,
+    fbc:         resolvedFbc,
+    clientIp:    context.clientIp,
+    userAgent:   context.userAgent,
+  };
+
+  const customData = {
+    value:        Number(price),
+    currency:     'USD',
+    content_ids:  [product._id?.toString()],
+    content_name: product.name,
+    content_type: 'product',
+    contents: [{
+      id:         product._id?.toString(),
+      quantity:   1,
+      item_price: Number(price),
+    }],
+  };
+
+  return sendMetaEvent('AddToWishlist', userData, customData, context);
+};
+
+// ─── ADD PAYMENT INFO EVENT ───────────────────────────────────────────────────
+
+/**
+ * sendMetaAddPaymentInfo
+ *
+ * New event. Fires Meta CAPI `AddPaymentInfo` when user reaches the
+ * payment_selection checkout step. This is the server-side counterpart to the
+ * browser pixel's AddPaymentInfo fired by eventBridge.trackCheckoutStep().
+ *
+ * The browser pixel fires on payment_selection only (not payment_gateway —
+ * eventBridge.js fix prevents double-counting). This server event carries the
+ * same step constraint: only called for payment_selection in
+ * checkoutController.updateCheckoutStep.
+ *
+ * Geographic priority: checkout.shippingInfo (filled by this point in the
+ * funnel since the user already completed the shipping step) falls back to
+ * user.shippingAddress from saved profile.
+ *
+ * req.user from auth middleware is a full Mongoose document in checkoutController
+ * (set by the isAuthenticatedUser middleware which loads from DB, not a lean
+ * JWT payload), so all user fields are available without an extra query.
+ *
+ * @param {Object} checkout - Checkout document
+ * @param {Object} user     - User document (full, from auth middleware)
+ * @param {Object} context  - Analytics context
+ * @returns {Promise<Object>}
+ */
+export const sendMetaAddPaymentInfo = async (checkout, user, context = {}) => {
+  const resolvedFbc = resolveFbc(context);
+
+  const userData = {
+    email:       user?.email,
+    phone:       resolvePhone(user),
+    firstName:   user?.firstName,
+    lastName:    user?.lastName,
+    userId:      user?._id?.toString(),
+    dateOfBirth: user?.dateOfBirth || null,
+    fbLoginId:   user?.facebookId  || null,
+    // shippingInfo is filled by this step in the funnel
+    city:    checkout.shippingInfo?.city    || user?.shippingAddress?.city    || null,
+    state:   checkout.shippingInfo?.state   || user?.shippingAddress?.state   || null,
+    country: checkout.shippingInfo?.country || user?.shippingAddress?.country || null,
+    zipCode: checkout.shippingInfo?.pinCode || user?.shippingAddress?.pinCode || null,
+    fbp:     context.fbp,
+    fbc:     resolvedFbc,
+    clientIp:  context.clientIp,
+    userAgent: context.userAgent,
+  };
+
+  const contentIds = (checkout.items || []).map(item =>
+    item.product?.toString() || 'unknown'
+  );
+
+  const customData = {
+    value:        Number(checkout.pricing?.totalPrice) || 0,
+    currency:     checkout.pricing?.currency || 'USD',
+    content_ids:  contentIds,
+    content_type: 'product',
+    num_items:    checkout.items?.length || 0,
+  };
+
+  return sendMetaEvent('AddPaymentInfo', userData, customData, context);
 };
 
 // ─── VIEW CONTENT EVENT ───────────────────────────────────────────────────────
