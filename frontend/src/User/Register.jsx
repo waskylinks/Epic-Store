@@ -1,12 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useDispatch, useSelector } from 'react-redux';
 import { register, removeErrors, removeSuccess } from '../features/products/userSlice';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import FacebookSignInButton from '../components/FacebookSignInButton';
-import '../UserStyles/Register.css'
-;
+import '../UserStyles/Register.css';
 
 const SPECIAL_RE = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/;
 const EMAIL_RE   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -29,10 +28,10 @@ const isPwValid = (pw) => {
 const getPwStrength = (pw) => {
     if (!pw) return null;
     const met = Object.values(getPwReqs(pw)).filter(Boolean).length;
-    if (met <= 2) return { level: 1, label: 'Weak',      color: '#E24B4A' };
-    if (met <= 3) return { level: 2, label: 'Fair',      color: '#EF9F27' };
-    if (met <= 4) return { level: 3, label: 'Good',      color: '#378ADD' };
-    return           { level: 4, label: 'Strong',    color: '#1D9E75' };
+    if (met <= 2) return { level: 1, label: 'Weak',   color: '#E24B4A' };
+    if (met <= 3) return { level: 2, label: 'Fair',   color: '#EF9F27' };
+    if (met <= 4) return { level: 3, label: 'Good',   color: '#378ADD' };
+    return           { level: 4, label: 'Strong', color: '#1D9E75' };
 };
 
 const STEPS = [
@@ -42,6 +41,162 @@ const STEPS = [
     { id: 4, label: 'Security', icon: 'ti-shield-lock' },
 ];
 
+/* ─── CAROUSEL SLIDES ────────────────────────────────────────────────────────
+   Replace `imageSrc` values with your actual image paths or URLs.
+   Suggested image themes are in the `hint` field for reference.
+────────────────────────────────────────────────────────────────────────────── */
+const SLIDES = [
+    {
+        imageSrc: '/images/1.png',                          // ← INSERT IMAGE: lifestyle flat-lay of products, warm natural light
+        hint:     'Lifestyle / hero product shot',
+        tag:      'New arrivals weekly',
+        headline: 'Your next favourite store.',
+        sub:      'Thousands of curated products, always a discovery away.',
+        accent:   '#1D9E75',
+    },
+    {
+        imageSrc: '/images/2.png',                          // ← INSERT IMAGE: person holding phone checking order, modern minimal
+        hint:     'Order tracking / mobile UX shot',
+        tag:      'Real-time tracking',
+        headline: 'Know where every order is.',
+        sub:      'Live updates from warehouse to doorstep, no guesswork.',
+        accent:   '#378ADD',
+    },
+    {
+        imageSrc: '/images/3.png',                          // ← INSERT IMAGE: secure lock / payment visual, dark abstract
+        hint:     'Security / encrypted payments',
+        tag:      'Bank-grade security',
+        headline: 'Shop with total confidence.',
+        sub:      'End-to-end encryption keeps your data and payments safe.',
+        accent:   '#8B5CF6',
+    },
+    {
+        imageSrc: '/images/4.png',                          // ← INSERT IMAGE: fast delivery / courier lifestyle shot
+        hint:     'Fast delivery lifestyle shot',
+        tag:      'Smart shipping',
+        headline: 'Delivered on your terms.',
+        sub:      'Flexible shipping options and smart address defaults.',
+        accent:   '#EF9F27',
+    },
+];
+
+/* ─── CAROUSEL COMPONENT ───────────────────────────────────────────────────── */
+function LeftCarousel() {
+    const [active, setActive] = useState(0);
+    const [prev, setPrev]     = useState(null);
+    const [dir, setDir]       = useState('next');
+    const timerRef            = useRef(null);
+    const count               = SLIDES.length;
+
+    const goTo = (idx, direction = 'next') => {
+        if (idx === active) return;
+        setPrev(active);
+        setDir(direction);
+        setActive(idx);
+    };
+
+    const next = () => goTo((active + 1) % count, 'next');
+    const prev_ = () => goTo((active - 1 + count) % count, 'prev');
+
+    useEffect(() => {
+        timerRef.current = setInterval(next, 5000);
+        return () => clearInterval(timerRef.current);
+    }, [active]);
+
+    const slide = SLIDES[active];
+
+    return (
+        <div className="reg-carousel" aria-label="Feature highlights">
+            {/* ── Image layer ─────────────────────────────────────────────── */}
+            <div className="reg-carousel-track">
+                {SLIDES.map((s, i) => (
+                    <div
+                        key={i}
+                        className={`reg-carousel-slide
+                            ${i === active ? 'is-active' : ''}
+                            ${i === prev   ? `is-leaving is-leaving--${dir}` : ''}
+                        `}
+                        aria-hidden={i !== active}
+                    >
+                        {s.imageSrc ? (
+                            <img
+                                src={s.imageSrc}
+                                alt={s.hint}
+                                className="reg-carousel-img"
+                                loading="lazy"
+                            />
+                        ) : (
+                            /* Placeholder shown until real images are added */
+                            <div className="reg-carousel-placeholder">
+                                <div className="reg-carousel-placeholder-inner">
+                                    <i className="ti ti-photo" aria-hidden="true" />
+                                    <span>{s.hint}</span>
+                                </div>
+                            </div>
+                        )}
+                        {/* Gradient overlay so text is always readable */}
+                        <div className="reg-carousel-overlay" />
+                    </div>
+                ))}
+            </div>
+
+            {/* ── Brand mark (top-left) ───────────────────────────────────── */}
+            <div className="reg-carousel-brand">
+                <span className="reg-brand-e">Epic</span>
+                <span className="reg-brand-s">Store</span>
+            </div>
+
+            {/* ── Copy (bottom) ───────────────────────────────────────────── */}
+            <div className="reg-carousel-copy" key={active}>
+                <span
+                    className="reg-carousel-tag"
+                    style={{ '--slide-accent': slide.accent }}
+                >
+                    {slide.tag}
+                </span>
+                <h2 className="reg-carousel-headline">{slide.headline}</h2>
+                <p  className="reg-carousel-sub">{slide.sub}</p>
+            </div>
+
+            {/* ── Nav arrows ──────────────────────────────────────────────── */}
+            <button
+                className="reg-carousel-arrow reg-carousel-arrow--prev"
+                onClick={prev_}
+                aria-label="Previous slide"
+            >
+                <i className="ti ti-chevron-left" aria-hidden="true" />
+            </button>
+            <button
+                className="reg-carousel-arrow reg-carousel-arrow--next"
+                onClick={next}
+                aria-label="Next slide"
+            >
+                <i className="ti ti-chevron-right" aria-hidden="true" />
+            </button>
+
+            {/* ── Dot indicators ──────────────────────────────────────────── */}
+            <div className="reg-carousel-dots" role="tablist" aria-label="Slide indicators">
+                {SLIDES.map((_, i) => (
+                    <button
+                        key={i}
+                        role="tab"
+                        aria-selected={i === active}
+                        aria-label={`Go to slide ${i + 1}`}
+                        className={`reg-carousel-dot ${i === active ? 'is-active' : ''}`}
+                        onClick={() => goTo(i, i > active ? 'next' : 'prev')}
+                    />
+                ))}
+            </div>
+
+            {/* ── Auto-play progress bar ──────────────────────────────────── */}
+            <div className="reg-carousel-progress" key={`p-${active}`}>
+                <div className="reg-carousel-progress-fill" />
+            </div>
+        </div>
+    );
+}
+
+/* ─── SUB-COMPONENTS ───────────────────────────────────────────────────────── */
 function StepIndicator({ current }) {
     return (
         <div className="reg-steps">
@@ -78,6 +233,7 @@ function FieldError({ msg }) {
     ) : null;
 }
 
+/* ─── MAIN COMPONENT ───────────────────────────────────────────────────────── */
 export default function Register() {
     const dispatch  = useDispatch();
     const navigate  = useNavigate();
@@ -210,29 +366,18 @@ export default function Register() {
 
     return (
         <div className="reg-page">
-            <div className="reg-left" aria-hidden="true">
-                <div className="reg-left-content">
-                    <div className="reg-brand-mark">
-                        <span className="reg-brand-e">Epic</span>
-                        <span className="reg-brand-s">Store</span>
-                    </div>
-                    <h2 className="reg-left-headline">Your next favourite store.</h2>
-                    <p className="reg-left-sub">
-                        Thousands of products, lightning-fast checkout, and a storefront built around you.
-                    </p>
-                    <ul className="reg-perks">
-                        <li><i className="ti ti-bolt" aria-hidden="true" /><span>Instant order tracking</span></li>
-                        <li><i className="ti ti-shield-check" aria-hidden="true" /><span>Secure &amp; encrypted</span></li>
-                        <li><i className="ti ti-truck-delivery" aria-hidden="true" /><span>Smart shipping defaults</span></li>
-                        <li><i className="ti ti-heart" aria-hidden="true" /><span>Personalised wishlist</span></li>
-                    </ul>
-                </div>
-            </div>
+            {/* ── LEFT: premium carousel (hidden on mobile) ──────────────── */}
+            <aside className="reg-left" aria-label="Store highlights">
+                <LeftCarousel />
+            </aside>
 
+            {/* ── RIGHT: registration form ────────────────────────────────── */}
             <div className="reg-right">
                 <div className="reg-form-wrap">
+                    {/* Mobile brand mark */}
                     <div className="reg-mobile-brand">
-                        <span className="reg-brand-e">Epic</span><span className="reg-brand-s">Store</span>
+                        <span className="reg-brand-e">Epic</span>
+                        <span className="reg-brand-s">Store</span>
                     </div>
 
                     <div className="reg-header">

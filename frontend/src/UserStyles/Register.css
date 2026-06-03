@@ -34,6 +34,9 @@
     --reg-font-body:    'Instrument Sans', sans-serif;
 
     --reg-transition: 0.18s ease;
+
+    /* Carousel */
+    --carousel-slide-duration: 5000ms;
 }
 
 /* ─────────────────────────────────────────────
@@ -57,32 +60,137 @@
     background: var(--reg-bg);
 }
 
-/* LEFT PANEL */
+/* ═══════════════════════════════════════════════════════════════════════════
+   LEFT PANEL — CAROUSEL
+═══════════════════════════════════════════════════════════════════════════ */
 .reg-left {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    width: 420px;
+    width: 480px;
     flex-shrink: 0;
-    background: var(--reg-left-bg);
-    padding: 3rem 3rem 3rem 3.5rem;
     position: sticky;
     top: 0;
     height: 100vh;
+    overflow: hidden;
+    /* Hidden on mobile, shown on tablet+ (see breakpoints) */
 }
 
-.reg-left-content {
-    max-width: 340px;
+/* ── Carousel root ──────────────────────────────────────────────────────── */
+.reg-carousel {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: var(--reg-left-bg);
+    overflow: hidden;
+    user-select: none;
 }
 
-.reg-brand-mark {
+/* ── Slide track ────────────────────────────────────────────────────────── */
+.reg-carousel-track {
+    position: absolute;
+    inset: 0;
+}
+
+.reg-carousel-slide {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transform: scale(1.04);
+    transition: opacity 0.75s cubic-bezier(0.4, 0, 0.2, 1),
+                transform 0.75s cubic-bezier(0.4, 0, 0.2, 1);
+    will-change: opacity, transform;
+}
+
+.reg-carousel-slide.is-active {
+    opacity: 1;
+    transform: scale(1);
+    z-index: 2;
+}
+
+.reg-carousel-slide.is-leaving {
+    opacity: 0;
+    z-index: 1;
+}
+
+.reg-carousel-slide.is-leaving--next  { transform: scale(0.97) translateX(-2%); }
+.reg-carousel-slide.is-leaving--prev  { transform: scale(0.97) translateX(2%); }
+
+/* ── Slide image ────────────────────────────────────────────────────────── */
+.reg-carousel-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+    display: block;
+}
+
+/* ── Placeholder (shown until real images are dropped in) ───────────────── */
+.reg-carousel-placeholder {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        135deg,
+        #1a1a18 0%,
+        #232320 40%,
+        #1a1a18 100%
+    );
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.reg-carousel-placeholder-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 32px;
+    border: 1.5px dashed rgba(255, 255, 255, 0.12);
+    border-radius: 16px;
+    background: rgba(255,255,255,0.03);
+    backdrop-filter: blur(4px);
+    text-align: center;
+    max-width: 260px;
+}
+
+.reg-carousel-placeholder-inner .ti {
+    font-size: 40px;
+    color: rgba(255, 255, 255, 0.18);
+}
+
+.reg-carousel-placeholder-inner span {
+    font-family: var(--reg-font-body);
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.3);
+    line-height: 1.5;
+    font-style: italic;
+    letter-spacing: 0.02em;
+}
+
+/* ── Gradient overlay ───────────────────────────────────────────────────── */
+.reg-carousel-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        to top,
+        rgba(10, 10, 9, 0.92) 0%,
+        rgba(10, 10, 9, 0.45) 40%,
+        rgba(10, 10, 9, 0.15) 65%,
+        rgba(10, 10, 9, 0.35) 100%
+    );
+    pointer-events: none;
+}
+
+/* ── Brand mark (top-left) ──────────────────────────────────────────────── */
+.reg-carousel-brand {
+    position: absolute;
+    top: 2rem;
+    left: 2.5rem;
+    z-index: 10;
     display: inline-flex;
     align-items: baseline;
     gap: 2px;
-    margin-bottom: 3rem;
 }
 
-.reg-brand-e {
+.reg-carousel-brand .reg-brand-e {
     font-family: var(--reg-font-display);
     font-size: 22px;
     font-weight: 800;
@@ -90,7 +198,7 @@
     letter-spacing: -0.5px;
 }
 
-.reg-brand-s {
+.reg-carousel-brand .reg-brand-s {
     font-family: var(--reg-font-display);
     font-size: 22px;
     font-weight: 400;
@@ -98,45 +206,156 @@
     letter-spacing: -0.5px;
 }
 
-.reg-left-headline {
-    font-family: var(--reg-font-display);
-    font-size: clamp(28px, 3vw, 38px);
-    font-weight: 700;
-    color: var(--reg-left-text);
-    line-height: 1.15;
-    letter-spacing: -0.5px;
-    margin-bottom: 1rem;
+/* ── Copy block (bottom) ────────────────────────────────────────────────── */
+.reg-carousel-copy {
+    position: absolute;
+    bottom: 5.5rem;
+    left: 0;
+    right: 0;
+    padding: 0 2.5rem;
+    z-index: 10;
+    animation: reg-copy-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.reg-left-sub {
-    font-size: 14px;
-    line-height: 1.7;
-    color: var(--reg-left-muted);
-    margin-bottom: 2.5rem;
+@keyframes reg-copy-in {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
 }
 
-.reg-perks {
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-
-.reg-perks li {
-    display: flex;
+.reg-carousel-tag {
+    display: inline-flex;
     align-items: center;
-    gap: 12px;
-    font-size: 14px;
-    color: var(--reg-left-text);
+    gap: 6px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--slide-accent, var(--reg-accent));
+    background: rgba(255, 255, 255, 0.07);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(6px);
+    border-radius: 999px;
+    padding: 5px 12px;
+    margin-bottom: 14px;
 }
 
-.reg-perks li .ti {
-    font-size: 18px;
-    color: var(--reg-accent);
+.reg-carousel-tag::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--slide-accent, var(--reg-accent));
     flex-shrink: 0;
 }
 
-/* RIGHT PANEL */
+.reg-carousel-headline {
+    font-family: var(--reg-font-display);
+    font-size: clamp(26px, 3.2vw, 38px);
+    font-weight: 700;
+    color: #f0efe8;
+    line-height: 1.12;
+    letter-spacing: -0.5px;
+    margin-bottom: 10px;
+}
+
+.reg-carousel-sub {
+    font-size: 14px;
+    line-height: 1.65;
+    color: rgba(240, 239, 232, 0.6);
+    max-width: 340px;
+}
+
+/* ── Arrow nav ──────────────────────────────────────────────────────────── */
+.reg-carousel-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 15;
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(8px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+    opacity: 0;
+}
+
+.reg-carousel:hover .reg-carousel-arrow { opacity: 1; }
+
+.reg-carousel-arrow:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+}
+
+.reg-carousel-arrow--prev { left: 1.25rem; }
+.reg-carousel-arrow--next { right: 1.25rem; }
+
+.reg-carousel-arrow--prev:hover { transform: translateY(-50%) translateX(-2px); }
+.reg-carousel-arrow--next:hover { transform: translateY(-50%) translateX(2px); }
+
+/* ── Dot indicators ─────────────────────────────────────────────────────── */
+.reg-carousel-dots {
+    position: absolute;
+    bottom: 2rem;
+    left: 2.5rem;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.reg-carousel-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    border: none;
+    background: rgba(255, 255, 255, 0.3);
+    cursor: pointer;
+    padding: 0;
+    transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                background 0.35s ease;
+}
+
+.reg-carousel-dot.is-active {
+    width: 24px;
+    background: #fff;
+}
+
+/* ── Auto-play progress bar ─────────────────────────────────────────────── */
+.reg-carousel-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: rgba(255, 255, 255, 0.08);
+    z-index: 10;
+}
+
+.reg-carousel-progress-fill {
+    height: 100%;
+    background: var(--reg-accent);
+    width: 0%;
+    animation: reg-progress var(--carousel-slide-duration) linear forwards;
+    transform-origin: left;
+}
+
+@keyframes reg-progress {
+    from { width: 0%; }
+    to   { width: 100%; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   RIGHT PANEL — FORM
+═══════════════════════════════════════════════════════════════════════════ */
 .reg-right {
     flex: 1;
     display: flex;
@@ -151,7 +370,7 @@
     max-width: 500px;
 }
 
-/* Mobile brand (hidden on desktop) */
+/* Mobile brand (hidden on desktop/tablet) */
 .reg-mobile-brand {
     display: none;
     font-family: var(--reg-font-display);
@@ -615,11 +834,20 @@
 
 .reg-signin a:hover { text-decoration: underline; }
 
-/* ─────────────────────────────────────────────
-   RESPONSIVE — tablet (≤ 900px)
-───────────────────────────────────────────── */
-@media (max-width: 900px) {
-    .reg-left { display: none; }
+/* ═══════════════════════════════════════════════════════════════════════════
+   RESPONSIVE
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tablet (≤ 1024px) — narrow the carousel panel ─────────────────────── */
+@media (max-width: 1024px) {
+    .reg-left { width: 380px; }
+}
+
+/* ── Small tablet / large phone (≤ 768px) — hide carousel entirely ──────── */
+@media (max-width: 768px) {
+    .reg-left {
+        display: none;   /* ← carousel hidden on mobile */
+    }
 
     .reg-right {
         padding: 2rem 1.25rem 3rem;
@@ -631,9 +859,7 @@
     .reg-mobile-brand { display: flex; }
 }
 
-/* ─────────────────────────────────────────────
-   RESPONSIVE — mobile (≤ 540px)
-───────────────────────────────────────────── */
+/* ── Mobile (≤ 540px) ───────────────────────────────────────────────────── */
 @media (max-width: 540px) {
     .reg-right { padding: 1.5rem 1rem 2.5rem; }
 
@@ -658,10 +884,13 @@
     .pw-reqs { grid-template-columns: 1fr; }
 }
 
-/* ─────────────────────────────────────────────
-   RESPONSIVE — very small (≤ 360px)
-───────────────────────────────────────────── */
+/* ── Very small (≤ 360px) ───────────────────────────────────────────────── */
 @media (max-width: 360px) {
-    .reg-right { padding: 1.25rem 0.75rem 2rem; }
-    .reg-input-h { --reg-input-h: 44px; }
+    .reg-right { 
+        padding: 1.25rem 0.75rem 2rem; 
+    }
+    
+    :root {
+        --reg-input-h: 44px;
+    }
 }
