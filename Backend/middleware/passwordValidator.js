@@ -18,8 +18,8 @@ export const validatePassword = (password) => {
     const errors = [];
     
     // Check length
-    if (!password || password.length < 12) {
-        errors.push('Password must be at least 12 characters long');
+    if (!password || password.length < 8) {
+        errors.push('Password must be at least 8 characters long');
     }
     
     // Check for uppercase

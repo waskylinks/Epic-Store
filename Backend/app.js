@@ -42,6 +42,7 @@ import { sessionMiddleware }  from './middleware/sessionMiddleware.js';
 import { identityMiddleware } from './middleware/identityMiddleware.js';
 import cronHealthRouter from './routes/cronHealthRoutes.js';
 import analyticsObservabilityRoutes from './routes/analyticsObservabilityRoutes.js';
+import analyticsEventRoutes from './routes/analytics-event-routes.js';
 
 import './config/passport.js';
 
@@ -195,7 +196,10 @@ app.use('/api/v1/discounts', discountRoutes);
 app.use('/api/v1/recovery', recoveryEmailRoutes);
 app.use('/api/v1/checkout', checkoutRoutes);
 app.use('/api/v1', seoRoutes);
+
+app.use('/api/v1/analytics', analyticsEventRoutes); 
 app.use('/api/v1/analytics', analyticsRoutes);
+
 app.use('/api/v1/admin', adminStatsRoutes);
  app.use('/api/v1/admin/analytics', analyticsObservabilityRoutes);
 app.use('/api/v1/discount-analytics', discountAnalyticsRoutes);
