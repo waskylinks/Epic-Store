@@ -9,20 +9,18 @@
     --reg-coral-hover: #c94a4a;
     --reg-coral-glow:  rgba(224, 85, 85, 0.18);
 
-    /* Step indicator — green palette */
-    --reg-step-active-bg:     rgba(29, 158, 117, 0.12);
-    --reg-step-active-border: #1D9E75;
-    --reg-step-active-color:  #1D9E75;
-    --reg-step-active-ring:   rgba(29, 158, 117, 0.14);
-    --reg-step-active-glow:   rgba(29, 158, 117, 0.18);
+    /* Step indicator — lighter green palette */
+    --reg-step-active-bg:     rgba(29, 158, 117, 0.08);
+    --reg-step-active-border: rgba(29, 158, 117, 0.5);
+    --reg-step-active-color:  rgba(45, 182, 56, 0.7);
+    --reg-step-active-ring:   rgba(29, 158, 117, 0.08);
+    --reg-step-active-glow:   rgba(29, 158, 117, 0.1);
 
-    /* FIX: done state uses explicit light-green fill — was incorrectly resolving
-       to near-white because bg/text tokens weren't set on the circle element. */
-    --reg-step-done-bg:       rgba(29, 158, 117, 0.22);
-    --reg-step-done-border:   #1D9E75;
-    --reg-step-done-color:    #5DCAA5;   /* mid-green — checkmark + label  */
-    --reg-step-done-line:     rgba(29, 158, 117, 0.35);
-    --reg-step-done-ring:     rgba(29, 158, 117, 0.1);
+    --reg-step-done-bg:       rgba(29, 158, 117, 0.12);
+    --reg-step-done-border:   rgba(29, 158, 117, 0.4);
+    --reg-step-done-color:    rgba(93, 202, 165, 0.55);
+    --reg-step-done-line:     rgba(29, 158, 117, 0.2);
+    --reg-step-done-ring:     rgba(29, 158, 117, 0.05);
 
     /* Semantic colours */
     --reg-danger:  #E24B4A;
@@ -350,6 +348,12 @@
     max-width: 480px;
 }
 
+/* gender dropdown option text color */
+.reg-input-wrap select option {
+    color: #000;
+    background: #fff;
+}
+
 /* ─────────────────────────────────────────────
    MOBILE BRAND
 ───────────────────────────────────────────── */
@@ -636,7 +640,7 @@
 }
 
 .reg-input-wrap:focus-within .field-icon {
-    color: var(--reg-success);
+    color: rgba(224, 85, 85, 0.5);
 }
 
 .reg-input-wrap input,
@@ -679,9 +683,10 @@
 
 .reg-input-wrap input:focus,
 .reg-input-wrap select:focus {
-    border-color: var(--reg-border-focus);
-    background: rgba(29, 158, 117, 0.06);
-    box-shadow: 0 0 0 3px rgba(29, 158, 117, 0.1);
+    border-color: rgba(224, 85, 85, 0.35); /* faint coral */
+    border-width: 1px; /* thin */
+    background: rgba(224, 85, 85, 0.03);
+    box-shadow: 0 0 0 2px rgba(224, 85, 85, 0.08);
 }
 
 .reg-input-wrap.has-error input,
@@ -759,6 +764,9 @@
     transition: background var(--reg-transition);
 }
 
+
+
+
 .pw-strength-label {
     font-size: 11px;
     font-weight: 700;
@@ -767,6 +775,7 @@
     white-space: nowrap;
     min-width: 42px;
     text-align: right;
+    opacity: 0.7; /* lighter overall */
 }
 
 /* FIX: requirements grid uses 1fr 1fr with better gap */
@@ -791,7 +800,9 @@
 
 .pw-reqs li .ti { font-size: 13px; flex-shrink: 0; }
 
-.pw-reqs li.met { color: var(--reg-success); }
+.pw-reqs li.met { 
+    color: rgba(29, 158, 117, 0.65); /* lighter green */
+}
 
 /* ─────────────────────────────────────────────
    SECTION NOTE (step 3 info banner)
@@ -1331,10 +1342,10 @@
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   FORGOT PASSWORD PAGE
+   FORGOT PASSWORD PAGE — UPDATED ICON STYLES
 ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── Page-level icon (lock / key) ── */
+/* ── Page-level icon (lock) ── */
 .fp-icon-wrap {
     width: 64px;
     height: 64px;
@@ -1344,13 +1355,18 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 26px;
     color: #378ADD;
     margin: 0 auto 1.25rem;
     box-shadow:
         0 0 0 6px rgba(55, 138, 221, 0.06),
         0 0 24px rgba(55, 138, 221, 0.12);
     animation: fp-icon-breathe 3s ease-in-out infinite;
+}
+
+.fp-icon-wrap svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
 }
 
 @keyframes fp-icon-breathe {
@@ -1399,11 +1415,17 @@
     margin-bottom: 18px;
 }
 
-.fp-info-note .ti {
-    font-size: 15px;
+.fp-info-note-icon {
     flex-shrink: 0;
     margin-top: 1px;
     color: #378ADD;
+    display: flex;
+    align-items: center;
+}
+
+.fp-info-note-icon svg {
+    width: 15px;
+    height: 15px;
 }
 
 /* ── Success state card ── */
@@ -1434,8 +1456,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 22px;
     color: var(--reg-success);
+}
+
+.fp-success-icon svg {
+    width: 24px;
+    height: 24px;
 }
 
 .fp-success-title {
@@ -1456,6 +1482,106 @@
 .fp-success-text strong {
     color: var(--reg-text-on-dark);
     font-weight: 700;
+}
+
+/* ── Button icon alignment ── */
+.reg-btn-icon {
+    display: flex;
+    align-items: center;
+}
+
+.reg-btn-icon svg {
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+}
+
+/* ── Field icon alignment ── */
+.reg-field .field-icon {
+    display: flex;
+    align-items: center;
+}
+
+.reg-field .field-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* ── Error banner icon ── */
+.lgn-error-banner-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.lgn-error-banner-icon svg {
+    width: 15px;
+    height: 15px;
+}
+
+/* ── Field error icon ── */
+.reg-field-error-icon {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.reg-field-error-icon svg {
+    width: 12px;
+    height: 12px;
+}
+
+/* ── Responsive: smaller screens ── */
+@media (max-width: 540px) {
+    .fp-icon-wrap {
+        width: 52px;
+        height: 52px;
+    }
+
+    .fp-icon-wrap svg {
+        width: 24px;
+        height: 24px;
+    }
+
+    .fp-success-icon {
+        width: 44px;
+        height: 44px;
+    }
+
+    .fp-success-icon svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .fp-success-card {
+        padding: 22px 18px;
+    }
+}
+
+@media (max-width: 380px) {
+    .fp-icon-wrap {
+        width: 44px;
+        height: 44px;
+    }
+
+    .fp-icon-wrap svg {
+        width: 20px;
+        height: 20px;
+    }
+
+    .fp-success-icon {
+        width: 38px;
+        height: 38px;
+    }
+
+    .fp-success-icon svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .fp-success-card {
+        padding: 18px 14px;
+    }
 }
 
 

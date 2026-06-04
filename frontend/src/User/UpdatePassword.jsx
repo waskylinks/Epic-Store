@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { updatePassword, removeErrors, removeSuccess } from '../features/products/userSlice';
@@ -16,7 +16,7 @@ const getPwReqs = (pw) => ({
     special: SPECIAL_RE.test(pw),
 });
 
-const isPwValid   = (pw) => Object.values(getPwReqs(pw)).every(Boolean);
+const isPwValid = (pw) => Object.values(getPwReqs(pw)).every(Boolean);
 
 const getPwStrength = (pw) => {
     if (!pw) return null;
@@ -36,7 +36,12 @@ export default function UpdatePassword() {
     const [showNew,         setShowNew]         = useState(false);
     const [showConfirm,     setShowConfirm]     = useState(false);
     const [touched,         setTouched]         = useState({ old: false, new: false, confirm: false });
-    const [done,            setDone]            = useState(false);
+
+    // FIX: removed `done` local state — success card now renders directly from
+    // Redux `success`, eliminating the setDone() call in an effect body.
+    // Same pattern applied to ForgotPassword's `sent` and VerifyResetCode's `verified`.
+
+    // FIX: removed `useRef` from import — it was imported but never used.
 
     const { success, loading, error } = useSelector(state => state.user);
     const dispatch = useDispatch();
@@ -74,11 +79,15 @@ export default function UpdatePassword() {
         }
     }, [error, dispatch]);
 
+    // FIX: no setState in effect body — success card renders from Redux `success` directly.
+    // removeSuccess() deferred inside the timeout so it never fires before navigation,
+    // preventing the dep-change → cleanup → timer-cancel race condition.
     useEffect(() => {
         if (success) {
-            setDone(true);
-            dispatch(removeSuccess());
-            const t = setTimeout(() => navigate('/profile'), 2500);
+            const t = setTimeout(() => {
+                dispatch(removeSuccess());
+                navigate('/profile');
+            }, 2500);
             return () => clearTimeout(t);
         }
     }, [success, dispatch, navigate]);
@@ -153,8 +162,8 @@ export default function UpdatePassword() {
                         </p>
                     </div>
 
-                    {/* ── Success state ── */}
-                    {done ? (
+                    {/* ── Success state — driven by Redux, no local `done` state ── */}
+                    {success ? (
                         <div className="up-success-card" role="status" aria-live="polite">
                             <div className="up-success-icon">
                                 <i className="ti ti-circle-check" aria-hidden="true" />

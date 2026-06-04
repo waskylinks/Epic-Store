@@ -68,6 +68,7 @@ function LeftCarousel() {
     useEffect(() => {
         timerRef.current = setInterval(next, 5000);
         return () => clearInterval(timerRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active]);
 
     const slide = SLIDES[active];
@@ -140,12 +141,22 @@ function LeftCarousel() {
 const RESEND_SECONDS = 90;
 
 export default function VerifyResetCode() {
-    const [code,      setCode]      = useState(['', '', '', '', '', '']);
-    const [timeLeft,  setTimeLeft]  = useState(RESEND_SECONDS);
-    const [canResend, setCanResend] = useState(false);
-    const [verified,  setVerified]  = useState(false);
+    const [code,     setCode]     = useState(['', '', '', '', '', '']);
+    const [timeLeft, setTimeLeft] = useState(RESEND_SECONDS);
 
-    const inputRefs = useRef([]);
+    // FIX: removed `canResend` local state — derived directly from timeLeft === 0
+    // to avoid calling setState synchronously inside a useEffect body.
+    const canResend = timeLeft === 0;
+
+    // FIX: removed `verified` local state — success card now renders directly
+    // from Redux `codeVerified`, eliminating setVerified() in an effect body.
+    // This is the same pattern applied to ForgotPassword's `sent` state.
+
+    const inputRefs  = useRef([]);
+    // Snapshot of the code at the moment verification succeeds so the
+    // navigate call always passes the correct 6-digit value even after
+    // codeVerified triggers a re-render that clears the inputs.
+    const codeSnapshot = useRef('');
 
     const { error, loading, success, message, codeVerified } =
         useSelector(state => state.user);
@@ -167,14 +178,11 @@ export default function VerifyResetCode() {
         }
     }, [email, navigate]);
 
-    /* ── Countdown ── */
+    /* ── Countdown — only ticks, never sets canResend ── */
     useEffect(() => {
-        if (timeLeft > 0) {
-            const t = setTimeout(() => setTimeLeft(s => s - 1), 1000);
-            return () => clearTimeout(t);
-        } else {
-            setCanResend(true);
-        }
+        if (timeLeft <= 0) return;
+        const t = setTimeout(() => setTimeLeft(s => s - 1), 1000);
+        return () => clearTimeout(t);
     }, [timeLeft]);
 
     const formatTime = (s) =>
@@ -223,6 +231,9 @@ export default function VerifyResetCode() {
             navigate('/password/forgot');
             return;
         }
+        // Snapshot the code before dispatching so the navigate call below
+        // always has the verified value regardless of render timing.
+        codeSnapshot.current = joined;
         dispatch(verifyResetCode({ email, code: joined }));
     };
 
@@ -235,18 +246,19 @@ export default function VerifyResetCode() {
         }
         dispatch(forgotPassword(email));
         setTimeLeft(RESEND_SECONDS);
-        setCanResend(false);
         setCode(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
     };
 
-    /* ── Effects ── */
+    /* ── Error effect — toast only, no setState ──
+       FIX: removed setCode([]) from this effect body.
+       Code is reset inside handleResend (user action) which is the correct
+       place for that side effect. On a wrong code the inputs stay filled so
+       the user can see what they typed and correct it. */
     useEffect(() => {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
-            setCode(['', '', '', '', '', '']);
-            inputRefs.current[0]?.focus();
         }
     }, [error, dispatch]);
 
@@ -258,20 +270,20 @@ export default function VerifyResetCode() {
         }
     }, [success, message, codeVerified, dispatch]);
 
-    /* Code verified — show success card then navigate */
+    // FIX: no setState in effect body — success card renders from codeVerified directly.
+    // removeSuccess/clearCodeVerifiedState deferred inside timeout so they
+    // never fire before navigation, preventing the dep-change → cleanup → cancel race.
     useEffect(() => {
         if (codeVerified) {
-            setVerified(true);
-            const resetCode = code.join('');
             const t = setTimeout(() => {
                 dispatch(clearCodeVerifiedState());
                 navigate('/password/new', {
-                    state: { email, code: resetCode, verified: true },
+                    state: { email, code: codeSnapshot.current, verified: true },
                 });
             }, 2000);
             return () => clearTimeout(t);
         }
-    }, [codeVerified, code, email, navigate, dispatch]);
+    }, [codeVerified, email, navigate, dispatch]);
 
     useEffect(() => () => {
         dispatch(removeErrors());
@@ -310,8 +322,8 @@ export default function VerifyResetCode() {
                         </p>
                     </div>
 
-                    {/* ── Success state ── */}
-                    {verified ? (
+                    {/* ── Success state — driven by Redux codeVerified, no local state ── */}
+                    {codeVerified ? (
                         <div className="vrc-success-card" role="status" aria-live="polite">
                             <div className="vrc-success-icon">
                                 <i className="ti ti-circle-check" aria-hidden="true" />

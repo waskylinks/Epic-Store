@@ -67,6 +67,7 @@ function LeftCarousel() {
     useEffect(() => {
         timerRef.current = setInterval(next, 5000);
         return () => clearInterval(timerRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active]);
 
     const slide = SLIDES[active];
@@ -139,11 +140,14 @@ function LeftCarousel() {
 const RESEND_SECONDS = 90;
 
 export default function VerifyEmail() {
-    const [code,      setCode]      = useState(['', '', '', '', '', '']);
-    const [timeLeft,  setTimeLeft]  = useState(RESEND_SECONDS);
-    const [canResend, setCanResend] = useState(false);
+    const [code,     setCode]     = useState(['', '', '', '', '', '']);
+    const [timeLeft, setTimeLeft] = useState(RESEND_SECONDS);
 
-    const inputRefs          = useRef([]);
+    // FIX: removed `canResend` local state — derived directly from timeLeft === 0
+    // to avoid calling setState synchronously inside a useEffect body.
+    const canResend = timeLeft === 0;
+
+    const inputRefs           = useRef([]);
     const wasAuthenticatedRef = useRef(false);
 
     const { error, loading, success, message, verificationEmail, isAuthenticated } =
@@ -155,14 +159,11 @@ export default function VerifyEmail() {
 
     const email = verificationEmail || location.state?.email;
 
-    /* ── Countdown ── */
+    /* ── Countdown — only ticks, never sets canResend ── */
     useEffect(() => {
-        if (timeLeft > 0) {
-            const t = setTimeout(() => setTimeLeft(t => t - 1), 1000);
-            return () => clearTimeout(t);
-        } else {
-            setCanResend(true);
-        }
+        if (timeLeft <= 0) return;
+        const t = setTimeout(() => setTimeLeft(s => s - 1), 1000);
+        return () => clearTimeout(t);
     }, [timeLeft]);
 
     const formatTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -217,7 +218,6 @@ export default function VerifyEmail() {
         }
         dispatch(resendVerificationCode(email));
         setTimeLeft(RESEND_SECONDS);
-        setCanResend(false);
         setCode(['', '', '', '', '', '']);
         inputRefs.current[0]?.focus();
     };

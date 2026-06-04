@@ -5,6 +5,60 @@ import { forgotPassword, removeErrors, removeSuccess } from '../features/product
 import { toast } from 'react-toastify';
 import '../UserStyles/Register.css';
 
+/* ─── INLINE SVG ICONS (no external library needed) ─────────────────────── */
+const IconLock = () => (
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="5" y="11" width="14" height="10" rx="2" ry="2"/>
+        <path d="M12 15v2"/>
+        <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+        <circle cx="12" cy="16" r="0.5" fill="currentColor" stroke="none"/>
+    </svg>
+);
+
+const IconMailCheck = () => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+        <path d="m22 4-10 7L2 4"/>
+        <path d="m8 13 2 2 4-4"/>
+    </svg>
+);
+
+const IconInfo = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <path d="M12 16v-4"/>
+        <path d="M12 8h.01"/>
+    </svg>
+);
+
+const IconMail = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+        <path d="m22 4-10 7L2 4"/>
+    </svg>
+);
+
+const IconSend = () => (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"/>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+    </svg>
+);
+
+const IconAlert = () => (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+);
+
 /* ─── SLIDES (identical to Login / Register / VerifyEmail) ──────────────── */
 const SLIDES = [
     {
@@ -62,6 +116,7 @@ function LeftCarousel() {
     useEffect(() => {
         timerRef.current = setInterval(next, 5000);
         return () => clearInterval(timerRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active]);
 
     const slide = SLIDES[active];
@@ -80,7 +135,13 @@ function LeftCarousel() {
                         ) : (
                             <div className="reg-carousel-placeholder">
                                 <div className="reg-carousel-placeholder-inner">
-                                    <i className="ti ti-photo" aria-hidden="true" />
+                                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+                                         stroke="rgba(255,255,255,0.18)" strokeWidth="1.5"
+                                         strokeLinecap="round" strokeLinejoin="round">
+                                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                                        <polyline points="21 15 16 10 5 21"/>
+                                    </svg>
                                     <span>{s.hint}</span>
                                 </div>
                             </div>
@@ -104,10 +165,16 @@ function LeftCarousel() {
             </div>
 
             <button className="reg-carousel-arrow reg-carousel-arrow--prev" onClick={prev_} aria-label="Previous slide">
-                <i className="ti ti-chevron-left" aria-hidden="true" />
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="15 18 9 12 15 6"/>
+                </svg>
             </button>
             <button className="reg-carousel-arrow reg-carousel-arrow--next" onClick={next} aria-label="Next slide">
-                <i className="ti ti-chevron-right" aria-hidden="true" />
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 18 15 12 9 6"/>
+                </svg>
             </button>
 
             <div className="reg-carousel-dots" role="tablist" aria-label="Slide indicators">
@@ -133,8 +200,12 @@ function LeftCarousel() {
 /* ─── MAIN COMPONENT ─────────────────────────────────────────────────────── */
 export default function ForgotPassword() {
     const [email,   setEmail]   = useState('');
-    const [sent,    setSent]    = useState(false);
     const [touched, setTouched] = useState(false);
+
+    // FIX: Removed local `sent` state entirely.
+    // The success card now renders directly from Redux `success && message`,
+    // which eliminates the `setSent(true)` call that was causing the
+    // react-hooks/set-state-in-effect lint error (cascading render warning).
 
     const { loading, error, success, message } = useSelector(state => state.user);
     const dispatch = useDispatch();
@@ -165,11 +236,13 @@ export default function ForgotPassword() {
         }
     }, [error, dispatch]);
 
+    // FIX: No setState in effect body — success card renders from Redux state directly.
+    // removeSuccess() is deferred inside the timeout so it never fires before
+    // navigation, preventing the dep-change → cleanup → timer-cancel race condition.
     useEffect(() => {
         if (success && message) {
-            setSent(true);
-            dispatch(removeSuccess());
             const t = setTimeout(() => {
+                dispatch(removeSuccess());
                 navigate('/password/verify-code', { state: { email: email.trim() } });
             }, 2000);
             return () => clearTimeout(t);
@@ -202,7 +275,7 @@ export default function ForgotPassword() {
                     {/* Header */}
                     <div className="fp-header">
                         <div className="fp-icon-wrap" aria-hidden="true">
-                            <i className="ti ti-lock-question" />
+                            <IconLock />
                         </div>
                         <h1 className="fp-title">Forgot your password?</h1>
                         <p className="fp-subtitle">
@@ -211,11 +284,11 @@ export default function ForgotPassword() {
                         </p>
                     </div>
 
-                    {/* ── Success state ── */}
-                    {sent ? (
+                    {/* ── Success state — driven by Redux, no local `sent` state ── */}
+                    {(success && message) ? (
                         <div className="fp-success-card" role="status" aria-live="polite">
                             <div className="fp-success-icon">
-                                <i className="ti ti-mail-check" aria-hidden="true" />
+                                <IconMailCheck />
                             </div>
                             <p className="fp-success-title">Reset code sent!</p>
                             <p className="fp-success-text">
@@ -228,7 +301,9 @@ export default function ForgotPassword() {
                         <>
                             {/* Info note */}
                             <div className="fp-info-note">
-                                <i className="ti ti-info-circle" aria-hidden="true" />
+                                <span className="fp-info-note-icon">
+                                    <IconInfo />
+                                </span>
                                 <span>
                                     We'll send a one-time code to your inbox. The code
                                     expires after 15 minutes.
@@ -243,7 +318,9 @@ export default function ForgotPassword() {
                                         {/* Server error banner */}
                                         {error && (
                                             <div className="lgn-error-banner" role="alert">
-                                                <i className="ti ti-alert-circle" aria-hidden="true" />
+                                                <span className="lgn-error-banner-icon">
+                                                    <IconAlert />
+                                                </span>
                                                 {error}
                                             </div>
                                         )}
@@ -255,7 +332,9 @@ export default function ForgotPassword() {
                                                 <span className="req-star" aria-hidden="true">*</span>
                                             </label>
                                             <div className={`reg-input-wrap${emailErr ? ' has-error' : ''}`}>
-                                                <i className="ti ti-mail field-icon" aria-hidden="true" />
+                                                <span className="field-icon">
+                                                    <IconMail />
+                                                </span>
                                                 <input
                                                     id="fp-email"
                                                     type="email"
@@ -271,7 +350,15 @@ export default function ForgotPassword() {
                                             </div>
                                             {emailErr && (
                                                 <span className="reg-field-error" role="alert">
-                                                    <i className="ti ti-alert-circle" aria-hidden="true" />
+                                                    <span className="reg-field-error-icon">
+                                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+                                                             stroke="currentColor" strokeWidth="2"
+                                                             strokeLinecap="round" strokeLinejoin="round">
+                                                            <circle cx="12" cy="12" r="10"/>
+                                                            <line x1="12" y1="8" x2="12" y2="12"/>
+                                                            <line x1="12" y1="16" x2="12.01" y2="16"/>
+                                                        </svg>
+                                                    </span>
                                                     Please enter a valid email address
                                                 </span>
                                             )}
@@ -293,7 +380,9 @@ export default function ForgotPassword() {
                                                 </>
                                             ) : (
                                                 <>
-                                                    <i className="ti ti-send" aria-hidden="true" />
+                                                    <span className="reg-btn-icon">
+                                                        <IconSend />
+                                                    </span>
                                                     Send Reset Code
                                                 </>
                                             )}
