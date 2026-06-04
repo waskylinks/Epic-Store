@@ -978,6 +978,42 @@
 
 .reg-signin a:hover { text-decoration: underline; }
 
+
+
+/* ── Add these rules alongside the existing .fp-icon-wrap svg block in Register.css ──
+   Both .vrc-icon-wrap and .ver-icon-wrap need the same SVG sizing treatment
+   that .fp-icon-wrap already has, since those pages now use inline SVGs
+   instead of Tabler font icons for the header icon. ── */
+
+.vrc-icon-wrap svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+.ver-icon-wrap svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+/* Responsive: smaller screens (matches .fp-icon-wrap responsive rules) */
+@media (max-width: 540px) {
+    .vrc-icon-wrap svg,
+    .ver-icon-wrap svg {
+        width: 24px;
+        height: 24px;
+    }
+}
+
+@media (max-width: 380px) {
+    .vrc-icon-wrap svg,
+    .ver-icon-wrap svg {
+        width: 20px;
+        height: 20px;
+    }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    RESPONSIVE
 ═══════════════════════════════════════════════════════════════════════════ */
@@ -2052,4 +2088,78 @@
     color: var(--reg-text-muted-dark);
     line-height: 1.65;
     font-family: var(--reg-font);
+}
+
+
+/* ── Add these rules alongside the existing .fp-icon-wrap svg block in Register.css ──
+   Both .vrc-icon-wrap and .ver-icon-wrap need the same SVG sizing treatment
+   that .fp-icon-wrap already has, since those pages now use inline SVGs
+   instead of Tabler font icons for the header icon. ── */
+
+.vrc-icon-wrap svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+.ver-icon-wrap svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+/* Responsive: smaller screens (matches .fp-icon-wrap responsive rules) */
+@media (max-width: 540px) {
+    .vrc-icon-wrap svg,
+    .ver-icon-wrap svg {
+        width: 24px;
+        height: 24px;
+    }
+}
+
+@media (max-width: 380px) {
+    .vrc-icon-wrap svg,
+    .ver-icon-wrap svg {
+        width: 20px;
+        height: 20px;
+    }
+}
+
+/* ── rp-icon-wrap (ResetPassword header) ── */
+.rp-icon-wrap svg {
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+}
+
+/* ── rp-success-icon (ResetPassword success card) ── */
+.rp-success-icon svg {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+/* ── up-icon-wrap (UpdatePassword right panel header) ── */
+.up-icon-wrap svg {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+/* ── up-left-icon (UpdatePassword left panel decorative icon) ── */
+.up-left-icon svg {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+}
+
+/* Responsive */
+@media (max-width: 540px) {
+    .rp-icon-wrap svg { width: 24px; height: 24px; }
+    .up-icon-wrap svg { width: 20px; height: 20px; }
+}
+
+@media (max-width: 380px) {
+    .rp-icon-wrap svg { width: 20px; height: 20px; }
+    .up-icon-wrap svg { width: 18px; height: 18px; }
 }

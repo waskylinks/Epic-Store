@@ -109,7 +109,12 @@ export default function UpdatePassword() {
                     </div>
 
                     <div className="up-left-icon">
-                        <i className="ti ti-shield-lock" aria-hidden="true" />
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <rect x="9" y="11" width="6" height="5" rx="1"/>
+                            <path d="M12 11V9a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+                        </svg>
                     </div>
 
                     <h2 className="up-left-headline">
@@ -154,7 +159,13 @@ export default function UpdatePassword() {
                     {/* Header */}
                     <div className="up-header">
                         <div className="up-icon-wrap" aria-hidden="true">
-                            <i className="ti ti-lock-cog" />
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="5" y="11" width="14" height="10" rx="2"/>
+                                <path d="M8 11V7a4 4 0 0 1 8 0v4"/>
+                                <circle cx="12" cy="16" r="1" fill="currentColor" stroke="none"/>
+                                <path d="M12 15v2"/>
+                            </svg>
                         </div>
                         <h1 className="up-title">Update your password</h1>
                         <p className="up-subtitle">

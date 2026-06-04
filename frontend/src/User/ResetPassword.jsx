@@ -62,6 +62,7 @@ function LeftCarousel() {
     useEffect(() => {
         timerRef.current = setInterval(next, 5000);
         return () => clearInterval(timerRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [active]);
 
     const slide = SLIDES[active];
@@ -159,8 +160,14 @@ export default function ResetPassword() {
     const [showPw,          setShowPw]          = useState(false);
     const [showConfirm,     setShowConfirm]     = useState(false);
     const [touched,         setTouched]         = useState({ pw: false, confirm: false });
-    const [done,            setDone]            = useState(false);
     const [accessOk,        setAccessOk]        = useState(false);
+
+    // FIX: removed `done` local state — success card now renders directly from
+    // Redux `success`, eliminating the setDone() call that was firing synchronously
+    // in a useEffect body. That caused: setDone(true) → dispatch(removeSuccess())
+    // → success cleared → deps changed → cleanup ran → setTimeout cancelled →
+    // page stuck on success card, never navigating to /login.
+    // Same pattern applied to ForgotPassword and UpdatePassword.
 
     const { success, loading, error } = useSelector(state => state.user);
     const dispatch  = useDispatch();
@@ -182,22 +189,19 @@ export default function ResetPassword() {
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     /* ── Derived state ── */
-    const pwReqs      = getPwReqs(password);
-    const pwStrength  = getPwStrength(password);
-    const pwValid     = isPwValid(password);
+    const pwReqs         = getPwReqs(password);
+    const pwStrength     = getPwStrength(password);
+    const pwValid        = isPwValid(password);
     const passwordsMatch = password === confirmPassword && confirmPassword !== '';
-    const mismatch    = touched.confirm && confirmPassword !== '' && password !== confirmPassword;
-    const canSubmit   = pwValid && passwordsMatch;
+    const mismatch       = touched.confirm && confirmPassword !== '' && password !== confirmPassword;
+    const canSubmit      = pwValid && passwordsMatch;
 
     /* ── Submit ── */
     const handleSubmit = (e) => {
         e.preventDefault();
         setTouched({ pw: true, confirm: true });
         dispatch(removeErrors());
-
-        if (!pwValid) return;
-        if (password !== confirmPassword) return;
-
+        if (!pwValid || password !== confirmPassword) return;
         dispatch(resetPassword({ email, code, password, confirmPassword }));
     };
 
@@ -209,11 +213,15 @@ export default function ResetPassword() {
         }
     }, [error, dispatch]);
 
+    // FIX: no setState in effect body — success card renders from Redux `success` directly.
+    // removeSuccess() is deferred inside the timeout so it never fires before navigation,
+    // preventing the dep-change → cleanup → timer-cancel race that caused the stuck state.
     useEffect(() => {
         if (success) {
-            setDone(true);
-            dispatch(removeSuccess());
-            const t = setTimeout(() => navigate('/login'), 2500);
+            const t = setTimeout(() => {
+                dispatch(removeSuccess());
+                navigate('/login');
+            }, 2500);
             return () => clearTimeout(t);
         }
     }, [success, dispatch, navigate]);
@@ -243,10 +251,18 @@ export default function ResetPassword() {
                         <span className="reg-brand-s">Store</span>
                     </div>
 
-                    {/* Header */}
+                    {/* Header
+                        FIX: replaced <i className="ti ti-shield-lock"> with an inline SVG.
+                        Tabler font icons require the icon font to be globally loaded;
+                        inline SVGs render unconditionally — same pattern as ForgotPassword. */}
                     <div className="rp-header">
                         <div className="rp-icon-wrap" aria-hidden="true">
-                            <i className="ti ti-shield-lock" />
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                                <rect x="9" y="11" width="6" height="5" rx="1"/>
+                                <path d="M12 11V9a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2"/>
+                            </svg>
                         </div>
                         <h1 className="rp-title">Set a new password</h1>
                         <p className="rp-subtitle">
@@ -255,11 +271,15 @@ export default function ResetPassword() {
                         </p>
                     </div>
 
-                    {/* ── Success state ── */}
-                    {done ? (
+                    {/* ── Success state — driven by Redux `success`, no local `done` state ── */}
+                    {success ? (
                         <div className="rp-success-card" role="status" aria-live="polite">
                             <div className="rp-success-icon">
-                                <i className="ti ti-circle-check" aria-hidden="true" />
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                     strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                    <polyline points="22 4 12 14.01 9 11.01"/>
+                                </svg>
                             </div>
                             <p className="rp-success-title">Password reset!</p>
                             <p className="rp-success-text">
@@ -339,7 +359,6 @@ export default function ResetPassword() {
                                                     )}
                                                 </div>
 
-                                                {/* Requirements */}
                                                 <ul className="pw-reqs" id="rp-reqs-list" aria-label="Password requirements">
                                                     {[
                                                         [pwReqs.len,     '8+ characters'],
@@ -431,8 +450,8 @@ export default function ResetPassword() {
                         </div>
                     )}
 
-                    {/* Footer link */}
-                    {!done && (
+                    {/* Footer link — hidden once success card shows */}
+                    {!success && (
                         <p className="reg-signin" style={{ marginTop: '1.25rem' }}>
                             Remember your password?{' '}
                             <Link to="/login">Sign in</Link>

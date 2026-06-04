@@ -277,7 +277,11 @@ export default function VerifyEmail() {
                     {/* Header */}
                     <div className="ver-header">
                         <div className="ver-icon-wrap" aria-hidden="true">
-                            <i className="ti ti-mail" />
+                            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                                <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
+                                <path d="m22 4-10 7L2 4"/>
+                            </svg>
                         </div>
                         <h1 className="ver-title">Check your inbox</h1>
                         <p className="ver-subtitle">
