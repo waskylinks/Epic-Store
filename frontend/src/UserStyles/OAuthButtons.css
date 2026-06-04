@@ -1,230 +1,319 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&display=swap');
+
 /* ===================================================
-  
-   Google & Facebook Sign In
+   OAuth Buttons — Epic Store Design System
    =================================================== */
 
+/* ── Base button ── */
 .oauth-button {
+    display: grid;
+    /* Left icon slot (fixed) | centred label | mirror spacer (fixed) */
+    grid-template-columns: 32px 1fr 32px;
+    align-items: center;
+    width: 100%;
+    min-height: 50px;
+    padding: 0 10px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    position: relative;
+    transition:
+        transform 0.15s ease,
+        box-shadow 0.15s ease,
+        background 0.15s ease,
+        border-color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    outline: none;
+    appearance: none;
+    overflow: hidden;
+    text-decoration: none;
+}
+
+/* Shimmer sweep */
+.oauth-button::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        105deg,
+        transparent 38%,
+        rgba(255, 255, 255, 0.05) 50%,
+        transparent 62%
+    );
+    transform: translateX(-130%);
+    pointer-events: none;
+    transition: none;
+}
+.oauth-button:hover::after  { transform: translateX(130%); transition: transform 0.5s ease; }
+/* FIX: hover and active share translateY(-1px) so there is no axis snap on press */
+.oauth-button:hover         { transform: translateY(-1px); }
+.oauth-button:active        { transform: translateY(-1px) scale(0.977); }
+.oauth-button:focus-visible { outline: 2px solid rgba(255, 255, 255, 0.35); outline-offset: 2px; }
+
+/* ── Icon slot (left) ──
+   Spinner goes HERE during loading so the grid never reflows
+   and the label stays optically centred at all times. */
+.oauth-icon {
+    width: 32px;
+    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
-    width: 100%;
-    padding: 14px 20px;
-    border: 2px solid var(--border-gray, #3d3d3d);
-    border-radius: 8px;
-    background: var(--black-tertiary, #2d2d2d);
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    margin: 10px 0;
-    position: relative;
-    overflow: hidden;
-    color: var(--text-white, #ffffff);
-}
-
-.oauth-button:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
-    background: var(--black-secondary, #1a1a1a);
-}
-
-.oauth-button:active {
-    transform: translateY(0);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-}
-
-/* Google Button */
-.google-button {
-    border-color: #4285F4;
-    background: linear-gradient(145deg, var(--black-tertiary), var(--black-secondary));
-}
-
-.google-button:hover {
-    border-color: #5a95f5;
-    background: linear-gradient(145deg, var(--black-secondary), var(--black-tertiary));
-    box-shadow: 0 6px 20px rgba(66, 133, 244, 0.3);
-}
-
-/* Facebook Button */
-.facebook-button {
-    border-color: #1877F2;
-    background: linear-gradient(145deg, #1877F2, #166fe5);
-    color: var(--text-white);
-}
-
-.facebook-button:hover {
-    background: linear-gradient(145deg, #1e88ff, #1877F2);
-    border-color: #1e88ff;
-    box-shadow: 0 6px 20px rgba(24, 119, 242, 0.4);
-}
-
-.facebook-button .oauth-text {
-    color: var(--text-white);
-}
-
-.oauth-icon {
-    width: 22px;
-    height: 22px;
     flex-shrink: 0;
 }
 
-.oauth-text {
-    font-weight: 600;
-    letter-spacing: 0.5px;
-}
-
-/* Divider for "OR" between OAuth and email login */
-.oauth-divider {
+/* ── Google G white tile ──
+   Required by Google Sign-In Branding Guidelines: the coloured G
+   must always sit on a white background, never directly on a tinted surface. */
+.oauth-google-tile {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: #ffffff;
     display: flex;
     align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.oauth-google-tile svg {
+    width: 18px;
+    height: 18px;
+    display: block;
+}
+
+/* ── Facebook blue circle ──
+   White f on solid #1877F2 per Meta brand guidelines. */
+.oauth-facebook-circle {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: #1877F2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.oauth-facebook-circle svg {
+    width: 14px;
+    height: 14px;
+    display: block;
+}
+
+/* ── Label (centre column — truly centred because columns are symmetric) ── */
+.oauth-label {
     text-align: center;
-    margin: 25px 0;
-    color: var(--text-gray, #b3b3b3);
-    font-size: 14px;
-    font-weight: 600;
+    white-space: nowrap;
+    color: inherit;
 }
 
-.oauth-divider::before,
-.oauth-divider::after {
-    content: '';
-    flex: 1;
-    border-bottom: 2px solid var(--border-gray, #3d3d3d);
+/* ── Right spacer (mirrors icon slot width for optical centre) ── */
+.oauth-spacer {
+    width: 32px;
+    flex-shrink: 0;
 }
 
-.oauth-divider span {
-    padding: 0 20px;
-    font-weight: 700;
-    color: var(--primary-orange, #ff6b00);
-    text-transform: uppercase;
-    letter-spacing: 2px;
+/* ── Google — neutral dark glass ── */
+.google-button {
+    background: rgba(255, 255, 255, 0.055);
+    color: rgba(240, 239, 232, 0.92);
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.04) inset,
+        0 2px 10px rgba(0, 0, 0, 0.25);
+}
+.google-button:hover {
+    background: rgba(255, 255, 255, 0.095);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.06) inset,
+        0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.google-button:active {
+    background: rgba(255, 255, 255, 0.07);
 }
 
-/* OAuth Buttons Container */
-.oauth-buttons-container {
-    margin: 20px 0;
+/* ── Facebook — blue-tinted dark glass ── */
+.facebook-button {
+    background: rgba(24, 119, 242, 0.12);
+    color: rgba(240, 239, 232, 0.92);
+    border-color: rgba(24, 119, 242, 0.28);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.04) inset,
+        0 2px 10px rgba(24, 119, 242, 0.08);
+}
+.facebook-button:hover {
+    background: rgba(24, 119, 242, 0.19);
+    border-color: rgba(24, 119, 242, 0.42);
+    box-shadow:
+        0 1px 0 rgba(255, 255, 255, 0.05) inset,
+        0 6px 20px rgba(24, 119, 242, 0.16);
+}
+.facebook-button:active {
+    background: rgba(24, 119, 242, 0.15);
 }
 
-/* Loading State */
+/* ── Loading state ──
+   Spinner renders inside .oauth-icon (left slot) — label stays centred. */
 .oauth-button.loading {
-    opacity: 0.6;
+    opacity: 0.5;
     cursor: not-allowed;
     pointer-events: none;
 }
-
-.oauth-button.loading::after {
-    content: '';
-    position: absolute;
-    width: 20px;
-    height: 20px;
-    border: 3px solid rgba(255, 255, 255, 0.3);
-    border-top: 3px solid var(--primary-orange);
+.oauth-spinner {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(240, 239, 232, 0.16);
+    border-top-color: rgba(240, 239, 232, 0.82);
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    animation: oauth-spin 0.7s linear infinite;
+    flex-shrink: 0;
 }
 
 /* ===================================================
-   OAuth Callback Loading Screen
+   OAuth Callback Screen
    =================================================== */
-
 .oauth-callback-container {
     display: flex;
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    background-color: #f9fafb;
+    background:
+        radial-gradient(circle at top left, rgba(255, 255, 255, 0.04), transparent 35%),
+        radial-gradient(circle at bottom right, rgba(255, 255, 255, 0.02), transparent 40%),
+        linear-gradient(135deg, #1a1a1a 0%, #242424 50%, #161616 100%);
+    padding: 20px;
+    box-sizing: border-box;
 }
 
 .oauth-callback-content {
     text-align: center;
-    padding: 40px;
-    background-color: white;
-    border-radius: 12px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    max-width: 400px;
+    padding: 52px 44px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 24px;
+    box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.3),
+        0 32px 64px rgba(0, 0, 0, 0.4),
+        0 1px 0 rgba(255, 255, 255, 0.05) inset;
+    max-width: 360px;
+    width: 100%;
+    box-sizing: border-box;
+    animation: oauth-callback-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+@keyframes oauth-callback-in {
+    from { opacity: 0; transform: translateY(16px) scale(0.97); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Coral spinner */
 .oauth-callback-spinner {
-    width: 50px;
-    height: 50px;
-    margin: 0 auto 20px;
-    border: 4px solid #f3f3f3;
-    border-top: 4px solid #3498db;
+    width: 46px;
+    height: 46px;
+    margin: 0 auto 24px;
+    position: relative;
+}
+.oauth-callback-spinner::before {
+    content: '';
+    position: absolute;
+    inset: 0;
     border-radius: 50%;
-    animation: spin 1s linear infinite;
+    border: 3px solid rgba(224, 85, 85, 0.14);
+}
+.oauth-callback-spinner::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: #e05555;
+    border-right-color: rgba(224, 85, 85, 0.3);
+    animation: oauth-spin 0.85s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* FIX: brand gap increased from 2px → 5px so weight-different glyphs don't visually collide */
+.oauth-callback-brand {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    margin-bottom: 18px;
+}
+.oauth-callback-brand .cb-e {
+    font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    font-size: 19px;
+    font-weight: 800;
+    color: rgba(240, 239, 232, 0.92);
+    letter-spacing: -0.5px;
+}
+.oauth-callback-brand .cb-s {
+    font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+    font-size: 19px;
+    font-weight: 400;
+    color: #e05555;
+    letter-spacing: -0.5px;
 }
 
 .oauth-callback-title {
-    font-size: 24px;
-    font-weight: 600;
-    color: #333;
-    margin-bottom: 10px;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 19px;
+    font-weight: 700;
+    color: rgba(240, 239, 232, 0.92);
+    margin: 0 0 8px;
+    letter-spacing: -0.3px;
 }
-
 .oauth-callback-text {
-    font-size: 14px;
-    color: #666;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    color: rgba(240, 239, 232, 0.38);
+    margin: 0;
 }
 
-/* Animations */
-@keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
-}
+@keyframes oauth-spin { to { transform: rotate(360deg); } }
 
-/* Responsive Design */
-@media (max-width: 768px) {
+/* ===================================================
+   Responsive
+   =================================================== */
+@media (max-width: 540px) {
     .oauth-button {
-        padding: 12px 16px;
-        font-size: 14px;
+        grid-template-columns: 28px 1fr 28px;
+        min-height: 48px;
+        font-size: 13.5px;
+        border-radius: 11px;
+        padding: 0 12px;
     }
-
-    .oauth-icon {
-        width: 20px;
-        height: 20px;
-    }
-
-    .oauth-divider {
-        margin: 20px 0;
-        font-size: 13px;
-    }
-
-    .oauth-divider span {
-        padding: 0 15px;
-    }
-
-    .oauth-callback-content {
-        padding: 30px;
-        max-width: 350px;
-    }
-
-    .oauth-callback-title {
-        font-size: 20px;
-    }
-
-    .oauth-callback-text {
-        font-size: 13px;
-    }
+    .oauth-icon    { width: 28px; height: 28px; }
+    .oauth-spacer  { width: 28px; }
+    .oauth-google-tile   { width: 23px; height: 23px; }
+    .oauth-google-tile svg { width: 16px; height: 16px; }
+    .oauth-facebook-circle { width: 23px; height: 23px; }
+    .oauth-facebook-circle svg { width: 12px; height: 12px; }
 }
 
-@media (max-width: 480px) {
+@media (max-width: 390px) {
     .oauth-button {
-        padding: 11px 14px;
+        grid-template-columns: 26px 1fr 26px;
+        min-height: 46px;
         font-size: 13px;
+        border-radius: 10px;
+        padding: 0 11px;
     }
+    .oauth-icon    { width: 26px; height: 26px; }
+    .oauth-spacer  { width: 26px; }
+    .oauth-google-tile   { width: 21px; height: 21px; }
+    .oauth-google-tile svg { width: 14px; height: 14px; }
+    .oauth-facebook-circle { width: 21px; height: 21px; }
+    .oauth-facebook-circle svg { width: 11px; height: 11px; }
+    .oauth-callback-content  { padding: 36px 24px; border-radius: 18px; }
+    .oauth-callback-title    { font-size: 17px; }
+    .oauth-callback-spinner  { width: 38px; height: 38px; }
+}
 
-    .oauth-icon {
-        width: 18px;
-        height: 18px;
-    }
-
-    .oauth-callback-content {
-        padding: 25px;
-        max-width: 300px;
-    }
-
-    .oauth-callback-spinner {
-        width: 40px;
-        height: 40px;
-    }
+@media (min-width: 768px) {
+    .oauth-button { min-height: 50px; }
 }

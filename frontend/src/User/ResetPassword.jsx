@@ -1,398 +1,447 @@
-import React, { useEffect, useState } from 'react';
-import '../UserStyles/Form.css';
-import PageTitle from '../components/PageTitle';
-import Navbar from '../components/Navbar';
-import Footer from '../components/footer';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useEffect, useState, useRef } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { removeErrors, removeSuccess, resetPassword } from '../features/products/userSlice';
+import { resetPassword, removeErrors, removeSuccess } from '../features/products/userSlice';
 import { toast } from 'react-toastify';
+import '../UserStyles/Register.css';
 
-function ResetPassword() {
-    const { success, loading, error } = useSelector((state) => state.user);
-    const dispatch = useDispatch();
-    const navigate = useNavigate();
-    const location = useLocation();
+/* ─── SLIDES ─────────────────────────────────────────────────────────────── */
+const SLIDES = [
+    {
+        imageSrc: '/images/1.png',
+        hint:     'Lifestyle / hero product shot',
+        tag:      'New arrivals weekly',
+        headline: 'Your next favourite store.',
+        sub:      'Thousands of curated products, always a discovery away.',
+        accent:   '#1D9E75',
+    },
+    {
+        imageSrc: '/images/2.png',
+        hint:     'Order tracking / mobile UX shot',
+        tag:      'Real-time tracking',
+        headline: 'Know where every order is.',
+        sub:      'Live updates from warehouse to doorstep, no guesswork.',
+        accent:   '#378ADD',
+    },
+    {
+        imageSrc: '/images/3.png',
+        hint:     'Security / encrypted payments',
+        tag:      'Bank-grade security',
+        headline: 'Shop with total confidence.',
+        sub:      'End-to-end encryption keeps your data and payments safe.',
+        accent:   '#8B5CF6',
+    },
+    {
+        imageSrc: '/images/4.png',
+        hint:     'Fast delivery lifestyle shot',
+        tag:      'Smart shipping',
+        headline: 'Delivered on your terms.',
+        sub:      'Flexible shipping options and smart address defaults.',
+        accent:   '#EF9F27',
+    },
+];
 
-    const [password, setPassword] = useState('');
+/* ─── CAROUSEL ───────────────────────────────────────────────────────────── */
+function LeftCarousel() {
+    const [active, setActive] = useState(0);
+    const [prev,   setPrev]   = useState(null);
+    const [dir,    setDir]    = useState('next');
+    const timerRef            = useRef(null);
+    const count               = SLIDES.length;
+
+    const goTo = (idx, direction = 'next') => {
+        if (idx === active) return;
+        setPrev(active);
+        setDir(direction);
+        setActive(idx);
+    };
+
+    const next  = () => goTo((active + 1) % count, 'next');
+    const prev_ = () => goTo((active - 1 + count) % count, 'prev');
+
+    useEffect(() => {
+        timerRef.current = setInterval(next, 5000);
+        return () => clearInterval(timerRef.current);
+    }, [active]);
+
+    const slide = SLIDES[active];
+
+    return (
+        <div className="reg-carousel" aria-label="Store highlights">
+            <div className="reg-carousel-track">
+                {SLIDES.map((s, i) => (
+                    <div
+                        key={i}
+                        className={`reg-carousel-slide${i === active ? ' is-active' : ''}${i === prev ? ` is-leaving is-leaving--${dir}` : ''}`}
+                        aria-hidden={i !== active}
+                    >
+                        {s.imageSrc ? (
+                            <img src={s.imageSrc} alt={s.hint} className="reg-carousel-img" loading="lazy" />
+                        ) : (
+                            <div className="reg-carousel-placeholder">
+                                <div className="reg-carousel-placeholder-inner">
+                                    <i className="ti ti-photo" aria-hidden="true" />
+                                    <span>{s.hint}</span>
+                                </div>
+                            </div>
+                        )}
+                        <div className="reg-carousel-overlay" />
+                    </div>
+                ))}
+            </div>
+
+            <div className="reg-carousel-brand">
+                <span className="reg-brand-e">Epic</span>
+                <span className="reg-brand-s">Store</span>
+            </div>
+
+            <div className="reg-carousel-copy" key={active}>
+                <span className="reg-carousel-tag" style={{ '--slide-accent': slide.accent }}>
+                    {slide.tag}
+                </span>
+                <h2 className="reg-carousel-headline">{slide.headline}</h2>
+                <p  className="reg-carousel-sub">{slide.sub}</p>
+            </div>
+
+            <button className="reg-carousel-arrow reg-carousel-arrow--prev" onClick={prev_} aria-label="Previous slide">
+                <i className="ti ti-chevron-left" aria-hidden="true" />
+            </button>
+            <button className="reg-carousel-arrow reg-carousel-arrow--next" onClick={next} aria-label="Next slide">
+                <i className="ti ti-chevron-right" aria-hidden="true" />
+            </button>
+
+            <div className="reg-carousel-dots" role="tablist" aria-label="Slide indicators">
+                {SLIDES.map((_, i) => (
+                    <button
+                        key={i}
+                        role="tab"
+                        aria-selected={i === active}
+                        aria-label={`Go to slide ${i + 1}`}
+                        className={`reg-carousel-dot${i === active ? ' is-active' : ''}`}
+                        onClick={() => goTo(i, i > active ? 'next' : 'prev')}
+                    />
+                ))}
+            </div>
+
+            <div className="reg-carousel-progress" key={`p-${active}`}>
+                <div className="reg-carousel-progress-fill" />
+            </div>
+        </div>
+    );
+}
+
+/* ─── PASSWORD HELPERS (aligned with Register — 8 char min) ─────────────── */
+const SPECIAL_RE = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/;
+
+const getPwReqs = (pw) => ({
+    len:     pw.length >= 8,
+    upper:   /[A-Z]/.test(pw),
+    lower:   /[a-z]/.test(pw),
+    num:     /[0-9]/.test(pw),
+    special: SPECIAL_RE.test(pw),
+});
+
+const isPwValid = (pw) => Object.values(getPwReqs(pw)).every(Boolean);
+
+const getPwStrength = (pw) => {
+    if (!pw) return null;
+    const met = Object.values(getPwReqs(pw)).filter(Boolean).length;
+    if (met <= 2) return { level: 1, label: 'Weak',   color: '#E24B4A' };
+    if (met <= 3) return { level: 2, label: 'Fair',   color: '#EF9F27' };
+    if (met <= 4) return { level: 3, label: 'Good',   color: '#378ADD' };
+    return           { level: 4, label: 'Strong', color: '#1D9E75' };
+};
+
+/* ─── MAIN COMPONENT ─────────────────────────────────────────────────────── */
+export default function ResetPassword() {
+    const [password,        setPassword]        = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-    const [passwordStrength, setPasswordStrength] = useState('');
-    const [hasValidatedAccess, setHasValidatedAccess] = useState(false);
+    const [showPw,          setShowPw]          = useState(false);
+    const [showConfirm,     setShowConfirm]     = useState(false);
+    const [touched,         setTouched]         = useState({ pw: false, confirm: false });
+    const [done,            setDone]            = useState(false);
+    const [accessOk,        setAccessOk]        = useState(false);
 
-    const email = location.state?.email;
-    const code = location.state?.code;
+    const { success, loading, error } = useSelector(state => state.user);
+    const dispatch  = useDispatch();
+    const navigate  = useNavigate();
+    const location  = useLocation();
+
+    const email    = location.state?.email;
+    const code     = location.state?.code;
     const verified = location.state?.verified;
 
-    // Calculate password strength
-    const calculatePasswordStrength = (pass) => {
-        if (!pass) return '';
-        let strength = 0;
-        
-        if (pass.length >= 12) strength++;
-        if (pass.length >= 16) strength++;
-        if (/[a-z]/.test(pass)) strength++;
-        if (/[A-Z]/.test(pass)) strength++;
-        if (/[0-9]/.test(pass)) strength++;
-        if (/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pass)) strength++;
-
-        if (strength <= 2) return 'weak';
-        if (strength <= 4) return 'medium';
-        if (strength <= 5) return 'strong';
-        return 'very-strong';
-    };
-
-    // Check if password meets all requirements
-    const isPasswordValid = (pass) => {
-        return pass.length >= 12 &&
-               /[A-Z]/.test(pass) &&
-               /[a-z]/.test(pass) &&
-               /[0-9]/.test(pass) &&
-               /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(pass);
-    };
-
-    const handlePasswordChange = (e) => {
-        const newPassword = e.target.value;
-        setPassword(newPassword);
-        setPasswordStrength(calculatePasswordStrength(newPassword));
-        
-        // Clear errors when user starts typing
-        if (error) {
-            dispatch(removeErrors());
-        }
-    };
-
-    const handleConfirmPasswordChange = (e) => {
-        setConfirmPassword(e.target.value);
-        
-        // Clear errors when user starts typing
-        if (error) {
-            dispatch(removeErrors());
-        }
-    };
-
-    const resetPasswordSubmit = (e) => {
-        e.preventDefault();
-
-        // Clear previous errors
-        dispatch(removeErrors());
-
-        if (!email || !code) {
-            toast.error('Invalid session. Please start the password reset process again.', { 
-                position: 'top-center', 
-                autoClose: 2000 
-            });
-            navigate('/password/forgot');
-            return;
-        }
-
-        if (password !== confirmPassword) {
-            toast.error('Passwords do not match', { 
-                position: 'top-center', 
-                autoClose: 2000 
-            });
-            return;
-        }
-
-        if (!isPasswordValid(password)) {
-            toast.error('Password must meet all requirements', { 
-                position: 'top-center', 
-                autoClose: 2000 
-            });
-            return;
-        }
-
-        dispatch(resetPassword({
-            email,
-            code,
-            password,
-            confirmPassword
-        }));
-    };
-
-    // Validate access on mount (only once)
+    /* ── Guard: must arrive via verify-code flow ── */
     useEffect(() => {
         if (!email || !code || !verified) {
-            toast.error('Please verify your reset code first', { 
-                position: 'top-center', 
-                autoClose: 2000 
-            });
+            toast.error('Please verify your reset code first', { position: 'top-center', autoClose: 2000 });
             navigate('/password/forgot');
         } else {
-            setHasValidatedAccess(true);
+            setAccessOk(true);
         }
-    }, []); // Empty dependency array - only run once on mount
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Handle errors
+    /* ── Derived state ── */
+    const pwReqs      = getPwReqs(password);
+    const pwStrength  = getPwStrength(password);
+    const pwValid     = isPwValid(password);
+    const passwordsMatch = password === confirmPassword && confirmPassword !== '';
+    const mismatch    = touched.confirm && confirmPassword !== '' && password !== confirmPassword;
+    const canSubmit   = pwValid && passwordsMatch;
+
+    /* ── Submit ── */
+    const handleSubmit = (e) => {
+        e.preventDefault();
+        setTouched({ pw: true, confirm: true });
+        dispatch(removeErrors());
+
+        if (!pwValid) return;
+        if (password !== confirmPassword) return;
+
+        dispatch(resetPassword({ email, code, password, confirmPassword }));
+    };
+
+    /* ── Effects ── */
     useEffect(() => {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
         }
-    }, [dispatch, error]);
+    }, [error, dispatch]);
 
-    // Handle success
     useEffect(() => {
         if (success) {
-            toast.success('Password reset successful! Please login with your new password.', { 
-                position: 'top-center', 
-                autoClose: 3000 
-            });
+            setDone(true);
             dispatch(removeSuccess());
-            setTimeout(() => {
-                navigate('/login');
-            }, 1000);
+            const t = setTimeout(() => navigate('/login'), 2500);
+            return () => clearTimeout(t);
         }
-    }, [dispatch, success, navigate]);
+    }, [success, dispatch, navigate]);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            dispatch(removeErrors());
-            dispatch(removeSuccess());
-        };
+    useEffect(() => () => {
+        dispatch(removeErrors());
+        dispatch(removeSuccess());
     }, [dispatch]);
 
-    const getStrengthColor = () => {
-        switch (passwordStrength) {
-            case 'weak': return '#f44336';
-            case 'medium': return '#ff9800';
-            case 'strong': return '#2196f3';
-            case 'very-strong': return '#4caf50';
-            default: return '#ccc';
-        }
-    };
-
-    const getStrengthWidth = () => {
-        switch (passwordStrength) {
-            case 'weak': return '25%';
-            case 'medium': return '50%';
-            case 'strong': return '75%';
-            case 'very-strong': return '100%';
-            default: return '0%';
-        }
-    };
-
-    const getStrengthText = () => {
-        switch (passwordStrength) {
-            case 'weak': return 'Weak';
-            case 'medium': return 'Medium';
-            case 'strong': return 'Strong';
-            case 'very-strong': return 'Very Strong';
-            default: return '';
-        }
-    };
-
-    const isFormValid = () => {
-        return password && 
-               confirmPassword && 
-               password === confirmPassword && 
-               isPasswordValid(password);
-    };
-
-    // Don't render until access is validated
-    if (!hasValidatedAccess) {
-        return null;
-    }
+    if (!accessOk) return null;
 
     return (
-        <>
-            <PageTitle title='Set New Password'/>
-            <Navbar />
+        <div className="reg-page">
 
-            <div className="container update-container">
-                <div className="form-content">
-                    <form className="form" onSubmit={resetPasswordSubmit}>
-                        <div className="verification-header">
-                            <div className="verification-icon">🔒</div>
-                            <h2>Set New Password</h2>
-                            <p className="verification-text">
-                                Create a strong password for<br />
-                                <strong>{email}</strong>
-                            </p>
+            {/* ── LEFT: carousel ── */}
+            <aside className="reg-left" aria-label="Store highlights">
+                <LeftCarousel />
+            </aside>
+
+            {/* ── RIGHT: form ── */}
+            <main className="reg-right">
+                <div className="reg-form-wrap">
+
+                    {/* Mobile brand */}
+                    <div className="reg-mobile-brand" aria-label="Epic Store">
+                        <span className="reg-brand-e">Epic</span>
+                        <span className="reg-brand-s">Store</span>
+                    </div>
+
+                    {/* Header */}
+                    <div className="rp-header">
+                        <div className="rp-icon-wrap" aria-hidden="true">
+                            <i className="ti ti-shield-lock" />
                         </div>
-
-                        <div className="input-group password-group">
-                            <input 
-                                type={showPassword ? "text" : "password"}
-                                name='password'
-                                placeholder='Enter New Password (min 12 characters)'
-                                value={password}
-                                onChange={handlePasswordChange}
-                                required
-                                disabled={loading}
-                                autoComplete="new-password"
-                            />
-                            <button
-                                type="button"
-                                className="password-toggle"
-                                onClick={() => setShowPassword(!showPassword)}
-                                disabled={loading}
-                                aria-label={showPassword ? "Hide password" : "Show password"}
-                            >
-                                {showPassword ? (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                                        <line x1="1" y1="1" x2="23" y2="23"></line>
-                                    </svg>
-                                ) : (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                        <circle cx="12" cy="12" r="3"></circle>
-                                    </svg>
-                                )}
-                            </button>
-                        </div>
-
-                        {password && (
-                            <div className="password-strength">
-                                <div className="strength-bar-container" style={{
-                                    width: '100%',
-                                    height: '6px',
-                                    backgroundColor: '#e0e0e0',
-                                    borderRadius: '3px',
-                                    overflow: 'hidden',
-                                    marginBottom: '8px'
-                                }}>
-                                    <div 
-                                        className="strength-bar"
-                                        style={{
-                                            width: getStrengthWidth(),
-                                            height: '100%',
-                                            backgroundColor: getStrengthColor(),
-                                            transition: 'all 0.3s ease'
-                                        }}
-                                    ></div>
-                                </div>
-                                <span 
-                                    className="strength-text" 
-                                    style={{ 
-                                        color: getStrengthColor(),
-                                        fontSize: '14px',
-                                        fontWeight: '500'
-                                    }}
-                                >
-                                    {getStrengthText()}
-                                </span>
-                            </div>
-                        )}
-
-                        <div className="password-requirements" style={{
-                            fontSize: '12px',
-                            color: '#666',
-                            marginBottom: '15px',
-                            padding: '10px',
-                            backgroundColor: '#f8f9fa',
-                            borderRadius: '6px'
-                        }}>
-                            <p style={{ margin: '0 0 5px 0', fontWeight: '600' }}>Password must contain:</p>
-                            <ul style={{ margin: 0, paddingLeft: '20px' }}>
-                                <li style={{ color: password.length >= 12 ? '#4caf50' : '#999' }}>
-                                    {password.length >= 12 ? '✓' : '○'} At least 12 characters
-                                </li>
-                                <li style={{ color: /[A-Z]/.test(password) ? '#4caf50' : '#999' }}>
-                                    {/[A-Z]/.test(password) ? '✓' : '○'} One uppercase letter
-                                </li>
-                                <li style={{ color: /[a-z]/.test(password) ? '#4caf50' : '#999' }}>
-                                    {/[a-z]/.test(password) ? '✓' : '○'} One lowercase letter
-                                </li>
-                                <li style={{ color: /[0-9]/.test(password) ? '#4caf50' : '#999' }}>
-                                    {/[0-9]/.test(password) ? '✓' : '○'} One number
-                                </li>
-                                <li style={{ color: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '#4caf50' : '#999' }}>
-                                    {/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password) ? '✓' : '○'} One special character
-                                </li>
-                            </ul>
-                        </div>
-
-                        <div className="input-group password-group">
-                            <input 
-                                type={showConfirmPassword ? "text" : "password"}
-                                name='confirmPassword'
-                                placeholder='Confirm New Password'
-                                value={confirmPassword}
-                                onChange={handleConfirmPasswordChange}
-                                required
-                                disabled={loading}
-                                autoComplete="new-password"
-                            />
-                            <button
-                                type="button"
-                                className="password-toggle"
-                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                disabled={loading}
-                                aria-label={showConfirmPassword ? "Hide password" : "Show password"}
-                            >
-                                {showConfirmPassword ? (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path>
-                                        <line x1="1" y1="1" x2="23" y2="23"></line>
-                                    </svg>
-                                ) : (
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                        <circle cx="12" cy="12" r="3"></circle>
-                                    </svg>
-                                )}
-                            </button>
-                        </div>
-
-                        {confirmPassword && password !== confirmPassword && (
-                            <p style={{
-                                color: '#f44336',
-                                fontSize: '14px',
-                                marginTop: '-10px',
-                                marginBottom: '10px'
-                            }}>
-                                ✗ Passwords do not match
-                            </p>
-                        )}
-
-                        {confirmPassword && password === confirmPassword && (
-                            <p style={{
-                                color: '#4caf50',
-                                fontSize: '14px',
-                                marginTop: '-10px',
-                                marginBottom: '10px'
-                            }}>
-                                ✓ Passwords match
-                            </p>
-                        )}
-
-                        <button 
-                            className="authBtn" 
-                            disabled={loading || !isFormValid()}
-                        >
-                            {loading ? 'Resetting...' : 'Reset Password'}
-                        </button>
-
-                        <p className="form-links">
-                            Remember your password? 
-                            <button 
-                                type="button"
-                                onClick={() => navigate('/login')}
-                                disabled={loading}
-                                className="link-btn"
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: loading ? '#ccc' : '#667eea',
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    textDecoration: 'underline',
-                                    marginLeft: '5px'
-                                }}
-                            >
-                                Sign in here
-                            </button>
+                        <h1 className="rp-title">Set a new password</h1>
+                        <p className="rp-subtitle">
+                            Creating a new password for{' '}
+                            <strong>{email}</strong>
                         </p>
-                    </form>
-                </div>
-            </div>
+                    </div>
 
-            <Footer />
-        </>
+                    {/* ── Success state ── */}
+                    {done ? (
+                        <div className="rp-success-card" role="status" aria-live="polite">
+                            <div className="rp-success-icon">
+                                <i className="ti ti-circle-check" aria-hidden="true" />
+                            </div>
+                            <p className="rp-success-title">Password reset!</p>
+                            <p className="rp-success-text">
+                                Your password has been updated. Redirecting you to sign in&hellip;
+                            </p>
+                            <span className="reg-spinner" aria-hidden="true" style={{ marginTop: 4 }} />
+                        </div>
+                    ) : (
+                        <div className="reg-form-card">
+                            <form onSubmit={handleSubmit} noValidate>
+                                <div className="reg-fields">
+
+                                    {/* Server error banner */}
+                                    {error && (
+                                        <div className="lgn-error-banner" role="alert">
+                                            <i className="ti ti-alert-circle" aria-hidden="true" />
+                                            {error}
+                                        </div>
+                                    )}
+
+                                    {/* New password */}
+                                    <div className="reg-field">
+                                        <label htmlFor="rp-password">
+                                            New password{' '}
+                                            <span className="req-star" aria-hidden="true">*</span>
+                                        </label>
+                                        <div className={`reg-input-wrap${touched.pw && !pwValid ? ' has-error' : ''}`}>
+                                            <i className="ti ti-lock field-icon" aria-hidden="true" />
+                                            <input
+                                                id="rp-password"
+                                                type={showPw ? 'text' : 'password'}
+                                                placeholder="Create a strong password"
+                                                value={password}
+                                                onChange={e => {
+                                                    setPassword(e.target.value);
+                                                    if (error) dispatch(removeErrors());
+                                                }}
+                                                onBlur={() => setTouched(p => ({ ...p, pw: true }))}
+                                                disabled={loading}
+                                                autoComplete="new-password"
+                                                aria-required="true"
+                                                aria-describedby="rp-reqs-list"
+                                            />
+                                            <button
+                                                type="button"
+                                                className="pw-toggle"
+                                                onClick={() => setShowPw(p => !p)}
+                                                disabled={loading}
+                                                aria-label={showPw ? 'Hide password' : 'Show password'}
+                                            >
+                                                <i className={`ti ${showPw ? 'ti-eye-off' : 'ti-eye'}`} aria-hidden="true" />
+                                            </button>
+                                        </div>
+
+                                        {/* Strength bar */}
+                                        {password && (
+                                            <div className="rp-strength-wrap">
+                                                <div className="pw-strength-bar" aria-hidden="true">
+                                                    {[1, 2, 3, 4].map(i => (
+                                                        <div
+                                                            key={i}
+                                                            className="pw-strength-seg"
+                                                            style={{
+                                                                background: pwStrength && i <= pwStrength.level
+                                                                    ? pwStrength.color
+                                                                    : undefined,
+                                                            }}
+                                                        />
+                                                    ))}
+                                                    {pwStrength && (
+                                                        <span
+                                                            className="pw-strength-label"
+                                                            style={{ color: pwStrength.color }}
+                                                        >
+                                                            {pwStrength.label}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {/* Requirements */}
+                                                <ul className="pw-reqs" id="rp-reqs-list" aria-label="Password requirements">
+                                                    {[
+                                                        [pwReqs.len,     '8+ characters'],
+                                                        [pwReqs.upper,   'One uppercase letter'],
+                                                        [pwReqs.lower,   'One lowercase letter'],
+                                                        [pwReqs.num,     'One number'],
+                                                        [pwReqs.special, 'One special character'],
+                                                    ].map(([met, label]) => (
+                                                        <li
+                                                            key={label}
+                                                            className={met ? 'met' : ''}
+                                                            aria-label={`${label}: ${met ? 'met' : 'not met'}`}
+                                                        >
+                                                            <i className={`ti ${met ? 'ti-circle-check' : 'ti-circle'}`} aria-hidden="true" />
+                                                            {label}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Confirm password */}
+                                    <div className="reg-field">
+                                        <label htmlFor="rp-confirm">
+                                            Confirm new password{' '}
+                                            <span className="req-star" aria-hidden="true">*</span>
+                                        </label>
+                                        <div className={`reg-input-wrap${mismatch ? ' has-error' : ''}`}>
+                                            <i className="ti ti-lock-check field-icon" aria-hidden="true" />
+                                            <input
+                                                id="rp-confirm"
+                                                type={showConfirm ? 'text' : 'password'}
+                                                placeholder="Re-enter your password"
+                                                value={confirmPassword}
+                                                onChange={e => {
+                                                    setConfirmPassword(e.target.value);
+                                                    if (error) dispatch(removeErrors());
+                                                }}
+                                                onBlur={() => setTouched(p => ({ ...p, confirm: true }))}
+                                                disabled={loading}
+                                                autoComplete="new-password"
+                                                aria-required="true"
+                                            />
+                                            <button
+                                                type="button"
+                                                className="pw-toggle"
+                                                onClick={() => setShowConfirm(p => !p)}
+                                                disabled={loading}
+                                                aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                                            >
+                                                <i className={`ti ${showConfirm ? 'ti-eye-off' : 'ti-eye'}`} aria-hidden="true" />
+                                            </button>
+                                        </div>
+
+                                        {/* Match indicator */}
+                                        {confirmPassword && (
+                                            <div className={`rp-match ${passwordsMatch ? 'is-ok' : 'is-err'}`}>
+                                                <i className={`ti ${passwordsMatch ? 'ti-circle-check' : 'ti-circle-x'}`} aria-hidden="true" />
+                                                {passwordsMatch ? 'Passwords match' : 'Passwords do not match'}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                </div>{/* .reg-fields */}
+
+                                {/* Submit */}
+                                <div className="reg-actions" style={{ marginTop: '20px' }}>
+                                    <button
+                                        type="submit"
+                                        className="reg-btn-next"
+                                        disabled={loading || !canSubmit}
+                                    >
+                                        {loading ? (
+                                            <>
+                                                <span className="reg-spinner" aria-hidden="true" />
+                                                Resetting&hellip;
+                                            </>
+                                        ) : (
+                                            <>
+                                                <i className="ti ti-lock-check" aria-hidden="true" />
+                                                Reset Password
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+
+                            </form>
+                        </div>
+                    )}
+
+                    {/* Footer link */}
+                    {!done && (
+                        <p className="reg-signin" style={{ marginTop: '1.25rem' }}>
+                            Remember your password?{' '}
+                            <Link to="/login">Sign in</Link>
+                        </p>
+                    )}
+
+                </div>
+            </main>
+
+        </div>
     );
 }
-
-export default ResetPassword;

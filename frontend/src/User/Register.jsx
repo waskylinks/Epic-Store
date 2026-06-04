@@ -12,8 +12,9 @@ const EMAIL_RE   = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_RE   = /^\+?[\d\s\-(]{7,20}$/;
 const NAME_RE    = /^[a-zA-Z\s'-]+$/;
 
+// FIX: minimum password length reduced from 12 → 8
 const getPwReqs = (pw) => ({
-    len:     pw.length >= 12,
+    len:     pw.length >= 8,
     upper:   /[A-Z]/.test(pw),
     lower:   /[a-z]/.test(pw),
     num:     /[0-9]/.test(pw),
@@ -47,7 +48,7 @@ const STEPS = [
 ────────────────────────────────────────────────────────────────────────────── */
 const SLIDES = [
     {
-        imageSrc: '/images/1.png',                          // ← INSERT IMAGE: lifestyle flat-lay of products, warm natural light
+        imageSrc: '/images/1.png',
         hint:     'Lifestyle / hero product shot',
         tag:      'New arrivals weekly',
         headline: 'Your next favourite store.',
@@ -55,7 +56,7 @@ const SLIDES = [
         accent:   '#1D9E75',
     },
     {
-        imageSrc: '/images/2.png',                          // ← INSERT IMAGE: person holding phone checking order, modern minimal
+        imageSrc: '/images/2.png',
         hint:     'Order tracking / mobile UX shot',
         tag:      'Real-time tracking',
         headline: 'Know where every order is.',
@@ -63,7 +64,7 @@ const SLIDES = [
         accent:   '#378ADD',
     },
     {
-        imageSrc: '/images/3.png',                          // ← INSERT IMAGE: secure lock / payment visual, dark abstract
+        imageSrc: '/images/3.png',
         hint:     'Security / encrypted payments',
         tag:      'Bank-grade security',
         headline: 'Shop with total confidence.',
@@ -71,7 +72,7 @@ const SLIDES = [
         accent:   '#8B5CF6',
     },
     {
-        imageSrc: '/images/4.png',                          // ← INSERT IMAGE: fast delivery / courier lifestyle shot
+        imageSrc: '/images/4.png',
         hint:     'Fast delivery lifestyle shot',
         tag:      'Smart shipping',
         headline: 'Delivered on your terms.',
@@ -95,7 +96,7 @@ function LeftCarousel() {
         setActive(idx);
     };
 
-    const next = () => goTo((active + 1) % count, 'next');
+    const next  = () => goTo((active + 1) % count, 'next');
     const prev_ = () => goTo((active - 1 + count) % count, 'prev');
 
     useEffect(() => {
@@ -107,15 +108,12 @@ function LeftCarousel() {
 
     return (
         <div className="reg-carousel" aria-label="Feature highlights">
-            {/* ── Image layer ─────────────────────────────────────────────── */}
+            {/* ── Image layer ── */}
             <div className="reg-carousel-track">
                 {SLIDES.map((s, i) => (
                     <div
                         key={i}
-                        className={`reg-carousel-slide
-                            ${i === active ? 'is-active' : ''}
-                            ${i === prev   ? `is-leaving is-leaving--${dir}` : ''}
-                        `}
+                        className={`reg-carousel-slide${i === active ? ' is-active' : ''}${i === prev ? ` is-leaving is-leaving--${dir}` : ''}`}
                         aria-hidden={i !== active}
                     >
                         {s.imageSrc ? (
@@ -126,7 +124,6 @@ function LeftCarousel() {
                                 loading="lazy"
                             />
                         ) : (
-                            /* Placeholder shown until real images are added */
                             <div className="reg-carousel-placeholder">
                                 <div className="reg-carousel-placeholder-inner">
                                     <i className="ti ti-photo" aria-hidden="true" />
@@ -134,47 +131,35 @@ function LeftCarousel() {
                                 </div>
                             </div>
                         )}
-                        {/* Gradient overlay so text is always readable */}
                         <div className="reg-carousel-overlay" />
                     </div>
                 ))}
             </div>
 
-            {/* ── Brand mark (top-left) ───────────────────────────────────── */}
+            {/* ── Brand mark ── */}
             <div className="reg-carousel-brand">
                 <span className="reg-brand-e">Epic</span>
                 <span className="reg-brand-s">Store</span>
             </div>
 
-            {/* ── Copy (bottom) ───────────────────────────────────────────── */}
+            {/* ── Copy block ── */}
             <div className="reg-carousel-copy" key={active}>
-                <span
-                    className="reg-carousel-tag"
-                    style={{ '--slide-accent': slide.accent }}
-                >
+                <span className="reg-carousel-tag" style={{ '--slide-accent': slide.accent }}>
                     {slide.tag}
                 </span>
                 <h2 className="reg-carousel-headline">{slide.headline}</h2>
                 <p  className="reg-carousel-sub">{slide.sub}</p>
             </div>
 
-            {/* ── Nav arrows ──────────────────────────────────────────────── */}
-            <button
-                className="reg-carousel-arrow reg-carousel-arrow--prev"
-                onClick={prev_}
-                aria-label="Previous slide"
-            >
+            {/* ── Arrow nav ── */}
+            <button className="reg-carousel-arrow reg-carousel-arrow--prev" onClick={prev_} aria-label="Previous slide">
                 <i className="ti ti-chevron-left" aria-hidden="true" />
             </button>
-            <button
-                className="reg-carousel-arrow reg-carousel-arrow--next"
-                onClick={next}
-                aria-label="Next slide"
-            >
+            <button className="reg-carousel-arrow reg-carousel-arrow--next" onClick={next} aria-label="Next slide">
                 <i className="ti ti-chevron-right" aria-hidden="true" />
             </button>
 
-            {/* ── Dot indicators ──────────────────────────────────────────── */}
+            {/* ── Dot indicators ── */}
             <div className="reg-carousel-dots" role="tablist" aria-label="Slide indicators">
                 {SLIDES.map((_, i) => (
                     <button
@@ -182,13 +167,13 @@ function LeftCarousel() {
                         role="tab"
                         aria-selected={i === active}
                         aria-label={`Go to slide ${i + 1}`}
-                        className={`reg-carousel-dot ${i === active ? 'is-active' : ''}`}
+                        className={`reg-carousel-dot${i === active ? ' is-active' : ''}`}
                         onClick={() => goTo(i, i > active ? 'next' : 'prev')}
                     />
                 ))}
             </div>
 
-            {/* ── Auto-play progress bar ──────────────────────────────────── */}
+            {/* ── Progress bar ── */}
             <div className="reg-carousel-progress" key={`p-${active}`}>
                 <div className="reg-carousel-progress-fill" />
             </div>
@@ -196,16 +181,20 @@ function LeftCarousel() {
     );
 }
 
-/* ─── SUB-COMPONENTS ───────────────────────────────────────────────────────── */
+/* ─── STEP INDICATOR ───────────────────────────────────────────────────────── */
 function StepIndicator({ current }) {
     return (
-        <div className="reg-steps">
+        <div className="reg-steps" role="list" aria-label="Registration steps">
             {STEPS.map((step, idx) => {
                 const done   = current > step.id;
                 const active = current === step.id;
                 return (
                     <React.Fragment key={step.id}>
-                        <div className={`reg-step ${active ? 'active' : ''} ${done ? 'done' : ''}`}>
+                        <div
+                            className={`reg-step${active ? ' active' : ''}${done ? ' done' : ''}`}
+                            role="listitem"
+                            aria-current={active ? 'step' : undefined}
+                        >
                             <div className="reg-step-circle">
                                 {done
                                     ? <i className="ti ti-check" aria-hidden="true" />
@@ -215,7 +204,7 @@ function StepIndicator({ current }) {
                             <span className="reg-step-label">{step.label}</span>
                         </div>
                         {idx < STEPS.length - 1 && (
-                            <div className={`reg-step-line ${done ? 'done' : ''}`} />
+                            <div className={`reg-step-line${done ? ' done' : ''}`} aria-hidden="true" />
                         )}
                     </React.Fragment>
                 );
@@ -224,9 +213,10 @@ function StepIndicator({ current }) {
     );
 }
 
+/* ─── FIELD ERROR ──────────────────────────────────────────────────────────── */
 function FieldError({ msg }) {
     return msg ? (
-        <span className="reg-field-error">
+        <span className="reg-field-error" role="alert">
             <i className="ti ti-alert-circle" aria-hidden="true" />
             {msg}
         </span>
@@ -359,27 +349,32 @@ export default function Register() {
         }
     }, [success, needsVerification, verificationEmail, navigate, dispatch]);
 
-    useEffect(() => () => { dispatch(removeErrors()); dispatch(removeSuccess()); }, [dispatch]);
+    useEffect(() => () => {
+        dispatch(removeErrors());
+        dispatch(removeSuccess());
+    }, [dispatch]);
 
     const pwStrength = getPwStrength(form.password);
     const pwReqs     = getPwReqs(form.password);
 
     return (
         <div className="reg-page">
-            {/* ── LEFT: premium carousel (hidden on mobile) ──────────────── */}
+            {/* ── LEFT: carousel (hidden on mobile) ── */}
             <aside className="reg-left" aria-label="Store highlights">
                 <LeftCarousel />
             </aside>
 
-            {/* ── RIGHT: registration form ────────────────────────────────── */}
-            <div className="reg-right">
+            {/* ── RIGHT: registration form ── */}
+            <main className="reg-right">
                 <div className="reg-form-wrap">
+
                     {/* Mobile brand mark */}
-                    <div className="reg-mobile-brand">
+                    <div className="reg-mobile-brand" aria-label="Epic Store">
                         <span className="reg-brand-e">Epic</span>
                         <span className="reg-brand-s">Store</span>
                     </div>
 
+                    {/* Header */}
                     <div className="reg-header">
                         <h1 className="reg-title">Create your account</h1>
                         <p className="reg-subtitle">
@@ -387,384 +382,413 @@ export default function Register() {
                         </p>
                     </div>
 
+                    {/* Step indicator */}
                     <StepIndicator current={step} />
 
-                    <div className="reg-oauth">
-                        <GoogleSignInButton text="Continue with Google" />
-                        <FacebookSignInButton text="Continue with Facebook" />
+                    {/* OAuth buttons */}
+                    <div className="reg-oauth-section">
+                        <p className="reg-oauth-section-label">Quick sign-up</p>
+                        <div className="reg-oauth">
+                            <GoogleSignInButton text="Continue with Google" />
+                            <FacebookSignInButton text="Continue with Facebook" />
+                        </div>
                     </div>
 
+                    {/* Divider */}
                     <div className="reg-divider"><span>or register with email</span></div>
 
-                    <form onSubmit={handleSubmit} noValidate>
+                    {/* Form card */}
+                    <div className="reg-form-card">
+                        <form onSubmit={handleSubmit} noValidate>
 
-                        {step === 1 && (
-                            <div className="reg-fields">
-                                <div className="reg-row">
-                                    <div className="reg-field">
-                                        <label htmlFor="firstName">
-                                            First name <span className="req-star">*</span>
-                                        </label>
-                                        <div className={`reg-input-wrap ${errors.firstName && touched.firstName ? 'has-error' : ''}`}>
-                                            <i className="ti ti-user field-icon" aria-hidden="true" />
-                                            <input
-                                                id="firstName"
-                                                name="firstName"
-                                                type="text"
-                                                placeholder="John"
-                                                value={form.firstName}
-                                                onChange={onField}
-                                                onBlur={() => touch('firstName')}
-                                                autoComplete="given-name"
-                                                disabled={loading}
-                                            />
-                                        </div>
-                                        {touched.firstName && <FieldError msg={errors.firstName} />}
-                                    </div>
-                                    <div className="reg-field">
-                                        <label htmlFor="lastName">
-                                            Last name <span className="req-star">*</span>
-                                        </label>
-                                        <div className={`reg-input-wrap ${errors.lastName && touched.lastName ? 'has-error' : ''}`}>
-                                            <i className="ti ti-user field-icon" aria-hidden="true" />
-                                            <input
-                                                id="lastName"
-                                                name="lastName"
-                                                type="text"
-                                                placeholder="Doe"
-                                                value={form.lastName}
-                                                onChange={onField}
-                                                onBlur={() => touch('lastName')}
-                                                autoComplete="family-name"
-                                                disabled={loading}
-                                            />
-                                        </div>
-                                        {touched.lastName && <FieldError msg={errors.lastName} />}
-                                    </div>
-                                </div>
-
-                                <div className="reg-field">
-                                    <label htmlFor="email">
-                                        Email address <span className="req-star">*</span>
-                                    </label>
-                                    <div className={`reg-input-wrap ${errors.email && touched.email ? 'has-error' : ''}`}>
-                                        <i className="ti ti-mail field-icon" aria-hidden="true" />
-                                        <input
-                                            id="email"
-                                            name="email"
-                                            type="email"
-                                            placeholder="you@example.com"
-                                            value={form.email}
-                                            onChange={onField}
-                                            onBlur={() => touch('email')}
-                                            autoComplete="email"
-                                            disabled={loading}
-                                        />
-                                    </div>
-                                    {touched.email && <FieldError msg={errors.email} />}
-                                </div>
-                            </div>
-                        )}
-
-                        {step === 2 && (
-                            <div className="reg-fields">
-                                <div className="reg-field">
-                                    <label htmlFor="phone">
-                                        Phone number <span className="req-star">*</span>
-                                    </label>
-                                    <div className={`reg-input-wrap ${errors.phone && touched.phone ? 'has-error' : ''}`}>
-                                        <i className="ti ti-phone field-icon" aria-hidden="true" />
-                                        <input
-                                            id="phone"
-                                            name="phone"
-                                            type="tel"
-                                            placeholder="+1 555 000 0000"
-                                            value={form.phone}
-                                            onChange={onField}
-                                            onBlur={() => touch('phone')}
-                                            autoComplete="tel"
-                                            disabled={loading}
-                                        />
-                                    </div>
-                                    <span className="reg-hint">Include your country code, e.g. +1, +44, +234</span>
-                                    {touched.phone && <FieldError msg={errors.phone} />}
-                                </div>
-
-                                <div className="reg-row">
-                                    <div className="reg-field">
-                                        <label htmlFor="dateOfBirth">
-                                            Date of birth <span className="req-star">*</span>
-                                        </label>
-                                        <div className={`reg-input-wrap ${errors.dateOfBirth && touched.dateOfBirth ? 'has-error' : ''}`}>
-                                            <i className="ti ti-calendar field-icon" aria-hidden="true" />
-                                            <input
-                                                id="dateOfBirth"
-                                                name="dateOfBirth"
-                                                type="date"
-                                                value={form.dateOfBirth}
-                                                onChange={onField}
-                                                onBlur={() => touch('dateOfBirth')}
-                                                autoComplete="bday"
-                                                disabled={loading}
-                                            />
-                                        </div>
-                                        {touched.dateOfBirth && <FieldError msg={errors.dateOfBirth} />}
-                                    </div>
-                                    <div className="reg-field">
-                                        <label htmlFor="gender">
-                                            Gender <span className="req-star">*</span>
-                                        </label>
-                                        <div className={`reg-input-wrap reg-select-wrap ${errors.gender && touched.gender ? 'has-error' : ''}`}>
-                                            <i className="ti ti-gender-bigender field-icon" aria-hidden="true" />
-                                            <select
-                                                id="gender"
-                                                name="gender"
-                                                value={form.gender}
-                                                onChange={onField}
-                                                onBlur={() => touch('gender')}
-                                                disabled={loading}
-                                            >
-                                                <option value="">Select gender</option>
-                                                <option value="male">Male</option>
-                                                <option value="female">Female</option>
-                                                <option value="other">Other</option>
-                                            </select>
-                                            <i className="ti ti-chevron-down select-chevron" aria-hidden="true" />
-                                        </div>
-                                        {touched.gender && <FieldError msg={errors.gender} />}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {step === 3 && (
-                            <div className="reg-fields">
-                                <div className="reg-section-note">
-                                    <i className="ti ti-info-circle" aria-hidden="true" />
-                                    <span>Shipping address is optional — you can add or update it later from your profile.</span>
-                                </div>
-
-                                <div className="reg-field">
-                                    <label htmlFor="address">Street address</label>
-                                    <div className="reg-input-wrap">
-                                        <i className="ti ti-home field-icon" aria-hidden="true" />
-                                        <input
-                                            id="address"
-                                            name="address"
-                                            type="text"
-                                            placeholder="123 Main Street, Apt 4B"
-                                            value={shipping.address}
-                                            onChange={onShipping}
-                                            disabled={loading}
-                                            autoComplete="street-address"
-                                        />
-                                    </div>
-                                </div>
-
-                                <div className="reg-row">
-                                    <div className="reg-field">
-                                        <label htmlFor="city">City</label>
-                                        <div className="reg-input-wrap">
-                                            <i className="ti ti-building field-icon" aria-hidden="true" />
-                                            <input
-                                                id="city"
-                                                name="city"
-                                                type="text"
-                                                placeholder="New York"
-                                                value={shipping.city}
-                                                onChange={onShipping}
-                                                disabled={loading}
-                                                autoComplete="address-level2"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="reg-field">
-                                        <label htmlFor="state">State / Province</label>
-                                        <div className="reg-input-wrap">
-                                            <i className="ti ti-map field-icon" aria-hidden="true" />
-                                            <input
-                                                id="state"
-                                                name="state"
-                                                type="text"
-                                                placeholder="NY"
-                                                value={shipping.state}
-                                                onChange={onShipping}
-                                                disabled={loading}
-                                                autoComplete="address-level1"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div className="reg-row">
-                                    <div className="reg-field">
-                                        <label htmlFor="country">Country</label>
-                                        <div className="reg-input-wrap">
-                                            <i className="ti ti-world field-icon" aria-hidden="true" />
-                                            <input
-                                                id="country"
-                                                name="country"
-                                                type="text"
-                                                placeholder="United States"
-                                                value={shipping.country}
-                                                onChange={onShipping}
-                                                disabled={loading}
-                                                autoComplete="country-name"
-                                            />
-                                        </div>
-                                    </div>
-                                    <div className="reg-field">
-                                        <label htmlFor="pinCode">ZIP / Pin code</label>
-                                        <div className="reg-input-wrap">
-                                            <i className="ti ti-mailbox field-icon" aria-hidden="true" />
-                                            <input
-                                                id="pinCode"
-                                                name="pinCode"
-                                                type="text"
-                                                placeholder="10001"
-                                                value={shipping.pinCode}
-                                                onChange={onShipping}
-                                                disabled={loading}
-                                                autoComplete="postal-code"
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {step === 4 && (
-                            <div className="reg-fields">
-                                <div className="reg-field">
-                                    <label htmlFor="password">
-                                        Password <span className="req-star">*</span>
-                                    </label>
-                                    <div className={`reg-input-wrap ${errors.password && touched.password ? 'has-error' : ''}`}>
-                                        <i className="ti ti-lock field-icon" aria-hidden="true" />
-                                        <input
-                                            id="password"
-                                            name="password"
-                                            type={showPw ? 'text' : 'password'}
-                                            placeholder="Create a strong password"
-                                            value={form.password}
-                                            onChange={onField}
-                                            onBlur={() => touch('password')}
-                                            autoComplete="new-password"
-                                            disabled={loading}
-                                        />
-                                        <button
-                                            type="button"
-                                            className="pw-toggle"
-                                            onClick={() => setShowPw(p => !p)}
-                                            aria-label={showPw ? 'Hide password' : 'Show password'}
-                                        >
-                                            <i className={`ti ${showPw ? 'ti-eye-off' : 'ti-eye'}`} aria-hidden="true" />
-                                        </button>
-                                    </div>
-                                    {touched.password && <FieldError msg={errors.password} />}
-
-                                    {form.password && (
-                                        <>
-                                            <div className="pw-strength-bar">
-                                                {[1, 2, 3, 4].map(i => (
-                                                    <div
-                                                        key={i}
-                                                        className="pw-strength-seg"
-                                                        style={{
-                                                            background: pwStrength && i <= pwStrength.level
-                                                                ? pwStrength.color
-                                                                : undefined,
-                                                        }}
-                                                    />
-                                                ))}
-                                                {pwStrength && (
-                                                    <span
-                                                        className="pw-strength-label"
-                                                        style={{ color: pwStrength.color }}
-                                                    >
-                                                        {pwStrength.label}
-                                                    </span>
-                                                )}
+                            {/* ── Step 1: Account ── */}
+                            {step === 1 && (
+                                <div className="reg-fields">
+                                    <div className="reg-row">
+                                        <div className="reg-field">
+                                            <label htmlFor="firstName">
+                                                First name <span className="req-star" aria-hidden="true">*</span>
+                                            </label>
+                                            <div className={`reg-input-wrap${errors.firstName && touched.firstName ? ' has-error' : ''}`}>
+                                                <i className="ti ti-user field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="firstName"
+                                                    name="firstName"
+                                                    type="text"
+                                                    placeholder="John"
+                                                    value={form.firstName}
+                                                    onChange={onField}
+                                                    onBlur={() => touch('firstName')}
+                                                    autoComplete="given-name"
+                                                    disabled={loading}
+                                                    aria-required="true"
+                                                    aria-invalid={!!(errors.firstName && touched.firstName)}
+                                                />
                                             </div>
+                                            {touched.firstName && <FieldError msg={errors.firstName} />}
+                                        </div>
+                                        <div className="reg-field">
+                                            <label htmlFor="lastName">
+                                                Last name <span className="req-star" aria-hidden="true">*</span>
+                                            </label>
+                                            <div className={`reg-input-wrap${errors.lastName && touched.lastName ? ' has-error' : ''}`}>
+                                                <i className="ti ti-user field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="lastName"
+                                                    name="lastName"
+                                                    type="text"
+                                                    placeholder="Doe"
+                                                    value={form.lastName}
+                                                    onChange={onField}
+                                                    onBlur={() => touch('lastName')}
+                                                    autoComplete="family-name"
+                                                    disabled={loading}
+                                                    aria-required="true"
+                                                    aria-invalid={!!(errors.lastName && touched.lastName)}
+                                                />
+                                            </div>
+                                            {touched.lastName && <FieldError msg={errors.lastName} />}
+                                        </div>
+                                    </div>
 
-                                            <ul className="pw-reqs">
-                                                {[
-                                                    [pwReqs.len,     '12+ characters'],
-                                                    [pwReqs.upper,   'One uppercase letter'],
-                                                    [pwReqs.lower,   'One lowercase letter'],
-                                                    [pwReqs.num,     'One number'],
-                                                    [pwReqs.special, 'One special character'],
-                                                ].map(([met, label]) => (
-                                                    <li key={label} className={met ? 'met' : ''}>
-                                                        <i
-                                                            className={`ti ${met ? 'ti-circle-check' : 'ti-circle'}`}
-                                                            aria-hidden="true"
-                                                        />
-                                                        {label}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        </>
-                                    )}
+                                    <div className="reg-field">
+                                        <label htmlFor="email">
+                                            Email address <span className="req-star" aria-hidden="true">*</span>
+                                        </label>
+                                        <div className={`reg-input-wrap${errors.email && touched.email ? ' has-error' : ''}`}>
+                                            <i className="ti ti-mail field-icon" aria-hidden="true" />
+                                            <input
+                                                id="email"
+                                                name="email"
+                                                type="email"
+                                                placeholder="you@example.com"
+                                                value={form.email}
+                                                onChange={onField}
+                                                onBlur={() => touch('email')}
+                                                autoComplete="email"
+                                                disabled={loading}
+                                                aria-required="true"
+                                                aria-invalid={!!(errors.email && touched.email)}
+                                            />
+                                        </div>
+                                        {touched.email && <FieldError msg={errors.email} />}
+                                    </div>
                                 </div>
+                            )}
 
-                                <p className="reg-legal">
-                                    By creating an account you agree to our{' '}
-                                    <Link to="/terms">Terms of Service</Link> and{' '}
-                                    <Link to="/privacy">Privacy Policy</Link>.
-                                </p>
+                            {/* ── Step 2: Personal ── */}
+                            {step === 2 && (
+                                <div className="reg-fields">
+                                    <div className="reg-field">
+                                        <label htmlFor="phone">
+                                            Phone number <span className="req-star" aria-hidden="true">*</span>
+                                        </label>
+                                        <div className={`reg-input-wrap${errors.phone && touched.phone ? ' has-error' : ''}`}>
+                                            <i className="ti ti-phone field-icon" aria-hidden="true" />
+                                            <input
+                                                id="phone"
+                                                name="phone"
+                                                type="tel"
+                                                placeholder="+1 555 000 0000"
+                                                value={form.phone}
+                                                onChange={onField}
+                                                onBlur={() => touch('phone')}
+                                                autoComplete="tel"
+                                                disabled={loading}
+                                                aria-required="true"
+                                                aria-invalid={!!(errors.phone && touched.phone)}
+                                            />
+                                        </div>
+                                        <span className="reg-hint">Include your country code, e.g. +1, +44, +234</span>
+                                        {touched.phone && <FieldError msg={errors.phone} />}
+                                    </div>
+
+                                    <div className="reg-row">
+                                        <div className="reg-field">
+                                            <label htmlFor="dateOfBirth">
+                                                Date of birth <span className="req-star" aria-hidden="true">*</span>
+                                            </label>
+                                            <div className={`reg-input-wrap${errors.dateOfBirth && touched.dateOfBirth ? ' has-error' : ''}`}>
+                                                <i className="ti ti-calendar field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="dateOfBirth"
+                                                    name="dateOfBirth"
+                                                    type="date"
+                                                    value={form.dateOfBirth}
+                                                    onChange={onField}
+                                                    onBlur={() => touch('dateOfBirth')}
+                                                    autoComplete="bday"
+                                                    disabled={loading}
+                                                    aria-required="true"
+                                                    aria-invalid={!!(errors.dateOfBirth && touched.dateOfBirth)}
+                                                />
+                                            </div>
+                                            {touched.dateOfBirth && <FieldError msg={errors.dateOfBirth} />}
+                                        </div>
+                                        <div className="reg-field">
+                                            <label htmlFor="gender">
+                                                Gender <span className="req-star" aria-hidden="true">*</span>
+                                            </label>
+                                            <div className={`reg-input-wrap reg-select-wrap${errors.gender && touched.gender ? ' has-error' : ''}`}>
+                                                <i className="ti ti-gender-bigender field-icon" aria-hidden="true" />
+                                                <select
+                                                    id="gender"
+                                                    name="gender"
+                                                    value={form.gender}
+                                                    onChange={onField}
+                                                    onBlur={() => touch('gender')}
+                                                    disabled={loading}
+                                                    aria-required="true"
+                                                    aria-invalid={!!(errors.gender && touched.gender)}
+                                                >
+                                                    <option value="">Select gender</option>
+                                                    <option value="male">Male</option>
+                                                    <option value="female">Female</option>
+                                                    <option value="other">Other</option>
+                                                </select>
+                                                <i className="ti ti-chevron-down select-chevron" aria-hidden="true" />
+                                            </div>
+                                            {touched.gender && <FieldError msg={errors.gender} />}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ── Step 3: Address ── */}
+                            {step === 3 && (
+                                <div className="reg-fields">
+                                    <div className="reg-section-note">
+                                        <i className="ti ti-info-circle" aria-hidden="true" />
+                                        <span>Shipping address is optional — you can add or update it later from your profile.</span>
+                                    </div>
+
+                                    <div className="reg-field">
+                                        <label htmlFor="address">Street address</label>
+                                        <div className="reg-input-wrap">
+                                            <i className="ti ti-home field-icon" aria-hidden="true" />
+                                            <input
+                                                id="address"
+                                                name="address"
+                                                type="text"
+                                                placeholder="123 Main Street, Apt 4B"
+                                                value={shipping.address}
+                                                onChange={onShipping}
+                                                disabled={loading}
+                                                autoComplete="street-address"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="reg-row">
+                                        <div className="reg-field">
+                                            <label htmlFor="city">City</label>
+                                            <div className="reg-input-wrap">
+                                                <i className="ti ti-building field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="city"
+                                                    name="city"
+                                                    type="text"
+                                                    placeholder="New York"
+                                                    value={shipping.city}
+                                                    onChange={onShipping}
+                                                    disabled={loading}
+                                                    autoComplete="address-level2"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="reg-field">
+                                            <label htmlFor="state">State / Province</label>
+                                            <div className="reg-input-wrap">
+                                                <i className="ti ti-map field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="state"
+                                                    name="state"
+                                                    type="text"
+                                                    placeholder="NY"
+                                                    value={shipping.state}
+                                                    onChange={onShipping}
+                                                    disabled={loading}
+                                                    autoComplete="address-level1"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="reg-row">
+                                        <div className="reg-field">
+                                            <label htmlFor="country">Country</label>
+                                            <div className="reg-input-wrap">
+                                                <i className="ti ti-world field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="country"
+                                                    name="country"
+                                                    type="text"
+                                                    placeholder="United States"
+                                                    value={shipping.country}
+                                                    onChange={onShipping}
+                                                    disabled={loading}
+                                                    autoComplete="country-name"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="reg-field">
+                                            <label htmlFor="pinCode">ZIP / Pin code</label>
+                                            <div className="reg-input-wrap">
+                                                <i className="ti ti-mailbox field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="pinCode"
+                                                    name="pinCode"
+                                                    type="text"
+                                                    placeholder="10001"
+                                                    value={shipping.pinCode}
+                                                    onChange={onShipping}
+                                                    disabled={loading}
+                                                    autoComplete="postal-code"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* ── Step 4: Security ── */}
+                            {step === 4 && (
+                                <div className="reg-fields">
+                                    <div className="reg-field">
+                                        <label htmlFor="password">
+                                            Password <span className="req-star" aria-hidden="true">*</span>
+                                        </label>
+                                        <div className={`reg-input-wrap${errors.password && touched.password ? ' has-error' : ''}`}>
+                                            <i className="ti ti-lock field-icon" aria-hidden="true" />
+                                            <input
+                                                id="password"
+                                                name="password"
+                                                type={showPw ? 'text' : 'password'}
+                                                placeholder="Create a strong password"
+                                                value={form.password}
+                                                onChange={onField}
+                                                onBlur={() => touch('password')}
+                                                autoComplete="new-password"
+                                                disabled={loading}
+                                                aria-required="true"
+                                                aria-invalid={!!(errors.password && touched.password)}
+                                                aria-describedby="pw-reqs-list"
+                                            />
+                                            <button
+                                                type="button"
+                                                className="pw-toggle"
+                                                onClick={() => setShowPw(p => !p)}
+                                                aria-label={showPw ? 'Hide password' : 'Show password'}
+                                            >
+                                                <i className={`ti ${showPw ? 'ti-eye-off' : 'ti-eye'}`} aria-hidden="true" />
+                                            </button>
+                                        </div>
+                                        {touched.password && <FieldError msg={errors.password} />}
+
+                                        {form.password && (
+                                            <>
+                                                {/* Strength bar */}
+                                                <div className="pw-strength-bar" aria-hidden="true">
+                                                    {[1, 2, 3, 4].map(i => (
+                                                        <div
+                                                            key={i}
+                                                            className="pw-strength-seg"
+                                                            style={{
+                                                                background: pwStrength && i <= pwStrength.level
+                                                                    ? pwStrength.color
+                                                                    : undefined,
+                                                            }}
+                                                        />
+                                                    ))}
+                                                    {pwStrength && (
+                                                        <span className="pw-strength-label" style={{ color: pwStrength.color }}>
+                                                            {pwStrength.label}
+                                                        </span>
+                                                    )}
+                                                </div>
+
+                                                {/* Requirements list */}
+                                                {/* FIX: label updated to "8+ characters" to match new minimum */}
+                                                <ul className="pw-reqs" id="pw-reqs-list" aria-label="Password requirements">
+                                                    {[
+                                                        [pwReqs.len,     '8+ characters'],
+                                                        [pwReqs.upper,   'One uppercase letter'],
+                                                        [pwReqs.lower,   'One lowercase letter'],
+                                                        [pwReqs.num,     'One number'],
+                                                        [pwReqs.special, 'One special character'],
+                                                    ].map(([met, label]) => (
+                                                        <li key={label} className={met ? 'met' : ''} aria-label={`${label}: ${met ? 'met' : 'not met'}`}>
+                                                            <i className={`ti ${met ? 'ti-circle-check' : 'ti-circle'}`} aria-hidden="true" />
+                                                            {label}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </>
+                                        )}
+                                    </div>
+
+                                    <p className="reg-legal">
+                                        By creating an account you agree to our{' '}
+                                        <Link to="/terms">Terms of Service</Link> and{' '}
+                                        <Link to="/privacy">Privacy Policy</Link>.
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* ── Actions ── */}
+                            <div className="reg-actions">
+                                {step > 1 && (
+                                    <button
+                                        type="button"
+                                        className="reg-btn-back"
+                                        onClick={goBack}
+                                        disabled={loading}
+                                    >
+                                        <i className="ti ti-arrow-left" aria-hidden="true" />
+                                        Back
+                                    </button>
+                                )}
+                                {step < STEPS.length ? (
+                                    <button
+                                        type="button"
+                                        className="reg-btn-next"
+                                        onClick={goNext}
+                                        disabled={loading}
+                                    >
+                                        Continue
+                                        <i className="ti ti-arrow-right" aria-hidden="true" />
+                                    </button>
+                                ) : (
+                                    <button
+                                        type="submit"
+                                        className="reg-btn-next"
+                                        disabled={loading}
+                                    >
+                                        {loading ? (
+                                            <>
+                                                <span className="reg-spinner" aria-hidden="true" />
+                                                Creating account&hellip;
+                                            </>
+                                        ) : (
+                                            <>
+                                                <i className="ti ti-check" aria-hidden="true" />
+                                                Create account
+                                            </>
+                                        )}
+                                    </button>
+                                )}
                             </div>
-                        )}
-
-                        <div className="reg-actions">
-                            {step > 1 && (
-                                <button
-                                    type="button"
-                                    className="reg-btn-back"
-                                    onClick={goBack}
-                                    disabled={loading}
-                                >
-                                    <i className="ti ti-arrow-left" aria-hidden="true" />
-                                    Back
-                                </button>
-                            )}
-                            {step < STEPS.length ? (
-                                <button
-                                    type="button"
-                                    className="reg-btn-next"
-                                    onClick={goNext}
-                                    disabled={loading}
-                                >
-                                    Continue
-                                    <i className="ti ti-arrow-right" aria-hidden="true" />
-                                </button>
-                            ) : (
-                                <button
-                                    type="submit"
-                                    className="reg-btn-next"
-                                    disabled={loading}
-                                >
-                                    {loading ? (
-                                        <>
-                                            <span className="reg-spinner" />
-                                            Creating account&hellip;
-                                        </>
-                                    ) : (
-                                        <>
-                                            <i className="ti ti-check" aria-hidden="true" />
-                                            Create account
-                                        </>
-                                    )}
-                                </button>
-                            )}
-                        </div>
-                    </form>
+                        </form>
+                    </div>{/* .reg-form-card */}
 
                     <p className="reg-signin">
                         Already have an account? <Link to="/login">Sign in</Link>
                     </p>
                 </div>
-            </div>
+            </main>
         </div>
     );
 }
+
+
+

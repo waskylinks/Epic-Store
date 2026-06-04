@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import '../UserStyles/OAuthButtons.css';
 
-function FacebookSignInButton({ text = "Sign in with Facebook" }) {
+function FacebookSignInButton({ text = 'Continue with Facebook' }) {
     const [loading, setLoading] = useState(false);
 
     const handleFacebookSignIn = () => {
@@ -12,28 +12,40 @@ function FacebookSignInButton({ text = "Sign in with Facebook" }) {
     return (
         <button
             type="button"
-            className={`oauth-button facebook-button ${loading ? 'loading' : ''}`}
+            className={`oauth-button facebook-button${loading ? ' loading' : ''}`}
             onClick={handleFacebookSignIn}
             disabled={loading}
+            aria-label="Continue with Facebook"
         >
-            {!loading && (
-                <>
-                    <svg 
-                        className="oauth-icon" 
-                        viewBox="0 0 24 24" 
-                        xmlns="http://www.w3.org/2000/svg"
-                    >
-                        <path 
-                            d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" 
-                            fill="#FFFFFF"
-                        />
-                    </svg>
-                    <span className="oauth-text">{text}</span>
-                </>
-            )}
-            {loading && (
-                <span className="oauth-text">Redirecting...</span>
-            )}
+            {/*
+             * FIX: spinner lives inside .oauth-icon (left slot) so the
+             * 3-column grid never reflows and the label stays truly centred.
+             *
+             * FIX: white f on solid #1877F2 circle per Meta brand guidelines.
+             * Replaces the previous faint monochrome path floating on glass,
+             * which lost definition at small sizes against the blue-tinted surface.
+             */}
+            <span className="oauth-icon" aria-hidden="true">
+                {loading ? (
+                    <span className="oauth-spinner" />
+                ) : (
+                    <span className="oauth-facebook-circle">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                            <path
+                                d="M13.397 20.997v-8.196h2.765l.411-3.209h-3.176V7.548c0-.926.258-1.56 1.587-1.56h1.684V3.127A22.336 22.336 0 0 0 14.201 3c-2.444 0-4.122 1.492-4.122 4.231v2.355H7.332v3.209h2.753v8.202h3.312z"
+                                fill="#ffffff"
+                            />
+                        </svg>
+                    </span>
+                )}
+            </span>
+
+            <span className="oauth-label">
+                {loading ? 'Redirecting…' : text}
+            </span>
+
+            {/* Right spacer mirrors left icon slot — keeps label optically centred */}
+            <span className="oauth-spacer" aria-hidden="true" />
         </button>
     );
 }

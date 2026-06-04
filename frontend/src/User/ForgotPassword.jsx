@@ -1,150 +1,319 @@
-import React, { useEffect, useState } from 'react';
-import '../UserStyles/Form.css';
-import PageTitle from '../components/PageTitle';
-import Navbar from '../components/Navbar';
-import Footer from '../components/footer';
+import React, { useEffect, useState, useRef } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
 import { forgotPassword, removeErrors, removeSuccess } from '../features/products/userSlice';
 import { toast } from 'react-toastify';
-import { useNavigate } from 'react-router-dom';
+import '../UserStyles/Register.css';
 
-function ForgotPassword() {
-    const { loading, error, success, message } = useSelector((state) => state.user);
+/* ─── SLIDES (identical to Login / Register / VerifyEmail) ──────────────── */
+const SLIDES = [
+    {
+        imageSrc: '/images/1.png',
+        hint:     'Lifestyle / hero product shot',
+        tag:      'New arrivals weekly',
+        headline: 'Your next favourite store.',
+        sub:      'Thousands of curated products, always a discovery away.',
+        accent:   '#1D9E75',
+    },
+    {
+        imageSrc: '/images/2.png',
+        hint:     'Order tracking / mobile UX shot',
+        tag:      'Real-time tracking',
+        headline: 'Know where every order is.',
+        sub:      'Live updates from warehouse to doorstep, no guesswork.',
+        accent:   '#378ADD',
+    },
+    {
+        imageSrc: '/images/3.png',
+        hint:     'Security / encrypted payments',
+        tag:      'Bank-grade security',
+        headline: 'Shop with total confidence.',
+        sub:      'End-to-end encryption keeps your data and payments safe.',
+        accent:   '#8B5CF6',
+    },
+    {
+        imageSrc: '/images/4.png',
+        hint:     'Fast delivery lifestyle shot',
+        tag:      'Smart shipping',
+        headline: 'Delivered on your terms.',
+        sub:      'Flexible shipping options and smart address defaults.',
+        accent:   '#EF9F27',
+    },
+];
+
+/* ─── CAROUSEL ───────────────────────────────────────────────────────────── */
+function LeftCarousel() {
+    const [active, setActive] = useState(0);
+    const [prev,   setPrev]   = useState(null);
+    const [dir,    setDir]    = useState('next');
+    const timerRef            = useRef(null);
+    const count               = SLIDES.length;
+
+    const goTo = (idx, direction = 'next') => {
+        if (idx === active) return;
+        setPrev(active);
+        setDir(direction);
+        setActive(idx);
+    };
+
+    const next  = () => goTo((active + 1) % count, 'next');
+    const prev_ = () => goTo((active - 1 + count) % count, 'prev');
+
+    useEffect(() => {
+        timerRef.current = setInterval(next, 5000);
+        return () => clearInterval(timerRef.current);
+    }, [active]);
+
+    const slide = SLIDES[active];
+
+    return (
+        <div className="reg-carousel" aria-label="Store highlights">
+            <div className="reg-carousel-track">
+                {SLIDES.map((s, i) => (
+                    <div
+                        key={i}
+                        className={`reg-carousel-slide${i === active ? ' is-active' : ''}${i === prev ? ` is-leaving is-leaving--${dir}` : ''}`}
+                        aria-hidden={i !== active}
+                    >
+                        {s.imageSrc ? (
+                            <img src={s.imageSrc} alt={s.hint} className="reg-carousel-img" loading="lazy" />
+                        ) : (
+                            <div className="reg-carousel-placeholder">
+                                <div className="reg-carousel-placeholder-inner">
+                                    <i className="ti ti-photo" aria-hidden="true" />
+                                    <span>{s.hint}</span>
+                                </div>
+                            </div>
+                        )}
+                        <div className="reg-carousel-overlay" />
+                    </div>
+                ))}
+            </div>
+
+            <div className="reg-carousel-brand">
+                <span className="reg-brand-e">Epic</span>
+                <span className="reg-brand-s">Store</span>
+            </div>
+
+            <div className="reg-carousel-copy" key={active}>
+                <span className="reg-carousel-tag" style={{ '--slide-accent': slide.accent }}>
+                    {slide.tag}
+                </span>
+                <h2 className="reg-carousel-headline">{slide.headline}</h2>
+                <p  className="reg-carousel-sub">{slide.sub}</p>
+            </div>
+
+            <button className="reg-carousel-arrow reg-carousel-arrow--prev" onClick={prev_} aria-label="Previous slide">
+                <i className="ti ti-chevron-left" aria-hidden="true" />
+            </button>
+            <button className="reg-carousel-arrow reg-carousel-arrow--next" onClick={next} aria-label="Next slide">
+                <i className="ti ti-chevron-right" aria-hidden="true" />
+            </button>
+
+            <div className="reg-carousel-dots" role="tablist" aria-label="Slide indicators">
+                {SLIDES.map((_, i) => (
+                    <button
+                        key={i}
+                        role="tab"
+                        aria-selected={i === active}
+                        aria-label={`Go to slide ${i + 1}`}
+                        className={`reg-carousel-dot${i === active ? ' is-active' : ''}`}
+                        onClick={() => goTo(i, i > active ? 'next' : 'prev')}
+                    />
+                ))}
+            </div>
+
+            <div className="reg-carousel-progress" key={`p-${active}`}>
+                <div className="reg-carousel-progress-fill" />
+            </div>
+        </div>
+    );
+}
+
+/* ─── MAIN COMPONENT ─────────────────────────────────────────────────────── */
+export default function ForgotPassword() {
+    const [email,   setEmail]   = useState('');
+    const [sent,    setSent]    = useState(false);
+    const [touched, setTouched] = useState(false);
+
+    const { loading, error, success, message } = useSelector(state => state.user);
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
-    const [email, setEmail] = useState('');
+    const EMAIL_RE  = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailErr  = touched && !EMAIL_RE.test(email.trim());
+    const canSubmit = EMAIL_RE.test(email.trim());
 
-    const validateEmail = (email) => {
-        const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        return re.test(email);
-    };
-
-    const forgotPasswordEmail = (e) => {
+    const handleSubmit = (e) => {
         e.preventDefault();
-        
-        // Clear any previous errors
+        setTouched(true);
         dispatch(removeErrors());
-
-        if (!email.trim()) {
-            return toast.error("Please enter your registered email", { 
-                position: "top-center", 
-                autoClose: 2000 
-            });
-        }
-
-        if (!validateEmail(email.trim())) {
-            return toast.error("Please enter a valid email address", { 
-                position: "top-center", 
-                autoClose: 2000 
-            });
-        }
-
+        if (!canSubmit) return;
         dispatch(forgotPassword(email.trim()));
     };
 
-    // Clear error when user starts typing
-    const handleEmailChange = (e) => {
+    const handleChange = (e) => {
         setEmail(e.target.value);
-        if (error) {
-            dispatch(removeErrors());
-        }
+        if (error) dispatch(removeErrors());
     };
 
-    // Handle error display
+    /* ── Effects ── */
     useEffect(() => {
         if (error) {
             toast.error(error, { position: 'top-center', autoClose: 3000 });
             dispatch(removeErrors());
         }
     }, [error, dispatch]);
-    
-    // Handle success and navigation
+
     useEffect(() => {
         if (success && message) {
-            toast.success(message, { 
-                position: 'top-center', 
-                autoClose: 3000 
-            });
+            setSent(true);
             dispatch(removeSuccess());
-            // Navigate to code verification page with email
-            setTimeout(() => {
+            const t = setTimeout(() => {
                 navigate('/password/verify-code', { state: { email: email.trim() } });
-            }, 500);
+            }, 2000);
+            return () => clearTimeout(t);
         }
-    }, [success, message, navigate, email, dispatch]);
+    }, [success, message, email, navigate, dispatch]);
 
-    // Cleanup on unmount
-    useEffect(() => {
-        return () => {
-            dispatch(removeErrors());
-            dispatch(removeSuccess());
-        };
+    useEffect(() => () => {
+        dispatch(removeErrors());
+        dispatch(removeSuccess());
     }, [dispatch]);
 
     return (
-        <>
-            <PageTitle title='Forgot Password'/>
-            <Navbar />
+        <div className="reg-page">
 
-            <div className="container forgot-container">
-                <div className="form-content email-group">
-                    <form className="form" onSubmit={forgotPasswordEmail}>
-                        <div className="verification-header">
-                            <div className="verification-icon">🔐</div>
-                            <h2>Forgot Password</h2>
-                            <p className="verification-text">
-                                Enter your registered email address and<br />
-                                we'll send you a verification code
-                            </p>
+            {/* ── LEFT: carousel ── */}
+            <aside className="reg-left" aria-label="Store highlights">
+                <LeftCarousel />
+            </aside>
+
+            {/* ── RIGHT: form ── */}
+            <main className="reg-right">
+                <div className="reg-form-wrap">
+
+                    {/* Mobile brand */}
+                    <div className="reg-mobile-brand" aria-label="Epic Store">
+                        <span className="reg-brand-e">Epic</span>
+                        <span className="reg-brand-s">Store</span>
+                    </div>
+
+                    {/* Header */}
+                    <div className="fp-header">
+                        <div className="fp-icon-wrap" aria-hidden="true">
+                            <i className="ti ti-lock-question" />
                         </div>
-
-                        <div className="input-group">
-                            <input 
-                                type="email" 
-                                placeholder='Enter your registered email' 
-                                name='email'
-                                value={email}
-                                onChange={handleEmailChange}
-                                required
-                                disabled={loading}
-                                autoComplete="email"
-                            />
-                        </div>
-
-                        <button 
-                            className="authBtn" 
-                            disabled={loading || !email.trim()}
-                        >
-                            {loading ? 'Sending...' : 'Send Reset Code'}
-                        </button>
-
-                        <p className="form-links">
-                            Remember your password? 
-                            <button 
-                                type="button"
-                                onClick={() => navigate('/login')}
-                                className="link-btn"
-                                disabled={loading}
-                                style={{
-                                    background: 'none',
-                                    border: 'none',
-                                    color: loading ? '#ccc' : '#667eea',
-                                    cursor: loading ? 'not-allowed' : 'pointer',
-                                    textDecoration: 'underline',
-                                    marginLeft: '5px'
-                                }}
-                            >
-                                Sign in here
-                            </button>
+                        <h1 className="fp-title">Forgot your password?</h1>
+                        <p className="fp-subtitle">
+                            No problem. Enter your registered email and we'll
+                            send you a reset code right away.
                         </p>
-                    </form>
-                </div>
-            </div>
+                    </div>
 
-            <Footer />
-        </>
+                    {/* ── Success state ── */}
+                    {sent ? (
+                        <div className="fp-success-card" role="status" aria-live="polite">
+                            <div className="fp-success-icon">
+                                <i className="ti ti-mail-check" aria-hidden="true" />
+                            </div>
+                            <p className="fp-success-title">Reset code sent!</p>
+                            <p className="fp-success-text">
+                                We've emailed a code to <strong>{email.trim()}</strong>.
+                                Check your inbox — redirecting you now&hellip;
+                            </p>
+                            <span className="reg-spinner" aria-hidden="true" style={{ marginTop: 4 }} />
+                        </div>
+                    ) : (
+                        <>
+                            {/* Info note */}
+                            <div className="fp-info-note">
+                                <i className="ti ti-info-circle" aria-hidden="true" />
+                                <span>
+                                    We'll send a one-time code to your inbox. The code
+                                    expires after 15 minutes.
+                                </span>
+                            </div>
+
+                            {/* Form card */}
+                            <div className="reg-form-card">
+                                <form onSubmit={handleSubmit} noValidate>
+                                    <div className="reg-fields">
+
+                                        {/* Server error banner */}
+                                        {error && (
+                                            <div className="lgn-error-banner" role="alert">
+                                                <i className="ti ti-alert-circle" aria-hidden="true" />
+                                                {error}
+                                            </div>
+                                        )}
+
+                                        {/* Email field */}
+                                        <div className="reg-field">
+                                            <label htmlFor="fp-email">
+                                                Email address{' '}
+                                                <span className="req-star" aria-hidden="true">*</span>
+                                            </label>
+                                            <div className={`reg-input-wrap${emailErr ? ' has-error' : ''}`}>
+                                                <i className="ti ti-mail field-icon" aria-hidden="true" />
+                                                <input
+                                                    id="fp-email"
+                                                    type="email"
+                                                    placeholder="you@example.com"
+                                                    value={email}
+                                                    onChange={handleChange}
+                                                    onBlur={() => setTouched(true)}
+                                                    disabled={loading}
+                                                    autoComplete="email"
+                                                    aria-required="true"
+                                                    aria-invalid={emailErr}
+                                                />
+                                            </div>
+                                            {emailErr && (
+                                                <span className="reg-field-error" role="alert">
+                                                    <i className="ti ti-alert-circle" aria-hidden="true" />
+                                                    Please enter a valid email address
+                                                </span>
+                                            )}
+                                        </div>
+
+                                    </div>{/* .reg-fields */}
+
+                                    {/* Submit */}
+                                    <div className="reg-actions" style={{ marginTop: '20px' }}>
+                                        <button
+                                            type="submit"
+                                            className="reg-btn-next"
+                                            disabled={loading || !canSubmit}
+                                        >
+                                            {loading ? (
+                                                <>
+                                                    <span className="reg-spinner" aria-hidden="true" />
+                                                    Sending&hellip;
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <i className="ti ti-send" aria-hidden="true" />
+                                                    Send Reset Code
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+
+                                </form>
+                            </div>
+
+                            {/* Footer links */}
+                            <p className="reg-signin" style={{ marginTop: '1.25rem' }}>
+                                Remember your password?{' '}
+                                <Link to="/login">Sign in</Link>
+                            </p>
+                        </>
+                    )}
+
+                </div>
+            </main>
+
+        </div>
     );
 }
-
-export default ForgotPassword;
