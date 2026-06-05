@@ -1,10 +1,6 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import axios from 'axios';
 
-// [FIX] Import analytics SDK so addToWishlist sends an eventId and full
-// attribution context to the backend. The backend wishlistController uses
-// these to fire Meta CAPI AddToWishlist + GA4 add_to_wishlist with maximum
-// Event Match Quality — the same pattern used in cartSlice.addItemsToCart.
 import {
   generateEventId,
   buildClientAnalyticsPayload,
@@ -15,7 +11,6 @@ axios.defaults.withCredentials = true;
 
 // ==================== ASYNC THUNKS ====================
 
-// GET WISHLIST
 export const getWishlist = createAsyncThunk(
   'wishlist/getWishlist',
   async (_, { rejectWithValue }) => {
@@ -30,47 +25,20 @@ export const getWishlist = createAsyncThunk(
   }
 );
 
-// ADD TO WISHLIST
-// [FIX] Generate eventId and build analytics payload so the backend can fire
-// Meta CAPI AddToWishlist and GA4 add_to_wishlist with:
-//   - analyticsEventId for deduplication against any browser pixel event
-//   - fbp / fbc for Meta user matching
-//   - ga4ClientId to tie the server event to the browser GA4 session
-//   - clientAttribution for UTM / click ID signals
-//
-// The backend wishlistController reads req.body.analyticsEventId,
-// req.body.fbp, req.body.fbc, req.body.ga4ClientId, and
-// req.body.clientAttribution — the same fields as addItemsToCart.
 export const addToWishlist = createAsyncThunk(
   'wishlist/addToWishlist',
   async (productId, { rejectWithValue }) => {
     try {
       const eventId = generateEventId();
-
-      // buildClientAnalyticsPayload reads UTMs, click IDs, fbp, fbc, and
-      // ga4ClientId from localStorage / cookies at call time and packages
-      // them into a single flat object ready for the request body.
-      // [FIX] Use ADD_TO_WISHLIST, not ADD_TO_CART.
-      // ADD_TO_WISHLIST was missing from the frontend ANALYTICS_EVENTS constants
-      // in analytics.js — it has been added there. Using ADD_TO_CART here was
-      // semantically wrong: the backend ingestion endpoint logs eventType as-is
-      // into BigQuery's events table, so a wishlist add would have appeared as
-      // an add_to_cart event in all analytical queries.
       const analyticsPayload = buildClientAnalyticsPayload({
         eventType:        ANALYTICS_EVENTS.ADD_TO_WISHLIST,
         analyticsEventId: eventId,
       });
 
-      const config = { headers: { 'Content-Type': 'application/json' } };
       const { data } = await axios.post(
         '/api/v1/wishlist/add',
-        {
-          productId,
-          // [FIX] Spread analytics payload so backend receives all signals
-          // needed by sendMetaAddToWishlist and sendGA4AddToWishlist.
-          ...analyticsPayload,
-        },
-        config
+        { productId, ...analyticsPayload },
+        { headers: { 'Content-Type': 'application/json' } }
       );
       return { ...data, productId };
     } catch (error) {
@@ -81,7 +49,6 @@ export const addToWishlist = createAsyncThunk(
   }
 );
 
-// REMOVE FROM WISHLIST
 export const removeFromWishlist = createAsyncThunk(
   'wishlist/removeFromWishlist',
   async (productId, { rejectWithValue }) => {
@@ -96,7 +63,6 @@ export const removeFromWishlist = createAsyncThunk(
   }
 );
 
-// CLEAR WISHLIST
 export const clearWishlist = createAsyncThunk(
   'wishlist/clearWishlist',
   async (_, { rejectWithValue }) => {
@@ -111,7 +77,6 @@ export const clearWishlist = createAsyncThunk(
   }
 );
 
-// CHECK WISHLIST STATUS
 export const checkWishlistStatus = createAsyncThunk(
   'wishlist/checkStatus',
   async (productId, { rejectWithValue }) => {
@@ -126,7 +91,6 @@ export const checkWishlistStatus = createAsyncThunk(
   }
 );
 
-// MOVE TO CART
 export const moveToCart = createAsyncThunk(
   'wishlist/moveToCart',
   async (productId, { rejectWithValue }) => {
@@ -148,11 +112,16 @@ const wishlistSlice = createSlice({
   initialState: {
     items: [],
     count: 0,
+    // Separate loading flags:
+    //   loading      → only true during getWishlist (full-list fetch)
+    //   actionLoading → true during clearWishlist
+    //   itemLoading  → per-product-id loading map for add/remove/move
     loading: false,
+    actionLoading: false,
     error: null,
     success: false,
     message: null,
-    itemLoading: {}, // Track loading state per product ID
+    itemLoading: {},
   },
   reducers: {
     removeErrors: (state) => {
@@ -162,24 +131,29 @@ const wishlistSlice = createSlice({
       state.success = false;
       state.message = null;
     },
-    // Optimistic local add (for instant UI feedback)
+    // Optimistic local add — used by ProductDetails and CartItem
     optimisticAdd: (state, action) => {
       const product = action.payload;
-      const exists = state.items.some(item => item.product._id === product._id);
+      const exists = state.items.some(
+        item => (item.product?._id || item.product) === product._id
+      );
       if (!exists) {
         state.items.push({ product, addedAt: new Date().toISOString() });
         state.count = state.items.length;
       }
     },
-    // Optimistic local remove (for instant UI feedback)
+    // Optimistic local remove
     optimisticRemove: (state, action) => {
       const productId = action.payload;
-      state.items = state.items.filter(item => item.product._id !== productId);
+      state.items = state.items.filter(
+        item => (item.product?._id || item.product) !== productId
+      );
       state.count = state.items.length;
     },
   },
   extraReducers: (builder) => {
-    // GET WISHLIST
+
+    // ── GET WISHLIST ──────────────────────────────────────────────────────────
     builder
       .addCase(getWishlist.pending, (state) => {
         state.loading = true;
@@ -197,76 +171,96 @@ const wishlistSlice = createSlice({
         state.count = 0;
       });
 
-    // ADD TO WISHLIST
+    // ── ADD TO WISHLIST ───────────────────────────────────────────────────────
+    // On fulfilled: patch items immediately so any component reading
+    // wishlistItems.some(...) sees the update without waiting for a refetch.
+    // The item shape mirrors what the server returns on getWishlist so
+    // isInWishlist checks work correctly everywhere.
     builder
       .addCase(addToWishlist.pending, (state, action) => {
         state.itemLoading[action.meta.arg] = true;
         state.error = null;
       })
       .addCase(addToWishlist.fulfilled, (state, action) => {
-        state.itemLoading[action.payload.productId] = false;
+        const { productId } = action.payload;
+        state.itemLoading[productId] = false;
         state.success = true;
         state.message = action.payload.message || 'Added to wishlist';
-        state.count = action.payload.wishlistCount || state.count;
-        // Note: Refresh the full wishlist to get complete product data
+        state.count = action.payload.wishlistCount ?? state.count;
+
+        // Patch items so isInWishlist is true immediately.
+        // A full getWishlist() will overwrite this with complete product data.
+        const alreadyPresent = state.items.some(
+          item => (item.product?._id || item.product) === productId
+        );
+        if (!alreadyPresent) {
+          // Store minimal shape; components fall back to product._id check
+          state.items.push({
+            product: { _id: productId },
+            addedAt: new Date().toISOString(),
+          });
+        }
       })
       .addCase(addToWishlist.rejected, (state, action) => {
         state.itemLoading[action.meta.arg] = false;
         state.error = action.payload?.message || 'Failed to add to wishlist';
       });
 
-    // REMOVE FROM WISHLIST
+    // ── REMOVE FROM WISHLIST ──────────────────────────────────────────────────
     builder
       .addCase(removeFromWishlist.pending, (state, action) => {
         state.itemLoading[action.meta.arg] = true;
         state.error = null;
       })
       .addCase(removeFromWishlist.fulfilled, (state, action) => {
-        state.itemLoading[action.payload.productId] = false;
+        const { productId } = action.payload;
+        state.itemLoading[productId] = false;
         state.success = true;
         state.message = action.payload.message || 'Removed from wishlist';
         state.items = state.items.filter(
-          item => item.product._id !== action.payload.productId
+          item => (item.product?._id || item.product) !== productId
         );
-        state.count = action.payload.wishlistCount || state.items.length;
+        state.count = action.payload.wishlistCount ?? state.items.length;
       })
       .addCase(removeFromWishlist.rejected, (state, action) => {
         state.itemLoading[action.meta.arg] = false;
         state.error = action.payload?.message || 'Failed to remove from wishlist';
       });
 
-    // CLEAR WISHLIST
+    // ── CLEAR WISHLIST ────────────────────────────────────────────────────────
+    // Uses actionLoading so it doesn't trigger the full-page loader
     builder
       .addCase(clearWishlist.pending, (state) => {
-        state.loading = true;
+        state.actionLoading = true;
         state.error = null;
       })
       .addCase(clearWishlist.fulfilled, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.success = true;
         state.message = action.payload.message || 'Wishlist cleared';
         state.items = [];
         state.count = 0;
       })
       .addCase(clearWishlist.rejected, (state, action) => {
-        state.loading = false;
+        state.actionLoading = false;
         state.error = action.payload?.message || 'Failed to clear wishlist';
       });
 
-    // MOVE TO CART
+    // ── MOVE TO CART ──────────────────────────────────────────────────────────
     builder
       .addCase(moveToCart.pending, (state, action) => {
         state.itemLoading[action.meta.arg] = true;
         state.error = null;
       })
       .addCase(moveToCart.fulfilled, (state, action) => {
-        state.itemLoading[action.payload.productId] = false;
+        const { productId } = action.payload;
+        state.itemLoading[productId] = false;
         state.success = true;
         state.message = action.payload.message || 'Moved to cart';
         state.items = state.items.filter(
-          item => item.product._id !== action.payload.productId
+          item => (item.product?._id || item.product) !== productId
         );
-        state.count = action.payload.wishlistCount || state.items.length;
+        state.count = action.payload.wishlistCount ?? state.items.length;
       })
       .addCase(moveToCart.rejected, (state, action) => {
         state.itemLoading[action.meta.arg] = false;
@@ -279,7 +273,7 @@ export const {
   removeErrors,
   removeMessage,
   optimisticAdd,
-  optimisticRemove
+  optimisticRemove,
 } = wishlistSlice.actions;
 
 export default wishlistSlice.reducer;

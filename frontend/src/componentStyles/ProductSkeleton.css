@@ -1,0 +1,177 @@
+/* ============================================================
+   ProductSkeleton.css — sk- prefix
+   Matches pc- design system exactly.
+   Coral accent: #FF6B6B | Base bg: #F0F2F5
+   Font: Plus Jakarta Sans
+   ============================================================ */
+
+/* ── Shimmer keyframe ───────────────────────────────────────── */
+@keyframes sk-shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+
+/* ── Base pulse block ───────────────────────────────────────── */
+.sk-pulse {
+  background: linear-gradient(
+    90deg,
+    #F0F2F5 25%,
+    #FAFBFC 50%,
+    #F0F2F5 75%
+  );
+  background-size: 1200px 100%;
+  animation: sk-shimmer 1.6s ease-in-out infinite;
+  border-radius: 6px;
+  flex-shrink: 0;
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sk-pulse {
+    background: linear-gradient(
+      90deg,
+      #242424 25%,
+      #2e2e2e 50%,
+      #242424 75%
+    );
+    background-size: 1200px 100%;
+  }
+}
+
+/* ── Card shell ─────────────────────────────────────────────── */
+.pc-card--skeleton {
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── Image area ─────────────────────────────────────────────── */
+.sk-image-wrap {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  overflow: hidden;
+  flex-shrink: 0;
+  border-bottom: 1px solid #E5E7EB;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sk-image-wrap { border-bottom-color: #2e2e2e; }
+}
+
+.sk-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
+/* ── Badge placeholder ──────────────────────────────────────── */
+.sk-badge-group {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+}
+
+.sk-badge {
+  height: 18px;
+  width: 52px;
+  border-radius: 4px;
+}
+
+/* ── Info panel ─────────────────────────────────────────────── */
+.sk-info {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* ── Meta row (brand · category) ───────────────────────────── */
+.sk-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sk-brand { height: 10px; width: 52px; border-radius: 4px; }
+.sk-cat   { height: 10px; width: 72px; border-radius: 4px; }
+
+/* ── Name lines ─────────────────────────────────────────────── */
+.sk-name-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sk-name-l1 { height: 13px; width: 92%; }
+.sk-name-l2 { height: 13px; width: 62%; }
+
+/* ── Star row ───────────────────────────────────────────────── */
+.sk-stars-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sk-star { width: 12px; height: 12px; border-radius: 3px; }
+.sk-rc   { height: 10px; width: 36px; border-radius: 4px; margin-left: 4px; }
+
+/* ── Price row ──────────────────────────────────────────────── */
+.sk-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.sk-price-main { height: 18px; width: 64px; border-radius: 5px; }
+.sk-price-old  { height: 12px; width: 44px; border-radius: 4px; }
+
+/* ── Footer row ─────────────────────────────────────────────── */
+.sk-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid #E5E7EB;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sk-footer-row { border-top-color: #2e2e2e; }
+}
+
+.sk-stock { height: 11px; width: 60px; border-radius: 4px; }
+.sk-btn   { height: 32px; width: 100px; border-radius: 6px; }
+
+/* ── Responsive image heights — mirror pc-image-wrap ────────── */
+@media (max-width: 1024px) {
+  .sk-image-wrap { height: 200px; }
+}
+
+@media (max-width: 768px) {
+  .sk-image-wrap { height: 190px; }
+}
+
+@media (max-width: 480px) {
+  .sk-image-wrap { height: 180px; }
+  .sk-btn        { width: 80px; }
+}
+
+@media (max-width: 360px) {
+  .sk-image-wrap { height: 160px; }
+  .sk-footer-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .sk-btn { width: 100%; }
+}
+
+/* ── Accessibility ──────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sk-pulse { animation: none; background: #F0F2F5; }
+
+  @media (prefers-color-scheme: dark) {
+    .sk-pulse { background: #242424; }
+  }
+}
