@@ -624,14 +624,22 @@ export const sendMetaCompleteRegistration = async (user, context = {}) => {
   const resolvedFbc = resolveFbc(context);
 
   const userData = {
-    email:     user.email,
-    firstName: user.firstName,
-    lastName:  user.lastName,
-    userId:    user._id?.toString(),
-    fbp:       context.fbp,
-    fbc:       resolvedFbc,
-    clientIp:  context.clientIp,
-    userAgent: context.userAgent,
+    email:       user.email,
+    phone:       resolvePhone(user),          // phone is required on registration
+    firstName:   user.firstName,
+    lastName:    user.lastName,
+    userId:      user._id?.toString(),
+    dateOfBirth: user?.dateOfBirth || null,   // collected on registration
+    fbLoginId:   user?.facebookId  || null,
+    // shippingAddress is optional — fall back gracefully when absent
+    city:        user?.shippingAddress?.city    || null,
+    state:       user?.shippingAddress?.state   || null,
+    country:     user?.shippingAddress?.country || null,
+    zipCode:     user?.shippingAddress?.pinCode || null,
+    fbp:         context.fbp,
+    fbc:         resolvedFbc,
+    clientIp:    context.clientIp,
+    userAgent:   context.userAgent,
   };
 
   return sendMetaEvent('CompleteRegistration', userData, {

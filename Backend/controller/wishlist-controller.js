@@ -78,15 +78,37 @@ export const addToWishlist = handleAsyncError(async (req, res, next) => {
     // Analytics failure must not abort the wishlist operation
   }
 
+  // Invalidate this user's wishlist cache and any product analytics caches
   await Promise.all([
     deleteCache(`wishlist_${userId}`),
     deleteCachePattern('product_conversion*'),
     deleteCachePattern('product_performance*')
   ]).catch(() => {});
 
+  // Fire-and-forget analytics — extract all body fields the orchestrator expects
+  // so Meta CAPI and GA4 receive full attribution context.
   (async () => {
     try {
       const { fireWishlistEvent } = await import('../Services/analytics/analyticsOrchestrator.js');
+
+      // Pull analytics signals forwarded by wishlistSlice.addToWishlist thunk
+      const {
+        analyticsEventId,
+        fbp,
+        fbc,
+        ga4ClientId,
+        clientAttribution,
+      } = req.body;
+
+      // Augment req with the analytics fields so fireWishlistEvent can read them
+      // from req.body (same pattern used in the cart controller)
+      req.analyticsContext = {
+        analyticsEventId,
+        fbp,
+        fbc,
+        ga4ClientId,
+        clientAttribution,
+      };
 
       // Fetch full user document for maximum EMQ on Meta CAPI.
       // Falls back to req.user (lower EMQ) if the query fails.
@@ -169,22 +191,31 @@ export const clearWishlist = handleAsyncError(async (req, res, next) => {
   if (!user) return next(new HandleError("User not found", 404));
 
   const productIds = user.wishlist.map(item => item.product);
+  const wishlistSize = productIds.length;
 
-  try {
-    await Product.updateMany(
-      { _id: { $in: productIds } },
-      [
-        {
-          $set: {
-            'analytics.addedToWishlist': {
-              $max: [{ $subtract: ['$analytics.addedToWishlist', 1] }, 0]
+  // FIX: The old implementation decremented analytics.addedToWishlist by 1
+  // for every product, regardless of how many times each appeared (a product
+  // can only appear once per user, so this was correct per-product), BUT
+  // running $max([sub - 1, 0]) in a bulk updateMany is correct for individual
+  // products. The real issue was that this ran even when wishlistSize === 0.
+  // Guard added so the updateMany is skipped on an already-empty wishlist.
+  if (wishlistSize > 0) {
+    try {
+      await Product.updateMany(
+        { _id: { $in: productIds } },
+        [
+          {
+            $set: {
+              'analytics.addedToWishlist': {
+                $max: [{ $subtract: ['$analytics.addedToWishlist', 1] }, 0]
+              }
             }
           }
-        }
-      ]
-    );
-  } catch {
-    // Analytics failure must not abort the clear operation
+        ]
+      );
+    } catch {
+      // Analytics failure must not abort the clear operation
+    }
   }
 
   user.wishlist = [];
@@ -212,6 +243,17 @@ export const checkWishlistStatus = handleAsyncError(async (req, res, next) => {
   const userId = req.user.id;
 
   if (!productId) return next(new HandleError("Product ID is required", 400));
+
+  // Check cache first — the wishlist cache already has all items so we can
+  // derive status from it without an extra DB query when cache is warm.
+  const cacheKey = `wishlist_${userId}`;
+  const cached = await getCache(cacheKey);
+  if (cached) {
+    const isInWishlist = cached.wishlist?.some(
+      item => (item.product?._id || item.product)?.toString() === productId
+    ) || false;
+    return res.status(200).json({ success: true, isInWishlist, productId });
+  }
 
   const user = await User.findById(userId).select('wishlist').lean();
   if (!user) return next(new HandleError("User not found", 404));

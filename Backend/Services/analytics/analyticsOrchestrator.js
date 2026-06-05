@@ -319,8 +319,24 @@ export const fireAnalyticsEvent = async (eventType, data, options = {}, override
  * @param {Object} req       - Express request
  * @param {Object} overrides - Controller-built analytics values that win over req
  */
+
+
+// analyticsOrchestrator.js
+
 export const firePurchaseEvent = (order, user, req, overrides = {}) =>
-  fireAnalyticsEvent(ANALYTICS_EVENTS.PURCHASE, { order, user, req }, {}, overrides);
+  fireAnalyticsEvent(
+    ANALYTICS_EVENTS.PURCHASE,
+    { order, user, req },
+    // Fast path handles immediate GA4 + Meta dispatch.
+    // Queue is disabled for purchase — the fast path is synchronous and
+    // awaited in verifyPaymentController, so if it fails the controller
+    // already has error context. A queued retry would send a duplicate
+    // CAPI Purchase to Meta with the same event_id, which Meta deduplicates
+    // but still counts as an unnecessary API call and pollutes the
+    // Events Manager test events view.
+    { fastPath: true, queue: false },
+    overrides
+  );
 
 /**
  * fireCheckoutStartEvent
