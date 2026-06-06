@@ -9,8 +9,8 @@ import { deleteCachePattern } from '../utils/redis.js';
 import { syncCustomerAnalytics } from '../Services/customer-analytics-service.js';
 import { stitchIdentityFromRequest } from '../middleware/identityMiddleware.js';
 import { invalidateSession } from '../middleware/sessionMiddleware.js';
-// [FIX] Import analytics wrapper so CompleteRegistration fires on email verification
 import { fireSignUpEvent } from '../Services/analytics/analyticsOrchestrator.js';
+ import Address from '../models/address-model.js';
 
 const invalidateCaches = async () => {
   try {
@@ -29,9 +29,19 @@ const USER_LIST_SELECT = 'firstName lastName email role avatar.url authProvider 
 // ============================================
 // REGISTER NEW USER (WITH EMAIL VERIFICATION)
 // ============================================
+// Replace the existing registerUser export in userController.js with this block.
+// The only change vs the previous version is the Address model import at the top
+// of the file and the address-creation block at the end of this handler.
+//
+// Add this import alongside the others at the top of userController.js:
+//  
 
 export const registerUser = handleAsyncError(async (req, res, next) => {
-  const { firstName, lastName, email, password, phone, dateOfBirth, gender } = req.body;
+  const {
+    firstName, lastName, email, password,
+    phone, dateOfBirth, gender,
+    shippingAddress,          // optional: { address, city, state, country, pinCode, isDefault }
+  } = req.body;
 
   const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
@@ -51,8 +61,52 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
     dateOfBirth,
     gender,
     authProvider: 'local',
-    emailVerified: false
+    emailVerified: false,
   });
+
+  // ── Persist shipping address to the Address model if supplied ───────────────
+  // We do this fire-and-forget style after user creation so that a failure here
+  // never prevents the verification email from being sent.
+  // Minimum required: address + country + state (city and pinCode are optional
+  // because some countries don't use them).
+  if (shippingAddress) {
+    const {
+      address:   addrLine,
+      city      = '',
+      state,
+      country,
+      pinCode   = '',
+      isDefault = false,
+    } = shippingAddress;
+
+    const hasMinFields =
+      typeof addrLine === 'string' && addrLine.trim().length >= 5 &&
+      typeof state    === 'string' && state.trim().length    >  0 &&
+      typeof country  === 'string' && country.trim().length  >  0;
+
+    if (hasMinFields) {
+      try {
+        await Address.create({
+          user:      user._id,
+          name:      user.fullName,
+          // Use the user's phone for the address record since the Address model
+          // requires a phoneNo field; the user just supplied it in step 2.
+          phoneNo:   phone,
+          address:   addrLine.trim(),
+          city:      city.trim(),
+          state:     state.trim(),
+          country:   country.trim(),
+          pinCode:   pinCode.trim(),
+          isDefault: Boolean(isDefault),
+        });
+      } catch (addrErr) {
+        // Address save failure is non-fatal — the user is still registered.
+        // Log for ops visibility but do not block the response.
+        console.error('[Register] Address save failed (non-fatal):', addrErr.message);
+      }
+    }
+  }
+  // ── End shipping address persistence ────────────────────────────────────────
 
   const verificationCode = user.generateVerificationCode();
   await user.save({ validateBeforeSave: false });
@@ -63,14 +117,14 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
       email:   user.email,
       subject: emailTemplate.subject,
       message: emailTemplate.text,
-      html:    emailTemplate.html
+      html:    emailTemplate.html,
     });
 
     res.status(201).json({
       success:           true,
       message:           `Verification code sent to ${user.email}. Please verify your email to complete registration.`,
       email:             user.email,
-      needsVerification: true
+      needsVerification: true,
     });
   } catch {
     await User.findByIdAndDelete(user._id);

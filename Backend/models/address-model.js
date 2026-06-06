@@ -35,10 +35,10 @@ const addressSchema = new mongoose.Schema({
   },
   city: {
     type: String,
-    required: [true, 'City is required'],
+    required: false,   // optional — some countries have no city subdivisions
     trim: true,
-    minlength: [2, 'City must be at least 2 characters'],
-    maxlength: [100, 'City cannot exceed 100 characters']
+    maxlength: [100, 'City cannot exceed 100 characters'],
+    default: ''
   },
   state: {
     type: String,
@@ -55,9 +55,10 @@ const addressSchema = new mongoose.Schema({
   },
   pinCode: {
     type: String,
-    required: [true, 'Postal code is required'],
+    required: false,   // optional — many countries (e.g. Nigeria) don't enforce postal codes
     trim: true,
-    maxlength: [20, 'Postal code cannot exceed 20 characters']
+    maxlength: [20, 'Postal code cannot exceed 20 characters'],
+    default: ''
   },
   isDefault: {
     type: Boolean,
