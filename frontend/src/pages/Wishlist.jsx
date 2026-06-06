@@ -1,27 +1,24 @@
-import React, { useEffect, useState } from 'react';
-import '../pageStyles/Wishlist.css';
-import PageTitle from '../components/PageTitle';
 import Navbar from '../components/Navbar';
 import Footer from '../components/footer';
 import Loader from '../components/Loader';
 import { useDispatch, useSelector } from 'react-redux';
-import {
-  getWishlist,
-  removeFromWishlist,
+import { 
+  getWishlist, 
+  removeFromWishlist, 
   clearWishlist,
   removeMessage,
-  removeErrors,
+  removeErrors 
 } from '../features/products/wishlistSlice';
 import { addItemsToCart } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
-import {
-  FiHeart,
-  FiTrash2,
-  FiShoppingCart,
+import { 
+  FiHeart, 
+  FiTrash2, 
+  FiShoppingCart, 
   FiX,
   FiStar,
-  FiPackage,
+  FiPackage
 } from 'react-icons/fi';
 
 function Wishlist() {
@@ -29,20 +26,9 @@ function Wishlist() {
   const navigate = useNavigate();
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-  // loading  → getWishlist (initial fetch only — don't use for action-level ops)
-  // actionLoading → clearWishlist
-  // itemLoading   → per-product add/remove/move
-  const {
-    items,
-    count,
-    loading,
-    actionLoading,
-    itemLoading,
-    error,
-    success,
-    message,
-  } = useSelector(state => state.wishlist);
-
+  const { items, count, loading, error, success, message } = useSelector(
+    state => state.wishlist
+  );
   const { isAuthenticated } = useSelector(state => state.user);
 
   useEffect(() => {
@@ -55,14 +41,20 @@ function Wishlist() {
 
   useEffect(() => {
     if (error) {
-      toast.error(error, { position: 'top-center', autoClose: 3000 });
+      toast.error(error, {
+        position: 'top-center',
+        autoClose: 3000
+      });
       dispatch(removeErrors());
     }
   }, [error, dispatch]);
 
   useEffect(() => {
     if (success && message) {
-      toast.success(message, { position: 'top-center', autoClose: 2000 });
+      toast.success(message, {
+        position: 'top-center',
+        autoClose: 2000
+      });
       dispatch(removeMessage());
     }
   }, [success, message, dispatch]);
@@ -72,31 +64,30 @@ function Wishlist() {
   const handleRemoveItem = async (productId) => {
     try {
       await dispatch(removeFromWishlist(productId)).unwrap();
-      // State is already patched in the slice; no full refetch needed.
-      // Only refetch if the server count and local count could diverge
-      // (e.g. a concurrent session added items). Optional — remove if
-      // the extra network call is undesirable.
-      // dispatch(getWishlist());
-    } catch (err) {
-      toast.error(err?.message || 'Failed to remove item', {
+      dispatch(getWishlist()); // Refresh list
+    } catch (error) {
+      toast.error(error.message || 'Failed to remove item', {
         position: 'top-center',
-        autoClose: 3000,
+        autoClose: 3000
       });
     }
   };
 
   const handleMoveToCart = async (productId) => {
     try {
-      // Fire both in parallel — cart add doesn't depend on wishlist remove
-      await Promise.all([
-        dispatch(addItemsToCart({ id: productId, quantity: 1 })).unwrap(),
-        dispatch(removeFromWishlist(productId)).unwrap(),
-      ]);
-      toast.success('Item moved to cart', { position: 'top-center', autoClose: 2000 });
-    } catch (err) {
-      toast.error(err?.message || 'Failed to move item', {
+      // Add to cart first
+      dispatch(addItemsToCart({ id: productId, quantity: 1 }));
+      // Then remove from wishlist
+      await dispatch(removeFromWishlist(productId)).unwrap();
+      toast.success('Item moved to cart', {
         position: 'top-center',
-        autoClose: 3000,
+        autoClose: 2000
+      });
+      dispatch(getWishlist()); // Refresh list
+    } catch (error) {
+      toast.error(error.message || 'Failed to move item', {
+        position: 'top-center',
+        autoClose: 3000
       });
     }
   };
@@ -105,59 +96,52 @@ function Wishlist() {
     try {
       await dispatch(clearWishlist()).unwrap();
       setShowClearConfirm(false);
-      // State is reset in the slice (items: [], count: 0)
-    } catch (err) {
-      toast.error(err?.message || 'Failed to clear wishlist', {
+      dispatch(getWishlist()); // Refresh list
+    } catch (error) {
+      toast.error(error.message || 'Failed to clear wishlist', {
         position: 'top-center',
-        autoClose: 3000,
+        autoClose: 3000
       });
     }
   };
 
-  // ==================== HELPERS ====================
+  // ==================== HELPER FUNCTIONS ====================
 
-  const formatPrice = (amount) =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2,
-    }).format(amount);
+  const formatPrice = (amount) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',        // ← USD
+    minimumFractionDigits: 2
+  }).format(amount);
+};
 
-  const getProductPrice = (product) =>
-    product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  const getProductPrice = (product) => {
+    return product.pricing?.sale || product.pricing?.regular || product.price || 0;
+  };
 
   const getOriginalPrice = (product) => {
-    if (product.pricing?.sale && product.pricing?.regular) return product.pricing.regular;
+    if (product.pricing?.sale && product.pricing?.regular) {
+      return product.pricing.regular;
+    }
     return null;
   };
 
   const getDiscountPercentage = (product) => {
     const regular = product.pricing?.regular || product.price;
     const sale = product.pricing?.sale;
-    if (sale && regular > sale) return Math.round(((regular - sale) / regular) * 100);
+    if (sale && regular > sale) {
+      return Math.round(((regular - sale) / regular) * 100);
+    }
     return 0;
   };
 
-  const getStockStatus = (product) =>
-    product.inventory?.stock ?? product.stock ?? 0;
+  const getStockStatus = (product) => {
+    const stock = product.inventory?.stock ?? product.stock ?? 0;
+    return stock;
+  };
 
-  // ── Full-page loader only on the initial data fetch ───────────────────────
-  // BUG WAS HERE: the old code used `if (loading) return <Loader />;` which
-  // re-triggered on every getWishlist() dispatch inside action handlers,
-  // hiding the entire page mid-interaction. Now only shown when items haven't
-  // loaded yet (first mount).
-  if (loading && items.length === 0) {
-    return (
-      <>
-        <PageTitle title="My Wishlist" />
-        <Navbar />
-        {/* Inline snake loader — does not hide the entire page */}
-        <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-          <Loader type="snake" size="md" />
-        </div>
-        <Footer />
-      </>
-    );
+  if (loading) {
+    return <Loader />;
   }
 
   // ==================== RENDER ====================
@@ -181,86 +165,74 @@ function Wishlist() {
           </div>
 
           {count > 0 && (
-            <button
+            <button 
               className="clear-all-btn"
               onClick={() => setShowClearConfirm(true)}
-              disabled={actionLoading}
             >
-              {actionLoading ? (
-                <Loader type="snake" size="sm" />
-              ) : (
-                <><FiTrash2 /> Clear All</>
-              )}
+              <FiTrash2 /> Clear All
             </button>
           )}
         </div>
 
         {/* Content */}
         {count === 0 ? (
+          // Empty State
           <div className="wishlist-empty">
             <FiHeart className="empty-icon" />
             <h2>Your wishlist is empty</h2>
             <p>Save your favorite items here for later</p>
-            <button className="shop-now-btn" onClick={() => navigate('/products')}>
+            <button 
+              className="shop-now-btn"
+              onClick={() => navigate('/products')}
+            >
               Start Shopping
             </button>
           </div>
         ) : (
+          // Wishlist Items
           <div className="wishlist-items">
             {items.map((item) => {
-              // Guard: item.product can be a plain id string (after optimisticAdd
-              // from a non-populated source) or a full populated object.
               const product = item.product;
-              if (!product || typeof product !== 'object') return null;
-
               const price = getProductPrice(product);
               const originalPrice = getOriginalPrice(product);
               const discount = getDiscountPercentage(product);
               const stock = getStockStatus(product);
               const image = product.images?.[0]?.url || '/placeholder-product.png';
-              const productId = product._id;
-              const isItemLoading = itemLoading[productId] || false;
 
               return (
-                <div key={productId} className={`wishlist-item${isItemLoading ? ' wishlist-item--loading' : ''}`}>
+                <div key={product._id} className="wishlist-item">
                   {/* Image */}
                   <div className="wishlist-item-image-wrapper">
-                    <img
-                      src={image}
+                    <img 
+                      src={image} 
                       alt={product.name}
                       className="wishlist-item-image"
-                      onClick={() =>
-                        navigate(
-                          product.slug ? `/products/${product.slug}` : `/product/${productId}`
-                        )
-                      }
+                      onClick={() => navigate(`/product/${product._id}`)}
                     />
                     {discount > 0 && (
-                      <span className="wishlist-discount-badge">-{discount}%</span>
+                      <span className="wishlist-discount-badge">
+                        -{discount}%
+                      </span>
                     )}
                   </div>
 
                   {/* Info */}
                   <div className="wishlist-item-info">
-                    <h3
+                    <h3 
                       className="wishlist-item-name"
-                      onClick={() =>
-                        navigate(
-                          product.slug ? `/products/${product.slug}` : `/product/${productId}`
-                        )
-                      }
+                      onClick={() => navigate(product.slug ? `/products/${product.slug}` : `/product/${product._id}`)}
                     >
                       {product.name}
                     </h3>
-
-                    {product.category && (
-                      <p className="wishlist-item-category">{product.category}</p>
-                    )}
+                    
+                    <p className="wishlist-item-category">
+                      {product.category}
+                    </p>
 
                     <div className="wishlist-item-rating">
                       <div className="wishlist-stars">
                         {[...Array(5)].map((_, i) => (
-                          <FiStar
+                          <FiStar 
                             key={i}
                             className={i < Math.floor(product.ratings || 0) ? 'filled' : ''}
                           />
@@ -272,7 +244,9 @@ function Wishlist() {
                     </div>
 
                     <div className="wishlist-item-price">
-                      <span className="wishlist-price-current">{formatPrice(price)}</span>
+                      <span className="wishlist-price-current">
+                        {formatPrice(price)}
+                      </span>
                       {originalPrice && (
                         <span className="wishlist-price-original">
                           {formatPrice(originalPrice)}
@@ -292,33 +266,23 @@ function Wishlist() {
                   {/* Actions */}
                   <div className="wishlist-item-actions">
                     {stock > 0 ? (
-                      <button
+                      <button 
                         className="move-to-cart-btn"
-                        onClick={() => handleMoveToCart(productId)}
-                        disabled={isItemLoading}
+                        onClick={() => handleMoveToCart(product._id)}
                       >
-                        {isItemLoading ? (
-                          <Loader type="snake" size="sm" />
-                        ) : (
-                          <><FiShoppingCart /> Move to Cart</>
-                        )}
+                        <FiShoppingCart /> Move to Cart
                       </button>
                     ) : (
                       <button className="out-of-stock-btn" disabled>
                         <FiPackage /> Out of Stock
                       </button>
                     )}
-
-                    <button
+                    
+                    <button 
                       className="remove-item-btn"
-                      onClick={() => handleRemoveItem(productId)}
-                      disabled={isItemLoading}
+                      onClick={() => handleRemoveItem(product._id)}
                     >
-                      {isItemLoading ? (
-                        <Loader type="snake" size="sm" />
-                      ) : (
-                        <><FiTrash2 /> Remove</>
-                      )}
+                      <FiTrash2 /> Remove
                     </button>
                   </div>
                 </div>
@@ -332,7 +296,7 @@ function Wishlist() {
       {showClearConfirm && (
         <div className="modal-overlay" onClick={() => setShowClearConfirm(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <button
+            <button 
               className="modal-close"
               onClick={() => setShowClearConfirm(false)}
             >
@@ -341,19 +305,17 @@ function Wishlist() {
             <h3>Clear Wishlist?</h3>
             <p>Are you sure you want to remove all items from your wishlist?</p>
             <div className="modal-actions">
-              <button
+              <button 
                 className="modal-btn cancel"
                 onClick={() => setShowClearConfirm(false)}
-                disabled={actionLoading}
               >
                 Cancel
               </button>
-              <button
+              <button 
                 className="modal-btn confirm"
                 onClick={handleClearAll}
-                disabled={actionLoading}
               >
-                {actionLoading ? 'Clearing...' : 'Clear All'}
+                Clear All
               </button>
             </div>
           </div>

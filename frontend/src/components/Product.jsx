@@ -1,358 +1,300 @@
-import React, { useEffect, useState } from 'react';
-import '../pageStyles/Products.css';
-import PageTitle from '../components/PageTitle';
-import Navbar from '../components/Navbar';
-import Footer from '../components/footer';
-import Product from '../components/Product';
-import ProductSkeleton from '../components/ProductSkeleton';
+import { useState, useCallback } from 'react';
+import '../componentStyles/Product.css';
+import { Link, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { getProduct, removeErrors } from '../features/products/productSlice';
-import { getWishlist } from '../features/products/wishlistSlice';
+import { addToWishlist, removeFromWishlist, getWishlist } from '../features/products/wishlistSlice';
+import { trackWishlistAnalytics } from '../features/products/productSlice';
+import { addItemsToCart } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
-import { useLocation, useNavigate } from 'react-router-dom';
-import {
-    FiGrid, FiList, FiFilter, FiX,
-    FiPackage
-} from 'react-icons/fi';
-import { addItemsToCart, removeMessage } from '../features/cart/cartSlice';
+import { FiEye, FiShoppingCart } from 'react-icons/fi';
+import { FaHeart, FaRegHeart } from 'react-icons/fa';
 
-// Number of skeleton cards to render while loading.
-// Matches a typical page of results so the layout doesn't jump.
-const SKELETON_COUNT = 8;
+// ── Pure helpers (outside component — no re-creation on render) ───────────────
 
-function Products() {
-    const { loading, error, products, productCount, totalPages } = useSelector(state => state.product);
-    const { success: cartSuccess, message: cartMessage } = useSelector(state => state.cart);
-    const { isAuthenticated } = useSelector(state => state.user);
+const formatPrice = (amount, currency = 'USD') =>
+  new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: ['USD', 'EUR', 'GBP', 'NGN'].includes(currency) ? currency : 'USD',
+    minimumFractionDigits: 2,
+  }).format(amount);
 
-    const dispatch = useDispatch();
-    const location = useLocation();
-    const navigate = useNavigate();
+const getPrimaryImage = (product) => {
+  const arr = product.images || product.image || [];
+  const primary = arr.find((img) => img.isPrimary) || arr[0];
+  return {
+    url: primary?.url || '/placeholder-product.png',
+    // Model stores dedicated alt per image for SEO/accessibility
+    alt: primary?.alt || product.name,
+  };
+};
 
-    const searchParams = new URLSearchParams(location.search);
-    const keyword = searchParams.get('keyword');
-    const pageFromURL = parseInt(searchParams.get('page'), 10) || 1;
-    const categoryFromURL = searchParams.get('category');
+const getStock = (product) => product.inventory?.stock ?? product.stock ?? 0;
 
-    const [currentPage, setCurrentPage] = useState(pageFromURL);
-    const [viewMode, setViewMode] = useState('grid');
-    const [selectedCategory, setSelectedCategory] = useState(categoryFromURL || '');
-    const [sortBy, setSortBy] = useState('newest');
-    const [priceRange, setPriceRange] = useState({ min: '', max: '' });
-    const [showFilters, setShowFilters] = useState(false);
+// Use model's isOnSale flag as source of truth; fall back to price comparison
+const resolveSalePrice = (product) => {
+  if (product.isOnSale && product.pricing?.sale != null) return product.pricing.sale;
+  const regular = product.pricing?.regular || product.price || 0;
+  const sale = product.pricing?.sale;
+  return sale != null && sale < regular ? sale : null;
+};
 
-    const categories = [
-        { id: 'all', name: 'All Products', icon: <FiPackage /> },
-        { id: 'Electronics', name: 'Electronics', icon: <FiPackage /> },
-        { id: 'Clothing & Apparel', name: 'Clothing & Apparel', icon: <FiPackage /> },
-        { id: 'Home & Living', name: 'Home & Living', icon: <FiPackage /> },
-        { id: 'Sports & Outdoors', name: 'Sports & Outdoors', icon: <FiPackage /> },
-        { id: 'Beauty & Personal Care', name: 'Beauty & Personal Care', icon: <FiPackage /> },
-        { id: 'Books & Media', name: 'Books & Media', icon: <FiPackage /> },
-        { id: 'Food & Beverages', name: 'Food & Beverages', icon: <FiPackage /> }
-    ];
+const getDiscountPct = (regular, sale) =>
+  sale && regular > sale ? Math.round(((regular - sale) / regular) * 100) : 0;
 
-    const sortOptions = [
-        { value: 'newest', label: 'Newest First' },
-        { value: 'price-low', label: 'Price: Low to High' },
-        { value: 'price-high', label: 'Price: High to Low' },
-        { value: 'rating', label: 'Highest Rated' },
-        { value: 'popular', label: 'Most Popular' }
-    ];
+// Respects model's inventory.status values: InStock | LowStock | OutOfStock | Discontinued
+const resolveStockState = (product) => {
+  const status = product.inventory?.status;
+  if (status === 'Discontinued') return 'discontinued';
+  if (status === 'OutOfStock' || getStock(product) === 0) return 'out';
+  if (status === 'LowStock') return 'low';
+  return 'in';
+};
 
-    useEffect(() => {
-        dispatch(getProduct({ keyword, page: currentPage, category: selectedCategory }));
-    }, [dispatch, keyword, currentPage, selectedCategory]);
+// ── Component ─────────────────────────────────────────────────────────────────
 
-    // FIX: Fetch wishlist so Product card heart icons reflect correct state.
-    // Previously missing — hearts always appeared empty on the product listing
-    // page because the Redux wishlist.items array was never populated here.
-    useEffect(() => {
-        if (isAuthenticated) {
-            dispatch(getWishlist());
-        }
-    }, [dispatch, isAuthenticated]);
+function Product({
+  product,
+  hideNewBadge = false,
+  onQuickAdd,
+  showQuickActions = true,
+}) {
+  const dispatch = useDispatch();
+  const navigate = useNavigate();
 
-    useEffect(() => {
-        if (error) {
-            toast.error(error.message || error, { position: 'top-center', autoClose: 3000 });
-            dispatch(removeErrors());
-        }
-    }, [dispatch, error]);
+  // All hooks unconditional — Rules of Hooks requires no hooks after early returns
+  const [isHovered, setIsHovered] = useState(false);
+  const [cartLoading, setCartLoading] = useState(false);
 
-    useEffect(() => {
-        if (cartSuccess) {
-            toast.success(cartMessage, { position: 'top-center', autoClose: 2000 });
-            dispatch(removeMessage());
-        }
-    }, [cartSuccess, cartMessage, dispatch]);
+  const { items: wishlistItems, itemLoading } = useSelector((s) => s.wishlist);
+  const { isAuthenticated } = useSelector((s) => s.user);
 
-    const handleCategoryClick = (category) => {
-        const catId = category === 'all' ? '' : category;
-        setSelectedCategory(catId);
-        setCurrentPage(1);
+  // ── Derived values above handlers so closures capture current values ──────
+  // Optional-chain safely when product is null (early return is below hooks)
+  const currency    = product?.pricing?.currency || 'USD';
+  const regular     = product?.pricing?.regular || product?.price || 0;
+  const salePrice   = product ? resolveSalePrice(product) : null;
+  const discount    = getDiscountPct(regular, salePrice);
+  const primaryImg  = product ? getPrimaryImage(product) : { url: '/placeholder-product.png', alt: '' };
+  const stockState  = product ? resolveStockState(product) : 'out';
+  const stock       = product ? getStock(product) : 0;
+  const isAddable   = stockState === 'in' || stockState === 'low';
 
-        const newSearchParams = new URLSearchParams(location.search);
-        if (catId) {
-            newSearchParams.set('category', catId);
-        } else {
-            newSearchParams.delete('category');
-        }
-        newSearchParams.delete('page');
-        navigate(`?${newSearchParams.toString()}`);
-    };
+  const productUrl = product?.slug
+    ? `/products/${product.slug}`
+    : `/product/${product?._id}`;
 
-    const handlePageChange = (page) => {
-        if (page !== currentPage) {
-            setCurrentPage(page);
-            const newSearchParams = new URLSearchParams(location.search);
-            if (page === 1) {
-                newSearchParams.delete('page');
-            } else {
-                newSearchParams.set('page', page);
-            }
-            navigate(`?${newSearchParams.toString()}`);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-    };
+  const isInWishlist  = wishlistItems.some((item) => {
+    const wid = item.product?._id || item.product;
+    return wid === product?._id;
+  });
+  const isWishlistBusy = itemLoading[product?._id] || false;
 
-    const getProductPrice = (product) =>
-        product.pricing?.regular || product.price || 0;
+  const stockLabel = {
+    in:           'In Stock',
+    low:          `Only ${stock} left`,
+    out:          'Out of Stock',
+    discontinued: 'Discontinued',
+  }[stockState];
 
-    const handleQuickAdd = (productId) => {
-        dispatch(addItemsToCart({ id: productId, quantity: 1 }));
-    };
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleWishlistToggle = useCallback(async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-    const getSortedProducts = () => {
-        if (!products || products.length === 0) return [];
+    if (!isAuthenticated) {
+      toast.info('Please login to add items to wishlist', { position: 'top-center', autoClose: 2000 });
+      navigate('/login');
+      return;
+    }
 
-        let sorted = [...products];
+    try {
+      if (isInWishlist) {
+        await dispatch(removeFromWishlist(product._id)).unwrap();
+        toast.success('Removed from wishlist', { position: 'top-center', autoClose: 2000 });
+      } else {
+        await dispatch(addToWishlist(product._id)).unwrap();
+        toast.success('Added to wishlist', { position: 'top-center', autoClose: 2000 });
+      }
+      dispatch(getWishlist());
+      // Fire analytics after wishlist state is confirmed — maps to incrementWishlist on the model
+      dispatch(trackWishlistAnalytics({ id: product._id, increment: !isInWishlist }));
+    } catch (err) {
+      toast.error(err?.message || 'Something went wrong', { position: 'top-center', autoClose: 3000 });
+    }
+  }, [isAuthenticated, isInWishlist, product, dispatch, navigate]);
 
-        switch (sortBy) {
-            case 'price-low':
-                sorted.sort((a, b) => getProductPrice(a) - getProductPrice(b));
-                break;
-            case 'price-high':
-                sorted.sort((a, b) => getProductPrice(b) - getProductPrice(a));
-                break;
-            case 'rating':
-                sorted.sort((a, b) => (b.ratings || 0) - (a.ratings || 0));
-                break;
-            case 'popular':
-                sorted.sort((a, b) => (b.analytics?.purchases || 0) - (a.analytics?.purchases || 0));
-                break;
-            default:
-                sorted.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        }
+  const handleQuickAdd = useCallback(async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-        return sorted;
-    };
+    if (!isAddable) {
+      toast.error('This product is unavailable', { position: 'top-center', autoClose: 2000 });
+      return;
+    }
 
-    const sortedProducts = getSortedProducts();
+    if (onQuickAdd) {
+      onQuickAdd(product._id);
+      return;
+    }
 
-    return (
-        <>
-            <PageTitle title={keyword ? `Search: ${keyword}` : 'All Products'} />
-            <Navbar />
+    try {
+      setCartLoading(true);
+      await dispatch(addItemsToCart({ id: product._id, quantity: 1 })).unwrap();
+      toast.success('Added to cart', { position: 'top-center', autoClose: 2000 });
+    } catch (err) {
+      toast.error(err?.message || 'Could not add to cart', {
+        position: 'top-center',
+        autoClose: 3000,
+      });
+    } finally {
+      setCartLoading(false);
+    }
+  }, [isAddable, onQuickAdd, product, dispatch]);
 
-            <div className="ep-container">
-                <div className="ep-header">
-                    <div className="ep-header-content">
-                        <h1 className="ep-title">
-                            {keyword ? `Search Results for "${keyword}"` : 'Our Products'}
-                        </h1>
-                        {/* Hide count while loading so it doesn't flash "0 products found" */}
-                        {!loading && (
-                            <p className="ep-subtitle">
-                                {productCount} {productCount === 1 ? 'product' : 'products'} found
-                            </p>
-                        )}
-                    </div>
-                </div>
+  // ── Early return after all hooks — Rules of Hooks compliant ──────────────
+  if (!product) return null;
 
-                <div className="ep-content">
-                    <aside className={`ep-sidebar ${showFilters ? 'show' : ''}`}>
-                        <div className="ep-sidebar-header">
-                            <h3 className="ep-sidebar-title">
-                                <FiFilter /> Filters
-                            </h3>
-                            <button
-                                className="ep-sidebar-close"
-                                onClick={() => setShowFilters(false)}
-                            >
-                                <FiX />
-                            </button>
-                        </div>
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <Link to={productUrl} className="pc-link" aria-label={`View ${product.name}`}>
+      <article
+        className={`pc-card ${isHovered ? 'pc-card--hovered' : ''}`}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        {/* ── Image ── */}
+        <div className="pc-image-wrap">
+          <img
+            src={primaryImg.url}
+            alt={primaryImg.alt}
+            className="pc-image"
+            loading="lazy"
+            decoding="async"
+          />
 
-                        <div className="ep-filter-section">
-                            <h4 className="ep-filter-title">Categories</h4>
-                            <div className="ep-category-list">
-                                {categories.map(cat => (
-                                    <button
-                                        key={cat.id}
-                                        className={`ep-category-btn ${selectedCategory === (cat.id === 'all' ? '' : cat.id) ? 'active' : ''}`}
-                                        onClick={() => handleCategoryClick(cat.id)}
-                                    >
-                                        {cat.icon}
-                                        <span>{cat.name}</span>
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-
-                        <div className="ep-filter-section">
-                            <h4 className="ep-filter-title">Price Range</h4>
-                            <div className="ep-price-inputs">
-                                <input
-                                    type="number"
-                                    className="ep-price-input"
-                                    placeholder="Min"
-                                    value={priceRange.min}
-                                    onChange={(e) => setPriceRange({ ...priceRange, min: e.target.value })}
-                                />
-                                <span className="ep-price-separator">-</span>
-                                <input
-                                    type="number"
-                                    className="ep-price-input"
-                                    placeholder="Max"
-                                    value={priceRange.max}
-                                    onChange={(e) => setPriceRange({ ...priceRange, max: e.target.value })}
-                                />
-                            </div>
-                        </div>
-
-                        <button
-                            className="ep-clear-filters"
-                            onClick={() => {
-                                setSelectedCategory('');
-                                setPriceRange({ min: '', max: '' });
-                                handleCategoryClick('all');
-                            }}
-                        >
-                            Clear All Filters
-                        </button>
-                    </aside>
-
-                    <div className="ep-main">
-                        <div className="ep-toolbar">
-                            <button
-                                className="ep-filter-toggle"
-                                onClick={() => setShowFilters(!showFilters)}
-                            >
-                                <FiFilter /> Filters
-                            </button>
-
-                            <div className="ep-toolbar-right">
-                                <select
-                                    className="ep-sort-select"
-                                    value={sortBy}
-                                    onChange={(e) => setSortBy(e.target.value)}
-                                    disabled={loading}
-                                >
-                                    {sortOptions.map(option => (
-                                        <option key={option.value} value={option.value}>
-                                            {option.label}
-                                        </option>
-                                    ))}
-                                </select>
-
-                                <div className="ep-view-toggle">
-                                    <button
-                                        className={`ep-view-btn ${viewMode === 'grid' ? 'active' : ''}`}
-                                        onClick={() => setViewMode('grid')}
-                                    >
-                                        <FiGrid />
-                                    </button>
-                                    <button
-                                        className={`ep-view-btn ${viewMode === 'list' ? 'active' : ''}`}
-                                        onClick={() => setViewMode('list')}
-                                    >
-                                        <FiList />
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* ── Skeleton while loading ── */}
-                        {loading ? (
-                            <div className="ep-products grid">
-                                {[...Array(SKELETON_COUNT)].map((_, i) => (
-                                    <ProductSkeleton key={i} />
-                                ))}
-                            </div>
-                        ) : sortedProducts.length > 0 ? (
-                            <div className={`ep-products ${viewMode}`}>
-                                {sortedProducts.map((product) => (
-                                    <Product
-                                        key={product._id}
-                                        product={product}
-                                        hideNewBadge={false}
-                                        onQuickAdd={handleQuickAdd}
-                                        showQuickActions={true}
-                                    />
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="ep-empty-state">
-                                <FiPackage className="ep-empty-icon" />
-                                <h3>No Products Found</h3>
-                                <p>
-                                    {keyword
-                                        ? `No products match your search for "${keyword}"`
-                                        : 'No products available in this category'
-                                    }
-                                </p>
-                            </div>
-                        )}
-
-                        {!loading && totalPages > 1 && (
-                            <div className="ep-pagination">
-                                <button
-                                    className="ep-page-btn"
-                                    onClick={() => handlePageChange(currentPage - 1)}
-                                    disabled={currentPage === 1}
-                                >
-                                    Previous
-                                </button>
-
-                                <div className="ep-page-numbers">
-                                    {[...Array(totalPages)].map((_, index) => {
-                                        const page = index + 1;
-                                        return (
-                                            <button
-                                                key={page}
-                                                className={`ep-page-number ${currentPage === page ? 'active' : ''}`}
-                                                onClick={() => handlePageChange(page)}
-                                            >
-                                                {page}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-
-                                <button
-                                    className="ep-page-btn"
-                                    onClick={() => handlePageChange(currentPage + 1)}
-                                    disabled={currentPage === totalPages}
-                                >
-                                    Next
-                                </button>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {showFilters && (
-                <div
-                    className="ep-sidebar-overlay"
-                    onClick={() => setShowFilters(false)}
-                />
+          {/* Badges */}
+          <div className="pc-badges" aria-label="Product labels">
+            {discount > 0 && (
+              <span className="pc-badge pc-badge--discount">−{discount}%</span>
             )}
+            {product.isNewArrival && !hideNewBadge && (
+              <span className="pc-badge pc-badge--new">New</span>
+            )}
+            {product.isFeatured && (
+              <span className="pc-badge pc-badge--featured">Featured</span>
+            )}
+            {product.isBestseller && (
+              <span className="pc-badge pc-badge--bestseller">Bestseller</span>
+            )}
+            {stockState === 'out' && (
+              <span className="pc-badge pc-badge--soldout">Sold Out</span>
+            )}
+            {stockState === 'discontinued' && (
+              <span className="pc-badge pc-badge--discontinued">Discontinued</span>
+            )}
+          </div>
 
-            <Footer />
-        </>
-    );
+          {/* Quick actions overlay */}
+          {showQuickActions && (
+            <div
+              className={`pc-actions ${isHovered ? 'pc-actions--visible' : ''}`}
+              role="group"
+              aria-label="Quick actions"
+            >
+              <button
+                className="pc-action-btn"
+                onClick={(e) => { e.preventDefault(); navigate(productUrl); }}
+                title="View Details"
+                aria-label="View product details"
+              >
+                <FiEye aria-hidden="true" />
+              </button>
+
+              <button
+                className={`pc-action-btn pc-action-btn--wish ${isInWishlist ? 'pc-action-btn--wish-active' : ''}`}
+                onClick={handleWishlistToggle}
+                disabled={isWishlistBusy}
+                title={isInWishlist ? 'Remove from wishlist' : 'Save to wishlist'}
+                aria-label={isInWishlist ? 'Remove from wishlist' : 'Save to wishlist'}
+                aria-pressed={isInWishlist}
+              >
+                {isInWishlist ? (
+                  <FaHeart aria-hidden="true" />
+                ) : (
+                  <FaRegHeart aria-hidden="true" />
+                )}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* ── Info ── */}
+        <div className="pc-info">
+          {/* Brand + Category */}
+          <div className="pc-meta">
+            {product.brand && <span className="pc-brand">{product.brand}</span>}
+            <span className="pc-category">{product.category}</span>
+          </div>
+
+          {/* Name */}
+          <h3 className="pc-name">{product.name}</h3>
+
+          {/* Rating — Number() guards against NaN from undefined/null ratings */}
+          <div className="pc-rating" aria-label={`Rated ${product.ratings || 0} out of 5`}>
+            <div className="pc-stars" aria-hidden="true">
+              {[...Array(5)].map((_, i) => (
+                <span
+                  key={i}
+                  className={`pc-star ${i < Math.floor(Number(product.ratings) || 0) ? 'pc-star--filled' : ''}`}
+                >
+                  ★
+                </span>
+              ))}
+            </div>
+            <span className="pc-review-count">({product.numOfReviews || 0})</span>
+          </div>
+
+          {/* Price — reads currency from model's pricing.currency enum */}
+          <div className="pc-price">
+            {salePrice != null ? (
+              <>
+                <span className="pc-price-sale">{formatPrice(salePrice, currency)}</span>
+                <span className="pc-price-regular">{formatPrice(regular, currency)}</span>
+              </>
+            ) : (
+              <span className="pc-price-current">{formatPrice(regular, currency)}</span>
+            )}
+          </div>
+
+          {/* Footer: stock status + add to cart */}
+          <div className="pc-footer">
+            <span className={`pc-stock pc-stock--${stockState}`} aria-live="polite">
+              {stockState === 'low' && <span className="pc-stock-dot" aria-hidden="true" />}
+              {stockLabel}
+            </span>
+
+            {isAddable && (
+              <button
+                className={`pc-cart-btn ${cartLoading ? 'pc-cart-btn--loading' : ''}`}
+                onClick={handleQuickAdd}
+                disabled={cartLoading}
+                aria-label={`Add ${product.name} to cart`}
+              >
+                {cartLoading ? (
+                  <span className="pc-spinner" aria-hidden="true" />
+                ) : (
+                  <>
+                    <FiShoppingCart aria-hidden="true" />
+                    <span>Add</span>
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      </article>
+    </Link>
+  );
 }
 
-export default Products;
+export default Product;
