@@ -2163,3 +2163,136 @@
     .rp-icon-wrap svg { width: 20px; height: 20px; }
     .up-icon-wrap svg { width: 18px; height: 18px; }
 }
+
+
+
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   REGISTER STEP 3 — react-select dark-card overrides
+   Append these rules to the bottom of Register.css
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* The react-select menu is portalled to <body>, so we scope it with a
+   high z-index class added via menuPortalTarget. The menu/option styles
+   are already handled inline via buildRegSelectStyles(), but we add a
+   global body-level dark scroll-bar for the menu list. */
+body .reg-rs__menu {
+    background-color: #1e1e1e !important;
+}
+
+/* ── Optional tag (e.g. "City (optional)") ── */
+.reg-optional-tag {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--reg-text-muted-dark);
+    letter-spacing: 0.04em;
+    margin-left: 4px;
+    text-transform: none;
+}
+
+/* ── Checkbox label (Set as default shipping address) ── */
+.reg-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+    padding: 10px 14px;
+    border-radius: var(--reg-radius-md);
+    border: 1px solid rgba(29, 158, 117, 0.2);
+    background: rgba(29, 158, 117, 0.05);
+    transition: background var(--reg-transition), border-color var(--reg-transition);
+}
+
+.reg-checkbox-label:hover {
+    background: rgba(29, 158, 117, 0.09);
+    border-color: rgba(29, 158, 117, 0.35);
+}
+
+.reg-checkbox-label span {
+    font-size: 13px;
+    font-family: var(--reg-font);
+    font-weight: 500;
+    color: rgba(93, 202, 165, 0.85);
+    line-height: 1.4;
+}
+
+.reg-checkbox {
+    /* Hide native checkbox — replaced by custom styled version */
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    min-width: 18px;
+    border: 1.5px solid rgba(29, 158, 117, 0.45);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    position: relative;
+    transition:
+        background var(--reg-transition),
+        border-color var(--reg-transition),
+        box-shadow var(--reg-transition);
+}
+
+.reg-checkbox:checked {
+    background: var(--reg-success);
+    border-color: var(--reg-success);
+    box-shadow: 0 0 0 3px rgba(29, 158, 117, 0.18);
+}
+
+/* Checkmark via pseudo-element */
+.reg-checkbox:checked::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 5px;
+    width: 5px;
+    height: 9px;
+    border: 2px solid #fff;
+    border-top: none;
+    border-left: none;
+    transform: rotate(45deg);
+}
+
+.reg-checkbox:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(29, 158, 117, 0.25);
+}
+
+.reg-checkbox:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* ── react-select control when rendered inside .reg-form-card ──
+   The inline styles from buildRegSelectStyles() already handle most
+   theming; these rules are fallback overrides for any edge cases where
+   the library resets to defaults (e.g. server-side render mismatches). ── */
+.reg-form-card .react-select__control {
+    background: rgba(255, 255, 255, 0.055) !important;
+    border-color: rgba(255, 255, 255, 0.09) !important;
+    min-height: 48px !important;
+}
+
+.reg-form-card .react-select__single-value {
+    color: rgba(240, 239, 232, 0.92) !important;
+}
+
+.reg-form-card .react-select__placeholder {
+    color: rgba(255, 255, 255, 0.18) !important;
+}
+
+.reg-form-card .react-select__input-container {
+    color: rgba(240, 239, 232, 0.92) !important;
+}
+
+/* ── Responsive: collapse state + city to single column on mobile ── */
+@media (max-width: 540px) {
+    /* The reg-row already collapses to 1fr on mobile for step 1;
+       step 3 has the same grid so it inherits that rule automatically. */
+    .reg-checkbox-label {
+        padding: 10px 12px;
+    }
+}

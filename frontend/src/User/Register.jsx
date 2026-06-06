@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { useDispatch, useSelector } from 'react-redux';
 import { register, removeErrors, removeSuccess } from '../features/products/userSlice';
 import GoogleSignInButton from '../components/GoogleSignInButton';
 import FacebookSignInButton from '../components/FacebookSignInButton';
+import Select from 'react-select';
 import '../UserStyles/Register.css';
 
 const SPECIAL_RE = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/;
@@ -81,6 +82,123 @@ const SLIDES = [
     },
 ];
 
+// ─── CSC API ──────────────────────────────────────────────────────────────────
+const CSC_KEY     = import.meta.env.VITE_CSC_API_KEY || '';
+const CSC_HEADERS = { 'X-CSCAPI-KEY': CSC_KEY };
+
+// ─── React Select styles — dark card context ──────────────────────────────────
+const buildRegSelectStyles = (hasError = false) => ({
+    control: (base, state) => ({
+        ...base,
+        minHeight: '48px',
+        borderColor: hasError
+            ? state.isFocused ? '#E24B4A' : 'rgba(226,75,74,0.6)'
+            : state.isFocused ? 'rgba(224,85,85,0.35)' : 'rgba(255,255,255,0.09)',
+        borderWidth: state.isFocused ? '1px' : '1.5px',
+        borderRadius: '12px',
+        boxShadow: state.isFocused
+            ? hasError
+                ? '0 0 0 3px rgba(226,75,74,0.10)'
+                : '0 0 0 2px rgba(224,85,85,0.08)'
+            : 'none',
+        backgroundColor: state.isFocused
+            ? 'rgba(224,85,85,0.03)'
+            : 'rgba(255,255,255,0.055)',
+        fontSize: '14px',
+        fontFamily: 'var(--reg-font)',
+        cursor: 'pointer',
+        transition: 'border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease',
+        '&:hover': {
+            borderColor: hasError ? 'rgba(226,75,74,0.6)' : 'rgba(255,255,255,0.16)',
+            backgroundColor: 'rgba(255,255,255,0.075)',
+        },
+    }),
+    option: (base, state) => ({
+        ...base,
+        fontSize: '13px',
+        fontFamily: 'var(--reg-font)',
+        fontWeight: state.isSelected ? 600 : 400,
+        backgroundColor: state.isSelected
+            ? 'rgba(224,85,85,0.18)'
+            : state.isFocused
+            ? 'rgba(255,255,255,0.07)'
+            : 'transparent',
+        color: state.isSelected ? '#fff' : 'rgba(240,239,232,0.85)',
+        cursor: 'pointer',
+        padding: '10px 14px',
+        borderRadius: '6px',
+    }),
+    placeholder: (base) => ({
+        ...base,
+        color: 'rgba(255,255,255,0.18)',
+        fontSize: '14px',
+        fontWeight: 400,
+        fontFamily: 'var(--reg-font)',
+    }),
+    singleValue: (base) => ({
+        ...base,
+        color: 'rgba(240,239,232,0.92)',
+        fontSize: '14px',
+        fontWeight: 500,
+        fontFamily: 'var(--reg-font)',
+    }),
+    input: (base) => ({
+        ...base,
+        color: 'rgba(240,239,232,0.92)',
+        fontFamily: 'var(--reg-font)',
+        fontSize: '14px',
+    }),
+    menu: (base) => ({
+        ...base,
+        backgroundColor: '#1e1e1e',
+        border: '1px solid rgba(255,255,255,0.09)',
+        borderRadius: '12px',
+        boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+        zIndex: 9999,
+        overflow: 'hidden',
+    }),
+    menuList: (base) => ({
+        ...base,
+        maxHeight: '200px',
+        padding: '4px',
+    }),
+    loadingMessage: (base) => ({ ...base, fontSize: '13px', color: 'rgba(240,239,232,0.4)', fontFamily: 'var(--reg-font)' }),
+    noOptionsMessage: (base) => ({ ...base, fontSize: '13px', color: 'rgba(240,239,232,0.4)', fontFamily: 'var(--reg-font)' }),
+    indicatorSeparator: () => ({ display: 'none' }),
+    dropdownIndicator: (base, state) => ({
+        ...base,
+        color: 'rgba(255,255,255,0.22)',
+        transition: 'transform 0.18s ease, color 0.18s ease',
+        transform: state.selectProps.menuIsOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+        padding: '0 10px 0 4px',
+        '&:hover': { color: 'rgba(255,255,255,0.5)' },
+    }),
+    clearIndicator: (base) => ({
+        ...base,
+        color: 'rgba(255,255,255,0.22)',
+        padding: '0 4px',
+        '&:hover': { color: 'rgba(255,255,255,0.5)' },
+    }),
+    valueContainer: (base) => ({
+        ...base,
+        padding: '0 14px',
+    }),
+});
+
+// ─── Format country option with flag ─────────────────────────────────────────
+const formatCountryOption = ({ label, flag }) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        {flag && (
+            <img
+                src={flag}
+                alt=""
+                style={{ width: '20px', height: '14px', objectFit: 'cover', borderRadius: '2px', flexShrink: 0 }}
+            />
+        )}
+        <span>{label}</span>
+    </div>
+);
+
 /* ─── CAROUSEL COMPONENT ───────────────────────────────────────────────────── */
 function LeftCarousel() {
     const [active, setActive] = useState(0);
@@ -100,9 +218,14 @@ function LeftCarousel() {
     const prev_ = () => goTo((active - 1 + count) % count, 'prev');
 
     useEffect(() => {
-        timerRef.current = setInterval(next, 5000);
+        const tick = () => goTo((active + 1) % count, 'next');
+        timerRef.current = setInterval(tick, 5000);
         return () => clearInterval(timerRef.current);
-    }, [active]);
+        // goTo is recreated each render but is referentially stable in effect
+        // terms — its identity doesn't affect the interval logic, only active
+        // and count do. Suppressing to avoid an infinite re-subscription loop.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [active, count]);
 
     const slide = SLIDES[active];
 
@@ -244,6 +367,7 @@ export default function Register() {
         password:    '',
     });
 
+    // ─── Step 3: shipping state ───────────────────────────────────────────────
     const [shipping, setShipping] = useState({
         address: '',
         city:    '',
@@ -251,6 +375,152 @@ export default function Register() {
         country: '',
         pinCode: '',
     });
+
+    // CSC dropdown data
+    const [countries,       setCountries]       = useState([]);
+    const [states,          setStates]          = useState([]);
+    const [cities,          setCities]          = useState([]);
+    const [loadingCountries, setLoadingCountries] = useState(false);
+    const [loadingStates,   setLoadingStates]   = useState(false);
+    const [loadingCities,   setLoadingCities]   = useState(false);
+
+    // Controlled React Select values
+    const [selectedCountry, setSelectedCountry] = useState(null);
+    const [selectedState,   setSelectedState]   = useState(null);
+    const [selectedCity,    setSelectedCity]    = useState(null);
+
+    // Whether the user has touched any shipping field (to decide if we skip or save)
+    const [shippingTouched, setShippingTouched] = useState(false);
+    const [setAsDefault,    setSetAsDefault]    = useState(false);
+
+    // ─── CSC fetch helpers ────────────────────────────────────────────────────
+    const fetchStates = useCallback(async (countryIso2) => {
+        if (!countryIso2) return;
+        setLoadingStates(true);
+        setStates([]);
+        setCities([]);
+        setSelectedState(null);
+        setSelectedCity(null);
+        setShipping(p => ({ ...p, state: '', city: '' }));
+        try {
+            const res  = await fetch(
+                `https://api.countrystatecity.in/v1/countries/${countryIso2}/states`,
+                { headers: CSC_HEADERS }
+            );
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+                setStates(sorted.map(s => ({
+                    value:      s.name,
+                    label:      s.name,
+                    iso2:       s.iso2,
+                    countryIso: countryIso2,
+                })));
+            }
+        } catch (err) {
+            console.error('Failed to fetch states:', err);
+        } finally {
+            setLoadingStates(false);
+        }
+    }, []);
+
+    const fetchCities = useCallback(async (countryIso2, stateIso2) => {
+        if (!countryIso2 || !stateIso2) return;
+        setLoadingCities(true);
+        setCities([]);
+        setSelectedCity(null);
+        setShipping(p => ({ ...p, city: '' }));
+        try {
+            const res  = await fetch(
+                `https://api.countrystatecity.in/v1/countries/${countryIso2}/states/${stateIso2}/cities`,
+                { headers: CSC_HEADERS }
+            );
+            const data = await res.json();
+            if (Array.isArray(data)) {
+                const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
+                setCities(sorted.map(c => ({ value: c.name, label: c.name })));
+            }
+        } catch (err) {
+            console.error('Failed to fetch cities:', err);
+        } finally {
+            setLoadingCities(false);
+        }
+    }, []);
+
+    const fetchCountries = useCallback(async () => {
+        setLoadingCountries(true);
+        try {
+            const res    = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,flags');
+            const data   = await res.json();
+            const sorted = data.sort((a, b) => a.name.common.localeCompare(b.name.common));
+            const opts   = sorted.map(c => ({
+                value: c.name.common,
+                label: c.name.common,
+                iso2:  c.cca2,
+                flag:  c.flags?.svg || c.flags?.png || '',
+            }));
+            setCountries(opts);
+
+            // Pre-select Nigeria as default
+            const nigeria = opts.find(o => o.iso2 === 'NG');
+            if (nigeria) {
+                setSelectedCountry(nigeria);
+                setShipping(p => ({ ...p, country: nigeria.value }));
+                fetchStates(nigeria.iso2);
+            }
+        } catch (err) {
+            console.error('Failed to fetch countries:', err);
+        } finally {
+            setLoadingCountries(false);
+        }
+    }, [fetchStates]);
+
+    // Fetch countries once when user reaches step 3
+    const countriesLoadedRef = useRef(false);
+    useEffect(() => {
+        if (step === 3 && !countriesLoadedRef.current) {
+            countriesLoadedRef.current = true;
+            fetchCountries();
+        }
+    }, [step, fetchCountries]);
+
+    // ─── CSC handlers ─────────────────────────────────────────────────────────
+    const handleCountryChange = (selected) => {
+        setSelectedCountry(selected);
+        setSelectedState(null);
+        setSelectedCity(null);
+        setShipping(p => ({ ...p, country: selected?.value || '', state: '', city: '' }));
+        setShippingTouched(true);
+        if (selected) fetchStates(selected.iso2);
+        else { setStates([]); setCities([]); }
+    };
+
+    const handleStateChange = (selected) => {
+        setSelectedState(selected);
+        setSelectedCity(null);
+        setShipping(p => ({ ...p, state: selected?.value || '', city: '' }));
+        setShippingTouched(true);
+        if (selected) fetchCities(selected.countryIso, selected.iso2);
+        else setCities([]);
+    };
+
+    const handleCityChange = (selected) => {
+        setSelectedCity(selected);
+        setShipping(p => ({ ...p, city: selected?.value || '' }));
+        setShippingTouched(true);
+    };
+
+    // ─── Determine if enough shipping data was filled to save ─────────────────
+    // We require at minimum: address + country + state.
+    // city is optional for countries where CSC returns no cities.
+    // pinCode is optional since some countries don't use postal codes.
+    const hasMinShipping = () => {
+        return (
+            shipping.address.trim().length >= 5 &&
+            shipping.country.trim().length  >  0 &&
+            shipping.state.trim().length    >  0
+        );
+    };
 
     const touch = (name) => setTouched(p => ({ ...p, [name]: true }));
 
@@ -264,6 +534,7 @@ export default function Register() {
     const onShipping = (e) => {
         const { name, value } = e.target;
         setShipping(p => ({ ...p, [name]: value }));
+        setShippingTouched(true);
     };
 
     const validateStep = (n) => {
@@ -285,6 +556,15 @@ export default function Register() {
                 if (age > 120) errs.dateOfBirth = 'Invalid date of birth';
             }
             if (!form.gender) errs.gender = 'Please select a gender';
+        }
+        if (n === 3) {
+            // Step 3 is optional overall, but if the user filled the address
+            // field we enforce the minimum requirements so partial data isn't saved.
+            if (shippingTouched && shipping.address.trim().length > 0) {
+                if (shipping.address.trim().length < 5) errs.shippingAddress = 'Address must be at least 5 characters';
+                if (!shipping.country) errs.shippingCountry = 'Please select a country';
+                if (!shipping.state)  errs.shippingState   = 'Please select a state / province';
+            }
         }
         if (n === 4) {
             if (!isPwValid(form.password)) errs.password = 'Password does not meet all requirements';
@@ -325,8 +605,17 @@ export default function Register() {
             password:    form.password,
         };
 
-        const hasShipping = Object.values(shipping).some(v => v.trim() !== '');
-        if (hasShipping) payload.shippingAddress = shipping;
+        // Attach shipping if the user filled enough fields
+        if (hasMinShipping()) {
+            payload.shippingAddress = {
+                address:   shipping.address.trim(),
+                city:      shipping.city.trim(),
+                state:     shipping.state.trim(),
+                country:   shipping.country.trim(),
+                pinCode:   shipping.pinCode.trim(),
+                isDefault: setAsDefault,
+            };
+        }
 
         dispatch(register(payload));
     };
@@ -559,15 +848,16 @@ export default function Register() {
                                 <div className="reg-fields">
                                     <div className="reg-section-note">
                                         <i className="ti ti-info-circle" aria-hidden="true" />
-                                        <span>Shipping address is optional — you can add or update it later from your profile.</span>
+                                        <span>Shipping address is optional — you can add or update it later. Fill at least your street address, country and state to save it now.</span>
                                     </div>
 
+                                    {/* Street address — plain text input */}
                                     <div className="reg-field">
-                                        <label htmlFor="address">Street address</label>
-                                        <div className="reg-input-wrap">
+                                        <label htmlFor="reg-address">Street address</label>
+                                        <div className={`reg-input-wrap${errors.shippingAddress ? ' has-error' : ''}`}>
                                             <i className="ti ti-home field-icon" aria-hidden="true" />
                                             <input
-                                                id="address"
+                                                id="reg-address"
                                                 name="address"
                                                 type="text"
                                                 placeholder="123 Main Street, Apt 4B"
@@ -577,77 +867,145 @@ export default function Register() {
                                                 autoComplete="street-address"
                                             />
                                         </div>
+                                        {errors.shippingAddress && <FieldError msg={errors.shippingAddress} />}
                                     </div>
 
+                                    {/* Country dropdown */}
+                                    <div className="reg-field">
+                                        <label>Country</label>
+                                        <Select
+                                            inputId="reg-country"
+                                            options={countries}
+                                            value={selectedCountry}
+                                            onChange={handleCountryChange}
+                                            isLoading={loadingCountries}
+                                            isDisabled={loading}
+                                            placeholder={loadingCountries ? 'Loading countries…' : 'Search country…'}
+                                            styles={buildRegSelectStyles(!!errors.shippingCountry)}
+                                            formatOptionLabel={formatCountryOption}
+                                            noOptionsMessage={() => 'No country found'}
+                                            loadingMessage={() => 'Loading countries…'}
+                                            isClearable
+                                        />
+                                        {errors.shippingCountry && <FieldError msg={errors.shippingCountry} />}
+                                    </div>
+
+                                    {/* State + City row */}
                                     <div className="reg-row">
                                         <div className="reg-field">
-                                            <label htmlFor="city">City</label>
-                                            <div className="reg-input-wrap">
-                                                <i className="ti ti-building field-icon" aria-hidden="true" />
-                                                <input
-                                                    id="city"
-                                                    name="city"
-                                                    type="text"
-                                                    placeholder="New York"
-                                                    value={shipping.city}
-                                                    onChange={onShipping}
-                                                    disabled={loading}
-                                                    autoComplete="address-level2"
+                                            <label>State / Province</label>
+                                            {/* Show dropdown when states loaded, otherwise plain input */}
+                                            {(states.length > 0 || loadingStates || !selectedCountry) ? (
+                                                <Select
+                                                    inputId="reg-state"
+                                                    options={states}
+                                                    value={selectedState}
+                                                    onChange={handleStateChange}
+                                                    isLoading={loadingStates}
+                                                    isDisabled={!selectedCountry || loadingStates || loading}
+                                                    placeholder={
+                                                        !selectedCountry ? 'Select country first'
+                                                        : loadingStates  ? 'Loading…'
+                                                        : 'Search state…'
+                                                    }
+                                                    styles={buildRegSelectStyles(!!errors.shippingState)}
+                                                    noOptionsMessage={() => 'No states found'}
+                                                    isClearable
                                                 />
-                                            </div>
+                                            ) : (
+                                                <div className="reg-input-wrap">
+                                                    <i className="ti ti-map field-icon" aria-hidden="true" />
+                                                    <input
+                                                        id="reg-state-text"
+                                                        name="state"
+                                                        type="text"
+                                                        placeholder="Enter your state"
+                                                        value={shipping.state}
+                                                        onChange={onShipping}
+                                                        disabled={loading}
+                                                    />
+                                                </div>
+                                            )}
+                                            {errors.shippingState && <FieldError msg={errors.shippingState} />}
                                         </div>
+
                                         <div className="reg-field">
-                                            <label htmlFor="state">State / Province</label>
-                                            <div className="reg-input-wrap">
-                                                <i className="ti ti-map field-icon" aria-hidden="true" />
-                                                <input
-                                                    id="state"
-                                                    name="state"
-                                                    type="text"
-                                                    placeholder="NY"
-                                                    value={shipping.state}
-                                                    onChange={onShipping}
-                                                    disabled={loading}
-                                                    autoComplete="address-level1"
+                                            {/* City label gets "(optional)" when CSC returns no cities */}
+                                            <label>
+                                                City
+                                                {selectedState && cities.length === 0 && !loadingCities && (
+                                                    <span className="reg-optional-tag"> (optional)</span>
+                                                )}
+                                            </label>
+                                            {(cities.length > 0 || loadingCities || !selectedState) ? (
+                                                <Select
+                                                    inputId="reg-city"
+                                                    options={cities}
+                                                    value={selectedCity}
+                                                    onChange={handleCityChange}
+                                                    isLoading={loadingCities}
+                                                    isDisabled={!selectedState || loadingCities || loading}
+                                                    placeholder={
+                                                        !selectedState ? 'Select state first'
+                                                        : loadingCities ? 'Loading…'
+                                                        : 'Search city…'
+                                                    }
+                                                    styles={buildRegSelectStyles(false)}
+                                                    noOptionsMessage={() => 'No cities found'}
+                                                    isClearable
                                                 />
-                                            </div>
+                                            ) : (
+                                                <div className="reg-input-wrap">
+                                                    <i className="ti ti-building field-icon" aria-hidden="true" />
+                                                    <input
+                                                        id="reg-city-text"
+                                                        name="city"
+                                                        type="text"
+                                                        placeholder="Enter your city"
+                                                        value={shipping.city}
+                                                        onChange={onShipping}
+                                                        disabled={loading}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <div className="reg-row">
-                                        <div className="reg-field">
-                                            <label htmlFor="country">Country</label>
-                                            <div className="reg-input-wrap">
-                                                <i className="ti ti-world field-icon" aria-hidden="true" />
-                                                <input
-                                                    id="country"
-                                                    name="country"
-                                                    type="text"
-                                                    placeholder="United States"
-                                                    value={shipping.country}
-                                                    onChange={onShipping}
-                                                    disabled={loading}
-                                                    autoComplete="country-name"
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="reg-field">
-                                            <label htmlFor="pinCode">ZIP / Pin code</label>
-                                            <div className="reg-input-wrap">
-                                                <i className="ti ti-mailbox field-icon" aria-hidden="true" />
-                                                <input
-                                                    id="pinCode"
-                                                    name="pinCode"
-                                                    type="text"
-                                                    placeholder="10001"
-                                                    value={shipping.pinCode}
-                                                    onChange={onShipping}
-                                                    disabled={loading}
-                                                    autoComplete="postal-code"
-                                                />
-                                            </div>
+                                    {/* PIN code — optional, with country-aware label */}
+                                    <div className="reg-field">
+                                        <label htmlFor="reg-pinCode">
+                                            ZIP / Postal code
+                                            <span className="reg-optional-tag"> (optional)</span>
+                                        </label>
+                                        <div className="reg-input-wrap">
+                                            <i className="ti ti-mailbox field-icon" aria-hidden="true" />
+                                            <input
+                                                id="reg-pinCode"
+                                                name="pinCode"
+                                                type="text"
+                                                placeholder="10001"
+                                                value={shipping.pinCode}
+                                                onChange={onShipping}
+                                                disabled={loading}
+                                                autoComplete="postal-code"
+                                                maxLength={20}
+                                            />
                                         </div>
                                     </div>
+
+                                    {/* "Set as default" — only shown when address has been started */}
+                                    {hasMinShipping() && (
+                                        <label className="reg-checkbox-label">
+                                            <input
+                                                type="checkbox"
+                                                className="reg-checkbox"
+                                                checked={setAsDefault}
+                                                onChange={e => setSetAsDefault(e.target.checked)}
+                                                disabled={loading}
+                                            />
+                                            <span>Set as my default shipping address</span>
+                                        </label>
+                                    )}
                                 </div>
                             )}
 
@@ -708,7 +1066,6 @@ export default function Register() {
                                                 </div>
 
                                                 {/* Requirements list */}
-                                                {/* FIX: label updated to "8+ characters" to match new minimum */}
                                                 <ul className="pw-reqs" id="pw-reqs-list" aria-label="Password requirements">
                                                     {[
                                                         [pwReqs.len,     '8+ characters'],
@@ -789,6 +1146,3 @@ export default function Register() {
         </div>
     );
 }
-
-
-

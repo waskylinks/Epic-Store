@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useCallback } from 'react';
 import '../CartStyles/Shipping.css';
 import PageTitle from '../components/PageTitle';
@@ -132,13 +130,7 @@ function Shipping() {
 
   const { setIntentionalProceed } = useCheckoutAbandonment(checkoutId, 'shipping_info');
 
-  // ── FIX 2: Advance DB currentStep to 'shipping_info' on mount ────────────
-  // Without this, if the user previously reached 'payment_gateway' and returns
-  // to the shipping page, the DB step stays at 'payment_gateway'. When the
-  // abandonment hook fires on unmount it dispatches abandonCheckout(), and
-  // markAsAbandoned() reads `this.currentStep` from the DB — recording
-  // payment_gateway instead of shipping_info.
-  // Non-fatal: a tracking failure must never block the shipping form UI.
+  // Advance DB currentStep to 'shipping_info' on mount
   useEffect(() => {
     if (!checkoutId) return;
     (async () => {
@@ -151,15 +143,14 @@ function Shipping() {
         console.warn('[Shipping] Failed to record shipping_info step on mount:', err);
       }
     })();
-    // Run once on mount — checkoutId is stable for the lifetime of this page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checkoutId]);
 
   // ─── Form data ──────────────────────────────────────────────────────────────
   const [formData, setFormData] = useState({
     address: '',
-    city: '',
-    state: '',
+    city:    '',
+    state:   '',
     country: 'Nigeria',
     pinCode: '',
     phoneNo: ''
@@ -167,27 +158,26 @@ function Shipping() {
 
   // ─── Dropdown options ────────────────────────────────────────────────────────
   const [countries, setCountries] = useState([]);
-  const [states, setStates] = useState([]);
-  const [cities, setCities] = useState([]);
+  const [states,    setStates]    = useState([]);
+  const [cities,    setCities]    = useState([]);
 
   // ─── Loading states for cascading dropdowns ──────────────────────────────────
   const [loadingCountries, setLoadingCountries] = useState(false);
-  const [loadingStates, setLoadingStates] = useState(false);
-  const [loadingCities, setLoadingCities] = useState(false);
+  const [loadingStates,    setLoadingStates]    = useState(false);
+  const [loadingCities,    setLoadingCities]    = useState(false);
 
   // ─── React Select controlled values ──────────────────────────────────────────
   const [selectedCountry, setSelectedCountry] = useState(null);
-  const [selectedState, setSelectedState] = useState(null);
-  const [selectedCity, setSelectedCity] = useState(null);
+  const [selectedState,   setSelectedState]   = useState(null);
+  const [selectedCity,    setSelectedCity]    = useState(null);
 
-  // ─── Form-level validation errors for React Select fields ────────────────────
-  const [formErrors, setFormErrors] = useState({});
-
+  // ─── Form-level validation errors ────────────────────────────────────────────
+  const [formErrors,    setFormErrors]    = useState({});
   const [saveToAccount, setSaveToAccount] = useState(false);
   const [setAsDefaultCheck, setSetAsDefaultCheck] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitting, setIsSubmitting]  = useState(false);
 
-  // ─── fetchStates declared first so fetchCountries can reference it ───────────
+  // ─── fetchStates ─────────────────────────────────────────────────────────────
   const fetchStates = useCallback(async (countryIso2) => {
     if (!countryIso2) return;
     setLoadingStates(true);
@@ -196,7 +186,7 @@ function Shipping() {
     setSelectedState(null);
     setSelectedCity(null);
     try {
-      const res = await fetch(
+      const res  = await fetch(
         `https://api.countrystatecity.in/v1/countries/${countryIso2}/states`,
         { headers: CSC_HEADERS }
       );
@@ -204,9 +194,9 @@ function Shipping() {
       if (Array.isArray(data)) {
         const sorted = data.sort((a, b) => a.name.localeCompare(b.name));
         setStates(sorted.map(s => ({
-          value: s.name,
-          label: s.name,
-          iso2: s.iso2,
+          value:      s.name,
+          label:      s.name,
+          iso2:       s.iso2,
           countryIso: countryIso2,
         })));
       }
@@ -223,7 +213,7 @@ function Shipping() {
     setCities([]);
     setSelectedCity(null);
     try {
-      const res = await fetch(
+      const res  = await fetch(
         `https://api.countrystatecity.in/v1/countries/${countryIso2}/states/${stateIso2}/cities`,
         { headers: CSC_HEADERS }
       );
@@ -239,18 +229,17 @@ function Shipping() {
     }
   }, []);
 
-  // ─── fetchCountries depends on fetchStates (declared above) ──────────────────
   const fetchCountries = useCallback(async () => {
     setLoadingCountries(true);
     try {
-      const res = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,flags');
-      const data = await res.json();
+      const res    = await fetch('https://restcountries.com/v3.1/all?fields=name,cca2,flags');
+      const data   = await res.json();
       const sorted = data.sort((a, b) => a.name.common.localeCompare(b.name.common));
       const options = sorted.map(c => ({
         value: c.name.common,
         label: c.name.common,
-        iso2: c.cca2,
-        flag: c.flags?.svg || c.flags?.png || '',
+        iso2:  c.cca2,
+        flag:  c.flags?.svg || c.flags?.png || '',
       }));
       setCountries(options);
 
@@ -267,20 +256,21 @@ function Shipping() {
     }
   }, [fetchStates]);
 
-  // ─── On mount: fetch saved addresses + all countries ─────────────────────────
+  // ─── On mount ────────────────────────────────────────────────────────────────
   useEffect(() => {
     dispatch(getSavedAddresses());
     dispatch(getDefaultAddress());
     fetchCountries();
   }, [dispatch, fetchCountries]);
 
+  // ─── Populate form when a saved address is selected ──────────────────────────
   useEffect(() => {
     if (!selectedAddress || countries.length === 0) return;
 
     setFormData({
       address: selectedAddress.address || '',
-      city: selectedAddress.city || '',
-      state: selectedAddress.state || '',
+      city:    selectedAddress.city    || '',
+      state:   selectedAddress.state   || '',
       country: selectedAddress.country || 'Nigeria',
       pinCode: selectedAddress.pinCode || '',
       phoneNo: selectedAddress.phoneNo || ''
@@ -295,11 +285,6 @@ function Shipping() {
     }
   }, [selectedAddress, countries, fetchStates]);
 
-  // FIX: selectedState and selectedCity are read inside these effects only to
-  // compare against the newly resolved option — they are not drivers of the
-  // effect. Including them as deps would cause infinite re-runs when the effect
-  // itself calls setSelectedState/setSelectedCity. The exhaustive-deps warning
-  // is intentionally suppressed here; the comparison is a guard, not a trigger.
   useEffect(() => {
     if (!formData.state || states.length === 0) return;
     const opt = states.find(s => s.value === formData.state);
@@ -379,11 +364,13 @@ function Shipping() {
     setFormErrors(prev => ({ ...prev, city: '' }));
   };
 
+  // ─── Validation — city and pinCode are optional ───────────────────────────
   const validateForm = () => {
     const errors = {};
     if (!formData.country) errors.country = 'Country is required';
-    if (!formData.state) errors.state = 'State is required';
-    if (!formData.city) errors.city = 'City is required';
+    if (!formData.state)   errors.state   = 'State is required';
+    // city    → optional: no validation
+    // pinCode → optional: no validation
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -398,7 +385,7 @@ function Shipping() {
 
       if (saveToAccount) {
         const saved = await dispatch(saveAddress({
-          name: userName,
+          name:      userName,
           ...formData,
           isDefault: setAsDefaultCheck
         })).unwrap();
@@ -410,8 +397,6 @@ function Shipping() {
         }));
       }
 
-      // The DB step is already 'shipping_info' (set on mount above).
-      // This call just stamps the stepsCompleted array — still non-fatal.
       if (checkoutId) {
         try {
           await dispatch(updateCheckoutStep({
@@ -439,11 +424,11 @@ function Shipping() {
 
   const handleDeleteAddress = async (id) => {
     if (!window.confirm('Delete this address?')) return;
-    try { await dispatch(deleteAddress(id)).unwrap(); } catch { /* errors surfaced via Redux error state */ }
+    try { await dispatch(deleteAddress(id)).unwrap(); } catch { /* surfaced via Redux error state */ }
   };
 
   const handleSetDefault = async (id) => {
-    try { await dispatch(setDefaultAddress(id)).unwrap(); } catch { /* errors surfaced via Redux error state */ }
+    try { await dispatch(setDefaultAddress(id)).unwrap(); } catch { /* surfaced via Redux error state */ }
   };
 
   const hasError = (kw) => validationErrors.length > 0 && validationErrors.some(e => e.includes(kw));
@@ -486,7 +471,10 @@ function Shipping() {
                       <div className="es-saved-info">
                         <p className="es-saved-name">{addr.name}</p>
                         <p className="es-saved-address">
-                          {addr.address}, {addr.city}, {addr.state} — {addr.pinCode}
+                          {addr.address}
+                          {addr.city    ? `, ${addr.city}`    : ''}
+                          {addr.state   ? `, ${addr.state}`   : ''}
+                          {addr.pinCode ? ` — ${addr.pinCode}` : ''}
                         </p>
                         <p className="es-saved-phone">{addr.phoneNo}</p>
                       </div>
@@ -518,6 +506,7 @@ function Shipping() {
 
             <form onSubmit={handleSubmit} className="es-form">
 
+              {/* Street address — required */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label htmlFor="address" className="es-label">
@@ -537,6 +526,7 @@ function Shipping() {
                 </div>
               </div>
 
+              {/* Country — required */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label className="es-label">
@@ -560,6 +550,7 @@ function Shipping() {
                 </div>
               </div>
 
+              {/* State (required) + City (optional) */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label className="es-label">
@@ -575,7 +566,7 @@ function Shipping() {
                       isDisabled={!selectedCountry || loadingStates}
                       placeholder={
                         !selectedCountry ? 'Select a country first'
-                        : loadingStates ? 'Loading states...'
+                        : loadingStates  ? 'Loading states...'
                         : 'Search state...'
                       }
                       styles={buildSelectStyles(hasError('State') || !!formErrors.state)}
@@ -599,7 +590,8 @@ function Shipping() {
 
                 <div className="es-form-group">
                   <label className="es-label">
-                    City <span className="es-required">*</span>
+                    City
+                    <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--es-text-xs)', textTransform: 'none', marginLeft: '3px' }}>(optional)</span>
                   </label>
                   {(cities.length > 0 || loadingCities || !selectedState) ? (
                     <Select
@@ -610,11 +602,11 @@ function Shipping() {
                       isLoading={loadingCities}
                       isDisabled={!selectedState || loadingCities}
                       placeholder={
-                        !selectedState ? 'Select a state first'
+                        !selectedState  ? 'Select a state first'
                         : loadingCities ? 'Loading cities...'
                         : 'Search city...'
                       }
-                      styles={buildSelectStyles(hasError('City') || !!formErrors.city)}
+                      styles={buildSelectStyles(false)}
                       noOptionsMessage={() => 'No cities found'}
                       isClearable
                     />
@@ -624,20 +616,19 @@ function Shipping() {
                       name="city"
                       value={formData.city}
                       onChange={handleChange}
-                      className={`es-input ${hasError('City') || formErrors.city ? 'es-input-error' : ''}`}
-                      placeholder="Enter your city"
-                      required
+                      className="es-input"
+                      placeholder="Enter your city (optional)"
                     />
                   )}
-                  {formErrors.city && <span className="es-error">{formErrors.city}</span>}
-                  {getErrors('City').map((err, i) => <span key={i} className="es-error">{err}</span>)}
                 </div>
               </div>
 
+              {/* Postal code (optional) + Phone (required) */}
               <div className="es-form-row">
                 <div className="es-form-group">
                   <label htmlFor="pinCode" className="es-label">
-                    Postal Code <span className="es-required">*</span>
+                    Postal Code
+                    <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--es-text-xs)', textTransform: 'none', marginLeft: '3px' }}>(optional)</span>
                   </label>
                   <input
                     type="text"
@@ -645,12 +636,10 @@ function Shipping() {
                     name="pinCode"
                     value={formData.pinCode}
                     onChange={handleChange}
-                    className={`es-input ${hasError('code') ? 'es-input-error' : ''}`}
+                    className="es-input"
                     placeholder="100001"
                     maxLength="10"
-                    required
                   />
-                  {getErrors('code').map((err, i) => <span key={i} className="es-error">{err}</span>)}
                 </div>
 
                 <div className="es-form-group">
