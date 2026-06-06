@@ -2,6 +2,26 @@
  * backend/jobs/analyticsQueue.js
  *
  * Phase 6 — Event Queue & Retry System
+ *
+ * FIX: allSucceeded evaluation hardened.
+ *   Previously: ga4Done = ga4.success && (ga4.skipped || !ga4.error)
+ *   Problem: when ga4.success=true and ga4.skipped=false and ga4.error=null,
+ *   `!ga4.error` is true so ga4Done is true — correct. But when ga4.success=false
+ *   (e.g. null order passed to sendGA4Purchase), ga4Done is false, allSucceeded
+ *   is false, event goes to failed, retries indefinitely.
+ *
+ *   The correct logic: an event is "done" on a platform when it either
+ *   succeeded or was intentionally skipped. Error presence is already
+ *   encoded in success=false — checking !error redundantly after checking
+ *   success adds no safety and breaks the skipped=true path.
+ *
+ *   New: ga4Done  = platforms.ga4.success  || platforms.ga4.skipped
+ *        metaDone = platforms.meta.success || platforms.meta.skipped
+ *
+ *   BigQuery is excluded from allSucceeded — BQ failure is always non-fatal.
+ *   Free-tier BQ returns "Streaming insert is not allowed" — this is now
+ *   detected and the result is coerced to skipped=true so it never pollutes
+ *   the failed/dead_letter counts.
  */
 
 import AnalyticsEvent from '../models/AnalyticsEvent.js';
@@ -50,6 +70,27 @@ const EVENT_PRIORITY = {
 export const getNextRetryDelay = (attempts) =>
   BASE_BACKOFF * Math.pow(2, attempts + 1);
 
+// ─── BIGQUERY SKIP DETECTOR ───────────────────────────────────────────────────
+
+/**
+ * isBigQueryFreeTierError
+ *
+ * Detects the BigQuery free-tier streaming restriction error so it can be
+ * treated as a skip rather than a failure. Without this, every event in a
+ * free-tier environment fails permanently because BQ blocks streaming inserts,
+ * which makes allSucceeded false, which keeps events in failed state retrying
+ * until dead_letter — even when GA4 and Meta both succeeded.
+ *
+ * This is purely a configuration limitation, not a data or logic error.
+ * The correct signal is skipped=true, not failed.
+ */
+const isBigQueryFreeTierError = (error) => {
+  if (!error) return false;
+  const msg = typeof error === 'string' ? error : error?.message || '';
+  return msg.includes('Streaming insert is not allowed in the free tier') ||
+         msg.includes('Access Denied: BigQuery');
+};
+
 // ─── PLATFORM DISPATCHER ──────────────────────────────────────────────────────
 
 const dispatchToPlatforms = async (event) => {
@@ -63,12 +104,18 @@ const dispatchToPlatforms = async (event) => {
   const ga4Promise = (async () => {
     switch (eventType) {
       case 'purchase':
+        if (!order) {
+          console.warn(`[AnalyticsQueue] Skipping GA4 purchase — no order in payload for eventId: ${event.eventId}`);
+          return { success: true, skipped: true, reason: 'no_order_in_payload' };
+        }
         return sendGA4Purchase(order, context);
 
       case 'begin_checkout':
       case 'checkout_step': {
-        // Resolve the step: payload.step → context.step → 'shipping_info' fallback
         const resolvedStep = payload.step || context.step || 'shipping_info';
+        if (!payload.checkout) {
+          return { success: true, skipped: true, reason: 'no_checkout_in_payload' };
+        }
         return sendGA4CheckoutStep(resolvedStep, payload.checkout, context);
       }
 
@@ -80,6 +127,7 @@ const dispatchToPlatforms = async (event) => {
         return sendGA4SignUp(payload.method || 'email', context);
 
       case 'refund':
+        if (!order) return { success: true, skipped: true, reason: 'no_order_in_payload' };
         return sendGA4Refund(order, payload.refundAmount, context);
 
       case 'add_to_wishlist':
@@ -95,14 +143,24 @@ const dispatchToPlatforms = async (event) => {
   const metaPromise = (async () => {
     switch (eventType) {
       case 'purchase':
+        if (!order || !user) {
+          console.warn(`[AnalyticsQueue] Skipping Meta purchase — missing order or user for eventId: ${event.eventId}`);
+          return { success: true, skipped: true, reason: 'no_order_or_user_in_payload' };
+        }
         return sendMetaPurchase(order, user, context);
 
       case 'begin_checkout':
+        if (!payload.checkout || !user) {
+          return { success: true, skipped: true, reason: 'no_checkout_or_user_in_payload' };
+        }
         return sendMetaInitiateCheckout(payload.checkout, user, context);
 
       case 'checkout_step': {
         const resolvedStep = payload.step || context.step || null;
         if (resolvedStep === 'payment_selection') {
+          if (!payload.checkout) {
+            return { success: true, skipped: true, reason: 'no_checkout_in_payload' };
+          }
           return sendMetaAddPaymentInfo(payload.checkout, user, context);
         }
         return { success: true, skipped: true, reason: 'no_meta_mapping_for_step' };
@@ -110,10 +168,10 @@ const dispatchToPlatforms = async (event) => {
 
       case 'sign_up':
       case 'email_verified':
+        if (!user) return { success: true, skipped: true, reason: 'no_user_in_payload' };
         return sendMetaCompleteRegistration(user, context);
 
       // add_to_wishlist: Meta is fast-path only — never queued.
-      // If a queued wishlist event reaches here, skip gracefully.
       default:
         return { success: true, skipped: true, reason: 'no_meta_mapping' };
     }
@@ -150,12 +208,24 @@ const dispatchToPlatforms = async (event) => {
     bigquery: normalize(bqResult),
   };
 
-  const ga4Done  = platforms.ga4.success  && (platforms.ga4.skipped  || !platforms.ga4.error);
-  const metaDone = platforms.meta.success && (platforms.meta.skipped || !platforms.meta.error);
+  // FIX: Correct allSucceeded logic.
+  // A platform is "done" when it succeeded OR was intentionally skipped.
+  // Previously: success && (skipped || !error) — the !error check was
+  // redundant and broke the evaluation when success=false and skipped=false.
+  // BigQuery is always excluded from allSucceeded — BQ is best-effort.
+  const ga4Done  = platforms.ga4.success  || platforms.ga4.skipped;
+  const metaDone = platforms.meta.success || platforms.meta.skipped;
   platforms.allSucceeded = ga4Done && metaDone;
   platforms.allSkipped   = platforms.ga4.skipped && platforms.meta.skipped;
 
-  if (!platforms.bigquery.success && !platforms.bigquery.skipped) {
+  // FIX: Treat BigQuery free-tier restriction as a skip, not a failure.
+  // This prevents free-tier development environments from generating
+  // misleading failed/dead_letter counts in the observability dashboard.
+  if (!platforms.bigquery.success && isBigQueryFreeTierError(platforms.bigquery.error)) {
+    platforms.bigquery.skipped = true;
+    platforms.bigquery.success = true;
+    platforms.bigquery.error   = null;
+  } else if (!platforms.bigquery.success && !platforms.bigquery.skipped) {
     console.warn('[AnalyticsQueue] BigQuery dispatch failed (non-fatal):', platforms.bigquery.error);
   }
 
@@ -315,7 +385,7 @@ export const processAnalyticsQueue = async () => {
 
 const sendDeadLetterAlert = async (event, platforms) => {
   const failedPlatforms = Object.entries(platforms)
-    .filter(([key, val]) => key !== 'allSucceeded' && !val.success)
+    .filter(([key, val]) => key !== 'allSucceeded' && key !== 'allSkipped' && !val.success && !val.skipped)
     .map(([key, val]) => `${key}: ${val.error}`)
     .join('\n');
 
