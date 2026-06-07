@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useTransition } from 'react';
 import '../componentStyles/Navbar.css';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -45,10 +45,6 @@ const getUserAvatar = (user) => {
   return './images/profile.webp';
 };
 
-
-
-// Rendered as a direct child of .nb-profile-menu-option / .nb-mobile-menu-action
-// NOT inside .nb-menu-option-icon-wrap — positions at the far right of the row.
 const NotificationDot = () => (
   <span className="nb-notif-dot" aria-label="New discounts available" />
 );
@@ -60,7 +56,14 @@ function Navbar() {
   const [isScrolled,        setIsScrolled]         = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen]  = useState(false);
 
-  const { count: wishlistCount }           = useSelector((state) => state.wishlist);
+  // [FIX] Derive wishlist badge count from items.length, not the separate
+  // `count` field. `count` is only updated by getWishlist() round-trips, so
+  // it lags behind instant add/remove actions that update `items` directly.
+  // items.length is always accurate because the slice pushes/filters it on
+  // every addToWishlist.fulfilled and removeFromWishlist.fulfilled.
+  const { items: wishlistItems }           = useSelector((state) => state.wishlist);
+  const wishlistCount                      = wishlistItems.length;
+
   const { isAuthenticated, user, loading } = useSelector((state) => state.user);
   const { cartItems }                      = useSelector((state) => state.cart);
   const { hasNewDiscount }                 = useSelector((state) => state.userDiscount);
@@ -70,10 +73,27 @@ function Navbar() {
   const dispatch       = useDispatch();
   const profileMenuRef = useRef(null);
 
-  // Poll every 30 seconds so the dot appears promptly after an admin creates
-  // a discount (broadcast or personal). 5 minutes was too slow for real UX.
-  // Dot clears via getMyDiscounts.fulfilled when the user visits /my-discounts.
-  // On logout isAuthenticated becomes false and the interval is cleaned up.
+  // [FIX] Track the previous location key to detect genuine navigations.
+  // When the location key changes we schedule the UI reset through
+  // startTransition, which marks the setState calls as non-urgent (transition)
+  // updates.  React batches them together in a single low-priority render
+  // instead of firing synchronous cascading renders, satisfying the
+  // react-hooks/set-state-in-effect rule while preserving the intent of
+  // "close every overlay whenever the route changes".
+  const prevLocationKeyRef = useRef(location.key);
+  const [, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (prevLocationKeyRef.current === location.key) return;
+    prevLocationKeyRef.current = location.key;
+
+    startTransition(() => {
+      setIsMenuOpen(false);
+      setIsSearchOpen(false);
+      setIsProfileMenuOpen(false);
+    });
+  }, [location.key]);
+
   useEffect(() => {
     if (!isAuthenticated) return;
 
@@ -81,14 +101,11 @@ function Navbar() {
 
     const interval = setInterval(() => {
       dispatch(checkNewDiscounts());
-    }, 30 * 1000); // 30 seconds
+    }, 30 * 1000);
 
     return () => clearInterval(interval);
   }, [isAuthenticated, dispatch]);
 
-  // FIX (Bug 3): If the user is already on /my-discounts when a new discount
-  // arrives (dot appears via poll), clear it immediately — they are already
-  // looking at the page so the dot is misleading.
   useEffect(() => {
     if (location.pathname === '/my-discounts' && hasNewDiscount) {
       dispatch(clearNewDiscountDot());
@@ -100,12 +117,6 @@ function Navbar() {
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-
-  useEffect(() => {
-    setIsMenuOpen(false);
-    setIsSearchOpen(false);
-    setIsProfileMenuOpen(false);
-  }, [location]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -172,19 +183,17 @@ function Navbar() {
     ...(user?.role === 'admin' || user?.role === 'superAdmin'
       ? [{ name: 'Admin Dashboard', icon: <DashboardIcon />, action: () => navigate('/admin/dashboard') }]
       : []),
-    { name: 'Account',           icon: <PersonIcon />,       action: () => navigate('/profile') },
+    { name: 'Account',                    icon: <PersonIcon />,       action: () => navigate('/profile') },
     { name: `Cart (${cartItems.length})`, icon: <ShoppingCartIcon />, action: () => navigate('/cart'), badge: cartItems.length },
-    { name: 'Orders',            icon: <OrdersIcon />,       action: () => navigate('/orders/user') },
+    { name: 'Orders',                     icon: <OrdersIcon />,       action: () => navigate('/orders/user') },
     {
       name:      'Coupons',
       icon:      <OfferIcon />,
       action:    () => navigate('/my-discounts'),
-      // hasNewDot is true for both audience:'all' (broadcast) and
-      // audience:'specific' (personal) — backend /has-new handles both.
       hasNewDot: hasNewDiscount,
     },
-    { name: 'Refunds & Returns', icon: <ReturnsIcon />,      action: () => navigate('/my-refunds-returns') },
-    { name: 'Logout',            icon: <LogoutIcon />,       action: handleLogout, isDanger: true },
+    { name: 'Refunds & Returns', icon: <ReturnsIcon />, action: () => navigate('/my-refunds-returns') },
+    { name: 'Logout',            icon: <LogoutIcon />,  action: handleLogout, isDanger: true },
   ];
 
   return (
@@ -264,7 +273,6 @@ function Navbar() {
                       {option.badge > 0 && (
                         <span className="nb-mobile-action-badge">{option.badge}</span>
                       )}
-                      {/* DOT: direct child of button — positions at far right of row */}
                       {option.hasNewDot && <NotificationDot />}
                     </button>
                   ))}
@@ -332,7 +340,6 @@ function Navbar() {
                     className="nb-profile-img"
                     onError={(e) => { e.target.src = './images/profile.webp'; }}
                   />
-                  {/* Corner dot on avatar — signals new discounts before menu opens */}
                   {hasNewDiscount && (
                     <span className="nb-profile-trigger-dot" aria-label="New discounts available" />
                   )}
@@ -371,7 +378,6 @@ function Navbar() {
                         {option.badge > 0 && (
                           <span className="nb-profile-option-badge">{option.badge}</span>
                         )}
-                        {/* DOT: direct child of button — positions at far right of row */}
                         {option.hasNewDot && <NotificationDot />}
                       </button>
                     ))}

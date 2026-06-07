@@ -8,6 +8,7 @@ import Login from './User/Login';
 import { useDispatch, useSelector } from 'react-redux';
 import { loadUser } from './features/products/userSlice';
 import { syncServerCart } from './features/cart/cartSlice';
+import { getWishlist } from './features/products/wishlistSlice';
 import Profile from './User/Profile';
 import VerifyEmail from './User/VerifyEmail';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -142,13 +143,12 @@ function App() {
     dispatch(loadUser());
   }, [dispatch]);
 
-  // Sync server cart after auth state is resolved
+  // ── Once auth is resolved, sync cart + fetch wishlist together ────────────
   useEffect(() => {
-    if (!initializing && isAuthenticated) {
-      dispatch(syncServerCart());
-    }
+    if (initializing || !isAuthenticated) return;
+    dispatch(syncServerCart());
+    dispatch(getWishlist());
   }, [initializing, isAuthenticated, dispatch]);
-
   if (initializing) {
     return <Loader />;
   }

@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import '../componentStyles/Product.css';
 import { Link, useNavigate } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
-import { addToWishlist, removeFromWishlist, getWishlist } from '../features/products/wishlistSlice';
+import { addToWishlist, removeFromWishlist } from '../features/products/wishlistSlice';
 import { trackWishlistAnalytics } from '../features/products/productSlice';
 import { addItemsToCart } from '../features/cart/cartSlice';
 import { toast } from 'react-toastify';
@@ -23,14 +23,12 @@ const getPrimaryImage = (product) => {
   const primary = arr.find((img) => img.isPrimary) || arr[0];
   return {
     url: primary?.url || '/placeholder-product.png',
-    // Model stores dedicated alt per image for SEO/accessibility
     alt: primary?.alt || product.name,
   };
 };
 
 const getStock = (product) => product.inventory?.stock ?? product.stock ?? 0;
 
-// Use model's isOnSale flag as source of truth; fall back to price comparison
 const resolveSalePrice = (product) => {
   if (product.isOnSale && product.pricing?.sale != null) return product.pricing.sale;
   const regular = product.pricing?.regular || product.price || 0;
@@ -41,7 +39,6 @@ const resolveSalePrice = (product) => {
 const getDiscountPct = (regular, sale) =>
   sale && regular > sale ? Math.round(((regular - sale) / regular) * 100) : 0;
 
-// Respects model's inventory.status values: InStock | LowStock | OutOfStock | Discontinued
 const resolveStockState = (product) => {
   const status = product.inventory?.status;
   if (status === 'Discontinued') return 'discontinued';
@@ -61,15 +58,12 @@ function Product({
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
-  // All hooks unconditional — Rules of Hooks requires no hooks after early returns
   const [isHovered, setIsHovered] = useState(false);
   const [cartLoading, setCartLoading] = useState(false);
 
   const { items: wishlistItems, itemLoading } = useSelector((s) => s.wishlist);
   const { isAuthenticated } = useSelector((s) => s.user);
 
-  // ── Derived values above handlers so closures capture current values ──────
-  // Optional-chain safely when product is null (early return is below hooks)
   const currency    = product?.pricing?.currency || 'USD';
   const regular     = product?.pricing?.regular || product?.price || 0;
   const salePrice   = product ? resolveSalePrice(product) : null;
@@ -83,10 +77,13 @@ function Product({
     ? `/products/${product.slug}`
     : `/product/${product?._id}`;
 
-  const isInWishlist  = wishlistItems.some((item) => {
+  // [FIX] Normalise both populated ({ product: { _id } }) and unpopulated
+  // ({ product: <string id> }) wishlist item shapes when checking membership.
+  const isInWishlist = wishlistItems.some((item) => {
     const wid = item.product?._id || item.product;
     return wid === product?._id;
   });
+
   const isWishlistBusy = itemLoading[product?._id] || false;
 
   const stockLabel = {
@@ -97,6 +94,7 @@ function Product({
   }[stockState];
 
   // ── Handlers ──────────────────────────────────────────────────────────────
+
   const handleWishlistToggle = useCallback(async (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -110,16 +108,18 @@ function Product({
     try {
       if (isInWishlist) {
         await dispatch(removeFromWishlist(product._id)).unwrap();
-        toast.success('Removed from wishlist', { position: 'top-center', autoClose: 2000 });
       } else {
         await dispatch(addToWishlist(product._id)).unwrap();
-        toast.success('Added to wishlist', { position: 'top-center', autoClose: 2000 });
+        // [FIX] Fire analytics after confirmed server add — no getWishlist()
+        // needed; the slice now pushes the item into state.items on fulfilled
+        // so isInWishlist flips immediately without a round-trip.
+        dispatch(trackWishlistAnalytics({ id: product._id, increment: true }));
       }
-      dispatch(getWishlist());
-      // Fire analytics after wishlist state is confirmed — maps to incrementWishlist on the model
-      dispatch(trackWishlistAnalytics({ id: product._id, increment: !isInWishlist }));
+    // eslint-disable-next-line no-unused-vars
     } catch (err) {
-      toast.error(err?.message || 'Something went wrong', { position: 'top-center', autoClose: 3000 });
+      // Silent — only surface cart errors to avoid double-toast confusion.
+      // Uncomment if you want error feedback:
+      // toast.error(err?.message || 'Something went wrong', { position: 'top-center', autoClose: 3000 });
     }
   }, [isAuthenticated, isInWishlist, product, dispatch, navigate]);
 
@@ -151,7 +151,7 @@ function Product({
     }
   }, [isAddable, onQuickAdd, product, dispatch]);
 
-  // ── Early return after all hooks — Rules of Hooks compliant ──────────────
+  // ── Early return after all hooks ──────────────────────────────────────────
   if (!product) return null;
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ function Product({
           {/* Name */}
           <h3 className="pc-name">{product.name}</h3>
 
-          {/* Rating — Number() guards against NaN from undefined/null ratings */}
+          {/* Rating */}
           <div className="pc-rating" aria-label={`Rated ${product.ratings || 0} out of 5`}>
             <div className="pc-stars" aria-hidden="true">
               {[...Array(5)].map((_, i) => (
@@ -254,7 +254,7 @@ function Product({
             <span className="pc-review-count">({product.numOfReviews || 0})</span>
           </div>
 
-          {/* Price — reads currency from model's pricing.currency enum */}
+          {/* Price */}
           <div className="pc-price">
             {salePrice != null ? (
               <>

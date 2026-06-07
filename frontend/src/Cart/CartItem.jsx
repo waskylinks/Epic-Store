@@ -9,8 +9,6 @@ import {
 import { 
   addToWishlist, 
   removeFromWishlist,
-  optimisticAdd,
-  optimisticRemove
 } from '../features/products/wishlistSlice';
 import { FiMinus, FiPlus, FiTrash2, FiHeart, FiTag } from 'react-icons/fi';
 import { toast } from 'react-toastify';
@@ -44,16 +42,18 @@ function CartItem({ item }) {
 
   const isIneligible = isCategoryRestricted && !isEligible;
 
-  // For unrestricted discounts, every item is eligible for the badge.
   const isUnrestrictedEligible = discount.applied && !isCategoryRestricted;
   // ──────────────────────────────────────────────────────────────────────────
 
+  // [FIX] Normalise both populated ({ product: { _id } }) and raw-id shapes
+  // when checking membership — same normalisation used in Product.jsx and
+  // the slice's removeFromWishlist.fulfilled filter.
   const isInWishlist = wishlistItems.some(wishItem => {
-    const wishlistProductId = wishItem.product?._id || wishItem.product;
-    return wishlistProductId === item.product;
+    const wid = wishItem.product?._id || wishItem.product;
+    return wid === item.product;
   });
-  
-  const isWishlistLoading = itemLoading[item.product] || false;
+
+  const isWishlistBusy = itemLoading[item.product] || false;
 
   const handleQuantityChange = (e) => {
     const value = e.target.value;
@@ -140,39 +140,23 @@ function CartItem({ item }) {
     }
   };
 
+  // [FIX] Drop the optimistic layer entirely. The slice now updates
+  // state.items synchronously on addToWishlist.fulfilled, so isInWishlist
+  // flips the moment the server confirms — no manual optimisticAdd /
+  // optimisticRemove needed. This also eliminates the itemLoading key
+  // mismatch that was leaving the button permanently disabled after a remove.
   const handleWishlistToggle = async () => {
-    if (isInWishlist) {
-      dispatch(optimisticRemove(item.product));
-      try {
+    try {
+      if (isInWishlist) {
         await dispatch(removeFromWishlist(item.product)).unwrap();
-      } catch {
-        dispatch(optimisticAdd({ 
-          _id: item.product, 
-          name: item.name, 
-          images: [{ url: item.image }],
-          price: item.price
-        }));
-        toast.error('Failed to remove from wishlist', {
-          position: 'top-center',
-          autoClose: 2000
-        });
-      }
-    } else {
-      dispatch(optimisticAdd({ 
-        _id: item.product, 
-        name: item.name, 
-        images: [{ url: item.image }],
-        price: item.price
-      }));
-      try {
+      } else {
         await dispatch(addToWishlist(item.product)).unwrap();
-      } catch {
-        dispatch(optimisticRemove(item.product));
-        toast.error('Failed to add to wishlist', {
-          position: 'top-center',
-          autoClose: 2000
-        });
       }
+    } catch (err) {
+      toast.error(err?.message || 'Something went wrong', {
+        position: 'top-center',
+        autoClose: 2000,
+      });
     }
   };
 
@@ -185,7 +169,6 @@ function CartItem({ item }) {
   };
 
   const itemTotal = item.price * quantity;
-
 
   const showPerItemDiscount = isEligible || isUnrestrictedEligible;
 
@@ -205,7 +188,6 @@ function CartItem({ item }) {
       }
     }
   }
-  // ──────────────────────────────────────────────────────────────────────────
 
   return (
     <div className={`ec-item${isIneligible ? ' ec-item--ineligible' : ''}`}>
@@ -228,7 +210,6 @@ function CartItem({ item }) {
             {item.stock > 0 ? `${item.stock} in stock` : 'Out of stock'}
           </p>
 
-          {/* ── Discount eligibility badge ─────────────────────────────── */}
           {(isEligible || isUnrestrictedEligible) && (
             <span className="ec-item-discount-badge">
               <FiTag />
@@ -240,7 +221,6 @@ function CartItem({ item }) {
               Not eligible for {discount.code}
             </span>
           )}
-          {/* ─────────────────────────────────────────────────────────────── */}
         </div>
       </div>
 
@@ -282,7 +262,6 @@ function CartItem({ item }) {
         </button>
       </div>
 
-      {/* ── Item total */}
       <div className="ec-item-total">
         <span className="ec-item-total-price">
           {discountedItemTotal !== null ? (
@@ -320,11 +299,10 @@ function CartItem({ item }) {
           <button 
             className="ec-item-save-btn"
             onClick={handleWishlistToggle}
-            disabled={isWishlistLoading}
+            disabled={isWishlistBusy}
             aria-label={isInWishlist ? "Remove from wishlist" : "Add to wishlist"}
           >
             <FiHeart 
-              className={isWishlistLoading ? 'ec-heart-filling' : ''}
               style={{ 
                 fill: isInWishlist ? '#ff3c3c' : 'none',
                 color: isInWishlist ? '#ff3c3c' : 'currentColor'
