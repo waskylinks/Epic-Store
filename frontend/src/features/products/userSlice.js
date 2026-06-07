@@ -84,15 +84,29 @@ export const logout = createAsyncThunk(
 );
 
 // VERIFY EMAIL
-// NOTE: Server syncs customer analytics on successful verification (new user onboarding)
-// NOTE: cartSlice listens to verifyEmail.fulfilled to reset cart for newly authenticated user
+
 export const verifyEmail = createAsyncThunk(
   "user/verifyEmail",
   async ({ email, code }, { rejectWithValue }) => {
     try {
+      const { getMetaPixelCookies, getGA4ClientId, getAttributionContext } =
+        await import('../../utils/analytics.js');
+
+      const metaCookies = getMetaPixelCookies();
+      const ga4ClientId = getGA4ClientId();
+      const attribution = getAttributionContext();
+
       const { data } = await axios.post(
         "/api/v1/verify-email",
-        { email, code },
+        {
+          email,
+          code,
+          fbp:              metaCookies.fbp  || null,
+          fbc:              metaCookies.fbc  || null,
+          ga4ClientId:      ga4ClientId      || null,
+          clientAttribution: attribution,
+          clientTimestamp:  new Date().toISOString(),
+        },
         { headers: { "Content-Type": "application/json" } }
       );
       return data;

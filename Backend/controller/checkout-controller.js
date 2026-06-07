@@ -5,8 +5,7 @@ import Product from "../models/product-model.js";
 import Discount from "../models/discount-model.js";
 import { deleteCachePattern } from '../utils/redis.js';
 import { verifyRecoveryToken, decodeRecoveryToken } from '../utils/recoveryToken.js';
-import { enqueueAnalyticsEvent } from '../jobs/analyticsQueue.js';
-import { resolveFbc } from '../Services/analytics/metaCapiService.js';
+
 
 const invalidateCheckoutCaches = async () => {
   try {
@@ -220,51 +219,21 @@ export const createCheckout = handleAsyncError(async (req, res, next) => {
   await checkout.save();
   invalidateCheckoutCaches().catch(err => console.error('Failed to invalidate caches:', err));
 
-  if (analyticsEventId) {
-    const resolvedFbc = resolveFbc({
-      fbc:         req.body.fbc,
-      fbclid:      req.body.fbclid,
-      attribution: attributionData,
-    });
 
-    enqueueAnalyticsEvent('begin_checkout', {
-      event_id: analyticsEventId,
 
-      checkout: {
-        _id:     checkout._id,
-        items:   checkout.items,
-        pricing: checkout.pricing,
-      },
-
-      user: {
-        _id:             req.user._id,
-        email:           req.user.email,
-        firstName:       req.user.firstName,
-        lastName:        req.user.lastName,
-        phone:           req.user.phone || req.user.phoneNo || null,
-        dateOfBirth:     req.user.dateOfBirth     || null,
-        facebookId:      req.user.facebookId      || null,
-        shippingAddress: req.user.shippingAddress || null,
-      },
-
-      context: {
-        eventId:        analyticsEventId,
-        fbp:            req.body.fbp  || null,
-        fbc:            resolvedFbc,
-        clientIp:       req.ip,
-        userAgent:      req.headers['user-agent'] || null,
-        eventSourceUrl: req.body.eventSourceUrl   || process.env.FRONTEND_URL || null,
-        attribution:    attributionData,
-      },
-    }).catch(err =>
-      console.error('[createCheckout] Failed to enqueue begin_checkout event:', err.message)
+if (analyticsEventId) {
+  import('../Services/analytics/analyticsOrchestrator.js')
+    .then(({ fireCheckoutStartEvent }) =>
+      fireCheckoutStartEvent(checkout, req.user, req)
+    )
+    .catch(err =>
+      console.error('[createCheckout] fireCheckoutStartEvent failed (non-fatal):', err.message)
     );
-  } else {
-    console.warn(
-      '[createCheckout] analyticsEventId missing from request body — ' +
-      'begin_checkout CAPI event skipped. Browser pixel will fire without server deduplication.'
-    );
-  }
+} else {
+  console.warn(
+    '[createCheckout] analyticsEventId missing — begin_checkout CAPI event skipped.'
+  );
+}
 
   res.status(200).json({
     success:  true,

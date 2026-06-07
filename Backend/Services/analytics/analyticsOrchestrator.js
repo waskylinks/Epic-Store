@@ -417,9 +417,13 @@ export const fireWishlistEvent = (product, user, req) =>
  *   payment_selection  → GA4 add_payment_info + Meta AddPaymentInfo
  *   payment_gateway    → GA4 checkout_step only (Meta fired on payment_selection)
  */
+
 export const fireCheckoutStepEvent = (step, checkout, user, req) =>
   fireAnalyticsEvent(
     ANALYTICS_EVENTS.CHECKOUT_STEP,
     { step, checkout, user, req },
-    { fastPath: true, queue: true }
+    // queue: false — fast path fires synchronously for all steps.
+    // Queue retry sends a duplicate Meta AddPaymentInfo for payment_selection
+    // showing as two Processed entries before Meta deduplication resolves.
+    { fastPath: true, queue: false }
   );

@@ -110,9 +110,6 @@ function Product({
         await dispatch(removeFromWishlist(product._id)).unwrap();
       } else {
         await dispatch(addToWishlist(product._id)).unwrap();
-        // [FIX] Fire analytics after confirmed server add — no getWishlist()
-        // needed; the slice now pushes the item into state.items on fulfilled
-        // so isInWishlist flips immediately without a round-trip.
         dispatch(trackWishlistAnalytics({ id: product._id, increment: true }));
       }
     // eslint-disable-next-line no-unused-vars

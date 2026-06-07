@@ -28,19 +28,13 @@ const USER_LIST_SELECT = 'firstName lastName email role avatar.url authProvider 
 
 // ============================================
 // REGISTER NEW USER (WITH EMAIL VERIFICATION)
-// ============================================
-// Replace the existing registerUser export in userController.js with this block.
-// The only change vs the previous version is the Address model import at the top
-// of the file and the address-creation block at the end of this handler.
-//
-// Add this import alongside the others at the top of userController.js:
-//  
+// ===========================================
 
 export const registerUser = handleAsyncError(async (req, res, next) => {
   const {
     firstName, lastName, email, password,
     phone, dateOfBirth, gender,
-    shippingAddress,          // optional: { address, city, state, country, pinCode, isDefault }
+    shippingAddress,
   } = req.body;
 
   const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -52,6 +46,36 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
     }
   }
 
+  // Validate shippingAddress once — reused for both User.create and Address.create
+  // so the validation logic lives in exactly one place.
+  const parsedAddress = (() => {
+    if (!shippingAddress) return null;
+    const {
+      address: addrLine,
+      city    = '',
+      state,
+      country,
+      pinCode   = '',
+      isDefault = false,
+    } = shippingAddress;
+
+    const hasMin =
+      typeof addrLine === 'string' && addrLine.trim().length >= 5 &&
+      typeof state    === 'string' && state.trim().length    >  0 &&
+      typeof country  === 'string' && country.trim().length  >  0;
+
+    if (!hasMin) return null;
+
+    return {
+      address:   addrLine.trim(),
+      city:      city.trim(),
+      state:     state.trim(),
+      country:   country.trim(),
+      pinCode:   pinCode.trim(),
+      isDefault: Boolean(isDefault),
+    };
+  })();
+
   const user = await User.create({
     firstName,
     lastName,
@@ -60,53 +84,42 @@ export const registerUser = handleAsyncError(async (req, res, next) => {
     phone,
     dateOfBirth,
     gender,
-    authProvider: 'local',
+    authProvider:  'local',
     emailVerified: false,
+    // Write shippingAddress to the User document so Meta CAPI CompleteRegistration
+    // (fired inside verifyEmail) has city/state/country/pinCode available as geo
+    // signals at verification time. user.shippingAddress is the analytics fallback
+    // copy; the Address model save below is the canonical checkout record.
+    ...(parsedAddress && {
+      shippingAddress: {
+        address: parsedAddress.address,
+        city:    parsedAddress.city,
+        state:   parsedAddress.state,
+        country: parsedAddress.country,
+        pinCode: parsedAddress.pinCode,
+      },
+    }),
   });
 
-  // ── Persist shipping address to the Address model if supplied ───────────────
-  // We do this fire-and-forget style after user creation so that a failure here
-  // never prevents the verification email from being sent.
-  // Minimum required: address + country + state (city and pinCode are optional
-  // because some countries don't use them).
-  if (shippingAddress) {
-    const {
-      address:   addrLine,
-      city      = '',
-      state,
-      country,
-      pinCode   = '',
-      isDefault = false,
-    } = shippingAddress;
-
-    const hasMinFields =
-      typeof addrLine === 'string' && addrLine.trim().length >= 5 &&
-      typeof state    === 'string' && state.trim().length    >  0 &&
-      typeof country  === 'string' && country.trim().length  >  0;
-
-    if (hasMinFields) {
-      try {
-        await Address.create({
-          user:      user._id,
-          name:      user.fullName,
-          // Use the user's phone for the address record since the Address model
-          // requires a phoneNo field; the user just supplied it in step 2.
-          phoneNo:   phone,
-          address:   addrLine.trim(),
-          city:      city.trim(),
-          state:     state.trim(),
-          country:   country.trim(),
-          pinCode:   pinCode.trim(),
-          isDefault: Boolean(isDefault),
-        });
-      } catch (addrErr) {
-        // Address save failure is non-fatal — the user is still registered.
-        // Log for ops visibility but do not block the response.
-        console.error('[Register] Address save failed (non-fatal):', addrErr.message);
-      }
+  // Persist to Address model — canonical record used by the checkout flow.
+  // Fire-and-forget: failure here must never block the verification email.
+  if (parsedAddress) {
+    try {
+      await Address.create({
+        user:      user._id,
+        name:      user.fullName,
+        phoneNo:   phone,
+        address:   parsedAddress.address,
+        city:      parsedAddress.city,
+        state:     parsedAddress.state,
+        country:   parsedAddress.country,
+        pinCode:   parsedAddress.pinCode,
+        isDefault: parsedAddress.isDefault,
+      });
+    } catch (addrErr) {
+      console.error('[Register] Address save failed (non-fatal):', addrErr.message);
     }
   }
-  // ── End shipping address persistence ────────────────────────────────────────
 
   const verificationCode = user.generateVerificationCode();
   await user.save({ validateBeforeSave: false });
